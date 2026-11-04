@@ -10,9 +10,25 @@ from . import kits, linuxvm, toolchains, wsl
 from .compiler import CompilerConfig
 
 
-def compiler_for(cfg: dict, vram: int | None) -> dict:
-    """The compiler a function at `vram` is built with: its address range's, for a game built by more than one (GTA
-    San Andreas: EE-GCC 2.95.3, and CodeWarrior 3.0.1 -O3 for some of its code), else the project's."""
+def function_compiler_key(function):
+    """Portable identity for an entry, including images mapped at more than one RAM address."""
+    row=dict(function)
+    offset=row.get('rom_offset',row.get('rom'))
+    return f"{offset}:{row['vram']}" if offset is not None else None
+
+
+def compiler_for(cfg: dict, vram: int | None, function=None) -> dict:
+    """The original entry's verified profile, else its address range's or the project's default.
+    `function` distinguishes overlays sharing RAM addresses; exported entries spell rom_offset as rom."""
+    if function is not None:
+        row=dict(function)
+        row.setdefault('vram',vram)
+        offset=row.get('rom_offset',row.get('rom'))
+        profiles=cfg.get('function_compilers') or {}
+        own=(profiles.get(function_compiler_key(row)) or profiles.get(str(offset))) if offset is not None else next(
+            (p for p in profiles.values() if p.get('function')==row.get('name') and p.get('vram')==vram),None)
+        if own and own.get('vram')==vram:
+            return {**cfg['compiler'],'toolchain':own['toolchain'],'flags':own['flags']}
     for r in cfg.get("compiler_ranges") or []:
         if vram is not None and r["start"] <= vram < r["end"]:
             return {**cfg["compiler"], "toolchain": r["toolchain"], "flags": r["flags"]}

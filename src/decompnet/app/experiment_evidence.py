@@ -33,7 +33,7 @@ def build_scope(net, proj, fn):
     cfg = net.cfg(proj)
     # Imported projects describe their compiler with a label, not ROM toolchain settings.
     # target_scope already fingerprints their unit and build inputs.
-    compiler = compiler_for(cfg,fn['vram']) if cfg.get('compiler') and not net.fork_slug(proj['slug']) else {}
+    compiler = compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') and not net.fork_slug(proj['slug']) else {}
     return hashlib.sha256((target_scope(net,fn,'')+repr(compiler_identity(compiler))).encode()).hexdigest()
 
 

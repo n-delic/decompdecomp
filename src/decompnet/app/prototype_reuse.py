@@ -49,13 +49,13 @@ def variants(net, proj, fn, source):
     if not net.is_rom(proj) or not net.cfg(proj).get('compiler'):return []
     names=list(prototypes(source))[:8]
     if not names:return []
-    settings=compiler_for(net.cfg(proj),fn['vram'])
+    settings=compiler_for(net.cfg(proj),fn['vram'], fn)
     rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND id!=? AND ("+
         ' OR '.join('instr(matched_source,?)>0' for _ in names)+') ORDER BY id DESC LIMIT 24',
         proj['id'],fn['id'],*names)
     donors=[]
     for row in rows:
-        if compiler_for(net.cfg(proj),row['vram'])!=settings:continue
+        if compiler_for(net.cfg(proj),row['vram'], row)!=settings:continue
         evidence=match_bundle.status(net,row)
         if evidence and not evidence['changed_inputs'] and not evidence.get('regression'):
             donors.append(evidence['source'])

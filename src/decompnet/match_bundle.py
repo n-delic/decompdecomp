@@ -66,7 +66,7 @@ def capture(db, fn, attempt_id, source, context_version, settings):
     header = row['header'] if row else ''
     recorded = db.execute('SELECT settings FROM repair_attempt_settings WHERE attempt_id=?',(attempt_id,)).fetchone()
     effective = json.loads(recorded['settings']) if recorded else (settings or {})
-    compiler = effective.get('compiler') or (compiler_for(cfg,fn['vram']) if cfg.get('compiler') else {})
+    compiler = effective.get('compiler') or (compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else {})
     details = {'format':1,'verdict':'exact','abi':abi(proj,cfg),'symbols_sha256':symbols(db,fn['project_id']),'recorded_at':time.time(),'attempt_id':attempt_id,
                'source_sha256':digest(source),'header_sha256':digest(header) if row else None,
                'context_version':context_version,'compiler':compiler,'compiler_identity':compiler_identity(compiler),
@@ -91,7 +91,7 @@ def status(net, fn):
     source = fn['matched_source'] if fn['status']=='matched' else fn['best_source']
     if digest(source or '') != details['source_sha256']: reasons.append('source changed')
     if details['header_sha256'] is not None and digest(context['header'] if context else '') != details['header_sha256']: reasons.append('header changed')
-    compiler = compiler_for(cfg,fn['vram']) if cfg.get('compiler') else {}
+    compiler = compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else {}
     if compiler != details['compiler']: reasons.append('compiler settings changed')
     if compiler_identity(compiler) != details['compiler_identity']: reasons.append('compiler installation/registry changed')
     if digest(fn['target'] or b'') != details['target_sha256'] or digest(fn['relocs'] or '') != details['relocations_sha256'] or fn['vram'] != details['vram']: reasons.append('target/address changed')

@@ -66,11 +66,11 @@ FAMILIES = (("ido", "ido"), ("gcc", "gcc"), ("ee-gcc", "gcc"), ("psp-gcc", "gcc"
             ("mwc", "mwcc"))
 
 
-def weight_family(cfg: dict, vram: int | None, fork: bool) -> str:
+def weight_family(cfg: dict, vram: int | None, fork: bool, function=None) -> str:
     """Which of decomp-permuter's weight sets suits the compiler that builds the code at `vram`."""
     if fork:  # forks name their console, not a toolchain: the console says its compilers' family
         return consoles.get(cfg.get("platform")).compiler_family or "base"
-    toolchain = (compiler_for(cfg, vram).get("toolchain") or "") if cfg.get("compiler") else ""
+    toolchain = (compiler_for(cfg, vram, function).get("toolchain") or "") if cfg.get("compiler") else ""
     return toolchains.compiler_family(toolchain) or next((family for prefix, family in FAMILIES if toolchain.startswith(prefix)), "base")
 
 
@@ -300,7 +300,7 @@ class Permuter:
                 log.info('permuter: %s: header unavailable: %s', fn['name'], error)
                 continue
             labels = {}
-            candidates = draft_repairs.variants(fn['best_source'], fn['name'], proj['arch'], fn['asm'] or '', flags=compiler_for(self.net.cfg(proj),fn['vram']).get('flags',[]) if not fork else [], labels=labels,header=header,limit=None,tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,fn['best_source']))
+            candidates = draft_repairs.variants(fn['best_source'], fn['name'], proj['arch'], fn['asm'] or '', flags=compiler_for(self.net.cfg(proj),fn['vram'], fn).get('flags',[]) if not fork else [], labels=labels,header=header,limit=None,tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,fn['best_source']))
             from . import normalization_repairs, repair_ranking
             normalization_repairs.extend_frame(candidates, labels, fn['best_source'], fn['name'], proj['arch'], repair_ranking.evidence(self.net,fn['id'],agent.id))
             ranked = repair_ranking.order(dict.fromkeys(labels.get(text, 'draft_repair') for text in candidates),repair_ranking.evidence(self.net,fn['id'],agent.id))
@@ -446,7 +446,7 @@ class Permuter:
                 # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
                 header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
                                       self.net._context(proj["id"], fn["unit"])["header"])
-                family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
+                family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork), fn)
                 try:
                     gen = Generator()
                 except OSError as e:  # its environment is broken: the simple rewrites still work
@@ -491,7 +491,7 @@ class Permuter:
                         if fresh_header != header or fresh_proj['config'] != proj['config']:
                             frontier = self.search_frontier = Frontier()
                         proj, header = fresh_proj, fresh_header
-                        family = weight_family(self.net.cfg(proj), fn['vram'], bool(fork))
+                        family = weight_family(self.net.cfg(proj), fn['vram'], bool(fork), fn)
                         best, _ = self._baseline(agent, proj, fn, st, fork)
                         if best is None or best == 0:
                             break
@@ -579,7 +579,7 @@ class Permuter:
         current = self.net.store.one("SELECT * FROM functions WHERE id=?", fn['id'])
         if current['status'] != 'open' or not current['best_score'] or current['best_score'] > current['n_insns'] * 2:
             return 0
-        own = compiler_for(self.net.cfg(proj), fn['vram'])
+        own = compiler_for(self.net.cfg(proj), fn['vram'], fn)
         ctx = self.net._context(proj['id'], fn['unit'])
         count = 0
         symbols = [tuple(row) for row in self.net.store.all('SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
@@ -704,7 +704,7 @@ class Permuter:
             naming = json.loads(fn['meta'] or '{}').get('naming')
             def build_settings(project):
                 cfg = json.loads(project['config'])
-                return (compiler_for(cfg, fn['vram']), project['root'], project['arch'], project['big_endian'],
+                return (compiler_for(cfg, fn['vram'], fn), project['root'], project['arch'], project['big_endian'],
                         tuple(cfg.get(k) for k in ('kind', 'platform', 'big_endian', 'gp')))
             build = build_settings(proj)
             generation = self.net._generation.get(proj['id'], 0)

@@ -27,8 +27,14 @@ def listing(net, proj):
 
 
 def scoped_config(proj, fn, settings):
-    """Replace only this entry's address interval, keeping surrounding profile ranges."""
+    """Select one original entry, keeping neighbouring and overlaid entries' compiler profiles."""
     cfg=json.loads(proj['config']);lo,hi=fn['vram'],fn['vram']+fn['size'];keep=[]
+    if dict(fn).get('rom_offset') is not None:
+        from ..project import function_compiler_key
+        # This selector is by original image position, so overlays sharing a RAM address remain independent.
+        cfg.setdefault('function_compilers',{})[function_compiler_key(fn)]={
+            'vram':fn['vram'],'function':fn['name'],**settings}
+        return cfg
     for old in cfg.get('compiler_ranges',[]):
         for a,b in ((old['start'],min(old['end'],lo)),(max(old['start'],hi),old['end'])):
             if a<b:keep.append({**old,'start':a,'end':b})
@@ -46,10 +52,23 @@ def publish_profile(net, db, fn, expected, settings, agent):
         raise NetworkError('The prepared bundle changed or its claim expired. Run preparation again.')
     if not fn['size'] or fn['size']<=0:
         raise NetworkError('The function needs a valid extent before applying a compiler bundle.')
-    if db.execute('SELECT 1 FROM functions WHERE project_id=? AND id!=? AND vram<? AND vram+size>?',
-                  (fn['project_id'],fn['id'],fn['vram']+fn['size'],fn['vram'])).fetchone():
-        raise NetworkError('The compiler range overlaps another function. Resolve the boundary before applying this bundle.')
-    cfg=scoped_config(proj,fn,settings)
+    from ..project import compiler_for
+    own=compiler_for(json.loads(proj['config']),fn['vram'], fn)
+    if all(own.get(k)==settings.get(k) for k in ('toolchain','flags')):
+        return prep.inputs(net,proj,fn)  # private headers can change without republishing an unchanged profile
+    overlaps=db.execute('SELECT id,vram,rom_offset,size FROM functions WHERE project_id=? AND id!=? '
+                        'AND vram<? AND vram+size>?',
+                        (fn['project_id'],fn['id'],fn['vram']+fn['size'],fn['vram'])).fetchall()
+    for other in overlaps:
+        if (fn['rom_offset'] is None or other['rom_offset'] is None
+                or other['rom_offset']-fn['rom_offset']==other['vram']-fn['vram']):
+            raise NetworkError('The compiler range overlaps another function. Resolve the boundary before applying this bundle.')
+    # Profiles select function entry addresses. Distinct overlay images may overlap in RAM;
+    # stop before every other entry rather than changing any neighbour's selected profile.
+    next_start=db.execute('SELECT MIN(vram) FROM functions WHERE project_id=? AND vram>?',
+                          (fn['project_id'],fn['vram'])).fetchone()[0]
+    end=min(fn['vram']+fn['size'],next_start) if next_start is not None else fn['vram']+fn['size']
+    cfg=scoped_config(proj,{**dict(fn),'size':end-fn['vram']},settings)
     from .function_profile_suggestions import settle_checks
     settle_checks(cfg,fn,settings)
     db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
@@ -110,7 +129,7 @@ def try_pair(net, proj, function, source, header, log, settings=None):
     if fn['status']!='open':
         raise NetworkError('Choose an unmatched function for a prepared source/header pair.')
     if not settings:
-        settings=compiler_for(json.loads(proj['config']),fn['vram'])
+        settings=compiler_for(json.loads(proj['config']),fn['vram'], fn)
     if (not isinstance(settings,dict) or settings.get('cmd') or not isinstance(settings.get('toolchain'),str)
             or not isinstance(settings.get('flags'),list) or not all(isinstance(flag,str) for flag in settings['flags'])):
         raise NetworkError('Choose an installed compiler and a list of flags for this pair.')
@@ -179,7 +198,7 @@ def recheck_exact(net, proj, log, limit=20):
 
 def promote_measured(net, proj, fn, source, header, settings, agent, expected):
     """Caller holds the claim. Recompile under frozen inputs; only an explicit ROM byte/data verdict wins."""
-    from .compiler_context import acceptable
+    from .compiler_context import acceptable, single_source
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Automatic prepared bundles require a local ROM project.')
     current=net._function(fn['name'],proj['slug']);fresh=net.project_row(proj['slug'])
@@ -187,11 +206,20 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
         raise NetworkError('Prepared inputs changed before automatic recheck. Run preparation again.')
     private={**dict(fresh),'config':json.dumps(scoped_config(fresh,current,settings))}
     result=net._compile(private,header,source,current)
+    if result.ok and not acceptable(net,proj,fn,result.obj):
+        from .function_names import canonical_source
+        isolated=single_source(canonical_source(current,source),header,fn['name'],result.obj)
+        if isolated:
+            source,header=isolated
+            result=net._compile(private,header,source,current)
     if not result.ok or not acceptable(net,proj,fn,result.obj):
-        raise NetworkError('Automatic bundle recheck did not compile as one function. Evidence retained for review.')
-    candidate,verdict,_=net._evaluate(current,fresh,result.obj)
+        from .preparation_diagnostics import compile_error
+        detail=compile_error(net,fn,getattr(result,'log','No compiler diagnostic was returned.')) if not result.ok else 'Additional function definitions remain; a separately verified compiler context is required.'
+        raise NetworkError('Automatic bundle recheck did not compile as one function. '+detail)
+    candidate,verdict,problems=net._evaluate(current,fresh,result.obj)
     if candidate is None or verdict is not True:
-        raise NetworkError('Automatic bundle recheck failed linked-byte/data verification. Evidence retained for review.')
+        detail='; '.join(problems) or 'Compiled instructions or referenced data differ from the original bytes.'
+        raise NetworkError('Automatic bundle recheck failed linked-byte/data verification. '+detail)
     # _record atomically rechecks the claim/inputs and publishes context, profile and source.
     net._record(current,agent,0,source,0,matched=True,via='local-source-auto-exact',
                 effective_settings=result.effective_settings,prepared_header=header,

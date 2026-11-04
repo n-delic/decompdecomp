@@ -116,7 +116,7 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         measured['compiler']=(getattr(compiled,'effective_settings',None) or {}).get('compiler')
         if not measured['compiler']:
             from ..project import compiler_for
-            measured['requested_compiler']=compiler_for(net.cfg(proj),fn['vram'])
+            measured['requested_compiler']=compiler_for(net.cfg(proj),fn['vram'], fn)
 
     # Imported diagnostic restoration can advance the compile generation. Cache against the
     # restored state, so the next read reuses evidence for that state rather than rebuilding.

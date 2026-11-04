@@ -107,3 +107,23 @@ def test_public_context_retains_each_identity_and_byte_gate(monkeypatch,bad):
     if bad=='gap':found['entry']=(4,20,32)
     if bad=='missing_code':monkeypatch.setattr(context.match,'link',lambda *a:LinkResult(object(),True,[]))
     assert context.private_unit(net,p,rows['entry'],b'obj') is None
+
+
+def test_single_source_keeps_entry_and_line_positions_but_declares_other_emitted_bodies(monkeypatch):
+    from decompnet.forks import csource
+    monkeypatch.setattr(context,'ELFFile',lambda _:object())
+    monkeypatch.setattr(context,'_function_symbols',lambda _:{'entry':None,'helper':None,'header_helper':None})
+    source='int helper(int x) { /* { */ return x+1; }\nint entry(int x) {\n return helper(x);\n}\n'
+    header='static int header_helper(void) { return 3; }\n'
+    isolated,private=context.single_source(source,header,'entry',b'obj')
+    assert csource.get(isolated,'entry')==csource.get(source,'entry')
+    assert csource.find(isolated,'helper') is None and 'int helper(int x) ;' in isolated
+    assert csource.find(private,'header_helper') is None
+    assert len(isolated)==len(source) and isolated.count('\n')==source.count('\n')
+    assert len(private)==len(header) and private.count('\n')==header.count('\n')
+
+
+def test_single_source_never_guesses_an_unknown_or_macro_generated_definition(monkeypatch):
+    monkeypatch.setattr(context,'ELFFile',lambda _:object())
+    monkeypatch.setattr(context,'_function_symbols',lambda _:{'entry':None,'unknown':None})
+    assert context.single_source('int entry(void) { return 1; }','','entry',b'obj') is None

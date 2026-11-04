@@ -147,7 +147,7 @@ class Bridge:
         # Reading a saved candidate does not acquire, release or replace an agent's claim.
         # Submission still uses the ordinary claim and freshness gates.
         cfg = self.net.cfg(proj)
-        compiler = compiler_for(cfg, fn['vram'])
+        compiler = compiler_for(cfg, fn['vram'], fn)
         flags = compiler.get('flags', [])
         if compiler.get('toolchain') != 'gcc-2.7.2-kmc' or compiler.get('cmd') or any(f not in FLAGS for f in flags):
             raise ValueError('This function uses compiler flags the browser does not support yet.')

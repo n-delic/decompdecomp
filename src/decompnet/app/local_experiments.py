@@ -153,7 +153,7 @@ def available(net, agent, slug, fn, source, revision, requested, *, deadline=Non
 
 def _available(net, agent, slug, fn, source, revision, requested):
     proj=net._project(slug);cfg=json.loads(proj['config'])
-    flags=compiler_for(cfg,fn['vram']).get('flags',[]) if not net.fork_slug(slug) else []
+    flags=compiler_for(cfg,fn['vram'], fn).get('flags',[]) if not net.fork_slug(slug) else []
     debug=any(re.fullmatch(r'-g[1-3]?',flag) for flag in flags)
     pools={family:[] for family in requested}
     if independent_address_repairs.FAMILIES[0] in pools and net.is_rom(proj):

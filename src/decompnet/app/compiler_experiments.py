@@ -51,12 +51,12 @@ def run(net,agent,slug,function,revision,trials):
                     if not own:
                         raise NetworkError('This imported build does not expose a selectable per-file compiler.')
                 else:
-                    own = compiler_for(cfg,fn['vram'])['toolchain']
+                    own = compiler_for(cfg,fn['vram'], fn)['toolchain']
                 t = {**t,'compiler':own}
             text=agent_targets.replace_anchor(source,t['old'],t.get('new',''),t.get('occurrence',0)) if 'old' in t else source
             if not fork:
                 compiler=net._toolchain_named(cfg,t['compiler'])
-                flags=t.get('flags','').split() or (compiler_for(cfg,fn['vram']).get('flags',[]) if current else consoles.default_flags(cfg,compiler))
+                flags=t.get('flags','').split() or (compiler_for(cfg,fn['vram'], fn).get('flags',[]) if current else consoles.default_flags(cfg,compiler))
                 t={**t,'compiler':compiler,'flags':' '.join(flags)}
             planned.append((t,text))
         scope=hashlib.sha256(repr((agent_tokens.target_scope(net,fn,revision),dict(fn),

@@ -398,7 +398,7 @@ def _run(twins, slug, job):
             return
         if getattr(job,'finish_near',False):finish_near.visited(net,proj,fn)
         header = net._context(proj['id'], fn['unit'])['header']
-        settings = compiler_for(cfg, fn['vram'])
+        settings = compiler_for(cfg, fn['vram'], fn)
         from . import verified_unit_context
         donor_signature=(prototype_reuse.signature(net,proj,fn['best_source']),
                          verified_unit_context.signature(net,proj,fn,fn['best_source']))

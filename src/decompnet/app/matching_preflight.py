@@ -35,7 +35,7 @@ def _run(net, proj, fn, log, check, max_profiles):
             or fn['status'] != 'open' or not fn['best_source']):
         return {'tested': 0}
     cfg = net.cfg(proj)
-    own = compiler_for(cfg, fn['vram'])
+    own = compiler_for(cfg, fn['vram'], fn)
     if own.get('cmd') or not own.get('toolchain') or toolchains.installed(own['toolchain']) is None:
         return {'tested': 0}
     from .profile_hypotheses import captured, neighbours, prioritized

@@ -763,14 +763,14 @@ class Twins:
         counts = self.net.store.one("SELECT COUNT(*) AS n,MAX(matched_at) AS latest FROM functions "
                                     "WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL", proj["id"])
         stamp = (self.net._layout_key(proj), self._compiler_key(cfg["compiler"]),
-                 self._compiler_key({"ranges": cfg.get("compiler_ranges") or []}), counts["n"], counts["latest"])
+                 self._compiler_key({"ranges": cfg.get("compiler_ranges") or [],'functions':cfg.get('function_compilers') or {}}), counts["n"], counts["latest"])
         if self._index_stamps.get(proj["id"]) == stamp:
             return counts["n"]
         prints = self.prints(proj)
-        rows = self.net.store.all("SELECT id,vram,matched_at FROM functions WHERE project_id=? AND status='matched' "
+        rows = self.net.store.all("SELECT id,name,vram,rom_offset,matched_at FROM functions WHERE project_id=? AND status='matched' "
                                   "AND matched_source IS NOT NULL", proj["id"])
         entries = [(r["id"], proj["id"], prints[r["id"]].key,
-                    self._compiler_key(compiler_for(cfg, r["vram"])), prints[r["id"]].size,
+                    self._compiler_key(compiler_for(cfg, r["vram"], r)), prints[r["id"]].size,
                     r["matched_at"] or 0) for r in rows if r["id"] in prints and not prints[r["id"]].asm]
         with self.net.store.tx() as db:
             db.execute("DELETE FROM cross_game_index WHERE project_id=?", (proj["id"],))
@@ -793,7 +793,7 @@ class Twins:
             self._index_stamps.pop(project_id, None)
 
     def _index_function(self, proj, fid: int) -> None:
-        row = self.net.store.one("SELECT id,vram,matched_at,status,matched_source FROM functions WHERE id=?", fid)
+        row = self.net.store.one("SELECT id,name,vram,rom_offset,matched_at,status,matched_source FROM functions WHERE id=?", fid)
         p = self.prints(proj).get(fid)
         cfg = self.net.cfg(proj)
         with self.net.store.tx() as db:
@@ -802,7 +802,7 @@ class Twins:
             else:
                 db.execute("INSERT OR REPLACE INTO cross_game_index VALUES(?,?,?,?,?,?)",
                            (fid, proj["id"], p.key,
-                            self._compiler_key(compiler_for(cfg, row["vram"])), p.size,
+                            self._compiler_key(compiler_for(cfg, row["vram"], row)), p.size,
                             row["matched_at"] or 0))
 
     def cross_game_results(self, slug: str) -> dict:
@@ -842,7 +842,7 @@ class Twins:
         target = self.prints(proj).get(fn["id"])
         if target is None or target.size < ACROSS_MIN_BYTES:
             return []
-        compiler = self._compiler_key(compiler_for(self.net.cfg(proj), fn["vram"]))
+        compiler = self._compiler_key(compiler_for(self.net.cfg(proj), fn["vram"], fn))
         exact = self.net.store.all(
             "SELECT i.*, f.name, p.name AS game FROM cross_game_index i "
             "JOIN functions f ON f.id=i.function_id AND f.status='matched' "

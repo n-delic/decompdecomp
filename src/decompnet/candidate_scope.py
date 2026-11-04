@@ -55,7 +55,7 @@ def callees(net, proj, fn, source):
 def state(net,proj,fn):
     cfg=json.loads(proj['config'])
     build={key:cfg.get(key) for key in ('kind','platform','big_endian','gp')}
-    build['compiler']=compiler_for(cfg,fn['vram']) if cfg.get('compiler') else None
+    build['compiler']=compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else None
     ctx=net._context(proj['id'],fn['unit'])
     text='\n'.join(str(fn[key] or '') for key in ('name','asm','best_source','seed','relocs'))
     names=set(re.findall(r'\b[A-Za-z_]\w*\b',text))

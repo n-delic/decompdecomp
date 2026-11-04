@@ -17,7 +17,7 @@ SUFFIXES={'.s','.asm'}
 
 
 def fingerprint(proj, fn):
-    cfg=json.loads(proj['config']);profile=compiler_for(cfg,fn['vram'])
+    cfg=json.loads(proj['config']);profile=compiler_for(cfg,fn['vram'], fn)
     return hashlib.sha256(repr((cfg.get('rom',{}).get('sha1'),fn['vram'],fn['size'],
                                bytes(fn['target'] or b''),dict(fn).get('relocs'),cfg.get('gp'),cfg.get('big_endian'),profile)).encode()).hexdigest()
 
@@ -93,7 +93,7 @@ def run(net, proj, cfg, log, stop=lambda:False, budget=8, only=None, agent=None,
             cached=net.store.one('SELECT reason FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key)
             if cached and not retry:
                 report['errors'].append(dest+': unchanged failed assembly trial skipped; use Verify mapped assembly to retry.');continue
-            base=compiler_for(json.loads(proj['config']),fn['vram'])
+            base=compiler_for(json.loads(proj['config']),fn['vram'], fn)
             if base.get('cmd') or not toolchains.known(base.get('toolchain','')) or toolchains.installed(base['toolchain']) is None:
                 raise NetworkError('Install and select a supported compiler driver before verifying assembly.')
             profiles=[base]

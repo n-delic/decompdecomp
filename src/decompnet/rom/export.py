@@ -279,7 +279,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         src = out / "src" / f["seg"] / f"{f['name']}.{'cpp' if compiled.language == 'c++' else 'c'}"  # as it compiled
         src.parent.mkdir(parents=True, exist_ok=True)
         include = "common.h" if not unit else f"common_{unit}.h"
-        prelude = toolchains.get(compiler_for(cfg, row["vram"])["toolchain"]).prelude
+        prelude = toolchains.get(compiler_for(cfg, row["vram"], row)["toolchain"]).prelude
         src.write_text(exported_source(prelude, include, row["matched_source"]), encoding="utf-8")
         f["kind"] = "c"
         f["src"] = src.relative_to(out).as_posix()
@@ -378,7 +378,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     build = {
         "title": proj["name"], "platform": console.id, "image": base, "output": f"build/game{ext}",
         "sha1": hashlib.sha1(image).hexdigest(), "compiler": cfg["compiler"],
-        "compiler_ranges": cfg.get("compiler_ranges") or [], "gp": cfg.get("gp") or 0,
+        "compiler_ranges": cfg.get("compiler_ranges") or [], "function_compilers": cfg.get('function_compilers') or {}, "gp": cfg.get("gp") or 0,
         "big_endian": console.big_endian, "asm_preamble": console.asm_preamble,
         "as_flags": [*console.as_flags, "-G0", "-no-pad-sections", "-I", "include"],
         "ld_flags": ["-EB" if console.big_endian else "-EL", "--no-check-sections"],

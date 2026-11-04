@@ -312,7 +312,7 @@ class GuiMixin:
                 'insns': fn['n_insns'], 'status': fn['status'], 'best': fn['best_score'],
                 'source': source, 'source_kind': kind, 'asm': fn['asm'] or '',
                 'scores': [], 'notes': [], 'calls': [], 'called_by': [], 'cross_game_hints': [],
-                'compiler_profile': compiler_for(cfg, fn['vram']) if cfg.get('compiler') else None,
+                'compiler_profile': compiler_for(cfg, fn['vram'], fn) if cfg.get('compiler') else None,
                 'default_compiler': cfg.get('compiler'), 'details_pending': True}
 
     def function_detail(self, slug: str, name: str, *, include_hints=True) -> dict:
@@ -342,7 +342,7 @@ class GuiMixin:
             "boundary_review": self.console(proj).boundary_reason(fn["target"] or b"") if fn["status"]!="matched" else None,
             "deep_pass": deep_pass, "verification": bundle_status(self,fn), "baseline_status": baseline_status(self,proj,fn),
             "compiler_test": self.compiler_test_result(proj, fn),
-            "compiler_profile": compiler_for(self.cfg(proj), fn["vram"]),
+            "compiler_profile": compiler_for(self.cfg(proj), fn["vram"], fn),
             "default_compiler": self.cfg(proj)["compiler"],
             "compiler_profile_usage": self.compiler_profile_usage(proj),
             "asm": self._asm_text(fn, proj),

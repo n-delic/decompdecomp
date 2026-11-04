@@ -19,7 +19,7 @@ def warnings(net, proj, fn):
     if not fn['best_source'] or net.fork_slug(proj['slug']):
         return ''  # Imported projects own their build commands; their ordinary build retains its diagnostics.
     cfg = net.cfg(proj)
-    settings = compiler_for(cfg, fn['vram'])
+    settings = compiler_for(cfg, fn['vram'], fn)
     flags = toolchains.diagnostic_flags(settings.get('toolchain', ''))
     if not flags or settings.get('cmd') or not net.is_rom(proj):
         return ''
@@ -30,7 +30,7 @@ def warnings(net, proj, fn):
     with lock:
         if key in cache:
             return cache[key]
-    diagnostic = {**cfg, 'compiler_ranges': [], 'compiler': {**settings, 'flags': [*settings.get('flags', []), *flags]}}
+    diagnostic = {**cfg, 'compiler_ranges': [], 'function_compilers':{}, 'compiler': {**settings, 'flags': [*settings.get('flags', []), *flags]}}
     try:
         result = net._compile({**dict(proj), 'config': json.dumps(diagnostic)}, header, fn['best_source'], fn)
         lines = [line for line in result.log.splitlines() if 'warning' in line.lower() or 'uninitialized' in line.lower()]

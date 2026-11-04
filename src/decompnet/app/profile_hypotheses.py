@@ -39,7 +39,7 @@ def neighbours(net, proj, fn, own):
                        proj['id'],fn['vram']-16384,fn['vram']+16384,fn['vram'])
     cfg=net.cfg(proj);ranked=[]
     for row in rows:
-        profile=compiler_for(cfg,row['vram'])
+        profile=compiler_for(cfg,row['vram'], row)
         flags=list(profile.get('flags',[]))
         if profile.get('toolchain')==own.get('toolchain') and not profile.get('cmd') and flags!=list(own['flags']) and flags not in ranked:
             ranked.append(flags)

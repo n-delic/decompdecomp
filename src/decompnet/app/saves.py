@@ -292,6 +292,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "title": proj["name"], "platform": cfg.get("platform"),
         "game": {"sha1": cfg.get("rom", {}).get("sha1"), "file": cfg.get("rom", {}).get("file")},
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
+        "function_compilers": cfg.get('function_compilers') or {},
         "instructions": cfg.get("instructions") or "", "knowledge": knowledge,
         "priority": cfg.get("priority") or [],
         "auto_compiler": cfg.get("auto_compiler"),
@@ -707,6 +708,8 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             log("left out saved compiler ranges whose compiler decompdecomp doesn't have: " + ", ".join(
                 f"0x{int(r.get('start') or 0):X}-0x{int(r.get('end') or 0):X} {r.get('toolchain')}" for r in gone))
         cfg["compiler_ranges"] = kept
+        cfg['function_compilers']={key:value for key,value in (manifest.get('function_compilers') or {}).items()
+                                   if toolchains.known(str(value.get('toolchain') or ''))}
         cfg["instructions"] = manifest.get("instructions") or ""
         cfg["priority"] = manifest.get("priority") or []
         cfg["auto_compiler"] = manifest.get("auto_compiler")

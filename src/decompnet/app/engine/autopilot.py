@@ -194,7 +194,7 @@ class AutopilotMixin:
             self._seed_for(fn, proj)  # the readable draft, for the agents that come after
             ctx = self._context(proj["id"], fn["unit"])
             _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
-            own = compiler_for(self.cfg(proj), fn["vram"])
+            own = compiler_for(self.cfg(proj), fn["vram"], fn)
             data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
             target_asm = self._asm_text(fn, proj)
             draft = seeds.generate_from_asm(target_asm, fn["name"], toolchain, context, data_asm, valid=True)

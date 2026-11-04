@@ -225,14 +225,14 @@ def integrate(net, proj, root, stage, log):
         unchanged=False
         if target.exists():
             for h in contexts(net,proj,row):
-                ctx=source_text(toolchains.get(compiler_for(cfg,row['vram'])['toolchain']).prelude+h,row['name'],fn['name'])
+                ctx=source_text(toolchains.get(compiler_for(cfg,row['vram'], row)['toolchain']).prelude+h,row['name'],fn['name'])
                 hn='decompdecomp_sync_'+hashlib.sha256(ctx.encode()).hexdigest()[:20]+'.h'
                 original=source_text(canonical_source(row,row['matched_source']),row['name'],fn['name'])
                 original=re.sub(r'(?m)^([ \t]*#[ \t]*include[ \t]*)"context\.h"',lambda m,hn=hn:m[1]+'"'+hn+'"',original)
                 if target.read_text(encoding='utf-8')==f'#include "{hn}"\n#line 1 "func.c"\n'+original+'\n':
                     unchanged=True;break
         if unchanged:continue
-        profile=compiler_for(cfg,row['vram'])
+        profile=compiler_for(cfg,row['vram'], row)
         from .repository_candidates import select
         prepared,reason=select(net,proj,row)
         if prepared is None:
@@ -255,7 +255,14 @@ def integrate(net, proj, root, stage, log):
         inside(stage,header).parent.mkdir(parents=True,exist_ok=True);inside(stage,header).write_text(context,encoding='utf-8')
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(rendered,encoding='utf-8')
         trial=json.loads(before)
-        trial.setdefault('compiler_ranges',[]).insert(0,{**profile,'start':row['vram'],'end':row['vram']+1})
+        scoped=fn.get('rom') is not None and 'function_of =' in (stage/'build.py').read_text(encoding='utf-8')
+        from ..project import function_compiler_key
+        profile_key=function_compiler_key(fn)
+        old_profile=trial.get('function_compilers',{}).get(profile_key)
+        if scoped:
+            trial.setdefault('function_compilers',{})[profile_key]={**profile,'vram':fn['vram'],'function':fn['name']}
+        else:
+            trial.setdefault('compiler_ranges',[]).insert(0,{**profile,'start':row['vram'],'end':row['vram']+1})
         for symbol in net.store.all('SELECT name,address FROM symbols WHERE project_id=?',proj['id']):
             trial['symbols'].setdefault(symbol['name'],symbol['address'])
         for symbol in net.store.all('SELECT name,vram FROM functions WHERE project_id=?',proj['id']):
@@ -269,7 +276,8 @@ def integrate(net, proj, root, stage, log):
             else:target.write_bytes(old_source)
             skipped.append({'function':row['name'],'reason':text[-1200:]});log(row['name']+': kept the repository version; standalone check failed.');continue
         manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
-        rollbacks[fn['name']]={'path':relative,'function':dict(fn),'range':trial['compiler_ranges'][0],'app_name':row['name']}
+        rollbacks[fn['name']]={'path':relative,'function':dict(fn),'range':None if scoped else trial['compiler_ranges'][0],
+                              'profile_key':profile_key if scoped else None,'old_profile':old_profile,'app_name':row['name']}
         files.update((relative,header));accepted.append(row['name'])
     return manifest,owned,files,accepted,skipped,rollbacks
 

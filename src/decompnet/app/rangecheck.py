@@ -163,7 +163,7 @@ class RangeChecks:
         """One function's verdict on "built by `label`" (see the module's docstring)."""
         if (fn["n_insns"] or 0) < MIN_INSNS:
             return "neutral"
-        own = compiler_for(cfg, fn["vram"])
+        own = compiler_for(cfg, fn["vram"], fn)
         built = (own["toolchain"], tuple(own["flags"]))  # what it's built with now (and matched with, if it is)
         kind = compilermap.kind(label)
         # the other side of the question: today's compiler, or the game's own where the range already applies. Whole
@@ -414,7 +414,7 @@ class RangeChecks:
         for c in self._open(proj):
             if c["toolchain"] == toolchain and c["flags"] == list(flags):
                 cfg = self.net.cfg(proj)
-                own = compiler_for(cfg, fn["vram"])
+                own = compiler_for(cfg, fn["vram"], fn)
                 if not self.net._judge_with(proj, fn, own["toolchain"], list(own["flags"]), source)[0]:
                     c["evidence"][str(fn["vram"])] = "confirmed"
                     c["status"] = "checking"

@@ -19,7 +19,7 @@ def destination(net, proj, fn):
         return key(net,proj,fn)
     context=net._context(proj['id'],fn['unit']) or {'header':''}
     symbols=[tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])]
-    return hashlib.sha256(repr((compiler_for(cfg,fn['vram']) if cfg.get('compiler') else {},cfg.get('gp'),proj['arch'],
+    return hashlib.sha256(repr((compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else {},cfg.get('gp'),proj['arch'],
                                fn['target'],fn['relocs'],fn['size'],fn['vram'],context['header'],symbols,build_state(proj))).encode()).hexdigest()
 
 
@@ -87,7 +87,7 @@ def rejected(net, fn, scope, source, header, lead, profile):
 def profile(net, proj, fn):
     if getattr(net,'fork_slug',lambda slug:None)(proj['slug']):
         return {'build_owned':True,'scope':destination(net,proj,fn)}
-    return compiler_for(json.loads(proj['config']),fn['vram'])
+    return compiler_for(json.loads(proj['config']),fn['vram'], fn)
 
 
 def record(net, proj, fn, source, header, score, rows, lead=None, elapsed_ms=0, error='', scope=None):
@@ -221,7 +221,7 @@ def brief(net, proj, fn):
 def rank_pairs(net, proj, fn, pairs, families):
     """Use local measured family yield after 32 trials; interleave the original order for exploration."""
     from itertools import zip_longest
-    own=compiler_for(json.loads(proj['config']),fn['vram'])
+    own=compiler_for(json.loads(proj['config']),fn['vram'], fn)
     evidence=listing(net,proj)
     groups=[g for g in evidence['families'] if g['profile']==own and g['tested']>=32]
     weights={g['family']:(g['improved']+3*g['matched']+1)/(g['tested']+32) for g in groups}

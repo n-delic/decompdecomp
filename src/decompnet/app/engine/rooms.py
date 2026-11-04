@@ -105,11 +105,12 @@ class RoomMixin:
             db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                        (project_id, aid, kind, detail, created_at))
 
-    def apply_remote_match(self, slug: str, vram: int, source: str, agent_name: str) -> None:
+    def apply_remote_match(self, slug: str, vram: int, source: str, agent_name: str, *, rom_offset=None) -> None:
         proj = self._project(slug)
         aid = self._remote_agent(agent_name)
         with self.store.tx() as db:
-            row = db.execute("SELECT id, status FROM functions WHERE project_id=? AND vram=?", (proj["id"], vram)).fetchone()
+            rows = db.execute("SELECT id,status,rom_offset FROM functions WHERE project_id=? AND vram=?", (proj["id"], vram)).fetchall()
+            row = next((r for r in rows if r['rom_offset']==rom_offset),None) if rom_offset is not None else (rows[0] if len(rows)==1 else None)
             if row is None or row["status"] == "matched":
                 return
             db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, matched_at=?, "
@@ -147,11 +148,14 @@ class RoomMixin:
             db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
                        (proj["id"], fid, aid, text, created_at, score_before, score_after))
 
-    def apply_remote_best(self, slug: str, vram: int, score: int, source: str) -> None:
+    def apply_remote_best(self, slug: str, vram: int, score: int, source: str, *, rom_offset=None) -> None:
         proj = self._project(slug)
         with self.store.tx() as db:
-            db.execute("UPDATE functions SET best_score=?, best_source=? WHERE project_id=? AND vram=? AND status='open' "
-                       "AND (best_score IS NULL OR best_score > ?)", (score, source, proj["id"], vram, score))
+            rows=db.execute('SELECT id,rom_offset FROM functions WHERE project_id=? AND vram=?',(proj['id'],vram)).fetchall()
+            row=next((r for r in rows if r['rom_offset']==rom_offset),None) if rom_offset is not None else (rows[0] if len(rows)==1 else None)
+            if row is not None:
+                db.execute("UPDATE functions SET best_score=?,best_source=? WHERE id=? AND status='open' "
+                           "AND (best_score IS NULL OR best_score > ?)",(score,source,row['id'],score))
 
     def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
         proj = self._project(slug)

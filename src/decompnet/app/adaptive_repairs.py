@@ -30,7 +30,7 @@ def profile(net, proj, fn):
         settings = ('project', candidate_scope.key(net, proj, fn))
     else:
         settings = ('rom', proj['arch'], bool(proj['big_endian']), cfg.get('platform'),
-                    compiler_for(cfg, fn['vram']))
+                    compiler_for(cfg, fn['vram'], fn))
     return hashlib.sha256(json.dumps(settings, sort_keys=True, default=str).encode()).hexdigest()
 
 

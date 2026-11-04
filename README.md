@@ -1541,6 +1541,12 @@ Team-room member cards show both matched and improved function counts. Improveme
 functions across each person's agents, include matches, and retain credit when another person later
 improves the same function. The host supplies these counts to everyone in the room.
 
+Room matches require the host's exact linked-byte and data check. Compiler profiles and private declarations
+travel with submitted C; a small source containing neighbouring definitions is recompiled as the selected
+function before acceptance. Overlay functions keep separate compiler profiles even when they share a RAM
+address. Pending-match retries show the current failure once and recheck cached failures after a host update.
+Use updated host and guest clients to preserve overlay identities when syncing profiles, headers and matches.
+
 Applying a compiler suggestion opens a progress dialog immediately. It reports affected-match
 checks, saved-score updates and progress-file saving while the work runs in the background. Errors
 remain in the dialog, and repeated clicks reuse the running job. Closing the dialog does not cancel

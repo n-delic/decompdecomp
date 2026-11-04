@@ -67,7 +67,7 @@ def _settings(proj, fn):
         # The build system owns per-file flags/includes; a global compiler name cannot stand in for them.
         return {'mode': 'project', 'platform': cfg.get('platform'), 'declared_compiler': cfg.get('compiler'),
                 'version': cfg.get('version'), 'unit': fn['unit'], 'per_file_flags_recorded': False}
-    return {'mode': 'rom', 'platform': cfg.get('platform'), 'compiler': compiler_for(cfg, fn['vram']) if cfg.get('compiler') else None,
+    return {'mode': 'rom', 'platform': cfg.get('platform'), 'compiler': compiler_for(cfg, fn['vram'], fn) if cfg.get('compiler') else None,
             'settings_source': 'project configuration at recording; temporary compile overrides may differ',
             'gp': cfg.get('gp'), 'big_endian': bool(proj['big_endian']),
             'rom': {key: cfg.get('rom', {}).get(key) for key in ('sha1', 'game_code', 'region', 'byte_order')}}

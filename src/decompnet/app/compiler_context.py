@@ -64,3 +64,28 @@ def private_unit(net, proj, fn, obj):
 def acceptable(net, proj, fn, obj):
     from ..rom.export import _single_definition
     return _single_definition(obj,fn['name']) or bool(verified(net,proj,fn,obj))
+
+
+def single_source(source, header, name, obj):
+    """Turn other emitted C definitions into declarations, retaining line positions. A room candidate may carry
+    neighbouring bodies, but publishing one function must compile and rejudge that function independently."""
+    from ..forks import csource
+
+    found = _function_symbols(ELFFile(BytesIO(obj)))
+    if name not in found or not 1 < len(found) <= MAX_FUNCTIONS or csource.find(source, name) is None:
+        return None
+    texts = [source, header]
+    for other in sorted(set(found) - {name}):
+        for index, text in enumerate(texts):
+            span = csource.find(text, other)
+            if span is None:
+                continue
+            start, end = span
+            brace = csource._code_only(text).find('{', start, end)
+            if brace < 0:
+                return None
+            texts[index] = text[:brace] + ';' + ''.join('\n' if c == '\n' else ' ' for c in text[brace+1:end]) + text[end:]
+            break
+        else:
+            return None  # mangled names, macros or included definitions need their original compiler context
+    return tuple(texts)

@@ -28,7 +28,7 @@ def status(net, proj, fn):
     if not settings:
         reasons.append('The original build settings were not recorded.')
     elif net.is_rom(proj):
-        current=compiler_for(net.cfg(proj),fn['vram'])
+        current=compiler_for(net.cfg(proj),fn['vram'], fn)
         old=settings.get('compiler') or {}
         if any(old.get(k)!=current.get(k) for k in ('toolchain','flags')):
             reasons.append('Compiler settings changed.')

@@ -377,12 +377,12 @@ def run(twins, slug: str, job) -> int:
         if net.store.one('SELECT 1 FROM claims WHERE function_id=?', b['id']):
             continue
         rows = donors.candidates(pb.size, max(MIN_BYTES, int(pb.size * .9)), min(MAX_BYTES, int(pb.size / .9)),
-                                 pb.key, twins._compiler_key(compiler_for(cfg, b['vram'])), MAX_POOL)
+                                 pb.key, twins._compiler_key(compiler_for(cfg, b['vram'], b)), MAX_POOL)
         layout = [(o, t) for o, t, _ in relocations(b)]
         rows = [a for a in rows if a['project_id'] in others and a['matched_source']
                 and ([(o, t) for o, t, _ in relocations(a)] == layout or maps[a['project_id']])
-                and json.loads(a['compiler']).get('toolchain') == compiler_for(cfg, b['vram']).get('toolchain')]
-        own_key = twins._compiler_key(compiler_for(cfg, b['vram']))
+                and json.loads(a['compiler']).get('toolchain') == compiler_for(cfg, b['vram'], b).get('toolchain')]
+        own_key = twins._compiler_key(compiler_for(cfg, b['vram'], b))
         rows = [a for a in rows if ([(o, t) for o, t, _ in relocations(a)] != layout or a['compiler'] != own_key) == bool(phase)]
         if not rows:
             continue
@@ -416,7 +416,7 @@ def run(twins, slug: str, job) -> int:
             header_b = net._context(proj['id'], b['unit'])['header']
             prelude = _declared(header_a, header_b, names, a['name'])
             source = apply(a['matched_source'], names)
-            own = compiler_for(cfg, b['vram'])
+            own = compiler_for(cfg, b['vram'], b)
             donor = json.loads(a['compiler'])
             variants = [(v, own, 'transfer') for v in
                         [source, *literal_variants(source, a, b, bool(proj['big_endian'])),

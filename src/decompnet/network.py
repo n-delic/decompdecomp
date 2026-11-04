@@ -636,8 +636,8 @@ class Network:
     def _compile(self, proj, header: str, source: str, fn=None):
         """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
         cfg = json.loads(proj["config"])
-        if fn is not None and cfg.get("compiler_ranges"):
-            cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"])}
+        if fn is not None and (cfg.get("compiler_ranges") or cfg.get('function_compilers')):
+            cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"], fn)}
         invocation = compiler_config(Path(proj["root"]), cfg)
         identity = dict(fn) if fn is not None else {}
         c = cfg['compiler']
@@ -1324,7 +1324,7 @@ class Network:
                  f"size {fn['size']} bytes, {fn['n_insns']} instructions, arch {proj['arch']}, "
                  f"context.h v{ctx['version']} ({len(ctx['header'].splitlines())} lines)"]
         cfg = json.loads(proj["config"])
-        own = compiler_for(cfg, fn["vram"])
+        own = compiler_for(cfg, fn["vram"], fn)
         if own is not cfg.get("compiler"):  # a range built by another compiler than the rest of the game
             lines.append(f"compiled with {own['toolchain']} {' '.join(own['flags'])}: this address range's compiler, "
                          f"not the project's")
@@ -1663,7 +1663,7 @@ class Network:
             # Keep that attempt as evidence, but never turn its old-profile verdict into a new green status.
             config = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (fn["project_id"],)).fetchone()["config"])
             used = (effective_settings or {}).get("compiler")
-            own = compiler_for(config, current["vram"]) if used else None
+            own = compiler_for(config, current["vram"], current) if used else None
             stale = bool(score is not None and used and any(used.get(k) != own.get(k) for k in ("toolchain", "flags")))
             if restoring_exact and not (matched and score==0 and prepared_header is not None and prepared_inputs is not None):
                 raise NetworkError('Saved-match restoration requires a fresh exact source/header verdict.')

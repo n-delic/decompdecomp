@@ -16,7 +16,7 @@ from dataclasses import dataclass
 # an automatic name says its address. splat writes one below 0x10000000 without leading zeros (an N64 segment's data:
 # D_B0069D8 is 0x0B0069D8): such a name didn't resolve, and 255 functions of an N64 game that load one couldn't match
 # (a number in their C is lui+ori, the game's symbol lui+addiu)
-AUTO_NAME = re.compile(r"^(?:func|D|B|jtbl|L|RO|STR|FLT|DBL|bss|data|sub|gUnknown|unk|off|dword|word|byte|loc)_([0-9A-Fa-f]{1,8})(?:_overlay_[0-9]{3})?$")
+AUTO_NAME = re.compile(r"^(?:func|D|B|jtbl|L|RO|STR|FLT|DBL|bss|data|sub|gUnknown|unk|off|dword|word|byte|loc)_([0-9A-Fa-f]{1,8})(?:_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3}))?$")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
 # GAS/compiler-local labels are metadata, never C function names or source-file paths.
 ASM_LOCAL = re.compile(r"^\.L[A-Za-z0-9_.$]+$")

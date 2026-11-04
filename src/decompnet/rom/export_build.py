@@ -203,7 +203,7 @@ def trim(path: Path) -> None:
 
 
 def build_objects(todo: list[tuple[str, str, str]]) -> None:
-    vram_of = {c_source(fn): fn["vram"] for fn in B["functions"] if c_source(fn)}  # a range's compiler builds its C
+    function_of = {c_source(fn): fn for fn in B["functions"] if c_source(fn)}
     configs = {}
     as_ = binutils("as")
     for kind, src, obj in todo:
@@ -214,7 +214,8 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         if kind == "asm":
             run([as_, *B["as_flags"], "-o", obj, src])
         else:
-            compiler = compiler_for(B, vram_of.get(src))
+            fn = function_of.get(src)
+            compiler = compiler_for(B, fn['vram'] if fn else None, fn)
             key = json.dumps(compiler, sort_keys=True)
             cfg = configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
             argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "include") for a in cfg.cmd]
@@ -441,7 +442,7 @@ def check(name: str) -> bool:
                     return image[at:at + n]
         return None
 
-    cfg = compiler_config(ROOT, {"compiler": compiler_for(B, fn["vram"])})
+    cfg = compiler_config(ROOT, {"compiler": compiler_for(B, fn["vram"], fn)})
     text = (ROOT / src).read_text(encoding="utf-8")
     m = re.match(r'\s*#include "([^"]+)"\s*\n', text)
     header = (ROOT / "include" / m.group(1)).read_text(encoding="utf-8") if m else ""

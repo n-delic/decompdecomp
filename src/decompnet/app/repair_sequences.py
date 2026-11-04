@@ -48,7 +48,7 @@ def next_families(net, profile, focus, prefix):
 
 def profile(net, proj, fn):
     cfg = net.cfg(proj)
-    compiler = compiler_for(cfg,fn['vram']) if cfg.get('compiler') and not net.fork_slug(proj['slug']) else {}
+    compiler = compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') and not net.fork_slug(proj['slug']) else {}
     return hashlib.sha256((adaptive_repairs.profile(net,proj,fn)+repr(compiler_identity(compiler))).encode()).hexdigest()
 
 

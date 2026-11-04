@@ -85,7 +85,7 @@ def variant(net, proj, fn, source, target, job):
     if exhausted(job):
         return None
     context = net._context(proj['id'], fn['unit'])['header']
-    settings = compiler_for(net.cfg(proj), fn['vram'])
+    settings = compiler_for(net.cfg(proj), fn['vram'], fn)
     symbols = [(r['name'], r['address']) for r in net.store.all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     key = trial_key(source, context, settings, fn, ['sdk-data-proposal-v1', symbols, target.refs, target.addrs])

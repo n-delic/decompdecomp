@@ -38,7 +38,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
         rows = net.store.all('SELECT * FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram', proj['id'])
         addresses = Counter(fn['vram'] for fn in rows)
         starts = sorted(addresses)
-        counts = Counter(profile(compiler_for(config, fn['vram'])) for fn in rows)
+        counts = Counter(profile(compiler_for(config, fn['vram'], fn)) for fn in rows)
         default = profile(config['compiler'])
         if source_profile is not None:
             if not isinstance(source_profile, dict) or not isinstance(source_profile.get('toolchain'), str) or not isinstance(source_profile.get('flags'), list) or not all(isinstance(flag, str) for flag in source_profile['flags']):
@@ -53,8 +53,8 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
             selected = None
             common = [p for p, _ in counts.most_common(3) if toolchains.installed(p[0]) is not None]
         candidates = [fn for fn in rows if fn['status'] == 'matched' and fn['matched_source']
-                      and profile(compiler_for(config, fn['vram'])) != profile(config['compiler'])
-                      and (profile(compiler_for(config, fn['vram'])) == selected if selected else counts[profile(compiler_for(config, fn['vram']))] <= rare_limit)]
+                      and profile(compiler_for(config, fn['vram'], fn)) != profile(config['compiler'])
+                      and (profile(compiler_for(config, fn['vram'], fn)) == selected if selected else counts[profile(compiler_for(config, fn['vram'], fn))] <= rare_limit)]
         changed, tested, skipped = [], 0, 0
         if selected:
             log(f'Checking all {len(candidates)} matched functions from the selected profile against the project default only.')
@@ -66,7 +66,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
                 skipped += 1
                 log(f'{index}/{len(candidates)}: {fn["name"]} is busy or shares an overlay address; skipped.')
                 continue
-            own = profile(compiler_for(config, fn['vram']))
+            own = profile(compiler_for(config, fn['vram'], fn))
             for target in common:
                 if target == own or (selected is None and counts[target] <= counts[own]):
                     continue
@@ -95,7 +95,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
             net._apply_compiler_config(proj, proposed, log=log)
             with net.store.tx() as db:
                 net._event(db, proj['id'], None, 'compiler', f'Compiler cleanup moved {len(changed)} functions to more common settings; all affected matches verified.')
-        after = {profile(compiler_for(proposed, fn['vram'])) for fn in rows}
+        after = {profile(compiler_for(proposed, fn['vram'], fn)) for fn in rows}
         log(f'Cleanup complete: {len(changed)} functions moved; {len(counts)} → {len(after)} used profiles. Other functions keep their settings.')
         return {'changed': changed, 'tested': tested, 'skipped': skipped, 'profiles_before': len(counts), 'profiles_after': len(after), 'ranges_before': len(config.get('compiler_ranges', [])),
                 'ranges_after': len(proposed.get('compiler_ranges', [])), 'unchanged': len(candidates) - len(changed) - skipped}

@@ -579,7 +579,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                     if not fork:
                         from ..project import compiler_for
                         from .source_lead_analysis import destination, rejected
-                        if rejected(net,fn,destination(net,fresh,fn),source,header,lead,compiler_for(json.loads(fresh['config']),fn['vram'])):
+                        if rejected(net,fn,destination(net,fresh,fn),source,header,lead,compiler_for(json.loads(fresh['config']),fn['vram'], fn)):
                             log_line(fn['name']+': retained rejected source lead; unchanged trial skipped.')
                             continue
                     cached=net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], cache_key)
@@ -701,7 +701,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     current_measurement=getattr(st,'source_measurement',{})
     if current_measurement.get('pair')==(source,header) and identity(compare(current_measurement.get('rows',[]),proj['arch'])):return
     cfg=json.loads(proj['config'])
-    own=compiler_for(cfg,fn['vram'])
+    own=compiler_for(cfg,fn['vram'], fn)
     if own.get('cmd') or not own.get('toolchain') or toolchains.installed(own['toolchain']) is None:return
     expected=inputs(net,proj,fn)
     choices=[]
@@ -716,7 +716,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
         if st.stop.is_set() or report['tested']>=budget or time.monotonic()>=deadline:return
         key=signature(flags)
         if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
-        private={**dict(proj),'config':json.dumps({**cfg,'compiler':{**own,'flags':flags},'compiler_ranges':[]})}
+        private={**dict(proj),'config':json.dumps({**cfg,'compiler':{**own,'flags':flags},'compiler_ranges':[],'function_compilers':{}})}
         from .source_lead_analysis import destination, record
         scope=destination(net,proj,fn);started=time.monotonic()
         report['tested']+=1;st.add(variants=1)
@@ -771,7 +771,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
 def trial_feedback(proj, fn, source, header, score=None, error='', measurement=None):
     """Precise local evidence so unchanged source/context/profile misses are not rediscovered."""
     from ..project import compiler_for
-    own=compiler_for(json.loads(proj['config']),fn['vram'])
+    own=compiler_for(json.loads(proj['config']),fn['vram'], fn)
     return {'source_sha256':hashlib.sha256(source.encode()).hexdigest(),
             'header_sha256':hashlib.sha256(header.encode()).hexdigest(),
             'toolchain':own.get('toolchain'),'flags':own.get('flags',[]),'score':score,

@@ -303,20 +303,20 @@ class Room:
         names = {ev["detail"] for ev in events if ev["kind"] in ("match",)}
         first = e == 0
         if first or fresh or names:
-            rows = net.store.all("SELECT f.name, f.vram, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
+            rows = net.store.all("SELECT f.name, f.vram, f.rom_offset, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
                                  "ON a.id=f.matched_agent_id WHERE f.project_id=? AND f.status='matched'", pid)
             out["matched"] = [dict(r) for r in rows if first or fresh or r["name"] in names]
         if first or fresh or names or kinds & {'compiler','context'}:
             cfg=net.cfg(net.project_row(self.slug))
-            out['compiler_settings']={k:cfg.get(k,[] if k=='compiler_ranges' else {}) for k in ('compiler','compiler_ranges')}
+            out['compiler_settings']={k:cfg.get(k,[] if k=='compiler_ranges' else {}) for k in ('compiler','compiler_ranges','function_compilers')}
             units=net._unit_contexts(pid)
-            out['function_contexts']=[{'vram':r['vram'],'header':net._context(pid,r['unit'])['header']}
-                                      for r in net.store.all('SELECT vram,unit FROM functions WHERE project_id=?',pid)
+            out['function_contexts']=[{'vram':r['vram'],'rom_offset':r['rom_offset'],'name':r['name'],'header':net._context(pid,r['unit'])['header']}
+                                      for r in net.store.all('SELECT vram,rom_offset,name,unit FROM functions WHERE project_id=?',pid)
                                       if r['unit'] and r['unit'] in units]
-        best = net.store.all("SELECT f.name, f.vram, f.best_score, f.best_source, MAX(t.id) AS last FROM attempts t "
+        best = net.store.all("SELECT f.name, f.vram, f.rom_offset, f.best_score, f.best_source, MAX(t.id) AS last FROM attempts t "
                              "JOIN functions f ON f.id=t.function_id WHERE f.project_id=? AND t.id>? AND f.status='open' "
                              "AND f.best_source IS NOT NULL GROUP BY f.id", pid, a)
-        out["best"] = [{"name": r["name"], "vram": r["vram"], "score": r["best_score"], "source": r["best_source"]} for r in best]
+        out["best"] = [{"name": r["name"], "vram": r["vram"], "rom_offset":r['rom_offset'], "score": r["best_score"], "source": r["best_source"]} for r in best]
         last = net.store.one("SELECT MAX(t.id) AS m FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?", pid)
         out["a"] = max(a, last["m"] or 0)
         if first or kinds & {"rename", "split"}:
@@ -325,7 +325,7 @@ class Room:
         if first or fresh or kinds & {"rename", "split"}:
             # fresh: a guest sharing saved work asks for the layout without the room's whole history
             out["functions"] = [dict(r) for r in net.store.all(
-                "SELECT name, vram, size FROM functions WHERE project_id=? ORDER BY vram", pid)]
+                "SELECT name, vram, rom_offset, size FROM functions WHERE project_id=? ORDER BY vram", pid)]
         ctx = net._context(pid)
         if ctx["version"] != ctx_version:
             out["context"] = {"version": ctx["version"], "header": ctx["header"]}
@@ -854,8 +854,8 @@ class Link:
             net.apply_remote_context(slug, st["context"]["header"], st["context"]["version"])
             self.cursor["v"] = st["context"]["version"]
         _in_batches(net, st.get("matched") or [], lambda m: net.apply_remote_match(
-            slug, m["vram"], m["matched_source"], m["agent"] or "host"))
-        _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"]))
+            slug, m["vram"], m["matched_source"], m["agent"] or "host",rom_offset=m.get('rom_offset')))
+        _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"],rom_offset=b.get('rom_offset')))
         _in_batches(net, st.get("notes") or [], lambda n: net.apply_remote_note(
             slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after")))
         for ev in st.get("events") or []:
@@ -1017,8 +1017,7 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
     log(f"Comparing {len(candidates)} saved functions with the host's existing results.")
     state = link._req("GET", "/collab/state", link.cursor | {"fresh": 1})
     matched_names = {row["name"] for row in state.get("matched", [])}
-    matched_vrams = {row["vram"] for row in state.get("matched", [])}
-    host_functions = {row["vram"]: row for row in state.get("functions", [])}
+    host_functions = {(row["vram"],row['name']): row for row in state.get("functions", [])}
     host_best = {row["vram"]: row["score"] for row in state.get("best", [])}
     local_names = set()
     if fork:
@@ -1042,13 +1041,13 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
                 done(candidate)
                 continue
         else:
-            host_fn = host_functions.get(candidate["vram"])
+            host_fn = host_functions.get((candidate["vram"],candidate['name']))
             if host_fn is None or host_fn["size"] != candidate["size"] or host_fn["name"] != candidate["name"]:
                 skipped += 1
                 done(candidate)
                 continue
             function = host_fn["name"]
-            if candidate["vram"] in matched_vrams:
+            if candidate['name'] in matched_names:
                 done(candidate)
                 continue
         if candidate["status"] == "matched":

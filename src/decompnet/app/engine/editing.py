@@ -349,6 +349,12 @@ class EditMixin:
                                           (proj["id"], addr)).fetchall():
                     record(db, renamed["id"], old, new)
 
+            cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=?',(proj['id'],)).fetchone()['config'])
+            if cfg.get('function_compilers'):
+                for profile in cfg['function_compilers'].values():
+                    profile['function']=new_of.get(profile.get('function'),profile.get('function'))
+                db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+
             for u, header in changed.items():
                 version = self._next_version(db, proj["id"])
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "

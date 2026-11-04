@@ -48,6 +48,10 @@ def verify(stage, root, manifest, files, accepted, skipped, rollbacks, command, 
         for index,value in enumerate(manifest.get('compiler_ranges',[])):
             if value==failed['range']:
                 manifest['compiler_ranges'].pop(index);break
+        if failed.get('profile_key') is not None:
+            profiles=manifest.setdefault('function_compilers',{})
+            if failed.get('old_profile') is None:profiles.pop(failed['profile_key'],None)
+            else:profiles[failed['profile_key']]=failed['old_profile']
         (stage/'build.json').write_text(json.dumps(manifest,indent=1)+'\n',encoding='utf-8')
         files.discard(relative);accepted.remove(failed['app_name'])
         skipped.append({'function':failed['app_name'],'reason':'Individual check passed, but the full rebuilt image differed. Repository source retained. '+text[-800:]})

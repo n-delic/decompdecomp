@@ -37,7 +37,7 @@ def test_header_and_function_profile_travel_and_host_rechecks(pair,monkeypatch):
     assert result['matched'],result.get('reason')
     fn=host._function('func_80000808',slug);cfg=host.cfg(host.project_row(slug))
     assert cfg['compiler']==changed['compiler']  # Default and neighbours do not adopt the client's profile.
-    assert compiler_for(cfg,fn['vram'])['flags']==evidence['compiler']['flags']
+    assert compiler_for(cfg,fn['vram'],fn)['flags']==evidence['compiler']['flags']
     assert host._context(fn['project_id'],fn['unit'])['header']==evidence['header']
     assert not room_matches.pending(host,slug)
     assert host.store.one('SELECT header FROM verified_matches WHERE function_id=?',fn['id'])['header']==evidence['header']
@@ -49,7 +49,7 @@ def test_header_and_function_profile_travel_and_host_rechecks(pair,monkeypatch):
     room_matches.sync_inputs(guest,gslug,state)
     gfn=guest._function('func_80000808',gslug)
     assert guest._context(gfn['project_id'],gfn['unit'])['header']==evidence['header']
-    assert compiler_for(guest.cfg(guest.project_row(gslug)),gfn['vram'])['flags']==evidence['compiler']['flags']
+    assert compiler_for(guest.cfg(guest.project_row(gslug)),gfn['vram'],gfn)['flags']==evidence['compiler']['flags']
 
 
 def test_mismatch_retained_and_missing_compiler_can_be_retried(pair,monkeypatch):
@@ -90,6 +90,7 @@ def test_legacy_candidates_walk_installed_profiles_with_a_budget(pair,monkeypatc
     host,slug,_,_=pair
     agent,_=host.local_agent('room-client')
     monkeypatch.setattr(host,'attempt',lambda *args:{'matched':False,'score':100})
+    monkeypatch.setattr(room_matches.build_info,'commit',lambda:'build-one')
     profiles=[('gcc-2.7.2-kmc',(f'-O{i}',)) for i in range(10)]
     monkeypatch.setattr(host,'_comparison_candidates',lambda *args,**kwargs:profiles)
     seen=[]
@@ -103,6 +104,37 @@ def test_legacy_candidates_walk_installed_profiles_with_a_budget(pair,monkeypatc
     assert len(seen)==6
     room_matches.retry(host,slug,result['submission'])
     assert len(seen)==10
+    before=room_matches.retry(host,slug,result['submission'])['reason']
+    after=room_matches.retry(host,slug,result['submission'])['reason']
+    assert len(seen)==10 and before==after and after.count('Tried ')==1
+    monkeypatch.setattr(room_matches.build_info,'commit',lambda:'build-two')
+    room_matches.retry(host,slug,result['submission'])
+    assert len(seen)==16  # a verifier update must not inherit the old failed-profile cache
+
+
+def test_old_repeated_pending_explanations_are_reduced_to_the_actual_failure():
+    reason=('Host has not verified this source/header/profile. '*4+'Unknown symbol. '
+            +'Tried 1/1 profiles in this context. Evidence retained. '*3)
+    assert room_matches.failure_reason({'reason':reason})=='Unknown symbol.'
+
+
+@pytest.mark.parametrize('value',[60,61])
+def test_room_bundle_isolates_entry_but_still_requires_exact_original_bytes(pair,value):
+    from decompnet.forks import csource
+    host,slug,guest,gslug=pair
+    source=DAMAGE.replace('= 60;', '= ROOM_TIMER;')+'\nint unrelated(void) { return 7; }\n'
+    evidence=room_matches.packet(guest,gslug,'func_80000808',source)
+    evidence['header']+=f'\n#define ROOM_TIMER {value}\n'
+    evidence['header_sha256']=room_matches.match_bundle.digest(evidence['header'])
+    remote,_=host.local_agent('room-client')
+    result=room_matches.verify(host,slug,remote,'func_80000808',source,evidence)
+    assert result['matched']==(value==60),result['reason']
+    fn=host._function('func_80000808',slug)
+    if value==60:
+        assert csource.find(fn['matched_source'],'unrelated') is None
+        assert csource.get(fn['matched_source'],'func_80000808')==csource.get(source,'func_80000808')
+    else:
+        assert fn['status']=='open' and room_matches.pending(host,slug)[0]['source']==source
 
 
 def test_saved_match_profile_is_preserved_across_join_and_host_sync(pair,built):  # noqa: F811
@@ -123,7 +155,7 @@ def test_saved_match_profile_is_preserved_across_join_and_host_sync(pair,built):
     assert host._function('func_80000808',slug)['status']=='matched'
     guest.links[gslug].sync()
     fn=guest._function('func_80000808',gslug)
-    assert compiler_for(guest.cfg(guest.project_row(gslug)),fn['vram'])['flags']==successful['compiler']['flags']
+    assert compiler_for(guest.cfg(guest.project_row(gslug)),fn['vram'],fn)['flags']==successful['compiler']['flags']
     assert guest._context(fn['project_id'],fn['unit'])['header']==successful['header']
 
 

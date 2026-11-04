@@ -130,7 +130,7 @@ def run(twins, slug, job):
             fingerprint = prints.get(fn['id'])
             if fingerprint is None or fingerprint.asm:
                 continue
-            settings = compiler_for(cfg, fn['vram'])
+            settings = compiler_for(cfg, fn['vram'], fn)
             candidates = wrapper_families.candidates(net,proj,fn,wrappers)
             candidates += [('template', 'MIPS leaf template', code) for code in mips_templates.candidates(fn, bool(proj['big_endian']), function_names)]
             if fn['best_source'] and fn['best_score'] is not None and 0 < fn['best_score'] <= (100 - REPAIR_PERCENT) * max(1, fn['n_insns'] or 0):

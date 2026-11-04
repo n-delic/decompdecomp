@@ -452,7 +452,7 @@ class ImportMixin:
                and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)]
         rows = [r for r in self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
                                           "ORDER BY vram", proj["id"])
-                if compiler_for(cfg, r["vram"])["toolchain"] == current]
+                if compiler_for(cfg, r["vram"], r)["toolchain"] == current]
         rows = rows[::max(1, len(rows) // sample)][:sample]  # spread over the whole game, not one library
         if len(tcs) < 2 or not rows or not seeds.available():
             return {}

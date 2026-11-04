@@ -69,7 +69,7 @@ class CompilerMixin:
         done = self.store.one("SELECT COUNT(*) AS n, COALESCE(SUM(status='matched'), 0) AS m, COALESCE(MAX(matched_at), 0) "
                               "AS t FROM functions WHERE project_id=?", proj["id"])
         confirmed = (cfg.get("compiler_survey") or {}).get("confirmed", {})
-        return tuple(done), json.dumps([cfg.get("compiler"), cfg.get("compiler_ranges")], sort_keys=True), len(confirmed)
+        return tuple(done), json.dumps([cfg.get("compiler"), cfg.get("compiler_ranges"),cfg.get('function_compilers')], sort_keys=True), len(confirmed)
 
     def _rebuild_cmap(self, slug: str, building: threading.Lock) -> None:
         try:
@@ -89,10 +89,10 @@ class CompilerMixin:
 
         def label(c: dict) -> compilermap.Label:
             return c["toolchain"], tuple(c["flags"])
-        rows = self.store.all("SELECT vram, size, target, status FROM functions WHERE project_id=? AND target IS NOT NULL",
+        rows = self.store.all("SELECT name,vram,rom_offset,size,target,status FROM functions WHERE project_id=? AND target IS NOT NULL",
                               proj["id"])
         built = compilermap.build(
-            [(r["vram"], r["size"], r["target"], label(compiler_for(cfg, r["vram"])), r["status"] == "matched",
+            [(r["vram"], r["size"], r["target"], label(compiler_for(cfg, r["vram"], r)), r["status"] == "matched",
               (lambda c: (c[0], tuple(c[1])) if c else None)(confirmed.get(str(r["vram"])))) for r in rows],
             bool(cfg.get("big_endian", True)))
         self._cmaps[proj["id"]] = (key, built)
@@ -172,7 +172,8 @@ class CompilerMixin:
     def _comparison_candidates(self, proj, all_installed=True):
         cfg = self.cfg(proj)
         candidates = sorted({(cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))}
-                            | {(r["toolchain"], tuple(r["flags"])) for r in cfg.get("compiler_ranges", [])})
+                            | {(r["toolchain"], tuple(r["flags"])) for r in cfg.get("compiler_ranges", [])}
+                            | {(r['toolchain'],tuple(r['flags'])) for r in cfg.get('function_compilers',{}).values()})
         if all_installed:
             # Only this console's installed, usable compilers: never download tools or call an AI provider.
             candidates = sorted({(c.id, tuple(consoles.default_flags(cfg, c.id)))
@@ -226,7 +227,7 @@ class CompilerMixin:
         fields = [encode(source), options, shared['units'][unit], shared['symbols'], tools,
                   encode((fn['target'] or b'').hex()), encode(fn['relocs']), encode(fn['vram']),
                   encode(cfg.get('gp')), encode(cfg.get('big_endian')),
-                  encode(compiler_for(cfg, fn['vram'])), encode(cfg['compiler'])]
+                  encode(compiler_for(cfg, fn['vram'], fn)), encode(cfg['compiler'])]
         digest = hashlib.sha256()
         digest.update(b'[')
         for index, field in enumerate(fields):
@@ -244,7 +245,7 @@ class CompilerMixin:
         cfg = self.cfg(proj)
         profiles = {}
         for fn in self.store.all("SELECT vram,status FROM functions WHERE project_id=?", proj["id"]):
-            profile = compiler_for(cfg, fn["vram"])
+            profile = compiler_for(cfg, fn["vram"], fn)
             key = (profile["toolchain"], tuple(profile["flags"]))
             if key not in profiles:
                 profiles[key] = {"toolchain": key[0], "flags": list(key[1]), "functions": 0, "matched": 0}
@@ -259,7 +260,7 @@ class CompilerMixin:
         comparison = json.loads(row["result"])
         candidates = self._used_comparison_candidates(proj) if comparison.get("used_profiles_only") else self._comparison_candidates(proj)
         if comparison.get("flags_only"):
-            own = compiler_for(self.cfg(proj), fn["vram"])
+            own = compiler_for(self.cfg(proj), fn["vram"], fn)
             candidates = [p for p in candidates if p[0] == own["toolchain"]]
         digest = self._comparison_digest(proj, fn, self._comparison_source(fn), candidates)
         default = self.cfg(proj)["compiler"]
@@ -349,7 +350,7 @@ class CompilerMixin:
                 source = self._comparison_source(fn)
                 if not source:
                     continue
-                own = compiler_for(cfg, fn["vram"])
+                own = compiler_for(cfg, fn["vram"], fn)
                 options = ([p for p in available_candidates if p[0] == own["toolchain"]]
                            if flags_only else available_candidates)
                 if not options:
@@ -373,7 +374,7 @@ class CompilerMixin:
             source = self._comparison_source(fn)
             if not source:
                 continue
-            own = compiler_for(cfg, fn["vram"])
+            own = compiler_for(cfg, fn["vram"], fn)
             candidates = ([p for p in available_candidates if p[0] == own["toolchain"]]
                           if flags_only else available_candidates)
             if not candidates:
@@ -384,7 +385,7 @@ class CompilerMixin:
             if tried.get(str(fn["vram"])) == digest:
                 continue
             n += 1
-            own = compiler_for(cfg, fn["vram"])
+            own = compiler_for(cfg, fn["vram"], fn)
             today = (own["toolchain"], tuple(own["flags"]))
             if all_installed:
                 matches = []
@@ -556,7 +557,7 @@ class CompilerMixin:
             return []
         if cmap is None or fn["status"] == "matched":
             return []
-        own = compiler_for(self.cfg(proj), fn["vram"])
+        own = compiler_for(self.cfg(proj), fn["vram"], fn)
         today = (own["toolchain"], tuple(own["flags"]))
         looks = cmap.of.get(fn["vram"])
         lines = []
@@ -707,7 +708,7 @@ class CompilerMixin:
                           "check": c.get("status", ""), "said": c.get("said", "")})
         elsewhere = sorted((r for r in (cmap.runs if cmap else []) if r.differs()), key=lambda r: -r.functions)
         def uses_default(fn):
-            own = compiler_for(cfg, fn["vram"])
+            own = compiler_for(cfg, fn["vram"], fn)
             return (own["toolchain"], tuple(own["flags"])) == main
         # the compiler's name and its flags apart: "built with KMC GCC 2.7.2" reads at a glance, the flags are details
         return {"compiler": consoles.compiler_name(main[0]), "flags": " ".join(main[1]), "parts": parts,
@@ -841,7 +842,7 @@ class CompilerMixin:
         proj = self._project(slug)
         cfg = self.cfg(proj)
         fn = self._function(function, slug)
-        own = compiler_for(cfg, fn["vram"])
+        own = compiler_for(cfg, fn["vram"], fn)
         tc = self._toolchain_named(cfg, compiler) if compiler else own["toolchain"]
         base = list(own["flags"]) if tc == own["toolchain"] else consoles.default_flags(cfg, tc)
         source = source if source.strip() else self._source_of(fn)
@@ -916,14 +917,18 @@ class CompilerMixin:
         default = self.cfg(proj)["compiler"]
         use_default = toolchain == default["toolchain"] and flags == default["flags"]
         end = fn["vram"] + fn["size"]
-        if preserve_other_profiles:
+        if preserve_other_profiles and fn['rom_offset'] is None:
             rows = self.store.all("SELECT id,vram FROM functions WHERE project_id=? AND vram IS NOT NULL", proj['id'])
             if any(row['id'] != fn['id'] and row['vram'] == fn['vram'] for row in rows):
                 raise NetworkError("This overlay shares its start address. An address-only range cannot safely isolate it.")
             # Compiler profiles are selected by function start address. Stop before
             # the next start, even when a legacy extent overlaps another overlay.
             end = min([max(fn['vram'] + 1, end)] + [row['vram'] for row in rows if row['vram'] > fn['vram']])
-        self.set_compiler_ranges(slug, [[fn["vram"], end]], None if use_default else toolchain, flags)
+        if fn['rom_offset'] is not None:
+            from ..prepared_evidence import scoped_config
+            self._apply_compiler_config(proj,scoped_config(proj,fn,{'toolchain':toolchain,'flags':list(flags)}))
+        else:
+            self.set_compiler_ranges(slug, [[fn["vram"], end]], None if use_default else toolchain, flags)
         if fn["status"] == "matched":
             return {"said": f"Compiler settings applied to {function}; its matching C is preserved.",
                     "matched": True, "newly_matched": False, "score": 0, "match_cause": "already_matched"}
@@ -985,7 +990,7 @@ class CompilerMixin:
             fn = self.store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name)
             if fn is None or fn["status"] != "matched":
                 continue
-            own = compiler_for(cfg, fn["vram"])
+            own = compiler_for(cfg, fn["vram"], fn)
             _, d, _ = self._judge_with(proj, fn, own["toolchain"], list(own["flags"]), fn["matched_source"] or "")
             with self.store.tx() as db:
                 db.execute("UPDATE functions SET status='open', best_source=matched_source, best_agent_id=matched_agent_id, "
@@ -998,9 +1003,9 @@ class CompilerMixin:
         describe today's compiler, including functions outside the old forty-function sample. Failed checks must
         not expose trial flags to working helpers, erase drafts or announce a change that never happened."""
         before = self.cfg(proj)
-        keys = ("compiler", "compiler_ranges")
+        keys = ("compiler", "compiler_ranges",'function_compilers')
         rows = self.store.all("SELECT * FROM functions WHERE project_id=? ORDER BY id", proj["id"])
-        affected = [f for f in rows if compiler_for(before, f["vram"]) != compiler_for(cfg, f["vram"])]
+        affected = [f for f in rows if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
         trial = dict(proj) | {"config": json.dumps(cfg)}
         contexts = [tuple(r) for r in self.store.all("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", proj["id"])]
         matched = [f for f in affected if f["status"] == "matched"]
@@ -1025,7 +1030,7 @@ class CompilerMixin:
         log(f"Updating saved scores for {len(rescored)} affected attempts.")
         def rescore(fn):
             source = fn["matched_source"] if fn["name"] in broken_names else self._source_of(fn)
-            own = compiler_for(cfg, fn["vram"])
+            own = compiler_for(cfg, fn["vram"], fn)
             _, diff, _ = self._judge_with(trial, fn, own["toolchain"], list(own["flags"]), source) if source else (False, None, "")
             return fn['id'], diff.score if diff is not None else None, fn['name']
         report({'phase':'Updating saved scores', 'done':0, 'total':len(rescored), 'affected':len(affected)})
@@ -1044,7 +1049,7 @@ class CompilerMixin:
             current = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             latest = db.execute("SELECT * FROM functions WHERE project_id=? ORDER BY id", (proj["id"],)).fetchall()
             headers = [tuple(r) for r in db.execute("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", (proj["id"],))]
-            latest_affected = [f for f in latest if compiler_for(before, f["vram"]) != compiler_for(cfg, f["vram"])]
+            latest_affected = [f for f in latest if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
             if any(current.get(k) != before.get(k) for k in keys) or population(latest_affected) != population(affected) or headers != contexts:
                 raise NetworkError("The project's code or settings changed during the compiler check. Try again after pausing its helpers.")
             for key in keys:

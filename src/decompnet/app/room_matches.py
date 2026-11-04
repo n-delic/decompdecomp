@@ -7,9 +7,16 @@ import time
 from .. import candidate_scope, match_bundle, toolchains
 from ..network import Agent, NetworkError
 from ..project import compiler_for
-from . import prepared_evidence, source_preparation
+from . import build_info, prepared_evidence, source_preparation
 
 PREFIX = 'room-match:'
+
+
+def failure_reason(item):
+    """Older retries wrapped their own summary repeatedly. Keep the actual failure separate from progress."""
+    reason=item.get('failure_reason') or item.get('reason','')
+    reason=re.sub(r'^(?:Host has not verified this source/header/profile\.\s*)+', '', reason)
+    return re.split(r'\s*Tried \d+/\d+ profiles in this context\.', reason, maxsplit=1)[0].strip()
 
 
 def _packet(net, slug, function, source):
@@ -22,11 +29,11 @@ def _packet(net, slug, function, source):
     if row and row['source'] == source:
         details = json.loads(row['details'])
         return {k: details.get(k) for k in ('compiler_identity','abi','vram','target_sha256','source_sha256')} | {
-            'compiler':{k:(details.get('compiler') or compiler_for(net.cfg(proj),fn['vram'])).get(k) for k in ('toolchain','flags')},
+            'compiler':{k:(details.get('compiler') or compiler_for(net.cfg(proj),fn['vram'], fn)).get(k) for k in ('toolchain','flags')},
             'header':row['header'],'header_sha256':match_bundle.digest(row['header'])}
     cfg = net.cfg(proj)
-    return {'compiler':{k:compiler_for(cfg,fn['vram'])[k] for k in ('toolchain','flags')}, 'header':net._context(proj['id'],fn['unit'])['header'],
-            'compiler_identity':match_bundle.compiler_identity(compiler_for(cfg,fn['vram'])),
+    return {'compiler':{k:compiler_for(cfg,fn['vram'], fn)[k] for k in ('toolchain','flags')}, 'header':net._context(proj['id'],fn['unit'])['header'],
+            'compiler_identity':match_bundle.compiler_identity(compiler_for(cfg,fn['vram'], fn)),
             'abi':match_bundle.abi(proj,cfg),'vram':fn['vram'],
             'target_sha256':match_bundle.digest(fn['target'] or b''),'source_sha256':match_bundle.digest(source),
             'header_sha256':match_bundle.digest(net._context(proj['id'],fn['unit'])['header'])}
@@ -164,6 +171,7 @@ def retry(net,slug,key, *, recover_profiles=True):
     row=net.store.one('SELECT value FROM settings WHERE key=?',key)
     if not row:raise NetworkError('Room submission is no longer available.')
     item=json.loads(row['value']);fn=net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?',item['function_id'],proj['id'])
+    item['failure_reason']=failure_reason(item)
     if not fn:raise NetworkError('Room submission function was removed.')
     agent_row=net.store.one('SELECT id,name,owner,trusted FROM agents WHERE id=?',item['agent_id'])
     if not agent_row:raise NetworkError('Room submission agent no longer exists.')
@@ -185,7 +193,7 @@ def retry(net,slug,key, *, recover_profiles=True):
                     now=time.time()
                     db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],agent.id,now,now+net.claim_ttl))
                     verification_claim=True
-            own=compiler_for(net.cfg(proj),fn['vram'])
+            own=compiler_for(net.cfg(proj),fn['vram'], fn)
             if toolchains.installed(own['toolchain']):
                 res=net.attempt(agent,fn['name'],item['source'],slug)
             else:
@@ -204,13 +212,17 @@ def retry(net,slug,key, *, recover_profiles=True):
                         evidence.get('header_sha256',match_bundle.digest(header))!=match_bundle.digest(header)):
                         raise NetworkError('Invalid room header evidence.')
                     profiles=[settings(net,proj,evidence.get('compiler'))]
+                    current={k:own[k] for k in ('toolchain','flags')}
+                    if current!=profiles[0] and toolchains.installed(current['toolchain']):
+                        # The host's profile may reproduce the same bytes with the client's private declarations.
+                        profiles.append(current)
                 else:
                     if not recover_profiles:
                         raise NetworkError('Older client supplied only C; compiler/header evidence is unavailable. Use Review pending matches → Retry to search installed host profiles, or update the client.')
                     # Older clients sent only C. Explicit retries walk bounded installed host profiles.
                     profiles=[{'toolchain':tc,'flags':list(flags)} for tc,flags in net._comparison_candidates(proj,all_installed=True)]
                 identities={p['toolchain']:match_bundle.compiler_identity(p) for p in profiles}
-                scope=hashlib.sha256((candidate_scope.key(net,proj,fn)+json.dumps(identities,sort_keys=True)).encode()).hexdigest()
+                scope=hashlib.sha256((candidate_scope.key(net,proj,fn)+json.dumps(identities,sort_keys=True)+build_info.commit()).encode()).hexdigest()
                 if item.get('scope')!=scope:item.update(scope=scope,tried=[])
                 tested=0
                 for profile in profiles:
@@ -225,13 +237,13 @@ def retry(net,slug,key, *, recover_profiles=True):
                         result.update(matched=True,score=0,pending=False)
                         break
                     except NetworkError as error:
-                        item['reason']=str(error)
+                        item['failure_reason']=str(error)
                         if not any(word in str(error).lower() for word in ('claim','changed','expired','busy')):
                             item['tried'].append(marker)
                 if not result['matched']:
-                    item['reason']='Host has not verified this source/header/profile. '+item.get('reason','')+f" Tried {len(item['tried'])}/{len(profiles)} profiles in this context. Retry continues the bounded search or rechecks changed inputs; evidence retained."
+                    item['reason']=item['failure_reason']+f" Tried {len(item['tried'])}/{len(profiles)} profiles in this context; evidence retained."
     except (NetworkError,ValueError,toolchains.ToolchainError) as error:
-        item['reason']=str(error)
+        item['reason']=item['failure_reason']=str(error)
     finally:
         if verification_claim:
             with net.store.tx() as db:
@@ -262,11 +274,11 @@ def send(link,agent,function,source):
 
 def recover_client(link,state):
     """Queue saved local matches absent from a full host snapshot before host profiles overwrite local settings."""
-    accepted={r['vram'] for r in state.get('matched',[])}
+    accepted={(r.get('name'),r['vram']) for r in state.get('matched',[])}
     agent,_=link.net.local_agent('saved-progress')
     proj=link.net.project_row(link.slug)
     for fn in link.net.store.all("SELECT name,vram,matched_source FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL",proj['id']):
-        if fn['vram'] not in accepted:
+        if (fn['name'],fn['vram']) not in accepted:
             evidence=packet(link.net,link.slug,fn['name'],fn['matched_source'])
             key,item=save(link.net,link.slug,'client',agent,fn['name'],fn['matched_source'],evidence,link.url+'/'+link.room)
             if item['status']=='accepted':
@@ -309,9 +321,15 @@ def sync_inputs(net,slug,state):
         if profiles:
             cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=?',(proj['id'],)).fetchone()['config'])
             cfg['compiler']=profiles['compiler'];cfg['compiler_ranges']=profiles.get('compiler_ranges',[])
+            cfg['function_compilers']=profiles.get('function_compilers',{})
             db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
         for item in contexts:
-            fn=db.execute('SELECT * FROM functions WHERE project_id=? AND vram=?',(proj['id'],item['vram'])).fetchone()
+            if item.get('rom_offset') is not None:
+                fn=db.execute('SELECT * FROM functions WHERE project_id=? AND vram=? AND rom_offset=?',
+                               (proj['id'],item['vram'],item['rom_offset'])).fetchone()
+            else:
+                rows=db.execute('SELECT * FROM functions WHERE project_id=? AND vram=?',(proj['id'],item['vram'])).fetchall()
+                fn=rows[0] if len(rows)==1 else None
             if not fn or not isinstance(item.get('header'),str):continue
             unit='room_verified_'+str(fn['id'])
             old=db.execute('SELECT header FROM context_versions WHERE project_id=? AND unit=? ORDER BY version DESC LIMIT 1',(proj['id'],unit)).fetchone()

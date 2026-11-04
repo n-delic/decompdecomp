@@ -51,7 +51,7 @@ def _config_key(proj, cfg: dict) -> str:
     compiler, instructions, priority, layout source or fingerprint does."""
     rom = cfg.get("rom") or {}
     settings = [proj["name"], cfg.get("platform"), rom.get("sha1"), rom.get("file"), cfg.get("compiler"),
-                cfg.get("compiler_ranges") or [], cfg.get("instructions") or "", cfg.get("priority") or [],
+                cfg.get("compiler_ranges") or [], cfg.get('function_compilers') or {}, cfg.get("instructions") or "", cfg.get("priority") or [],
                 cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
     return hashlib.sha1(json.dumps(settings, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 

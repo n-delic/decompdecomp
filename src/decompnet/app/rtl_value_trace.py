@@ -97,7 +97,7 @@ def saved(net, proj, fn, source, header):
     try:state=json.loads(row['state'])
     except (ValueError,TypeError):return {},[]
     trace=state.get('value_trace') or {}
-    settings=compiler_for(json.loads(proj['config']),fn['vram'])
+    settings=compiler_for(json.loads(proj['config']),fn['vram'], fn)
     profile=hashlib.sha256(json.dumps(settings,sort_keys=True,default=str).encode()).hexdigest()
     if trace.get('profile_sha256')!=profile:return {},[]
     rows=state.get('value_trace_rows') or []

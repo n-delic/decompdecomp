@@ -114,7 +114,7 @@ class BriefMixin:
         declaration and its callees' and globals' from the header, and the types those need, nothing else: on the
         owner's games 116 of 120 drafts made from those declarations alone were the same as with the whole header,
         and the other 4 were better (a declaration elsewhere in the header made m2c's reading of it fail)."""
-        own = compiler_for(self.cfg(proj), fn["vram"])
+        own = compiler_for(self.cfg(proj), fn["vram"], fn)
         target = seeds.m2c_target(own["toolchain"]) or ""
         ctx = ctx or self._context(proj["id"], fn["unit"])
         roots = self._current_names(proj, seeds.asm_names(fn["asm"] or "") if names is None else names)
@@ -193,7 +193,7 @@ class BriefMixin:
         fn = self._function(function, proj["slug"])
         if not seeds.available():
             raise NetworkError("redraft needs m2c, the draft decompiler: the user can install it in Setup")
-        own = compiler_for(self.cfg(proj), fn["vram"])
+        own = compiler_for(self.cfg(proj), fn["vram"], fn)
         if not seeds.m2c_target(own["toolchain"]):
             raise NetworkError("m2c can't read this function's code (no draft decompiler for its compiler)")
         mine = seeds.declarations(seeds.c_only(context))

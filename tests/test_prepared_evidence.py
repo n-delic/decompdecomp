@@ -55,6 +55,42 @@ def test_review_rejects_stale_before_compiling():
     assert evidence.listing(net,proj)[0]['function']=='f'
 
 
+def test_overlay_profile_stops_before_other_entry_without_changing_its_compiler():
+    from decompnet.project import compiler_for
+    net,proj,fn=prepared_net()
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET size=16,rom_offset=100 WHERE id=1')
+        db.execute("INSERT INTO functions(project_id,name,vram,size,rom_offset) VALUES(1,'other_overlay',4104,16,500)")
+    fn=net.store.one('SELECT * FROM functions WHERE id=1')
+    expected=prep.inputs(net,proj,fn)
+    settings={'toolchain':'ido-5.3','flags':['-O3']}
+    with net.store.tx() as db:evidence.publish_profile(net,db,fn,expected,settings,Agent(1,'autopilot',None))
+    cfg=json.loads(net.store.one('SELECT config FROM projects')['config'])
+    assert cfg['function_compilers']['100:4096']['toolchain']=='ido-5.3'
+    assert compiler_for(cfg,4096,fn)['toolchain']=='ido-5.3'
+    assert compiler_for(cfg,4104)==cfg['compiler']
+
+
+def test_same_address_overlays_have_independent_profiles():
+    net,proj,fn=prepared_net();settings={'toolchain':'ido-5.3','flags':['-O3']}
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?',(json.dumps({'compiler':settings}),))
+        db.execute('UPDATE functions SET rom_offset=100 WHERE id=1')
+        db.execute("INSERT INTO functions(project_id,name,vram,size,rom_offset) VALUES(1,'other_overlay',4096,4,500)")
+    proj=net.store.one('SELECT * FROM projects WHERE id=1');fn=net.store.one('SELECT * FROM functions WHERE id=1')
+    expected=prep.inputs(net,proj,fn)
+    with net.store.tx() as db:
+        evidence.publish_profile(net,db,fn,expected,settings,Agent(1,'autopilot',None))
+    assert net.store.one('SELECT config FROM projects')['config']==proj['config']
+    with net.store.tx() as db:
+        evidence.publish_profile(net,db,fn,expected,{'toolchain':'ido-5.3','flags':['-O2']},Agent(1,'autopilot',None))
+    from decompnet.project import compiler_for
+    cfg=json.loads(net.store.one('SELECT config FROM projects')['config'])
+    other=net.store.one("SELECT * FROM functions WHERE name='other_overlay'")
+    assert compiler_for(cfg,4096,fn)['flags']==['-O2']
+    assert compiler_for(cfg,4096,other)['flags']==['-O3']
+
+
 def test_named_array_requires_declared_extent_and_verified_rom_values():
     source='void f(void){ int choices[]={1,2}; use(choices); say("choices"); }'
     header='extern const int D_80004000[2];'

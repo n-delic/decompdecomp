@@ -19,7 +19,7 @@ def allowance(diagnosis):
 
 
 def key(net, proj, fn, source):
-    profile = compiler_for(net.cfg(proj),fn['vram'])
+    profile = compiler_for(net.cfg(proj),fn['vram'], fn)
     installed = toolchains.installed(profile.get('toolchain',''))
     return VERSION+':'+hashlib.sha256(repr((candidate_scope.key(net,proj,fn),source,installed)).encode()).hexdigest()
 
@@ -42,7 +42,7 @@ def capture(net, proj, fn, source, *, on_compile, rows=()):
         return cached
     scope_key = key(net,proj,fn,source)
     header = net._context(proj['id'],fn['unit'])['header']
-    profile = compiler_for(net.cfg(proj),fn['vram'])
+    profile = compiler_for(net.cfg(proj),fn['vram'], fn)
     # Capture is isolated, supports only installed native GCC, and must reproduce the ordinary
     # object's allocated output. The caller charges both builds to its existing search allowance.
     result = compiler_diagnostics.diagnose(profile,header,source,fn['name'],on_compile=on_compile)

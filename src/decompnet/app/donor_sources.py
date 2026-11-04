@@ -130,7 +130,7 @@ def compact(text, name):
 
 def preprocess(net, proj, fn, source, header):
     """Reuse the pinned destination compiler sandbox. Unsupported drivers remain a visible skip."""
-    settings=compiler_for(net.cfg(proj),fn['vram'])
+    settings=compiler_for(net.cfg(proj),fn['vram'], fn)
     cfg=compiler_config(Path(proj['root']),{'compiler':settings})
     if '-c' not in cfg.cmd:
         raise NetworkError('This compiler driver has no supported preprocessing mode for named donors.')

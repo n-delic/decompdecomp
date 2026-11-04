@@ -57,7 +57,7 @@ def prepared(net,proj,b,a,source,header,label,job):
         return source,''
     if label=='verified ROM source':
         return source,header
-    settings=compiler_for(net.cfg(proj),b['vram'])
+    settings=compiler_for(net.cfg(proj),b['vram'], b)
     key='named-donor-prep-v1:'+donor_sources.signature(source,header,settings)
     old=net.store.one('SELECT outcome,feedback,reason FROM reuse_trials WHERE function_id=? AND signature=?',b['id'],key)
     if old:
@@ -164,7 +164,7 @@ def run(twins,slug,job=None,*,only=None):
                         fresh=net.project_row(slug)
                         fork=net.fork_slug(slug)
                         scope=destination_scope(net,fresh,current)
-                        settings=compiler_for(net.cfg(fresh),current['vram']) if not fork else {}
+                        settings=compiler_for(net.cfg(fresh),current['vram'], current) if not fork else {}
                         key='named-donor-trial-v1:'+trial_key(candidate,header,settings,current,[scope])
                         old=net.store.one('SELECT outcome,feedback FROM reuse_trials WHERE function_id=? AND signature=?',b['id'],key)
                         if old and old['outcome']!='match':

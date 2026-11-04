@@ -349,7 +349,7 @@ class Search(Permuter):
     def local_repairs(self, agent, proj, fn, best, fork, max_trials=None, phase_deadline=None):
         """Regenerate from each saved winner, sharing this search's deadline, cache and allowance."""
         ordinary_phase = self.phase
-        flags = compiler_for(self.net.cfg(proj), fn['vram']).get('flags', []) if not fork else []
+        flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
         trials = 0
         detours_used = set()
         alternatives = search_frontier.Frontier()
@@ -359,7 +359,7 @@ class Search(Permuter):
         best = self._repair_preflight(agent, proj, fn, best, fork)
         proj = self.net.project_row(proj['slug'])
         fn = self.net._function(fn['name'], proj['slug'])
-        flags = compiler_for(self.net.cfg(proj), fn['vram']).get('flags', []) if not fork else []
+        flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
         source = fn['best_source']
         initial_rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net,fn['id'],agent.id)
         source_rows = {source:initial_rows}
@@ -486,7 +486,7 @@ class Search(Permuter):
                     if score > 0 and fresh['best_source'] == candidate:
                         best = self._repair_preflight(agent, proj, fresh, best, fork)
                         proj = self.net.project_row(proj['slug'])
-                        flags = compiler_for(self.net.cfg(proj), fn['vram']).get('flags', []) if not fork else []
+                        flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
                     fn = self.net._function(fn['name'], proj['slug'])
                     source = fn['best_source']
                     if best > 0 and (source != candidate or repair_sequences.profile(self.net,proj,fn) != lineage.profile):
@@ -545,7 +545,7 @@ class Search(Permuter):
         from . import deep_profiles
         if self.measuring_baseline or not hasattr(self, 'compiler_profiles') or fork:
             return self._score_current(agent, proj, fn, source, best, fork)
-        own = compiler_for(self.net.cfg(proj), fn['vram'])
+        own = compiler_for(self.net.cfg(proj), fn['vram'], fn)
         own_flags = own['flags'].split() if isinstance(own['flags'], str) else own['flags']
         score = None
         for profile in self.compiler_profiles:

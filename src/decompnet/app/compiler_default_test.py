@@ -18,12 +18,12 @@ def run(net, slug, selected, log=print, nonmatches=False):
     cfg = json.loads(proj['config'])
     default, target = profile(cfg['compiler']), profile(selected)
     rows = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
-    if target == default or not any(profile(compiler_for(cfg, f['vram'])) == target for f in rows):
+    if target == default or not any(profile(compiler_for(cfg, f['vram'], f)) == target for f in rows):
         raise NetworkError('Choose a non-default compiler profile currently used in this project.')
     if toolchains.installed(target[0]) is None:
         raise NetworkError('Install the selected compiler before testing it as default.')
     def population(items, config):
-        return [f for f in items if f['status'] == 'open'] if nonmatches else [f for f in items if f['status'] == 'matched' and profile(compiler_for(config, f['vram'])) == default]
+        return [f for f in items if f['status'] == 'open'] if nonmatches else [f for f in items if f['status'] == 'matched' and profile(compiler_for(config, f['vram'], f)) == default]
     candidates = population(rows, cfg)
     def signature(items):
         return [tuple(f[k] for k in ('id','name','vram','unit','size','target','relocs','meta','status','matched_source','best_source','best_score')) for f in items]
@@ -97,7 +97,7 @@ def replace_default(net, slug, selected, log=print):
         blocked = {f['vram'] for f in rows if f['name'] in failures}
         starts = sorted({f['vram'] for f in rows if f['vram'] is not None})
         for fn in rows:
-            if fn['vram'] in blocked and profile(compiler_for(cfg, fn['vram'])) == old:
+            if fn['vram'] in blocked and profile(compiler_for(cfg, fn['vram'], fn)) == old:
                 end = min([fn['vram'] + max(1, fn['size'])] + [v for v in starts if v > fn['vram']])
                 replace_range(proposed, fn['vram'], end, old)
         # The normal guarded commit rechecks all affected matches and rescoring, then publishes atomically.

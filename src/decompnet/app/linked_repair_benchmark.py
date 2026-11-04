@@ -29,7 +29,7 @@ def evaluator(root, name, header):
     fn = next((f for f in manifest['functions'] if f['name']==name),None)
     if fn is None:
         raise ValueError('The function is absent from build.json.')
-    exported_profile = compiler_for(manifest,fn['vram'])
+    exported_profile = compiler_for(manifest,fn['vram'], fn)
     profile = {k:exported_profile[k] for k in ('toolchain','flags','timeout') if k in exported_profile}
     if not toolchains.installed(profile['toolchain']):
         raise ValueError('Install the recorded pinned compiler first; benchmarks do not download tools.')

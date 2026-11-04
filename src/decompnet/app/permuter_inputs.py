@@ -24,7 +24,7 @@ def refresh(net, proj, rows):
     changed = []
     for fn in rows:
         header = net.forks.permuter_header(fork, fn['name']) if fork else net._context(proj['id'], fn['unit'])['header']
-        own = cfg.get('compiler') if fork else compiler_for(cfg, fn['vram'])
+        own = cfg.get('compiler') if fork else compiler_for(cfg, fn['vram'], fn)
         fields = (header, own, symbols, build, fn['unit'], fn['vram'], fn['target'], fn['relocs'], fn['name'])
         digest = hashlib.sha256(repr(fields).encode()).hexdigest()
         key = f'permuter-inputs-v1:{fn["id"]}'

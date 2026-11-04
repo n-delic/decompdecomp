@@ -687,7 +687,7 @@ def local_family(net, agent, slug, function, revision, family, old='', declarati
                 raise NetworkError('Pattern families use function and revision only; omit target/old/declaration/occurrence.')
             proj = net._project(slug)
             cfg = json.loads(proj['config'])
-            flags = compiler_for(cfg,fn['vram']).get('flags',[]) if not net.fork_slug(slug) else []
+            flags = compiler_for(cfg,fn['vram'], fn).get('flags',[]) if not net.fork_slug(slug) else []
             debug = any(re.fullmatch(r'-g[1-3]?',flag) for flag in flags)
             if family == 'source_lines' and not debug:
                 raise NetworkError('source_lines requires known debug compiler flags; imported per-file flags are not available yet.')
