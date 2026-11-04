@@ -125,9 +125,12 @@ def runner(version: str) -> list[str]:
 
 def shows_includes(version: str) -> bool:
     """/showIncludes (header dependencies): Visual C++ .NET 2003 (7.1) and later have it, Visual C++ 6 doesn't. A
-    compiler of the user's own is taken to have it when it's a 7.1 build or later (an XDK's: xdk-<build>)."""
+    compiler of the user's own has it when it's known to be 7.1: an XDK's (xdk-<build>) from XDK 5233 on, or one in
+    an XDK's bin/vc71 (the earlier XDKs shipped 7.0 builds of their own, kits/xdk.py)."""
     if version in OWN and not version[:1].isdigit():
-        return False
+        kind, _, build = version.rpartition("/")[2].partition("-")  # MSVC/xdk-5849
+        return kind == "xdk" and ((build.isdigit() and int(build) >= 5233)
+                                  or Path(OWN[version][1]).parent.name.lower() == "vc71")
     return tuple(int(x) for x in version.split(".")[:2] if x.isdigit()) >= (7, 1)
 
 

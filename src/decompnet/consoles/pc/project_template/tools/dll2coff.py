@@ -63,12 +63,30 @@ def _blank(text: str) -> str:
     return _COMMENT_OR_STRING.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), text)
 
 
+_INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
+
+
+def _past(clean: str, brace: int) -> int:
+    """Just past the block that opens at `brace`."""
+    depth, k = 0, brace
+    while k < len(clean):
+        depth += (clean[k] == "{") - (clean[k] == "}")
+        k += 1
+        if depth == 0:
+            break
+    return k
+
+
 def definition(text: str, clean: str, pos: int, bound: int) -> str | None:
-    """The first line of the first function definition in text[pos:bound], up to its "(" (a declaration, a type or
-    a brace initialiser before it is skipped), or None."""
-    start_pos = pos
+    """The first line of the function definition in text[pos:bound], up to its "(" (a declaration, a type or a brace
+    initialiser before it is skipped), or None. An inline helper before it (`static inline int Tail(...) { ... }`) is
+    never the annotated function when another definition follows: the first that isn't inline, else the first, as
+    the app's csource finds it (the helper's code was judged as the function's, with no problem said)."""
+    start_pos, first = pos, None
     while True:
         brace = clean.find("{", pos, bound)
+        if brace < 0 and first is not None:
+            return first
         if brace < 0:  # no body here: a definition a macro writes (`HEADER_INLINE(void F(int a))`), the first line
             at = start_pos  # with a "(" that isn't a declaration (`;`) or a preprocessor line
             for ln in clean[start_pos:bound].split("\n"):
@@ -81,22 +99,20 @@ def definition(text: str, clean: str, pos: int, bound: int) -> str | None:
         head_at = max(clean.rfind(";", pos, brace), clean.rfind("}", pos, brace), pos - 1) + 1
         head = "\n".join(ln for ln in clean[head_at:brace].split("\n") if not ln.lstrip().startswith("#"))
         if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
-            depth, k = 0, brace
-            while k < len(clean):  # past the type (or initialiser)
-                depth += (clean[k] == "{") - (clean[k] == "}")
-                k += 1
-                if depth == 0:
-                    break
-            pos = k
+            pos = _past(clean, brace)  # past the type (or initialiser)
             continue
-        at = head_at
+        at, found = head_at, None
         for ln in clean[head_at:brace].split("\n"):  # its first line: the one with the "(" (not a #pragma)
             if "(" in ln and not ln.lstrip().startswith("#"):
                 start = at + len(ln) - len(ln.lstrip())
                 # up to its last "(" (`__declspec(noinline) bool A::F(`); the real text: extern "C" keeps its "C"
-                return text[start:at + ln.rindex("(") + 1]
+                found = text[start:at + ln.rindex("(") + 1]
+                break
             at += len(ln) + 1
-        return None
+        if found is None or not _INLINE_HEAD.search(head):
+            return found or first
+        first = first or found
+        pos = _past(clean, brace)
 TARGET = re.compile(r"//[ \t]*TARGET[ \t]+(0x[0-9a-fA-F]+)[ \t]+(\S+)")
 # "// GLOBAL: 0x<va> [map symbol]" then a declaration or definition of the global at that original address
 GLOBAL = re.compile(r"//[ \t]*GLOBAL:[ \t]*(0x[0-9a-fA-F]+)(?:[ \t]+(\S+))?[^\n]*\n"

@@ -8,6 +8,7 @@ ltcg`), where the linker passes an argument in a register, and run only where Vi
 objdiff are set up.
 """
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -303,8 +304,10 @@ def test_compiler_literals_are_compared_by_value():
 def test_the_progress_report_counts_functions_failing_the_ltcg_checks_as_not_matched(tmp_path):
     (tmp_path / "objdiff.json").write_text(json.dumps({"units": [{"name": "u", "base_path": "build/u.obj"}]}))
     (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "u.obj").write_bytes(b"object")
     (tmp_path / "build" / "u.ltcg.json").write_text(json.dumps({"functions": {
-        "_a": {"conflicts": [], "data": ["+0x2: yours refers to ..."]}, "_b": {"conflicts": [], "data": []}}}))
+        "_a": {"conflicts": [], "data": ["+0x2: yours refers to ..."]}, "_b": {"conflicts": [], "data": []}},
+        "object_sha1": hashlib.sha1(b"object").hexdigest()}))
     rep = {"measures": {"total_code": "40", "matched_code": "40", "matched_code_percent": 100.0, "total_functions": 2,
                         "matched_functions": 2, "matched_functions_percent": 100.0},
            "units": [{"name": "u", "measures": {"total_code": "40", "matched_code": "40", "total_functions": 2,
@@ -332,18 +335,42 @@ def test_a_checks_file_that_cant_be_read_confirms_no_100_percent_of_its_unit(tmp
                         "matched_functions": 2, "matched_functions_percent": 100.0}, "units": [unit("u"), unit("v")]}
     out = objdiff.subtract_conflicts(tmp_path, rep)
     assert out["units"][0]["functions"][0]["fuzzy_match_percent"] == 99.99  # u: unknown, so unconfirmed
-    assert out["units"][1]["functions"][0]["fuzzy_match_percent"] == 100.0  # v has no checks file: as before
+    # v has no checks file, and its build makes none (it isn't built in harness mode): as before
+    assert out["units"][1]["functions"][0]["fuzzy_match_percent"] == 100.0
     found = objdiff.mapping_conflicts(tmp_path / "build" / "u.obj", "_a")
     assert len(found) == 1 and "couldn't be read" in found[0].describe() and "compile again" in found[0].describe()
     assert objdiff.mapping_conflicts(tmp_path / "build" / "v.obj", "_a") == []
+
+
+def test_missing_checks_of_a_harness_unit_and_checks_naming_no_object_confirm_nothing(tmp_path, monkeypatch):
+    """A unit that left harness mode before checks named their object kept `{"functions": {"_a": {"conflicts":
+    []}}}`, which confirmed its 100%; and a harness unit whose checks are gone confirmed it too."""
+    monkeypatch.setattr(objdiff, "SIDECAR_WAIT", 0)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"units": [{"name": "u", "base_path": "build/u.obj"},
+                                                                {"name": "v", "base_path": "build/v.obj"}]}))
+    (tmp_path / "build").mkdir()
+    for name in ("u", "v"):
+        (tmp_path / "build" / f"{name}.obj").write_bytes(b"object")
+    (tmp_path / "build" / "u.ltcg.json").write_text(json.dumps({"functions": {"_a": {"conflicts": []}}}))
+    # v is built in harness mode (tools/ltcg.py names its checks as an output of its build), and has none
+    (tmp_path / "build.ninja").write_text("build build/v.obj | build/v.ltcg.json: ltcg_coff build/v/v.dll\n")
+    unit = lambda name: {"name": name, "measures": {"total_code": "10", "matched_code": "10", "total_functions": 1,  # noqa: E731
+                                                     "matched_functions": 1},
+                         "functions": [{"name": "_a", "size": "10", "fuzzy_match_percent": 100.0}]}
+    rep = {"measures": {"total_code": "20", "matched_code": "20", "matched_code_percent": 100.0, "total_functions": 2,
+                        "matched_functions": 2, "matched_functions_percent": 100.0}, "units": [unit("u"), unit("v")]}
+    out = objdiff.subtract_conflicts(tmp_path, rep)
+    assert [u["functions"][0]["fuzzy_match_percent"] for u in out["units"]] == [99.99, 99.99]
+    for name in ("u", "v"):
+        found = objdiff.mapping_conflicts(tmp_path / "build" / f"{name}.obj", "_a")
+        assert len(found) == 1 and "isn't confirmed" in found[0].describe()
+    assert not objdiff.checked(tmp_path / "build" / "u.obj")  # u's build makes none: only its old file counts
 
 
 def test_checks_of_another_object_confirm_nothing_and_a_plain_build_drops_them(tmp_path, monkeypatch):
     """dll2coff wrote the object, then its checks: a report in between read the new object's 100% by the old
     checks, and a unit that left harness mode kept its old checks. The checks now name their object and come first,
     and a plain compile removes them."""
-    import hashlib
-
     monkeypatch.setattr(objdiff, "SIDECAR_WAIT", 0)
     obj = tmp_path / "build" / "u.obj"
     obj.parent.mkdir()
@@ -575,6 +602,12 @@ def test_an_edit_rebuilds_the_units_that_compile_the_file_and_only_a_header_rebu
     (root / "include" / "state.h").unlink()
     # `#include <...>` counts like "...": w's driver including u's source with it builds w too
     (root / "harness" / "w.drv.cpp").write_text("#include <../src/auto/u.cpp>\nvoid HarnessEntry(void) {}\n")
+    assert built("src/auto/u.cpp") == ["u", "v", "w"]
+    (root / "harness" / "w.drv.cpp").write_text("void HarnessEntry(void) {}\n")
+    # but only "..." is looked for beside the including file: <...> is in the include folders only
+    (root / "src" / "auto" / "w.cpp").write_text("#include <u.cpp>\n")
+    assert built("src/auto/u.cpp") == ["u", "v"]
+    (root / "src" / "auto" / "w.cpp").write_text('#include "u.cpp"\n')
     assert built("src/auto/u.cpp") == ["u", "v", "w"]
     # and a file including what a macro names could include anything: the whole project
     (root / "harness" / "w.drv.cpp").write_text("#include STATE_FILE\nvoid HarnessEntry(void) {}\n")

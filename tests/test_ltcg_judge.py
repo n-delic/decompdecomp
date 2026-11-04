@@ -204,17 +204,23 @@ def test_jump_table_entries_going_elsewhere_are_a_difference(tmp_path):
         "+0x14: goes to +0xD in yours, +0xE in the original (a jump table entry)"]
 
 
-def _cut(tmp_path: Path, source: str, obj: str) -> dict:
+def _cut(tmp_path: Path, source: str, obj: str, helper: bool = False) -> dict:
     """dll2coff on one function G (`ret`) at 0x11000, ours at 0x10001000 from map object `obj`, the unit's source
-    `source` (u.cpp): its .ltcg.json."""
+    `source` (u.cpp): its .ltcg.json. `helper`: ours has Tail (`mov eax, [esp+4]; ret`) at 0x10001000 too, in the
+    map, and G after it at 0x10001010."""
     exe = b"\xc3".ljust(0x40, b"\xcc")
     (tmp_path / "game.bin").write_bytes(exe)
     units = {"u": [{"name": "?G@@YAXXZ", "addr": 0x11000, "offset": 0, "size": 1, "relocs": []}]}
     (tmp_path / "functions.json").write_text(json.dumps({"exe": str(tmp_path / "game.bin"),
                                                          "sha1": hashlib.sha1(exe).hexdigest(), "units": units}))
-    (tmp_path / "u.dll").write_bytes(_pe([(".text", 0x1000, b"\xc3" + b"\xcc" * 4)], []))
+    text, publics = b"\xc3" + b"\xcc" * 4, f" 0001:00000000       ?G@@YAXXZ                  10001000 f   {obj}\n"
+    if helper:
+        text = bytes.fromhex("8b442404c3").ljust(0x10, b"\xcc") + b"\xc3" + b"\xcc" * 4
+        publics = (f" 0001:00000000       ?Tail@@YAHH@Z              10001000 f   {obj}\n"
+                   f" 0001:00000010       ?G@@YAXXZ                  10001010 f   {obj}\n")
+    (tmp_path / "u.dll").write_bytes(_pe([(".text", 0x1000, text)], []))
     (tmp_path / "u.map").write_text(" Address         Publics by Value              Rva+Base       Lib:Object\n\n"
-                                    f" 0001:00000000       ?G@@YAXXZ                  10001000 f   {obj}\n")
+                                    + publics)
     (tmp_path / "u.cpp").write_text(source)
     out = tmp_path / "u.obj"
     subprocess.run([sys.executable, str(TOOLS / "dll2coff.py"), str(tmp_path / "functions.json"), "u",
@@ -228,7 +234,19 @@ def test_a_helper_between_the_annotation_and_its_function_doesnt_lose_the_functi
     source = ("// FUNCTION: 0x11000\nstatic inline int Tail(int x)\n{\n    return x;\n}\nvoid G()\n{\n}\n")
     side = _cut(tmp_path, source, "00_u.obj")
     assert "?G@@YAXXZ" in side["functions"] and side["problems"] == []
-    # the original's name from a stand-in (another object of the harness) isn't the unit's function
-    side = _cut(tmp_path, source, "01_u_standins.obj")
+    # the original's name from a stand-in (another object of the harness) isn't the unit's function (a helper that
+    # isn't inline is taken as the annotated one, so the name is looked for)
+    side = _cut(tmp_path, source.replace("static inline", "static"), "01_u_standins.obj")
     assert "?G@@YAXXZ" not in side["functions"]
     assert side["problems"] == ["0x00011000 ?Tail@@ isn't in the map (not called from the driver, or inlined everywhere)"]
+
+
+def test_an_inline_helper_in_the_map_isnt_judged_as_the_annotated_function(tmp_path):
+    # the helper kept out of line (in the map): the annotation named it, its code was cut out as G's, and no problem
+    # was said
+    source = ("// FUNCTION: 0x11000\nstatic inline int Tail(int x)\n{\n    return x;\n}\nvoid G()\n{\n}\n")
+    side = _cut(tmp_path, source, "00_u.obj", helper=True)
+    assert side["functions"]["?G@@YAXXZ"]["symbol"] == "?G@@YAXXZ" and side["problems"] == []
+    # only an inline definition after the annotation: that's the function
+    side = _cut(tmp_path, "// FUNCTION: 0x11000\ninline void G()\n{\n}\n", "00_u.obj")
+    assert "?G@@YAXXZ" in side["functions"] and side["problems"] == []

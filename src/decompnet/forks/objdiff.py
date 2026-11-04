@@ -213,20 +213,45 @@ def _sidecar(base: Path) -> dict | None:
     two swapped globals, twice. A read that fails is tried again (the rewrite takes milliseconds); after that the
     unit's checks are unknown, and callers count its functions as not confirmed. The checks name the object they're
     of (`object_sha1`, written before the object): checks of another object (the object's being written, or is
-    another build's) are unknown too."""
+    another build's) are unknown too, and so are checks that name none (written before they did: a unit that left
+    harness mode kept them, and they confirmed its 100%) and missing checks of a unit the build makes them for."""
     path = base.with_suffix(".ltcg.json")
     for _ in range(SIDECAR_TRIES):
-        if not path.is_file():
+        if not path.is_file() and not checked(base):
             return {}
         try:
             found = json.loads(path.read_text(encoding="utf-8"))
             of = found.get("object_sha1")
-            if of is None or of == hashlib.sha1(base.read_bytes()).hexdigest():
+            if of is None:
+                return None
+            if of == hashlib.sha1(base.read_bytes()).hexdigest():
                 return found.get("functions", {}) or {}
         except (OSError, ValueError, AttributeError):
             pass
         time.sleep(SIDECAR_WAIT)
     return None
+
+
+_BUILD_FILES: dict[Path, tuple[float, str]] = {}  # build.ninja -> (its mtime, its text)
+
+
+def checked(base: Path) -> bool:
+    """Whether the project's build makes checks for this object: its build.ninja names <object>.ltcg.json as an
+    output (tools/ltcg.py, a unit built in harness mode)."""
+    for root in base.parents:
+        ninja = root / "build.ninja"
+        try:
+            mtime = ninja.stat().st_mtime
+        except OSError:
+            continue
+        if (cached := _BUILD_FILES.get(ninja)) is None or cached[0] != mtime:
+            try:
+                cached = _BUILD_FILES[ninja] = (mtime, ninja.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                return False
+        rel = base.with_suffix(".ltcg.json").relative_to(root).as_posix()
+        return re.search(r"(?<!\S)" + re.escape(rel) + r"(?=[\s:]|$)", cached[1], re.M) is not None
+    return False
 
 
 def ltcg_problems(base: Path | None) -> list[str]:
@@ -248,9 +273,9 @@ def mapping_conflicts(base: Path | None, symbol: str | None) -> list[MappingConf
         return []
     side = _sidecar(base)
     if side is None:
-        return [MappingConflict(f"the unit's address checks ({base.with_suffix('.ltcg.json').name}) couldn't be "
-                                "read, or are of another build of it, so this 100% isn't confirmed; it's being "
-                                "rebuilt: compile again")]
+        return [MappingConflict(f"the unit's address checks ({base.with_suffix('.ltcg.json').name}) are missing, "
+                                "couldn't be read, or are of another build of it, so this 100% isn't confirmed; it's "
+                                "being rebuilt, or was built before its checks named their object: compile again")]
     found = side.get(symbol) or {}
     return [MappingConflict(c) for c in found.get("conflicts", [])] + [DataConflict(c) for c in found.get("data", [])]
 
@@ -267,7 +292,7 @@ def subtract_conflicts(project: Path, rep: dict) -> dict:
     lost_fns, lost_code = 0, 0
     for unit in rep.get("units", []):
         base = bases.get(unit.get("name"))
-        if base is None or not base.with_suffix(".ltcg.json").is_file():
+        if base is None or not (base.with_suffix(".ltcg.json").is_file() or checked(base)):
             continue
         side = _sidecar(base)
         u_fns, u_code = 0, 0

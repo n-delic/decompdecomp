@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import ltcg
 
@@ -128,6 +130,24 @@ def test_export_takes_the_xdk_whose_compiler_is_the_games(tmp_path):
     assert res.returncode == 0, res.stderr
     export = _ninja(root).split("rule export\n", 1)[1].split("\n", 2)[0]
     assert str(tmp_path / "xdk5849" / "xbox") in export and "xdk4627" not in export
+
+
+@pytest.mark.parametrize("build,folder,rule", [("5849", "vc71", "ltcg_cc"), ("3911", "vc7", "ltcg_cc_all"),
+                                               ("", "vc71", "ltcg_cc")])
+def test_an_xdks_visual_cpp_71_shows_its_includes(tmp_path, build, folder, rule):
+    """The usual Xbox compiler, an XDK's 7.1 (MSVC/xdk-5849), was taken to have no /showIncludes, as its version
+    doesn't start with a digit: its harness objects were rebuilt on any header. An early XDK's 7.0 still hasn't it."""
+    root = _project(tmp_path)
+    _entry(root)
+    version = f"MSVC/xdk-{build}" if build else "MSVC/xdk"
+    xbox = tmp_path / "xdk" / "xbox"
+    cfg = root / "tools" / "configure.py"
+    cfg.write_text(cfg.read_text().replace('MSVC_VERSION = "7.1"', f'MSVC_VERSION = "{version}"'))
+    res = subprocess.run([sys.executable, "tools/configure.py", "v", "--msvc", str(root / "msvc"), "--own",
+                          f"{version}=none,{xbox / 'bin' / folder / 'CL.EXE'},{xbox / 'include'}"], cwd=root,
+                         capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert _ninja(root).split("build build/v/ltcg/u/01_u_drv.obj: ", 1)[1].startswith(rule + " ")
 
 
 def test_objects_depend_on_the_project_files_the_compiler_includes_and_nothing_else(tmp_path):

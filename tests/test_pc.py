@@ -207,7 +207,7 @@ def test_which_compilers_run_through_wine_is_each_packs_own(tmp_path):
                         "/x/wibo"], cwd=root, check=True, capture_output=True, timeout=30, env=env)
         text = (root / "build.ninja").read_text()
         return {unit: "wine" if re.search(r"runner = --wine\b", block) else "wibo" if "--wrapper /x/wibo" in block
-                else "none" for unit, block in re.findall(r"build \S+/(\w)\.obj: cl .*?\n((?:  .*\n)*)", text)}
+                else "none" for unit, block in re.findall(r"build \S+/(\w)\.obj: cl(?:_deps)? .*?\n((?:  .*\n)*)", text)}
 
     if sys.platform == "win32":
         assert set(runners([by_wine]).values()) == {"none"}
