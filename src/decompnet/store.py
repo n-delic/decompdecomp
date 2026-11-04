@@ -469,6 +469,7 @@ class Store:
                               "BEGIN INSERT INTO read_revisions VALUES('sdk_names',1) "
                               "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
         self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_baseline ON attempts(function_id,score,id)")
         self._slow_queries = {}
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()

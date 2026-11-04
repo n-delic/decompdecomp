@@ -231,6 +231,7 @@ async function openFn(name) {
   if (!again) {
     S.fnNav = (S.fnNav || 0) + 1;
     S.fnDetail = null; S.fnLoading = true;
+    $("functionDetailsLoading").hidden = true;
     compilerComparisonBusy = false; compilerComparisonTarget = null;
     deepPermuterBusy = false; deepPermuterTarget = null; deepPermuterJob = null;
     $("fnName").textContent = name;
@@ -302,18 +303,24 @@ let compilerComparisonBusy = false, compilerComparisonTarget = null;
 let deepPermuterBusy = false, deepPermuterJob = null, deepPermuterTarget = null;
 async function refreshFn(first) {
   if ((nameChangeBusy && !first) || !S.fn) return;
-  const slug = S.slug, requested = S.fn, gen = S.gen;
+  const slug = S.slug, requested = S.fn, gen = S.gen, nav = S.fnNav;
   const key = `${gen}|${S.fnNav}|${slug}|${requested}`;
   if (fnBusy?.key === key) return;
   cancelFunctionRead();
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const request = fnBusy = {key, id: ++fnRequest, controller};
+  let loadDetails = false;
   try {
-    const d = await api(`/api/function?slug=${slug}&name=${encodeURIComponent(requested)}`, {signal:controller?.signal});
+    const d = await api(`/api/function?slug=${slug}&name=${encodeURIComponent(requested)}${first ? "&quick=1" : ""}`, {signal:controller?.signal});
     if (gen !== S.gen || slug !== S.slug || requested !== S.fn || fnBusy !== request || (nameChangeBusy && !first)) return;
     // The server follows old-name aliases after a rename (including names inferred by Autopilot).
     S.fn = d.name;
     S.fnDetail = d;
+    loadDetails = !!d.details_pending;
+    $("functionDetailsLoading").hidden = !d.details_pending;
+    $("functionDetailsLoading").querySelector('.workbar').hidden = false;
+    $("functionDetailsStatus").textContent = 'Loading history, calls and verification… Showing saved code; drafts and current project source follow when ready.';
+    $("functionDetailsRetry").hidden = true;
     $("fnAddr").textContent = S.ov.kind === "fork"
       ? `${d.unit} · ${d.insns} instructions${d.match_percent != null ? ` · ${d.match_percent >= 100 ? "100" : (Math.floor(d.match_percent * 10) / 10).toFixed(1)}% now` : ""}`
       : `${hex8(d.vram)} · ROM 0x${d.rom_offset.toString(16).toUpperCase()} · ${d.insns} instructions`;
@@ -370,9 +377,11 @@ async function refreshFn(first) {
     $("fnDeepPanel").hidden = !deepPermuterBusy && (d.status !== "open" || d.best == null);
     $("fnWorkPanel").hidden = $("fnFocusPanel").hidden && $("fnDeepPanel").hidden;
     const pass = d.deep_pass || {};
-    $("fnDeepHistory").textContent = deepPermuterBusy ? "Following this function’s deep search. Improvements save immediately." : pass.completed ? `Deep pass completed · ${pass.minutes} min / ${Number(pass.max_variants).toLocaleString()} variants budget` : pass.stale ? "Previous pass saved; inputs changed, so this function is eligible again." : pass.state === "error" ? `Deep pass needs attention: ${pass.error}` : `Deep pass: ${pass.state || "not tried"}`;
-    $("fnCompilerTest").hidden = S.ov.kind === "fork" || !S.ov.compilers?.length;
-    if (S.ov.kind !== "fork" && !compilerComparisonBusy) renderKnownCompilerProfiles(d);
+    if (d.details_pending) $("fnDeepRun").disabled = true;
+    else if (!deepPermuterBusy) $("fnDeepRun").disabled = false;
+    $("fnDeepHistory").textContent = d.details_pending ? "Checking saved deep-search status…" : deepPermuterBusy ? "Following this function’s deep search. Improvements save immediately." : pass.completed ? `Deep pass completed · ${pass.minutes} min / ${Number(pass.max_variants).toLocaleString()} variants budget` : pass.stale ? "Previous pass saved; inputs changed, so this function is eligible again." : pass.state === "error" ? `Deep pass needs attention: ${pass.error}` : `Deep pass: ${pass.state || "not tried"}`;
+    $("fnCompilerTest").hidden = !!d.details_pending || S.ov.kind === "fork" || !S.ov.compilers?.length;
+    if (!d.details_pending && S.ov.kind !== "fork" && !compilerComparisonBusy) renderKnownCompilerProfiles(d);
     $("fnTestCompilers").disabled = !d.source || d.source_kind === "draft";
     if (!compilerComparisonBusy && S.ov.kind !== "fork") {
       const history = d.compiler_test;
@@ -468,7 +477,23 @@ async function refreshFn(first) {
       $("functionRetry").hidden = false;
       $("functionRetry").onclick = () => refreshFn(true);
     }
-  } finally { if (fnBusy === request) fnBusy = null; }
+    else if (!$("functionDetailsLoading").hidden) {
+      $("functionDetailsStatus").textContent = `Saved code is available. Could not load additional details: ${e.message}`;
+      $("functionDetailsLoading").querySelector('.workbar').hidden = true;
+      $("functionDetailsRetry").hidden = false;
+      $("functionDetailsRetry").onclick = () => refreshFn(false);
+    }
+  } finally {
+    if (fnBusy === request) {
+      fnBusy = null;
+      if (loadDetails && gen === S.gen && slug === S.slug && !$("drawer").hidden) {
+        const detailName = S.fn;
+        Promise.resolve().then(() => {
+          if (gen === S.gen && slug === S.slug && nav === S.fnNav && detailName === S.fn && !fnBusy && !$("drawer").hidden) refreshFn(false);
+        });
+      }
+    }
+  }
 }
 
 /* Editing a function yourself: a highlighted editor over a textarea, judged like an agent's attempt. */

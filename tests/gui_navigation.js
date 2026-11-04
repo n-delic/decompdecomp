@@ -59,6 +59,26 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   const retry=f.el('functionRetry').onclick(); f.calls.at(-1).resolve(detail('failed')); await retry;
   assert.equal(f.el('functionLoading').hidden,true);
 
+  // Saved code paints before optional analysis finishes, and later data preserves edits.
+  const preview = f.ctx.openFn('preview');
+  assert.match(f.calls.at(-1).url, /quick=1/);
+  f.calls.at(-1).resolve({...detail('preview'),details_pending:true}); await preview; await flush();
+  assert.equal(f.el('functionLoading').hidden,true);
+  assert.equal(f.el('fnEdit').value,'source preview');
+  assert.equal(f.el('functionDetailsLoading').hidden,false);
+  const fullDetails=f.calls.at(-1);
+  assert.ok(!fullDetails.url.includes('quick=1'));
+  f.S.editDirty=true; f.el('fnEdit').value='my unsaved edit';
+  fullDetails.resolve({...detail('preview'),source:'new background source'}); await flush();
+  assert.equal(f.el('fnEdit').value,'my unsaved edit');
+  assert.equal(f.el('functionDetailsLoading').hidden,true);
+  const moving=f.ctx.openFn('moving');
+  f.calls.at(-1).resolve({...detail('moving'),details_pending:true}); await moving; await flush();
+  const oldDetails=f.calls.at(-1);
+  const moved=f.ctx.openFn('moved'); f.calls.at(-1).resolve(detail('moved')); await moved;
+  oldDetails.resolve(detail('moving')); await flush();
+  assert.equal(f.S.fnDetail.name,'moved','late detailed response must not replace the new function');
+
   // Background jobs keep running but must not paint another function's shared DOM.
   let update, finishJob, finishes=0, compilerPaints=0;
   f.ctx.renderCompilerProgress=()=>{compilerPaints++;};

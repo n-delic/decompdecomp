@@ -2237,3 +2237,8 @@ external imported-project expiry, explicit checks and the ordinary byte judge ar
   totals, compact live sections and deferred hidden map refreshes, persistent revision-checked ROM fingerprints
   and cross-project map identities, narrow SDK naming reads with bounded unchanged-check reuse, and scoped
   autosave project/contributor reads. External progress-file checks and byte verification are preserved.
+
+- Done: function drawers paint saved code and assembly from a lightweight preview on the small-request queue,
+  then load history, drafts, calls, verification and compiler details with visible progress and retry. Both ROM
+  and imported projects retain full analysis; late detailed responses preserve edits and navigation. Baseline
+  evidence lookups use a function/score index and no longer materialize entire historical attempts.

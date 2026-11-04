@@ -292,6 +292,26 @@ class GuiMixin:
         self._diffs[key] = out
         return out | {"kind": kind}
 
+    def function_preview(self, slug: str, name: str) -> dict:
+        """The drawer's first paint reads one function, never generates drafts or inspects whole projects."""
+        from ..function_names import state as name_state
+        fn = self._function(name, slug)
+        proj = self.store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+        cfg = self.cfg(proj)
+        source = fn['matched_source'] or fn['best_source']
+        kind = 'matched' if fn['matched_source'] else 'best' if fn['best_source'] else None
+        if not source:
+            latest = self.store.one('SELECT source FROM attempts WHERE function_id=? AND source IS NOT NULL ORDER BY id DESC LIMIT 1', fn['id'])
+            source = latest['source'] if latest else fn['seed']
+            kind = 'latest' if latest else 'draft' if fn['seed'] else None
+        return {**name_state(fn), **set_aside(fn), 'name': fn['name'], 'unit': fn['unit'],
+                'vram': fn['vram'] or 0, 'rom_offset': fn['rom_offset'] or 0, 'size': fn['size'],
+                'insns': fn['n_insns'], 'status': fn['status'], 'best': fn['best_score'],
+                'source': source, 'source_kind': kind, 'asm': fn['asm'] or '',
+                'scores': [], 'notes': [], 'calls': [], 'called_by': [], 'cross_game_hints': [],
+                'compiler_profile': compiler_for(cfg, fn['vram']) if cfg.get('compiler') else None,
+                'default_compiler': cfg.get('compiler'), 'details_pending': True}
+
     def function_detail(self, slug: str, name: str, *, include_hints=True) -> dict:
         from ...match_bundle import status as bundle_status
         from ..baseline_status import status as baseline_status
@@ -304,8 +324,8 @@ class GuiMixin:
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         from ..function_history import history
         saved_history = history(self.store, fn)
-        latest = self.store.one("SELECT source, score FROM attempts WHERE function_id=? AND source IS NOT NULL "
-                                "ORDER BY id DESC LIMIT 1", fn["id"])
+        latest = None if fn['matched_source'] or fn['best_source'] else self.store.one(
+            "SELECT source, score FROM attempts WHERE function_id=? AND source IS NOT NULL ORDER BY id DESC LIMIT 1", fn['id'])
         x = self.xrefs(proj)
         syms = self.symbols(proj["id"])
         if not (fn["matched_source"] or fn["best_source"] or latest) and fn["status"] == "open":

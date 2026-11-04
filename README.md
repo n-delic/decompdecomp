@@ -1656,3 +1656,9 @@ SDK naming reads narrow metadata and briefly reuses unchanged ROM naming checks 
 projects and active claims retain retry checks). Autosave reuses the project inventory and scopes contributor
 lookups to agents referenced by the saved functions. It still checks for external file edits every second,
 and existing dirty-function tracking still controls what is rendered and written.
+
+The function drawer requests a lightweight saved-data preview first, on the small-request queue. It shows saved
+C and assembly before generating a machine draft or loading history, calls, compiler comparisons and verification.
+A separate status bar follows those details, with retry on failure. Imported projects show saved C first and
+then load their current source and object comparison. Late responses are scoped to the selected function and
+never overwrite unsaved edits. Existing full function API responses and the normal byte judge are unchanged.

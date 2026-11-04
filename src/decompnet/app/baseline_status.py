@@ -20,7 +20,7 @@ def revision():
 def status(net, proj, fn):
     if fn['status']=='matched' or not fn['best_source']:
         return {'state':'not needed','reasons':[]}
-    attempt=net.store.one('SELECT a.*,s.settings FROM attempts a LEFT JOIN repair_attempt_settings s '
+    attempt=net.store.one('SELECT s.settings FROM attempts a LEFT JOIN repair_attempt_settings s '
                           'ON s.attempt_id=a.id WHERE a.function_id=? AND a.source=? AND a.score=? '
                           'ORDER BY a.id DESC LIMIT 1',fn['id'],fn['best_source'],fn['best_score'])
     reasons=[]

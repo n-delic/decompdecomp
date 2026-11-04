@@ -47,7 +47,7 @@ def register(app: App) -> None:
                     if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
-                reader = app.fast_call if request.url.path == '/api/live' else app.ui_call
+                reader = app.fast_call if request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
                 from ...request_timing import response
                 def respond():
                     return response(perform, started, JSONResponse, request.url.path)
@@ -435,7 +435,8 @@ def register(app: App) -> None:
         name = request.query_params.get("name", "")
         # The drawer loads name suggestions separately when its peers disclosure opens.
         # Do not delay the core function response by repeating that cross-project search.
-        detail = net.function_detail(slug, name, include_hints=False)
+        detail = (net.function_preview(slug, name) if request.query_params.get('quick') == '1'
+                  else net.function_detail(slug, name, include_hints=False))
         claim = net.store.one('SELECT a.name FROM claims c JOIN agents a ON a.id=c.agent_id JOIN functions f ON f.id=c.function_id JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=? AND c.expires_at>?', slug, detail['name'], time.time())
         detail['claim_owner'] = claim['name'] if claim else None
         detail['can_handover'] = bool(claim and claim['name'] == 'you')
