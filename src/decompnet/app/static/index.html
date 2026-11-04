@@ -459,6 +459,7 @@
           <label class="field deep-main-budget"><span>Minutes per function</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5"><small>Maximum time for each search.</small></label>
           <details class="deep-advanced"><summary>Advanced settings</summary><div class="deep-advanced-fields">
             <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
+            <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. Local ROM projects only.</small></label>
             <label class="field"><span>Parallel threads</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
             <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
           </div></details>
@@ -796,6 +797,7 @@
           <div class="deep-controls">
             <label class="field"><span>Time limit · minutes</span><input id="fnDeepMinutes" type="number" min="1" max="120" value="30"></label>
             <label class="field"><span>Compile limit</span><input id="fnDeepVariants" type="number" min="1" max="1000000" value="100000"></label>
+            <label class="field"><span>Compiler profiles per candidate</span><input id="fnDeepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. Local ROM projects only.</small></label>
             <div class="deep-actions"><button class="primary small-btn" id="fnDeepRun" type="button">Run deep permuter</button>
             <button class="ghost small-btn" id="fnDeepStop" type="button" hidden>Stop</button></div>
           </div>

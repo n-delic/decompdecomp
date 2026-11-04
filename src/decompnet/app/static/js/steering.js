@@ -1275,6 +1275,7 @@ async function renderDeepSweep() {
       panel.dataset.loadedSlug = slug;
       $("deepSweepMinutes").value = status.minutes;
       $("deepSweepVariants").value = status.max_variants;
+      $("deepSweepProfiles").value = status.compiler_profiles || 1;
       $("deepSweepThreads").value = status.threads || "";
       $("deepSweepRepeat").checked = false;
     }
@@ -1335,7 +1336,7 @@ $("deepSweepStart").onclick = async () => {
   let job = null;
   const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
   try {
-    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), repeat:$("deepSweepRepeat").checked || runAgain, threads:Number($("deepSweepThreads").value) || 0}});
+    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, threads:Number($("deepSweepThreads").value) || 0}});
     job = result.job;
     if (S.slug === slug) renderDeepQueueState(result);
   } catch (error) { showJobError(log, error.message); }

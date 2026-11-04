@@ -2207,6 +2207,13 @@ have a worker-specific index. Global agent views and reset/lifetime accounting r
 Completed: the function drawer defers optional cross-project and SDK name similarity work to the
 existing peers disclosure request, for both ROM and imported projects.
 
+- Done: local ROM deep searches offer 1–16 compiler profiles per C candidate, default first then
+  distinct profiles ranked by matched-function usage. Tests and exact-bundle verification share the
+  compile allowance; misses are cached per profile. Project-wide passes remember the count and
+  invalidate completed scopes when it changes. Imported-build and host-owned room profile search
+  needs separate build/host support and remains planned.
+
+
 
 Completed: deep-pass polling reuses revision-scoped queue/error checks; ROM maps cache cross-project
 byte relationships; compiler display reads use covering metadata and separate automatic maintenance;

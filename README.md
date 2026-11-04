@@ -1071,6 +1071,17 @@ reach it. No AI tokens are used by these searches.
 
 For a longer search of one function, open its drawer and expand **Deep permuter · this function**.
 Choose a time limit and maximum candidate compiles, then select **Run deep permuter**.
+For local ROM projects, **Compiler profiles per candidate** selects how many profiles each local/random
+C variant is tried against: **1** uses the project default; **2** adds the distinct alternative used by
+the most matched functions. Higher counts add further profiles in that order, including differences in
+flags. Profiles with no matches are excluded. The same setting is available on the project-wide pass.
+Each source/profile test uses the shared compile allowance, so increasing this count tests fewer distinct
+C variants within the same budget. Exact alternatives reserve verification allowance and go through the
+existing function-only source/header/profile check, respecting automatic compiler changes. Alternative
+near-miss scores are retained as diagnostic evidence, without replacing the saved current-profile score.
+Changing the profile count makes completed project-pass entries eligible again. Imported projects and
+rooms keep their build/host compiler settings; multiple-profile searches are not available there.
+
 The scorecard shows the freshly measured starting score and percentage, the current best, and how many
 verified score reductions this run found. Local repairs and random rewrites share that improvement count.
 Expand **Technical output** for compiler diagnostics; the progress bar stays visible when output is closed. **Stop** ends the job

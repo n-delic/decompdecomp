@@ -549,6 +549,23 @@ def test_queue_separates_rotated_errors_and_removed_functions(sweep):
     assert calls == []
 
 
+def test_profile_count_is_remembered_forwarded_and_invalidates_completion(sweep, monkeypatch):
+    obj, net, _, _ = sweep
+    counts = []
+    def search(net, slug, name, minutes, variants, log, compiler_profiles=1):
+        counts.append(compiler_profiles)
+        return {'tested':2, 'matched':False, 'reason':'Time limit reached', 'best_score':50,
+                'compiler_profiles':compiler_profiles}
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    obj.save('game', {'enabled':False, 'minutes':1, 'max_variants':10, 'compiler_profiles':1})
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 2
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
+    obj.save('game', {**obj.config('game'), 'compiler_profiles':2})
+    assert obj.config('game')['compiler_profiles'] == 2
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 2
+    assert counts == [1, 1, 2, 2]
+
+
 def test_status_reuses_scope_checks_until_header_or_pass_changes(sweep, monkeypatch):
     obj, net, _, _ = sweep
     obj.save('game', {'enabled': False, 'minutes': 1, 'max_variants': 10})
@@ -585,3 +602,19 @@ def test_queue_batches_state_and_loads_fresh_function_at_dispatch(sweep, monkeyp
     obj.run('game',1,10,Log())
     assert calls == ['f1']
     assert any('LEFT JOIN deep_permutation_passes' in sql and 'LIMIT 128' in sql for sql in reads)
+
+
+def test_cached_queue_and_attention_refresh_when_profile_count_changes(sweep):
+    obj, net, _, _ = sweep
+    cfg={'enabled':False,'minutes':1,'max_variants':10,'compiler_profiles':1}
+    obj.save('game',cfg)
+    proj=net.project_row('game')
+    for name,state in [('f0','completed'),('f1','error')]:
+        fn=net._function(name,'game')
+        obj.record(fn,deep_sweep.signature(net,proj,fn,1,10),state,1,10,error='compile failed' if state=='error' else '')
+    first=obj.status('game')
+    assert first['queue_done']==1 and first['queue_blocked']==1 and len(first['attention'])==1
+    obj.save('game',cfg | {'compiler_profiles':2})
+    changed=obj.status('game')
+    assert changed['queue_done']==0 and changed['queue_blocked']==0 and changed['queue_left']==2
+    assert changed['attention']==[]

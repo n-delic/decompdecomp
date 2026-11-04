@@ -525,6 +525,28 @@ class Search(Permuter):
             self.phase = previous
 
     def _score(self, agent, proj, fn, source, best, fork):
+        from . import deep_profiles
+        if self.measuring_baseline or not hasattr(self, 'compiler_profiles') or fork:
+            return self._score_current(agent, proj, fn, source, best, fork)
+        own = compiler_for(self.net.cfg(proj), fn['vram'])
+        own_flags = own['flags'].split() if isinstance(own['flags'], str) else own['flags']
+        score = None
+        for profile in self.compiler_profiles:
+            self.check()
+            if profile['toolchain'] == own['toolchain'] and profile['flags'] == own_flags:
+                measured = self._score_current(agent, proj, fn, source, best, fork)
+                if measured is not None:
+                    score = measured
+                    best = min(best, measured)
+            else:
+                if proj['slug'] in self.net.links:
+                    continue  # A room host owns profile changes; no local profile promotion can bypass it.
+                measured = deep_profiles.probe(self, agent, proj, fn, source, profile)
+            if measured == 0:
+                return 0
+        return score
+
+    def _score_current(self, agent, proj, fn, source, best, fork):
         self.check()
         self.visited += 1
         if not fork and not self.measuring_baseline and source != fn['best_source']:
@@ -604,26 +626,35 @@ class Search(Permuter):
         return score
 
 
-def run(net, slug, name, minutes, max_variants, log):
+def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
     # One explicit deep search per function, including credential issuance. Agents may keep working.
     fn = net._function(name, slug)
     lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())
     if not lock.acquire(blocking=False):
         raise NetworkError('A deep search is already running for this function.')
     try:
-        return _run(net, slug, name, minutes, max_variants, log)
+        return _run(net, slug, name, minutes, max_variants, log, compiler_profiles)
     finally:
         lock.release()
 
 
-def _run(net, slug, name, minutes, max_variants, log):
+def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
     proj, fn = validate(net, slug, name, minutes, max_variants)
     sweeps = getattr(net, 'deep_sweeps', None)
     if sweeps:
         from ..candidate_scope import key
         build_scope = key(net, proj, fn)
+    from . import deep_profiles
+    deep_profiles.validate(compiler_profiles)
+    if compiler_profiles > 1 and (net.fork_slug(slug) or slug in net.links):
+        raise NetworkError('Multiple compiler profiles require a local ROM project; imported builds and rooms own their compiler settings.')
     search = Search(net, minutes, max_variants, log, fn)
+    if not net.fork_slug(slug) and slug not in net.links:
+        search.compiler_profiles = deep_profiles.selected(net, proj, compiler_profiles)
+        for profile in search.compiler_profiles:
+            log('Selected profile: '+profile['toolchain']+' '+' '.join(profile['flags']))
+        log('Compiler profiles per candidate: '+str(len(search.compiler_profiles))+'. Default first; other profiles ranked by matched-function usage. Each profile test uses compile allowance.')
     if sweeps:
         search.record_improvement = lambda score: sweeps.improvement(fn, score)
     search.report()
@@ -740,6 +771,7 @@ def _run(net, slug, name, minutes, max_variants, log):
     result = {'function': name, 'reason': reason, 'tested': search.tested, 'skipped': search.skipped,
               'rejected': search.rejected, 'refinement_rounds': search.refinement_rounds,
               'matched': net._function(name, slug)['status'] == 'matched', **search.metrics()}
+    result['compiler_profiles'] = compiler_profiles
     if sweeps:
         sweeps.completed(slug, fn, minutes, max_variants, result, build_scope)
     return result
