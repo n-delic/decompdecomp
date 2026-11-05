@@ -90,6 +90,8 @@ def test_repair_metadata_is_small_and_details_are_exact(data,monkeypatch):
 def test_retention_keeps_current_referenced_successful_and_latest_sources(data):
     net,fid=data
     old=add(net,fid,'discard')
+    with net.store.tx() as db:
+        db.execute('INSERT INTO repair_attempt_settings VALUES(?,?)',(old,'{}'))
     best=add(net,fid,'best');seed=add(net,fid,'seed');hint=add(net,fid,'hint')
     success=add(net,fid,'successful',12,1)
     latest=add(net,fid,'latest')
@@ -101,6 +103,7 @@ def test_retention_keeps_current_referenced_successful_and_latest_sources(data):
     assert net.store.one('SELECT source FROM attempts WHERE id=?',old)['source'] is None
     for a in (best,seed,hint,success,latest):assert net.store.one('SELECT source FROM attempts WHERE id=?',a)['source']
     assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==6
+    assert net.store.one('SELECT settings FROM repair_attempt_settings WHERE attempt_id=?',old)['settings']=='{}'
 
 
 def test_history_page_never_decodes_payloads_and_details_are_scoped(data,monkeypatch):

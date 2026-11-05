@@ -19,8 +19,9 @@ indexes dropped: the required history query already uses a covering index. Packi
 
 Retention is disabled by default. Users can remove source for old, unsuccessful attempts with no score,
 or save a daily automatic rule. Selection and clearing happen in one transaction per bounded batch.
-Current seed/best/matched source, the last attempt for each worker/function, all foreign-key references,
-known attempt-reference columns and nested repair evidence references are protected. Attempt rows and
+Current seed/best/matched source, the last attempt for each worker/function, foreign-key references from evidence consumers,
+known attempt-reference columns and nested repair evidence references are protected. Per-attempt
+settings, provenance and history revision metadata are retained but do not prevent source expiry. Attempt rows and
 lifetime metrics remain. Stopping keeps completed batches; no rollback of earlier batches is implied.
 
 Packing and cleanup make pages reusable inside SQLite. The existing Settings → Saved C header history

@@ -65,10 +65,14 @@ def pack(net,log):
 
 
 def _protection(store):
-    # Keep every foreign-key-referenced attempt, even if a newer feature adds another evidence table.
+    # Preserve source referenced by evidence consumers, including future foreign-key tables.
     clauses=[]
     for row in store.all("SELECT name FROM sqlite_master WHERE type='table'"):
-        name=row['name'];quoted='"'+name.replace('"','""')+'"'
+        name=row['name']
+        # These records describe the attempt itself, rather than retaining its source
+        # for another consumer. Keep their IDs/settings while expiring only source.
+        if name in ('repair_attempt_settings','repair_attempt_provenance','history_rewrites'):continue
+        quoted='"'+name.replace('"','""')+'"'
         for column in store.all('PRAGMA table_info('+quoted+')'):
             if column['name'] in ('attempt_id','before_attempt_id','after_attempt_id','baseline_attempt_id','previous_attempt_id'):
                 col='"'+column['name']+'"'
