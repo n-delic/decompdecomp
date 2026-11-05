@@ -75,7 +75,7 @@ def run(net, slug, selected, log=print, nonmatches=False):
     state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
                       or headers() != original_headers or signature(latest_candidates) != signature(candidates))
     state['compatible'] = bool(candidates) and state['failed'] == 0 and not state['stale']
-    log('Test finished. Settings, matches and saved scores are unchanged.' + (' Inputs changed during the test; rerun before making a decision.' if state['stale'] else ''))
+    log('Test finished. Settings, matches and saved scores are unchanged.' + ((' Inputs changed during the test; passing results can be freshly rechecked and applied.' if nonmatches else ' Inputs changed during the test; rerun before making a decision.') if state['stale'] else ''))
     return state
 
 
