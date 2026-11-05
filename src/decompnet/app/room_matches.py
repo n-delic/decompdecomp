@@ -360,9 +360,9 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
     return result
 
 
-def send(link,agent,function,source):
+def send(link,agent,function,source, *, evidence=None):
     net,slug=link.net,link.slug
-    evidence=packet(net,slug,function,source)
+    if evidence is None:evidence=packet(net,slug,function,source)
     room=link.url+'/'+link.room
     key,item=save(net,slug,'client',agent,function,source,evidence,room)
     try:
