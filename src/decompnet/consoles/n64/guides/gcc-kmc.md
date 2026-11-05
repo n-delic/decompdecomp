@@ -822,3 +822,14 @@ A source association is not a register prescription. Stale/missing line informat
 provides no proposal. Preserve compiler flags and exact checking; the first held-out
 sweep did not improve the two motivating residuals, so do not repeat exhausted shapes
 without a new source/context/evidence hypothesis.
+
+### Pure address helpers can interact with branch scope and debug lines
+
+With `-O2 -g3`, a real byte-offset pointer accessor may change delay-slot scheduling
+without changing an access. One measured scheduler needed three source choices together:
+a private inline signed-halfword address helper, braces around existing if/else assignment
+arms, and two adjacent calls on one physical line (370 →200 →exact472 linked bytes).
+The minimal helper alone did not help. The shared `inline_byte_address` bundle tries a
+bounded, typed version of these shapes; it never adds volatile, changes the ABI or
+moves an effect. Keep qualifiers backed by actual behavior, preserve verified source
+line breaks, and check actual callback signatures before accepting a low-score draft.

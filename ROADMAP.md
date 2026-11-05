@@ -2531,3 +2531,9 @@ need independent evidence before receiving this specific GNU C repair.
   imported/debug-object formats. Missing or stale maps cannot supply targeted edits.
 - Measured limit: the 22-case copied held-out sweep produced no new matches or score
   improvements. Sixteen fewer broad line trials did not reduce total trial count.
+
+- Done: shared draft, agent and deep repair discovery includes bounded pure integer
+  byte-address inline helpers, conservative if/else expression-arm scopes and adjacent
+  call-line bridges. It preserves types/evaluation order, rejects opaque preprocessing
+  and qualifiers, rotates bridges across accessor sites, and relies on ordinary exact
+  judging; host semantic and pinned period-compiler regressions cover the supported C.
