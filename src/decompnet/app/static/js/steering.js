@@ -337,26 +337,31 @@ function renderAutopilot(ov) {
   const run = $("crossGameRun"), minutes = $("crossGameMinutes"), attempts = $("crossGameAttempts");
   const preset = $("crossGamePreset"), stop = $("crossGameStop");
   stop.hidden = !run._working || $("crossGameLog")._slug !== ov.slug;
+  run.hidden = !stop.hidden;
   const budgetKey = `cross-game-budget:${ov.slug}`;
   if (minutes._slug !== ov.slug) {
     let saved;
     try { saved = JSON.parse(localStorage.getItem(budgetKey)); } catch (_) { /* Storage may be unavailable. */ }
-    minutes.value = saved?.minutes || 2; attempts.value = saved?.attempts || 128;
+    // Migrate only the old default pair; keep explicitly saved Quick and custom budgets.
+    if (saved && !saved.version && saved.minutes === 2 && saved.attempts === 128) saved = {...saved, minutes:20};
+    minutes.value = saved?.minutes || 20; attempts.value = saved?.attempts || 128;
     minutes._slug = ov.slug;
-    preset.value = saved ? 'custom' : 'quick';
+    preset.value = saved?.preset || (Number(minutes.value) === 20 && Number(attempts.value) === 128 ? 'standard' : 'custom');
   }
   const saveBudget = () => {
-    try { localStorage.setItem(budgetKey, JSON.stringify({minutes: Number(minutes.value), attempts: Number(attempts.value)})); }
+    try { localStorage.setItem(budgetKey, JSON.stringify({version:2, preset:preset.value, minutes: Number(minutes.value), attempts: Number(attempts.value)})); }
     catch (_) { /* The search still works when device storage is unavailable. */ }
   };
   minutes.onchange = attempts.onchange = () => { preset.value = 'custom'; saveBudget(); };
   preset.onchange = () => {
-    const values = {quick: [2, 128], thorough: [60, 10000], overnight: [720, 100000]}[preset.value];
+    const values = {standard: [20, 128], quick: [2, 128], thorough: [60, 10000], overnight: [720, 100000]}[preset.value];
     if (values) { [minutes.value, attempts.value] = values; saveBudget(); }
   };
   const busy = ov.twins?.state === 'running' || ov.autopilot?.state === 'running';
   run.disabled = !!run._working || busy;
-  run.textContent = busy || run._working ? 'Checking…' : 'Run now';
+  run.textContent = busy || run._working ? 'Searching…' : 'Start search';
+  const logState = $("crossGameLog");
+  $("crossGameState").textContent = run._working ? logState._slug === ov.slug ? logState._state || "Searching other games" : "A search is running in another project" : busy ? "A free matching pass is running" : logState._slug === ov.slug && logState._state ? logState._state : "Ready to search";
   run.onclick = async () => {
     if (run._working || !minutes.reportValidity() || !attempts.reportValidity()) return;
     body.hidden = false; collapsed.delete(ov.slug);
@@ -365,43 +370,63 @@ function renderAutopilot(ov) {
     const seconds = Number(minutes.value) * 60, limit = Number(attempts.value);
     const slug = ov.slug, log = $("crossGameLog");
     const status = $("crossGameBudgetStatus"), bar = $("crossGameBudgetBar");
-    status.textContent = `Preparing · 0 / ${limit.toLocaleString()} checks used · ${seconds.toLocaleString()} second limit`;
+    status.textContent = `Preparing · 0 / ${limit.toLocaleString()} checks used · ${Number(minutes.value).toLocaleString()} min limit`;
     bar.setAttribute('aria-valuemax', String(limit)); bar.setAttribute('aria-valuenow', '0');
-    bar.firstElementChild.style.width = '0%';
-    log._showJobProgress = true;
-    run._working = true; log._slug = slug; $("crossGameWork").hidden = false;
+    bar.firstElementChild.style.width = '0%'; bar.hidden = true;
+    $("crossGamePhaseStatus").textContent = 'Preparing the search…';
+    $("crossGamePhaseBar").hidden = true;
+    log._state = 'Searching other games'; $("crossGameState").textContent = log._state;
+    log._showJobProgress = false;
+    run._working = true; run.hidden = true; run.textContent = "Starting…"; log._slug = slug; $("crossGameWork").hidden = false;
     showJobError(log, '');
     const finish = beginWork(log, 'Checking other games', [run, minutes, attempts, preset], 'Cross-game check finished.');
     stop.hidden = false; stop.disabled = true;
     try {
       const {job} = await api('/api/cross-game/run', {method:'POST', body:{slug, seconds, attempts: limit}});
-      stop.disabled = false;
+      stop.disabled = false; run.textContent = 'Searching…';
       stop.onclick = async () => {
-        stop.disabled = true;
+        stop.disabled = true; stop.textContent = 'Stopping…';
+        if (S.slug === slug) $("crossGameState").textContent = 'Stopping search…';
         try { await api('/api/job/cancel', {method:'POST', body:{id: job}}); }
-        catch (error) { stop.disabled = false; showJobError(log, error.message); }
+        catch (error) { stop.disabled = false; stop.textContent = "Stop"; if(S.slug === slug) {$("crossGameState").textContent = "Searching other games"; $("crossGamePhaseStatus").textContent = "Could not stop: " + error.message;} showJobError(log, error.message); }
       };
       const result = await followJob(job, log, (_lines, snapshot) => {
         const p = snapshot.progress;
         if (!p || S.slug !== slug) return;
         const elapsed = snapshot.state === 'running' && snapshot.t ? Math.max(0, Date.now() / 1000 - snapshot.t) : p.seconds;
-        status.textContent = `${p.attempts.toLocaleString()} / ${p.attempt_limit.toLocaleString()} checks used · ${Math.round(elapsed).toLocaleString()} / ${p.second_limit.toLocaleString()} seconds · ${p.confirmed} verified matches`;
+        status.textContent = `${p.attempts.toLocaleString()} / ${p.attempt_limit.toLocaleString()} checks used · ${Math.floor(elapsed / 60)}m ${Math.floor(elapsed % 60)}s elapsed · ${Math.round(p.second_limit / 60)} min limit · ${p.confirmed} verified this run`;
+        const known = p.total > 0 && p.done != null;
+        $("crossGamePhaseStatus").textContent = `${p.phase || 'Checking candidates'}${known ? ` · ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${Math.floor(100 * p.done / p.total)}%)` : ''}${p.game ? ` · ${p.game}` : ''}${p.function ? ` · ${p.function}` : ''}`;
+        const phaseBar = $("crossGamePhaseBar"); phaseBar.hidden = !known;
+        if (known) { phaseBar.max = p.total; phaseBar.value = p.done; }
+        bar.hidden = !p.attempts;
         bar.setAttribute('aria-valuemax', String(p.attempt_limit)); bar.setAttribute('aria-valuenow', String(p.attempts));
         bar.firstElementChild.style.width = `${Math.min(100, 100 * p.attempts / p.attempt_limit)}%`;
       });
-      if (S.slug === slug) { await poll(false); refreshMap(); }
+      log._state = 'Search complete';
+      if (S.slug === slug) {
+        $("crossGameState").textContent = log._state;
+        $("crossGamePhaseBar").hidden = true;
+        $("crossGamePhaseStatus").textContent = `${result.matched} verified ${result.matched === 1 ? "match" : "matches"} · ${result.improved} partial ${result.improved === 1 ? "improvement" : "improvements"} saved. You can run another search.`;
+        await poll(false); refreshMap();
+      }
       toast(`${result.matched} matches · ${result.improved} partial improvements from other games.`, 'match');
-    } catch (error) { showJobError(log, error.message); }
-    finally { finish(); stop.hidden = true; run._working = false; run.textContent = 'Run now'; }
+    } catch (error) {
+      log._state = /stopp|cancel/i.test(error.message) ? 'Search stopped' : 'Search could not finish';
+      if (S.slug === slug) { $("crossGameState").textContent = log._state; $("crossGamePhaseStatus").textContent = error.message; $("crossGamePhaseBar").hidden = true; }
+      showJobError(log, error.message);
+    }
+    finally { finish(); stop.hidden = true; stop.textContent = 'Stop'; run._working = false; run.hidden = false; run.textContent = 'Start search'; }
   };
   const cross = ov.cross_game || { counts: {}, recent: [] };
   const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
   $("crossGamePanel").hidden = false;
-  $("crossGameSummary").innerHTML = `<div class="transfer-totals"><span><strong>${count.toLocaleString()}</strong> verified matches</span><span><strong>${(cross.counts.improved || 0).toLocaleString()}</strong> partial improvements</span><span><strong>${tried.toLocaleString()}</strong> attempts</span></div>${ov.free_search?.seconds > 0 ? `<p>Last free pass <b>${ov.free_search.matched} matches</b> from ${ov.free_search.attempts} checks</p>` : ''}`;
+  $("crossGameSummary").innerHTML = `<p class="transfer-saved-caption">Saved across runs</p><div class="transfer-totals" aria-label="Saved results across runs"><span><strong>${count.toLocaleString()}</strong> verified matches</span><span><strong>${(cross.counts.improved || 0).toLocaleString()}</strong> partial improvements</span><span><strong>${tried.toLocaleString()}</strong> candidate checks</span></div>`;
   const discovery = cross.discovery;
   $("crossGameSummary").innerHTML += discovery
-    ? `<p><b>${discovery.detected.toLocaleString()}</b> functions with shared code detected · <b>${discovery.ready.toLocaleString()}</b> ready to test · <b>${discovery.blocked.toLocaleString()}</b> need writable C scaffolding.</p><p class="muted small">Signatures are leads, not recovered C. Run now prepares supported assembly-only units and tests candidates with this project's judge. Unsupported builds keep their original setup.</p>${discovery.block_reason ? `<p class="muted small">Setup blocker: ${esc(discovery.block_reason)}</p>` : ''}`
-    : `<p class="muted small">Run now to detect shared code, including assembly-only functions, across local projects and SDKs.</p>`;
+    ? `<details class="transfer-context"><summary>Shared-code leads <span class="muted">· ${discovery.ready.toLocaleString()} ready to test</span></summary><p><b>${discovery.detected.toLocaleString()}</b> functions with shared code detected · <b>${discovery.ready.toLocaleString()}</b> ready to test · <b>${discovery.blocked.toLocaleString()}</b> need writable C scaffolding.</p><p class="muted small">Signatures are leads, not recovered C. The search prepares supported assembly-only units and tests candidates with this project's judge. Unsupported builds keep their original setup.</p>${discovery.block_reason ? `<p class="muted small">Setup blocker: ${esc(discovery.block_reason)}</p>` : ''}</details>`
+    : "";
+  if (ov.free_search?.seconds > 0) $("crossGameSummary").innerHTML += `<details class="transfer-context"><summary>Last free matching pass</summary><p>${ov.free_search.matched} matches from ${ov.free_search.attempts} checks. The saved totals above cover cross-game transfers.</p></details>`;
   const renderTransfers = () => {
     const filter = $("crossGameFilter").value;
     const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match')) : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
@@ -418,7 +443,7 @@ function renderAutopilot(ov) {
       return `<li class="transfer-row"><div class="transfer-target">${targetLink}<span class="transfer-status ${matched ? 'verified' : improved ? 'improved' : ''}">${esc(status)}</span></div>
         <div class="transfer-source"><span>From ${esc(r.game)}</span>${sourceLink}</div>
         <div class="transfer-score ${improved ? 'improved' : ''}" title="${esc(r.reason || (matched ? 'The receiving game verified identical bytes.' : 'No scored result.'))}"><strong>${esc(scoreText)}</strong><span>${matched ? 'Byte for byte' : score ? 'Mismatch score · lower is better' : hint || 'Not compiled'}</span>${score && hint ? `<span>${hint}</span>` : ''}</div></li>`;
-    }).join('') || `<li class="transfer-empty">${filter === 'matches' ? 'No verified transfers to show.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : 'No recent transfer attempts.'}</li>`;
+    }).join('') || `<li class="transfer-empty">${filter === 'matches' ? 'No verified matches yet. Start a search to check your other games and local SDKs.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : 'No recent transfer attempts.'}</li>`;
   };
   $("crossGameRecent").onclick = e => {
     const button = e.target.closest("button[data-transfer-function]");

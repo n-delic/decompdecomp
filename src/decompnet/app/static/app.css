@@ -1862,3 +1862,60 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .boundary-assembly span { display:block; }
 .boundary-inside { color:var(--ink); background:color-mix(in srgb,var(--hl) 12%,transparent); }
 #fnBoundaryRepair { margin-bottom:16px; }
+
+/* Cross-game reuse: one search dashboard, compact limits, readable saved results. */
+#crossGamePanel .panel-head h2 { flex:1; }
+.transfer-local-badge { font-size:10px; color:var(--muted); padding:4px 9px; border:1px solid var(--line-soft); border-radius:99px; white-space:nowrap; }
+.transfer-intro { padding:18px 20px 0; margin:0; color:var(--muted); font-size:12px; line-height:1.7; }
+.transfer-dashboard { margin:16px 20px; padding:18px; border:1px solid var(--line-soft); border-radius:var(--r); background:var(--raise); }
+.transfer-run-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--line-soft); }
+.transfer-run-heading h3 { margin:0; font-size:15px; letter-spacing:-.02em; }
+.transfer-run-heading h3::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:9px; background:var(--hl); }
+.transfer-dashboard .transfer-summary { padding:18px 0 0; border:0; }
+.transfer-totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0; }
+.transfer-totals > span { display:grid; gap:6px; align-content:start; border-left:1px solid var(--line-soft); padding:0 18px; font-size:11px; }
+.transfer-totals > span:first-child { border:0; padding-left:0; }
+.transfer-totals strong { font:650 28px/1.1 var(--sans); letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
+.transfer-totals > span:first-child strong { color:var(--match); }
+.transfer-context { margin-top:16px; font-size:11px; color:var(--muted); }
+.transfer-context summary { cursor:pointer; }
+.transfer-context p { line-height:1.7; }
+#crossGameWork { border:0; border-top:1px solid var(--line-soft); padding:16px 0 0; margin-top:16px; }
+.transfer-phase { margin:0 0 10px; font-size:12px; line-height:1.65; overflow-wrap:anywhere; }
+.transfer-phase-bar { appearance:none; width:100%; height:6px; border:0; border-radius:99px; overflow:hidden; background:var(--line-soft); accent-color:var(--hl); }
+.transfer-phase-bar::-webkit-progress-bar { background:var(--line-soft); }
+.transfer-phase-bar::-webkit-progress-value { background:var(--hl); border-radius:99px; }
+.transfer-phase-bar::-moz-progress-bar { background:var(--hl); }
+#crossGameBudgetStatus { font-size:11px; margin:8px 0; line-height:1.6; }
+#crossGameBudgetBar { height:3px; margin:8px 0 12px; }
+#crossGameBudgetBar[hidden], #crossGamePhaseBar[hidden] { display:none; }
+.transfer-technical { font-size:11px; color:var(--muted); margin-top:12px; }
+.transfer-technical summary { cursor:pointer; }
+.transfer-controls { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px 24px; padding:0 20px 18px; border-bottom:1px solid var(--line-soft); }
+.transfer-time { display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted); }
+.transfer-time input { width:80px; }
+.transfer-advanced { padding-top:9px; font-size:12px; color:var(--muted); }
+.transfer-advanced > summary { cursor:pointer; }
+.transfer-budgets { padding-top:14px; align-items:start; }
+.transfer-budgets label { color:var(--muted); min-width:150px; flex:1; }
+.transfer-budgets input { width:100%; }
+.transfer-controls > p { grid-column:1/-1; margin:0; font-size:11px; }
+.transfer-results-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding:18px 20px 8px; }
+.transfer-results-heading h3 { margin:0; font-size:14px; }
+.transfer-results-heading label { display:flex; align-items:center; gap:9px; color:var(--muted); font-size:11px; }
+.transfer-list { padding:0 20px 18px; display:grid; gap:10px; }
+.transfer-row { border:1px solid var(--line-soft); border-radius:var(--r); padding:16px; background:var(--raise); gap:14px 24px; }
+.transfer-row + .transfer-row { border-top:1px solid var(--line-soft); }
+.transfer-status { justify-self:start; font-size:10px; }
+.transfer-score { padding-left:18px; border-left:1px solid var(--line-soft); }
+.transfer-empty { padding:20px 16px; border:1px dashed var(--line-soft); border-radius:var(--r); line-height:1.7; }
+@media(max-width:650px) {
+ .transfer-dashboard { margin:14px; padding:14px; }
+ .transfer-intro { padding:14px 14px 0; }
+ .transfer-controls { padding:0 14px 16px; grid-template-columns:1fr; gap:10px; }
+ .transfer-totals > span { padding:0 10px; }
+ .transfer-totals strong { font-size:24px; }
+ .transfer-list { padding:0 14px 16px; }
+ .transfer-results-heading { padding:16px 14px 10px; }
+}
+.transfer-dashboard .transfer-saved-caption { font-size:10px; color:var(--muted); margin:0 0 12px; }

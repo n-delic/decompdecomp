@@ -11,7 +11,7 @@ MAX_ATTEMPTS = 1_000_000
 def limits(data):
     """Reject invalid budgets before reserving a worker; long manual passes remain finite and stoppable."""
     result = []
-    for key, default, maximum in (("seconds", 120, MAX_SECONDS), ("attempts", 128, MAX_ATTEMPTS)):
+    for key, default, maximum in (("seconds", 20 * 60, MAX_SECONDS), ("attempts", 128, MAX_ATTEMPTS)):
         value = data.get(key, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 1 <= value <= maximum or int(value) != value:
             raise NetworkError(f"Choose a whole number of {key} between 1 and {maximum:,}.")
