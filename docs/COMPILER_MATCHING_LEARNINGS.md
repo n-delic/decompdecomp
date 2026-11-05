@@ -4567,7 +4567,8 @@ body narrowing, and correcting all four caller prototypes made the wrapper and
 all four callers byte-exact. Do not infer a narrow formal solely from `sll`/`sra`
 in the callee, or restore an unspecified prototype to conceal the discrepancy.
 
-The frozen profiles were GCC 2.7.2 KMC, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+The five width-case profiles were GCC 2.7.2 KMC,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
 An expanded 24-source caller/interface correction set passed individual linked
 byte comparisons and an independent complete 12,582,912-byte cartridge build;
 all 2,069 compiler profiles and 2,045 other selected C objects stayed unchanged.
