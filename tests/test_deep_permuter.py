@@ -453,7 +453,7 @@ def test_source_recipe_lineage_and_old_diff_are_reset_when_a_profile_changes(mon
     assert not net.store.one('SELECT 1 FROM repair_sequences')
 
 
-def test_room_claims_renew_release_and_host_rejection(monkeypatch):
+def test_room_claims_renew_release_and_pending_local_match(monkeypatch):
     import time
     from types import SimpleNamespace
 
@@ -474,20 +474,19 @@ def test_room_claims_renew_release_and_host_rejection(monkeypatch):
     search.room_holds[1] = (link, agent, name, time.monotonic()-31)
     search.check()
     assert len([c for c in calls if c[0] == 'claim']) == 2
+    from decompnet.app import deep_room
+    monkeypatch.setattr(deep_room,'best',lambda *args:calls.append(('/collab/best',{})))
+    monkeypatch.setattr(deep_room,'submit',lambda *args:{'matched':False,'pending':True})
     search._accept_candidate(AGENT, net.project_row('game'), net.function(), 'draft', SimpleNamespace(bytes_match=False, score=20))
     assert calls[-1][0] == '/collab/best'
-    with pytest.raises(NetworkError, match='host could not confirm'):
-        search._accept_candidate(AGENT, net.project_row('game'), net.function(), 'draft', SimpleNamespace(bytes_match=True))
+    search._accept_candidate(AGENT, net.project_row('game'), net.function(), 'draft', SimpleNamespace(bytes_match=True))
     search._let_go(AGENT, net.function())
-    assert calls[-1][0] == '/collab/release'
-    assert calls[-1][1]['notes'] == ''
     assert not net.store.one('SELECT 1 FROM claims')
     assert search._hold(AGENT, net.function())
     def offline(*args, **kwargs):
         raise NetworkError('host offline')
     monkeypatch.setattr(link, 'call', offline)
-    with pytest.raises(NetworkError, match='host offline'):
-        search._let_go(AGENT, net.function())
+    search._let_go(AGENT, net.function())
     assert not net.store.one('SELECT 1 FROM claims')
 
 

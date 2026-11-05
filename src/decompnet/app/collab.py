@@ -477,6 +477,10 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         """A member's attempt got better: kept as the function's best so far, as reported (no compile here: the host
         only spends its CPU on verifying matches)."""
         agent = room.agent_for(member, d.get("agent"))
+        if not room.fork and d.get('evidence') is not None:
+            from .deep_room import comparable
+            if not comparable(net,room.slug,str(d.get('function','')),d['evidence']):
+                return {'ok':False,'reason':'Saved score uses different build inputs; local candidate retained.'}
         net.apply_reported_best(room.slug, str(d.get("function", "")), int(d.get("score", 0)), str(d.get("source", ""))[:65536], agent)
         return {"ok": True}
 
@@ -731,11 +735,12 @@ class Link:
 
     def _req(self, method: str, path: str, data: dict | None = None) -> dict:
         headers = {"authorization": f"Bearer {self.token}", "x-room": self.room}
+        quick={'timeout':httpx.Timeout(5,connect=3)} if path in ('/collab/claim','/collab/release','/collab/best') else {}
         try:
             if method == "GET":
-                r = self.client.get(f"{self.url}{path}", params={**(data or {}), "room": self.room}, headers=headers)
+                r = self.client.get(f"{self.url}{path}", params={**(data or {}), "room": self.room}, headers=headers, **quick)
             else:
-                r = self.client.post(f"{self.url}{path}?room={self.room}", json=data or {}, headers=headers)
+                r = self.client.post(f"{self.url}{path}?room={self.room}", json=data or {}, headers=headers, **quick)
         except httpx.HTTPError as e:
             self.error = f"can't reach the host ({type(e).__name__})"
             raise NetworkError(f"the room's host isn't reachable right now: {self.error}") from None
@@ -827,6 +832,8 @@ class Link:
         if not self.fork:
             from .room_matches import pump
             pump(self)
+            from . import deep_room
+            deep_room.pump(self)
 
     def _save_saved_progress(self) -> None:
         """Keep queued work in its own small table, not in projects.config (parsed on every project access): a guest

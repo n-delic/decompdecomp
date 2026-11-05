@@ -391,3 +391,44 @@ def test_deep_profile_probe_sends_exact_bundle_to_real_host_judge(pair):
     assert 'ROOM_TIMER 60' in host._context(hfn['project_id'],hfn['unit'])['header']
     assert host.cfg(host.project_row(slug))['compiler']['flags']==['-O0']
     assert guest.cfg(guest.project_row(gslug))['compiler']['flags']==['-O0']
+
+
+def test_offline_deep_search_verifies_locally_then_delivers_exact_match(pair):
+    from types import SimpleNamespace
+
+    from decompnet.app import deep_permuter, deep_room
+    from tests.test_deep_permuter import Log
+    host,slug,guest,gslug=pair
+    agent,_=guest.local_agent('offline-deep');remote,_=host.local_agent('reconnected-deep')
+    requests=[]
+    def request(method,path,data):
+        requests.append(path)
+        return room_matches.verify(host,slug,remote,data['function'],data['source'],data['evidence'])
+    link=SimpleNamespace(net=guest,slug=gslug,url='http://host',room='room',error="can't reach the host (ReadTimeout)",_req=request)
+    guest.links[gslug]=link
+    fn=guest._function('func_80000808',gslug);proj=guest.project_row(gslug)
+    search=deep_permuter.Search(guest,1,10,Log(),fn)
+    assert search._hold(agent,fn,count_turn=False)
+    assert search._score_work(agent,proj,fn,DAMAGE,999999,None)==0
+    assert guest._function(fn['name'],gslug)['status']=='matched'
+    assert host._function(fn['name'],slug)['status']=='open'
+    queued=room_matches.pending(guest,gslug,'client')
+    assert len(queued)==1 and queued[0]['evidence']['compiler']
+    assert not requests
+    search._let_go(agent,fn)
+    link.error=''
+    assert room_matches.resend(link,queued[0]['key'])['matched']
+    assert host._function(fn['name'],slug)['status']=='matched'
+    assert not room_matches.pending(guest,gslug,'client')
+    assert not deep_room.offline(link)
+
+
+def test_offline_best_scores_require_identical_host_inputs(pair):
+    from decompnet.app import deep_room
+    host,slug,guest,gslug=pair
+    name='func_80000808'
+    evidence=room_matches.packet(guest,gslug,name,DAMAGE)
+    assert deep_room.comparable(host,slug,name,evidence)
+    assert not deep_room.comparable(host,slug,name,{**evidence,'target_sha256':'changed'})
+    assert not deep_room.comparable(host,slug,name,{**evidence,'header_sha256':'changed'})
+    assert not deep_room.comparable(host,slug,name,{**evidence,'compiler':{'toolchain':evidence['compiler']['toolchain'],'flags':['-O0']}})

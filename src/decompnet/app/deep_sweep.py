@@ -227,7 +227,18 @@ class Sweeps:
             issues.append({'function': fn['name'], 'error': error, 'action': action})
         return sorted(issues, key=lambda issue: issue['function'])
 
+    def recover_room_transport(self, slug):
+        from .deep_room import unavailable
+        proj=self.net.project_row(slug)
+        rows=self.net.store.all("SELECT function_id,error FROM deep_permutation_passes WHERE state='error' AND function_id IN (SELECT id FROM functions WHERE project_id=?)",proj['id'])
+        ids=[r['function_id'] for r in rows if unavailable(r['error'])]
+        if ids:
+            with self.net.store.tx() as db:
+                db.executemany("UPDATE deep_permutation_passes SET state='pending',error='' WHERE function_id=?",[(fid,) for fid in ids])
+            with self.lock:self.queue_cache.clear()
+
     def status(self, slug):
+        self.recover_room_transport(slug)
         proj = self.net.project_row(slug)
         counts = self.net.store.one("SELECT COUNT(*) total, SUM(best_source IS NOT NULL AND best_score IS NOT NULL) ready "
                                     f"FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])
@@ -284,6 +295,7 @@ class Sweeps:
         if not isinstance(loop, bool):
             raise NetworkError('Loop indefinitely must be true or false.')
         deep_profiles.validate(compiler_profiles)
+        self.recover_room_transport(slug)
         if compiler_profiles > 1 and self.net.fork_slug(slug):
             raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
         if (isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 120 or
@@ -357,6 +369,7 @@ class Sweeps:
 
         Blocked functions never occupy a worker. Sleep only when no useful turn is available.
         """
+        self.recover_room_transport(slug)
         count = workers.clamp(threads) if threads != 1 else 1
         stats = {'visited': 0, 'tested': 0, 'matched': 0, 'rotated':0, 'activity': Activity(log)}
         visited_turns = set()
@@ -526,7 +539,8 @@ class Sweeps:
             # Claim races are temporary. A bad unchanged candidate stays visible as an error,
             # not completed, and a changed source/header or an explicit repeat retries it.
             busy = self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time())
-            claim_wait = bool((busy and slug in self.net.links) or 'claim' in str(error).lower() or str(error).startswith('This function is working'))
+            from .deep_room import unavailable
+            claim_wait = unavailable(error) or bool((busy and slug in self.net.links) or 'claim' in str(error).lower() or str(error).startswith('This function is working'))
             self.record(fn, scope, 'pending' if claim_wait else 'error', minutes, variants, error=str(error))
             activity.update(fn['name'], {'phase': 'waiting' if claim_wait else 'error', 'error': str(error)}, line=str(error), finished=True)
             log(f'{fn["name"]}: {error}')

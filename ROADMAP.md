@@ -1,5 +1,11 @@
 # Roadmap
 
+- Done: ROM room deep searches continue from cached local inputs during host outages.
+  Exact bundles and input-bound better attempts are queued durably and retried after reconnection;
+  the host still verifies its own matches. Transport failures are retryable, not source-review failures.
+  Planned: offline imported-room searches need a complete reproducible local build adapter;
+  these drafts currently require the host build.
+
 - Planned: MIPS `R_MIPS_LITERAL` pool linking with independently known target `$gp`,
   corresponding instruction/address witnesses and original data checks. The current
   ROM judge explains missing `$gp` or unsupported literal linking and keeps rejecting it.

@@ -151,3 +151,17 @@ def test_room_search_tests_alternate_profiles_instead_of_skipping_them(monkeypat
     monkeypatch.setattr(deep_profiles,'probe',lambda *args:seen.append(args[-1]) or 0)
     assert search._score(AGENT,proj,fn,'candidate',40,None)==0
     assert seen==search.compiler_profiles
+
+
+def test_offline_alternate_profile_is_durable_and_not_a_review_error(monkeypatch):
+    from decompnet.app import room_matches
+    net=setup(monkeypatch);fn=net.function();proj=net.project_row('game')
+    net._judge_with=lambda *args:(True,SimpleNamespace(score=0),'')
+    link=SimpleNamespace(net=net,slug='game',url='http://host',room='room',error="can't reach the host (ReadTimeout)")
+    monkeypatch.setattr(net,'links',{'game':link})
+    monkeypatch.setattr(room_matches,'packet',lambda *args:{'header':''})
+    search=deep_permuter.Search(net,1,1,Log(),fn)
+    with pytest.raises(deep_permuter.SearchLimit,match='Host unavailable'):
+        deep_profiles.probe(search,AGENT,proj,fn,'exact C',{'toolchain':'other','flags':['-O2']})
+    saved=room_matches.pending(net,'game','client')[0]
+    assert saved['source']=='exact C' and saved['evidence']['compiler']['toolchain']=='other'

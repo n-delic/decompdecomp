@@ -100,12 +100,19 @@ class Search(Permuter):
         proj = self.net.store.one('SELECT slug FROM projects WHERE id=?', fn['project_id'])
         link = self.net.links.get(proj['slug']) if proj else None
         if link:
-            claimed = link.claim(agent, fn['name'], 'easiest')
-            if claimed != fn['name']:
-                if claimed:
-                    link.call('/collab/release', agent, function=claimed, notes='Function identity changed; synchronize before retrying.')
-                return False
-            self.room_holds[fn['id']] = (link, agent, fn['name'], time.monotonic())
+            from . import deep_room
+            if not deep_room.offline(link):
+                try:
+                    claimed=link.claim(agent,fn['name'],'easiest')
+                    if claimed!=fn['name']:
+                        if claimed:link.call('/collab/release',agent,function=claimed,notes='Function identity changed; synchronize before retrying.')
+                        return False
+                    self.room_holds[fn['id']]=(link,agent,fn['name'],time.monotonic())
+                except NetworkError as error:
+                    if self.net.fork_slug(proj['slug']):raise
+                    deep_room.disconnected(self,link,error)
+            elif self.net.fork_slug(proj['slug']):
+                raise NetworkError('Imported room drafts require the host build; retry when the host reconnects.')
         if not link:
             claim = self.net.store.one('SELECT agent_id FROM claims WHERE function_id=? AND expires_at>?',
                                        fn['id'], time.time())
@@ -129,8 +136,11 @@ class Search(Permuter):
     def _let_go(self, agent, fn):
         try:
             hold = self.room_holds.pop(fn['id'], None)
-            if hold:
-                hold[0].call('/collab/release', agent, function=fn['name'], notes='')
+            from . import deep_room
+            if hold and not deep_room.offline(hold[0]):
+                try:hold[0].call('/collab/release', agent, function=fn['name'], notes='')
+                except NetworkError as error:
+                    deep_room.disconnected(self,hold[0],error)
         finally:
             super()._let_go(agent, fn)
 
@@ -151,19 +161,31 @@ class Search(Permuter):
     def _accept_candidate(self, agent, proj, fn, source, diff):
         link = self.net.links.get(proj['slug'])
         if link:
+            from . import deep_room
             if diff.bytes_match:
-                verdict = link.attempt(agent, fn['name'], source)
+                verdict=deep_room.submit(self,link,agent,fn,source)
                 if not verdict.get('matched'):
-                    raise NetworkError('The room host could not confirm this match. Synchronize the room before retrying.')
-                self.room_holds.pop(fn['id'], None)
+                    self.log('Match verified locally; host confirmation is pending.')
+                self.room_holds.pop(fn['id'],None)
             else:
-                link.call('/collab/best', agent, function=fn['name'], source=source, score=diff.score)
+                deep_room.best(self,link,agent,fn,source,diff.score)
 
     def check(self):
         self.log.check_cancel()
         for key, (link, agent, name, renewed) in list(self.room_holds.items()):
             if time.monotonic() - renewed >= 30:
-                if link.claim(agent, name, 'easiest') != name:
+                from . import deep_room
+                if deep_room.offline(link):
+                    self.room_holds.pop(key,None)
+                    continue
+                try:
+                    claimed=link.claim(agent,name,'easiest')
+                except NetworkError as error:
+                    if self.net.fork_slug(link.slug):raise
+                    deep_room.disconnected(self,link,error)
+                    self.room_holds.pop(key,None)
+                    continue
+                if claimed!=name:
                     raise NetworkError('The host no longer grants this function claim; synchronize the room and retry.')
                 self.room_holds[key] = (link, agent, name, time.monotonic())
         if time.monotonic() >= self.deadline:
@@ -821,7 +843,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
     finally:
         search.flush_recipes()
         link = net.links.get(slug)
-        if link and (search.tested or reason.startswith('Stopped:')):
+        from . import deep_room
+        if link and not deep_room.offline(link) and (search.tested or reason.startswith('Stopped:')):
             # Lease releases happen between phases too. Publish one actual turn summary,
             # not a note for each release, and never claim an unverified room match.
             text = (f'Deep permuter: score {search.starting_score} → {search.best}; '
