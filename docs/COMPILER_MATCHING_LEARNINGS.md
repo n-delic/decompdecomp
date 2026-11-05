@@ -4364,3 +4364,31 @@ One stack-only residual maps a single store/load pair to an unescaped pointer lo
 identical frames; a small register-only residual maps a pointer-load/comparison region.
 Mapped declaration/storage and same-type conversion-lifetime candidates remain hypotheses:
 they did not solve these cases. See [constraints and failed experiments](TARGETED_STORAGE_REPAIRS.md).
+
+## Pure byte-address accessors and debug branch boundaries
+
+- **Compiler/flags:** pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+- **Private linked evidence:** a 118-instruction scheduler routine's honest ordinary-RAM
+  draft scored370. A private inline helper returning the same signed-halfword pointer,
+  plus braces around existing simple if/else assignment arms, scored200; joining two
+  adjacent existing calls onto one physical line recovered all472 linked target bytes.
+  Neither calls, stores nor loads changed order. The inline helper emitted no extra
+  function. Explicit callback call types follow the real registered implementations;
+  byte equality alone does not validate stale callback declarations elsewhere.
+- **Negative controls:** the minimal accessor alone stayed370. The old near120 draft
+  used unproven `volatile` on ordinary RAM, which was removed, not generalized into a
+  repair. Historical and current headers gave the same320/120 source-line pair; changing
+  only debug flags to `-g0` gave120/120 and `-g2` gave280/280. Historical flags were not
+  retained per attempt, so these controls explain a possible drift mechanism, not its
+  proven historical cause. Do not blame saves or normalize verified source silently.
+- **Automation:** `inline_byte_address` resolves ordinary integer pointees and byte
+  aliases, supports unique explicit `void *` locals/parameters and small constant
+  offsets, preserving evaluation count and pointee type. `debug_branch_scope` braces
+  only complete if/else assignment arms. Their bounded bundle uses the shared adjacent
+  call-boundary probe, rotates across up to four accessor sites and tests at most eight
+  bridges. Unknown qualifiers, macros, shadowing and line-sensitive preprocessing skip.
+  These are scheduling hypotheses, always compiled and linked by the ordinary judge.
+- **Controlled regressions:** synthetic host UBSan checks preserve return values, data
+  and call/effect counts across both branch paths and signed-halfword edge values; a
+  pinned compiler control verifies the helper fully inlines without an extra function.
+  The shared shortlist/agent/deep consumers retain explicit family provenance.
