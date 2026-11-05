@@ -358,8 +358,11 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
         return None
     if target.startswith('mips-'):
         from .arch.mips import abi_register_names
+        from .rom.split import draft_asm
 
         asm_text = abi_register_names(asm_text)
+        if data_asm:
+            asm_text = draft_asm(asm_text, name, data_asm=data_asm)
     if target.startswith("gba"):  # a public GBA decomp (pret style): function macros, pre-UAL load mnemonics
         asm_text = re.sub(r"^\s*(?:non_word_aligned_)?thumb_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
         asm_text = re.sub(r"^\s*arm_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)

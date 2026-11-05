@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: preserve overlay branch labels during ROM import, recover missing local labels
+  at recorded instruction addresses in existing drafts, follow renamed entry symbols,
+  and retry recovered failed drafts through the ordinary compiler and exact judge.
+  Background draft planning now supplies the complete function inputs it uses.
+
 - Done: numeric MCP transaction-writer and candidate lock acquisition timings,
   with synthetic rollback, release and claim-check regressions. This diagnoses
   contention without changing concurrency or exact matching.
