@@ -17,7 +17,7 @@ function element(id) {
 }
 let follower, finished = 0;
 const opened = [];
-const ctx = {renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String, openFn:name=>opened.push(name),
+const ctx = {AbortController,setTimeout,clearTimeout,renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String, openFn:name=>opened.push(name),
   document:{createElement:()=>({})},
   beginWork:()=>()=>finished++, showJobError:()=>{},
   followJob:(job, log, callback, active)=>new Promise(resolve=>{follower={job,callback,active,resolve};}),
@@ -197,6 +197,32 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   oldFollower.resolve(null);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(finished,1);
+  ctx.S.slug="status-error";
+  ctx.api=async()=>{throw new Error('Server unavailable');};
+  await ctx.renderDeepSweep();
+  assert.equal(element('deepSweepStart').disabled,false);
+  assert.match(element('deepSweepQueueTitle').textContent,/unavailable/);
+  assert.match(element('deepSweepQueueReason').textContent,/Server unavailable/);
+  assert.equal(element('deepSweepStatusRetry').hidden,false);
+  ctx.api=async()=>({state:'idle',minutes:5,max_variants:100});
+  await element('deepSweepStatusRetry').onclick();
+  assert.equal(element('deepSweepStatusRetry').hidden,true);
+  let timeout;
+  ctx.setTimeout=fn=>{timeout=fn;return 1;};ctx.clearTimeout=()=>{};
+  ctx.S.slug='slow-status';
+  let calls=0;
+  ctx.api=(url,options)=>{calls++;return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('aborted'))));};
+  const slow=ctx.renderDeepSweep();
+  assert.equal(element('deepSweepStart').disabled,false,'status loading must not silently gate Start');
+  await ctx.renderDeepSweep();assert.equal(calls,1,'polls must coalesce a pending status read');
+  timeout();await slow;
+  assert.match(element('deepSweepQueueReason').textContent,/15 seconds/);
+  assert.equal(element('deepSweepStatusRetry').disabled,false);
+  ctx.api=async()=>{throw new Error('A deep pass is already running');};
+  vm.runInContext(source.slice(source.indexOf('$("deepSweepStart").onclick'),source.indexOf('$("deepSweepStop").onclick')),ctx);
+  await element('deepSweepStart').onclick();
+  assert.match(element('deepSweepQueueTitle').textContent,/could not start/);
+  assert.match(element('deepSweepQueueReason').textContent,/already running/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 // Integration with the match-ranked profile controls: one field in the compact Advanced disclosure.

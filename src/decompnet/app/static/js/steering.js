@@ -1488,7 +1488,9 @@ async function renderDeepSweep() {
     renderDeepQueueState({});
     $("deepSweepQueueTitle").textContent = "Loading search status…";
     $("deepSweepStatus").textContent = "";
-    $("deepSweepStart").disabled = true;
+    $("deepSweepStart").disabled = false;
+    $("deepSweepQueueReason").textContent = "Checking saved search progress. You can start now; the server will check whether a search is already running.";
+    $("deepSweepStatusRetry").hidden = false;
     $("deepSweepStop").hidden = true;
     $("deepSweepStop").disabled = false; $("deepSweepStop").textContent = "Stop";
     $("deepSweepStart").hidden = false;
@@ -1498,11 +1500,16 @@ async function renderDeepSweep() {
     for (const id of ["deepSweepDone", "deepSweepLeft", "deepSweepWaiting"]) $(id).textContent = "0";
     $("deepSweepBar").value = 0;
     $("deepSweepProgressText").textContent = "";
+    $("deepSweepLeft").textContent = "—";
   }
   const version = deepSweepProjectVersion;
-  if (panel.dataset.resetting === slug) return;
+  if (panel.dataset.resetting === slug || panel.dataset.statusLoading === slug) return;
+  panel.dataset.statusLoading = slug;
+  $("deepSweepStatusRetry").disabled = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const status = await api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`);
+    const status = await api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`, {signal:controller.signal});
     if (S.slug !== slug || version !== deepSweepProjectVersion || panel.dataset.resetting === slug) return;
     if (panel.dataset.loadedSlug !== slug) {
       panel.dataset.loadedSlug = slug;
@@ -1512,13 +1519,27 @@ async function renderDeepSweep() {
       $("deepSweepThreads").value = status.threads || "";
       $("deepSweepRepeat").checked = false;
     }
+    $("deepSweepStatusRetry").hidden = true;
     renderDeepSweepResults(status);
     renderDeepQueueState(status);
     renderDeepActivity(status.state === "running" ? status.progress || {} : {...(status.progress || {}), workers:[]});
     $("deepSweepThreads").placeholder = status.threads_default ? `auto (${status.threads_default})` : "auto";
     if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
-  } catch (error) { if (S.slug === slug && version === deepSweepProjectVersion) { $("deepSweepLogSection").hidden = false; showJobError($("deepSweepLog"), error.message); } }
+  } catch (error) {
+    if (S.slug === slug && version === deepSweepProjectVersion) {
+      $("deepSweepQueueTitle").textContent = "Search status unavailable";
+      $("deepSweepQueueReason").textContent = controller.signal.aborted
+        ? "The status check took longer than 15 seconds. Retry status, or start a search; the server will check whether one is already running."
+        : `Could not load search status: ${error.message}. Retry status, or try Start search to get the server’s current result.`;
+      $("deepSweepStatusRetry").hidden = false;
+      if (!deepSweepFollowing) { $("deepSweepStart").hidden = false; $("deepSweepStart").disabled = false; }
+    }
+  } finally {
+    clearTimeout(timeout);
+    if (panel.dataset.statusLoading === slug) { delete panel.dataset.statusLoading; $("deepSweepStatusRetry").disabled = false; }
+  }
 }
+$("deepSweepStatusRetry").onclick = () => renderDeepSweep();
 async function followDeepSweep(slug, job) {
   if (deepSweepFollowing) deepSweepFollowing.finish();
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = false;
@@ -1573,7 +1594,14 @@ $("deepSweepStart").onclick = async () => {
     const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, threads:Number($("deepSweepThreads").value) || 0}});
     job = result.job;
     if (S.slug === slug) renderDeepQueueState(result);
-  } catch (error) { showJobError(log, error.message); }
+  } catch (error) {
+    showJobError(log, error.message);
+    if (S.slug === slug) {
+      $("deepSweepQueueTitle").textContent = "Search could not start";
+      $("deepSweepQueueReason").textContent = error.message;
+      $("deepSweepStatusRetry").hidden = false;
+    }
+  }
   finally { done(); }
   if (job && S.slug === slug) { $("deepSweepStop").hidden = false; followDeepSweep(slug, job); }
 };
