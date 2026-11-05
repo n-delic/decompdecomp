@@ -3,11 +3,6 @@
 Flags are usually `-O2 -mips3 -G0` (some games `-O1` or `-O3`; ask the user to change the project's
 compiler settings if nothing matches at all).
 
-Debug information can also affect the generated instructions. On measured KMC builds, `-g` or `-g3`
-changed scheduling and branch delay slots even when the C logic stayed the same. Try those as controlled
-flag variants when the instruction shape is close. A win on one function does not establish the flags
-for the rest of the game; check neighbouring functions before changing a range.
-
 Traits
 - Unconditional jumps inside a function are `j label`; IDO would use `b`. (That's how the app guessed.)
 - `move` is written as `addu rd, rs, $zero`.
@@ -47,7 +42,7 @@ problem. Check, in order:
 2. Does the stack frame have the same size, saved registers, and spill slots?
 3. Are values live across the same blocks, especially across calls and at branch joins?
 4. Do loads, extensions, and comparisons use the same type and signedness?
-5. Only then tune expression order, declarations, and scheduling-sensitive source layout.
+5. Only then tune expression order and declarations.
 
 Keep a best candidate and a structurally different candidate. Record the flags, first mismatch, and
 what each experiment changed; do not spend repeated compiles on the same source and flags. A better
@@ -73,15 +68,6 @@ remains live. Reusing an already extended `int` may remove an instruction the RO
 a fresh narrow temporary may restore it. Pointer fields and global declarations need the correct
 types for the same reason: one incorrect type can alter loads, shifts, and branches throughout a
 large function.
-
-## Source layout is another variable
-
-KMC builds with debug flags can be sensitive to physical line grouping. Source line breaks changed
-instruction scheduling in measured cases, including delay slots. Once the algorithm, types, and
-register lifetimes are close, try grouping or separating adjacent statements while leaving their
-semantics unchanged. Keep this as a late, controlled experiment: line layout cannot repair a
-wrong call, frame, or branch. Avoid `__LINE__`, line directives, or opaque macros as matching tricks;
-the source should remain a readable account of the function.
 
 ## Validate the result
 
