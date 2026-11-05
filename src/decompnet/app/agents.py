@@ -725,7 +725,7 @@ class Manager:
             if session is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
             if session.options.get('task')=='readable':raise ValueError('Retry paused functions applies to matching agents.')
             slug, name = session.slug, session.agent_name
-        agent,_=self.net.local_agent(name)
+        agent=self.net.attribution_agent(name)
         return retry_paused.retry(self.net,slug,agent,limit,log=log)
 
     def set_selection(self, sid: str, policy: dict, per_session: int | None = None) -> dict:

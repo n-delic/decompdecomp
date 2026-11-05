@@ -1449,3 +1449,36 @@ def test_retry_paused_releases_worker_registry_before_scanning(tmp_path, quiet, 
         return {'resumed': 0}
     monkeypatch.setattr(retry_paused, 'retry', retry)
     assert manager.retry_paused(session.id) == {'resumed': 0}
+
+
+@pytest.mark.parametrize('fails',[False,True])
+def test_retry_paused_keeps_running_worker_credentials(tmp_path,quiet,monkeypatch,fails):
+    from decompnet.app import retry_paused
+    net=_game(tmp_path);manager=agents.Manager(net,tmp_path,URL)
+    session=manager._record('game','codex','retry-token-worker','Worker',{})
+    original,token=net.local_agent(session.agent_name)
+    before=net.store.one('SELECT token_hash FROM agents WHERE id=?',original.id)['token_hash']
+    def retry(network,slug,worker,limit,**kwargs):
+        assert worker==original and slug=='game' and limit==3
+        assert network.authenticate(token)==original
+        if fails:raise ValueError('Synthetic scan failure')
+        return {'resumed':1}
+    monkeypatch.setattr(retry_paused,'retry',retry)
+    if fails:
+        with pytest.raises(ValueError,match='Synthetic scan failure'):manager.retry_paused(session.id,3)
+    else:
+        assert manager.retry_paused(session.id,3)=={'resumed':1}
+    assert net.authenticate(token)==original
+    assert net.store.one('SELECT token_hash FROM agents WHERE id=?',original.id)['token_hash']==before
+
+
+def test_retry_paused_without_existing_runner_does_not_issue_credentials(tmp_path,quiet,monkeypatch):
+    from decompnet.app import retry_paused
+    net=_game(tmp_path);manager=agents.Manager(net,tmp_path,URL)
+    session=manager._record('game','codex','retry-credit-only','Worker',{})
+    monkeypatch.setattr(net,'local_agent',lambda *a:pytest.fail('Retry must not issue runner credentials'))
+    seen=[]
+    monkeypatch.setattr(retry_paused,'retry',lambda n,p,a,*args,**kwargs:seen.append(a) or {'resumed':0})
+    assert manager.retry_paused(session.id)=={'resumed':0}
+    row=net.store.one('SELECT id,token_hash FROM agents WHERE name=?',session.agent_name)
+    assert seen[0].id==row['id'] and row['token_hash'].startswith('attribution:')

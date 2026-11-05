@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: retry paused functions using attribution only, preserving running helper
+  credentials on successful and failed scans without issuing new bearer tokens.
+
 - Done: compiler-tested fresh drafts, bounded private MIPS callback/argument/frame recovery,
   owner-aware ROM data context, persistent generation/compiler/link diagnostics and cancellable
   draft regeneration without clearing matches or attempts. Imported m2c projects use their own build.
