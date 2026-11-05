@@ -74,6 +74,19 @@ def _settings(proj, fn):
 
 
 
+def _same_recheck(old, new):
+    """Compare frozen judging inputs and repair attribution, ignoring fresh record IDs."""
+    from .repair_review import identity
+    def failure(evidence, key):
+        row = evidence.get(key) or {}
+        return tuple(row.get(field) for field in ('source_sha256', 'score', 'settings'))
+    return (identity({'evidence': old}) == identity({'evidence': new})
+            and old.get('via') == new.get('via')
+            and old.get('provenance') == new.get('provenance')
+            and failure(old, 'before') == failure(new, 'before')
+            and failure(old, 'previous') == failure(new, 'previous'))
+
+
 class RepairFeedback:
     def __init__(self, net):
         self.net, self.store = net, net.store
@@ -168,6 +181,15 @@ class RepairFeedback:
             'comparable_settings':bool(comparable),
             'comparison': 'closest comparable-settings failed attempt when available, otherwise closest historical failure; previous retains last own failed trial',
         }
+        # Progress rechecks can reopen and rematch the same frozen input many times. Keep
+        # the original review and avoid scheduling identical analysis again. Imported builds
+        # do not yet capture complete per-file inputs, so never suppress their evidence here.
+        if current.get('mode') == 'rom' and all(current.get(key) for key in
+                ('compiler', 'context_sha256', 'scoring_revision')) and evidence['target_sha256']:
+            last = db.execute('SELECT evidence FROM repair_examples WHERE function_id=? AND agent_id IS ? '
+                              'ORDER BY id DESC LIMIT 1', (fn['id'], agent_id)).fetchone()
+            if last and _same_recheck(json.loads(last['evidence']), evidence):
+                return
         # Retain deterministic successes for regression analysis without proposing the installed
         # rule as new work. Agent explanations still cannot mark their own hypotheses implemented.
         automated = (evidence.get('provenance') or {}).get('kind') in ('deterministic draft repair','automatic agent local pass')

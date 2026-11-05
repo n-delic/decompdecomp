@@ -188,7 +188,7 @@ def test_mcp_and_api_accept_inline_feedback_without_an_extra_model_call(setup, m
         net._record(fn(net, fid), agent, 0, source, 1, matched=True)
         return 'matched'
     monkeypatch.setattr(net, 'compile_and_diff', attempt, raising=False)
-    monkeypatch.setattr(tools, '_named', lambda *args: args[-1])
+    monkeypatch.setattr(tools, '_named', lambda net, agent, slug, args, name: args)
     mcp = tools.build_mcp(net, lambda context: (winner, 'demo'))
     anyio.run(mcp.call_tool, 'compile_and_diff', {'function': 'target', 'source': 'winning C',
                                                'repair_note': 'Changed signedness.', 'repair_category': 'types',
@@ -285,6 +285,7 @@ def test_autopilot_capture_uses_actual_compile_settings_instead_of_project_snaps
         cfg['compiler_ranges']=[{'start':0x80001000,'end':0x80001010,**effective['compiler']}]
         db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
 
+    monkeypatch.setattr(net, '_jtbl_asm', lambda *args: [], raising=False)
     result=SimpleNamespace(ok=True,obj=b'object',effective_settings=effective)
     monkeypatch.setattr(net,'_compile',lambda *args:result)
     monkeypatch.setattr(net,'_evaluate',lambda *args:(SimpleNamespace(code=b'code',relocs=[]),True,[]))
@@ -306,22 +307,23 @@ def test_autopilot_capture_uses_actual_compile_settings_instead_of_project_snaps
                 raise AssertionError('successful standard drafts must not generate the fallback')
             monkeypatch.setattr(autopilot,'candidate_context',unexpected_fallback)
         if path=='machine_local_context':
+            monkeypatch.setattr(autopilot,'candidate_context',lambda *args:'synthetic local context')
             with net.store.tx() as db:
                 db.execute('UPDATE functions SET best_source=? WHERE id=?',
                            ('short sample(int); int target(void){return sample(0);}',fid))
             monkeypatch.setattr(net,'_current_names',lambda *args:{'sample','target'},raising=False)
             monkeypatch.setattr(autopilot.seeds,'generate_from_asm',
                                 lambda *args,**kwargs:('/* LOCAL */ int target(void){return 0;}'
-                                                      if kwargs.get('strict') else 'int target(void){return 1;}'))
+                                                      if args[3] == 'synthetic local context' else 'int target(void){return 1;}'))
             monkeypatch.setattr(autopilot.m2cfix,'refine_draft',lambda *args:None)
-            monkeypatch.setattr(net,'_compile',lambda *args:result if 'LOCAL' in args[2] else SimpleNamespace(ok=False,obj=None))
+            monkeypatch.setattr(net,'_compile',lambda *args:result if 'LOCAL' in args[2] else SimpleNamespace(ok=False,obj=None,log="synthetic compiler refusal"))
         if path=='machine_refined':
             monkeypatch.setattr(autopilot.m2cfix,'refine_draft',lambda *args:'/* REPAIRED */ int target(void){return 0;}')
-            monkeypatch.setattr(net,'_compile',lambda *args:result if 'REPAIRED' in args[2] else SimpleNamespace(ok=False,obj=None))
+            monkeypatch.setattr(net,'_compile',lambda *args:result if 'REPAIRED' in args[2] else SimpleNamespace(ok=False,obj=None,log="synthetic compiler refusal"))
         if path in ('machine_buffer','machine_buffer_indexed'):
             monkeypatch.setattr(autopilot.m2cfix,'refine_draft',lambda *args:None)
             monkeypatch.setattr(autopilot.m2cfix,'stack_array',lambda source,name,canonical:'/* BUFFER */ int target(void){return 0;}' if canonical==(path=='machine_buffer_indexed') else None)
-            monkeypatch.setattr(net,'_compile',lambda *args:result if 'BUFFER' in args[2] else SimpleNamespace(ok=False,obj=None))
+            monkeypatch.setattr(net,'_compile',lambda *args:result if 'BUFFER' in args[2] else SimpleNamespace(ok=False,obj=None,log="synthetic compiler refusal"))
         assert AutopilotMixin._autopilot_one(net,winner,proj,fid)=='match'
     case=net.repair_feedback.listing('demo')['examples'][0]['id']
     detail=net.repair_feedback.detail('demo',case)
@@ -469,3 +471,63 @@ def test_build_activity_groups_only_same_unit_minute_and_settings(setup):
     assert sorted(r['repetitions'] for r in builds) == [1,2]
     assert len([r for r in records if r['evidence_kind']!='build report']) == 1
     assert net.store.one('SELECT COUNT(*) AS n FROM repair_examples')['n'] == 4
+
+
+def test_reopened_identical_match_keeps_original_review_and_analysis(setup, monkeypatch):
+    from decompnet.app import repair_outcomes
+    net, winner, _, _, fid = setup
+    scheduled = []
+    monkeypatch.setattr(repair_outcomes, 'schedule', lambda *args: scheduled.append(args[1]))
+    case = match(setup)
+    net.repair_feedback.review('demo', case, 'reviewed', 'constants', 'Keep this review.')
+    source = net.repair_feedback.detail('demo', case)['evidence']['after']['source']
+    count = net.store.one('SELECT COUNT(*) n FROM attempts')['n']
+    for _ in range(3):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='open' WHERE id=?", (fid,))
+        net._record(fn(net, fid), winner, 0, source, 1, matched=True)
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == count + 3
+    assert net.store.one('SELECT COUNT(*) n FROM repair_examples')['n'] == 1
+    assert scheduled == [case]
+    row = net.repair_feedback.detail('demo', case)
+    assert row['status'] == 'reviewed' and row['review_note'] == 'Keep this review.'
+    assert fn(net, fid)['status'] == 'matched'
+
+
+@pytest.mark.parametrize('change', ['target', 'header', 'compiler', 'source', 'failure', 'agent', 'provenance', 'via', 'project'])
+def test_recheck_keeps_distinct_or_incomplete_evidence(setup, change):
+    from decompnet.repair_feedback import trial
+    net, winner, other, pid, fid = setup
+    case = match(setup)
+    source = net.repair_feedback.detail('demo', case)['evidence']['after']['source']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open' WHERE id=?", (fid,))
+        if change == 'target':
+            db.execute('UPDATE functions SET target=? WHERE id=?', (b'changed target', fid))
+        if change == 'header':
+            db.execute('UPDATE context_versions SET header=? WHERE project_id=?', ('typedef long word;', pid))
+        if change in ('compiler', 'project'):
+            cfg = json.loads(net.store.one('SELECT config FROM projects WHERE id=?', pid)['config'])
+            if change == 'compiler': cfg['compiler']['flags'] = ['-O1']
+            else: cfg['kind'] = 'fork'
+            db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), pid))
+    if change == 'failure': net._record(fn(net, fid), winner, 5, 'new failed source', 1)
+    if change == 'source': source += ' /* new source */'
+    with trial({'kind': 'new provenance'} if change == 'provenance' else None):
+        net._record(fn(net, fid), other if change == 'agent' else winner, 0, source, 1,
+                    matched=True, via='recheck' if change == 'via' else 'agent')
+    assert net.store.one('SELECT COUNT(*) n FROM repair_examples')['n'] == 2
+
+
+def test_identical_imported_rechecks_remain_separate_without_build_snapshots(setup):
+    net, winner, _, pid, fid = setup
+    with net.store.tx() as db:
+        cfg = json.loads(db.execute('SELECT config FROM projects WHERE id=?', (pid,)).fetchone()['config'])
+        cfg['kind'] = 'fork'
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), pid))
+    case = match(setup)
+    source = net.repair_feedback.detail('demo', case)['evidence']['after']['source']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open' WHERE id=?", (fid,))
+    net._record(fn(net, fid), winner, 0, source, 1, matched=True)
+    assert net.store.one('SELECT COUNT(*) n FROM repair_examples')['n'] == 2

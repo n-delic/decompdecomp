@@ -2626,3 +2626,9 @@ need independent evidence before receiving this specific GNU C repair.
 - Done: importing unchanged note metadata during a source edit preserves the existing note
   rows instead of deleting and re-attributing the complete history. Explicit manifest note
   edits still replace history; source edits retain notes added concurrently after the render.
+
+- Done: unchanged ROM rematch checks reuse the original repair example and review instead of
+  enqueuing repeated automatic analyses. Different source, target, build context, failed
+  baseline or attribution remains separate; every judging attempt is still retained.
+- Planned: imported-project repair capture deduplication needs complete per-file build input
+  snapshots; keep their captures separate while compiler/header evidence is incomplete.
