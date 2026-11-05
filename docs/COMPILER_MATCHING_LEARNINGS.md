@@ -4088,3 +4088,21 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   self-read assignments and batch protocol coverage. Private replay rejects the
   observed unsafe temporary while allowing the sound boolean-materialization and
   early narrowing alternatives. Ordinary exact judging remains mandatory.
+
+### A single constant memory store can need a one-shot scope
+
+- Profile: KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+- Private controlled replay: wrapping only `*(u8*)flag = 0;` as
+  `do {*(u8*)flag = 0;}while(0);` moved its scheduled store ahead of a later
+  constant store and mask computation. Ordinary linked comparison changed from
+  seven differing instruction words to exact bytes. The advisory score remained
+  20 because its symbolic relocation annotation differed; linked bytes decide.
+- A scalar global declaration alone and a plain compound block did not recover
+  the schedule. The original array declaration with the do-loop wrapper did, so
+  changing the global type was unnecessary. No volatile qualifier or extra value
+  was introduced. This is one isolated replay, not a universal scheduling rule.
+- `constant_memory_store_scope` proposes at most four individual constant
+  indirect-store wrappers. It accepts only a simple identifier dereference with
+  an optional integer pointer cast, rejects macro captures and unbraced/labeled
+  statements, and does not nest existing do scopes. It reaches both judging modes
+  through the shared repair pipeline; ordinary exact verification still applies.

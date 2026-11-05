@@ -10,7 +10,7 @@ from . import constant_store_scope, local_flow, scalar_normalization_scope
 from .integer_repair_support import IDENT, INTEGER, edit, view
 from .pattern_repairs import close
 
-FAMILIES = (constant_store_scope.FAMILY, scalar_normalization_scope.FAMILY, 'dead_copy_source', 'divisor_flag_split', 'regional_load_reuse', 'divisor_value_scope', 'divisor_normalization_copy')
+FAMILIES = (constant_store_scope.FAMILY, constant_store_scope.DIRECT_FAMILY, scalar_normalization_scope.FAMILY, 'dead_copy_source', 'divisor_flag_split', 'regional_load_reuse', 'divisor_value_scope', 'divisor_normalization_copy')
 LIMIT = 16
 
 
