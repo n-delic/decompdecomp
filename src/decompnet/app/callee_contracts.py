@@ -25,8 +25,21 @@ def type_name(text):
     return ALIASES[base] + '*' * text.count('*')
 
 
+def partial_type_name(text):
+    normalized = type_name(text)
+    if normalized is not None:
+        return normalized
+    # One unfamiliar typedef may hide any type. Preserve its position, not a guess
+    # about its compatibility; qualifiers and compound syntax still stop the audit.
+    if re.fullmatch(rf'{IDENT}(?:\s*\*)*', text.strip()):
+        base = text.strip().rstrip('*').strip()
+        if base not in {'const', 'volatile', 'restrict', 'struct', 'union', 'enum'}:
+            return '?'
+    return None
+
+
 def signature(result, parameters, *, named):
-    result = type_name(result)
+    result = partial_type_name(result)
     if result is None or not parameters.strip():
         return None  # () is unspecified in the period C dialect, not a zero-argument prototype
     if parameters.strip() == 'void':
@@ -37,10 +50,10 @@ def signature(result, parameters, *, named):
     types = []
     for part in parts:
         # A declaration may omit names; definitions must name each ordinary parameter.
-        normalized = type_name(part)
+        normalized = partial_type_name(part)
         if normalized is None or named:
             match = re.fullmatch(rf'(.+?[\s*])({IDENT})\s*', part.strip())
-            normalized = type_name(match[1]) if match else None
+            normalized = partial_type_name(match[1]) if match else None
         if normalized in (None, 'void'):
             return None
         types.append(normalized)
@@ -64,10 +77,22 @@ def mismatch(caller, selected, name):
         return ''
     actual = signature(definition[1], definition[2], named=True)
     declared = signature(declarations[0][1], declarations[0][2], named=False)
-    if actual is None or declared is None or actual == declared:
+    if actual is None or declared is None:
+        return ''
+    known_difference = actual[0] != '?' and declared[0] != '?' and actual[0] != declared[0]
+    if len(actual[1]) == len(declared[1]):
+        known_difference |= any(a != '?' and b != '?' and a != b
+                                for a, b in zip(actual[1], declared[1]))
+    elif '?' not in (*actual[1], *declared[1]):
+        # A sole unfamiliar typedef could even mean void: don't infer arity from it.
+        known_difference = True
+    if not known_difference:
         return ''
     render = lambda s: s[0]+'('+(','.join(s[1]) or 'void')+')'
-    return name+': caller '+render(declared)+', selected definition '+render(actual)
+    hint = name+': caller '+render(declared)+', selected definition '+render(actual)
+    if '?' in (*actual[1], *declared[1], actual[0], declared[0]):
+        hint += ' (? = unresolved typedef, not compared)'
+    return hint
 
 
 def message(leads):

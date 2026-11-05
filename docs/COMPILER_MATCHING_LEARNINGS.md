@@ -4578,3 +4578,23 @@ and allocator defects remain outside this correction. Before accepting a width
 repair, audit every upstream declaration and actual argument, then validate the
 changed caller/callee set jointly. The brief's prototype warning is a lead for
 that audit, not permission to change signatures automatically.
+
+## Compare known prototype positions without guessing unfamiliar typedefs
+
+A caller audit of a remaining interpolation routine found an unfamiliar object
+pointer alongside independently known scalar-width and output-pointer differences.
+The earlier advisory parser discarded the entire signature at the unfamiliar
+object type. It now retains an unresolved `?` slot and compares only positions
+whose scalar types are known on both sides. An unfamiliar return typedef likewise
+does not hide an independently known argument discrepancy. No compatibility is
+inferred for the unresolved slot. Arity differences remain unclassified if any
+parameter typedef is unresolved: a lone typedef might even denote `void`.
+
+This changes no source, signature, compiler profile, claim or verdict. Full ROM
+and project briefs retain one bounded matched-callee lookup and the existing
+three-lead budget; receipt-only claims remain cheap. Qualifiers, arrays, function
+pointers, variadics and ambiguous declarations still stop classification. A live
+read-only brief check found additional bounded leads in three remaining routines;
+this is diagnostic coverage, not a new match or proof of the original C types.
+Synthetic cases cover mixed known/unresolved types, aliases, unknown-only silence,
+possible void typedef arity, excluded complex syntax and shared brief behavior.
