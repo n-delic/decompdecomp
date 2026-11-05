@@ -877,3 +877,12 @@ helper exactly; one twelve-byte copy did not. Use byte offsets within the
 containing object, not arithmetic through an invented integer array. This
 requires audited padding and caller preconditions; do not apply it to arbitrary
 uninitialized values. Rebuild the full image after joint edits.
+
+### GP-relative literal diagnostics
+
+`R_MIPS_LITERAL (8)` can come from a compiler-created `.lit4`/`.lit8` pool under
+small-data flags such as `-G8`. The object's GP value is not the game's GP.
+If the target has no known GP or no corresponding pool-address instruction,
+keep the attempt nonmatching. `-G0` is a compiler-profile hypothesis to test
+explicitly, not an automatic fix or permission to guess a literal address.
+A lower advisory score with an unresolved pool still cannot be accepted.
