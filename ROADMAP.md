@@ -2324,3 +2324,11 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   MIPS `mfc1` evidence and GNU debug flags. Other processors need tested hazard/line
   diagnostics before that family can be enabled for them. Fixed debugger-break
   compiler support remains limited to the registered KMC pack.
+
+### Measured hazard and scalar capture recovery
+
+- Done: bounded MIPS branch/NOP line-boundary hints, range-proven low-zero masks, and
+  explicit post-call narrow captures shared with local/deep search and iterative
+  autopilot. Frozen private precursor replay verifies rediscovery with unchanged judges.
+- Planned: hazard evidence readers beyond MIPS; imported builds without measured
+  function rows cannot use that hint. Scalar families reach supported 32-bit ABIs.

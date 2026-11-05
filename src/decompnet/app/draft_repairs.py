@@ -128,7 +128,9 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     if opening < 0:
         return []
     # The dedicated path preserves directives and never rewrites their bodies.
-    early=(_generated(known_bit_repairs.variants,source,name,header,arch) + _generated(post_call_capture_repairs.variants,source,name,header,arch)) + _generated(copy_lifetime_repairs.variants,source,name) + _generated(debug_boundary_repairs.variants,source,name,flags,header) + _generated(conversion_scheduling_repairs.variants,source,name,header,arch,asm,flags) + _generated(hardware_operation_repairs.variants,source,name,arch,asm) + _generated(shared_offset_repairs.variants,source,name,header) + _generated(branch_layout_repairs.store_tails,source,name,header) + _generated(captured_index_repairs.variants,source,name,header) + _generated(decision_address_repairs.variants, source,name,arch,header) + _generated(recent_capture_repairs.variants,source,name,arch,asm,header,callees)
+    semantic=(_generated(known_bit_repairs.variants,source,name,header,arch)
+              + _generated(post_call_capture_repairs.variants,source,name,header,arch))
+    early=semantic + _generated(copy_lifetime_repairs.variants,source,name) + _generated(debug_boundary_repairs.variants,source,name,flags,header) + _generated(conversion_scheduling_repairs.variants,source,name,header,arch,asm,flags) + _generated(hardware_operation_repairs.variants,source,name,arch,asm) + _generated(shared_offset_repairs.variants,source,name,header) + _generated(branch_layout_repairs.store_tails,source,name,header) + _generated(captured_index_repairs.variants,source,name,header) + _generated(decision_address_repairs.variants, source,name,arch,header) + _generated(recent_capture_repairs.variants,source,name,arch,asm,header,callees)
     if '#' in clean[opening:end]:
         def generate(masked):
             inner_labels = {}
@@ -186,9 +188,7 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     for family, text in _generated(pointer_pair_repairs.variants, source, name, header) + _generated(field_order_repairs.variants, source, name, header) + _generated(zero_test_repairs.variants, source, name, arch, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in (_generated(known_bit_repairs.variants,source,name,header,arch)
-                         + _generated(post_call_capture_repairs.variants,source,name,header,arch)
-                         + _generated(branch_scalar_repairs.variants,source,name,header,arch)
+    for family, text in (semantic + _generated(branch_scalar_repairs.variants,source,name,header,arch)
                          + _generated(call_count_repairs.variants,source,name,header,arch)
                          + _generated(call_assignment_repairs.variants,source,name,header,arch)
                          + _generated(pointer_snapshot_repairs.variants,source,name,header,arch,asm)

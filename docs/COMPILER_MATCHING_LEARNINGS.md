@@ -3581,3 +3581,27 @@ This follow-up reruns isolated candidate generation and linked-byte checks again
 those saved inputs; it does not claim another full-image rebuild or fresh match.
 Broader compiler sweeps, unknown `__builtin_trap` calls, artificial padding and
 one-line conversion temporaries had failed to resolve the final mismatch.
+
+## Range-proven masks, explicit captures and measured hazard boundaries
+
+KMC GCC 2.7.2, fixed `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: copied replay
+of three frozen precursors of one existing rendering match, 32 candidates / 30 seconds
+each, against main `bb6b6930` (which already contains conversion scheduling repairs):
+
+| Starting score | Main first exact trial | New first exact trial | Main / new best |
+| --- | --- | --- | --- |
+| 410 | 27 | 3 | 0 / 0 |
+| 140 | 4 | 4 | 0 / 0 |
+| 20 | None | 1 | 20 / 0 |
+
+Direct checks reproduce 410 → 140 → 20 → 0 through a proven redundant unsigned
+low-bit mask, explicit post-call narrow capture and separated same-type conversion
+statements. The final branch targets differ by one word around a NOP: the old
+instruction-multiset gate excluded that scheduling hypothesis. New MIPS evidence
+accepts only bounded identical-test destination movement as an advisory hint.
+
+The first implementation failed to reach the scalar families through local macro
+definitions; it also sampled declaration order instead of the branch tail. Both
+failures are regression-covered. These are three precursors of **one previously
+matched function**, not three new matches. No whole-ROM rebuild, live project edit
+or general token/runtime saving is claimed. See [design and replay instructions](HAZARD_MASK_CAPTURE_REPAIRS.md).
