@@ -399,7 +399,7 @@ async function loadManualMcp() {
       wireCopies($("mcpConfig"));
       await refreshManualMcp();
     } catch(e) { showJobError(log,e.message); }
-    finally { finish(); button.disabled = !select.value; }
+    finally { finish(); button.disabled = !select.value || select.disabled; }
   };
   await refreshManualMcp();
 }
