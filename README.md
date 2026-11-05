@@ -56,6 +56,17 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+Open **Regenerate machine drafts** under a project's overview, then choose **Regenerate drafts** to refresh
+starting C and test it with the project's compiler. Matches, best attempts and shared headers are preserved.
+Claimed functions and unresolved boundaries are skipped; Stop keeps completed work. **Starting C diagnostics**
+in a function shows separate generation, compiler and linking failures. Unchanged failed inputs are cached;
+explicit regeneration opens a new pass. No AI calls are made.
+
+Initial MIPS drafts can try private callback-table declarations, missing forwarded arguments, and overlapping
+stack views in one original-sized frame. Known-size original tables, constants and strings use the selected
+overlay's reader. Malformed irregular switches get one bounded alternative. These are hypotheses: compilation
+is a useful starting point, and only the ordinary exact judge can accept a match.
+
 ROM drafts preserve overlay branch labels and follow renamed entry symbols. Existing imports can recover missing
 labels only at recorded instruction addresses, including supplied jump-table cases. Cached failed drafts are
 regenerated after the fix; newly recovered local drafts go through the ordinary compiler and exact judge.

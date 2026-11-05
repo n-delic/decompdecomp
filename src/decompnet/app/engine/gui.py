@@ -321,12 +321,13 @@ class GuiMixin:
     def function_detail(self, slug: str, name: str, *, include_hints=True) -> dict:
         from ...match_bundle import status as bundle_status
         from ..baseline_status import status as baseline_status
+        from ..draft_reports import read as draft_report
         from ..function_names import state as name_state
         sweep = getattr(self, 'deep_sweeps', None)
         fn = self._function(name, slug)
         deep_pass = sweep.history(slug, fn) if sweep else {'state': 'not tried', 'completed': False}
         if (fork := self.fork_slug(slug)):
-            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'deep_pass': deep_pass, 'verification': bundle_status(self,fn)}
+            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'])}
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         from ..function_history import history
         saved_history = history(self.store, fn)
@@ -338,8 +339,10 @@ class GuiMixin:
             self._seed_for(fn, proj)  # (made again first when what it's made from changed)
             fn = self._function(fn["name"], slug)
         from ..source_assembly import detail as assembly_detail
+        initial_report = draft_report(self,fn['id'])
         return {
             "assembly_verification":assembly_detail(proj,fn),
+            "machine_draft_report": initial_report,
             **name_state(fn), "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
             "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
             "boundary_review": boundary_reason(self.console(proj),fn),
@@ -350,9 +353,9 @@ class GuiMixin:
             "default_compiler": self.cfg(proj)["compiler"],
             "compiler_profile_usage": self.compiler_profile_usage(proj),
             "asm": self._asm_text(fn, proj),
-            "source": fn["matched_source"] or fn["best_source"] or (latest["source"] if latest else None) or fn["seed"],
+            "source": fn["matched_source"] or fn["best_source"] or initial_report.get("compiled_source") or (latest["source"] if latest else None) or fn["seed"],
             "source_kind": "matched" if fn["matched_source"] else "best" if fn["best_source"] else
-                           "latest" if latest else "draft" if fn["seed"] else None,
+                           "draft" if initial_report.get("compiled_source") else "latest" if latest else "draft" if fn["seed"] else None,
             **saved_history,
             "calls": [syms.label(a) for a in sorted(x["calls"].get(fn["vram"], ()))],
             "called_by": [syms.label(a) for a in sorted(x["called_by"].get(fn["vram"], ()))],

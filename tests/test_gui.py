@@ -526,3 +526,10 @@ def test_boundary_review_preview_shows_original_extent_and_escapes_evidence():
         pytest.skip('needs node')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_boundary_repairs.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_machine_draft_refresh_has_progress_cancellation_and_error_cleanup():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_machine_drafts.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

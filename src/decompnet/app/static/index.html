@@ -287,6 +287,14 @@
         <div class="ap-text"><b id="apTitle"></b><span class="muted small" id="apSub"></span><div class="upbar" id="apBar" role="progressbar" aria-label="Automatic matching progress" hidden><i></i></div></div>
         <button class="ghost small-btn" id="apBtn" type="button"></button>
       </div>
+      <details class="panel settings-disclosure" id="machineDraftPanel">
+        <summary>Regenerate machine drafts</summary>
+        <div class="settings-content">
+          <p class="muted small">Make fresh starting C for open functions and test it locally. Matches, saved attempts and shared headers are kept. Claimed functions and targets needing boundary review are skipped. No AI calls.</p>
+          <div class="row"><button id="regenerateMachineDrafts" class="ghost" type="button">Regenerate drafts</button><button id="machineDraftStop" type="button" hidden>Stop</button></div>
+          <pre id="machineDraftLog" class="joblog" hidden></pre>
+        </div>
+      </details>
       <details class="panel settings-disclosure" id="savedMatchRecoveryPanel">
         <summary>Recover saved matches</summary>
         <div class="settings-content">
@@ -808,6 +816,7 @@
         <summary>Other projects and local SDKs</summary>
         <div class="collapsible-box-body"><div id="fnProjectPeersContent"></div></div>
       </details>
+      <details class="more" id="fnMachineDraft" hidden><summary>Starting C diagnostics</summary><pre class="small" id="fnMachineDraftReport"></pre></details>
       <details class="more" id="fnVerification" hidden>
         <summary>Last verified match</summary>
         <p class="small muted" id="fnVerificationStatus"></p>

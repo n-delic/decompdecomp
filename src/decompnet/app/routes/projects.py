@@ -544,6 +544,29 @@ def register(app: App) -> None:
             net.permuter.start(slug)
         return {"permuter": net.permuter.status(slug)}
 
+    draft_jobs = {}
+
+    def p_machine_drafts(slug, request, data):
+        from .. import draft_regeneration, draft_reports
+        proj = net.project_row(slug)
+        if request.method == 'GET':
+            name = request.query_params.get('function')
+            if name:
+                fn = net._function(name, slug)
+                return {'function':fn['name'], 'report':draft_reports.read(net,fn['id'])}
+            rows = net.store.all("SELECT value FROM settings WHERE key IN (SELECT ? || id FROM functions WHERE project_id=?)",
+                                 draft_reports.PREFIX,proj['id'])
+            reports = [json.loads(row['value']) for row in rows]
+            return {'checked':len(reports), 'compiled':sum(bool(r.get('compiled')) for r in reports),
+                    'failed':sum(not r.get('compiled',False) for r in reports), 'job':draft_jobs.get(slug)}
+        draft_regeneration.validate(net,slug)
+        previous = draft_jobs.get(slug)
+        if previous and jobs.jobs.get(previous,{}).get('state') == 'running':
+            return {'job':previous}
+        draft_jobs[slug] = jobs.start('Regenerate machine drafts',lambda log:draft_regeneration.run(net,slug,log),
+                                     cancel_message='Draft refresh stopped. Completed drafts and verified attempts are saved.')
+        return {'job':draft_jobs[slug]}
+
     def p_autopilot(slug, request, data):
         if data.get("action") == "stop":
             net.stop_autopilot(slug)
@@ -688,7 +711,7 @@ def register(app: App) -> None:
         "/api/permuter/pass": (p_deep_sweep, ["GET", "POST"]),
         "/api/permuter/function": (p_deep_permuter, ["POST"]),
         "/api/source-preparation": (p_source_preparation, ["GET", "POST"]),
-        "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
+        "/api/drafts": (p_machine_drafts, ["GET", "POST"]), "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
         "/api/cross-game": (lambda s, r, d: {"results": net.twins.cross_game_results(s),
                             "suggestions": net.twins.suggestions(s, r.query_params.get("function", ""))
                             if r.query_params.get("function") else []}, ["GET"]),

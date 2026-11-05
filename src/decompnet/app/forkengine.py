@@ -2639,7 +2639,7 @@ class ForkEngine:
         """m2c draft from the project's assembly for this function (Ghidra's from its target object where m2c can't
         read the code), cached in the database. A console with drafts of its own (Ghidra's: PC) keys it by the unit's
         target object: a join, a split or a repair of the analysis changes that, and the draft is made again."""
-        key = self._draft_key(cfg, unit)
+        key = self._draft_key(cfg, unit, fp.root)
         if fn["seed"] is not None and fn["seed_key"] == key:
             return fn["seed"] or None
         hint = (unit.scratch or {}).get("compiler", "") or compiler_info.describe(fp, cfg.get("version")).get("name", "")
@@ -2660,25 +2660,30 @@ class ForkEngine:
         return text
 
     @staticmethod
-    def _draft_key(cfg: dict, unit) -> str | None:
-        """What a function's machine draft is made from, where that changes (Console.own_drafts: its unit's target
-        object, which Ghidra drafts): None elsewhere, a draft made once."""
-        if not consoles.get(cfg.get("platform")).own_drafts or unit.target is None:
-            return None
-        try:
-            return hashlib.sha1(unit.target.read_bytes()).hexdigest()[:16]
-        except OSError:
-            return None
+    def _draft_key(cfg: dict, unit, root=None) -> str:
+        """Target/header/source inputs for a unit, including an explicit regeneration request."""
+        inputs = [cfg.get('draft_generation',0),cfg.get('version'),unit.scratch]
+        if unit.target is not None:
+            try:inputs.append(hashlib.sha256(unit.target.read_bytes()).hexdigest())
+            except OSError:inputs.append(None)
+        if root is not None:
+            for path in [*sorted((root/'include').rglob('*.h')), *([root/unit.source] if unit.source else [])]:
+                try:inputs.append((str(path.relative_to(root)),hashlib.sha256(path.read_bytes()).hexdigest()))
+                except OSError:inputs.append(None)
+        if root is not None:
+            from ..candidate_scope import digest
+            inputs.extend((name,digest(root/name)) for name in ('Makefile','build.ninja','objdiff.json','configure.py'))
+        return hashlib.sha1(repr(inputs).encode()).hexdigest()[:16]
 
     # ------------------------------------------------------------------ drafts in the background (app/drafts.py)
 
     def can_draft(self, proj) -> bool:
-        """Whether the background drafter makes this project's drafts: a game started from scratch on a console with
-        drafts of its own (PC), with Ghidra installed (its exact drafts need nothing, and are made as autopilot
-        tries them)."""
-        cfg = json.loads(proj["config"])
-        return (cfg.get("origin") == "scratch" and bool(cfg.get("ready"))
-                and consoles.get(cfg.get("platform")).own_drafts and ghidra.available())
+        """Scratch projects use their own draft decompiler or the console's m2c target."""
+        from .. import seeds
+        cfg = json.loads(proj['config'])
+        console = consoles.get(cfg.get('platform'))
+        return (cfg.get('origin') == 'scratch' and bool(cfg.get('ready'))
+                and ((console.own_drafts and ghidra.available()) or (drafts.supported(console.id) and seeds.available())))
 
     def stale_drafts(self, proj) -> list[int]:
         """Open functions whose machine draft is missing or was made from another target object, a unit after
@@ -2691,7 +2696,7 @@ class ForkEngine:
         for r in rows:
             if r["unit"] not in keys:
                 try:
-                    keys[r["unit"]] = self._draft_key(cfg, fp.unit(r["unit"]))
+                    keys[r["unit"]] = self._draft_key(cfg, fp.unit(r["unit"]), fp.root)
                 except (ForkError, KeyError):
                     keys[r["unit"]] = None
         stale = [r["id"] for r in rows if r["seed"] is None or r["seed_key"] != keys[r["unit"]]]
@@ -2705,8 +2710,9 @@ class ForkEngine:
         """What drafts are made from, summed up: the headers (declarations, classes) and functions.json (names, the
         analysis) as they are on disk."""
         root = Path(proj["root"])
-        files = [*sorted((root / "include").rglob("*.h")), *sorted((root / "config").rglob("functions.json"))]
-        return tuple((p.name, p.stat().st_mtime_ns) for p in files if p.is_file())
+        files = [*sorted((root / "include").rglob("*.h")), *sorted((root / "config").rglob("functions.json")),
+                 *(root/name for name in ('Makefile','build.ninja','objdiff.json','configure.py'))]
+        return (self.net.cfg(proj).get('draft_generation',0), tuple((p.name, p.stat().st_mtime_ns) for p in files if p.is_file()))
 
     def background_draft(self, proj, fn) -> str | None:
         """One function's machine draft, made for the background drafter (and cached, as when a brief asks)."""
@@ -3437,7 +3443,7 @@ class ForkEngine:
         return console.compilable_draft(fp, meta.get("symbol") or fn["name"], raw.removeprefix("/* Ghidra */\n"),
                                         self._known(fp, unit) + "\n" + context)
 
-    def _autopilot_drafts(self, proj, fp: ForkProject, cfg: dict, fn, unit):
+    def _autopilot_drafts(self, proj, fp: ForkProject, cfg: dict, fn, unit, report=None):
         """What autopilot tries for a function, in order, as (prelude, definition with what it includes): a console
         with drafts of its own, its exact drafts, then its machine draft made compilable (made only when no exact
         one matched: Ghidra takes seconds a source file); else m2c's draft."""
@@ -3459,6 +3465,29 @@ class ForkEngine:
         except OSError:
             current = ""
         yield "", "/* machine draft (m2c), tried by autopilot */\n" + drafts.self_contained(text, span, current)
+        if report is not None and not report.get('compiled'):
+            from .. import seeds
+            from . import initial_draft_repairs
+            path = drafts.find_asm(fp.root, unit.name, meta.get('symbol') or fn['name'], current)
+            if path is None or path.stat().st_size > drafts.MAX_ASM:
+                return
+            asm = path.read_text(encoding='utf-8', errors='replace')
+            name = meta.get('symbol') or fn['name']
+            roots = seeds.asm_names(asm) | {name}
+            known = self._known(fp, unit)
+            context = '\n'.join(d.text for d in seeds.HeaderIndex(seeds.c_only(known)).used(roots)
+                                if not d.text.startswith('#') and not re.search(r'\)\s*{', d.text))
+            target = console.m2c_target(hint)
+            language = 'c++' if Path(unit.source).suffix.lower() in ('.cpp','.cc','.cxx','.cp') else 'c'
+            def generate(assembly, symbol, _toolchain, context_header, data_asm, **kwargs):
+                return seeds.run_m2c(assembly, symbol, target+'-'+language, context_header, data_asm, **kwargs)
+            for index, (_, source) in enumerate(initial_draft_repairs.recovery_drafts(
+                    text, name, asm, proj['arch'], '', context, None, report, generate=generate)):
+                if report.get('compiled') or index >= 6:
+                    return
+                _, repaired = self._find(source, self._names(meta, fn))
+                if repaired:
+                    yield '', '/* private initial draft recovery, judged normally */\n'+drafts.self_contained(source, repaired, current)
 
     def autopilot_one(self, agent: Agent, proj, fid: int) -> str:
         """match | near | far | fail | skip, for one function's drafts, each built and diffed like an agent's, until
@@ -3477,20 +3506,40 @@ class ForkEngine:
             if not unit.source:
                 return "skip"
             names = self._names(self._meta(fn), fn)
+            from . import draft_reports
+            input_key = draft_reports.key(repr((self._draft_key(cfg, unit, fp.root),cfg.get('draft_generation',0))), self._known(fp,unit), '', fn)
+            previous = draft_reports.read(self.net, fid)
+            if previous.get('key') == input_key and previous.get('complete'):
+                return 'skip'
+            report = {'key':input_key, 'compiled':False, 'scored':False, 'matched':False, 'trials':0, 'failures':[]}
             outcomes = []
-            for prelude, code in self._autopilot_drafts(proj, fp, cfg, fn, unit):
+            for prelude, code in self._autopilot_drafts(proj, fp, cfg, fn, unit, report):
                 _, span = self._find(code, names)
-                if span is None or self.net.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND "
-                                                      "source=?", fid, agent.id, code[span[0]:span[1]]):
+                if span is None:
                     continue
                 res = self.attempt(agent, proj["slug"], fn["name"], code, keep=False, prelude=prelude)
+                report['trials'] += 1
+                report['compiled'] |= res.get('score') is not None
+                report['scored'] |= res.get('score') is not None
+                report['matched'] |= res['matched']
                 if res["matched"]:
+                    report['complete'] = True
+                    draft_reports.save(self.net, fid, report)
                     return "match"
                 if res["score"] is None:
+                    phase = 'link' if 'objdiff' in res['text'] else 'compiler'
+                    if phase == 'link':
+                        report['compiled'] = True
+                        report['compiled_source'] = prelude+'\n'+code
+                    draft_reports.failure(report, phase, 'project_draft', res['text'])
                     why = [ln for ln in res["text"].splitlines() if re.search(r"error|Error", ln) and "ninja" not in ln]
                     logging.getLogger("decompdecomp").info("autopilot: %s's draft didn't build: %s", fn["name"],
                                                          " | ".join(why[:4])[:600] or res["text"][-300:])
                 outcomes.append("fail" if res["score"] is None else "near" if (res.get("percent") or 0) >= 90 else "far")
+            if not outcomes:
+                draft_reports.failure(report, 'generation', 'project_draft', 'No new machine draft was available; inspect the unit assembly and draft decompiler.')
+            report['complete'] = True
+            draft_reports.save(self.net, fid, report)
             if not outcomes:
                 return "skip" if self.net.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?",
                                                     fid, agent.id) else "fail"
