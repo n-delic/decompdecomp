@@ -79,6 +79,38 @@ def test_shutdown_prevents_background_startup_from_launching_helpers(tmp_path, m
     assert manager.resume() == []
 
 
+def test_resume_does_project_sync_outside_manager_lock_and_launches_under_it(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    session = agents.Session("1", "api", "helper", "game", "helper", {},
+                             state="stopped", stopped_by=agents.BY_QUIT)
+    manager.sessions[session.id] = session
+    entered, release, launched = threading.Event(), threading.Event(), threading.Event()
+
+    def project_row(slug):
+        entered.set()
+        assert release.wait(5)
+
+    def launch(s):
+        assert manager._lock._is_owned()
+        launched.set()
+
+    monkeypatch.setattr(net, "project_row", project_row)
+    monkeypatch.setattr(manager, "_prepare", lambda slug: None)
+    monkeypatch.setattr(manager, "_launch", launch)
+    worker = threading.Thread(target=manager.resume)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        # A state request takes the same lock and must stay responsive during project synchronization.
+        assert manager.detected() == []
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert launched.is_set()
+
+
 def test_on_windows_it_stops_updating_and_shows_the_way_back_to_1_0_2(tmp_path, monkeypatch):
     """1.0.2 on Windows (in WSL) can install this version by itself, and it doesn't run there. Going back to 1.0.2
     must stick: 1.0.2 reads the same settings, so its update checks are switched off, and its old tab says how."""

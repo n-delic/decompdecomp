@@ -589,11 +589,11 @@ class Manager:
         if agent.id != kind:
             kind = agent.id
             options.pop("model", None)  # a Gemini CLI model name may mean nothing to Antigravity: use its default
-        if self._down:
-            raise ValueError("decompdecomp is quitting")
         ids = []
         self._prepare(slug)
         with self._lock:
+            if self._down:
+                raise ValueError("decompdecomp is quitting")
             for _ in range(max(1, min(int(count), MAX_AT_ONCE))):
                 model = options.get("model") or agent.config_model() or ""
                 if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
@@ -606,6 +606,8 @@ class Manager:
         return ids
 
     def _launch(self, s: Session) -> None:
+        if self._down:
+            return
         s.stop = threading.Event()
         s.state, s.why, s.todo, s.until, s.stopped_by, s.error = "starting", "", "", None, "", ""
         s.signed_out = s.throttled = s.limited = s.auth_failed = False
@@ -637,26 +639,37 @@ class Manager:
         """Helpers the app stopped by quitting carry on, as their options are now (options_now)."""
         ids = []
         with self._lock:
-            for s in list(self.sessions.values()):
-                if self._down:
-                    break  # startup resumes in the background; shutdown may have won the race
-                if s.state != "stopped" or s.stopped_by != BY_QUIT:
-                    continue
-                try:
-                    self.net.project_row(s.slug)
-                except NetworkError:
-                    continue
-                options = self.options_now(s.kind, dict(s.options))
-                if options is None:
-                    s.stopped_by, s.why = BY_ITSELF, "its API endpoint was removed"
-                    self._save(s)
-                    continue
-                s.options = options
-                self._prepare(s.slug)
+            sessions = list(self.sessions.values())
+        for s in sessions:
+            with self._lock:
                 if self._down:
                     break
+                if self.sessions.get(s.id) is not s or s.state != "stopped" or s.stopped_by != BY_QUIT:
+                    continue
+            try:
+                self.net.project_row(s.slug)
+            except NetworkError:
+                continue
+            options = self.options_now(s.kind, dict(s.options))
+            if options is None:
+                with self._lock:
+                    if not self._down and self.sessions.get(s.id) is s \
+                            and s.state == "stopped" and s.stopped_by == BY_QUIT:
+                        s.stopped_by, s.why = BY_ITSELF, "its API endpoint was removed"
+                        self._save(s)
+                continue
+            self._prepare(s.slug)
+            with self._lock:
+                # Project sync and preparation can take a while. stop(), restart(), or shutdown may have
+                # changed this session while they ran; only register a helper that is still eligible.
+                if self._down:
+                    break
+                if self.sessions.get(s.id) is not s or s.state != "stopped" or s.stopped_by != BY_QUIT:
+                    continue
+                s.options = options
                 self._launch(s)
-                ids.append(s.id)
+                if s.state == "starting":
+                    ids.append(s.id)
         return ids
 
     def _prepare(self, slug: str) -> None:
@@ -702,6 +715,9 @@ class Manager:
         and they carry on when it starts again). Its function is free at once, not when its thread notices (an API
         helper waits on its model meanwhile, and its claim showed up as a "connected agent")."""
         by = BY_QUIT if sid is None else by
+        if sid is None:
+            with self._lock:
+                self._down = True
         for s in list(self.sessions.values()):
             if sid not in (None, s.id):
                 continue
