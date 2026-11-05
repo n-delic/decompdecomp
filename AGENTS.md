@@ -203,6 +203,11 @@ linting). In short:
   and a `<div class="pad">` body. Include the full shell: `settings-disclosure` alone does not provide
   header spacing. Keep independent tools as sibling cards, collapsed by default; preserve open state
   during refreshes. Use `disclosure-context` for a short purpose or count beside the title.
+- Data tables should sort by clicking their column headings. Use native buttons inside `th scope="col"`,
+  visible direction indicators and `aria-sort`; toggle ascending/descending, sort numbers numerically,
+  keep missing values last, and preserve the choice across refreshes of the same view. Default to the most
+  useful ordering (compiler comparisons: Used by, highest first). Keep action-only columns unsortable and
+  preserve each row's identity when sorting so its actions still affect the correct item.
 - Avoid rows of secondary action buttons. Keep the main action visible and group related secondary actions
   in a vertical ⋮ overflow menu using the existing `agent-menu` / `agent-menu-items` pattern (also used by
   compiler profiles). Give the trigger a descriptive accessible label, show one action per line, retain

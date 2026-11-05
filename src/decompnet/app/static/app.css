@@ -1960,3 +1960,8 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .verification-banner .row { flex-wrap: wrap; justify-content: space-between; }
 
 #projectLoadDiagnostic { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Sortable table headings share a keyboard-accessible, full-cell target. */
+.table-sort { display: inline-flex; width: 100%; align-items: center; gap: 5px; padding: 4px 0; font: inherit; font-weight: inherit; text-align: left; }
+.table-sort:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.table-sort span { color: var(--muted); }
