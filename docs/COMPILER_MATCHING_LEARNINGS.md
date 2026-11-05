@@ -3678,3 +3678,40 @@ identical to the previously full-cartridge-verified candidate. This was copied
 engine replay, not another live match. An alternate-profile match must also report
 best score 0, 100%, and one improvement; stale previous-profile diff evidence must
 not overwrite its display afterward.
+
+### A pointer's final RHS reads can start a word scalar phase
+
+With GCC 2.7.2 KMC and `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a 268-instruction
+function differed only in the register holding its initial pointer. Sharing that
+pointer's storage with a later signed word scalar produced exact linked bytes.
+The scalar's first assignment called a function using the pointer on its RHS:
+`code = inspect(pointer, pointer->kind)`. Those reads finish before the assignment
+writes `code`; textual ordering of the LHS before the pointer references is not
+an overlapping value lifetime.
+
+The existing `pointer_integer_phase_union` family now recognizes plain initialized
+pointers, retains initializer evaluation order, and allows this transition only
+when the scalar has no incoming read and the pointer is dead on every successor.
+Each member is initialized in its own phase. Dominating definitions and CFG
+liveness still reject uninitialized reads, branch overlap, and loop back edges;
+escaped/shadowed storage, macro references, volatile aliases, unknown widths and
+64-bit pointer metadata remain excluded. Word members keep their original type
+for later self-assignments and compound operations; narrow compound updates remain
+excluded. The proposal limit stays eight, and source line counts are preserved.
+
+Evidence: the captured baseline scored 30 with the normal pinned compiler and
+linked judge. The extended family emitted six candidates; candidate four was
+exact (display score 10 was a raw-address/symbolic relocation spelling difference).
+Reusing the initial pointer identity as several other later locals failed, with
+scores from 120 to 1995. Declaration order, explicit register hints, pointer casts,
+argument staging and alternate argument prototypes did not fix the baseline.
+This is controlled generator replay of an independently found match, not a new
+native permuter job. No compiler flags or judge rules changed.
+
+The shared `draft_repairs.variants` route emitted 90 proposals, including the same
+six union candidates and the identical exact fourth union source. That generated
+source also passed the normal standalone build check and a complete 12,582,912-byte
+cartridge comparison. Every prior object stayed unchanged except the intentionally
+recompiled target object (whose debug information changed between cast and union
+source). This validates generated source through the full link, while remaining
+controlled replay rather than a native search result.
