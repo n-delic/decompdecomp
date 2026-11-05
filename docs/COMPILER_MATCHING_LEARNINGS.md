@@ -3951,3 +3951,37 @@ byte offset changed allocation and scheduling substantially. Inspect `.greg`/`.l
 phase reuse before expanding such searches. With `-g3`, statement boundaries and
 the position of a pure capture relative to the preceding call can matter; retain
 line boundaries and verify each candidate with the ordinary judge.
+
+
+### Measured match and controlled replay: equal field assignment chain order
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+32-bit big-endian MIPS. A private 84-instruction initializer reproduced its saved
+source at advisory score 185 (the stored historical score was 175). Replacing an
+absolute address with its existing symbol changed advisory relocation presentation
+to 165 without establishing a byte improvement. Broad declaration changes, signed
+byte field substitutions, constant identities and narrow helper returns did not
+recover the match. Explicit constant reuse changed scheduling and hoisted a store;
+one-shot scopes moved initialization across floating constant loads.
+
+A related local SDK version supplied a useful source lead: logical initialization
+order differed substantially from final assembly store order. Its record layout and
+sample-bank selection also differed, so this was provenance for a hypothesis, not
+an identical donor or proof of identity. Reconstructing a candidate-local typed
+record and logical assignment order produced a 20-score near miss. Reversing one
+chain into two distinct same-typed short fields recovered the two final store
+operands, including the return delay slot, and reached ordinary linked score zero.
+An independent complete cartridge comparison also passed; all previously verified
+objects and compiler profiles remained unchanged.
+
+The shared `equal_type_field_chain_order` proposal reproduces that prepared 20 to
+zero at index 4 of the normal 40-candidate first page. This controlled replay is
+one measured match, not another independently discovered match. The source lead
+and record reconstruction were manual preparation. Generation requires one
+ordinary declared struct object, distinct non-array scalar fields with identical
+declared types, unqualified storage, pure field addresses and a bounded RHS without
+calls, writes or conditional evaluation. It retains RHS evaluation once, both
+conversions and all source line breaks. Synthetic tests reject mixed widths,
+qualifiers, unions, arrays, macros, escaped bases and RHS side effects. Inspect
+local SDK/library sources before treating assembly store order as original C order;
+judge each layout and expression hypothesis normally.

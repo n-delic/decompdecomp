@@ -1,5 +1,11 @@
 # Roadmap
 
+Implemented: bounded reversal of chained assignments to distinct, identically typed
+ordinary struct fields in shared source repairs. Field layout, qualifier, macro,
+array and RHS effect guards preserve conversions and one RHS evaluation; source
+line breaks remain intact. Related SDK discovery and layout reconstruction remain
+reviewed source hypotheses, with ordinary exact verification required.
+
 Implemented: bounded integer-index to local-array pointer phase proposals in shared source
 repairs, with explicit 32-bit metadata, unique array/scalar lifetime guards, and pure local
 copy capture before a call. Macro expansions and argument-side writes remain opaque;

@@ -734,3 +734,14 @@ Never move the capture across an argument-side write, address escape or read of 
 old destination. The shared bounded repair proves local dominance, preserves unrelated
 volatile operations, and still requires exact linking. Its first-page replay is a
 regression of that same match, not an additional matched function.
+
+
+For library initializers, consult related local SDK sources before copying assembly
+store order into C. A related version is a source lead; verify its record layout,
+globals and behavior separately. Typed record field stores can schedule differently
+from raw pointer casts. When only the final operands of a chained assignment differ,
+try reversing two distinct same-typed ordinary fields: both conversions and the RHS
+must remain identical. The bounded `equal_type_field_chain_order` repair preserves
+line breaks and requires the ordinary exact judge. In one measured initializer,
+manual source/context recovery reached 20 and this first-page proposal reached zero;
+constant reuse and broad declaration changes had not recovered it.
