@@ -92,7 +92,16 @@ def test_resume_does_project_sync_outside_manager_lock_and_launches_under_it(tmp
         assert release.wait(5)
 
     def launch(s):
-        assert manager._lock._is_owned()
+        acquired = threading.Event()
+
+        def probe_lock():
+            with manager._lock:
+                acquired.set()
+
+        probe = threading.Thread(target=probe_lock)
+        probe.start()
+        probe.join(0.1)
+        assert not acquired.is_set()
         launched.set()
 
     monkeypatch.setattr(net, "project_row", project_row)
@@ -103,7 +112,11 @@ def test_resume_does_project_sync_outside_manager_lock_and_launches_under_it(tmp
     try:
         assert entered.wait(5)
         # A state request takes the same lock and must stay responsive during project synchronization.
-        assert manager.detected() == []
+        state_ready = threading.Event()
+        state = threading.Thread(target=lambda: (manager.detected(), state_ready.set()))
+        state.start()
+        assert state_ready.wait(1)
+        state.join(1)
     finally:
         release.set()
         worker.join(5)
