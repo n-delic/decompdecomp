@@ -59,7 +59,7 @@ def probe(search, agent, proj, fn, source, profile):
         link=search.net.links.get(proj['slug'])
         if link:
             from .. import match_bundle
-            from . import room_matches
+            from . import deep_room, room_matches
             # Freeze the tested compiler and private header into the durable room packet.
             # Never change local assignments or report a win before the host accepts it.
             evidence=room_matches.packet(search.net,proj['slug'],fn['name'],source)
@@ -69,10 +69,11 @@ def probe(search, agent, proj, fn, source, profile):
             search.phase='awaiting host profile verification'
             search.report()
             search.log('Submitting exact source/header/compiler bundle for host verification…')
-            result=room_matches.send(link,agent,fn['name'],source,evidence=evidence)
+            result=deep_room.submit(search,link,agent,fn,source,evidence=evidence)
             search.room_holds.pop(fn['id'],None)
             if result.get('matched'):
-                link.sync()
+                try:link.sync()
+                except NetworkError as error:deep_room.disconnected(search,link,error)
                 search.log('Host verified the alternate compiler profile match.')
                 return 0
             from .deep_permuter import SearchLimit

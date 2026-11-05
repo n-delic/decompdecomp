@@ -728,3 +728,13 @@ def test_loop_flag_validation(sweep):
     obj, *_ = sweep
     with pytest.raises(NetworkError, match='true or false'):
         obj.start('game', loop='yes')
+
+
+def test_old_host_outage_errors_are_retryable_not_attention(sweep):
+    obj,net,*_=sweep
+    proj=net.project_row('game')
+    fn=net.store.one('SELECT * FROM functions WHERE project_id=? LIMIT 1',proj['id'])
+    obj.record(fn,'old-scope','error',1,10,error="the room's host isn't reachable right now: can't reach the host (ReadTimeout)")
+    obj.recover_room_transport('game')
+    row=net.store.one('SELECT state,error FROM deep_permutation_passes WHERE function_id=?',fn['id'])
+    assert row['state']=='pending' and row['error']==''
