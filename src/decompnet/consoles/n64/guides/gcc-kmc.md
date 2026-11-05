@@ -764,3 +764,9 @@ scratch whose old value is dead on every CFG path, and a replaced local dead aft
 its store. It preserves one execution and rejects observable/escaped locals and
 macro aliases. Review operand/conversion errors separately before treating a small
 score as only allocation; the ordinary exact judge still decides.
+
+When a literal indirect store is scheduled after later independent stores or mask
+work, try putting that single store in `do { ...; }while(0);`. One controlled KMC
+`-O2 -g3` replay recovered exact linked bytes this way; a plain block and a scalar
+global declaration alone did not. Preserve the original lvalue and declarations.
+The shared `constant_memory_store_scope` repair offers a bounded version.
