@@ -72,6 +72,7 @@ def test_manual_save_locations_survive_restart_and_belong_to_one_project(project
         assert "save_folder" not in json.loads((chosen / saves.MANIFEST).read_text())
     saves.save(net, "game")  # clearing the field restores the project's default
     assert saves.save_folder(net, "game") == folder.resolve()
+    assert "save_folder" not in net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))
 
 
 def test_a_failed_save_keeps_the_last_successful_location(project, tmp_path, monkeypatch):
@@ -86,6 +87,19 @@ def test_a_failed_save_keeps_the_last_successful_location(project, tmp_path, mon
     with pytest.raises(NetworkError, match="unavailable"):
         saves.save(net, "game", tmp_path / "unavailable")
     assert saves.save_folder(net, "game") == chosen.resolve()
+
+
+def test_a_save_to_an_unwritable_remembered_folder_has_an_actionable_error(project, tmp_path, monkeypatch):
+    net, _, _ = project
+    chosen = tmp_path / "unwritable"
+    saves.save(net, "game", chosen)
+
+    def fail(*args, **kwargs):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(saves, "_publish", fail)
+    with pytest.raises(NetworkError, match="Choose a writable folder"):
+        saves.save(net, "game", chosen)
 
 
 def test_a_project_opened_from_a_save_shows_its_linked_location(project, tmp_path):
