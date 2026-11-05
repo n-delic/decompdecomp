@@ -1,4 +1,5 @@
 """Explicit function suggestions publish one freshly verified source/header/profile bundle."""
+from .. import toolchains
 from ..network import NetworkError
 from . import prepared_evidence, source_preparation
 
@@ -77,3 +78,48 @@ def settle_checks(cfg, fn, settings):
     for item in cfg.get('suggestions',[]):
         if item['id'] in ids:
             item.update(status='applied',check='Freshly verified and applied to the originating function only.')
+
+
+def actionable(net, proj, suggestion):
+    """Single-function compiler proposals expire when that function is no longer open."""
+    if not suggestion.get('toolchain'):
+        return True
+    bundle = suggestion.get('function_match')
+    if bundle:
+        fn = net.store.one('SELECT status,vram,size FROM functions WHERE project_id=? AND name=?',
+                           proj['id'], bundle['function'])
+        return bool(fn and fn['status'] == 'open' and (fn['vram'], fn['size']) == (bundle['vram'], bundle['size']))
+    # Legacy map suggestions identify their originating function through the range check.
+    checks = net.cfg(proj).get('range_checks', [])
+    for check in checks:
+        if check.get('suggestion') != suggestion['id'] or check.get('origin') is None:
+            continue
+        rows = net.store.all('SELECT status,vram,size FROM functions WHERE project_id=? AND vram=?',
+                             proj['id'], check['origin'])
+        if len(rows) == 1 and suggestion.get('ranges') and contained(rows[0], suggestion['ranges']):
+            return rows[0]['status'] == 'open'
+    return True
+
+
+def accept_all(net, slug, log):
+    """Apply a snapshot sequentially through the usual verification and match protections."""
+    items = [s for s in net.overview(slug)['suggestions'] if s.get('toolchain')]
+    results = []
+    for index, item in enumerate(items, 1):
+        log.check_cancel()
+        current = net.project_row(slug)
+        fresh = next((s for s in net.cfg(current).get('suggestions', []) if s['id'] == item['id']), None)
+        reason = None
+        try:
+            if not fresh or fresh['status'] != 'open' or not actionable(net, current, fresh):
+                raise NetworkError('Already resolved or no longer needs a compiler suggestion; skipped.')
+            net.resolve_suggestion(slug, item['id'], True, log=log)
+        except (NetworkError, toolchains.ToolchainError, OSError) as error:
+            reason = str(error)
+        results.append({'id':item['id'], 'applied':reason is None, 'reason':reason})
+        log(f"{index}/{len(items)}: suggestion #{item['id']}: {reason or 'applied'}")
+        log.progress({'phase':'Applying waiting suggestions', 'done':index, 'total':len(items),
+                      'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results)})
+    net.progress.sync(slug, force=True, logger=log)
+    return {'overview':net.overview(slug), 'results':results,
+            'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results)}

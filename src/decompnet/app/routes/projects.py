@@ -44,7 +44,7 @@ def register(app: App) -> None:
                         with net.progress.view():
                             return fn(slug, request, data)
                     result = fn(slug, request, data)
-                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
@@ -362,6 +362,15 @@ def register(app: App) -> None:
     suggestion_jobs = {}
 
     def p_suggestion(slug, request, data):
+        if data.get('action') == 'apply-all':
+            from ..function_profile_suggestions import accept_all
+            with jobs._lock:
+                previous = suggestion_jobs.get((slug, 'all'))
+                if previous and jobs.jobs.get(previous, {}).get('state') == 'running':
+                    return {'job':previous}
+                job = jobs.start('Apply waiting compiler suggestions', lambda log:accept_all(net, slug, log))
+                suggestion_jobs[slug, 'all'] = job
+                return {'job':job}
         if data.get("background") and data.get("action") == "apply":
             sid = int(data.get("id", 0))
             with jobs._lock:

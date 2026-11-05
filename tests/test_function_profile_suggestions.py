@@ -194,3 +194,51 @@ def test_function_can_return_to_default_profile_without_changing_neighbors(monke
     assert compiler_for(cfg,4096)['flags']==['-O2']
     assert compiler_for(cfg,4100)['flags']==['-O1']
     assert net._function('f','game')['status']=='matched'
+
+
+def test_matched_and_changed_function_suggestions_are_not_actionable(monkeypatch):
+    net, _ = fixture(monkeypatch)
+    proj=net.project_row('game');fn=net._function('f','game')
+    item = {'id':1,'toolchain':'gcc','function_match':{'function':fn['name'],'vram':fn['vram'],'size':fn['size']}}
+    assert profiles.actionable(net, proj, item)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE id=?", (fn['id'],))
+    assert not profiles.actionable(net, proj, item)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',size=size+4 WHERE id=?", (fn['id'],))
+    assert not profiles.actionable(net, proj, item)
+
+
+def test_legacy_matched_suggestion_is_not_actionable(monkeypatch):
+    net, _ = fixture(monkeypatch)
+    proj=net.project_row('game');fn=net._function('f','game')
+    net._update_cfg(proj['slug'], lambda cfg:cfg.update(range_checks=[{'suggestion':1,'origin':fn['vram']}]))
+    item={'id':1,'toolchain':'gcc','ranges':[[fn['vram'],fn['vram']+fn['size']]]}
+    assert profiles.actionable(net, net.project_row(proj['slug']), item)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE id=?", (fn['id'],))
+    assert not profiles.actionable(net, net.project_row(proj['slug']), item)
+
+
+def test_accept_all_rechecks_and_continues_after_failure(monkeypatch):
+    net, _ = fixture(monkeypatch)
+    proj=net.project_row('game')
+    items=[{'id':i,'status':'open','toolchain':'gcc'} for i in range(1,4)]
+    net._update_cfg(proj['slug'],lambda cfg:cfg.update(suggestions=items))
+    net.overview=lambda slug:{'suggestions':items}
+    applied=[]
+    def resolve(slug, sid, accept, log):
+        applied.append(sid)
+        if sid==2:raise NetworkError('Busy function')
+    net.resolve_suggestion=resolve
+    net.progress=SimpleNamespace(sync=lambda *a,**kw:None)
+    class Log:
+        def __call__(self,line):pass
+        def check_cancel(self):pass
+        def progress(self,value):self.last=value
+    log=Log()
+    result=profiles.accept_all(net,proj['slug'],log)
+    assert applied==[1,2,3]
+    assert (result['applied'],result['skipped'])==(2,1)
+    assert result['results'][1]['reason']=='Busy function'
+    assert log.last['done']==3

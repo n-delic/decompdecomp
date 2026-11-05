@@ -81,7 +81,8 @@ class GuiMixin:
                        "priority": cfg.get("priority", []),
                        # (a suggestion its own check disproved isn't one: older ones were filed)
                        "suggestions": [function_profile_suggestions.public(s) for s in cfg.get("suggestions", []) if s["status"] == "open"
-                                       and not re.search(r"does not match|doesn't compile", s["check"] or "")],
+                                       and not re.search(r"does not match|doesn't compile", s["check"] or "")
+                                       and function_profile_suggestions.actionable(self, proj, s)],
                        "boundaries": [r for r in cfg.get("boundaries", []) if r["status"] == "open"],
                        # (a fork whose files each have a compiler says its own: DS)
                        "compiler_ranges": base.get("compiler_ranges") or self._range_rows(cfg),
