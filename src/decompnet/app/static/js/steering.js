@@ -1472,7 +1472,7 @@ function renderDeepQueueState(status) {
     $("deepSweep" + id + "Group").hidden = !count;
   }
   $("deepSweepRunChecked").textContent = status.progress?.functions_tested != null
-    ? `${running ? "This run" : "Last run"}: ${status.progress.functions_tested.toLocaleString()} functions checked` : "";
+    ? `${running && status.loop ? `Pass ${status.progress.cycle || 1} · looping` : running ? "This run" : "Last run"}: ${status.progress.functions_tested.toLocaleString()} functions checked` : "";
   $("deepSweepBar").max = Math.max(1, total);
   $("deepSweepBar").value = done;
   $("deepSweepProgressText").textContent = total ? `${done.toLocaleString()} of ${total.toLocaleString()} functions completed · ${Math.floor(100 * done / total)}%` : "";
@@ -1529,6 +1529,7 @@ async function renderDeepSweep() {
       $("deepSweepProfiles").value = status.compiler_profiles || 1;
       $("deepSweepThreads").value = status.threads || "";
       $("deepSweepRepeat").checked = false;
+      $("deepSweepLoop").checked = !!status.loop;
     }
     $("deepSweepStatusRetry").hidden = true;
     renderDeepSweepResults(status);
@@ -1603,7 +1604,7 @@ $("deepSweepStart").onclick = async () => {
   let job = null;
   const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
   try {
-    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, threads:Number($("deepSweepThreads").value) || 0}});
+    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0}});
     job = result.job;
     if (S.slug === slug) renderDeepQueueState(result);
   } catch (error) {

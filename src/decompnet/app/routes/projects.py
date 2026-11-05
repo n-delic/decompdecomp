@@ -458,7 +458,7 @@ def register(app: App) -> None:
         if not isinstance(data.get('repeat', False), bool):
             raise ValueError('Repeat must be true or false.')
         return sweeps.start(slug, data.get('minutes', 5), data.get('max_variants', 10000), data.get('repeat', False),
-                            data.get('threads', 0), data.get('compiler_profiles', 1))
+                            data.get('threads', 0), data.get('compiler_profiles', 1), data.get('loop', False))
 
     def p_function_notes(slug, request, data):
         from ..function_history import notes_page
