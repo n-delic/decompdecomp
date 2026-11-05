@@ -9,6 +9,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1142,6 +1143,33 @@ def test_a_unit_build_that_hangs_with_its_output_open_is_stopped_with_its_compil
     results = fp.build_units([fp.unit("a"), fp.unit("b")])
     assert alone == ["a", "b"] and all(not ok and "didn't finish" in said for ok, said in results)
     assert not _running(int(pid_file.read_text()))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows stops the whole tree by force (taskkill /T /F)")
+def test_a_compiler_that_ignores_being_asked_to_stop_is_killed_at_the_time_limit(tmp_path, monkeypatch):
+    """ninja runs each command in a process group of its own: the step's group was killed, and a compiler that
+    ignored SIGTERM outlived its build."""
+    import sys
+    import time
+
+    from decompnet.forks import project
+
+    fp = _steps_project(tmp_path, broken="")
+    pid_file = tmp_path / "compiler.pid"
+    (tmp_path / "stubborn.py").write_text(f"import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                                          f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
+    (tmp_path / "build.ninja").write_text(f'rule hang\n  command = "{sys.executable}" stubborn.py\n'
+                                          "build build/a.o: hang src/a.c\n")
+    monkeypatch.setattr(project, "UNIT_SECONDS", 2)
+    started = time.monotonic()
+    ok, said = fp.build_unit(fp.unit("a"))
+    assert not ok and "didn't finish in 2 seconds" in said and time.monotonic() - started < 20
+    pid = int(pid_file.read_text())
+    for _ in range(20):  # (killed, it's gone once its new parent reaps it)
+        if not _running(pid):
+            break
+        time.sleep(0.1)
+    assert not _running(pid)
 
 
 def test_a_step_that_prints_another_units_failure_doesnt_fail_that_unit(tmp_path):
