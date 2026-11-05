@@ -1,5 +1,12 @@
 # Roadmap
 
+Implemented: the shared native permuter batch wrapper rejects a possible read before
+initialization of an introduced ordinary scalar temporary using bounded CFG must
+analysis. ROM, imported-project and deep native batches share the guard. Existing,
+escaped, qualified or shadowed locals, constant controls and unsupported syntax receive no verdict;
+this limited guard is not a general undefined-behavior proof. Generator-internal
+walk reset feedback remains planned; every emitted descendant is checked independently.
+
 Implemented: bounded constant field-store lifetime reuse inside a one-shot scope,
 using an existing compatible consumed scalar and CFG liveness in shared source
 repairs. Scope, escape, qualifier, macro and branch-entry guards preserve behavior;

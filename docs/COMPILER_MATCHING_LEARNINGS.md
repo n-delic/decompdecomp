@@ -4064,3 +4064,27 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   Every proposal still requires ordinary compilation and exact linked/object
   verification. This adapter currently recognizes MIPS direct symbolic calls;
   other instruction syntaxes need their own evidence-backed adapters.
+
+
+### Native temporary extraction can introduce a read before assignment
+
+- Observed during a private KMC GCC 2.7.2 local search: `perm_temp_for_expr`
+  introduced a scalar assigned inside a conditional and reused it as an argument
+  after the conditional. The closer compiled score did not establish valid source
+  behavior, and the candidate was rejected. This is not an exact-match result.
+- The shared `Generator.batch` wrapper now checks newly introduced ordinary scalar
+  locals before returning candidates to ROM, imported-project and deep native
+  searches. It reuses bounded local control-flow edges and intersects initialized
+  states across reachable predecessors. Bare declarations reset initialization;
+  assignments check RHS reads before generating an initialized value.
+- This is a limited guard, not a general undefined-behavior or equivalence proof.
+  Existing names, escapes, qualifiers, shadows, macros, constant controls and unsupported sequencing
+  receive no verdict. Correlated branches are not proved equivalent; this conservative
+  filter may omit valid candidates. Only literal-zero do-loop back edges are pruned.
+  The native generator protocol has no per-candidate rejection
+  feedback, so its internal walk continues; every emitted descendant is checked
+  independently against the job source. Lineage remains attached to accepted output.
+- Validation: synthetic branches, switches, loops, gotos, declaration reentry,
+  self-read assignments and batch protocol coverage. Private replay rejects the
+  observed unsafe temporary while allowing the sound boolean-materialization and
+  early narrowing alternatives. Ordinary exact judging remains mandatory.
