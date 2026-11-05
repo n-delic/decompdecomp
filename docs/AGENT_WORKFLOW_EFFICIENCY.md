@@ -187,3 +187,37 @@ variant are shown only from matching recorded provenance; inherited/mismatched s
 attributed as a new rewrite. Unrecorded file/draft changes explicitly have no inferred writer. Historical scores
 remain historical and every new match still goes through the ordinary judge. These views do not compile,
 select another source, or change a claim.
+
+
+## Responsive connections and claim recovery
+
+Compact `project_info` reads saved configuration and indexed project totals. Full overview, SDK/room facts,
+knowledge and compiler suggestions are deferred to `detail=true`; explicit project instructions are retained.
+MCP initialization, authenticated tool listing, authentication and transcript persistence run in workers,
+not on the HTTP event loop. Metadata and app-only health checks have dedicated capacity independent of
+ordinary tool workers. At most two app startup probes run concurrently; busy probes retry without a model
+request, using staggered backoff. Per-tool transcript responses include numeric queue, dispatch, SQL-read,
+build and pre-dispatch durations. Build duration includes compiler/build-lock waiting; SQL timing covers
+Store reads, not all transaction writes. Timings overlap and are not CPU measurements.
+
+Agent `claim_function` reserves ordinary leases and returns saved candidate C and a claim token without
+running diagnostic builds, drafting or imported-tree inspection. Same-agent/project claim requests serialize;
+unchanged retries return the existing receipt. Supporting assembly, notes and drafts remain available through
+`get_assembly` and `get_function(section="brief")`; `get_candidate` explicitly loads baseline evidence.
+Preparation is described as deferred, never falsely queued or completed. Low-level claim/UI APIs retain
+full briefs. The read-only `get_claims` tool lists up to 20 of the caller's live project claims and tokens;
+ownership errors identify held functions and point to this recovery path. No other agent's claims are exposed.
+
+Explicit CLI-reported MCP timeouts/unavailable tools are connection outcomes rather than no-compilation
+failures. During connection backoff, saved source and claims remain available; an explicit user stop still
+uses ordinary cleanup. A second consecutive CLI-reported connection failure pauses further model retries;
+normal paused-worker cleanup releases leases without abandon penalties. Old session replies cannot trigger
+a new connection outcome. Generic blockers and provider usage limits retain their existing handling.
+
+`try_compiler(compiler="current")` uses the effective function profile (including overlay selectors), retaining
+its flags unless explicit flags are supplied. Imported projects resolve their file's own compiler through the
+console adapter and keep their build-owned flag restrictions. Explicit compiler diagnostics rejecting a
+requested option are remembered for that pinned compiler ID; repeated diagnostic requests skip that known
+invalid flag, without claiming a successful compile or match. Other compiler versions and unrecognized
+failures are unaffected. Mismatch-focused assembly reads without a mapped target anchor return an explained,
+bounded raw target page; they do not infer a location or run another compile.

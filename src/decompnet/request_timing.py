@@ -1,7 +1,9 @@
 """Opt-in request diagnostics: numeric durations only, never SQL, paths or game data."""
+import functools
 import logging
 import os
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 _current = ContextVar('request_timing', default=None)
@@ -36,3 +38,26 @@ def response(work, queued_at, encode, label):
     logging.getLogger('decompdecomp').info('UI timing %s queue=%.1fms work=%.1fms sql=%.1fms queries=%d encode=%.1fms',
         label, queue*1000, (built-started)*1000, metrics['sql']*1000, metrics['queries'], (encoded-built)*1000)
     return result
+
+
+@contextmanager
+def capture():
+    metrics={'sql':0.,'queries':0}
+    token=_current.set(metrics)
+    try:
+        yield metrics
+    finally:
+        _current.reset(token)
+
+
+def build(function):
+    @functools.wraps(function)
+    def run(*args,**kwargs):
+        began=time.monotonic()
+        try:
+            return function(*args,**kwargs)
+        finally:
+            metrics=_current.get()
+            if metrics is not None:
+                metrics['build']=metrics.get('build',0)+time.monotonic()-began
+    return run

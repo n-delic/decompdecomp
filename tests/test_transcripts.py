@@ -83,7 +83,7 @@ def test_mcp_records_full_arguments_results_and_errors(setup, monkeypatch):
     net, manager, session, row = setup
     agent = SimpleNamespace(id=1, name='helper')
     monkeypatch.setitem(tools.HANDLERS, 'get_function', lambda *a, **kw: 'source ' * 1000)
-    monkeypatch.setattr(tools, '_named', lambda *a: a[-1])
+    monkeypatch.setattr(tools, '_named', lambda net, agent, slug, args, tool='': args)
     mcp = tools.build_mcp(net, lambda context: (agent, 'demo'), observe=manager.record_agent)
     anyio.run(mcp.call_tool, 'get_function', {'function': 'target'})
     events = manager.transcript('demo', 1)['events']

@@ -26,6 +26,7 @@ from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
 from .release_receipts import operation as release_operation
+from .request_timing import build as timed_build
 from .store import Store
 
 CLAIM_TTL = 30 * 60
@@ -634,6 +635,7 @@ class Network:
         row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
         return row["name"] if row else "?"
 
+    @timed_build
     def _compile(self, proj, header: str, source: str, fn=None):
         """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
         cfg = json.loads(proj["config"])
@@ -1339,6 +1341,9 @@ class Network:
         return self._brief(self._function(function, project), agent, header="VIEW")
 
     def _brief(self, fn, agent: Agent | None, header: str) -> str:
+        from .app import claim_state
+        if header == "CLAIMED" and agent and claim_state.fast():
+            return claim_state.brief(self,fn,agent,header)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         ctx = self._context(proj["id"], fn["unit"])
         claim = self.store.one("SELECT * FROM claims WHERE function_id=?", fn["id"])
@@ -1448,7 +1453,8 @@ class Network:
                 if claim is None:
                     held = db.execute("SELECT 1 FROM claims WHERE agent_id=?", (agent.id,)).fetchone()
                     if held:
-                        raise NetworkError("you hold another claim; release it before working on a different function")
+                        from .app.claim_state import ownership_hint
+                        raise NetworkError(ownership_hint(self,agent,fn["project_id"]))
                     db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                     self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
                 elif claim["agent_id"] != agent.id:

@@ -321,7 +321,8 @@ def claim_packet(net, agent, slug, text):
                       'Start with the detailed function below; load queued function briefs when ready. Batch judging is still available.',
                       text[:blocks[1].start()])+'\nQueued claims (leases retained; details on demand):\n'+'\n'.join(
             '- '+name for name in queue)+'\nUse get_function(function, section="brief") when starting each queued function.\n'
-    rendered = brief(net, text, slug, agent)
+    from .claim_state import fast
+    rendered = text if fast() else brief(net, text, slug, agent)
     if not re.search(r'^## CLAIMED', rendered, re.M):
         return rendered
     normalized = re.sub(r'lease expires in [^\n]*', 'lease renewed', rendered)
@@ -388,8 +389,11 @@ def assembly(net, slug, function, start=0, limit=60, focus="", agent=None):
             hits=[i for i,line in enumerate(lines) if re.search(r'(?<![\w])'+re.escape(focus)+r'(?![\w])',line)]
         if not hits and automatic:
             hits=[min(20,max(0,len(lines)-1))]
+        if not hits and focus.startswith('mismatch'):
+            fallback=assembly(net,slug,function,start, min(40,max(1,int(limit))), 'page',agent)
+            return 'Mismatch location unavailable for the current evidence; showing a bounded target page instead. No mismatch location or score inferred.\n'+fallback
         if not hits:
-            return 'No target region located for this focus. Use paged get_assembly or compile a candidate before focus="mismatch".'
+            return 'No target region located for this focus. Use paged get_assembly or a shorter symbol anchor.'
         start=max(0,hits[0]-8);limit=min(40,max(1,int(limit)))
         prefix=f'Focus at target line {hits[0]}; matching lines: '+', '.join(map(str,hits[:10]))+'. Use focus="page" with start/limit for exact paging; mismatch:N selects another differing instruction.\n'
     else:

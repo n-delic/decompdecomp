@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: lightweight agent project facts and claim receipts, serialized claim retries, read-only live-claim
+recovery, dedicated MCP health/metadata workers and bounded startup probes, numeric tool timing, connection
+failure outcomes, current-profile compiler diagnostics with remembered rejected flags, and bounded assembly
+fallback when mismatch mapping is unavailable. See docs/AGENT_WORKFLOW_EFFICIENCY.md.
+
 Implemented: typed batch symbol/address ownership and unambiguous read aliases, cached full model-ID
 resolution before worker creation, lease-bound release receipts for agent/room retries, and candidate
 selection/writer/score provenance in stale and continuation responses. ROM and imported-project metadata

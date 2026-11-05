@@ -244,6 +244,9 @@ class BriefMixin:
         return super().get_context(project, function)
 
     def _brief(self, fn, agent, header):
+        from .. import claim_state
+        if header == "CLAIMED" and agent and claim_state.fast():
+            return claim_state.brief(self,fn,agent,header)
         from ..search_evidence import brief as search_brief
         proj = self.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
         warning=self.console(proj).boundary_reason(fn['target'] or b'') if fn['status']!='matched' else None

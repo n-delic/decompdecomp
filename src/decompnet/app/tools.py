@@ -4,6 +4,7 @@ built-in API agent. Every tool works on the project the agent was started on."""
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from importlib import resources
 from typing import Callable, Literal
@@ -16,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .. import __version__, agents, candidate_quality, consoles
 from ..network import Agent, NetworkError
 from ..release_receipts import operation as release_operation
-from . import agent_tokens, compiler_experiments, local_experiments
+from . import agent_tokens, claim_state, compiler_experiments, local_experiments
 from .engine import RomNetwork
 
 
@@ -273,6 +274,8 @@ def _fork(net: RomNetwork, slug: str, what: str) -> str:
 
 def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
     wish = net.instructions(slug)
+    if not detail:
+        return _compact_project_info(net,slug) + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
     text = _project_info(net, slug, detail)
     open_ = net.overview(slug).get("suggestions") or []
     if open_ and not detail:
@@ -289,9 +292,27 @@ def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
     return text + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
 
 
+def _compact_project_info(net, slug):
+    """Indexed totals and saved metadata only: no overview, SDK, room or build scans."""
+    proj=net._project(slug)
+    cfg=net.cfg(proj)
+    totals=net.store.one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
+    profile=cfg.get('compiler') or {}
+    platform=consoles.get(cfg.get('platform'))
+    compiler=profile.get('toolchain') or 'set by the project build'
+    known=', '.join(c.id for c in platform.compilers)
+    return (f"{proj['name']} ({slug})\ncompiler: {compiler} {' '.join(profile.get('flags',[]))}\n"
+            + (f"this platform's compilers (for try_compiler): {known}\n" if known else '')
+            + (f"progress: {totals['matched']}/{totals['total']} functions matched; {totals['attempts']} compiles\n" if totals else 'Progress totals unavailable; no project scan performed.\n')
+            + 'Compact saved metadata; each claim uses its own effective compiler profile. '
+              'project_info(detail=true) loads full facts, knowledge and suggestions. Next: get_claims() to recover held work, or claim_function().')
+
+
 def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
     if net.fork_slug(slug):
         return net.forks.info(slug)
+    if not detail:
+        return _compact_project_info(net,slug)
     ov = net.overview(slug)
     pct = 100 * ov["matched_bytes"] / (ov["bytes"] or 1)
     ranges = "".join(f"\n  0x{r['start']:X}-0x{r['end']:X}: {r['name']} {' '.join(r['flags'])}" for r in ov["compiler_ranges"]) if detail else ""
@@ -313,6 +334,7 @@ def _release_with_experiment(net, agent, slug, function, notes, needs, not_c, mo
     return agent_tokens.brief(net,net.release_function(agent,function,notes,slug,needs or '',bool(not_c),bool(move_on),claim_token=claim_token),slug,agent) + ('\n'+saved if saved else '')
 
 
+@claim_state.quick
 def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1) -> str:
     """A claim; one asked for that's matched, set aside (no C makes it) or someone else's is the next free function
     instead (an agent asking for those has nothing better to do than the next one, and is told why). count > 1: a
@@ -454,6 +476,7 @@ def _resolve_addresses(net, agent, slug, queries, context_function=""):
 
 
 HANDLERS: dict[str, Callable[..., str]] = {
+    "get_claims": claim_state.get_claims,
     "resolve_addresses": _resolve_addresses,
     "report_data_region": _report_data_region,
     "project_info": lambda net, agent, slug, detail=False: project_info(net, slug, detail),
@@ -522,7 +545,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-READ_ONLY = frozenset({"resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+READ_ONLY = frozenset({"get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
@@ -643,35 +666,51 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     ensure(net)
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
 
+    health_limiter = anyio.CapacityLimiter(2)
     async def run(ctx: Context, name: str, **args) -> str:
-        try:
-            agent, slug = agent_of(ctx)
-        except NetworkError as e:
-            raise ToolError(str(e)) from None
-        call_id = uuid.uuid4().hex
+        queued=time.monotonic()
         try:
             checking = name == 'project_info' and (ctx.headers or {}).get('x-decomp-connection-check') == '1'
         except ValueError:
-            checking = False  # In-process tool calls have no HTTP request context.
+            checking = False
         prefix = 'connection_check_' if checking else ''
-        if observe:
-            observe(agent, slug, prefix + 'tool_request', {'name': name, 'arguments': args, 'call_id': call_id})
-        try:
-            if checking:
-                # agent_of authenticated the token/project. Avoid slow overview, SDK and progress scans.
-                await anyio.to_thread.run_sync(net.project_row, slug)
-                result = f'Authenticated tools ready for {slug}. App-only connection check; project facts are supplied separately.'
-            else:
-                result = await anyio.to_thread.run_sync(lambda: _dispatch(net,agent,slug,name,args,count_usage=True))
-        except Exception as e:
+        call_id = uuid.uuid4().hex
+        def execute():
+            from ..request_timing import capture
+            started=time.monotonic()
+            try:
+                agent,slug=agent_of(ctx)
+            except NetworkError as error:
+                raise ToolError(str(error)) from None
             if observe:
-                observe(agent, slug, prefix + 'tool_response', {'name': name, 'error': str(e), 'call_id': call_id})
-            if isinstance(e, NetworkError):
-                raise ToolError(str(e)) from None
-            raise
-        if observe:
-            observe(agent, slug, prefix + 'tool_response', {'name': name, 'content': result, 'call_id': call_id})
-        return result
+                observe(agent,slug,prefix+'tool_request',{'name':name,'arguments':args,'call_id':call_id})
+            result=None
+            error=None
+            with capture() as metrics:
+                dispatch=time.monotonic()
+                try:
+                    if checking:
+                        net.project_row(slug)
+                        result=f'Authenticated tools ready for {slug}. App-only connection check; project facts are supplied separately.'
+                    else:
+                        result=_dispatch(net,agent,slug,name,args,count_usage=True)
+                except Exception as exc:
+                    error=exc
+                elapsed=time.monotonic()-dispatch
+            timings={'queue_ms':round((started-queued)*1000,2),'dispatch_ms':round(elapsed*1000,2),
+                     'sql_read_ms':round(metrics['sql']*1000,2),'sql_reads':metrics['queries'],
+                     'build_ms':round(metrics.get('build',0)*1000,2),
+                     'before_dispatch_ms':round((dispatch-started)*1000,2)}
+            if observe:
+                payload={'name':name,'call_id':call_id,'timings':timings}
+                payload['error' if error else 'content']=str(error) if error else result
+                observe(agent,slug,prefix+'tool_response',payload)
+            if isinstance(error,NetworkError):
+                raise ToolError(str(error)) from None
+            if error:
+                raise error
+            return result
+        return await anyio.to_thread.run_sync(execute,limiter=health_limiter if checking else None)
 
     def tool(fn):
         full = " ".join((fn.__doc__ or "").split())
@@ -688,9 +727,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     async def claim_function(ctx: Context, function: str = "", strategy: str = "", count: int = 1) -> str:
         """Claim the next function to decompile (or a specific one by name or address).
 
-        Returns its assembly, the best previous attempt and notes from earlier agents, plus (ROM projects)
-        calls, data and a machine-made draft or (forks) the current diff and its source file. Each compile
-        renews the claim.
+        Returns a lightweight receipt with saved candidate C and claim token. No baseline compile, new draft or
+        imported build is run while claiming. Read get_assembly or get_function(section=brief) for supporting
+        evidence; get_candidate rechecks a baseline. get_claims recovers held work. Each compile renews the claim.
 
         Args:
             function: optional name or address (0x80001234) of a specific function
@@ -719,6 +758,11 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         their definitions in one source; each is judged on its own."""
         return await run(ctx, "compile_and_diff", function=function, source=source, repair_note=repair_note,
                          repair_category=repair_category, repair_automation=repair_automation)
+
+    @tool
+    async def get_claims(ctx: Context) -> str:
+        """Recover your live claims, canonical function names and claim tokens in this project. Read-only; no builds, drafting, new claims or source selection. Use get_candidate for C/revision."""
+        return await run(ctx, "get_claims")
 
     @tool
     async def get_candidate(ctx: Context, function: str, base: Literal["current", "saved_best", "last_compiling", "reported_corrected"] = "current") -> str:
@@ -988,7 +1032,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
         Args:
             function: the function to judge it against
-            compiler: a toolchain id (project_info lists this platform's); where each source file has its own
+            compiler: current retains this function's effective compiler and default flags, or a toolchain id (project_info lists this platform's); where each source file has its own
                 compiler (DS), "all" tries every one, and the one that matches becomes the file's
             flags: its flags (default: that compiler's defaults for this game)
             source: the C (default: the function's best attempt)
