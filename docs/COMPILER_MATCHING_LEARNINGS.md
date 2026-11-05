@@ -4187,3 +4187,18 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   match is claimed. Pointer temporaries and more complex function-like memory
   aliases remain outside this change. Regressions cover initialized alternatives,
   hidden dependencies, conflicting definitions and traced generator output.
+
+### Cancellation insertion is not a safe allocation repair
+
+- A native random walk from a corrected N64 leaf produced a lower advisory score
+  by inserting `p++; p--;` into a signed loaded value and adding a self-assignment.
+  The target accepts arbitrary word values; incrementing `INT_MAX` is undefined.
+  The lower score was rejected, not accepted as a new match.
+- Native `perm_add_self_assignment` also chooses `x = x` and `x += 0` without
+  proving initialization, qualifiers, pointer bounds or signed ranges. The app
+  now excludes this insertion family before selecting rewrites, for traced and
+  untraced generation. The pinned tool itself is unchanged.
+- This prevents new insertions by that family; it does not sanitize historical
+  candidates or prove other random rewrites equivalent. Existing bad candidates
+  still need explicit source review and, when appropriate, corrective adoption
+  even when the corrected source has a higher advisory score.

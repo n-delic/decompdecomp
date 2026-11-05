@@ -1,5 +1,13 @@
 # Roadmap
 
+- Done: preserve overlay branch labels during ROM import, recover missing local labels
+  at recorded instruction addresses in existing drafts, follow renamed entry symbols,
+  and retry recovered failed drafts through the ordinary compiler and exact judge.
+  Background draft planning now supplies the complete function inputs it uses.
+
+- Done: allow flag context in reusable knowledge proposals while retaining explicit
+  compiler-selection routing, function-note scoping and model/user review.
+
 - Done: numeric MCP transaction-writer and candidate lock acquisition timings,
   with synthetic rollback, release and claim-check regressions. This diagnoses
   contention without changing concurrency or exact matching.
@@ -2473,3 +2481,8 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   byte/objdiff judge; reopening inputs never turns a fingerprint into automatic acceptance.
 - Imported candidates whose dependencies exist only in external project headers still need those
   declarations in the destination build, as with the existing cross-project transfer adapter.
+
+- Done: the shared native randomizer wrapper excludes artificial self-assignment
+  insertion in traced and untraced jobs, preventing that family from introducing
+  unchecked signed/pointer increment-decrement cancellations or self-reads.
+  Historical candidates still require review; ordinary judging is unchanged.

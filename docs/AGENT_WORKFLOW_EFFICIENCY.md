@@ -332,3 +332,13 @@ or SQLite engine waits in BEGIN/COMMIT. Nested request timers can overlap, so do
 not add all timing fields as exclusive portions of dispatch time. Zero can mean
 no instrumented acquisition occurred. This adds diagnostic evidence, not a proven
 latency improvement.
+
+### Known flag context in reusable techniques
+
+A source-layout proposal was repeatedly rejected as compiler selection because it
+mentioned a debug flag. Shared knowledge now distinguishes a flag that describes
+the conditions of a technique from language asking to use/switch compiler settings.
+Explicit compiler guesses and selection requests still go to compiler tools;
+function progress reports still go to function notes. Accepted proposals still need
+the existing model agreement and user/automatic acceptance policy. This classifier
+fix does not validate the proposed compiler behavior or change any compiler settings.

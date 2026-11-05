@@ -56,6 +56,11 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+ROM drafts preserve overlay branch labels and follow renamed entry symbols. Existing imports can recover missing
+labels only at recorded instruction addresses, including supplied jump-table cases. Cached failed drafts are
+regenerated after the fix; newly recovered local drafts go through the ordinary compiler and exact judge.
+Outgoing branches and incomplete targets still need boundary review.
+
 Source preparation can now find real matched callback owners as CPU-only compiler
 context, including saved C from another unit. It can separately assemble supplied
 local assembly and verify linked code/data without claiming C coverage. The overview

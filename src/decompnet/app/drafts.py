@@ -110,13 +110,16 @@ class Drafter:
             fork = self.net.fork_slug(proj["slug"])  # a game started from scratch in project mode (PC)
             if fork:
                 self.net.forks.background_draft(proj, fn)
+                recovered = False
             else:
-                self.net._seed_for(fn, proj)
+                seed = self.net._seed_for(fn, proj)
+                recovered = fn['seed'] == '' and bool(seed)
             st.made += 1
-            if proj["slug"] not in self.net.links and self.net.store.one(
-                    "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?", fid, agent.id):
+            if proj["slug"] not in self.net.links and (recovered or self.net.store.one(
+                    "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?", fid, agent.id)):
                 # autopilot tried this function's draft before: the new one goes through the judge too (in a room,
                 # the host's copy does that, and its matches come back here)
+                # A recovered failed seed has no attempt: m2c stopped before compilation.
                 outcome = (self.net.forks.autopilot_one if fork else self.net._autopilot_one)(agent, proj, fid)
                 st.retried += outcome in ("match", "near", "far")
                 st.matched += outcome == "match"

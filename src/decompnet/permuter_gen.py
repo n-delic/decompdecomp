@@ -64,6 +64,16 @@ def private_inline(original):
         return result
     return call
 
+
+def supported_methods(methods):
+    """Do not manufacture self reads or arithmetic cancellations to shape allocation."""
+    # Native perm_add_self_assignment also inserts x++; x--;. Signed overflow,
+    # pointer bounds and uninitialized/qualified reads make these unsafe without
+    # range and type proofs. They add no source-level computation to recover.
+    return [(method, weight) for method, weight in methods
+            if method.__name__ != 'perm_add_self_assignment']
+
+
 def main() -> int:
     sys.path.insert(0, sys.argv[1])  # decomp-permuter's folder: its `src` package and its own copy of pycparser
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -122,7 +132,7 @@ def main() -> int:
                     return private_inline(method)
                 return method
             candidate.randomizer.methods = [(wrap(guarded(method)), weight)
-                                             for method, weight in candidate.randomizer.methods]
+                                             for method, weight in supported_methods(candidate.randomizer.methods)]
         configure(cand)
         for _ in range(count * TRIES_PER_VARIANT):
             if len(seen) > count:

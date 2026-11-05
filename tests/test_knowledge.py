@@ -175,3 +175,38 @@ def test_generic_rule_can_name_a_library_call_in_code(net):
     kid=int(response.split('#')[1].split('.')[0]);net.knowledge.decide('game',kid,True)
     assert rule in net.knowledge.for_prompt('game')
     with pytest.raises(NetworkError):net.knowledge.share(worker,'game','I tried to cast `sqrtf` and improved its score by 10; remaining differences are in the loop.')
+
+
+@pytest.mark.parametrize('flag',['-g3','-O2','-G0'])
+def test_flags_can_describe_source_technique_conditions_without_selecting_settings(net,flag):
+    worker=agent(net,'claude-opus-1');pid=net._project('game')['id']
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name) VALUES(?,?)",(pid,'library_begin'))
+    rule=(f'With GCC and {flag}, debug line notes can affect delay-slot scheduling. '
+          'If calls expand from a macro, keep the expanded calls on one source line '
+          'such as `library_begin(task); library_end(task);` to test their shared line note.')
+    response=net.knowledge.share(worker,'game',rule,evidence='Synthetic caller: score 40 to 20 with unchanged flags.')
+    kid=int(response.split('#')[1].split('.')[0])
+    item=net.knowledge.listing('game')['items'][0]
+    assert item['text']==rule and item['status']=='proposed'
+    assert item['evidence'][0]['text'].startswith('Synthetic caller:')
+    assert rule not in net.knowledge.for_prompt('game',worker)
+    # Context does not exempt an actual function progress report.
+    with pytest.raises(NetworkError,match='specific function'):
+        net.knowledge.share(worker,'game',f'With GCC {flag}, library_begin is stuck at score 40.')
+    net.knowledge.share(agent(net,'gpt-1'),'game',supports=kid)
+    assert net.knowledge.listing('game')['items'][0]['status']=='agreed'
+    assert rule not in net.knowledge.for_prompt('game',worker)
+    net.knowledge.decide('game',kid,True)
+    assert rule in net.knowledge.for_prompt('game')
+
+
+@pytest.mark.parametrize('selection',[
+    'This part is built with GCC -O2.', 'The compiler is GCC.',
+    'Use the compiler GCC.', 'Switch to GCC.', 'Change flags to -g3.',
+    'Try -O2.', 'Use -g3.', 'Switch to -G0.',
+])
+def test_explicit_compiler_or_flag_selection_still_requires_compiler_tools(net,selection):
+    with pytest.raises(NetworkError,match='compiler map'):
+        net.knowledge.share(agent(net,'claude-opus-1'),'game',selection)
+    assert net.knowledge.listing('game')['items']==[]
