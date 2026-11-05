@@ -39,6 +39,15 @@ header change. Preserve narrowing on each repeated expression; volatile local st
 changes require target evidence and never extend to MMIO. After repeated identical
 output, use a different evidence-backed family rather than resending unchanged trials.
 
+## Hazard boundaries and scalar captures
+
+Use `hazard_statement_lines` with current measured rows when branch tests agree but
+local labels shift by one instruction around a NOP. Do not treat branch relocation as
+a register miss. `known_zero_mask` and `post_call_narrow_capture` are bounded local
+families for proven scalar bits and capture timing; no guessed shared prototype is
+required for the explicit-conversion capture. Keep successful source line breaks and
+profile/context together. Frozen precursor replay measures recovery; it is not a new match.
+
 
 A lower native-permuter score is not proof of sound C. In particular, check that
 expanding a captured address does not recompute it after an index changes. The

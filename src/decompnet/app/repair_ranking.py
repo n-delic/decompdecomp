@@ -74,6 +74,8 @@ def order(families, rows):
         preferred = ('dead_copy_source','divisor_normalization_copy', 'divisor_value_scope', 'divisor_flag_split', 'regional_load_reuse') + preferred
     elif diagnose(rows)['scheduling'] or diagnose(rows)['delay_slot']:
         preferred = ('debug_statement_boundary',) + preferred
+    preferred=('hazard_statement_lines','known_zero_mask','post_call_narrow_capture')+preferred
+
     # These families only exist after a narrow target/source guard. Generic delay-slot
     # or register-shape heuristics must not spend the whole budget before that operation.
     preferred=GUARDED+preferred

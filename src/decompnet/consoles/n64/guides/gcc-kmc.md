@@ -628,6 +628,17 @@ If m2c emits `M2C_BREAK(9)` and the target has BREAK 9, use the fixed
 operations before interpreting downstream branch displacements or extra padding
 as progress. Other compiler packs need their own tested intrinsic registration.
 
+### Branch destinations around a hazard NOP
+
+A two-branch miss can come from a physical source boundary: the NOP may land before
+or after a shared label. Check identical branch tests and one-word destination shifts
+before more register permutations. `hazard_statement_lines` tests bounded boundaries
+and same-type assignment-conversion temporaries. Preserve the exact working lines.
+For a shared doubled value, `known_zero_mask` can preserve a useful intermediate through
+a range-proven redundant mask. `post_call_narrow_capture` retains the explicit argument
+conversion and captures the local afterwards, only with no intervening mutation/escape.
+These supplement existing conversion families; every candidate still needs exact checking.
+
 ### Current live return address versus the entry caller
 
 When target code stores `$ra` to a global after an optional callback, distinguish
