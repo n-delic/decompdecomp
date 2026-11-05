@@ -612,6 +612,8 @@ class Manager:
         kept = {k: v for k, v in options.items() if k != "api_key"}  # the key stays in the settings
         s = next((x for x in self.sessions.values() if x.slug == slug and x.agent_name == name), None)
         if s is not None:
+            options = {k: v for k, v in s.options.items() if k in ('prompts', 'disabled_tools')} | options
+            kept = {k: v for k, v in options.items() if k != 'api_key'}
             s.kind, s.label, s.options = kind, label, dict(options)
             with self.net.store.tx() as db:
                 db.execute("UPDATE helpers SET kind=?, model=?, label=?, options=? WHERE id=?",

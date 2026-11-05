@@ -7,6 +7,7 @@ from decompnet.app import manual_mcp
 from decompnet.app.engine import RomNetwork
 from decompnet.app.support import Settings
 from decompnet.network import NetworkError
+from tests.test_claims import _game
 
 
 def test_credentials_are_scoped_persistent_and_revocable(tmp_path):
@@ -27,12 +28,29 @@ def test_credentials_are_scoped_persistent_and_revocable(tmp_path):
     restored = Settings(settings.path)
     assert manual_mcp.project_for(net, restored, agent.id) == 'one'
     assert manual_mcp.project_for(net, restored, second['id']) == 'two'
-    manual_mcp.revoke(restored, agent.id)
+    manual_mcp.revoke(net, restored, agent.id)
     assert manual_mcp.project_for(net, Settings(settings.path), agent.id) is None
+    with pytest.raises(NetworkError, match='invalid API token'):
+        net.authenticate(first['token'])
     assert manual_mcp.project_for(net, restored, second['id']) == 'two'
     with net.store.tx() as db:
         db.execute('DELETE FROM projects WHERE slug=?', ('two',))
     assert manual_mcp.project_for(net, restored, second['id']) is None
+
+
+def test_revoke_releases_the_connection_claim_without_touching_other_agents(tmp_path):
+    net, _ = _game(tmp_path, [('held', 4, 'open')])
+    settings = Settings(tmp_path / 'settings.json')
+    connection = manual_mcp.create(net, settings, 'game')
+    agent = net.authenticate(connection['token'])
+    assert net.claim_row(agent, 'game', 'held')['name'] == 'held'
+    with pytest.raises(NetworkError, match='no longer exists'):
+        manual_mcp.revoke(net, settings, agent.id + 100)
+    assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', agent.id)
+    manual_mcp.revoke(net, settings, agent.id)
+    assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', agent.id) is None
+    with pytest.raises(NetworkError, match='invalid API token'):
+        net.authenticate(connection['token'])
 
 
 def test_server_resolves_manual_credentials_and_rejects_revoked_tokens(tmp_path, monkeypatch):
@@ -68,5 +86,5 @@ def test_server_resolves_manual_credentials_and_rejects_revoked_tokens(tmp_path,
     with pytest.raises(NetworkError):
         resolve[0](SimpleNamespace(headers={'Authorization': 'Bearer invalid'}))
     assert client.post('/api/manual-mcp', json={'action': 'revoke', 'id': agent.id}).status_code == 200
-    with pytest.raises(NetworkError, match='no longer assigned'):
+    with pytest.raises(NetworkError, match='invalid API token'):
         resolve[0](context)

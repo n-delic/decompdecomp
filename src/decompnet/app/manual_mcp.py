@@ -32,6 +32,11 @@ def create(net, settings, slug):
     return {**item, 'token': token}
 
 
-def revoke(settings, agent_id):
+def revoke(net, settings, agent_id):
+    if not any(item['id'] == agent_id for item in connections(settings)):
+        raise NetworkError('That MCP connection no longer exists.')
+    net.release_stopped([agent_id], 'manual MCP connection revoked')
+    with net.store.tx() as db:
+        db.execute('DELETE FROM agents WHERE id=? AND origin=?', (agent_id, 'manual-mcp'))
     settings.data['manual_mcp'] = [item for item in connections(settings) if item['id'] != agent_id]
     settings.save()

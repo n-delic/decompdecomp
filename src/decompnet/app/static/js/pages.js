@@ -364,6 +364,7 @@ setInterval(() => checkUpdate(false, true), 10 * 60 * 1000);
 let manualMcpRead = 0, manualMcpProjectsRead = 0;
 async function loadManualMcp() {
   const select = $("mcpProject"), previous = select.value;
+  $("mcpCreate").disabled = true;
   select.innerHTML = '<option value="">Loading projects…</option>';
   select.disabled = true;
   const read = ++manualMcpProjectsRead, log = $("mcpLog");
@@ -387,6 +388,7 @@ async function loadManualMcp() {
   $("mcpRefresh").onclick = loadManualMcp;
   $("mcpCreate").onclick = async () => {
     const slug = select.value, button = $("mcpCreate"), log = $("mcpLog");
+    if (!slug || select.disabled) return;
     const finish = beginWork(log, "Creating MCP connection", [], "Connection created.");
     button.disabled = true;
     try {

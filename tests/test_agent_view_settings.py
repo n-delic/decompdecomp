@@ -37,6 +37,21 @@ def test_prompt_overrides_validate_inherit_and_snapshot(tmp_path, monkeypatch):
             prompt_settings.validate(value)
 
 
+def test_stopped_helper_keeps_its_prompts_and_disabled_tools_on_restart(tmp_path):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    manager = Manager(net, tmp_path, 'http://localhost/mcp')
+    session = manager._record('game', 'codex', 'codex-1', 'Reader', {'model': 'first'})
+    manager.set_prompts(session.id, {'instructions': 'Keep this'})
+    manager.set_tool(session.id, 'guide', False)
+    restarted = manager._record('game', 'codex', 'codex-1', 'Reader', {'model': 'second'})
+    assert restarted is session
+    assert restarted.options['prompts']['instructions'] == 'Keep this'
+    assert 'guide' in restarted.options['disabled_tools']
+    assert restarted.options['model'] == 'second'
+    stored = json.loads(net.store.one('SELECT options FROM helpers WHERE id=?', session.id)['options'])
+    assert stored == restarted.options
+
+
 def test_tool_policy_applies_to_lists_and_calls_and_counts_usage(tmp_path, monkeypatch):
     net, _ = _game(tmp_path, [('f', 10, 'open')])
     agent, _ = net.local_agent('reader')

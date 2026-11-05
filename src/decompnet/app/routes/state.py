@@ -189,7 +189,7 @@ def register(app: App) -> None:
             if request.method == "POST":
                 data = await body(request)
                 if data.get('action') == 'revoke':
-                    await call(manual_mcp.revoke, settings, int(data['id']))
+                    await call(manual_mcp.revoke, net, settings, int(data['id']))
                     return JSONResponse({'ok': True})
                 if data.get('action') != 'create':
                     raise ValueError('Choose create or revoke.')
