@@ -1675,8 +1675,8 @@ a verified C match. Imported object fingerprints keep their existing file-based 
 
 SDK naming reads narrow metadata and briefly reuses unchanged ROM naming checks (at most 60 seconds; imported
 projects and active claims retain retry checks). Autosave reuses the project inventory and scopes contributor
-lookups to agents referenced by the saved functions. It still checks for external file edits every second,
-and existing dirty-function tracking still controls what is rendered and written.
+lookups to agents referenced by the saved functions. It checks dirty work every second, with full external-file checks at most 15 seconds apart;
+existing dirty-function tracking still controls what is rendered and written.
 
 The function drawer requests a lightweight saved-data preview first, on the small-request queue. It shows saved
 C and assembly before generating a machine draft or loading history, calls, compiler comparisons and verification.
@@ -1772,3 +1772,15 @@ one-hour and overnight presets. Manual passes allow up to 24 hours and 1,000,000
 including unfinished donor C. Each project remembers the controls on this device. The
 budget bar shows checks used, not whole-library completion; a pass stops when either
 limit is reached or eligible candidates run out. **Stop** keeps verified results.
+
+### Background responsiveness
+
+Dirty progress continues saving on the one-second background cycle. Unchanged progress
+folders receive a deep file check every 15 seconds; explicit saves and checks before
+judging still inspect files immediately. Startup scans and full or post-match reuse
+passes share one maintenance lane across projects, with cooperative yields during
+long naming, indexing and fingerprint loops. Reuse compile parallelism also respects
+the configured background worker limit. SDK signature corpora are indexed once per
+architecture/revision and filtered for each project's selected libraries. Persistent
+local tool connection failures retry progressively less often, up to five minutes
+plus a small worker-specific offset; stopping a worker still interrupts the wait.

@@ -92,3 +92,19 @@ def test_game_batches_do_not_pull_in_nearby_sdk_code(tmp_path):
     agent, _ = net.local_agent('worker')
     first = net.claim_row(agent, 'demo', 'first')
     assert [r['name'] for r in net._batch_more(agent, net.project_row('demo'), first, 4)] == ['game']
+
+
+def test_sdk_corpus_index_is_shared_between_projects_and_invalidated(tmp_path,monkeypatch):
+    net=RomNetwork(tmp_path/'sdk.db',tmp_path)
+    with net.store.tx() as db:
+        for slug in ('a','b'):
+            db.execute("INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,'mips',1,?,'{}')",(slug,slug,str(tmp_path)))
+        db.execute("INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES('SDK','mips',1,'name','same',40)")
+    monkeypatch.setattr(net.twins,'prints',lambda proj:{1:SimpleNamespace(key='same',size=40,asm=False)})
+    queries=[]
+    net.store._reader().set_trace_callback(queries.append)
+    assert identify(net,net.project_row('a'),{})[1]['names']==['name']
+    assert identify(net,net.project_row('b'),{})[1]['names']==['name']
+    assert sum('SELECT corpus,name,fingerprint,size' in q for q in queries)==1
+    with net.store.tx() as db:db.execute("UPDATE sdk_signatures SET name='newName'")
+    assert identify(net,net.project_row('a'),{})[1]['names']==['newName']

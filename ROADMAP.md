@@ -602,6 +602,8 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- Background contention: autosave keeps one-second dirty checks with 15-second deep file checks; reuse and startup scans share one maintenance lane with cooperative UI yields and lower priority; SDK corpus indexes are shared across projects; persistent local connection failures back off to five minutes plus worker jitter.
+
 - Check again and helper startup reconsider obsolete agent tooling verdicts when
   the effective compiler supports a target-backed live return-address C repair,
   including fixes shipped under the same package version. Valid assembly, user
