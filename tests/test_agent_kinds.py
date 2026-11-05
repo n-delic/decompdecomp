@@ -6,6 +6,7 @@ template is a complete example that isn't registered, and nothing outside agents
 program is ever run here: a stand-in prints a version.
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -105,6 +106,8 @@ def test_the_template_is_not_registered():
 
 
 def test_posix_npm_shim_uses_sibling_node_only_for_node_shebang(tmp_path, monkeypatch):
+    if os.name == 'nt':
+        pytest.skip('POSIX executable shebangs are not available on Windows')
     monkeypatch.setattr(agents.sys, 'platform', 'linux')
     node = tmp_path / 'node'
     node.write_text('#!/bin/sh\n')
