@@ -363,3 +363,27 @@ Metadata still imports normally and is retained when the candidate result is sav
 Explicit reimports remain invalidating. Unrelated source imports can still invalidate
 an in-flight result; this change does not provide per-function revision tracking or
 remove the stale-result guard.
+
+
+## Matched integer prototype repairs
+
+`matched_integer_prototype` turns selected matched-callee evidence into a bounded
+local-repair hypothesis. It compares one candidate-owned, file-scope declaration
+with a referenced matched definition in the same project. Only known integer
+widths and signedness are changed, including integer return types. Explicit
+argument casts, call expressions and parameter names are preserved. Conventional
+fixed-width aliases require compatible explicit typedefs in the candidate context.
+
+The shared ROM/project proposal path offers up to three individual callee changes
+and one combined candidate, using the existing compiler budgets, cancellation,
+trial history and exact judge. Agents can request the family with
+`try_local_repairs`; background local/deep repair searches receive it through the
+same generator. Existing matches and shared headers are not rewritten. An
+improved score is saved by ordinary search rules; a function is matched only by
+the ordinary exact-byte/objdiff verdict.
+
+Pointers, callbacks, floating types, uncertain typedefs, qualifiers, conditional
+interfaces, conflicting/shared declarations, escaped function names and argument
+count differences remain review items. All positions in a proposed interface
+must be supported; this pass does not partially guess a complex signature.
+Matched C supplies a candidate contract, not proof of the original interface.

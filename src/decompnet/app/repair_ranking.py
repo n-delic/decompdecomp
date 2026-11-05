@@ -1,6 +1,6 @@
 """Rank applicable hypotheses by observed mismatches without excluding other families."""
 
-GUARDED = ('mips_debug_break','live_return_address','live_return_address_initializers')
+GUARDED = ('matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers')
 
 
 def guarded_first(candidates, labels=None):

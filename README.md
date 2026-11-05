@@ -1680,6 +1680,9 @@ Agent sessions now return structured waiting state for empty queues, share scope
 rechecks, include focused instruction feedback, retain explicit correctness alternatives,
 and hand released work to bounded background CPU repairs. See
 [agent workflow efficiency](docs/AGENT_WORKFLOW_EFFICIENCY.md) for limits and verification.
+Local repair searches can test candidate-owned integer prototypes against referenced matched callees,
+with at most three individual corrections and one combined candidate. Shared declarations and existing
+matches stay untouched; each candidate still goes through the ordinary compiler and exact judge.
 
 Compiler-comparison preparation reports checked functions, total functions and a percentage while checking
 eligibility. Each pass batches previous-result lookups and reads shared headers, symbols and compiler

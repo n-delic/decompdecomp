@@ -78,6 +78,10 @@
 - Done: allow flag context in reusable knowledge proposals while retaining explicit
   compiler-selection routing, function-note scoping and model/user review.
 
+- Done: bounded matched-callee integer prototype candidates in shared ROM/project local repairs,
+  with preserved explicit casts, unchanged shared headers and ordinary exact judging. Complex interfaces
+  and argument-count changes remain review items.
+
 - Done: MCP SQL connection, fallback-lock, execute and fetch timings on successful and failed
   tool calls; failed database-open/execute phases retain elapsed time without logging SQL or bindings.
 

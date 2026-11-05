@@ -22,6 +22,24 @@ Use these evidence levels:
 
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
+### Controlled regression: matched integer prototype candidates
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2`, big-endian MIPS.
+Recent repair captures include caller prototype corrections alongside other source
+changes. Those combined successes do not isolate which edit caused the match.
+The new `matched_integer_prototype` family therefore uses only a referenced
+selected matched definition as a bounded contract hypothesis and still requires
+the normal compiler and exact judge.
+
+In a synthetic control, a caller declared a helper as `short helper(short)` while
+the selected helper definition used `int helper(int)`. Updating the caller-owned
+declaration to `int helper(int)` recovered the independent control's instruction
+bytes and relocations; the original narrow declaration differed. This is a
+controlled regression, not a new game match. Tests also retain explicit casts,
+reject ambiguous/complex/shared interfaces, and verify that ordinary failed
+trials retain the saved baseline. No callee definition or shared header changes.
+
+
 ### Controlled regression: consumed unsigned countdown value
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
