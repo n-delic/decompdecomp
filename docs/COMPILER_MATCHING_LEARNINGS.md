@@ -4202,3 +4202,23 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   candidates or prove other random rewrites equivalent. Existing bad candidates
   still need explicit source review and, when appropriate, corrective adoption
   even when the corrected source has a higher advisory score.
+
+## 2026-11-05: SN EE-GCC needs a real executable path without spaces
+
+- **Compilers/flags:** SN Systems EE-GCC 2.95.2 (273a) and 2.95.3 (136), `-O2 -G0`,
+  little-endian R5900, original Windows executables through pinned macOS wibo.
+- **Controlled regression:** an unchanged `int probe(int a,int b){return a+b;}` is
+  compiled and linked against a homemade eight-byte return/add target by
+  `tests/test_ps2_compilers_macos.py::test_real_mac_ps2_engine_and_export_compile`.
+  Installed under macOS `Application Support`, both drivers fail preprocessing with
+  `Too many arguments`; a private materialized runtime copy without whitespace
+  restores successful compilation. The normal judge still rejects subtraction.
+- **Mechanism:** `-v` shows an injected, unquoted `-I Z:\...\Application Support\...`
+  derived from the canonical executable location. A space-free symlink and a relative
+  `-B` prefix still expose that real location; `-nostdinc` does not suppress this
+  driver-added include. Copy the installed pack, rather than changing source/flags
+  or weakening the judge. Original binaries and install manifests remain unchanged.
+- **Scope:** runtime-path compatibility, not a new retail-game match or an ABI/flag
+  recommendation. Shared runtime resolution covers live judging, profile comparison
+  and exported builds. Temporary copies are private to a process, reused by threads
+  and replaced after reinstall. Physical Intel Mac and Windows checks remain open.

@@ -361,7 +361,9 @@ remain outstanding. Shared instruction diffs expose encoding-only disagreements
 hidden behind identical disassembly aliases without weakening the byte judge.
 
 PS2 Sony EE-GCC 2.9 (991111), 2.96 and 3.2 now use the same optional macOS
-Linux runner; SN Systems EE-GCC 2.95.2/2.95.3 use native Mac wibo. Original
+Linux runner; SN Systems EE-GCC 2.95.2/2.95.3 use native Mac wibo. Installed SN packs
+whose path contains spaces run from a private temporary copy; their old driver embeds
+an unquoted self-relative include path, so symlinks alone cannot fix it. Original
 compiler binaries and the linked byte judge are retained. Physical Intel Mac
 verification remains planned; Apple Silicon checks use isolated homemade programs.
 CodeWarrior PS2 2.3.3/3.0.1 also run through native Mac wibo after explicit
