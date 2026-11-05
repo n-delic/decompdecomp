@@ -1056,8 +1056,8 @@ function uploadFile(url, file, onProgress) {
 }
 
 function closeUnfinishedProject(slug, title) {
-  dialog("Close project", `<p>Close <b>${esc(title)}</b> and remove its unfinished import from decompdecomp?</p>
-    <p>The project folder and all files stay on disk. You can import the folder again later. Any app-only notes for this import will be removed.</p>
+  dialog("Close project", `<p>Close <b>${esc(title)}</b> and remove it from the active projects in decompdecomp?</p>
+    <p>The project folder and all files stay on disk. You can import the folder again later. Verified matches stay in your local match library. Any app-only notes for this import will be removed.</p>
     <div class="row"><button class="primary" id="fsCloseGo" type="button">Close project</button><button class="ghost" data-close type="button">Cancel</button></div>
     <pre class="joblog" id="fsCloseLog" hidden></pre>`);
   $("fsCloseGo").onclick = async () => {

@@ -57,6 +57,8 @@ class Core(Network):
         from ..twins import Twins
         self.forks = ForkEngine(self)
         self.twins = Twins(self)
+        from ..match_library import Library
+        self.match_library = Library(self)
         self.permuter = Permuter(self)
         from ..rangecheck import RangeChecks
         self.rangechecks = RangeChecks(self)
@@ -362,3 +364,8 @@ class Core(Network):
         else:
             token = self.register_agent(name, "you", trusted=True, origin="local")
         return self.authenticate(token), token
+
+    def remove_project(self, slug):
+        # Archive before deleting any records or files. An archive failure keeps the project intact.
+        self.match_library.archive_project(self.project_row(slug))
+        return super().remove_project(slug)

@@ -1,0 +1,20 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync('src/decompnet/app/static/js/pages.js','utf8');
+const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:''});return elements.get(id);};
+const ctx={updateWorkProgress:()=>{},$:el,esc:s=>String(s).replaceAll('<','&lt;'),api:async()=>({functions:1,games:2,solutions:1,disk_bytes:1572864,items:[{name:'shared_function',arch:'mips',size:64,games:2,game_names:'First game,Second game',variants:1}]})};
+vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('async function loadMatchLibrary()'),source.indexOf('$("matchLibraryRefresh").onclick')),ctx);
+(async()=>{
+ const log={_workStatus:{}};
+ ctx.showMatchLibraryProgress(log,{phase:'Reading verified matches',game:'Example game',game_index:2,games_total:5,done:25,total:100,function:'func_123'});
+ assert.match(log._workStatus.textContent,/Example game.*game 2 \/ 5.*3 games left.*25 \/ 100 matches processed.*75 matches left.*func_123/);
+ ctx.showMatchLibraryProgress(log,{phase:'Indexing complete',done:100,total:100});
+ assert.equal(log._workStatus.textContent,'Indexing complete');
+ await ctx.loadMatchLibrary();
+ assert.match(el('matchLibraryCount').textContent,/1 functions · 2 games · 1 variants/);
+ assert.match(el('matchLibraryCount').textContent,/1.5 MiB on disk/);
+ assert.match(el('matchLibraryItems').innerHTML,/First game,Second game/);
+ assert.match(el('matchLibraryItems').innerHTML,/shared_function/);
+ ctx.api=async()=>({functions:0,games:0,solutions:0,items:[]});
+ await ctx.loadMatchLibrary();assert.match(el('matchLibraryItems').innerHTML,/No saved matches/);
+})().catch(error=>{console.error(error);process.exitCode=1;});

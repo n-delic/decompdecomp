@@ -1,11 +1,84 @@
 import json
 import subprocess
 import threading
+from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
 
 from decompnet.app import source_runtime as runtime
+
+
+def test_only_child_owned_python_can_update_without_a_server_restart():
+    assert runtime.worker_only_changes([
+        'src/decompnet/app/permute.py', 'src/decompnet/app/permuter_initialization.py', 'tests/test_permute.py'])
+    assert not runtime.worker_only_changes(['src/decompnet/app/permuter_worker.py'])
+    assert not runtime.worker_only_changes(['src/decompnet/app/permuter_focus.py'])
+    assert not runtime.worker_only_changes(['src/decompnet/app/permute.py', 'src/decompnet/app/engine/core.py'])
+
+
+def test_permuter_only_pull_replaces_the_worker_and_keeps_the_server(tmp_path, monkeypatch):
+    def git(*args, cwd=None):
+        return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    remote = tmp_path / 'remote.git'
+    source = tmp_path / 'source'
+    staged = tmp_path / 'staged'
+    git('init', '--bare', str(remote))
+    git('clone', str(remote), str(source))
+    git('config', 'user.email', 'test@example.invalid', cwd=source)
+    git('config', 'user.name', 'Test', cwd=source)
+    git('switch', '-c', 'main', cwd=source)
+    (source / 'src/decompnet/app').mkdir(parents=True)
+    (source / 'src/decompnet/app/cli.py').write_text('')
+    (source / 'src/decompnet/app/permute.py').write_text('old worker')
+    (source / 'pyproject.toml').write_text('')
+    git('add', '.', cwd=source)
+    git('commit', '-m', 'old', cwd=source)
+    git('push', '-u', 'origin', 'main', cwd=source)
+    git('clone', '--branch', 'main', str(remote), str(staged))
+    git('config', 'user.email', 'test@example.invalid', cwd=staged)
+    git('config', 'user.name', 'Test', cwd=staged)
+    (staged / 'src/decompnet/app/permute.py').write_text('new worker')
+    git('add', '.', cwd=staged)
+    git('commit', '-m', 'worker only', cwd=staged)
+    git('push', 'origin', 'main', cwd=staged)
+
+    app = make_app(tmp_path)
+    app.build_id = 'old'
+    steps = []
+
+    @contextmanager
+    def code_update():
+        steps.append('paused')
+        yield
+        steps.append('resumed')
+
+    app.net.permuter.code_update = code_update
+    app.updater.before_restart = lambda: pytest.fail('server must stay running')
+    monkeypatch.setattr(runtime.edition, 'CHECKOUT_ROOT', Path(source))
+    monkeypatch.setattr(runtime, 'validate', lambda *args: (source, 'git'))
+    manager = runtime.Runtime(app)
+    assert manager.update_worker_source(source, staged, 'git', 'example/repo')
+    assert steps == ['paused', 'resumed']
+    assert (source / 'src/decompnet/app/permute.py').read_text() == 'new worker'
+    assert app.build_id == git('rev-parse', '--short=12', 'HEAD', cwd=staged)
+
+
+def test_worker_only_handoff_uses_the_selected_checkout_not_the_staged_clone(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    manager = runtime.Runtime(app)
+    source = tmp_path / 'source'
+    staged = tmp_path / 'staged'
+    source.mkdir()
+    staged.mkdir()
+    monkeypatch.setattr(manager, 'prepare', lambda *args: staged)
+    monkeypatch.setattr(manager, 'update_worker_source',
+                        lambda folder, prepared, git, repo: (folder, prepared) == (source, staged))
+    monkeypatch.setattr(manager, 'drain', lambda: pytest.fail('worker-only update must not drain the server'))
+    manager.run(source, 'git', 'uv', tmp_path, 'example/repo')
+    assert manager.job['state'] == 'idle'
 
 
 def test_checkout_validation_preserves_local_work(tmp_path):

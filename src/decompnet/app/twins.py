@@ -646,9 +646,10 @@ class Twins:
         proj = self.net.project_row(slug)
         fork = bool(self.net.fork_slug(slug))
         from . import shared_reuse
+        archived = self.net.match_library.reuse(self, proj, job) if hasattr(self.net, "match_library") else 0
         shared_reuse.discover(self, proj, job=job)
         if fork:
-            matched = shared_reuse.transfer(self, proj, job)
+            matched = archived + shared_reuse.transfer(self, proj, job)
             mine = self.prints(proj)
             wanted = defaultdict(list)
             for row in self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
@@ -669,19 +670,23 @@ class Twins:
             if p is not None and not p.asm and p.size >= ACROSS_MIN_BYTES:
                 wanted[p.key].append(r["id"])
         if not wanted:
-            return 0
+            return archived
         others = [p for p in self.net.store.all(
             "SELECT * FROM projects WHERE id != ? AND arch=? AND big_endian=?",
             proj["id"], proj["arch"], proj["big_endian"]) if self.net.is_rom(p)] if not fork else []
-        for other in others:
+        from .cross_game_progress import report
+        for index, other in enumerate(others):
             if bounded and exhausted(job):
-                return 0
+                return archived
+            report(job, 'Indexing verified C', game=other['name'], done=index, total=len(others))
             self.index_project(other)
-        matched = 0
+        matched = archived
         agent, _ = self.net.local_agent("autopilot")
         if not fork:
             # Imported projects do not necessarily fill the database's architecture columns.
             for other in self.net.store.all("SELECT * FROM projects WHERE id != ?", proj["id"]):
+                if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):
+                    return matched
                 if self.net.fork_slug(other["slug"]) and other["slug"] not in self.net.links:
                     try:
                         matched += self._fork_to_rom(agent, proj, other, wanted, mine, job)
@@ -731,6 +736,7 @@ class Twins:
                     job.cross_tried += 1
                 if bounded:
                     job.reuse_attempts += 1
+                report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
                 outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
                 with self.net.store.tx() as db:
                     db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,"
@@ -1029,6 +1035,8 @@ class Twins:
         if console.arch != proj["arch"] or console.big_endian != bool(proj["big_endian"]):
             return 0
         bounded = job is not None and hasattr(job, "reuse_limit")
+        from .cross_game_progress import report
+        report(job, 'Reading imported target objects', game=other['name'])
         theirs = self.prints(other)
         matched = 0
         for a in self.net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", other["id"]):
@@ -1056,6 +1064,7 @@ class Twins:
                     job.cross_tried += 1
                 if bounded:
                     job.reuse_attempts += 1
+                report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
                 outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
                 with self.net.store.tx() as db:
                     db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,"

@@ -1450,6 +1450,48 @@ def test_cross_game_run_is_dedicated_and_rejects_duplicate_passes(app, monkeypat
     assert net.twins.jobs['cross-demo'].state == 'done'
 
 
+@pytest.mark.parametrize('data', [{'seconds':0}, {'seconds':86401}, {'seconds':'120'}, {'seconds':None},
+                                {'attempts':True}, {'attempts':1.5}, {'attempts':1000001}])
+def test_cross_game_invalid_budgets_do_not_reserve_a_pass(app, monkeypatch, data):
+    client, net, _ = app
+    monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
+    response = client.post('/api/cross-game/run', headers={'X-Decomp':'1'}, json={'slug':'invalid', **data})
+    assert response.status_code == 400
+    assert 'invalid' not in net.twins.jobs
+
+
+def test_cross_game_custom_budgets_report_current_work_and_cancel(app, monkeypatch):
+    from decompnet.app.cross_game_progress import report
+    client, net, _ = app
+    entered = threading.Event()
+    monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
+    monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
+    monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts':{}})
+    def across(slug, check):
+        assert check.reuse_limit == check.partial_limit == 1000000
+        assert 86390 < check.reuse_deadline - time.monotonic() <= 86400
+        check.cross_tried = 7
+        report(check, 'Compiling candidate', game='Demo donor', function='target', donor='original')
+        entered.set()
+        assert check.stop.wait(5)
+        return 0
+    monkeypatch.setattr(net.twins, 'across_games', across)
+    response = client.post('/api/cross-game/run', headers={'X-Decomp':'1'},
+                           json={'slug':'custom','seconds':86400,'attempts':1000000})
+    assert response.status_code == 200 and entered.wait(5)
+    jid = response.json()['job']
+    snapshot = client.get('/api/job', params={'id':jid}).json()
+    assert snapshot['progress']['function'] == 'target' and snapshot['progress']['game'] == 'Demo donor'
+    assert snapshot['progress']['attempts'] == 7 and snapshot['progress']['attempt_limit'] == 1000000
+    assert client.post('/api/job/cancel', headers={'X-Decomp':'1'}, json={'id':jid}).json()['cancelled']
+    for _ in range(100):
+        snapshot = client.get('/api/job', params={'id':jid}).json()
+        if snapshot['state'] != 'running':break
+        time.sleep(.01)
+    assert snapshot['state'] == 'cancelled'
+    assert net.twins.jobs['custom'].state == 'stopped'
+
+
 def test_cross_game_run_failure_releases_busy_state(app, monkeypatch):
     client, net, _ = app
     monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
@@ -2312,3 +2354,14 @@ def test_batch_compiler_suggestions_reuse_background_job(app, monkeypatch):
         assert calls==['batch-suggestions']
     finally:
         release.set()
+
+
+def test_match_library_api_is_guarded_and_does_not_expose_source(app):
+    client, net, *_ = app
+    assert client.get('/api/match-library',headers={'User-Agent':'outside'}).status_code==401
+    assert client.post('/api/match-library',json={}).status_code==403
+    data=client.get('/api/match-library').json()
+    assert data['functions']>=0 and isinstance(data['items'],list)
+    assert all('source' not in item and 'header' not in item for item in data['items'])
+    response=client.post('/api/match-library',json={},headers={'X-Decomp':'1'})
+    assert response.status_code==200 and response.json()['job']

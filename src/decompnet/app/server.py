@@ -32,6 +32,8 @@ from .support import Jobs, Settings, session_options
 
 
 def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False):
+    from .permuter_worker import PermuterWorker
+    net.permuter = PermuterWorker(net)
     mcp_url = f"http://127.0.0.1:{port}/mcp"
     from . import build_info
     build_id = (build_info.commit() or updates.installed().get("commit") or "")[:12]  # a branch install: the commit it came from
@@ -61,6 +63,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         startup.close()
         window.close_app()
         net.deep_sweeps.shutdown()
+        net.permuter.close()
         manager.shutdown()
         flush_progress()
         wine.stop()  # (its wine server would otherwise stay up to 10 minutes after the last compile)
@@ -85,7 +88,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
                            settings.data.get('iterative_seconds', 120), settings.data.get('iterative_attempts', 128),
                            settings.data.get('iterative_threads', 0))
     net.permuter.configure(settings.data)
-    workers.configure(settings.data.get("worker_threads"))
+    workers.configure(net.permuter.parent_threads(settings.data.get("worker_threads")))
     net.auto_compiler = bool(settings.data.get("auto_compiler"))
     from .agent_local_pass import configure as configure_local_repairs
     configure_local_repairs(net,settings.data)
@@ -132,6 +135,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         net.console(row).on_start(net, slug, log=jobs.logger.info)
     startup_projects = list(net.store.all('SELECT slug FROM projects'))
     startup_projects.sort(key=lambda r: r['slug'] != settings.data.get('last_project'))
+    startup.add("Save existing matches to the local library", net.match_library.backfill)
     for row in startup_projects:
         slug = row['slug']
         startup.add(f'Console startup {slug}', lambda slug=slug: console_start(slug))
@@ -272,6 +276,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
         startup.close()
         net.deep_sweeps.shutdown()
+        net.permuter.close()
         manager.shutdown()
         flush_progress()
 
