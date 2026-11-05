@@ -5,7 +5,8 @@ A program built with /GR (a choice in Visual C++ 6.0 to 7.1, on by default from 
 virtual functions, what typeid and dynamic_cast read at run time:
 - the word before each vtable points to the class's Complete Object Locator: a signature (0 on 32-bit x86), where
   this vtable's pointer sits in the object (0, or a second base's place), then the class's type descriptor and its
-  class hierarchy descriptor;
+  class hierarchy descriptor (a 64-bit program's, signature 1, holds addresses relative to the image base, RVAs, and
+  its own RVA last; its pointers, the vtables' slots and the word before them, are 8 bytes);
 - the type descriptor holds the class's decorated name, `.?AVTown@@` (`.?AU` for a struct);
 - the hierarchy descriptor lists the class and every base class it has, the class itself first, then its bases
   depth first (the direct base next).
@@ -30,13 +31,15 @@ from ...arch import x86, x86_fields
 
 # `.?AV` (a class) or `.?AU` (a struct), then the name, `Inner@Outer` for nested names, and `@@`
 TYPE_NAME = re.compile(rb"\.\?A[VU]([^\0]{1,1024}?)@@\0")
-TYPE_NAME_AT = 8  # in a type descriptor: the type_info vtable's address and a spare word come first
-COL_OFFSET_AT, COL_TYPE_AT, COL_HIERARCHY_AT, COL_BYTES = 4, 12, 16, 20
+TYPE_NAME_AT = 8  # in a type descriptor: the type_info vtable's address and a spare word come first (16: x64's)
+COL_OFFSET_AT, COL_TYPE_AT, COL_HIERARCHY_AT, COL_SELF_AT, COL_BYTES = 4, 12, 16, 20, 20
+COL_SIGNATURE_X64 = 1  # (x64's locators: their fields RVAs, their own RVA at COL_SELF_AT)
 HIERARCHY_COUNT_AT, HIERARCHY_BASES_AT = 8, 12
 MAX_BASES = 256  # a broken hierarchy descriptor stops here
 MAX_VPTR_OFFSET = 0x10000  # where a second base's vtable pointer can sit in an object
 MAX_SLOTS = 1024
 WORD = 4
+CONSTRUCTOR_STORE_BYTES = 32  # (x64) how far after taking a vtable's address a constructor stores it
 _FOUND: dict[tuple, tuple[classes.Classes, structs.Structs]] = {}  # the last project's, by what it was read from
 _FACTS: dict[tuple, dict[int, structs.Facts]] = {}  # what its functions do with pointers, by the program and them
 STORED = "the vtables its constructors store"
@@ -154,9 +157,9 @@ def class_name(decorated: str) -> str:
     return f".?AV{decorated}@@"
 
 
-def _words(data: bytes) -> array:
-    words = array("I")
-    words.frombytes(data[:len(data) // WORD * WORD])
+def _words(data: bytes, width: int = WORD) -> array:
+    words = array("I" if width == WORD else "Q")
+    words.frombytes(data[:len(data) // width * width])
     return words
 
 
@@ -166,43 +169,51 @@ def recover(pe, labels: dict[int, str] | None = None, relocs: dict[int, list] | 
     vtable."""
     out = classes.Classes(found_from="the program's run-time type information", reads_fields=False)
     word = {}
+    wide = getattr(pe, "x64", False)  # (a 64-bit program: 8-byte pointers, RVAs in the records)
+    ptr = 8 if wide else WORD
+    base = pe.image_base if wide else 0
 
-    def at(addr: int) -> int | None:
-        if addr not in word:
-            raw = pe.read(addr, WORD)
-            word[addr] = struct.unpack("<I", raw)[0] if len(raw) == WORD else None
-        return word[addr]
+    def at(addr: int, n: int = WORD) -> int | None:
+        if (addr, n) not in word:
+            raw = pe.read(addr, n)
+            word[addr, n] = struct.unpack("<I" if n == WORD else "<Q", raw)[0] if len(raw) == n else None
+        return word[addr, n]
+
+    def address(addr: int) -> int | None:  # a record's field naming another: an RVA on x64
+        value = at(addr)
+        return None if value is None else value + base
 
     types: dict[int, str] = {}  # type descriptor -> the class's name
     for s in pe.sections:
         data = pe.data[s.offset:s.offset + s.size]
         for m in TYPE_NAME.finditer(data):
-            td = s.va + m.start() - TYPE_NAME_AT
-            if td % WORD == 0 and pe.contains(at(td) or 0) and at(td + WORD) == 0:
+            td = s.va + m.start() - TYPE_NAME_AT * ptr // WORD
+            if td % ptr == 0 and pe.contains(at(td, ptr) or 0) and at(td + ptr, ptr) == 0:
                 types[td] = class_name(m.group(1).decode("latin-1"))
     if not types:
         return out
     # Complete Object Locators: a word pointing at a type descriptor, 12 bytes into a 20-byte record whose
-    # signature is 0 and whose hierarchy descriptor is in the program
+    # signature is 0 and whose hierarchy descriptor is in the program (x64's: signature 1, its own RVA after them)
     locators: dict[int, tuple[int, int]] = {}  # locator -> (type descriptor, where its vtable pointer sits)
     for s in pe.sections:
         for k, value in enumerate(_words(pe.data[s.offset:s.offset + s.size])):
-            if value in types:
+            if value + base in types:
                 col = s.va + WORD * k - COL_TYPE_AT
                 offset = at(col + COL_OFFSET_AT)
-                if at(col) == 0 and offset is not None and offset < MAX_VPTR_OFFSET \
-                        and pe.contains(at(col + COL_HIERARCHY_AT) or 0):
-                    locators[col] = (value, offset)
+                if at(col) == (COL_SIGNATURE_X64 if wide else 0) and offset is not None and offset < MAX_VPTR_OFFSET \
+                        and pe.contains(address(col + COL_HIERARCHY_AT) or 0) and \
+                        (not wide or address(col + COL_SELF_AT) == col):
+                    locators[col] = (value + base, offset)
     vtables: dict[int, int] = {}  # vtable -> its locator: the word before a vtable points at it
     for s in pe.sections:
-        for k, value in enumerate(_words(pe.data[s.offset:s.offset + s.size])):
+        for k, value in enumerate(_words(pe.data[s.offset:s.offset + s.size], ptr)):
             if value in locators:
-                vtables[s.va + WORD * (k + 1)] = value
+                vtables[s.va + ptr * (k + 1)] = value
 
     def slots(vt: int) -> list[int]:
         found = []
         while len(found) < MAX_SLOTS:
-            target = at(vt + WORD * len(found))
+            target = at(vt + ptr * len(found), ptr)
             sec = pe.section_at(target) if target is not None else None
             if sec is None or not sec.code:  # the next vtable's locator, or data
                 break
@@ -215,16 +226,16 @@ def recover(pe, labels: dict[int, str] | None = None, relocs: dict[int, list] | 
         td, offset = locators[col]
         if offset == 0 and td not in primary:
             primary[td] = vt
-            out.by_vtable[vt] = classes.Class(vt, 0, slots(vt))
+            out.by_vtable[vt] = classes.Class(vt, 0, slots(vt), stride=ptr, width=ptr)
             out.names[vt] = types[td]
         elif offset:
             seconds.append((vt, td, offset))
     for vt, cls in out.by_vtable.items():
-        hierarchy = at(vtables[vt] + COL_HIERARCHY_AT)
+        hierarchy = address(vtables[vt] + COL_HIERARCHY_AT) or 0
         count = min(at(hierarchy + HIERARCHY_COUNT_AT) or 0, MAX_BASES)
-        bases = at(hierarchy + HIERARCHY_BASES_AT) or 0
-        for k in range(1, count):
-            base_td = at(at(bases + WORD * k) or 0)
+        bases = address(hierarchy + HIERARCHY_BASES_AT) or 0
+        for k in range(1, count):  # (each base's descriptor, whose first field is its type descriptor)
+            base_td = address(address(bases + WORD * k) or 0)
             if base_td in types:
                 cls.bases.append(types[base_td])
                 if k == 1 and base_td in primary:
@@ -249,13 +260,15 @@ def _constructors(pe, out: classes.Classes, relocs: dict[int, list], owner: dict
     """The functions that store a class's vtable into an object (`mov dword ptr [esi], offset vtable`): its
     constructors and destructors (and code that builds one inline). Only functions whose relocations name a vtable
     are read, so a big game doesn't disassemble every function."""
-    names = {f"_D_{vt:08X}": vt for vt in owner}
+    wide = getattr(pe, "x64", False)
+    names = {f"{'' if wide else '_'}D_{vt:08X}": vt for vt in owner}
     for addr, rs in relocs.items():
         wanted = {off: names[name] for off, _, name, addend in rs if name in names and not addend}
         if not wanted:
             continue
-        end = max(off for off, _, _, _ in rs) + WORD
-        stores = x86.immediate_stores(pe.read(addr, end), addr)
+        # (x64 stores the address it took with a lea after it: some of what follows the last relocation too)
+        end = max(off for off, _, _, _ in rs) + WORD + (CONSTRUCTOR_STORE_BYTES if wide else 0)
+        stores = x86.immediate_stores(pe.read(addr, end), addr, wide)
         for off, vt in wanted.items():
             disp = stores.get(off)
             cls = out.by_vtable[owner[vt]]
@@ -277,9 +290,11 @@ def read_code(pe, functions: list[dict], found: classes.Classes, real: dict[str,
     facts = {} if facts is None else facts
     known = dict(facts)
 
+    wide = getattr(pe, "x64", False)
+
     def read(addr: int, code: bytes, relocs: list, datum) -> structs.Facts:
         if addr not in known:
-            facts[addr] = x86_fields.read_facts(addr, code, relocs, datum=datum, pops=pops)
+            facts[addr] = x86_fields.read_facts(addr, code, relocs, datum=datum, pops=pops, wide=wide)
         return facts[addr]
 
     def data(addr: int) -> int | None:  # every address the code names is a datum of its own (D_<address>)
@@ -287,9 +302,11 @@ def read_code(pe, functions: list[dict], found: classes.Classes, real: dict[str,
         return addr if section is not None and not section.code else None
 
     layouts = structs.recover(((fn["addr"], pe.read(fn["addr"], fn["size"]), []) for fn in functions), read, data)
+    layouts.first_is_this = wide  # (x64's rcx: arg0 and `this` both)
     named = set(found.by_vtable)
     classes.from_facts(facts, lambda addr, n: pe.read(addr, n) or None, (structs.ARGUMENT, structs.THIS), known=found,
-                       code=lambda addr: (section := pe.section_at(addr)) is not None and section.code)
+                       code=lambda addr: (section := pe.section_at(addr)) is not None and section.code,
+                       width=8 if wide else 4)
     added = [vt for vt in found.by_vtable if vt not in named]
     for vt in added:
         found.names[vt] = found.labels[vt] = (real or {}).get(f"D_{vt:08X}", f"Class_{vt:08X}")

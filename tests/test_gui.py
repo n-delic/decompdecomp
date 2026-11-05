@@ -211,14 +211,17 @@ def test_the_drop_zone_tells_psp_games_from_the_ps2s_and_says_what_to_do_with_wh
     assert psp["name"] == "PlayStation 1, 2 or PSP"
 
 
-def test_the_drop_zone_tells_64_bit_arm_and_dos_programs_apart(gui):
-    """It said "a 64-bit or non-x86 Windows program (or a DOS one)" for all three: it says which, and when 64-bit
-    games come, before uploading hundreds of megabytes the import would refuse."""
-    x64, arm, x86, dos = gui["checks"]["windows"]
-    assert x64[0] is None and "64-bit Windows program" in x64[1] and "Newer Windows games" in x64[1]
-    assert arm[0] is None and "ARM" in arm[1]
+def test_the_drop_zone_takes_64_bit_programs_and_tells_arm_and_dos_ones_apart(gui):
+    """It said "a 64-bit or non-x86 Windows program (or a DOS one)" for all three: it says which, before uploading
+    hundreds of megabytes the import would refuse. 64-bit games start now: a 64-bit program is the PC console's,
+    its entry above 4 GB shown whole, offered the pack of 2017's 64-bit compiler (the server's pack_x64)."""
+    x64, arm, x86, dos, damaged = gui["checks"]["windows"]
+    assert x64[0] == "win32" and x64[2] == ["64-bit Windows program (.exe)", "0x140001000", "msvc2015", "msvc2015",
+                                                "x64"]
+    assert arm[0] is None and "ARM" in arm[1] and "32-bit or 64-bit x86" in arm[1]
     assert x86[0] == "win32"  # a 32-bit x86 one is the PC console's (notSupported is asked only otherwise)
     assert dos[0] is None and "DOS program" in dos[1]
+    assert damaged[0] is None and "header is damaged" in damaged[1]
 
 
 def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
