@@ -392,6 +392,10 @@ class Search(Permuter):
             for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
                 labels[candidate]=family
                 choices.append(candidate)
+            from . import scan_load_repairs
+            guided_scans=scan_load_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source))
+            for family,candidate in guided_scans:labels[candidate]=family
+            choices=list(dict.fromkeys([c for _,c in guided_scans]+choices))
             from . import targeted_storage_repairs
             for family,candidate in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source)):
                 labels[candidate]=family

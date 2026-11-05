@@ -6,6 +6,7 @@ recovery is a regression result; it never counts as a new verified game match.
 import argparse
 import hashlib
 import json
+import math
 import tempfile
 import time
 from collections import Counter
@@ -196,6 +197,33 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
     return report
 
 
+def select_cases(examples, *, limit=20, ids=None, min_failed_score=0, min_instructions=0, distinct=False):
+    """Freeze an input-ordered cohort using captured pre-search facts, never new-policy results."""
+    if type(limit) is not int or not 1<=limit<=100 or min_failed_score<0 or min_instructions<0:
+        raise ValueError('Use a cohort limit of 1–100 and nonnegative thresholds.')
+    selected=[];seen=set()
+    for case in examples:
+        if ids and case.get('id') not in ids:continue
+        evidence=case.get('evidence') or {}
+        score=(evidence.get('before') or {}).get('score')
+        instructions=evidence.get('instructions')
+        if min_failed_score and (not isinstance(score,(int,float)) or not math.isfinite(score) or score<min_failed_score):continue
+        if min_instructions and (not isinstance(instructions,(int,float)) or not math.isfinite(instructions) or instructions<min_instructions):continue
+        # A target identity plus compiler/context scope keeps separate builds distinct.
+        identity=json.dumps([evidence.get('target_sha256') or evidence.get('function_id') or evidence.get('function') or case.get('id'),
+                             (evidence.get('after') or {}).get('settings')],sort_keys=True)
+        if distinct and identity in seen:continue
+        seen.add(identity);selected.append(case)
+        if len(selected)>=limit:break
+    return selected
+
+
+def cohort_manifest(selected):
+    """Source hashes identify immutable private inputs without embedding their source in summaries."""
+    return [dict(id=case.get('id'),before=(case.get('evidence',{}).get('before') or {}).get('source_sha256'),
+                 after=(case.get('evidence',{}).get('after') or {}).get('source_sha256')) for case in selected]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('evidence',type=Path,help='Full private repair-example export from the app')
@@ -207,20 +235,30 @@ def main():
     parser.add_argument('--minimize',action='store_true',help='Use up to half the trial budget to revert captured edits while preserving the full allocated control output.')
     parser.add_argument('--diagnostics',action='store_true',help='Opt in to two additional native GCC runs and a bounded phase summary; no tool downloads.')
     parser.add_argument('--combinations',action='store_true',help='Benchmark bounded multi-step repairs, stopping at control-output recovery; reports compiles, path and elapsed time.')
+    parser.add_argument('--min-failed-score',type=int,default=0,help='Select harder captures using their recorded failed score, before running either policy.')
+    parser.add_argument('--min-instructions',type=int,default=0,help='Minimum captured function instruction count.')
+    parser.add_argument('--distinct-functions',action='store_true',help='Keep one capture per target/compiler/context scope, in input order.')
     args = parser.parse_args()
     if not 1 <= args.limit <= 100:
         parser.error('Use --limit 1–100.')
+    if args.min_failed_score<0 or args.min_instructions<0:
+        parser.error('Cohort thresholds must be nonnegative.')
     data = json.loads(args.evidence.read_text())
     examples = data.get('examples',[data])
-    selected = [e for e in examples if not args.ids or e['id'] in args.ids][:args.limit]
+    selected = select_cases(examples,limit=args.limit,ids=args.ids,min_failed_score=args.min_failed_score,
+                            min_instructions=args.min_instructions,distinct=args.distinct_functions)
+    manifest=cohort_manifest(selected)
     results = []
+    # Persist the selected input hashes before the first compiler invocation.
+    args.output.write_text(json.dumps({'schema_version':1,'cohort':manifest,'examples':[]},indent=2)+'\n')
     with tempfile.TemporaryDirectory(prefix='decomp-repair-replay-') as root:
         for case in selected:
             try:
                 results.append(replay(case,trials=args.trials,seconds=args.seconds,root=root,minimize=args.minimize,diagnostics=args.diagnostics,combinations=args.combinations))
             except (ValueError,KeyError,OSError,toolchains.ToolchainError) as error:
                 results.append({'id':case.get('id'),'skipped':str(error)[:500]})
-    args.output.write_text(json.dumps({'schema_version':1,'examples':results},indent=2)+'\n')
+    args.output.write_text(json.dumps({'schema_version':1,'cohort':manifest,'selection':dict(min_failed_score=args.min_failed_score,
+        min_instructions=args.min_instructions,distinct_functions=args.distinct_functions),'examples':results},indent=2)+'\n')
     print(f'Replayed {len(results)} examples; results saved to {args.output}. No game progress changed.')
 
 

@@ -14,11 +14,11 @@ class Feedback:
 
     def record(self, parent, candidate, family, path, score, rows, output, reused=False, granularity="function"):
         before=self.proofs.get(parent,{})
-        node=dict(source=candidate,parent_source=parent,parent_output=before.get('output'),path=path+[family])
+        node=dict(source=candidate,parent_source=parent,parent_output=before.get('output'),path=path+[family],baseline_rows=before.get('report',{}).get('rows'))
         changed=output is not None and before.get('output') is not None and output!=before['output']
         productive=changed and isinstance(score,(int,float)) and score<before.get('score',score)
         if not reused:
-            repair_effects.observe(self.state,node,output if score is not None else None,score=score,parent_score=before.get('score'))
+            repair_effects.observe(self.state,node,output if score is not None else None,score=score,parent_score=before.get('score'),rows=rows)
             counts=self.state['counts'];kind='scored' if score is not None else 'compile_failed'
             counts[kind]=counts.get(kind,0)+1
         if score is not None:

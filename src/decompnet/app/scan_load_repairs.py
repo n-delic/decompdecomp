@@ -35,7 +35,7 @@ def arrays(source, part):
     return {name:value for name,value in found.items() if name not in duplicates}
 
 
-def variants(source, name, header='', arch='mips'):
+def variants(source, name, header='', arch='mips', rows=(), locations=None):
     if re.search(r'\b__LINE__\b|^\s*#\s*line\b',header+'\n'+source,re.M):return []
     ctx=copy_lifetime_repairs.context(source,name)
     if not ctx:return []
@@ -93,6 +93,7 @@ def variants(source, name, header='', arch='mips'):
         def next_write(decl, end=end):
             hit=re.search(rf'\b{decl.name}\s*=(?!=)',part.clean[end:])
             return hit.start() if hit else len(source)
-        for decl in sorted(reusable,key=next_write)[:3]:result.append(('scan_load_reuse',capture(decl.name,'')))
+        from .scan_donor_ranking import order
+        for decl in order(source,flow,sorted(reusable,key=next_write),begin,end,rows,locations,arch):result.append(('scan_load_reuse',capture(decl.name,'')))
         if len(result)>=LIMIT:break
     return result[:LIMIT]

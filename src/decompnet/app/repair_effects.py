@@ -18,7 +18,7 @@ def output_scope(node):
     return hashlib.sha256(repr((node['parent_output'],node['path'][-1])).encode()).hexdigest()
 
 
-def observe(state, node, output, *, score=None, parent_score=None):
+def observe(state, node, output, *, score=None, parent_score=None, rows=None):
     scope = key(node)
     if scope is None:
         return
@@ -27,14 +27,14 @@ def observe(state, node, output, *, score=None, parent_score=None):
         totals['unknown'] = totals.get('unknown',0)+1
         return
     from . import repair_diversity
-    repair_diversity.observe(state,node,output)
+    useful=repair_diversity.observe(state,node,output,score=score,parent_score=parent_score,rows=rows)
     same = output == node['parent_output']
     kind = ('identical' if same else 'changed_improved' if score is not None and parent_score is not None and score<parent_score
             else 'changed_unimproved' if score is not None and parent_score is not None else 'changed_unknown_score')
     totals[kind] = totals.get(kind,0)+1
     stalls=state.setdefault('output_stalls',{})
     parent=hashlib.sha256(repr(node['parent_output']).encode()).hexdigest()
-    stalls[parent]=stalls.get(parent,0)+1 if output==node['parent_output'] else 0
+    stalls[parent]=stalls.get(parent,0)+1 if useful is False or (useful is None and output==node['parent_output']) else 0
     while len(stalls)>HISTORY_LIMIT:del stalls[next(iter(stalls))]
     history = state.setdefault('family_no_effect', {})
     history[scope] = history.get(scope, 0)+1 if output == node['parent_output'] else 0

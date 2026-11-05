@@ -438,3 +438,41 @@ local elapsed time was about 3.7 seconds. Its compact evidence identified the tw
 pseudos and retained ambiguity for another value sharing S4. The global compiler profile was
 kept fixed during the measured register-cycle lane. This is a near-final regression, not an
 end-to-end recovery of all preceding source reconstruction work.
+
+### Freeze a harder comparison cohort
+
+Select cases using recorded pre-search facts, rather than choosing successes after
+trying the new policy. For example:
+
+```sh
+uv run python -m decompnet.app.repair_replay /private/repair-examples.json \
+  --output /private/hard-results.json --combinations --trials 24 --seconds 120 \
+  --limit 8 --min-failed-score 50 --min-instructions 50 --distinct-functions
+```
+
+The thresholds use captured failed scores and instruction counts; the native
+compiler replay can reproduce a different score against its successful control.
+The output records the selected IDs and before/after source hashes before compiling.
+Use the same frozen inputs, compiler/header/target controls and budgets for each
+policy, and retain unresolved and skipped cases in the report. Report candidate
+compiles and control recoveries separately from real linked/objdiff game matches.
+A small output-control benchmark does not measure model token savings.
+
+Search scheduling now distinguishes output novelty from useful progress. Fresh
+score improvements or bounded regional recoveries without new region damage get
+priority. Six nonproductive trials across three families can trigger a strategy
+switch even when each trial changes compiler output. Unknown/cached evidence does
+not teach progress, and untried/deferred hypotheses retain exploration slots.
+
+For supported MIPS storage residuals, current source-bound compiler-line mappings
+can rank CFG-dead local scan temporaries associated with a later mismatching phase.
+This is source/liveness advice, not a C-variable-to-register mapping. Missing/stale
+maps retain the existing ordering; the original probes remain available alongside
+the guided candidates, under the ordinary search budget and exact judge.
+
+The initial harder-cohort comparison used eight frozen captures and at most 24
+candidate trials per case. Both policies recovered two controls and reached the same
+best scores. Candidate compiles were 164 before and 160 after; regressed trials were
+78 versus 53, with compile failures increasing from two to five. One recovery took
+nine trials instead of six, while another took seven instead of fourteen. Keep these
+mixed outcomes visible; fewer bad proposals alone is not a new exact match.

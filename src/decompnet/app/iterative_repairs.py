@@ -118,7 +118,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             return False
         state['pending'].pop(0)
         if isinstance(report.get('score'), (int, float)) and not report.get('cached'):
-            repair_effects.observe(state, node, output_key(report),score=report.get('score'),parent_score=node.get('parent_score'))
+            repair_effects.observe(state, node, output_key(report),score=report.get('score'),parent_score=node.get('parent_score'),rows=report.get('rows'))
         counts = state.setdefault('counts', {})
         if node.get('sequence_loan'):counts['sequence_evaluations']=counts.get('sequence_evaluations',0)+1
         if (node.get('path') or [''])[-1] in {'paired_local','paired_inert'}:
@@ -300,7 +300,9 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
     from . import targeted_storage_repairs
     storage=targeted_storage_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
-    operand_focused = storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    from . import scan_load_repairs
+    scans=scan_load_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
+    operand_focused = scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
     labels.update({text: family for family, text in operand_focused})
     for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):

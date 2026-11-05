@@ -2566,3 +2566,22 @@ need independent evidence before receiving this specific GNU C repair.
   exact. Five frozen held-out failures recovered 3/5 successful controls with either
   policy, using 51 candidate compiles per policy. This is evidence for the supported
   staging repair, not a demonstrated general match-rate or token-cost improvement.
+
+### Completed: progress-aware repair selection
+
+- Search distinguishes distinct outputs from useful score or bounded regional
+  improvements. A changed-but-worse output no longer clears the separate progress
+  stall counter; six nonproductive trials across three families can pivot strategy.
+  Initial sibling probes and untried/deferred exploration remain available.
+- Supported MIPS scan temporary reuse uses current compiler-mapped residual lines
+  and CFG liveness to rank donors, retaining the original probes. It never infers a
+  physical register binding from a source line or changes exact judging.
+- Offline replay supports preselected harder cohorts by captured failed score,
+  instruction count and distinct target/build scope. It freezes input hashes before
+  compiling and reports selection metadata for policy comparisons.
+- Private fixed-budget validation: eight frozen harder captures (24 candidate trials
+  each maximum) recovered 2/8 controls with either policy. Candidate compiles fell
+  from 164 to 160; regressed trials fell from 78 to 53, while compile failures rose
+  from 2 to 5. Best scores were unchanged across the cohort. Individual recoveries
+  moved from 6 to 9 trials and from 14 to 7 trials. This small comparison does not
+  establish general match-rate or model-token savings; no live matches were adopted.
