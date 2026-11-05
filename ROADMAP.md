@@ -2324,3 +2324,13 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   MIPS `mfc1` evidence and GNU debug flags. Other processors need tested hazard/line
   diagnostics before that family can be enabled for them. Fixed debugger-break
   compiler support remains limited to the registered KMC pack.
+
+### Fixed live MIPS return-address snapshots
+
+- Done: a no-argument current live-link-register intrinsic in the registered KMC
+  compiler template, used-template portable export selection, raw absolute-store
+  evidence and a shared local repair for single-use uninitialized placeholders.
+  Real compiler tests distinguish current reads after calls from saved snapshots.
+- Planned: tested registrations for other compiler packs and explicit real-name
+  symbol adapters for this hardware-store repair. Other processor link-register
+  snapshots require their own semantics/evidence; no cross-processor guesses.

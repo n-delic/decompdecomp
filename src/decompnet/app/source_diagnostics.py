@@ -32,6 +32,8 @@ def hints(source, name, asm='', arch='', rows=None):
                       "Try the target_call_argument local family; shared declarations stay unchanged.")
     from .hardware_operation_repairs import hints as hardware_hints
     result.extend(hardware_hints(source,asm,arch,rows))
+    from .live_return_address_repairs import hint as live_ra_hint
+    if note:=live_ra_hint(asm,arch):result.insert(0,note)
     if arch=="mips" and rows and re.search(r"\bmfc1\b",asm or "") and any(r[0]=="i" and re.match(r"(?:b\w*|j)\s",r[1]) for r in rows):
         result.append("Branch destinations near an FP conversion can depend on debug line markers and assembler hazard NOP placement. Try debug_conversion_tail with the original debug profile before flag sweeps. Preserve verified physical source lines through polishing and export; an equivalent one-line temporary may compile differently.")
     original=source[span[0]:span[1]]

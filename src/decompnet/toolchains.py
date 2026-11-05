@@ -183,7 +183,8 @@ def source_prelude(tc, source: str) -> str:
     import importlib
     intrinsic = getattr(tc, 'intrinsics', '')
     if not intrinsic:return tc.prelude
-    header = importlib.import_module(intrinsic).header()
+    module = importlib.import_module(intrinsic)
+    header = module.header_for(source) if hasattr(module,'header_for') else module.header()
     provided = set(re.findall(r'^#define[ \t]+([A-Za-z_]\w*)', header, re.M))
     used = set(re.findall(r'[A-Za-z_]\w*', source))
     return tc.prelude + (header if provided & used else '')
