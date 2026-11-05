@@ -14,15 +14,35 @@ assert.match(context.suggestionHtml({...item,ranges:[[1,4]]}),/Scope: selected a
 
 (async()=>{
  const nodes=new Map();const node=s=>{if(!nodes.has(s))nodes.set(s,{textContent:'',innerHTML:'',value:0,max:1});return nodes.get(s);};
- const requested=[];const env={S:{slug:'game'},esc:String,
- dialog:()=>({querySelector:node}),beginWork:()=>()=>{},showJobError:(_,msg)=>{throw new Error(msg);},
+ let dialogHtml='',cleaned=0; const requested=[];const env={S:{slug:'game'},esc:context.esc,
+ dialog:(_title,html)=>{dialogHtml=html;return {querySelector:node};},beginWork:log=>{log._workBar={};log._workStatus={};return()=>cleaned++;},showJobError:(_log,msg)=>{node('[data-batch-error]').textContent=msg;},
  api:async(url,options)=>{requested.push(options.body);return {job:1};},
- followJob:async(job,log,update)=>{update([],{progress:{phase:'Applying waiting suggestions',done:2,total:2,applied:1,skipped:1}});return {applied:1,skipped:1,results:[{id:2,applied:false,reason:'Busy <function>'}],overview:{}};},
+ followJob:async(job,log,update)=>{update([],{progress:{phase:'Applying waiting suggestions',done:2,total:2,applied:1,skipped:1}});return {applied:1,skipped:1,results:[{id:1,applied:true},{id:2,applied:false,reason:'Busy <function>'}],overview:{}};},
  renderStats:()=>{},renderProjectSettings:()=>{}};
- vm.createContext(env);vm.runInContext(source.slice(source.indexOf('async function acceptWaitingSuggestions(')),env);
+ vm.createContext(env);vm.runInContext(source.slice(source.indexOf('function renderSuggestionBatchProgress(')),env);
  await env.acceptWaitingSuggestions({});
  assert.equal(requested[0].action,'apply-all');
- assert.match(node('[data-batch-status]').textContent,/1 applied · 1 skipped/);
+ assert.equal(node('[data-batch-checked]').textContent,'2 / 2');
+ assert.equal(node('[data-batch-applied]').textContent,1);
+ assert.equal(node('[data-batch-skipped]').textContent,1);
+ assert.match(node('[data-batch-status]').textContent,/Compiler suggestions checked/);
+ assert.match(dialogHtml,/<details class="collapsible-box"><summary>Technical log/);
+ assert.match(dialogHtml,/<pre class="joblog" data-batch-log>/);
+ assert.doesNotMatch(dialogHtml,/<details[^>]+open/);
+ assert.equal(node('[data-batch-log]')._workBar.hidden,true);
+ assert.equal(node('[data-batch-log]')._workStatus.hidden,true);
+ assert.equal(cleaned,1);
+ env.renderSuggestionBatchProgress({querySelector:node},{done:4,total:16,applied:3,skipped:1,suggestion:8,compiler:'gcc',current:{phase:'Updating saved scores',done:2,total:18,function:'current_function'}});
+ assert.equal(node('[data-batch-checked]').textContent,'4 / 16');
+ assert.equal(node('[data-batch-bar]').value,4);
+ assert.equal(node('[data-batch-bar]').max,16);
+ assert.match(node('[data-batch-current]').textContent,/Suggestion #8.*gcc.*Updating saved scores.*2 \/ 18.*current_function/);
+ env.api=async()=>{throw Error('Cannot reach the compiler');};
+ await env.acceptWaitingSuggestions({});
+ assert.match(node('[data-batch-status]').textContent,/Could not finish/);
+ assert.match(node('[data-batch-error]').textContent,/Cannot reach/);
+ assert.equal(cleaned,2);
  assert.match(node('[data-batch-results]').innerHTML,/Suggestion #2/);
+ assert.match(node('[data-batch-results]').innerHTML,/Busy &lt;function&gt;/);
  assert.match(source,/data-apply-all>Accept all/);
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1965,3 +1965,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .table-sort { display: inline-flex; width: 100%; align-items: center; gap: 5px; padding: 4px 0; font: inherit; font-weight: inherit; text-align: left; }
 .table-sort:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .table-sort span { color: var(--muted); }
+
+/* Batch summaries keep one visible progress bar; diagnostics stay in a bounded disclosure. */
+.suggestion-batch-progress { margin: 16px 0; }
+.suggestion-batch-progress [data-batch-current] { overflow-wrap: anywhere; }

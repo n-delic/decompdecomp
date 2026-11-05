@@ -1920,24 +1920,52 @@ $("sourceAssemblyRun").onclick = async () => {
 };
 
 
+function renderSuggestionBatchProgress(body, p, complete = false) {
+  const total = p.total || 0, checked = p.done || 0;
+  body.querySelector('[data-batch-status]').textContent = complete ? (total ? 'Compiler suggestions checked' : 'No waiting compiler suggestions') : 'Checking compiler suggestions';
+  body.querySelector('[data-batch-checked]').textContent = `${checked} / ${total}`;
+  body.querySelector('[data-batch-applied]').textContent = p.applied || 0;
+  body.querySelector('[data-batch-skipped]').textContent = p.skipped || 0;
+  const bar = body.querySelector('[data-batch-bar]');
+  bar.max = total || 1; bar.value = total ? checked : complete ? 1 : 0;
+  const current = p.current || {};
+  const parts = [p.suggestion != null ? `Suggestion #${p.suggestion}` : '', p.compiler, current.phase,
+    current.total > 0 ? `${current.done || 0} / ${current.total}` : '', current.function].filter(Boolean);
+  body.querySelector('[data-batch-current]').textContent = complete
+    ? (p.skipped ? 'Applied changes are saved. Expand skipped suggestions to see what needs attention.' : 'All applied changes are verified and saved.')
+    : parts.join(' · ') || 'Preparing verification…';
+}
+
 async function acceptWaitingSuggestions(button) {
   const slug=S.slug;
-  const body=dialog('Accept waiting compiler suggestions', '<p>Each suggestion is checked before applying. Existing matches stay protected. Suggestions that are busy, outdated or fail verification are skipped.</p><p data-batch-status role="status">Preparing suggestions…</p><progress class="deep-sweep-bar" data-batch-bar max="1" value="0"></progress><div data-batch-log></div><div data-batch-results></div>');
+  const body=dialog('Accept waiting compiler suggestions', `<p class="small muted">Verify and apply waiting suggestions. Existing matches stay protected.</p>
+    <section class="compiler-progress suggestion-batch-progress" aria-label="Applying compiler suggestions">
+      <div class="compiler-progress-heading"><b data-batch-status role="status">Preparing suggestions…</b><span class="small muted" data-batch-current role="status"></span></div>
+      <dl class="compiler-progress-stats"><div><dt>Checked</dt><dd data-batch-checked>—</dd></div><div><dt>Applied</dt><dd class="ok" data-batch-applied>0</dd></div><div><dt>Skipped</dt><dd data-batch-skipped>0</dd></div></dl>
+      <progress class="deep-sweep-bar" data-batch-bar max="1" aria-label="Compiler suggestions checked"></progress>
+    </section>
+    <p class="err-msg" data-batch-error role="alert" hidden></p><div data-batch-results></div>
+    <details class="collapsible-box"><summary>Technical log</summary><div class="collapsible-box-body"><pre class="joblog" data-batch-log></pre></div></details>`);
   const log=body.querySelector('[data-batch-log]');
-  const done=beginWork(log,'Checking and applying suggestions',[button],'Finished');
+  const done=beginWork(log,'Checking and applying suggestions',[button],'');
+  // The visible card owns progress; the shared worker still owns cleanup and error handling.
+  if(log._workBar)log._workBar.hidden=true;
+  if(log._workStatus)log._workStatus.hidden=true;
+  log._errorBox=body.querySelector('[data-batch-error]');
   try {
     const {job}=await api('/api/suggestion',{method:'POST',body:{slug,action:'apply-all',background:true}});
     const result=await followJob(job,log,(_lines,state)=>{
-      const p=state.progress;
-      if(p?.phase!=='Applying waiting suggestions')return;
-      body.querySelector('[data-batch-status]').textContent=`${p.done} / ${p.total} checked · ${p.applied} applied · ${p.skipped} skipped`;
-      body.querySelector('[data-batch-bar]').max=p.total || 1;
-      body.querySelector('[data-batch-bar]').value=p.done;
+      if(state.progress?.phase==='Applying waiting suggestions')renderSuggestionBatchProgress(body,state.progress);
     });
     if(!result)return;
-    body.querySelector('[data-batch-status]').textContent=`${result.applied} applied · ${result.skipped} skipped`;
-    body.querySelector('[data-batch-bar]').max=1;body.querySelector('[data-batch-bar]').value=1;
-    body.querySelector('[data-batch-results]').innerHTML=result.results.filter(r=>!r.applied).map(r=>`<p class="small">Suggestion #${r.id}: ${esc(r.reason)}</p>`).join('');
+    const results=result.results || [];
+    renderSuggestionBatchProgress(body,{total:results.length,done:results.length,applied:result.applied,skipped:result.skipped},true);
+    const skipped=results.filter(r=>!r.applied);
+    body.querySelector('[data-batch-results]').innerHTML=skipped.length ? `<details class="collapsible-box"><summary>${skipped.length} skipped suggestions — view reasons</summary><div class="collapsible-box-body">${skipped.map(r=>`<div><b class="small">Suggestion #${esc(r.id)}</b><p class="small muted">${esc(r.reason)}</p></div>`).join('')}</div></details>` : '';
     if(S.slug===slug){S.ov=result.overview;renderStats(S.ov);renderProjectSettings();}
-  }catch(error){showJobError(log,error.message);}finally{done();}
+  }catch(error){
+    body.querySelector('[data-batch-status]').textContent='Could not finish applying suggestions';
+    body.querySelector('[data-batch-current]').textContent='Completed changes are saved. Review the error before retrying.';
+    showJobError(log,error.message);
+  }finally{done();}
 }

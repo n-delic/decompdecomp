@@ -229,14 +229,20 @@ def test_accept_all_rechecks_and_continues_after_failure(monkeypatch):
     applied=[]
     def resolve(slug, sid, accept, log):
         applied.append(sid)
+        log.progress({'phase':'Updating saved scores', 'done':2, 'total':8, 'function':'current_function'})
+        snapshot=log_sink.snapshots[-1]
+        assert snapshot['suggestion']==sid and snapshot['compiler']=='gcc'
+        assert snapshot['done']==sid-1 and snapshot['total']==3
+        assert snapshot['current']['function']=='current_function'
         if sid==2:raise NetworkError('Busy function')
     net.resolve_suggestion=resolve
     net.progress=SimpleNamespace(sync=lambda *a,**kw:None)
     class Log:
         def __call__(self,line):pass
         def check_cancel(self):pass
-        def progress(self,value):self.last=value
-    log=Log()
+        def progress(self,value):self.last=value; self.snapshots.append(value)
+    log=Log();log.snapshots=[]
+    log_sink=log
     result=profiles.accept_all(net,proj['slug'],log)
     assert applied==[1,2,3]
     assert (result['applied'],result['skipped'])==(2,1)

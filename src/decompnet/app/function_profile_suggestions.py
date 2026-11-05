@@ -105,21 +105,33 @@ def accept_all(net, slug, log):
     """Apply a snapshot sequentially through the usual verification and match protections."""
     items = [s for s in net.overview(slug)['suggestions'] if s.get('toolchain')]
     results = []
+    def publish(item=None, current=None):
+        log.progress({'phase':'Applying waiting suggestions', 'done':len(results), 'total':len(items),
+                      'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results),
+                      'suggestion':item['id'] if item else None, 'compiler':item.get('toolchain', '') if item else '',
+                      'current':current or {}})
+    class SuggestionLog:
+        def __init__(self, item):self.item = item
+        def __call__(self, line):log(line)
+        def __getattr__(self, name):return getattr(log, name)
+        def progress(self, value):publish(self.item, value)
+    publish()
     for index, item in enumerate(items, 1):
         log.check_cancel()
         current = net.project_row(slug)
         fresh = next((s for s in net.cfg(current).get('suggestions', []) if s['id'] == item['id']), None)
         reason = None
+        publish(item, {'phase':'Checking suggested settings'})
         try:
             if not fresh or fresh['status'] != 'open' or not actionable(net, current, fresh):
                 raise NetworkError('Already resolved or no longer needs a compiler suggestion; skipped.')
-            net.resolve_suggestion(slug, item['id'], True, log=log)
+            net.resolve_suggestion(slug, item['id'], True, log=SuggestionLog(item))
         except (NetworkError, toolchains.ToolchainError, OSError) as error:
             reason = str(error)
         results.append({'id':item['id'], 'applied':reason is None, 'reason':reason})
         log(f"{index}/{len(items)}: suggestion #{item['id']}: {reason or 'applied'}")
-        log.progress({'phase':'Applying waiting suggestions', 'done':index, 'total':len(items),
-                      'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results)})
+        publish(item, {'phase':'Suggestion skipped' if reason else 'Settings and scores saved'})
+    publish(current={'phase':'Saving project progress'})
     net.progress.sync(slug, force=True, logger=log)
     return {'overview':net.overview(slug), 'results':results,
             'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results)}
