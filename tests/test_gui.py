@@ -13,6 +13,18 @@ NODE = shutil.which("node")
 GUI_TIMEOUT_SECONDS = 60
 
 
+def test_the_game_picker_stays_above_existing_project_cards():
+    """Returning users need to see the new game's details without scrolling past their projects."""
+    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    home = html.split('<main id="home"', 1)[1].split('</main>', 1)[0]
+    assert home.index('class="hero"') < home.index('id="recent"')
+    css = (static / "app.css").read_text(encoding="utf-8")
+    for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if "#recent" in selector or ".hero" in selector:
+            assert not re.search(r"(?:^|;)\s*order\s*:", declarations), selector
+
+
 def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
@@ -267,3 +279,10 @@ def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
     assert js == {v: {*compilers, *glued} for v, compilers, glued in scratch.RICH_COMPILERS}
     linkers = re.search(r"const RICH_LINKERS = \[(.*?)\];", text, re.S).group(1)
     assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS
+
+
+def test_linux_vm_setup_shows_readiness_and_uses_progress():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)

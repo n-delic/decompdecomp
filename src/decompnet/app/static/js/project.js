@@ -787,7 +787,9 @@ async function renderForkSetup() {
   let n;
   try { n = await api(`/api/fork/needs?slug=${S.slug}`); } catch (e) { box.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
   const kinds = { manifest: "decompdecomp manifest", dtk: "dtk-template (configure.py + ninja)", configure: "configure.py + ninja", splat: "splat + make", objdiff: "objdiff project", custom: "its own setup" };
-  const facts = `<dl class="facts one">${[["Repository", (S.ov.repo_url || "").replace(/^https?:\/\//, "") || "made by decompdecomp"], ["Layout", kinds[n.kind] || n.kind], ["Version", n.version || "—"], ["Game goes to", n.path || "see the README"]]
+  const versions = Array.isArray(n.rom_versions) ? n.rom_versions.filter((v) => /^[0-9a-f]{40}$/i.test(v.sha1 || "")) : [];
+  const facts = `<dl class="facts one">${[["Repository", (S.ov.repo_url || "").replace(/^https?:\/\//, "") || "made by decompdecomp"], ["Layout", kinds[n.kind] || n.kind], ["Version", n.version || "—"], ["Game goes to", n.path || "see the README"],
+    ...versions.map((v) => [`Original ROM SHA-1 (${v.version})`, v.sha1])]
     .map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
     <div class="row"><button class="ghost small-btn" id="fsFolder" type="button">Open project folder</button></div>`;
   let usingGame = false;
@@ -854,7 +856,7 @@ async function renderForkSetup() {
         if (found.path) {
           if (found.in_project) input.value = "";
           else if (!input.value.trim()) input.value = found.path;
-          statusEl.textContent = found.in_project ? "Your verified ROM is already in the project. Retry setup without choosing it again." : "Found a ROM with the expected SHA-1. Confirm ownership above, then click Use path.";
+          statusEl.textContent = found.in_project ? "Your verified ROM is already in the project. Retry setup without choosing it again." : `Found the ${found.version ? found.version + " version" : "expected version"} by SHA-1. Confirm ownership above, then click Use path.`;
           if (found.in_project) { $("fsBuild").textContent = "Retry setup"; $("fsBuild").className = "primary"; }
         } else statusEl.textContent = found.reason || "No matching ROM found.";
       } catch (e) {

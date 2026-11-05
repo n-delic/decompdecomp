@@ -74,15 +74,22 @@ def _candidate(path: Path, platform: str) -> int:
 
 
 def find(project, needs: dict, folder: str, log=print) -> dict:
-    """Find an exact SHA-1 match in a local folder within fixed file, byte and time budgets."""
-    expected = str(needs.get('sha1') or '').lower()
-    if not re.fullmatch('[0-9a-f]{40}', expected):
+    """Find a supported game version within fixed file, byte and time budgets."""
+    expected = {str(v['sha1']).lower(): str(v['version']) for v in needs.get('rom_versions', [])
+                if isinstance(v, dict) and re.fullmatch('[0-9a-fA-F]{40}', str(v.get('sha1', '')))
+                and isinstance(v.get('version'), str)}
+    default = str(needs.get('sha1') or '').lower()
+    if re.fullmatch('[0-9a-f]{40}', default):
+        expected.setdefault(default, None)
+    if not expected:
         return {'path': None, 'reason': 'This project does not declare an expected game SHA-1.'}
     platform = str(getattr(project, 'platform', '') or '')
     local = project.root / needs['path'] if needs.get('path') else None
     # Retry setup without copying only when the file already has the exact bytes the project expects.
-    if local and fingerprint(local, 'raw') == expected:
-        return {'path': str(local), 'in_project': True}
+    if local and (digest := fingerprint(local, platform)) in expected:
+        # Another edition or byte order still needs placement/conversion before setup.
+        return {'path': str(local), 'in_project': fingerprint(local, 'raw') == default,
+                'version': expected[digest]}
     if not folder:
         return {'path': None, 'reason': 'Set a ROM library folder in Settings to find your game.'}
     root = Path(folder).expanduser()
@@ -114,9 +121,10 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
                         'reason': 'Search reached its 2 GiB read limit. Choose the file manually or use a smaller folder.'}
             count += 1
             hashed += size
-            if fingerprint(path, platform) == expected:
+            if (digest := fingerprint(path, platform)) in expected:
                 log(f'Found a matching game: {path}')
-                return {'path': str(path), 'in_project': False, 'scanned': count, 'skipped': skipped}
+                return {'path': str(path), 'in_project': False, 'version': expected[digest],
+                        'scanned': count, 'skipped': skipped}
             if count % 100 == 0:
                 log(f'Checked {count} files…')
     return {'path': None, 'scanned': count, 'skipped': skipped,

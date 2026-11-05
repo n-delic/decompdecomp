@@ -9,6 +9,11 @@ a gap to close, each with its item here (CONTRIBUTING.md, "Every console gets ev
 
 Want to work on one? Open an issue first, so two people don't build the same thing. CONTRIBUTING.md has the rest.
 
+PS2 compiler packs now run on macOS: Sony EE-GCC 2.9/2.96/3.2 through an optional
+local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Intel
+Mac and retail-game verification remain planned; Apple Silicon checks use the
+homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
@@ -51,7 +56,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Public project build prerequisite hints | — | — | — | — | — | — | — | — | — | — | ✓ (observed missing cross tools; Make-specific checks) |
-| Find a game in a local library by declared SHA-1 | — | — | — | — | — | — | — | — | — | — | ✓ N64 and exact-file splat; — dtk, configure and whole-disc PS |
+| Verified objdiff references for public Splat projects | — | — | — | — | — | — | — | — | — | — | ✓ N64 and PS1 simple code splits; — overlays and nested builds |
+| Find a game in a local library by declared SHA-1 | — | — | — | — | — | — | — | — | — | — | ✓ N64, including supported original ROM versions and byte orders; exact-file splat; — dtk, configure and whole-disc PS |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
