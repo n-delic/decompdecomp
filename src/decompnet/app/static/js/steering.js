@@ -152,6 +152,20 @@ function suggestionHtml(s) {
     ${s.toolchain ? `<p class="small muted">${single ? `Scope: ${esc(single)} only. Rechecks and saves its exact source, header and flags together; neighbours are unchanged.` : (s.ranges || []).length ? 'Scope: selected address ranges. Only functions whose settings change are checked.' : 'Scope: project default. This can require checking thousands of existing matches; use a range suggestion for a local change.'}</p>` : ''}
     <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${single ? ` for ${esc(single)} only` : (s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
 }
+function compilerSuggestionHtml(s) {
+  const single = s.function_scope?.function;
+  const scope = single ? `Only ${single}` : (s.ranges || []).length ? plural(s.ranges.length, "address range") : "Project default";
+  const verified = (s.check || "").includes("matches the game");
+  return `<article class="compiler-inbox-item">
+    <div class="compiler-inbox-item-head"><h4>${esc(tcName(s.toolchain))}</h4><span class="said-badge quiet">${esc(scope)}</span></div>
+    <code class="compiler-inbox-flags">${esc((s.flags || []).join(" "))}</code>
+    ${saidHead("", s.agents || [], s.t, true)}
+    <p class="small ${verified ? "ok" : "muted"}">${verified ? "✓ Matching C checked" : "Verification required"} · Existing matches are checked before applying.</p>
+    <div class="row"><button class="primary small-btn" type="button" data-apply="${s.id}">Apply suggestion</button><button class="ghost small-btn" type="button" data-dismiss="${s.id}">Dismiss</button></div>
+    <details class="compiler-inbox-evidence"><summary>Why this was suggested</summary>${saidText(s.text)}${s.check ? `<p class="small muted">${esc(s.check)}</p>` : ""}</details>
+  </article>`;
+}
+
 $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
   const cut = e.target.closest("button[data-bapply], button[data-bdismiss]");
   if (cut) {
@@ -163,6 +177,8 @@ $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
     } catch (err) { toast(esc(err.message), "err"); }
     return;
   }
+  const dismissAll = e.target.closest('button[data-dismiss-all]');
+  if (dismissAll) { await dismissWaitingSuggestions(dismissAll); return; }
   const batch = e.target.closest('button[data-apply-all]');
   if (batch) { await acceptWaitingSuggestions(batch); return; }
   const b = e.target.closest("button[data-apply], button[data-dismiss]");
@@ -1227,7 +1243,13 @@ function renderCompilerAnswer(a) {
 }
 function renderCompilerWaiting(ov) {
   const sg = compilerSuggestions(ov);
-  setHtml($("compilerWaiting"), sg.length ? `<div class="row" style="justify-content:space-between"><p class="col-title">Waiting for you · ${sg.length}</p><button type="button" class="primary small-btn" data-apply-all>Accept all ${sg.length} suggestions</button></div>${sg.map(suggestionHtml).join("")}` : "");
+  // Keep a pending batch's controls and feedback stable during overview polling.
+  if ($("compilerWaiting").dataset.dismissing === S.slug) return;
+  setHtml($("compilerWaiting"), sg.length ? `<section class="compiler-inbox" aria-labelledby="compilerInboxTitle">
+    <header class="compiler-inbox-head"><div><h3 id="compilerInboxTitle">Waiting for you <span class="said-badge quiet">${sg.length}</span></h3><p class="small muted">Review suggested compiler settings for this game.</p></div>
+    <div class="row"><button type="button" class="primary small-btn" data-apply-all>Accept all ${sg.length} suggestions</button><button type="button" class="ghost small-btn" data-dismiss-all>Dismiss all</button></div></header>
+    <div data-inbox-status role="status" hidden></div>
+    <div class="compiler-inbox-list">${sg.map(compilerSuggestionHtml).join("")}</div></section>` : "");
 }
 $("closeProjectBtn").onclick=()=>closeUnfinishedProject(S.slug,S.ov.title);
 $("deleteBtn").onclick = () => {
@@ -1981,4 +2003,26 @@ async function acceptWaitingSuggestions(button) {
     body.querySelector('[data-batch-current]').textContent='Completed changes are saved. Review the error before retrying.';
     showJobError(log,error.message);
   }finally{done();}
+}
+
+async function dismissWaitingSuggestions(button) {
+  const slug = S.slug, host = $("compilerWaiting");
+  if (host.dataset.dismissing) return;
+  const ids = compilerSuggestions(S.ov).map(s => s.id);
+  const log = host.querySelector('[data-inbox-status]');
+  host.dataset.dismissing = slug;
+  const label = button.textContent;
+  const done = beginWork(log, 'Dismissing suggestions', [...host.querySelectorAll('button')], '');
+  button.textContent = 'Dismissing…';
+  let failed = false;
+  try {
+    const result = await api('/api/suggestion', {method:'POST', body:{slug, action:'dismiss-all', ids}});
+    if (S.slug === slug) { S.ov = result.overview; renderStats(S.ov); }
+    toast(`${result.dismissed} suggestions dismissed.`);
+  } catch (error) { failed = true; showJobError(log, error.message); }
+  finally {
+    done(); button.textContent = label; delete host.dataset.dismissing;
+    // Preserve visible errors until retry; successful dismissal refreshes the inbox.
+    if (S.slug === slug && !failed) renderCompilerWaiting(S.ov);
+  }
 }

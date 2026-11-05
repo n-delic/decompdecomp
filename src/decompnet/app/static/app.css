@@ -1966,3 +1966,17 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 /* Batch summaries keep one visible progress bar; diagnostics stay in a bounded disclosure. */
 .suggestion-batch-progress { margin: 16px 0; }
 .suggestion-batch-progress [data-batch-current] { overflow-wrap: anywhere; }
+
+/* Compiler inbox: a distinct section, with evidence kept out of the action labels. */
+.compiler-inbox { border-top: 2px solid var(--line); padding-top: 20px; }
+.compiler-inbox-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding-bottom: 18px; }
+.compiler-inbox-head h3 { margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+.compiler-inbox-head p { margin: 0; }
+.compiler-inbox-item { padding: 20px 0; border-top: 1px solid var(--line); }
+.compiler-inbox-item-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+.compiler-inbox-item h4 { margin: 0; font-size: 1rem; }
+.compiler-inbox-flags { display: block; margin: 10px 0; white-space: normal; overflow-wrap: anywhere; color: var(--muted); }
+.compiler-inbox-item .said-head { margin: 8px 0; }
+.compiler-inbox-evidence { margin-top: 14px; font-size: .9rem; }
+.compiler-inbox-evidence summary { color: var(--muted); cursor: pointer; }
+.compiler-inbox-evidence .said-text { margin-top: 12px; }

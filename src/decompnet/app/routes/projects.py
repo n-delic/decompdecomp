@@ -374,6 +374,10 @@ def register(app: App) -> None:
     suggestion_jobs = {}
 
     def p_suggestion(slug, request, data):
+        if data.get('action') == 'dismiss-all':
+            from ..function_profile_suggestions import dismiss_all
+            count = dismiss_all(net, slug, data.get('ids'))
+            return {'dismissed':count, 'overview':net.overview(slug)}
         if data.get('action') == 'apply-all':
             from ..function_profile_suggestions import accept_all
             with jobs._lock:

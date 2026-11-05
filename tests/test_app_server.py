@@ -2502,3 +2502,17 @@ def test_header_storage_routes_guard_preview_and_maintenance_actions(app,monkeyp
         assert client.post('/api/header-storage',json={'action':action},headers=headers).json()=={'job':'synthetic-job'}
     assert calls==['headers','compact']
     assert client.post('/api/header-storage',json={'action':'unknown'},headers=headers).status_code==400
+
+
+def test_dismiss_compiler_inbox_passes_explicit_project_snapshot(app, monkeypatch):
+    from decompnet.app import function_profile_suggestions
+    client, net, *_ = app
+    calls = []
+    monkeypatch.setattr(function_profile_suggestions, 'dismiss_all',
+                        lambda net, slug, ids:calls.append((slug, ids)) or 2)
+    monkeypatch.setattr(net, 'overview', lambda slug:{'slug':slug, 'suggestions':[]})
+    response = client.post('/api/suggestion', json={'slug':'inbox', 'action':'dismiss-all', 'ids':[4, 7]},
+                           headers={'X-Decomp':'1'})
+    assert response.status_code == 200
+    assert response.json() == {'dismissed':2, 'overview':{'slug':'inbox', 'suggestions':[]}}
+    assert calls == [('inbox', [4, 7])]

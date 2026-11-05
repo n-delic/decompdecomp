@@ -248,3 +248,28 @@ def test_accept_all_rechecks_and_continues_after_failure(monkeypatch):
     assert (result['applied'],result['skipped'])==(2,1)
     assert result['results'][1]['reason']=='Busy function'
     assert log.last['done']==3
+
+
+def test_dismiss_all_only_resolves_displayed_open_compiler_suggestions(monkeypatch):
+    net, _ = fixture(monkeypatch)
+    items = [
+        {'id':1, 'status':'open', 'toolchain':'gcc'},
+        {'id':2, 'status':'open', 'toolchain':None},
+        {'id':3, 'status':'applied', 'toolchain':'gcc'},
+        {'id':4, 'status':'open', 'toolchain':'gcc'},
+    ]
+    net._update_cfg('game', lambda cfg:cfg.update(suggestions=items))
+    before = net.cfg(net.project_row('game'))['compiler']
+    net.resolve_suggestion = lambda *a, **kw:pytest.fail('Dismissal must not apply or compile settings')
+    assert profiles.dismiss_all(net, 'game', [1, 1, 2, 3, 999]) == 1
+    cfg = net.cfg(net.project_row('game'))
+    assert [s['status'] for s in cfg['suggestions']] == ['dismissed', 'open', 'applied', 'open']
+    assert cfg['compiler'] == before
+    assert profiles.dismiss_all(net, 'game', [1]) == 0
+
+
+@pytest.mark.parametrize('ids', [None, 'all', [True], ['1']])
+def test_dismiss_all_requires_explicit_snapshot(monkeypatch, ids):
+    net, _ = fixture(monkeypatch)
+    with pytest.raises(NetworkError, match='Refresh the compiler suggestions'):
+        profiles.dismiss_all(net, 'game', ids)
