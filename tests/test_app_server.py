@@ -99,6 +99,30 @@ def test_only_the_apps_own_window_gets_the_gui(app):
     assert client.post("/api/settings", json={"autopilot": False}, headers={"X-Decomp": "1"}).json()["autopilot"] is False
 
 
+def test_the_app_opens_a_new_window_when_the_windows_browser_dies(app, monkeypatch):
+    """#154: WebView2's browser process dying ended the window, and the app quit with it (`window closed; quitting`)
+    when nothing was running. A new window opens instead, and the app keeps its projects and agents."""
+    _, _, _ = app
+    quits, reopened = [], []
+    monkeypatch.setattr(os, "_exit", lambda code=0: quits.append(code))
+    monkeypatch.setattr(window.WINDOW, "reopen_after_browser_failure", lambda: reopened.append(1) or True)
+    monkeypatch.setattr(window.WINDOW, "exit_code", window.BROWSER_FAILED, raising=False)
+    window.WINDOW.on_close()  # what Window._watch calls when the window program ends by itself
+    assert reopened == [1] and quits == []
+
+
+def test_a_window_that_keeps_dying_leaves_the_app_up_without_one(app, monkeypatch):
+    """A crash loop no window can fix: the app stays up (its jobs and agents keep working), and says so."""
+    _, _, _ = app
+    quits, told = [], []
+    monkeypatch.setattr(os, "_exit", lambda code=0: quits.append(code))
+    monkeypatch.setattr(window.WINDOW, "reopen_after_browser_failure", lambda: False)
+    monkeypatch.setattr(window.WINDOW, "exit_code", window.BROWSER_FAILED, raising=False)
+    monkeypatch.setattr(window, "tell_desktop", lambda title, text: told.append(title))
+    window.WINDOW.on_close()
+    assert quits == [] and told and "crash" in told[0]
+
+
 def test_reimport_runs_as_a_background_project_job(app, tmp_path, monkeypatch):
     client, net, manager = app
     from types import SimpleNamespace

@@ -64,6 +64,37 @@ def test_the_app_closing_its_window_is_not_the_user_closing_it(fake_window):
     assert not w.is_open() and closed == []
 
 
+def test_a_window_that_ends_by_itself_says_how(tmp_path):
+    """#154: the app tells a window whose browser died (BROWSER_FAILED) from one the user closed (0)."""
+    closed = []
+    w = window.Window(tmp_path, "http://127.0.0.1:6464/", "secret", lambda: closed.append(1))
+
+    class Proc:
+        returncode = window.BROWSER_FAILED
+
+        def wait(self):
+            return self.returncode
+
+    w.proc = Proc()
+    w._watch(w.proc)
+    assert w.exit_code == window.BROWSER_FAILED and closed == [1] and w.proc is None
+
+
+def test_a_window_whose_browser_died_is_opened_again(fake_window):
+    """#154: WebView2's browser process dying used to end the window and quit the app."""
+    w, _log, closed = fake_window
+    assert w.reopen_after_browser_failure() and w.is_open() and closed == []
+
+
+def test_a_window_that_keeps_dying_is_not_reopened(fake_window):
+    """A crash loop: reopening would only repeat it, so the app stays up without a window (the tray opens one)."""
+    w, _log, _closed = fake_window
+    w.browser_failures = [time.monotonic()] * window.REOPEN_TRIES
+    assert not w.reopen_after_browser_failure() and not w.is_open()
+    w.browser_failures = [time.monotonic() - window.REOPEN_SECONDS * 2] * window.REOPEN_TRIES  # long ago: not a loop
+    assert w.reopen_after_browser_failure() and w.is_open()
+
+
 def test_no_window_in_tests(tmp_path, monkeypatch):
     monkeypatch.setenv("DECOMP_WINDOW", "0")
     assert not window.Window(tmp_path, "http://127.0.0.1:6464/", "s", lambda: None).open()

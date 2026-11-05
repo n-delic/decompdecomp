@@ -323,7 +323,22 @@ function notSupported(head, file) {
 const TRY_AND_TELL = `This version is new, so <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">tell us how it goes</a> on your game.`;
 const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (yet). For other platforms, continue a public decomp.";
 
+// A game bigger than this is read where it is, never copied through the window: WebView2's browser process dies on a
+// copy that large, which ends the window and the app with it (#154: a 2 GB disc image). A dropped or picked file
+// carries no path, so the user gives one instead (askPath, whose dialog says the same). A PC game's debug files ride
+// the same copy (runImport sends them with the game, and the import cuts them out of the body), so they count too.
+const COPY_LIMIT = 64 * 1024 * 1024;
+
+function tooBigToCopy(file, copied, symbols = 0) {
+  resetDrop();
+  const what = symbols ? `${file.name} with its debug files` : file.name;
+  return askPath(`${what} comes to ${MB(copied)}: too big to copy through this window, whose browser engine dies on `
+    + `a copy that large (that's what closed the app). Give the game's path below and decompdecomp reads it from `
+    + `where it is, copying nothing.`);
+}
+
 async function pickFile(file, extras = []) {
+  if (file.size > COPY_LIMIT) return tooBigToCopy(file, file.size);
   const head = new Uint8Array(await file.slice(0, 0x9400).arrayBuffer());
   // dropped before the page finished loading: the state first, as what the file is needs it (a PC program's pack is
   // the server's table: pcPack), and so do the compiler lists
@@ -338,6 +353,8 @@ async function pickFile(file, extras = []) {
     }
   }
   // only a PC game's import reads them (debuginfo.py): with another game they'd be uploaded for nothing
+  const symbols = info.platform === "win32" ? extras.reduce((n, f) => n + f.size, 0) : 0;
+  if (file.size + symbols > COPY_LIMIT) return tooBigToCopy(file, file.size + symbols, extras.length);
   picked = { buf, info, name: file.name, extras: info.platform === "win32" ? extras : [] };
   $("romFile").textContent = file.name;
   $("romTitle").textContent = info.title;
