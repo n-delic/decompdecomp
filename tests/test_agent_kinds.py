@@ -104,6 +104,22 @@ def test_the_template_is_not_registered():
         agents.get(template.EXAMPLE.id)
 
 
+def test_posix_npm_shim_uses_sibling_node_only_for_node_shebang(tmp_path, monkeypatch):
+    monkeypatch.setattr(agents.sys, 'platform', 'linux')
+    node = tmp_path / 'node'
+    node.write_text('#!/bin/sh\n')
+    node.chmod(0o755)
+    shim = tmp_path / 'kimi'
+    shim.write_text('#!/usr/bin/env node\nconsole.log(1)\n')
+    shim.chmod(0o755)
+    assert agents.cli_argv([str(shim), '--model', 'x']) == [str(node), str(shim), '--model', 'x']
+    shim.write_text('#!/bin/sh\necho local\n')
+    assert agents.cli_argv([str(shim)]) == [str(shim)]
+    node.unlink()
+    shim.write_text('#!/usr/bin/env node\nconsole.log(1)\n')
+    assert agents.cli_argv([str(shim)]) == [str(shim)]
+
+
 def test_the_launcher_gets_the_facts_it_shows_agents_by():
     """The GUI shows the API helper first, with its endpoints instead of models, and opencode's effort: from what
     each agent says, not from its name."""
@@ -120,7 +136,9 @@ def test_an_agent_that_runs_one_makers_models_names_their_family():
     assert network.model_family("gemini-2") == network.model_family("antigravity-1") == "gemini"
     assert network.model_family("opencode-deepseek-v4.1-flash-1") == "deepseek"  # the model in its name says
     assert network.model_family("zcode-glm-5.3-1") == "glm"
-    assert network.model_family("cursor-claude-sonnet-5-1") == "claude"
+    assert agents.get('cursor').id == 'cursor'
+    assert not agents.get('kimi').family
+    assert network.model_family(helpers.helper_name(agents.get('cursor').id, 'claude-sonnet-5', set())) == "claude"
     assert network.model_family("cursor-gpt-5-1") == "gpt"
     assert network.model_family("kimi-claude-sonnet-5-1") == "claude"
     assert network.model_family("kimi-gemini-3-1") == "gemini"

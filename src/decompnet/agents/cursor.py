@@ -108,7 +108,7 @@ class Cursor(Agent):
         return cmd, env
 
     def fatal(self, error):
-        return bool(re.search(r"invalid model|unknown model|unknown option", error, re.I))
+        return bool(re.search(r"invalid model|unknown model|unknown option|couldn't access the keychain", error, re.I))
 
     def parse(self, event, state):
         kind = event.get('type')

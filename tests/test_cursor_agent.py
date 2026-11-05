@@ -51,6 +51,7 @@ def test_cursor_stream_events_and_missing_usage():
     assert [kind for kind, _ in rows] == ['info']
     assert not CURSOR.fatal('Error: Authentication required. Please run agent login first')
     assert not CURSOR.fatal('temporary network error')
+    assert CURSOR.fatal("Cursor couldn't access the keychain")
 
 
 def test_cursor_explicit_usage_is_tracked_only_when_present():
