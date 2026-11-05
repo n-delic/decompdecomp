@@ -773,7 +773,7 @@ class Permuter:
         self.net.keep_diff(agent.id, fn['id'], rows)
         if not hasattr(self.net, '_agent_outcomes'):
             self.net._agent_outcomes = {}
-        self.net._agent_outcomes[agent.id, fn['id']] = {'source': source, 'score': d.score, 'rows': rows}
+        self.net._agent_outcomes[agent.id, fn['id']] = {'source': source, 'score': d.score, 'rows': rows, 'repair_locations':self._trial_locations}
         if d.score < best or (d.bytes_match and fn['status'] != 'matched'):
             self._accept_candidate(agent, proj, fn, source, d)
             self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter", effective_settings=getattr(result,"effective_settings",None),

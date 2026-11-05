@@ -799,3 +799,14 @@ intervening call, write, pointer mutation or volatile access; never introduce si
 overflow or change a used expression result. The shared `unsigned_byte_increment` repair proves
 its supported narrow CFG/read shape and otherwise skips. The normal judge remains authoritative;
 one case does not justify a broad increment rewrite.
+
+### Isolated spill slots and register chains
+
+Equal frames with one differing spill store/load pair need a local storage/lifetime
+hypothesis before global frame padding. `mapped_spill_storage` uses the actual object's
+C-line association to select the assignment's local; `mapped_register_lifetime` uses
+a small consistent register chain to try same-type conversion lifetime changes.
+A source association is not a register prescription. Stale/missing line information
+provides no proposal. Preserve compiler flags and exact checking; the first held-out
+sweep did not improve the two motivating residuals, so do not repeat exhausted shapes
+without a new source/context/evidence hypothesis.

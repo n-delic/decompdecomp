@@ -2512,3 +2512,14 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   exact byte addresses and ordinary declarations are required. Unknown qualifiers,
   aliases, macros, shadows, cycles and used assignment values skip the family.
   Compiler and ordinary byte/object judging remain unchanged across supported processors.
+
+### Compiler-mapped local storage follow-ups
+
+- Done: bounded same-frame spill-pair and single-register-chain hypotheses, bound to
+  current compiler C-line mappings; shared local experiments, CPU follow-ups, iterative
+  autopilot and deep refinement retain the normal exact judges. Broad line-family
+  exploration is interleaved when current rows lack scheduling/control evidence.
+- Planned: residual readers beyond MIPS and source-map adapters for unsupported
+  imported/debug-object formats. Missing or stale maps cannot supply targeted edits.
+- Measured limit: the 22-case copied held-out sweep produced no new matches or score
+  improvements. Sixteen fewer broad line trials did not reduce total trial count.

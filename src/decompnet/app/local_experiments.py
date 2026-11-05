@@ -50,7 +50,7 @@ EXPERIMENTAL = ('experimental_bitfield_frame',)
 FAMILIES = ('value_trace_bundle','verified_unit_helpers') + independent_address_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (prototype_reuse.FAMILY, 'learned_expression', 'address_association', 'call_initialization', *EXPERIMENTAL, 'masked_value_reuse', 'cfg_integer_lifetimes', 'table_slot_lifetime', 'unsigned_assignment_reuse', 'guard_forward_jump', 'constant_register_reuse', 'copy_register_reuse', 'last_shift_reuse', 'signedness','declaration_order','typed_temporary','branch_orientation','narrowing','source_lines',
             'address_temporary','constant_local','comparison_load','stack_array','loop_induction',
             'parameter_width','value_lifetime','sum_shape','call_result_inline','comparison_reuse','integer_address_order','mmio_address','call_arity','struct_byte_offset','switch_call','paired_load_order','array_index_width','split_scalar_lifetime','pointer_before_store','store_address_lifetime','stack_padding','local_width','pointer_cast_inline',
-            'local_widening','callee_parameter_width','callee_return_width','split_integer_lifetime','merge_integer_lifetimes','branch_call','goto_leaf','switch_layout') + ('hazard_statement_lines',) + draft_repairs.AGENT_FAMILIES
+            'local_widening','callee_parameter_width','callee_return_width','split_integer_lifetime','merge_integer_lifetimes','branch_call','goto_leaf','switch_layout') + ('mapped_spill_storage','mapped_register_lifetime','hazard_statement_lines',) + draft_repairs.AGENT_FAMILIES
 
 
 def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch'):
@@ -74,6 +74,10 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
             return _compile(net,agent,slug,function,source)
         if time.monotonic()>=deadline:
             return 'Local repair time budget reached during baseline checking; no variants submitted.'
+        if checked and checked.get('score') is not None:
+            if not hasattr(net, '_agent_outcomes'):
+                net._agent_outcomes={}
+            net._agent_outcomes[agent.id,fn['id']]=checked
         pools = available(net,agent,slug,fn,source,revision,requested,deadline=time.monotonic()+max(0,(deadline-time.monotonic())*0.35),desired=max_trials if families is not None else 0)
         from .repair_localisation import order as local_order
         evidence = checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id'])) or {}
@@ -95,10 +99,6 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         baseline=checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if baseline and baseline.get('source')!=source:
             baseline=None
-        if checked and checked.get('score') is not None:
-            if not hasattr(net, '_agent_outcomes'):
-                net._agent_outcomes={}
-            net._agent_outcomes[agent.id,fn['id']]=checked
         recipe_profile=repair_sequences.profile(net,net._project(slug),fn)
         policy_profile=adaptive_repairs.profile(net,net._project(slug),fn)
         from .permuter_focus import classify
@@ -245,6 +245,14 @@ def _available(net, agent, slug, fn, source, revision, requested):
         measured = getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source') == source:
             pools['spill_normalization'] = normalization_repairs.frame_variants(source,fn['name'],measured.get('rows') or [])
+    if any(family in pools for family in ('mapped_spill_storage','mapped_register_lifetime')):
+        from . import targeted_storage_repairs
+        measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
+        if measured and measured.get('source')==source and measured.get('input_scope')==agent_evidence.build_key(net,fn)[0]:
+            ctx=net._context(proj['id'],fn['unit'])
+            header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+            for family,text in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],measured.get('rows') or [],measured.get('repair_locations')):
+                if family in pools:pools[family].append(text)
     if 'hazard_statement_lines' in pools:
         from . import hazard_line_repairs
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))

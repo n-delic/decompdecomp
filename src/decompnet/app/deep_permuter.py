@@ -392,6 +392,10 @@ class Search(Permuter):
             for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
                 labels[candidate]=family
                 choices.append(candidate)
+            from . import targeted_storage_repairs
+            for family,candidate in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source)):
+                labels[candidate]=family
+                choices.append(candidate)
             from . import expression_recipes
             for candidate in expression_recipes.variants(self.net, lineage.profile, source):
                 labels[candidate] = 'learned_expression'

@@ -4310,3 +4310,17 @@ object, with no diagnostic flag changes or guessed source locations.
   recommendation. Shared runtime resolution covers live judging, profile comparison
   and exported builds. Temporary copies are private to a process, reused by threads
   and replaced after reinstall. Physical Intel Mac and Windows checks remain open.
+
+## Targeted spill and register-lifetime follow-ups: negative held-out evidence
+
+On 22 copied, frozen remaining functions, main `3b107ab7` and the targeted storage/trial
+selection build each spent 419 candidate trials under equal 32-trial / 30-second per-case
+limits. Neither found a new match or score improvement. Broad line trials fell from 96 to
+80; total compiles did not fall. Concurrent testing affected the wall-time cutoff, so this
+is not a timing or universal token-saving result. KMC GCC 2.7.2 per-function profiles were
+preserved (19 use `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`; three keep their own variants).
+
+One stack-only residual maps a single store/load pair to an unescaped pointer local with
+identical frames; a small register-only residual maps a pointer-load/comparison region.
+Mapped declaration/storage and same-type conversion-lifetime candidates remain hypotheses:
+they did not solve these cases. See [constraints and failed experiments](TARGETED_STORAGE_REPAIRS.md).

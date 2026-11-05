@@ -56,6 +56,15 @@ conversions still need review before using a variant as a new search baseline.
 Generated inline helpers are private, but check complete build output too: a
 function-window match alone does not verify extra helper code or its placement.
 
+## Compiler-mapped storage probes
+
+For a same-frame isolated spill pair, `mapped_spill_storage` tries just the local
+identified by current compiled C-line evidence. `mapped_register_lifetime` offers
+small same-type lifetime changes for a consistent register-only residual. Both need
+fresh build-scoped evidence and source-hash-matched locations; no map means no guess.
+Use these through local repairs before broad declaration or source-line sweeps.
+The initial held-out cases remain unresolved; a generated proposal is not a promise
+of improvement, and the ordinary exact judge remains mandatory.
 ## Focus, combinations and output evidence
 
 When the ordinary compiler supplies source lines for a mismatch, local variants prefer

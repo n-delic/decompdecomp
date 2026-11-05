@@ -111,6 +111,8 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         from ..source_lines import mismatches, render
         mapped = mismatches(compiled.obj, fn['name'], diff.rows, source,
                             filename='func.cpp' if getattr(compiled,'language','c') == 'c++' else 'func.c')
+        from .repair_localisation import bind
+        measured['repair_locations']=bind(source,mapped)
         measured['line_note'] = render(mapped, source, limit=4)
         from .repair_localisation import bind
         measured['repair_locations'] = bind(source,mapped)
