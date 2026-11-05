@@ -176,3 +176,8 @@ def test_registry_command_and_prelude_are_part_of_scope_proof(monkeypatch):
 def test_narrowing_must_be_an_entire_expression_statement(statement):
     source = 'int g(void);int sample(int x){int y;'+statement+'g();return y;}'
     assert proposals(source) == []
+
+
+@pytest.mark.parametrize('directive', ['#import "hidden.h"', '#include_next "hidden.h"', '#line 1 "hidden.c"'])
+def test_unknown_directives_do_not_hide_type_contracts(directive):
+    assert proposals(directive+'\nint sample(int x){x=(u8)x;return observer(x);}') == []
