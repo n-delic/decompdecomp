@@ -660,9 +660,10 @@ def target_scope(net, fn, revision):
     return hashlib.sha256(repr((revision,candidate_scope.key(net,proj,fn),claim_stalls.repair_rules())).encode()).hexdigest()
 
 
-def target_tried(net, fn, revision, family, old):
+def target_tried(net, fn, revision, family, old, scope=None):
+    scope=scope if scope is not None else target_scope(net,fn,revision)
     return net.store.one('SELECT 1 FROM agent_family_targets WHERE function_id=? AND scope=? AND family=? AND target_hash=?',
-                         fn['id'],target_scope(net,fn,revision),family,hashlib.sha256(old.encode()).hexdigest()) is not None
+                         fn['id'],scope,family,hashlib.sha256(old.encode()).hexdigest()) is not None
 
 
 def compiled_before(net,fn,source,scope=None):

@@ -268,3 +268,20 @@ by its one-based position, retains exact occurrence/line diagnostics and include
 current candidate revision. A rejected explicit batch runs no variants or baseline
 build and changes no candidate; valid alternatives are not silently compiled on their
 own. Fix each reported anchor against the same starting C and resubmit the batch.
+
+### Reuse discovery fingerprints within a pass
+
+Recent candidate reads took 15–21 seconds and about 1,000–1,200 SQL reads even when
+no new build ran. Proposal eligibility and final filtering rebuilt the same
+source/build/rule fingerprint for each candidate. They now compute revision scope
+once per pass and reuse it for indexed tried-target lookups, as already done for
+the durable compiled-source scope. The database lookup still runs for each target;
+trial records are not cached. A later discovery pass recomputes the fingerprint,
+so changed compiler inputs reopen old trials.
+
+Synthetic 100-proposal filtering needs four scope calculations instead of 103;
+generation eligibility needs three instead of 102. Regression tests verify the
+same suppressed/remaining proposals, fresh trial records and changed-input
+invalidation. These counts do not establish a live wall-time speedup or explain
+all observed candidate-read latency. Every submitted candidate still uses the
+ordinary judge.
