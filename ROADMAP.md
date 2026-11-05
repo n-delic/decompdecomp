@@ -1,5 +1,12 @@
 # Roadmap
 
+- Done: compiler-tested fresh drafts, bounded private MIPS callback/argument/frame recovery,
+  owner-aware ROM data context, persistent generation/compiler/link diagnostics and cancellable
+  draft regeneration without clearing matches or attempts. Imported m2c projects use their own build.
+- Planned: callback/frame evidence readers for PowerPC, ARM and x86; explicit variadic, floating-point
+  and complex/variable-frame ABI recovery. Ambiguous frames and unbounded data remain unresolved.
+
+
 - Done: preserve overlay branch labels during ROM import, recover missing local labels
   at recorded instruction addresses in existing drafts, follow renamed entry symbols,
   and retry recovered failed drafts through the ordinary compiler and exact judge.
@@ -395,6 +402,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Start from your own copy | ✓ | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ | ✓ | ✓ | fork by address |
 | Judge | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
+| Compile-tested draft refresh and saved diagnostics | ✓ | ✓ | ✓ | ✓ | ✓ m2c | ✓ Ghidra | — draft generator planned | ✓ supported draft generators |
+| Initial callback, forwarded-argument and overlapping-frame recovery | ✓ bounded MIPS | ✓ bounded MIPS | ✓ bounded MIPS | ✓ bounded MIPS | — processor reader planned | — processor reader planned | — processor reader planned | ✓ MIPS C; other readers planned |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | ✓ | — | ✓ Ghidra's | — | — |
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | ✓ | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
