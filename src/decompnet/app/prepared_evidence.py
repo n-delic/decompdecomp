@@ -274,22 +274,30 @@ def _promote_measured(net, proj, fn, source, header, settings, agent, expected):
 
 
 def auto_existing(net, proj, fn, agent):
-    """One historical exact, rejudged on current inputs; failed rechecks are cached only in that scope."""
+    """Rejudge one untried historical exact pair, including budget-limited deep searches."""
     if not prep.settings(net,proj).get('auto_exact'):return None
-    rows=net.store.all("SELECT signature,feedback FROM reuse_trials WHERE function_id=? AND outcome='0' "
-                       "AND signature LIKE 'local-source-profile-%' ORDER BY rowid DESC LIMIT 1",fn['id'])
+    rows=net.store.all("SELECT signature FROM reuse_trials WHERE function_id=? AND outcome='0' "
+                       "AND (signature LIKE 'local-source-profile-%' OR signature LIKE 'local-source-deep-profile-%') "
+                       "ORDER BY rowid DESC",fn['id'])
     if not rows:return None
-    item=json.loads(rows[0]['feedback'] or '{}')
-    if not item.get('exact') or not all(k in item for k in ('toolchain','flags','source','header')):return None
-    key='local-source-auto-recheck:'+hashlib.sha256((digest(net,proj,fn)+rows[0]['signature']).encode()).hexdigest()
-    if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):return None
-    expected=prep.inputs(net,proj,fn)
-    try:
-        promote_measured(net,proj,fn,item['source'],item['header'],
-                         {'toolchain':item['toolchain'],'flags':item['flags']},agent,expected)
-        return {'tested':1,'matched':True}
-    except NetworkError as error:
-        with net.store.tx() as db:
-            db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
-                       (fn['id'],key,'failed',str(error)[:1200]))
-        return {'tested':1,'matched':False,'error':str(error)}
+    scope=digest(net,proj,fn)
+    checked={r['signature'] for r in net.store.all("SELECT signature FROM reuse_trials WHERE function_id=? AND signature LIKE 'local-source-auto-recheck:%'",fn['id'])}
+    for row in rows:
+        key='local-source-auto-recheck:'+hashlib.sha256((scope+row['signature']).encode()).hexdigest()
+        if key in checked:continue
+        saved=net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],row['signature'])
+        if not saved:continue
+        try:item=json.loads(saved['feedback'] or '{}')
+        except (ValueError,TypeError):continue
+        if not isinstance(item,dict) or not item.get('exact') or not all(k in item for k in ('toolchain','flags','source','header')):continue
+        expected=prep.inputs(net,proj,fn)
+        try:
+            promote_measured(net,proj,fn,item['source'],item['header'],
+                             {'toolchain':item['toolchain'],'flags':item['flags']},agent,expected)
+            return {'tested':1,'matched':True}
+        except NetworkError as error:
+            with net.store.tx() as db:
+                db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
+                           (fn['id'],key,'failed',str(error)[:1200]))
+            return {'tested':1,'matched':False,'error':str(error)}
+    return None

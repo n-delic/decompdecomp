@@ -2348,3 +2348,9 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   read with bounded typed literal inlining or declaration staging. Shared draft
   repair consumers use the family on MIPS; other processors have no corresponding
   proven hardware reader. Ordinary linked-byte or objdiff judging still applies.
+
+- Done: opt-in automatic exact-bundle recovery also rechecks saved deep-permuter
+  source/profile pairs when the original search lacked promotion allowance. Each
+  pass attempts one fresh verification; failed newer evidence no longer hides
+  older untried exact pairs. Claims, input freshness and ordinary byte/data gates
+  remain required; imported project builds retain their existing exclusion.
