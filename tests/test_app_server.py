@@ -2285,3 +2285,27 @@ def test_batch_naming_route_is_authenticated_and_previews_without_mutation(app, 
     response = client.post('/api/symbol-names', json=payload, headers={'X-Decomp': '1'})
     assert response.status_code == 200 and response.json() == {'renames': 1}
     assert calls == [('game', payload['names'])]
+
+
+def test_batch_compiler_suggestions_reuse_background_job(app, monkeypatch):
+    from decompnet.app import function_profile_suggestions
+    client, net, *_ = app
+    entered, release = threading.Event(), threading.Event()
+    calls=[]
+    def accept(net, slug, log):
+        calls.append(slug)
+        entered.set()
+        assert release.wait(5)
+        return {'applied':1,'skipped':0,'results':[], 'overview':{}}
+    monkeypatch.setattr(function_profile_suggestions,'accept_all',accept)
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:pytest.fail('request must not sync a background batch'))
+    payload={'slug':'batch-suggestions','action':'apply-all','background':True}
+    try:
+        first=client.post('/api/suggestion',json=payload,headers={'X-Decomp':'1'})
+        assert first.status_code==200
+        assert entered.wait(2)
+        second=client.post('/api/suggestion',json=payload,headers={'X-Decomp':'1'})
+        assert second.json()['job']==first.json()['job']
+        assert calls==['batch-suggestions']
+    finally:
+        release.set()

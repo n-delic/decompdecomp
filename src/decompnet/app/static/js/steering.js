@@ -163,6 +163,8 @@ $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
     } catch (err) { toast(esc(err.message), "err"); }
     return;
   }
+  const batch = e.target.closest('button[data-apply-all]');
+  if (batch) { await acceptWaitingSuggestions(batch); return; }
   const b = e.target.closest("button[data-apply], button[data-dismiss]");
   if (!b) return;
   const apply = b.dataset.apply != null;
@@ -1098,7 +1100,7 @@ function renderCompilerAnswer(a) {
 }
 function renderCompilerWaiting(ov) {
   const sg = compilerSuggestions(ov);
-  setHtml($("compilerWaiting"), sg.length ? `<p class="col-title">Waiting for you</p>${sg.map(suggestionHtml).join("")}` : "");
+  setHtml($("compilerWaiting"), sg.length ? `<div class="row" style="justify-content:space-between"><p class="col-title">Waiting for you · ${sg.length}</p><button type="button" class="primary small-btn" data-apply-all>Accept all ${sg.length} suggestions</button></div>${sg.map(suggestionHtml).join("")}` : "");
 }
 $("deleteBtn").onclick = () => {
   dialog("Remove project", `<p>Remove <b>${esc(S.ov.title)}</b> from decompdecomp? Matched functions and notes are deleted.</p>
@@ -1801,3 +1803,26 @@ $("sourceAssemblyRun").onclick = async () => {
   try { const result=await api("/api/source-preparation",{method:"POST",body:{slug:S.slug,action:"assembly-run"}}); await followJob(result.job,log); await refreshMap(true); }
   catch(error) { showJobError(log,error.message); } finally { finish(); }
 };
+
+
+async function acceptWaitingSuggestions(button) {
+  const slug=S.slug;
+  const body=dialog('Accept waiting compiler suggestions', '<p>Each suggestion is checked before applying. Existing matches stay protected. Suggestions that are busy, outdated or fail verification are skipped.</p><p data-batch-status role="status">Preparing suggestions…</p><progress class="deep-sweep-bar" data-batch-bar max="1" value="0"></progress><div data-batch-log></div><div data-batch-results></div>');
+  const log=body.querySelector('[data-batch-log]');
+  const done=beginWork(log,'Checking and applying suggestions',[button],'Finished');
+  try {
+    const {job}=await api('/api/suggestion',{method:'POST',body:{slug,action:'apply-all',background:true}});
+    const result=await followJob(job,log,(_lines,state)=>{
+      const p=state.progress;
+      if(p?.phase!=='Applying waiting suggestions')return;
+      body.querySelector('[data-batch-status]').textContent=`${p.done} / ${p.total} checked · ${p.applied} applied · ${p.skipped} skipped`;
+      body.querySelector('[data-batch-bar]').max=p.total || 1;
+      body.querySelector('[data-batch-bar]').value=p.done;
+    });
+    if(!result)return;
+    body.querySelector('[data-batch-status]').textContent=`${result.applied} applied · ${result.skipped} skipped`;
+    body.querySelector('[data-batch-bar]').max=1;body.querySelector('[data-batch-bar]').value=1;
+    body.querySelector('[data-batch-results]').innerHTML=result.results.filter(r=>!r.applied).map(r=>`<p class="small">Suggestion #${r.id}: ${esc(r.reason)}</p>`).join('');
+    if(S.slug===slug){S.ov=result.overview;renderStats(S.ov);renderProjectSettings();}
+  }catch(error){showJobError(log,error.message);}finally{done();}
+}
