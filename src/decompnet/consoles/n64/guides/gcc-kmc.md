@@ -781,3 +781,9 @@ work, try putting that single store in `do { ...; }while(0);`. One controlled KM
 `-O2 -g3` replay recovered exact linked bytes this way; a plain block and a scalar
 global declaration alone did not. Preserve the original lvalue and declarations.
 The shared `constant_memory_store_scope` repair offers a bounded version.
+
+Do not repair allocation by inserting cancellation pairs such as `x++; x--;`.
+They can overflow signed values or leave valid pointer bounds before returning to
+an apparently unchanged value. A lower score does not make them valid. The native
+wrapper excludes its self-assignment insertion family; review old saved drafts
+separately, and use corrective candidate adoption when a cleaner draft scores worse.
