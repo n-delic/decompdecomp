@@ -61,4 +61,8 @@ def hint(asm,arch):
             'live_return_address family for an uninitialized draft placeholder. It is hardware context, '
             'not a reason to sweep compiler flags or invent a normal local value. The live_return_address_initializers '
             'bundle preserves one-shot scopes and initializer evaluation order while testing declaration staging; '
-            'the intermediate hardware-only change can score worse. Exact byte judging remains required.')
+            'the intermediate hardware-only change can score worse. If it remains a near miss, test the same '
+            'candidate with a separately verified neighbouring compiler profile. Deep permuter can test '
+            'multiple match-ranked profiles per variant when explicitly selected; one profile keeps its '
+            'default-only meaning. Do not apply a neighbour profile without an exact source/profile verdict. '
+            'Exact byte judging remains required.')

@@ -649,3 +649,11 @@ keeping initializer evaluation order. A hardware-only intermediate can score
 worse, so test the bounded combined proposal directly. Unrelated volatile locals
 are retained; volatile placeholders are not inferred. Verify the function's own
 compiler profile rather than copying a neighbour's flags.
+
+A source repair and compiler profile can both need changing at once. One saved
+`-O2 -g3` draft scored 5; the live-register repair scored 65 there but exact with
+an independently verified neighbouring `-O2 -ffast-math -fno-schedule-insns`
+profile. Neither source-only nor profile-only improvement would find this pair.
+Check that specific pair before a broad sweep. Match popularity can rank the
+correct local profile well below the default; multi-profile deep search visits
+only the explicitly selected number. Keep single-profile searches default-only.

@@ -3637,3 +3637,22 @@ literal and preserving the live-register store. Its actual source and four other
 pending source units passed standalone checks and a complete 12,582,912-byte image
 comparison. Existing compiled objects were checked unchanged before reuse. No game
 source or extracted assembly is included in these generic regression tests.
+
+### Coupled hardware read and an independently verified compiler profile
+
+A neighbouring dispatcher illustrates a second non-monotonic barrier: with its
+saved `-O2 -g3` profile the draft scored 5 and the fixed live-register read scored
+65. With independently verified `-O2 -ffast-math -fno-schedule-insns` (same KMC
+compiler and `-G0 -mips3 -mgp32 -mfp32`), the original draft scored 75 and the
+hardware-read candidate scored **0 / exact linked bytes**. PR #496's existing
+family generated that exact candidate in one proposal; no new source rewrite was
+needed. This is controlled replay, not a new native job result.
+
+Popularity alone is not proximity: at measurement the exact profile ranked fifth,
+with two matches, behind the default and three more popular alternatives. The
+existing explicit five-profile deep search reaches it; two or three do not. Keep
+one profile default-only and respect the configured compile budget. For a targeted
+investigation, check a separately verified neighbour profile with the repaired
+source directly instead of widening every random variant's compiler search. Never
+infer a compiler range from adjacency alone, and never replace a saved source or
+profile on a merely improved score: require an exact fresh pair verdict.
