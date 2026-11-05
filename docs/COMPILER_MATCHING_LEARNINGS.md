@@ -3514,6 +3514,38 @@ local float slots, an explicit returned index, and repeated byte expressions wit
 conversion preserved. An initial ranking failed from the earliest precursor until
 complementary families were connected. See [evidence and limits](RETURN_CONTRACT_REPAIRS.md).
 
+## Copied scalar lifetimes and debug statement boundaries (2026-11-05)
+
+- **Compiler:** native KMC GCC 2.7.2, MIPS, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+- **Original evidence:** a 529-instruction controller function was independently linked and
+  rebuilt byte-identically before this app change. Its last two differing operands selected the
+  original register instead of an already-made copy. Ending the original scalar's lifetime with
+  a dead assignment after the copy disappeared from output and recovered the exact instructions.
+  This did not require register bindings, changed compiler flags, header changes or assembly edits.
+- **Automation:** `dead_copy_source` requires ordinary unescaped scalar locals and CFG proof that
+  every outgoing path is dead. It rejects unknown control flow, volatile/assembly, shadows and
+  unbraced insertion sites. It supports comma declarations, initialized copies and opaque local
+  object aliases. Division families separate values and flags or move an existing signed rounding
+  sequence into its saved copy; they preserve existing arithmetic and require scratch redefinition.
+  Regional reuse is limited to an adjacent repeated local-array load with no intervening action.
+- **Scheduling:** physical statement/line boundaries affected `mflo` hazard NOP placement with
+  the above debug profile. Token-preserving probes are gated by debug flags and bounded, with
+  arithmetic boundaries first. Their effects must be compiled; whitespace is not generally causal.
+- **Search:** use the existing structural frontier and two-step residual lane; newly recovered
+  structures now prioritize these specific lifetime/flag families. No change to adoption rules,
+  search budgets, cached-input scope or the linked/objdiff judge.
+- **Diagnostics:** compare unique mapped source-line groups for actual GCC allocation ranks,
+  reference counts, live lengths and hard-register dispositions. Never align renumbered pseudos
+  between compilations or claim a line is a unique C-variable identity. Ambiguous/truncated
+  groups are omitted. Compact agent advice names applicable families and leaves source intact.
+- **Negative evidence:** the original broad deep search spent 482 compiler invocations over
+  three minutes at score 330 with no improvement. Simple declaration shuffles were often inert.
+  New local families are not a demonstrated general solution for all earlier structural misses.
+- **Reproduction:** private frozen source/header/checkpoint files remain outside the repository;
+  public tests use synthetic C only. Offline replay compares against previously verified compiled
+  output and is a regression, never a newly adopted game match. See PR validation for measured
+  equal-budget results; neither game bytes nor extracted game C are distributed here.
+
 ### Controlled regressions: conversion capture, shared shifts and debug branch joins
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian

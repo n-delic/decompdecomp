@@ -55,3 +55,15 @@ def test_bounded_phase_capture_includes_only_requested_function_trace(tmp_path):
     result=diagnostics.phase_summary(tmp_path,'f')
     assert result['value_trace']['values'][0]['pseudo']==72
     assert not diagnostics.phase_summary(tmp_path,'missing')['value_trace']['values']
+
+
+def test_priority_comparison_uses_unique_source_groups_not_renumbered_pseudos():
+    from decompnet.app.gcc_allocation import priority_changes
+    a = {'values':[{'pseudo':90,'source_lines':[12],'allocation_rank':0,'references':24,'live_insns':412,'hard_register':17}]}
+    b = {'values':[{'pseudo':190,'source_lines':[12],'allocation_rank':2,'references':22,'live_insns':411,'hard_register':19}]}
+    changes = priority_changes(a,b)
+    assert changes[0]['changes']['references']=={'before':24,'after':22}
+    assert 'bounded local variants' in changes[0]['next_action']
+    assert not priority_changes(a, {'values':b['values']*2})
+    assert not priority_changes(a, b | {'truncated':True})
+    assert not diagnostics.compare({'output_unchanged':False}, {})['comparable']

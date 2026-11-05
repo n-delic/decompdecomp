@@ -90,11 +90,11 @@ def plan(rows, arch=None):
     """Small evidence record for agents/replays; categories do not establish a compiler cause."""
     d=diagnose(rows,arch)
     if d['register_only']:
-        category='allocation';families=['later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse','allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
+        category='allocation';families=['dead_copy_source','divisor_normalization_copy','divisor_value_scope','divisor_flag_split','regional_load_reuse','later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse','allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
     elif d['branch_target'] or (d['delay_slot'] and not d['scheduling']):
         category='control';families=['structured_backedge','guard_forward_jump','branch_orientation','loop_update_order','goto_leaf','shared_return_tail']
     elif d['scheduling'] or d['allocation_schedule']:
-        category='scheduling';families=['call_one_shot_scope','debug_initialization_group','debug_constant_initialization','initialization_cluster','paired_operand_reuse','affine_counter_guard']
+        category='scheduling';families=['debug_statement_boundary','call_one_shot_scope','debug_initialization_group','debug_constant_initialization','initialization_cluster','paired_operand_reuse','affine_counter_guard']
     elif d['spill_offsets'] or d['target_frame']!=d['candidate_frame']:
         category='stack';families=['spill_normalization','local_declaration_order','stack_padding']
     else:

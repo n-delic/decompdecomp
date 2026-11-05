@@ -4,9 +4,9 @@ from . import allocation_evidence, repair_selection, search_frontier
 BURSTS = 3
 PROBES = 2
 FAMILIES = {
-    'scheduling': ('delayed_narrow_capture','debug_conversion_tail','shared_shift_mask','plain_float_slots','return_contract','narrow_expression_inline','embedded_call_assignment','inline_call_count','typed_pointer_snapshot','call_one_shot_scope','debug_initialization_group','debug_constant_initialization','allocation_initialization_order','scalar_schedule_order','paired_load_order',
+    'scheduling': ('debug_statement_boundary','delayed_narrow_capture','debug_conversion_tail','shared_shift_mask','plain_float_slots','return_contract','narrow_expression_inline','embedded_call_assignment','inline_call_count','typed_pointer_snapshot','call_one_shot_scope','debug_initialization_group','debug_constant_initialization','allocation_initialization_order','scalar_schedule_order','paired_load_order',
                    'combined_scheduling','local_declaration_order','declaration_order','byte_fill_constant'),
-    'allocation': ('delayed_narrow_capture','shared_shift_mask','return_contract','narrow_expression_inline','plain_float_slots','narrow_call_destination','branch_scalar_lifetime','later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse',
+    'allocation': ('dead_copy_source','divisor_normalization_copy','divisor_value_scope','divisor_flag_split','regional_load_reuse','delayed_narrow_capture','shared_shift_mask','return_contract','narrow_expression_inline','plain_float_slots','narrow_call_destination','branch_scalar_lifetime','later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse',
                    'split_integer_phase','split_integer_lifetime','merge_integer_lifetimes','loop_weight_scope'),
 }
 

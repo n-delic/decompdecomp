@@ -16,6 +16,8 @@ from . import (
     call_initialization_repairs,
     callee_prototype_repairs,
     captured_repairs,
+    copy_lifetime_repairs,
+    debug_boundary_repairs,
     draft_repairs,
     evidence_repairs,
     expression_recipes,
@@ -203,7 +205,10 @@ def _available(net, agent, slug, fn, source, revision, requested):
     for family,candidate in _generated(lifetime_repairs.variants, source,fn['name']):
         if family in pools:
             pools[family].append(candidate)
-    for module in (address_association_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
+    for family, candidate in _generated(debug_boundary_repairs.variants, source, fn['name'], flags):
+        if family in pools:
+            pools[family].append(candidate)
+    for module in (copy_lifetime_repairs, address_association_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
         for family, candidate in _generated(module.variants, source, fn['name']):
             if family in pools:
                 pools[family].append(candidate)

@@ -47,7 +47,7 @@ def test_invalid_trial_budget_does_not_compile(tmp_path,bad):
 def test_release_handover_compacted_and_small_edit_coached_once(tmp_path,monkeypatch):
     net,_=_game(tmp_path,[('f',10,'open')]);a,_=net.local_agent('a');fn=net._function('f','game')
     text='## CLAIMED: game/f\n### Target assembly\n```asm\n'+'nop\n'*100+'```\n'
-    monkeypatch.setattr(net,'release_function',lambda *args:text)
+    monkeypatch.setattr(net,'release_function',lambda *args,**kwargs:text)
     result=tools.call(net,a,'game','release_function',{'function':'f','notes':'done'})
     assert result.count('nop\n')==12 and 'get_assembly' in result
     net.claim_row(a,'game','f')
@@ -59,7 +59,7 @@ def test_release_handover_compacted_and_small_edit_coached_once(tmp_path,monkeyp
     first=tools.call(net,a,'game','compile_and_diff',{'function':'f','source':source.replace('return 1','return 2')})
     second=tools.call(net,a,'game','compile_and_diff',{'function':'f','source':source.replace('return 1','return 3')})
     assert 'Small edit:' in first and 'Small edit:' not in second
-    assert len(second)<250 and 'Candidate revision' in second
+    assert len(second)<500 and 'Candidate revision' in second and 'Continuation state:' in second
 
 
 @pytest.mark.parametrize('mode',['rom','fork'])

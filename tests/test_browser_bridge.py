@@ -157,7 +157,7 @@ def test_real_submission_uses_original_compiler_and_linked_byte_judge(pair, monk
     if use_variant:
         from decompnet.project import compiler_for
         updated=pair.project_row('destination')
-        assert compiler_for(json.loads(updated['config']), packet['vram'])['flags']==variant['flags']
+        assert compiler_for(json.loads(updated['config']), packet['vram'], pair.store.one('SELECT * FROM functions WHERE id=?',fid))['flags']==variant['flags']
 
 
 def test_task_offers_only_supported_host_generated_variations(pair, monkeypatch):
