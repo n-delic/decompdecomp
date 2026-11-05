@@ -1,6 +1,8 @@
 """Large paused queues use bounded metadata reads, without making old verdicts current."""
 from types import SimpleNamespace
 
+import pytest
+
 from decompnet import candidate_scope, claim_stalls
 from decompnet.request_timing import capture
 from tests.test_model_pauses import setup
@@ -93,3 +95,19 @@ def test_imported_external_source_is_rechecked_without_database_revision_change(
     source.write_text('void f0(){ /* external change */ }')
     assert net.store.read_version('inputs',proj['id'])==revision
     assert not claim_stalls.blocked(net,proj,a)
+
+
+@pytest.mark.parametrize('helper', ['constant_initializer_staging.py', 'integer_abi.py',
+                                     'integer_repair_support.py', 'mips_live_return_address.py',
+                                     'mips_addresses.py'])
+def test_changed_hardware_or_initializer_helper_reopens_cached_candidate(tmp_path,monkeypatch,helper):
+    original=claim_stalls.file_digest
+    changed=False
+    def digest(path):
+        if changed and path.name==helper:return 'updated-helper'
+        return original(path)
+    monkeypatch.setattr(claim_stalls,'file_digest',digest)
+    net,(agent,_,_)=setup(tmp_path,1);proj=net._project('game');pause_all(net,agent)
+    assert claim_stalls.blocked(net,proj,agent)
+    changed=True
+    assert not claim_stalls.blocked(net,proj,agent)
