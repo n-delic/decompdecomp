@@ -223,7 +223,7 @@ class AutopilotMixin:
                 draft = None
             else:
                 try:
-                    draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm, valid=True, strict=True, timeout=8)
+                    draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm, valid=True, strict=True, timeout=20)
                 except seeds.DraftError as error:
                     draft_reports.failure(report, 'generation', 'raw_m2c', error)
                     draft = None

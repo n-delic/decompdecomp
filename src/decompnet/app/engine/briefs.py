@@ -146,14 +146,14 @@ class BriefMixin:
             report = {'seed_key':key, 'compiled':False, 'failures':[]}
             try:
                 draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn['name'], toolchain, context, data_asm,
-                                                valid=True, strict=True, timeout=8)
+                                                valid=True, strict=True, timeout=20)
             except seeds.DraftError as error:
                 draft_reports.failure(report, 'generation', 'raw_m2c', error)
                 draft = None
                 if context.strip():
                     try:
                         draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn['name'], toolchain, '', data_asm,
-                                                        valid=True, strict=True, timeout=8)
+                                                        valid=True, strict=True, timeout=20)
                     except seeds.DraftError as fallback_error:
                         draft_reports.failure(report, 'generation', 'without_context', fallback_error)
             if report['failures']:
