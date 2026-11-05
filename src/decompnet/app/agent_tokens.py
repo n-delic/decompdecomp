@@ -316,12 +316,18 @@ def claim_packet(net, agent, slug, text):
     # compact queue; get_function(section="brief") loads any queued task on demand.
     blocks = list(re.finditer(r'^## CLAIMED: (.+?)(?:  \([^\n]*\))?$',text,re.M))
     if len(blocks)>1:
-        queue = [m[1] for m in blocks[1:]]
+        queue = []
+        for index,block in enumerate(blocks[1:],1):
+            stop=blocks[index+1].start() if index+1<len(blocks) else len(text)
+            lease=re.search(r'^claim_token: ([0-9a-f]+)$',text[block.end():stop],re.M)
+            queue.append(block[1]+('; claim_token='+lease[1] if lease else '; get_claims() recovers its current claim_token'))
         text = re.sub(r'(?m)^Write all of them[^\n]*',
                       'Start with the detailed function below; load queued function briefs when ready. Batch judging is still available.',
                       text[:blocks[1].start()])+'\nQueued claims (leases retained; details on demand):\n'+'\n'.join(
-            '- '+name for name in queue)+'\nUse get_function(function, section="brief") when starting each queued function.\n'
-    rendered = brief(net, text, slug, agent)
+            '- '+name for name in queue)+'\nUse each function\'s own claim_token when releasing it; never reuse another function\'s token. '
+        text += 'Use get_function(function, section="brief") when starting each queued function.\n'
+    from .claim_state import fast
+    rendered = text if fast() else brief(net, text, slug, agent)
     if not re.search(r'^## CLAIMED', rendered, re.M):
         return rendered
     normalized = re.sub(r'lease expires in [^\n]*', 'lease renewed', rendered)
@@ -343,6 +349,7 @@ def claim_packet(net, agent, slug, text):
         return ('You still hold the unchanged claim: ' + ', '.join(names) + '. No new functions were claimed.\n'
                 + '; '.join(dict.fromkeys(revisions))
                 + '\nUse the candidate already supplied, compile_patch or try_local_repairs. '
+                  'get_claims recovers current function-specific claim tokens without loading C; '
                   'get_candidate recovers C; get_function(section="brief") refreshes supporting details.')
     return rendered
 
@@ -388,8 +395,11 @@ def assembly(net, slug, function, start=0, limit=60, focus="", agent=None):
             hits=[i for i,line in enumerate(lines) if re.search(r'(?<![\w])'+re.escape(focus)+r'(?![\w])',line)]
         if not hits and automatic:
             hits=[min(20,max(0,len(lines)-1))]
+        if not hits and focus.startswith('mismatch'):
+            fallback=assembly(net,slug,function,start, min(40,max(1,int(limit))), 'page',agent)
+            return 'Mismatch location unavailable for the current evidence; showing a bounded target page instead. No mismatch location or score inferred.\n'+fallback
         if not hits:
-            return 'No target region located for this focus. Use paged get_assembly or compile a candidate before focus="mismatch".'
+            return 'No target region located for this focus. Use paged get_assembly or a shorter symbol anchor.'
         start=max(0,hits[0]-8);limit=min(40,max(1,int(limit)))
         prefix=f'Focus at target line {hits[0]}; matching lines: '+', '.join(map(str,hits[:10]))+'. Use focus="page" with start/limit for exact paging; mismatch:N selects another differing instruction.\n'
     else:
@@ -656,9 +666,10 @@ def target_scope(net, fn, revision):
     return hashlib.sha256(repr((revision,candidate_scope.key(net,proj,fn),claim_stalls.repair_rules())).encode()).hexdigest()
 
 
-def target_tried(net, fn, revision, family, old):
+def target_tried(net, fn, revision, family, old, scope=None):
+    scope=scope if scope is not None else target_scope(net,fn,revision)
     return net.store.one('SELECT 1 FROM agent_family_targets WHERE function_id=? AND scope=? AND family=? AND target_hash=?',
-                         fn['id'],target_scope(net,fn,revision),family,hashlib.sha256(old.encode()).hexdigest()) is not None
+                         fn['id'],scope,family,hashlib.sha256(old.encode()).hexdigest()) is not None
 
 
 def compiled_before(net,fn,source,scope=None):
@@ -767,10 +778,18 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             if checked and checked.get('exact'):
                 return _compile(net,agent,slug,function,source)
         candidates = []
-        for p in patches:
-            if not isinstance(p,dict):
-                raise NetworkError('Every patch needs old and new text.')
-            candidates.append(agent_targets.replace_anchor(source,p.get('old'),p.get('new'),p.get('occurrence',0)))
+        invalid = []
+        for index,p in enumerate(patches,1):
+            try:
+                if not isinstance(p,dict):
+                    raise NetworkError('Every patch needs old and new text.')
+                candidates.append(agent_targets.replace_anchor(source,p.get('old'),p.get('new'),p.get('occurrence',0)))
+            except NetworkError as error:
+                invalid.append(f'Variant {index}: {error}')
+        if invalid:
+            raise NetworkError('Batch rejected before variant compilation. No patches applied.\n'
+                               + '\n'.join(invalid) + f'\nCurrent candidate revision {actual}. '
+                               'Correct these variants against the same starting candidate; patches are independent, not cumulative.')
         results = ['Independent variants against revision '+revision+' (not cumulative):']
         last = None
         observations = []

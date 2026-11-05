@@ -469,6 +469,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
     it = lambda desc: {"type": "integer", "description": desc}
     bo = lambda desc: {"type": "boolean", "description": desc}
     defs = {
+        "get_claims": ("Recover only your live claims and claim tokens; no build or mutation.", s()),
         "project_info": ("Game, compiler and progress; detail=true includes all facts and suggestions.", s(detail=bo("full details"))),
         "get_candidate": ("Read candidate C and its revision, without assembly or notes.", s(function=st("function", True), base={"type":"string","enum":["current","saved_best","last_compiling","reported_corrected"],"description":"Named recovery base, never a revision hash; selection does not judge source."})),
         "compile_patch": ("Compile one exact-text replacement against a candidate revision using the normal judge.",
@@ -494,8 +495,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                         "items": {"type": "object", "properties": {"old": {"type": "string"}, "new": {"type": "string"}, "occurrence": {"type": "integer", "minimum": 0}}, "required": ["old", "new"]}})),
         "get_assembly": ("Read target assembly: focus=mismatch or a callee symbol/short anchor for a bounded region; omit focus to page.",
                          s(function=st("function", True), start=it("zero-based line"), limit=it("up to 200 lines"), focus=st("mismatch:N, body, symbol or short assembly anchor"))),
-        "claim_function": ("Claim the next function (or one by name/address). Returns assembly, data, best attempt, "
-                           "notes and a draft. count > 1: a batch of small functions to judge together.",
+        "claim_function": ("Reserve the next function or batch and return saved candidate C. No diagnostic build or draft during claiming. "
+                           "Use get_assembly/get_function(section=brief) for supporting evidence and get_claims to recover leases.",
                            s(function=st("optional name or address"), strategy=st("no_compiling_c | finish | easiest | least_tried | oldest_checked | untried | closest | hardest | random"),
                              count=it("up to 6 small functions at once"))),
         "get_function": ("Show any function by name or address.", s(function=st("name or address", True), section=st("summary (default) | brief | all | history | candidate | experiment | quality | notes | declarations | compiler | layouts"), start=it("Character offset for supporting sections"), limit=it("Page characters, default 6000, maximum 12000; complete editable C is not truncated"))),
@@ -517,7 +518,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"), start=it("zero-based row"), limit=it("up to 200 rows"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
                              "on (before that it answers once with what to try; call again to release anyway).",
-                             s(claim_token=st("Current claim token from get_candidate; identifies the lease for safe retries"), function=st("function", True), notes=st("what you tried, what is left", True),
+                             s(claim_token=st("Always pass the current claim token from the claim, continuation state or get_candidate on the first release and retries; stale tokens cannot release a newer claim"), function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
                                move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
                                next_experiment={"type":"object","description":"Optional untested exact patch. Anchor/revision are validated; retrieve with get_function(section=experiment).", "properties":{key:{"type":"string"} for key in ('revision','old','new','title')}, "required":["revision","old","new"],"additionalProperties":False},

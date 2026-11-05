@@ -54,6 +54,7 @@ from ..network import (
     set_aside,
 )
 from ..release_receipts import operation as release_operation
+from ..request_timing import build as timed_build
 from ..rom import RomError
 from ..scoring import percent_text
 from ..textedit import replace_once
@@ -543,6 +544,7 @@ class ForkEngine:
                 stack.enter_context(self._unit_lock(proj, n))
             yield
 
+    @timed_build
     def _build_unit(self, proj, fp: ForkProject, unit) -> tuple[bool, str]:
         """Build one unit's object. Builds share the tree's build files (ninja's log), so they take turns."""
         with self._build_locks[proj["id"]]:
@@ -2487,6 +2489,9 @@ class ForkEngine:
                 "says more."]
 
     def brief(self, fn, agent: Agent | None, header: str) -> str:
+        from . import claim_state
+        if header == "CLAIMED" and agent and claim_state.fast():
+            return claim_state.brief(self.net,fn,agent,header)
         proj = self.net.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         _, fp, cfg = self.get(proj["slug"])
         meta = self._meta(fn)
@@ -3249,13 +3254,16 @@ class ForkEngine:
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} already matches with {own}")
         known = [c.id for c in console.compilers]
+        current = compiler.strip().lower() == "current"
+        if current:
+            compiler = own
         if compiler.strip().lower() == "all":
             wanted = sorted(known, key=lambda c: abs(known.index(c) - known.index(own))) if own in known else known
         else:
             wanted = [compiler.strip()]
         if wanted[0] not in known:
             raise NetworkError(f"{wanted[0]!r} isn't one of this platform's compilers: {', '.join(known)}")
-        if wanted == [own]:
+        if wanted == [own] and not current:
             raise NetworkError(f"{unit.source} is built with {own} already")
         source = source.strip() or self.net._source_of(fn) or ""
         if not source:

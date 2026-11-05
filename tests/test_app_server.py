@@ -1414,7 +1414,7 @@ def test_deep_sweep_routes_validate_start_stop_and_status(app, monkeypatch):
     monkeypatch.setattr(net.deep_sweeps, 'reset_metrics', lambda slug: {'reset':slug})
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'reset-metrics'}, headers={'X-Decomp':'1'}).json() == {'reset':'example'}
     response = client.post('/api/permuter/pass', json={'slug':'example','minutes':7,'max_variants':99,'repeat':True}, headers={'X-Decomp':'1'})
-    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1)]
+    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False)]
     assert not client.post('/api/permuter/pass', json={'slug':'example','action':'stop'}, headers={'X-Decomp':'1'}).json()['enabled']
     assert client.post('/api/permuter/pass', json={'slug':'example','repeat':'yes'}, headers={'X-Decomp':'1'}).status_code == 400
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'unknown'}, headers={'X-Decomp':'1'}).status_code == 400
@@ -2090,7 +2090,7 @@ def test_room_retry_all_processes_snapshot_beyond_five_and_continues_errors(app,
     rows=[{'key':f'{room_matches.PREFIX}{pid}:{i}','function':f'f{i}','direction':'host'} for i in range(8)]
     monkeypatch.setattr(room_matches,'pending',lambda *args:rows)
     calls=[]
-    def retry(n,s,key):
+    def retry(n,s,key, **kwargs):
         calls.append(key)
         if key==rows[1]['key']:raise NetworkError('Compiler unavailable')
         return {'matched':True}
@@ -2101,7 +2101,10 @@ def test_room_retry_all_processes_snapshot_beyond_five_and_continues_errors(app,
         job=client.get('/api/job',params={'id':response.json()['job']}).json()
         if job['state']!='running':break
         time.sleep(.01)
-    assert job['state']=='done' and job['result']=={'matched':7,'failed':1,'total':8}
+    assert job['state']=='done' and {k:job['result'][k] for k in ('matched','failed','total')}=={'matched':7,'failed':1,'total':8}
+    assert len(job['result']['results'])==8
+    assert job['progress']['results'][1]['reason']=='Compiler unavailable'
+    assert job['progress']['results'][0]['matched'] is True
     assert calls==[r['key'] for r in rows]
     assert job['progress']['finished']==8 and job['progress']['total']==8
     calls.clear()
@@ -2285,3 +2288,27 @@ def test_batch_naming_route_is_authenticated_and_previews_without_mutation(app, 
     response = client.post('/api/symbol-names', json=payload, headers={'X-Decomp': '1'})
     assert response.status_code == 200 and response.json() == {'renames': 1}
     assert calls == [('game', payload['names'])]
+
+
+def test_batch_compiler_suggestions_reuse_background_job(app, monkeypatch):
+    from decompnet.app import function_profile_suggestions
+    client, net, *_ = app
+    entered, release = threading.Event(), threading.Event()
+    calls=[]
+    def accept(net, slug, log):
+        calls.append(slug)
+        entered.set()
+        assert release.wait(5)
+        return {'applied':1,'skipped':0,'results':[], 'overview':{}}
+    monkeypatch.setattr(function_profile_suggestions,'accept_all',accept)
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:pytest.fail('request must not sync a background batch'))
+    payload={'slug':'batch-suggestions','action':'apply-all','background':True}
+    try:
+        first=client.post('/api/suggestion',json=payload,headers={'X-Decomp':'1'})
+        assert first.status_code==200
+        assert entered.wait(2)
+        second=client.post('/api/suggestion',json=payload,headers={'X-Decomp':'1'})
+        assert second.json()['job']==first.json()['job']
+        assert calls==['batch-suggestions']
+    finally:
+        release.set()

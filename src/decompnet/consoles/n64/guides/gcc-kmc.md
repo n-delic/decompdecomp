@@ -638,3 +638,146 @@ For a shared doubled value, `known_zero_mask` can preserve a useful intermediate
 a range-proven redundant mask. `post_call_narrow_capture` retains the explicit argument
 conversion and captures the local afterwards, only with no intervening mutation/escape.
 These supplement existing conversion families; every candidate still needs exact checking.
+
+### Current live return address versus the entry caller
+
+When target code stores `$ra` to a global after an optional callback, distinguish
+that hardware snapshot from `__builtin_return_address(0)`: the latter returns the
+function-entry caller even after another call changes the live register. The fixed
+no-argument `__builtin_mips_live_return_address()` in this compiler pack captures
+the current register with an ordered compiler-visible read. It is not portable C
+or a request to synthesize instructions; submitted assembly remains prohibited.
+
+Try `live_return_address` when a draft's uninitialized placeholder corresponds to
+a raw target-proven absolute `$ra` store. Do not run broad flag sweeps for a missing
+hardware operation, guess a caller constant, or reinterpret stack frame saves as
+this pattern. All resulting candidates still require ordinary exact verification.
+
+For a live-register store followed by a persistent register-allocation mismatch,
+try `live_return_address_initializers`: preserve one-shot scopes, inline an
+unchanged typed integer literal, or stage adjacent literal declarations while
+keeping initializer evaluation order. A hardware-only intermediate can score
+worse, so test the bounded combined proposal directly. Unrelated volatile locals
+are retained; volatile placeholders are not inferred. Verify the function's own
+compiler profile rather than copying a neighbour's flags.
+
+A source repair and compiler profile can both need changing at once. One saved
+`-O2 -g3` draft scored 5; the live-register repair scored 65 there but exact with
+an independently verified neighbouring `-O2 -ffast-math -fno-schedule-insns`
+profile. Neither source-only nor profile-only improvement would find this pair.
+Check that specific pair before a broad sweep. Match popularity can rank the
+correct local profile well below the default; multi-profile deep search visits
+only the explicitly selected number. Keep single-profile searches default-only.
+
+When the remaining miss is the register holding an early pointer, try sharing its
+storage with a later word scalar through `pointer_integer_phase_union`. A final
+call such as `code = inspect(pointer, pointer->kind)` reads the pointer before
+writing the scalar. An initialized union can preserve this allocation identity
+without reading a member as another type. Keep the initializer in its original
+position. Require a defined scalar phase, no subsequent pointer read on any CFG
+path or loop back edge, unescaped storage and explicit 32-bit pointer metadata.
+The normal linked byte/data judge must verify every proposal; later word compound
+updates keep their original type, while narrow compound updates stay excluded.
+
+
+A final `addu` operand-order miss can be hidden inside a byte-load macro.
+For a proven `LOAD(p,o) (*(char**)((char*)(p)+(o)))` shape,
+`LOAD(LOAD(base,offset),index)` may need the outer address written as
+`*(char**)(index + (int)(LOAD(base,offset)))`. The bounded
+`macro_byte_address_order` repair preserves both reads and leaves directives
+unchanged, requiring a literal field offset, word index and explicit 32-bit ABI.
+Isolate each edit: an accompanying signedness change need not contribute.
+Do not expand unknown macros or reorder side effects; verify linked bytes/data.
+
+If a draft already uses `__builtin_return_address(0)` for a raw global `$ra` store
+following a callback, the same family tests the fixed live intrinsic and an atomic
+`do { global = (s32)__builtin_mips_live_return_address(); } while (0);` boundary.
+The direct swap can worsen the score by allowing mask arithmetic to move before
+the store; judge the bounded companion even then. This requires encoded target
+call/store evidence and a declared 32-bit scalar or pointer destination. Genuine
+entry snapshots without that evidence stay unchanged. Keep physical source lines
+when testing with `-g3`.
+
+Check again can retire legacy agent-only tooling verdicts about this hardware read
+when the active compiler supports the fixed intrinsic and the existing source has
+a target-backed shared repair. It preserves the old votes in audit metadata and
+runs a bounded ordinary autopilot judge. A nonmatch stays available for further C
+work; explicit user and valid assembly verdicts are preserved.
+
+If a saved global pointer's address pair appears before an aggregate argument
+copy but the target forms it afterward, inspect assignment-valued pointer field
+arguments. For a source-owned helper proven to return one nonvolatile global
+array on every path, try the direct `array[0].field` argument and capture the
+pointer immediately after the call. Preserve the earlier capture and scopes
+until the ordinary linked judge verifies simplification. The shared
+`constant_pointer_capture_timing` repair proposes this bounded change; it does
+not infer or rewrite the callee ABI. Verify aggregate arguments against the
+actual callee, since old matched callers can carry misleading prototypes.
+
+Repeated aligned scalar loads through a local byte pointer can schedule differently
+when expressed through a candidate-local record view. With `-O2 -g3`, one private
+function's halfword load moved before a global pointer store and matched exactly.
+The shared inferred-record repair also recognizes implicit byte offsets for unique,
+unescaped initialized local byte pointers, retaining its two-field/three-access
+minimum. Explicit early scalar captures changed register allocation instead.
+Treat the inferred record as a local hypothesis and keep ordinary linked verification.
+
+For byte-counter guards whose promoted index survives into the body, inspect local/global allocation
+in `.lreg` and `.greg` dumps. A named 32-bit scratch can capture the byte bound, then receive the
+comparison result in a separate statement. This can change which local temporaries reserve return
+registers before the counter is allocated. Keep both stores sequenced; a nested double assignment
+can accidentally match while violating C90 sequence rules. Redirect an equality scratch only if the
+following branch overwrites its old destination before any read. Ordinary linking remains decisive.
+
+If an advisory diff shows a symbolic address disagreement around a masked `%lo` addend,
+compare the raw linked words before changing C. Older splits can omit the low annotation;
+the display now completes an adjacent pair only when its raw address and register flow
+agree with the annotated high. This changes diagnostic scores, never the linked-byte gate.
+An exact opcode sequence with different spill offsets still requires a genuine C solution.
+
+When an integer index dies before a local-array address is repeatedly passed to
+calls, a union can give those disjoint phases one carrier. Assign the integer member
+and later the pointer member before reading each; do not reinterpret the old value.
+One measured 257-instruction `-O2 -g3` case improved from a persisted score 70 to 10
+with this phase reuse, then matched by capturing a pure unescaped local immediately
+before the preceding call. Keep separate C90 statements and debug line boundaries.
+Never move the capture across an argument-side write, address escape or read of its
+old destination. The shared bounded repair proves local dominance, preserves unrelated
+volatile operations, and still requires exact linking. Its first-page replay is a
+regression of that same match, not an additional matched function.
+
+
+For library initializers, consult related local SDK sources before copying assembly
+store order into C. A related version is a source lead; verify its record layout,
+globals and behavior separately. Typed record field stores can schedule differently
+from raw pointer casts. When only the final operands of a chained assignment differ,
+try reversing two distinct same-typed ordinary fields: both conversions and the RHS
+must remain identical. The bounded `equal_type_field_chain_order` repair preserves
+line breaks and requires the ordinary exact judge. In one measured initializer,
+manual source/context recovery reached 20 and this first-page proposal reached zero;
+constant reuse and broad declaration changes had not recovered it.
+
+For a signed `value<0?-value-width:value` normalization whose arithmetic matches
+but copy/negation registers differ, try the bounded `scalar_normalization_scope`
+repair. A saved scalar, a branch-local dead reset of the original, and a one-shot
+scope can prevent old GCC CSE from replacing the saved value with its source.
+The original is restored before the next statement. Split negation, unscoped
+copies and simple if/else arms are not equivalent allocation evidence. Only the
+ordinary linked-byte judge can accept the candidate; advisory symbol/literal
+renderings can remain different after the linked bytes are exact.
+
+A consumed scalar can carry a later constant store inside a one-shot scope:
+`do { scratch=48; out->field=scratch; } while(0);`. In one measured initializer,
+plain lifetime splitting selected the right register but reordered the store;
+unscoped reuse retained the wrong register. The scoped reuse matched both. The
+bounded `constant_store_scope` repair requires a visible, same-type ordinary
+scratch whose old value is dead on every CFG path, and a replaced local dead after
+its store. It preserves one execution and rejects observable/escaped locals and
+macro aliases. Review operand/conversion errors separately before treating a small
+score as only allocation; the ordinary exact judge still decides.
+
+When a literal indirect store is scheduled after later independent stores or mask
+work, try putting that single store in `do { ...; }while(0);`. One controlled KMC
+`-O2 -g3` replay recovered exact linked bytes this way; a plain block and a scalar
+global declaration alone did not. Preserve the original lvalue and declarations.
+The shared `constant_memory_store_scope` repair offers a bounded version.

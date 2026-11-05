@@ -26,6 +26,7 @@ from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
 from .release_receipts import operation as release_operation
+from .request_timing import build as timed_build
 from .store import Store
 
 CLAIM_TTL = 30 * 60
@@ -373,7 +374,7 @@ def move_on_brief(fn, after=None) -> str:
     basis = "your worker setting" if custom else "this function’s size"
     return (f"move on after {after} compiles in a row without a better score ({basis}; "
             f"each compile_and_diff result shows the count). Recovery above the inherited best does not reset it. "
-            'To leave earlier with a reason, use release_function(move_on=true, notes="what you tried and why").')
+            'To leave earlier with a reason, use release_function(move_on=true, claim_token="the current claim_token", notes="what you tried and why").')
 
 
 def normalized_source(source: str) -> str:
@@ -634,6 +635,7 @@ class Network:
         row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
         return row["name"] if row else "?"
 
+    @timed_build
     def _compile(self, proj, header: str, source: str, fn=None):
         """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
         cfg = json.loads(proj["config"])
@@ -899,9 +901,10 @@ class Network:
     def attempt_turn(self, agent: Agent, fn):
         # A CLI can submit parallel tool calls: serialize this worker's candidates so two submissions cannot
         # both spend the last allowed try. Never hold the database write lock while compiling.
-        with self.store.lock:
+        from .request_timing import timed_lock
+        with timed_lock(self.store.lock,'write_lock_wait'):
             lock = self._attempt_locks.setdefault((agent.id, fn["id"]), threading.RLock())
-        with lock:
+        with timed_lock(lock,'candidate_lock_wait'):
             self.ensure_agent_active(agent)
             self.check_attempt_limit(agent, fn)
             yield
@@ -1339,6 +1342,9 @@ class Network:
         return self._brief(self._function(function, project), agent, header="VIEW")
 
     def _brief(self, fn, agent: Agent | None, header: str) -> str:
+        from .app import claim_state
+        if header == "CLAIMED" and agent and claim_state.fast():
+            return claim_state.brief(self,fn,agent,header)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         ctx = self._context(proj["id"], fn["unit"])
         claim = self.store.one("SELECT * FROM claims WHERE function_id=?", fn["id"])
@@ -1448,7 +1454,8 @@ class Network:
                 if claim is None:
                     held = db.execute("SELECT 1 FROM claims WHERE agent_id=?", (agent.id,)).fetchone()
                     if held:
-                        raise NetworkError("you hold another claim; release it before working on a different function")
+                        from .app.claim_state import ownership_hint
+                        raise NetworkError(ownership_hint(self,agent,fn["project_id"]))
                     db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                     self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
                 elif claim["agent_id"] != agent.id:
@@ -1604,9 +1611,11 @@ class Network:
         since, after = st["no_better"], st["after"]
         if since < after:
             return f"\n\nMove-on count: {stall_line(since, after)}."
-        return (f"\n\n⏭ Move on: {stall_line(since, after)}. release_function with notes (what you tried, what's "
-                "left) goes through now; then claim the next one: functions that match mostly do in the first few "
-                "tries, and this one keeps your best attempt for whoever comes next.")
+        from .release_receipts import instruction
+        action=instruction(self,function_id,agent_id)
+        return (f"\n\n⏭ Move on: {stall_line(since, after)}. {action}. "
+                "Use this claim_token on the first release and on retries. Then claim the next function; "
+                "your best attempt stays saved for whoever comes next.")
 
     def claim_progress(self, agent: Agent, fn) -> dict | None:
         """This agent's claim on `fn` as release_function judges it: stall_status, the same count compile_and_diff

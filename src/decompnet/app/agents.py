@@ -547,6 +547,7 @@ class Manager:
         self.sessions: dict[str, Session] = {}
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.RLock()
+        self._tool_startup_slots = threading.BoundedSemaphore(2)
         self._metrics_locks = {}
         self._prep: dict[str, threading.Event] = {}  # slug -> giving its code source files before agents claim
         self._found: list[dict] | None = None  # the agents installed, as last found (detected)
@@ -1218,7 +1219,7 @@ class Manager:
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)
         s.tool_handshake_failures = 0
-        failures = fast = throttles = limits = auths = connection_failures = 0
+        failures = fast = throttles = limits = auths = connection_failures = transport_failures = 0
         while not s.stop.is_set():
             if not focused_agents.ready(self,s,agent):continue
             if getattr(self, 'source_update_pending', False):
@@ -1289,7 +1290,7 @@ class Manager:
                 s.error = str(error)
                 s.push('error', s.error)
                 self._session_end(s, row, agent, began, 'connection_retry')
-                delay = min(60, 5 * 2 ** min(connection_failures-1, 4))
+                delay = min(60, 5 * 2 ** min(connection_failures-1, 4)) + (int(s.id) % 11)
                 self._wait(s, f'Local tool connection unavailable; retry {connection_failures} in {delay}s. '+('The CLI session did not complete its handshake.' if s.tool_handshake_failures else 'No model request started.'),
                            time.time()+delay, 'This helper reconnects automatically; saved work is retained.')
                 continue
@@ -1307,11 +1308,25 @@ class Manager:
                 s.error = f"{type(e).__name__}: {e}"
                 s.push("error", s.error)
                 ok = False
+            from .tool_connections import failure as connection_failure_report
+            if ok and not s.stop.is_set() and (transport := connection_failure_report(s,self.net)):
+                connection_failures += 1
+                s.error=transport
+                s.push('error',transport)
+                transport_failures += 1
+                self._session_end(s,row,agent,began,'connection_retry' if transport_failures == 1 else 'paused')
+                if transport_failures > 1:
+                    self._pause(s,'The CLI repeatedly reported local tool connection failures. Automatic model retries paused; saved work is retained.',
+                                'Review MCP startup diagnostics and restart this helper when the connection is available.')
+                    break
+                delay=min(60,5*2**min(connection_failures-1,4))+(int(s.id)%11)
+                self._wait(s,transport,time.time()+delay,'Local tool connection retry; saved work remains available.')
+                continue
             if ok and not s.stop.is_set() and not s.limited and not s.throttled and not s.auth_failed:
                 from .session_recovery import completed
                 completed(s, self.net)
                 self._save(s)
-            connection_failures = 0
+            connection_failures = transport_failures = 0
             compiled = self._progress(agent.id) - before
             investigation = session_followups.investigation_outcome(self.net, agent, began) if compiled == 0 else None
             followup = ok and not investigation and session_followups.premature(self, s, agent, compiled)
@@ -1600,6 +1615,14 @@ class Manager:
         return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
     def _preflight_tools(self, token: str) -> None:
+        if not self._tool_startup_slots.acquire(blocking=False):
+            raise ToolConnectionUnavailable('Local tool startup capacity is busy. Retrying with staggered backoff; no model request was started.')
+        try:
+            return self._probe_tools(token)
+        finally:
+            self._tool_startup_slots.release()
+
+    def _probe_tools(self, token: str) -> None:
         """Check local authenticated wiring, without building project facts or making a model request."""
         phase = 'local authentication'
         began = time.monotonic()

@@ -3605,3 +3605,585 @@ definitions; it also sampled declaration order instead of the branch tail. Both
 failures are regression-covered. These are three precursors of **one previously
 matched function**, not three new matches. No whole-ROM rebuild, live project edit
 or general token/runtime saving is claimed. See [design and replay instructions](HAZARD_MASK_CAPTURE_REPAIRS.md).
+
+### Verified linked-byte case: current live return address after a callback
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian
+MIPS. A dispatcher draft differed only in the register used by one absolute global
+store (score 5). The target stored `$ra` after an optional indirect call; the draft
+stored an uninitialized local. Replacing that placeholder with the fixed
+`__builtin_mips_live_return_address()` produced score **0 / exact linked bytes**
+in private normal-judge replay. The generated `live_return_address` family also
+reproduced the exact result. This is one case, not a general claim that uninitialized
+locals hold return addresses. Complete image publication is verified separately.
+
+The semantic distinction matters: on the callback path the live register holds the
+callback's return location, while without that callback it still holds the entry
+caller return location. `__builtin_return_address(0)` instead reads the function-entry
+caller and generated a stack reload, so it was both behaviourally and mechanically
+wrong for this target. A recorded 199-profile sweep had not fixed the source mismatch.
+
+The trusted template binds a local output to fixed register `$31` and performs an
+empty volatile extended-asm output with a memory clobber. This emits no supplied
+instruction stream and captures the hardware value at the source operation rather
+than relying on an otherwise uninitialized register variable. Generic real-compiler
+tests check reads before/after an indirect call and preservation of an earlier
+snapshot across a call. A snapshot already saved in C must retain its old value;
+a subsequent invocation must observe the newly live link register.
+
+Automatic replacement requires raw annotated target words proving an absolute word
+store from `$ra` (not a frame save), an explicitly declared automatic-address global
+at that address, and a single-use uninitialized scalar/pointer placeholder. Gaps,
+unknown address bases, escaped/initialized placeholders and other processors are
+not inferred. The normal compiler/link/data judge remains authoritative. Other
+compiler packs and real-name symbol adapters need separate tested support.
+
+### Atomic live-register and initializer allocation repairs
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -ffast-math
+-fno-schedule-insns`. A second dispatcher started at score 5. A hardware read
+without its original one-shot scope scored 185; retaining the scope scored 65.
+Staging adjacent literal declarations while retaining initializer evaluation order
+then reached score 0 with the ordinary linked-byte judge. Inlining an unchanged
+literal is another bounded allocation candidate; keep its declared scalar type.
+These are atomic proposals: retaining only improving intermediate scores would
+miss the combined repair. Do not remove lexical wrappers just because they look
+redundant, or assume the neighbouring function's compiler flags apply.
+
+An unrelated volatile local must not exclude the entire function. Reject qualified
+or escaped placeholders individually, and require raw target evidence for the
+hardware store. Scalar globals need an explicit matching 32-bit cast. The new
+bundle retains the four-candidate cap and the ordinary exact-byte gate.
+
+Evidence: controlled replay of saved private inputs, not a new native automation
+match. An independently running helper matched the live function by inlining the
+literal and preserving the live-register store. Its actual source and four other
+pending source units passed standalone checks and a complete 12,582,912-byte image
+comparison. Existing compiled objects were checked unchanged before reuse. No game
+source or extracted assembly is included in these generic regression tests.
+
+### Coupled hardware read and an independently verified compiler profile
+
+A neighbouring dispatcher illustrates a second non-monotonic barrier: with its
+saved `-O2 -g3` profile the draft scored 5 and the fixed live-register read scored
+65. With independently verified `-O2 -ffast-math -fno-schedule-insns` (same KMC
+compiler and `-G0 -mips3 -mgp32 -mfp32`), the original draft scored 75 and the
+hardware-read candidate scored **0 / exact linked bytes**. PR #496's existing
+family generated that exact candidate in one proposal; no new source rewrite was
+needed. This is controlled replay, not a new native job result.
+
+Popularity alone is not proximity: at measurement the exact profile ranked fifth,
+with two matches, behind the default and three more popular alternatives. The
+existing explicit five-profile deep search reaches it; two or three do not. Keep
+one profile default-only and respect the configured compile budget. For a targeted
+investigation, check a separately verified neighbour profile with the repaired
+source directly instead of widening every random variant's compiler search. Never
+infer a compiler range from adjacency alone, and never replace a saved source or
+profile on a merely improved score: require an exact fresh pair verdict.
+
+### A generated exact repair still needs an opportunity to run
+
+A copied dispatcher case exposed budget starvation rather than a missing source
+transformation. The live five-profile deep search spent its entire 64-compile
+allowance on generic statement-boundary proposals without reaching the already
+applicable live-register repair. Generic shape priorities and learned family
+ordering can displace a more narrowly guarded operation.
+
+Keep the finite target-backed breakpoint/live-register families ahead of generic
+line-boundary, allocation and learned rewrites, including the final deep queue.
+Their source/target guards and the ordinary judge remain unchanged; no absent
+family is invented and other proposals retain their order. Multi-profile counts
+and compile budgets remain explicit.
+
+Evidence: normal engine replay in a separate project/database copy matched in a
+16-compile allowance, including baseline/preflight and profile verification. Its
+first local proposal was the existing live-register candidate. Source SHA was
+identical to the previously full-cartridge-verified candidate. This was copied
+engine replay, not another live match. An alternate-profile match must also report
+best score 0, 100%, and one improvement; stale previous-profile diff evidence must
+not overwrite its display afterward.
+
+### A pointer's final RHS reads can start a word scalar phase
+
+With GCC 2.7.2 KMC and `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a 268-instruction
+function differed only in the register holding its initial pointer. Sharing that
+pointer's storage with a later signed word scalar produced exact linked bytes.
+The scalar's first assignment called a function using the pointer on its RHS:
+`code = inspect(pointer, pointer->kind)`. Those reads finish before the assignment
+writes `code`; textual ordering of the LHS before the pointer references is not
+an overlapping value lifetime.
+
+The existing `pointer_integer_phase_union` family now recognizes plain initialized
+pointers, retains initializer evaluation order, and allows this transition only
+when the scalar has no incoming read and the pointer is dead on every successor.
+Each member is initialized in its own phase. Dominating definitions and CFG
+liveness still reject uninitialized reads, branch overlap, and loop back edges;
+escaped/shadowed storage, macro references, volatile aliases, unknown widths and
+64-bit pointer metadata remain excluded. Word members keep their original type
+for later self-assignments and compound operations; narrow compound updates remain
+excluded. The proposal limit stays eight, and source line counts are preserved.
+
+Evidence: the captured baseline scored 30 with the normal pinned compiler and
+linked judge. The extended family emitted six candidates; candidate four was
+exact (display score 10 was a raw-address/symbolic relocation spelling difference).
+Reusing the initial pointer identity as several other later locals failed, with
+scores from 120 to 1995. Declaration order, explicit register hints, pointer casts,
+argument staging and alternate argument prototypes did not fix the baseline.
+This is controlled generator replay of an independently found match, not a new
+native permuter job. No compiler flags or judge rules changed.
+
+The shared `draft_repairs.variants` route emitted 90 proposals, including the same
+six union candidates and the identical exact fourth union source. That generated
+source also passed the normal standalone build check and a complete 12,582,912-byte
+cartridge comparison. Every prior object stayed unchanged except the intentionally
+recompiled target object (whose debug information changed between cast and union
+source). This validates generated source through the full link, while remaining
+controlled replay rather than a native search result.
+
+
+### One byte-load macro address can account for the final operand mismatch
+
+A 426-instruction function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` had a score-5 draft. Its source-owned
+load macro was of the form `LOAD(p,o) (*(char**)((char*)(p)+(o)))`.
+Changing one outer access from `LOAD(LOAD(base,140),index)` to
+`*(char**)(index + (int)(LOAD(base,140)))` recovered exact linked code/data.
+The inner pointer load remains in place and each operand is still evaluated once.
+An accompanying unsigned-to-signed cast change elsewhere was unnecessary: that
+change alone retained score 5; the outer address edit alone matched at score 0.
+Do not infer a coupled repair from a multi-edit agent submission without isolating it.
+
+The existing 64 deterministic proposals did not match this captured draft. Pinned
+preprocessing alone preserved score 5, and existing address proposals on that
+expanded source also missed. Macro statements are normally opaque to generic
+repairs; arbitrary macro expansion or operand swapping would lose their effects.
+The new `macro_byte_address_order` family instead recognizes only unconditional,
+source-owned, single-use byte-load macro definitions. It requires explicit 32-bit
+pointer metadata, a plain word index and a declared byte-pointer base; the nested
+load uses a literal field displacement. Conditional/redefined directives, unknown
+macro effects, updates, arbitrary calls, volatile source, array indices posing as
+scalars, conflicting types and wide/unknown ABIs remain excluded.
+
+Controlled evidence: the family generated one candidate, exact at score 0, and
+the shared draft-repair route included it first. The actual generated source
+passed standalone checking and the full 12,582,912-byte cartridge comparison;
+only the intentionally rebuilt target object changed. This replays an independently
+produced match, not a new live/native autopilot match. The normal judge and flags
+are unchanged. Other macro shapes and more complex index expressions remain
+unsupported; names in this example describe the grammar, not game-specific rules.
+
+### Verified linked-byte case: entry-caller workaround plus statement boundary
+
+A private 55-instruction GNU MIPS function stored current `$ra` to an absolute
+global after an optional callback. Its saved draft used `__builtin_return_address(0)`.
+With pinned `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the ordinary
+linked judge scored that draft 145. Replacing only the builtin with
+`__builtin_mips_live_return_address()` worsened it to 270: `lui`/`and` mask arithmetic
+moved before the store. Wrapping just that assignment in `do { ... } while (0);`
+retained evaluation and physical source lines and produced score **0 / exact linked
+bytes**, with no source assembly or compiler-profile change. Scope-only wrappers,
+condition spelling changes and separately tested fast-math/no-schedule-insns flags
+failed to fix the direct swap. Full image publication is a separate gate.
+
+The old shared generator emitted 12 proposals with no live-register repair because
+it recognized only an uninitialized placeholder or an already fixed intrinsic.
+The corrected shared route emits 14 proposals: raw replacement at rank 1 (270),
+atomic one-shot companion at rank 2 (**0, exact**). This is private real-target
+linked replay evidence, separate from the synthetic regression tests. Reuse only
+with encoded call-before-raw-store evidence, no intervening RA restoration, and an
+explicit 32-bit scalar/pointer global; entry snapshots and other store registers
+are not evidence. The judge remains unchanged.
+
+### Supported hardware C can invalidate old tooling verdicts
+
+A private MIPS ROM helper with a callback, a volatile stack dispatch index, and a
+live return-address global store matched using the existing shared
+`live_return_address_initializers` proposal at rank 2. KMC GCC 2.7.2 retained
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: saved entry-caller builtin scored 145,
+fixed live-return intrinsic alone 270, and its atomic one-shot statement boundary
+scored 0 with exact ordinary linked bytes. This independently confirms the repair
+on another helper; no new source hypothesis or compiler change was needed.
+
+The remaining app gap was eligibility: old agent assembly votes about unsupported
+return-address extensions survived after new votes of that kind were rejected.
+Check again now retires only all-invalid agent tooling verdicts with a supported
+live-return intrinsic and a target-backed shared proposal. Explicit user/library,
+shape/twin, verified assembly, mixed valid votes, and claimed functions stay put.
+The retired votes remain in an audit snapshot. The ordinary autopilot judge tries
+at most four proposals and alone records matches; nonmatches remain available for
+further work. A private copied-project replay matched the second proposal without
+an agent, using unchanged source context and compiler settings. Unit tests exercise
+eligibility and routing; they are controlled regressions, not additional matches.
+
+### Separate invariant pointer field arguments from the pointer's later lifetime
+
+A private 74-instruction MIPS function built with `gcc-2.7.2-kmc -G0 -mips3
+-mgp32 -mfp32 -O2 -g3` differed only in where it formed a saved global pointer:
+its address pair preceded a by-value aggregate argument copy, while the original
+formed it after that copy. The advisory score was 190; ordinary linked bytes
+confirmed that the address-pair movement was the only real difference.
+
+The source had an assignment-valued field argument `(p = state(input))->field`.
+A source-owned inline helper returned the same declared global array on both
+branches, including an identity `array + zero` branch. Replacing that argument
+with `array[0].field` and moving the pointer assignment immediately after the
+call produced an exact 296-byte linked function. Retaining the earlier pointer
+capture and existing scopes mattered. The score remained 70 because seven
+relocation-display operands differed; the ordinary judge reported exact and the
+linked bytes equalled the original bytes. No judge rule was changed.
+
+The shared `constant_pointer_capture_timing` proposal reproduced the exact result
+at rank 6 of 34 from the original stored source, before ABI cleanup. A copied
+project replay also placed the exact proposal sixth on the first eight-item
+`targeted_variants` page; this measures proposal generation and ordinary judging,
+not an automatic submission or promotion. All 33
+previous shared proposals failed to improve 190. Separately, the actual matched
+callee established a six-word aggregate beginning in the fourth argument; a
+source using that correct prototype also linked exactly after the same timing
+change. Old matched caller prototypes are evidence of syntax that compiled, not
+proof of a callee's ABI.
+
+Negative evidence: explicitly staging the whole aggregate made an extra copy;
+directly replacing the pointer helper with a constant address enabled separate
+absolute field accesses; removing the early pointer capture, unwrapping scopes,
+and eliminating an address temporary each lost the exact match. Two profiles
+already verified on nearby functions (plain `-O2`, and `-O2 -ffast-math
+-fno-schedule-insns`) did not solve it. These are one private game match plus
+controlled synthetic guard tests, not a claim of broad profile superiority or an
+autopilot replay. The repair is shared across architectures and modes, but the
+new exact compiler observation is MIPS GCC evidence only.
+
+### Aggregate views can preserve scalar load scheduling through local byte pointers
+
+A private 154-instruction MIPS function compiled with `gcc-2.7.2-kmc -G0
+-mips3 -mgp32 -mfp32 -O2 -g3` had one unsigned halfword load scheduled after
+a global pointer store; the target loaded it before the store. The ordinary
+linked judge scored the two reordered instructions at 60. Replacing repeated
+constant-offset scalar dereferences through a local byte pointer with fields
+of a candidate-local record produced exact linked bytes (score 0). Both a typed
+local pointer and casts to the same record at the accesses worked. This is a
+source-shape scheduling observation; no compiler RTL evidence establishes the
+precise alias/dependency mechanism.
+
+The existing inferred-record proposal now recognizes implicit byte offsets when
+an initialized local byte pointer has no uses except the recognized accesses.
+The existing requirements of two distinct aligned, nonoverlapping scalar fields
+and at least three accesses still apply. A private shared-proposal replay found
+the exact variant fifth among 40 proposals and fifth on the copied project
+first eight-item targeted-repair page. The preferred source also passed the
+complete cartridge rebuild, retaining all prior verified objects. Synthetic tests cover escaping,
+reassignment, shadows, unknown uses, qualifiers and preprocessor directives;
+those tests are controlled guards, not additional game matches.
+
+Negative evidence: explicitly capturing the halfword earlier in an integer
+local repaired the ordering but changed register allocation (score 160); using
+a narrow local added truncation. Joining source lines, inserting blank lines,
+moving the global store, and lexical statement wrappers did not produce an
+exact match. Keep the normal compiler and linked/object judge as the acceptance
+path; inferred records are local hypotheses, not proven shared object layouts.
+
+### Verified case: sequenced byte guard storage across a branch
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian MIPS.
+A 201-instruction input scan had a stale induction copy in its draft. Target instructions independently
+showed the incremented byte counter supplying call arguments. Correcting those uses changed the
+ordinary linked mismatch from 60 to 70: fourteen register operands, with every opcode matching.
+
+Compiler RTL separated the promoted signed counter, live across the guard branch, from the byte
+bound and comparison result local to its predecessor block. Local allocation assigned the latter
+pair to register 2, forcing the counter into register 3. Capturing the bound in a 32-bit scratch,
+then assigning the comparison result to that same scratch in a **separate statement**, changed
+this allocation. Reusing the scratch for a later equality result only where the following branch
+unconditionally overwrote the previous equality destination recovered exact linked bytes (804 bytes).
+The generated repair reaches this source from the original draft at position nine in the broad
+proposal list and within an eight-candidate targeted query. An independent complete-image rebuild
+was byte-identical; all 2,059 previously selected C inputs, profiles and object hashes were preserved. This is one newly matched case, not a general register assignment guarantee.
+
+Failed controlled alternatives: reversing comparison operands, integer casts, standalone bound or
+counter captures, splitting equality/call-result locals, register storage qualifiers, identity inline
+helpers, and byte record views retained the fourteen differences or regressed. The neighboring
+`-fno-strength-reduce` profile and `-ffast-math` did not change the result; disabling instruction
+scheduling regressed substantially. A nested double assignment also emitted exact bytes but was
+rejected because C90 does not sequence those stores (see GCC
+[`-Wsequence-point`](https://gcc.gnu.org/onlinedocs/gcc-15.1.0/gcc/Warning-Options.html)). Comma-sequenced and separate-statement forms
+both retained exact bytes; only well-sequenced forms are generated. Synthetic regression fixtures
+check source constraints and compile under host C90 sequence-point diagnostics; these are generator
+tests, not additional game matches. Target bytes, context and effective compiler flags stayed fixed.
+
+### Controlled regression: omitted masked low relocation annotations
+
+Profile observed: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+32-bit big-endian MIPS. This was a diagnostic correction, not a newly matched function.
+A copied 251-instruction candidate differed in two linked stack accesses, but the advisory
+score was 62: six additional operand differences came from `%lo(base + (constant & 0xffff))`
+annotations omitted by the target reader. An annotated high relocation combined with an
+unannotated absolute low immediate displayed a fictitious address.
+
+The reader now accepts that constant mask only when an adjacent annotated high instruction,
+register flow and the raw instruction pair prove the full address. Existing targets receive
+that completion only in the advisory object; their bytes and stored relocation list stay fixed.
+The copied replay score became 2 and the ordinary linked verdict remained false, with exactly
+the same two differing words. Synthetic tests cover both byte orders, masks, incompatible
+addresses/registers, existing annotations, clobbers and unsupported expressions.
+
+Negative source experiments did not resolve the actual stack gap: putting the table pointer
+first and removing an unused eight-byte array fixed body spill offsets but shrank the frame
+by eight bytes. Padding scopes, register qualifiers, aligned unused locals, pointer copies,
+wide pointer carriers and caller-save/peephole/strength-reduction switches did not recover an
+exact linked match. Preserve those failures separately from the diagnostic correction.
+
+
+### Controlled regression: inline helper storage order
+
+Native rewrite printers may emit `inline static` instead of `static inline`.
+Helper normalization must recognize both orders without inserting a second `static`.
+The observed KMC GCC 2.7.2 compiler accepted the duplicated specifier with a warning;
+this was not an exact-match breakthrough or a compiler failure. The fix preserves
+existing specifier order and line breaks, and adds internal linkage only where absent.
+Synthetic regressions cover comments, strings, indentation and multiline specifiers.
+
+### Measured match and controlled replay: integer index to array pointer phase
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+32-bit big-endian MIPS. A private 257-instruction function first improved manually
+from advisory score 130 to 70 by expressing a genuine parallel-copy rotation with
+separate C90 statements and a one-shot copy scope. This manual preparation is not
+an automatically recovered result.
+
+Sharing an ended integer index with a later local-array call address through a
+union changed the saved-register allocation and reduced the persisted 70 draft to
+two differing register operands (score 10). Capturing an unescaped ordinary local
+immediately before the preceding call, rather than after it, recovered the final
+temporary register and delay-slot copy. Every active union member is assigned
+before reading it; no stored integer is reinterpreted as a pointer. Calls, array
+stores, volatile accesses, target bytes and compiler flags retain their meaning.
+The ordinary linked verdict and independent complete cartridge comparison passed.
+
+The shared bounded `integer_array_pointer_phase` adapter reproduces 70 to zero
+in controlled replay: three direct family proposals, or rank 12 in the interleaved
+40-candidate first page. This replay is the same measured match, not another game
+match. Explicit 32-bit metadata, unique unqualified arrays, scalar dominance and
+escape checks constrain generation. Copy capture rejects argument-side writes,
+address escapes, destination reads, macro expansion and control statements.
+Unrelated volatile operations remain in the CFG and source; the default liveness
+analysis still declines volatile functions unless a caller supplies ordinary locals
+and explicitly requests that limited analysis.
+
+Negative evidence: plain copy rotations, added byte-offset phases, register/type
+qualifiers and source-line pairings did not resolve the frozen case. An explicit
+byte offset changed allocation and scheduling substantially. Inspect `.greg`/`.lreg`
+phase reuse before expanding such searches. With `-g3`, statement boundaries and
+the position of a pure capture relative to the preceding call can matter; retain
+line boundaries and verify each candidate with the ordinary judge.
+
+
+### Measured match and controlled replay: equal field assignment chain order
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+32-bit big-endian MIPS. A private 84-instruction initializer reproduced its saved
+source at advisory score 185 (the stored historical score was 175). Replacing an
+absolute address with its existing symbol changed advisory relocation presentation
+to 165 without establishing a byte improvement. Broad declaration changes, signed
+byte field substitutions, constant identities and narrow helper returns did not
+recover the match. Explicit constant reuse changed scheduling and hoisted a store;
+one-shot scopes moved initialization across floating constant loads.
+
+A related local SDK version supplied a useful source lead: logical initialization
+order differed substantially from final assembly store order. Its record layout and
+sample-bank selection also differed, so this was provenance for a hypothesis, not
+an identical donor or proof of identity. Reconstructing a candidate-local typed
+record and logical assignment order produced a 20-score near miss. Reversing one
+chain into two distinct same-typed short fields recovered the two final store
+operands, including the return delay slot, and reached ordinary linked score zero.
+An independent complete cartridge comparison also passed; all previously verified
+objects and compiler profiles remained unchanged.
+
+The shared `equal_type_field_chain_order` proposal reproduces that prepared 20 to
+zero at index 4 of the normal 40-candidate first page. This controlled replay is
+one measured match, not another independently discovered match. The source lead
+and record reconstruction were manual preparation. Generation requires one
+ordinary declared struct object, distinct non-array scalar fields with identical
+declared types, unqualified storage, pure field addresses and a bounded RHS without
+calls, writes or conditional evaluation. It retains RHS evaluation once, both
+conversions and all source line breaks. Synthetic tests reject mixed widths,
+qualifiers, unions, arrays, macros, escaped bases and RHS side effects. Inspect
+local SDK/library sources before treating assembly store order as original C order;
+judge each layout and expression hypothesis normally.
+
+## Scoped scalar normalization copies can stop old GCC CSE substitution
+
+KMC GCC 2.7.2 with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian MIPS,
+can lower `value=value<0?-value-width:value` with a separate negation temporary
+and an interfering conditional-result register. An ordinary copied local alone
+can be substituted back to the original by CSE. A bounded alternative is
+`do {saved=value; if(value<0){value=0;saved=-saved-width;}} while(0); value=saved;`
+using an existing unused, compatible signed scalar. The zero assignment ends the
+old value within this replacement; the original local is restored before the
+next source statement. The one-shot scope also matters: an unscoped copied form,
+a split negation/subtraction, and separate if/else arms did not reproduce the
+measured allocation.
+
+Evidence: a private 343-instruction function went from advisory score 90 to exact
+linked bytes (advisory 70 remained solely from seven equivalent symbol/literal
+relocation renderings). An independent full 12,582,912-byte cartridge rebuild
+preserved all 2,062 preceding C objects and compiler profiles. The captured input
+was manually cleaned first to remove a dead uninitialized read; this is not
+claimed as automatic arbitrary-macro cleanup. The shared repair generated one
+scoped candidate at index 0 of the actual 40-candidate first page and its first
+ordinary compile/link was exact. Synthetic tests cover expression grouping,
+observable locals, qualifiers, scopes, escapes, macros and shared pipeline reach;
+they are safety regression evidence, not another game match.
+
+Only a fixed scalar normalization grammar is recognized. Parentheses are parsed,
+not deleted; signed scalar declarations must be available and unescaped, and an
+unused compatible scratch must exist. Unrelated macro bodies remain untouched;
+tracked aliases and continued directives are rejected. No assembly, compiler
+profile, score normalization or acceptance rule is changed.
+
+## A consumed scalar plus a one-shot scope can separate constant-store allocation
+
+KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, can keep a loaded
+scalar and its later constant assignment in one register even when their values
+have disjoint lifetimes. Splitting the constant into an independent local gave
+the desired register in one 149-instruction initializer, but moved its store ahead
+of the preceding field store. Reusing an already consumed same-type local inside
+`do { scratch=48; out->field=scratch; } while(0);` retained the original schedule
+and separated the allocation. No arithmetic identity, volatile qualifier, assembly
+or changed compiler profile was needed. Unscoped reuse, plain constant stores,
+extra declarations and declaration order did not recover this combination.
+
+The starting captured draft also stored a narrowed unsigned byte as a full-width
+mask, producing 255 where the target stores -1. That semantic error was manually
+corrected before this experiment; the repair does not infer or fix mask behavior.
+After that correction, the ordinary advisory score was 10. Both generated scope
+candidates linked exactly with score zero at indices 0 and 15 of the actual
+44-candidate first page; the preceding implementation produced 42 candidates and
+none matched. These are replays of one captured function, not additional matches.
+
+The shared `constant_store_scope` family is bounded to four proposals. It requires
+an existing consumed local of the identical ordinary 32-bit type, visible in the
+replacement scope. CFG liveness must prove that its previous value is dead and
+that the replaced assignment's destination is dead after its field store. Escapes,
+qualified aliases, relevant macros, branch entries and out-of-scope locals are
+excluded. The literal assignment and store stay together and execute once. Synthetic
+C90 boundary-value tests verify store behavior; only ordinary exact judging accepts
+a candidate. An independent complete cartridge rebuild verifies the accepted
+scope source while preserving all 2,063 prior C objects and compiler profiles.
+
+### Copied overlay call names can leave a relocation-only miss
+
+- Profile: KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`.
+- Evidence: several recent captured MIPS GCC repairs changed a single generated
+  callee name and its owned declaration to the target's symbolic direct-call name,
+  moving a comparable-settings score of 10 to an exact linked match. Other reuse
+  examples changed profiles or several callees and do not isolate this cause.
+- Implementation: `target_callee_name` proposes one replacement only when exactly
+  one symbolic `jal` target is absent from the candidate and exactly one declared
+  generated-name callee is extra, with equal static call counts. It retains the
+  source-owned prototype's types as a hypothesis; it does not infer the target ABI.
+- Reject indirect calls, ambiguous target sets, helpers/definitions, escaped or
+  shadowed names, macro captures and preexisting target declarations. Existing
+  same-address overlay aliases remain a separate family.
+- Validation is synthetic generation/guard coverage, not a new replayed game match.
+  Every proposal still requires ordinary compilation and exact linked/object
+  verification. This adapter currently recognizes MIPS direct symbolic calls;
+  other instruction syntaxes need their own evidence-backed adapters.
+
+
+### Native temporary extraction can introduce a read before assignment
+
+- Observed during a private KMC GCC 2.7.2 local search: `perm_temp_for_expr`
+  introduced a scalar assigned inside a conditional and reused it as an argument
+  after the conditional. The closer compiled score did not establish valid source
+  behavior, and the candidate was rejected. This is not an exact-match result.
+- The shared `Generator.batch` wrapper now checks newly introduced ordinary scalar
+  locals before returning candidates to ROM, imported-project and deep native
+  searches. It reuses bounded local control-flow edges and intersects initialized
+  states across reachable predecessors. Bare declarations reset initialization;
+  assignments check RHS reads before generating an initialized value.
+- This is a limited guard, not a general undefined-behavior or equivalence proof.
+  Existing names, escapes, qualifiers, shadows, macros, constant controls and unsupported sequencing
+  receive no verdict. Correlated branches are not proved equivalent; this conservative
+  filter may omit valid candidates. Only literal-zero do-loop back edges are pruned.
+  The native generator protocol has no per-candidate rejection
+  feedback, so its internal walk continues; every emitted descendant is checked
+  independently against the job source. Lineage remains attached to accepted output.
+- Validation: synthetic branches, switches, loops, gotos, declaration reentry,
+  self-read assignments and batch protocol coverage. Private replay rejects the
+  observed unsafe temporary while allowing the sound boolean-materialization and
+  early narrowing alternatives. Ordinary exact judging remains mandatory.
+
+### A single constant memory store can need a one-shot scope
+
+- Profile: KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+- Private controlled replay: wrapping only `*(u8*)flag = 0;` as
+  `do {*(u8*)flag = 0;}while(0);` moved its scheduled store ahead of a later
+  constant store and mask computation. Ordinary linked comparison changed from
+  seven differing instruction words to exact bytes. The advisory score remained
+  20 because its symbolic relocation annotation differed; linked bytes decide.
+- A scalar global declaration alone and a plain compound block did not recover
+  the schedule. The original array declaration with the do-loop wrapper did, so
+  changing the global type was unnecessary. No volatile qualifier or extra value
+  was introduced. This is one isolated replay, not a universal scheduling rule.
+- `constant_memory_store_scope` proposes at most four individual constant
+  indirect-store wrappers. It accepts only a simple identifier dereference with
+  an optional integer pointer cast, rejects macro captures and unbraced/labeled
+  statements, and does not nest existing do scopes. It reaches both judging modes
+  through the shared repair pipeline; ordinary exact verification still applies.
+
+### Native expansion must preserve the time an address was captured
+
+- A private KMC GCC 2.7.2 replay (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
+  exposed a source error, not a compiler scheduling rule: `perm_expand_expr`
+  replaced a captured row pointer at stores after its integer index had been
+  reassigned to a decoded value. The lower advisory score was rejected.
+- The native generator now filters eligible reads before invoking that method.
+  Operand writes (including updates in branches and the consuming statement),
+  changed control context, labels, escaped/qualified/static/global operands,
+  memory reads, calls and macro bindings prevent that expansion. Constant and
+  ordinary local-value captures remain eligible in supported straight-line cases.
+- Partial expansion retains the initializer needed by unexpanded reads. Fully
+  eligible expansion can still remove the capture. The pinned tool is unchanged;
+  a private function namespace substitutes its read finder for this method only.
+- In the private repro, four pre-mutation pointer reads remain eligible and seven
+  later reads are excluded. Homemade C90 execution checks cover partial expansion
+  and complete capture elimination. This guard only addresses operand stability,
+  not general type conversion, aliasing or equivalence of other random rewrites.
+  Ordinary exact judging and semantic review remain mandatory; no new game match
+  is claimed by this regression.
+- Volatile aliases declared inside a function need the same guard. Alias names
+  shadowed in nested blocks retain all definitions conservatively, so a later
+  plain alias cannot hide an earlier volatile declaration.
+
+### Generated inline helpers need private linkage
+
+- With KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`), a native
+  `perm_inline` candidate emitted a 16-byte global helper even though its call
+  was inlined into the selected function. A selected-function byte comparison
+  does not prove that extra helper text will fit in the complete cartridge.
+- The same source with a static inline helper emitted no helper symbol and
+  retained its advisory score. It was not an exact match; no cartridge equality
+  or new game match is claimed by this experiment.
+- The generator now adds static linkage only to inline definitions newly created
+  by this native rewrite. Pre-existing source definitions and the pinned tool
+  remain unchanged. Traced and untraced generation use the same safeguard.
+- A regression generates two independent units with the actual pinned rewrite.
+  GNU89 compilation/linking succeeds with private helpers and verifies their
+  results for all byte inputs; the external-linkage negative control fails on
+  duplicate helper symbols. Full-project verification is still required when
+  accepting any candidate, especially if a helper cannot be fully inlined.
+
+### Unrelated memory aliases must not disable temporary initialization checks
+
+- A native rewrite from an N64 candidate introduced an integer temporary assigned
+  in only one branch and read in another. With KMC GCC 2.7.2, compiling and scoring
+  that candidate did not establish its validity. Previously, unrelated object
+  dereference macros disabled the entire bounded initialization check.
+- The check now recognizes narrow object dereference aliases and exact self-cast
+  function forwarders. Definitions mentioning tracked temporaries, unknown macro
+  dependencies, assignments, control flow or reordered arguments still receive no
+  verdict. This is not arbitrary macro expansion or a complete UB checker.
+- Private replay rejects the retained integer-temporary example; no new exact
+  match is claimed. Pointer temporaries and more complex function-like memory
+  aliases remain outside this change. Regressions cover initialized alternatives,
+  hidden dependencies, conflicting definitions and traced generator output.

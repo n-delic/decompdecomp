@@ -5,7 +5,7 @@ from .capture_followup_repairs import definitions
 from .integer_repair_support import IDENT, edit, view
 
 FAMILIES = ('shared_store_constant', 'nested_halfword_arithmetic', 'callee_array_extent',
-            'overlay_callee_alias', 'argument_home_slot', 'untouched_argument_forwarding')
+            'overlay_callee_alias', 'argument_home_slot', 'untouched_argument_forwarding', 'target_callee_name')
 
 
 def variants(source, name, arch, asm='', header='', callees=''):
@@ -73,6 +73,8 @@ def variants(source, name, arch, asm='', header='', callees=''):
             if not re.search(r'addiu\s+\$a[0-3],\s*\$sp,\s*0x[0-9a-f]+',asm):continue
             add(FAMILIES[2],[(base+decl.start(),base+decl.end(),f'{typ} {var}[{extent}];')])
     if arch!='mips':return result
+    from . import callee_name_repairs
+    result += callee_name_repairs.variants(source,name,asm,header)
     # Alias only to the exact symbolic call recorded in this target, never by VRAM alone.
     targets=set(re.findall(r'\bjal\s+(func_[0-9A-Fa-f]+_(?:ovl_\d+|overlay_\d+))\b',asm))
     for old in set(re.findall(r'\bfunc_[0-9A-Fa-f]+_(?:ovl_\d+|overlay_\d+)\b',part.body)):

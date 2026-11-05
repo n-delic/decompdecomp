@@ -33,6 +33,8 @@ from .symbols import AUTO_NAME, SymbolTable
 
 R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16, R_MIPS_GPREL16 = 2, 4, 5, 6, 7
 _REF = re.compile(r"%(hi|lo|gp_rel)\(\s*([A-Za-z_.$][\w.$]*)\s*(?:([+-])\s*(0x[0-9A-Fa-f]+|\d+))?\s*\)")
+_MASKED_LOW = re.compile(r"%(lo)\(\s*([A-Za-z_.$][\w.$]*)\s*([+-])\s*\(\s*"
+                         r"(0x[0-9A-Fa-f]+|\d+)\s*&\s*(?:0x[fF]{4}|65535)\s*\)\s*\)")
 _KIND = {"hi": 5, "lo": 6, "gp_rel": 7}
 _JUMPS = {"jal", "j"}
 # Bytes a load or store moves, by opcode (lwl/lwr/swl/swr read parts of words, so they don't say)
@@ -95,15 +97,26 @@ def target_from_split(fn: RomFunction, resolve: Callable[[str], int | None], big
     """The function's bytes from the ROM plus the address behind every annotated reference."""
     code = b"".join(ln.word.to_bytes(4, "big" if big_endian else "little") for ln in fn.lines)
     relocs: list[tuple[int, int, int]] = []
-    for ln in fn.lines:
+    for index, ln in enumerate(fn.lines):
         off = ln.vram - fn.vram
         m = _REF.search(ln.operands)
+        masked = _MASKED_LOW.search(ln.operands) if m is None else None
+        m = m or masked
         if m:
             kind, sym, sign, num = m.groups()
             base = resolve(sym)
             if base is not None:
                 addend = (int(num, 0) if num else 0) * (-1 if sign == "-" else 1)
-                relocs.append((off, _KIND[kind], (base + addend) & 0xFFFFFFFF))
+                address = (base + addend) & 0xffffffff
+                if masked:
+                    # A masked low addend alone names several possible full addresses. The
+                    # preceding annotated high and actual instruction pair must select this one.
+                    if not index or (off - 4, R_MIPS_HI16, address) not in relocs:
+                        continue
+                    previous = fn.lines[index - 1]
+                    if previous.vram + 4 != ln.vram or _adjacent_low_address(previous.word, ln.word) != address:
+                        continue
+                relocs.append((off, _KIND[kind], address))
             continue
         if ln.mnemonic in _JUMPS:
             op = ln.operands.strip()
@@ -117,9 +130,39 @@ def target_from_split(fn: RomFunction, resolve: Callable[[str], int | None], big
     return RomTarget(fn.name, fn.vram, code, relocs, big_endian, gp)
 
 
+def _adjacent_low_address(high: int, low: int) -> int | None:
+    register = (high >> 16) & 31
+    opcode = low >> 26
+    if high >> 26 != 15 or not register or (low >> 21) & 31 != register:
+        return None
+    if opcode != 9 and opcode not in _WIDTH:
+        return None
+    immediate = low & 0xffff
+    signed = immediate - 0x10000 if immediate & 0x8000 else immediate
+    return (((high & 0xffff) << 16) + signed) & 0xffffffff
+
+
+def _display_relocs(t: RomTarget):
+    """Complete an older split's omitted low annotation without changing the linked target.
+
+    Masked constant addends were once missed by the assembly reader. Only infer the adjacent
+    low instruction when its actual register flow and raw bytes prove the annotated address.
+    """
+    result = list(t.relocs)
+    occupied = {off for off, _, _ in result}
+    for off, kind, addr in t.relocs:
+        if kind != R_MIPS_HI16 or off < 0 or off % 4 or off + 8 > len(t.code) or off + 4 in occupied:
+            continue
+        high = int.from_bytes(t.code[off:off+4], t.order)
+        low = int.from_bytes(t.code[off+4:off+8], t.order)
+        if _adjacent_low_address(high, low) == addr:
+            result.append((off + 4, R_MIPS_LO16, addr))
+    return sorted(result)
+
+
 def canonical_target(t: RomTarget, symbols: SymbolTable) -> FunctionObj:
     relocs = []
-    for off, rtype, addr in t.relocs:
+    for off, rtype, addr in _display_relocs(t):
         name, residual = symbols.name_at(addr)
         if t.vram <= addr < t.vram + len(t.code):
             name, residual = t.name, addr - t.vram

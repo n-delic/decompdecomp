@@ -6,11 +6,11 @@ whose value is dead on every CFG edge can end that lifetime without modifying th
 import re
 from dataclasses import dataclass
 
-from . import local_flow
+from . import constant_store_scope, local_flow, scalar_normalization_scope
 from .integer_repair_support import IDENT, INTEGER, edit, view
 from .pattern_repairs import close
 
-FAMILIES = ('dead_copy_source', 'divisor_flag_split', 'regional_load_reuse', 'divisor_value_scope', 'divisor_normalization_copy')
+FAMILIES = (constant_store_scope.FAMILY, constant_store_scope.DIRECT_FAMILY, scalar_normalization_scope.FAMILY, 'dead_copy_source', 'divisor_flag_split', 'regional_load_reuse', 'divisor_value_scope', 'divisor_normalization_copy')
 LIMIT = 16
 
 
@@ -83,12 +83,13 @@ def context(source, name):
     return (part, flow, {d.name: d for d in declarations}) if flow else None
 
 
-def variants(source, name):
+def variants(source, name, header=''):
     ctx = context(source, name)
+    scoped = constant_store_scope.variants(source, name, header) + scalar_normalization_scope.variants(source, name, header)
     if not ctx:
-        return []
+        return scoped
     part, flow, declarations = ctx
-    result = []
+    result = list(scoped)
     for node in sorted(flow.nodes, key=lambda n: n.start):
         text = part.clean[node.start:node.end]
         copy = re.fullmatch(rf'\s*(?:{INTEGER}\s+)?({IDENT})\s*=\s*({IDENT})\s*;\s*', text)
@@ -190,6 +191,11 @@ def variants(source, name):
 
 def hint(source, name):
     choices = variants(source, name)
+    if any(f == scalar_normalization_scope.FAMILY for f, _ in choices):
+        return ('A signed scalar normalization has an unused compatible scratch. Test '
+                'scalar_normalization_scope to preserve a copied value while ending its original '
+                'CSE lifetime inside one statement replacement. The original is restored before '
+                'the next statement; only the ordinary judge establishes a match.')
     if any(f == 'dead_copy_source' for f, _ in choices):
         return ('A scalar copy has a copied-from local dead on every outgoing CFG edge. If ordered '
                 'operations agree but registers differ, test dead_copy_source through local variants: '

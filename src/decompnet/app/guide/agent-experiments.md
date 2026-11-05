@@ -47,3 +47,11 @@ a register miss. `known_zero_mask` and `post_call_narrow_capture` are bounded lo
 families for proven scalar bits and capture timing; no guessed shared prototype is
 required for the explicit-conversion capture. Keep successful source line breaks and
 profile/context together. Frozen precursor replay measures recovery; it is not a new match.
+
+
+A lower native-permuter score is not proof of sound C. In particular, check that
+expanding a captured address does not recompute it after an index changes. The
+generator guards supported local captures, but other transformations and type
+conversions still need review before using a variant as a new search baseline.
+Generated inline helpers are private, but check complete build output too: a
+function-window match alone does not verify extra helper code or its placement.

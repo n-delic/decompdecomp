@@ -945,3 +945,15 @@ def test_imported_baseline_evidence_is_cached_without_applying_matches(per_file)
     assert (root/'src/game.c').read_bytes()==before
     assert net._function('lerp',slug)['status']=='open'
     assert net.store.one('SELECT COUNT(*) AS n FROM attempts')['n']==0
+
+
+def test_current_profile_alias_diagnoses_own_compiler_without_switching(per_file):
+    net,slug,agent,root,state,lerp=per_file
+    before=(root/'src/game.c').read_bytes()
+    head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root)
+    result=net.try_compiler(agent,slug,'lerp','current',source=lerp,keep_match=False)
+    assert 'nothing to switch' in result and state['sets']==[]
+    assert state['compiler']==GOOD and (root/'src/game.c').read_bytes()==before
+    assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=root)==head
+    assert net._function('lerp',slug)['status']=='open'
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==0

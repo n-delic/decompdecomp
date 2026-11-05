@@ -24,7 +24,7 @@ def strip_outer(text):
     return text
 
 
-def accesses(body):
+def accesses(body, implicit_bases=()):
     """Read only complete cast-and-byte-offset dereferences, including m2c's extra parentheses."""
     found = []
     for star in re.finditer(r'\*', body):
@@ -57,7 +57,10 @@ def accesses(body):
                     continue
                 left, right = strip_outer(address[:split]), address[split+1:].strip()
                 base = re.fullmatch(rf'\(\s*(?:char|[su]8|unsigned\s+char|signed\s+char)\s*\*\s*\)\s*({IDENT})', left)
-                if not base or not re.fullmatch(NUMBER, right):
+                if not re.fullmatch(NUMBER, right):
+                    continue
+                base_name = base[1] if base else left if left in implicit_bases else None
+                if base_name is None:
                     continue
                 finish = end
                 for _ in range(wrappers):
@@ -67,9 +70,27 @@ def accesses(body):
                     finish += tail.end()
                 else:
                     typ = ' '.join(cast[1].split())
-                    found.append((star.start(), finish, base[1], CANONICAL.get(typ, typ), number(right)))
+                    found.append((star.start(), finish, base_name, CANONICAL.get(typ, typ), number(right)))
                     break
     return found
+
+
+def local_byte_bases(part):
+    """Only initialized local byte pointers whose every later reference is a scalar offset access."""
+    if re.search(r'^\s*#\s*(?:define|if|elif|else|endif|undef)\b', part.clean, re.M):
+        return set()
+    bases = set()
+    byte = r'(?:char|[su]8|unsigned\s+char|signed\s+char)'
+    declarations = re.finditer(rf'(?:^|(?<=[;{{}}]))\s*{byte}\s*\*\s*({IDENT})\s*=\s*{IDENT}\s*;', part.body)
+    for declaration in declarations:
+        base = declaration[1]
+        hits = accesses(part.body, (base,))
+        # Counting every token also excludes shadows, reassignment, address escape and pointer aliases.
+        refs = list(re.finditer(rf'\b{re.escape(base)}\b', part.body))
+        if all(declaration.start() <= ref.start() < declaration.end()
+               or any(start <= ref.start() < end for start, end, *_ in hits) for ref in refs):
+            bases.add(base)
+    return bases
 
 
 def variants(source, name, arch):
@@ -79,7 +100,7 @@ def variants(source, name, arch):
     if re.search(r'\b(?:volatile|restrict|asm|__asm__)\b', part.clean):
         return []
     groups = {}
-    for hit in accesses(part.body):
+    for hit in accesses(part.body, local_byte_bases(part)):
         groups.setdefault(hit[2], []).append(hit)
     result = []
     for base, hits in groups.items():

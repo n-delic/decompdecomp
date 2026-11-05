@@ -92,3 +92,21 @@ def test_extra_profiles_cannot_overrun_compile_limit(monkeypatch):
     with pytest.raises(deep_permuter.SearchLimit):
         search._score(AGENT, proj, fn, 'candidate', 40, None)
     assert calls == ['one'] and search.tested == 1
+
+
+def test_confirmed_alternate_profile_match_updates_progress_once(monkeypatch):
+    net=setup(monkeypatch);fn=net.function();proj=net.project_row('game');log=Log()
+    search=deep_permuter.Search(net,1,20,log,fn)
+    search.compiler_profiles=[{'toolchain':'other','flags':[]}]
+    search.winner_diff=([('r','old target','old candidate')],'old profile')
+    def probe(*args):
+        with net.store.tx() as db:db.execute("UPDATE functions SET status='matched',best_score=0")
+        return 0
+    monkeypatch.setattr(deep_profiles,'probe',probe)
+    assert search._score(AGENT,proj,fn,'exact source',40,None)==0
+    assert search.best==0 and search.improvements==1
+    assert search.winner_diff is None
+    assert log.updates[-1]['best_percent']==100
+    assert log.updates[-1]['last_score']==0 and log.updates[-1]['last_outcome']=='matched'
+    assert search._score(AGENT,proj,fn,'exact source',40,None)==0
+    assert search.improvements==1

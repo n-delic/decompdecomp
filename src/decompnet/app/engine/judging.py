@@ -12,6 +12,7 @@ from pathlib import Path
 from ... import consoles, scoring
 from ...network import MACHINE_AGENTS, Agent, Network, NetworkError, stall_line
 from ...release_receipts import operation as release_operation
+from ...request_timing import build as timed_build
 from ...rom import match
 from ...rom.symbols import SymbolTable
 from ..function_names import canonical_source
@@ -435,16 +436,20 @@ class JudgeMixin:
     def spend(self, slug: str) -> dict | None:
         return self.cfg(self._project(slug)).get("spend")
 
+    @timed_build
     def _judge_with(self, proj, fn, toolchain: str, flags: list[str], source: str):
         """(matched, diff or None, log) for C built with this compiler and flags, judged like an attempt, recording
         nothing."""
         from ...compiler import compile_source
         from ...project import compiler_config
-
+        from .. import compiler_flags
+        if rejected := compiler_flags.known(self,toolchain,flags):
+            return False,None,rejected
         header = self._context(proj["id"], fn["unit"])["header"]
         settings = {"toolchain": toolchain, "flags": flags, "timeout": 20}
         result = compile_source(compiler_config(Path(proj["root"]), {"compiler": settings}), header, canonical_source(fn, source))
         if not result.ok:
+            compiler_flags.remember(self,toolchain,flags,result.log)
             return False, None, result.log
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:

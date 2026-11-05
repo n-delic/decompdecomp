@@ -18,6 +18,17 @@ def current(net, fn, agent):
     return token(net,fn,claim)
 
 
+def instruction(net, function_id, agent_id):
+    """Give move-on callers the current lease token, without changing any claim."""
+    fn=net.store.one('SELECT id,project_id,name FROM functions WHERE id=?',function_id)
+    claim=net.store.one('SELECT * FROM claims WHERE function_id=? AND agent_id=?',function_id,agent_id)
+    if not fn or not claim:
+        return 'Claim ended; claim another eligible function. Do not release this function again.'
+    lease=token(net,fn,claim)
+    return (f'release_function(function={json.dumps(fn["name"])}, claim_token={json.dumps(lease)}, '
+            'notes="what you tried and what is left")')
+
+
 def operation(kind, *, protect_new=False):
     """Serialize just this agent/function, without holding the database lock across compile/room work."""
     def decorate(function):

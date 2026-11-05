@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet import scoring
+from decompnet import scoring, source_lines
 from decompnet.app import deep_permuter, draft_repairs, prototype_alignment, register_reuse_repairs
 from decompnet.app.permute import Permuter, State
 from tests.test_deep_permuter import Log, setup
@@ -69,6 +69,8 @@ def test_a_zero_saved_score_is_marked_matched_only_after_the_real_exact_verdict(
     net._target_obj=lambda *a: object()
     net.keep_diff=lambda *a: None
     monkeypatch.setattr(scoring,'diff',lambda *a: scoring.DiffResult(0,1000,[],True))
+    # This verdict unit test supplies sentinel objects, not actual ELF compiler output.
+    monkeypatch.setattr(source_lines,'mismatches',lambda *a,**k: [])
     recorded=[]
     def record(fn,agent,score,source,version,**kwargs):
         recorded.append(kwargs['matched'])

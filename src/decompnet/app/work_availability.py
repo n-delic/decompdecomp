@@ -9,14 +9,27 @@ def version(net, agent, slug):
     claims=net.store.all('SELECT c.function_id,c.agent_id,c.expires_at FROM claims c JOIN functions f '
                          'ON f.id=c.function_id WHERE f.project_id=? AND c.expires_at>? ORDER BY c.function_id',pid,time.time())
     from .. import claim_stalls
-    pauses=net.store.all("SELECT s.key,s.value FROM settings s JOIN functions f ON "
-                         "s.key=? || f.id OR s.key GLOB ? || f.id || ':*' WHERE f.project_id=? ORDER BY s.key",
-                         claim_stalls.PREFIX,claim_stalls.PREFIX,pid)
+    pauses=pause_records(net,pid)
     regions=net.store.all('SELECT key,value FROM settings WHERE key LIKE ? ORDER BY key',f'data-region:{pid}:%')
     link=net.links.get(slug)
     return hashlib.sha256(repr((net.store.read_version('inputs',pid),net.selection(slug,agent.name),
                                [tuple(r) for r in pauses],[tuple(r) for r in regions],repr(claim_stalls.repair_rules()),
                                [tuple(r) for r in claims],repr(link.claims) if link else '')).encode()).hexdigest()[:20]
+
+
+def pause_records(net, project_id):
+    """Seek only this project's exact/scoped keys using the existing settings primary key."""
+    from ..claim_stalls import PREFIX
+    # The old variable GLOB/OR join scanned settings for every project function.
+    # ':' is the scope separator; ';' is its exclusive binary successor. The
+    # legacy point lookup is disjoint, and 1's range cannot include 10's keys.
+    return net.store.all(
+        "SELECT s.key,s.value FROM functions f CROSS JOIN settings s "
+        "WHERE f.project_id=? AND s.key=? || f.id "
+        "UNION ALL "
+        "SELECT s.key,s.value FROM functions f CROSS JOIN settings s "
+        "WHERE f.project_id=? AND s.key>=? || f.id || ':' AND s.key<? || f.id || ';' "
+        "ORDER BY key",project_id,PREFIX,project_id,PREFIX,PREFIX)
 
 
 def held(net, agent):

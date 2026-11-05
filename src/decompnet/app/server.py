@@ -176,20 +176,24 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     mcp = tools.build_mcp(net, agent_of, observe=manager.record_agent)
 
+    mcp_metadata_limiter = anyio.CapacityLimiter(2)
+
     async def personalized_instructions(ctx, call_next):
         result = await call_next(ctx)
         if ctx.method not in {'initialize', 'server/discover'}:
             return result
         auth = (getattr(ctx.request, 'headers', None) or {}).get('authorization', '')
-        try:
-            agent = net.authenticate(auth.removeprefix('Bearer ').strip() or None)
-            slug = project_for(agent.id)
-            if slug:
-                instructions = manager.instructions_for(agent, slug)
-                return ({**result, 'instructions':instructions} if isinstance(result, dict)
-                        else result.model_copy(update={'instructions':instructions}))
-        except NetworkError:
-            pass  # Anonymous clients keep generic built-in instructions, never private overrides.
+        def personalized():
+            try:
+                agent=net.authenticate(auth.removeprefix('Bearer ').strip() or None)
+                slug=project_for(agent.id)
+                return manager.instructions_for(agent,slug) if slug else None
+            except NetworkError:
+                return None
+        instructions=await anyio.to_thread.run_sync(personalized,limiter=mcp_metadata_limiter)
+        if instructions is not None:
+            return ({**result,'instructions':instructions} if isinstance(result,dict)
+                    else result.model_copy(update={'instructions':instructions}))
         return result
 
     mcp._lowlevel_server.middleware.append(personalized_instructions)
@@ -201,19 +205,21 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     async def scoped_tools(ctx, params):
         everything = await mcp.list_tools()
         auth = (getattr(ctx.request, "headers", None) or {}).get("authorization", "")
-        try:
-            agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
-        except NetworkError:
-            return ListToolsResult(tools=[])
-        slug = project_for(agent.id)
-        if not slug:
-            return ListToolsResult(tools=[])
-        keep = set(tools.project_tools(net, slug, agent))
-        selected = [t for t in everything if t.name in keep]
         checking = (getattr(ctx.request, 'headers', None) or {}).get('x-decomp-connection-check') == '1'
-        manager.record_agent(agent, slug, 'connection_check_tools' if checking else 'tool_definitions',
-                             [t.model_dump(mode='json') for t in selected])
-        return ListToolsResult(tools=selected)
+        def select():
+            try:
+                agent=net.authenticate(auth.removeprefix('Bearer ').strip() or None)
+            except NetworkError:
+                return ListToolsResult(tools=[])
+            slug=project_for(agent.id)
+            if not slug:
+                return ListToolsResult(tools=[])
+            keep=set(tools.project_tools(net,slug,agent))
+            selected=[t for t in everything if t.name in keep]
+            manager.record_agent(agent,slug,'connection_check_tools' if checking else 'tool_definitions',
+                                 [t.model_dump(mode='json') for t in selected])
+            return ListToolsResult(tools=selected)
+        return await anyio.to_thread.run_sync(select,limiter=mcp_metadata_limiter)
 
     mcp._lowlevel_server.add_request_handler("tools/list", PaginatedRequestParams, scoped_tools)
 

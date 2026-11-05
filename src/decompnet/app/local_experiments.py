@@ -143,9 +143,10 @@ def available(net, agent, slug, fn, source, revision, requested, *, deadline=Non
              generation_signature(prototype_reuse.signature,net,proj,source), generation_signature(verified_unit_context.signature,net,proj,fn,source),
              repr(rtl_value_trace.saved(net,proj,fn,source,ctx['header'] if ctx else '')))
     durable_scope=agent_tokens.target_scope(net,fn,'')
+    revision_scope=agent_tokens.target_scope(net,fn,revision)
     from .repair_preflight import invalid_call
     def eligible(family,candidate):
-        return candidate!=source and not invalid_call(candidate,fn['name']) and not agent_tokens.compiled_before(net,fn,candidate,durable_scope) and not agent_tokens.target_tried(net,fn,revision,'local:'+family,candidate)
+        return candidate!=source and not invalid_call(candidate,fn['name']) and not agent_tokens.compiled_before(net,fn,candidate,durable_scope) and not agent_tokens.target_tried(net,fn,revision,'local:'+family,candidate,revision_scope)
     with repair_generation.session(net,scope,deadline,requested,accept=eligible,goal=desired) as state:
         result = Pools(_available(net,agent,slug,fn,source,revision,requested))
         result.incomplete = state.incomplete
@@ -154,6 +155,8 @@ def available(net, agent, slug, fn, source, revision, requested, *, deadline=Non
 
 
 def _available(net, agent, slug, fn, source, revision, requested):
+    # Every proposal in this pass belongs to the same source/input snapshot.
+    revision_scope=agent_tokens.target_scope(net,fn,revision)
     proj=net._project(slug);cfg=json.loads(proj['config'])
     flags=compiler_for(cfg,fn['vram'], fn).get('flags',[]) if not net.fork_slug(slug) else []
     debug=any(re.fullmatch(r'-g[1-3]?',flag) for flag in flags)
@@ -182,7 +185,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
         if family not in pools:
             continue
         for target in agent_targets.valid_targets(source,family):
-            if agent_tokens.target_tried(net,fn,revision,family,target['old']):
+            if agent_tokens.target_tried(net,fn,revision,family,target['old'],revision_scope):
                 continue
             for patch in agent_tokens.family_patches(family,target['old']):
                 edited=agent_targets.replace_anchor(source,patch['old'],patch['new'])
@@ -210,7 +213,13 @@ def _available(net, agent, slug, fn, source, revision, requested):
         boundary_header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
         for family, candidate in _generated(debug_boundary_repairs.variants, source, fn['name'], flags, boundary_header):
             pools[family].append(candidate)
-    for module in (copy_lifetime_repairs, address_association_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
+    if any(family in pools for family in copy_lifetime_repairs.FAMILIES):
+        ctx = net._context(proj['id'],fn['unit'])
+        copy_header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+        for family, candidate in _generated(copy_lifetime_repairs.variants, source, fn['name'], copy_header):
+            if family in pools:
+                pools[family].append(candidate)
+    for module in (address_association_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
         for family, candidate in _generated(module.variants, source, fn['name']):
             if family in pools:
                 pools[family].append(candidate)
@@ -259,6 +268,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
     from .repair_generation import ACTIVE
     from .repair_preflight import invalid_call
     durable_scope=agent_tokens.target_scope(net,fn,'')
+    # Reuse the pass fingerprint instead of repeating header/rule reads per proposal.
     state=ACTIVE.get()
     validation_deadline=time.monotonic()+1 if state and state.deadline is not None else None
     filtered={f:[] for f in pools}
@@ -269,7 +279,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
                 break
             if (candidate!=source and not invalid_call(candidate,fn['name'])
                 and not agent_tokens.compiled_before(net,fn,candidate,durable_scope)
-                and not agent_tokens.target_tried(net,fn,revision,'local:'+family,candidate)):
+                and not agent_tokens.target_tried(net,fn,revision,'local:'+family,candidate,revision_scope)):
                 filtered[family].append(candidate)
     pools=filtered
     ranked = repair_ranking.order(pools,repair_ranking.evidence(net,fn['id'],agent.id))

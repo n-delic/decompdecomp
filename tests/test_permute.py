@@ -283,7 +283,7 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
     gen = permute.Generator()
     try:
         variants = gen.batch(job)
-        assert len(variants) == len(set(variants)) == 20
+        assert 0 < len(variants) == len(set(variants)) <= 20  # possibly uninitialized new temporaries are filtered
         assert all(" f(" in v and "typedef" not in v and "the game's types" not in v for v in variants)
         assert gen.batch({**job, "source": "s32 f(s32 a) { return M2C_FIELD(a, s32 *, 4); }"}) is None  # a macro call
         assert gen.batch({**job, "seed": 2}) != variants  # it answers on after C it couldn't read

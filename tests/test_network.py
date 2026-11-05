@@ -247,7 +247,9 @@ def test_a_function_is_found_by_its_address_from_an_index(tmp_path):
 
     store = Store(tmp_path / "s.db")
     plan = store.all("EXPLAIN QUERY PLAN SELECT id, status FROM functions WHERE project_id=? AND vram=?", 1, 0x100000)
-    assert "idx_functions_vram" in " ".join(str(r[3]) for r in plan)
+    detail=" ".join(str(r[3]) for r in plan)
+    # SQLite may prefer the newer covering compiler index with the same leading keys.
+    assert "SEARCH functions USING" in detail and "(project_id=? AND vram=?)" in detail
 
 
 def test_a_note_is_found_by_its_function_and_text_from_an_index(tmp_path):

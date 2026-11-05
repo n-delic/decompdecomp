@@ -1,5 +1,62 @@
 # Roadmap
 
+- Done: numeric MCP transaction-writer and candidate lock acquisition timings,
+  with synthetic rollback, release and claim-check regressions. This diagnoses
+  contention without changing concurrency or exact matching.
+
+- Done: keep newly generated native inline helpers private, with a real two-unit
+  GNU89 link/execution regression and traced/untraced generator coverage. Extra
+  helper code still requires complete project build verification.
+
+Implemented: native expression expansion checks captured operand stability before
+rewriting or deleting an initializer. ROM, imported-project and deep native jobs
+share the generator guard. Unsupported control/memory/qualifier cases are skipped;
+this does not prove equivalence of arbitrary native rewrites.
+
+Implemented: the shared native permuter batch wrapper rejects a possible read before
+initialization of an introduced ordinary scalar temporary using bounded CFG must
+analysis. ROM, imported-project and deep native batches share the guard. Existing,
+escaped, qualified or shadowed locals, constant controls and unsupported syntax receive no verdict;
+this limited guard is not a general undefined-behavior proof. Generator-internal
+walk reset feedback remains planned; every emitted descendant is checked independently.
+
+Implemented: bounded constant field-store lifetime reuse inside a one-shot scope,
+using an existing compatible consumed scalar and CFG liveness in shared source
+repairs. Scope, escape, qualifier, macro and branch-entry guards preserve behavior;
+manual semantic repairs remain separate and exact judging remains mandatory.
+
+Implemented: bounded reversal of chained assignments to distinct, identically typed
+ordinary struct fields in shared source repairs. Field layout, qualifier, macro,
+array and RHS effect guards preserve conversions and one RHS evaluation; source
+line breaks remain intact. Related SDK discovery and layout reconstruction remain
+reviewed source hypotheses, with ordinary exact verification required.
+
+Implemented: bounded integer-index to local-array pointer phase proposals in shared source
+repairs, with explicit 32-bit metadata, unique array/scalar lifetime guards, and pure local
+copy capture before a call. Macro expansions and argument-side writes remain opaque;
+unrelated volatile accesses retain their source order and default CFG policy.
+
+Implemented: bounded, sequenced byte-loop guard storage proposals in shared source repairs,
+with MIPS target-evidenced stale counter-copy hypotheses and conservative local-use checks.
+Guard storage proposals work in ROM and imported-source searches; counter-copy evidence adapters
+for other processors remain planned.
+
+Implemented: bounded source-owned byte-load macro address repairs in the shared deterministic
+search, with explicit 32-bit ABI/type guards and normal exact-byte verification. Unknown
+macro effects, conditional definitions and complex index expressions remain opaque.
+
+Implemented: indexed legacy/scoped pause-record lookups for idle work receipts. Project-local point and
+binary-range seeks replace the settings/function cross-scan while preserving the exact revision digest.
+
+Implemented: batched candidate-scope inputs and revision-keyed, model-scoped paused-queue read snapshots.
+Unchanged ROM queues reuse immutable scheduling results; source/header/symbol/callee changes and retry
+records invalidate immediately, while imported external files are inspected on every decision.
+
+Implemented: lightweight agent project facts and claim receipts, serialized claim retries, read-only live-claim
+recovery, dedicated MCP health/metadata workers and bounded startup probes, numeric tool timing, connection
+failure outcomes, current-profile compiler diagnostics with remembered rejected flags, and bounded assembly
+fallback when mismatch mapping is unavailable. See docs/AGENT_WORKFLOW_EFFICIENCY.md.
+
 Implemented: typed batch symbol/address ownership and unambiguous read aliases, cached full model-ID
 resolution before worker creation, lease-bound release receipts for agent/room retries, and candidate
 selection/writer/score provenance in stale and continuation responses. ROM and imported-project metadata
@@ -529,6 +586,12 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+- Check again and helper startup reconsider obsolete agent tooling verdicts when
+  the effective compiler supports a target-backed live return-address C repair,
+  including fixes shipped under the same package version. Valid assembly, user
+  choices, and claims remain protected; bounded ordinary judging verifies matches.
+
 
 - The notification panel renders cached events immediately, shares an in-flight history request, offers loading/error retry feedback, and reads bounded indexed history using reserved UI capacity.
 
@@ -2332,3 +2395,72 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   autopilot. Frozen private precursor replay verifies rediscovery with unchanged judges.
 - Planned: hazard evidence readers beyond MIPS; imported builds without measured
   function rows cannot use that hint. Scalar families reach supported 32-bit ABIs.
+
+### Fixed live MIPS return-address snapshots
+
+- Done: callback-backed live return-address repairs also recognize an existing
+  entry-caller builtin workaround. A bounded one-shot statement companion is judged
+  atomically, retaining source lines and hardware-family priority; restored entry
+  registers, no-call targets and unsupported destination widths are excluded.
+
+- Done: a no-argument current live-link-register intrinsic in the registered KMC
+  compiler template, used-template portable export selection, raw absolute-store
+  evidence and a shared local repair for single-use uninitialized placeholders.
+  Real compiler tests distinguish current reads after calls from saved snapshots.
+- Planned: tested registrations for other compiler packs and explicit real-name
+  symbol adapters for this hardware-store repair. Other processor link-register
+  snapshots require their own semantics/evidence; no cross-processor guesses.
+
+- Done: target-backed live return-address repairs can combine a fixed hardware
+  read with bounded typed literal inlining or declaration staging. Shared draft
+  repair consumers use the family on MIPS; other processors have no corresponding
+  proven hardware reader. Ordinary linked-byte or objdiff judging still applies.
+
+- Done: opt-in automatic exact-bundle recovery also rechecks saved deep-permuter
+  source/profile pairs when the original search lacked promotion allowance. Each
+  pass attempts one fresh verification; failed newer evidence no longer hides
+  older untried exact pairs. Claims, input freshness and ordinary byte/data gates
+  remain required; imported project builds retain their existing exclusion.
+
+- Done: applicable target-backed breakpoint/live-register proposals retain priority
+  through learned ordering and the final deep queue, ahead of generic rewrites.
+  Alternate-profile exact matches update best score/percentage and improvement
+  counts and discard the stale previous-profile diff.
+
+- Done: move-on guidance includes the current release claim token, avoiding rejected first handoffs after a same-worker reclaim while preserving stale-lease guards.
+- Done: shared deterministic repairs can separate a proven constant global
+  pointer field argument from the pointer's later capture. The bounded proposal
+  preserves helper purity, pointer types and evaluation constraints, reaches ROM
+  and project repair consumers, and reproduced a private MIPS GCC linked match at
+  rank 6 of 34. It leaves callee prototypes to verified source context.
+- Done: independent patch batches identify all invalid variant anchors and their current revision before any trial compiles, allowing one precise correction without partial edits.
+
+- Done: inferred candidate-local records recognize repeated aligned scalar accesses
+  through initialized local byte pointers, with no other pointer uses. Shared repair
+  paths retain the existing field/access bounds and ordinary judge; guards reject
+  mutation, escape, shadows, unknown uses, qualifiers and preprocessor directives.
+
+- Done: MIPS ROM target diagnostics recognize constant `0xffff`-masked low addends
+  when an adjacent annotated high and raw register/address pair prove the full address.
+  Older target metadata receives the same completion in the display object, preserving
+  stored bytes, relocation records and ordinary linked verification. This shared MIPS
+  path reaches ROM consoles; object-project judging already reads object relocations.
+
+- Done: local repair discovery reuses its revision fingerprint across one proposal pass while retaining fresh tried-target lookups and recomputing scope on the next pass.
+
+- Done: bounded scalar normalization scopes preserve a saved signed value while
+  ending its copied-from lifetime inside one expression replacement. Shared
+  draft/agent/permuter candidates reuse an existing unused scalar, preserve opaque
+  unrelated macros, reject observable or out-of-scope locals, and retain the
+  ordinary compiler and byte/object judge as the acceptance gate.
+
+- Done: shared draft and agent repair searches can propose one unambiguous copied
+  callee-name correction from MIPS symbolic direct calls, preserving source-owned
+  prototype types and the ordinary exact judge. Other processor call-syntax adapters
+  remain planned; ambiguous multi-callee remapping is intentionally unsupported.
+
+- Done: read-only address resolution recognizes both imported `func` and legacy
+  `function` symbol kinds while preserving data conflicts and overlay ambiguity.
+
+- Done: compact batch claim queues retain each queued function's release token,
+  with cheap claim-metadata recovery guidance and unchanged stale-lease protection.

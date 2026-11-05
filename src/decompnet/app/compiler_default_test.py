@@ -75,7 +75,7 @@ def run(net, slug, selected, log=print, nonmatches=False):
     state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
                       or headers() != original_headers or signature(latest_candidates) != signature(candidates))
     state['compatible'] = bool(candidates) and state['failed'] == 0 and not state['stale']
-    log('Test finished. Settings, matches and saved scores are unchanged.' + (' Inputs changed during the test; rerun before making a decision.' if state['stale'] else ''))
+    log('Test finished. Settings, matches and saved scores are unchanged.' + ((' Inputs changed during the test; passing results can be freshly rechecked and applied.' if nonmatches else ' Inputs changed during the test; rerun before making a decision.') if state['stale'] else ''))
     return state
 
 
@@ -129,8 +129,12 @@ def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False):
                 raise NetworkError('No longer unmatched; skipped.')
             if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
                 raise NetworkError('An agent is working on this function; retry after it releases the claim.')
-            if net.store.one('SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND vram=?', proj['id'], fn['vram'])['n'] != 1:
-                raise NetworkError('Shares an overlay address; needs an individual compiler review.')
+            siblings = net.store.all('SELECT id,rom_offset FROM functions WHERE project_id=? AND vram=?', proj['id'], fn['vram'])
+            if len(siblings) != 1 and (fn['rom_offset'] is None or any(
+                    row['id'] != fn['id'] and row['rom_offset'] == fn['rom_offset'] for row in siblings)):
+                raise NetworkError('Shares an overlay address without a unique ROM location; identify its original overlay before applying.')
+            # A known ROM location selects this entry alone through apply_function_compiler's
+            # function_compilers override. Never change an address range for shared overlays.
             source = net._comparison_source(fn)
             if not source:
                 raise NetworkError('No saved C is available.')

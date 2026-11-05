@@ -780,9 +780,11 @@ class CompilerMixin:
             return self.forks.try_compiler(agent, slug, function, compiler, flags, source, keep_match=keep_match)
         proj = self._project(slug)
         cfg = self.cfg(proj)
-        tc = self._toolchain_named(cfg, compiler)
-        flag_list = flags.split() or consoles.default_flags(cfg, tc)
         fn = self._function(function, slug)
+        current = compiler.strip().lower() == "current"
+        own = compiler_for(cfg,fn["vram"],fn)
+        tc = own["toolchain"] if current else self._toolchain_named(cfg, compiler)
+        flag_list = flags.split() or (own.get("flags",[]) if current else consoles.default_flags(cfg, tc))
         source = source if source.strip() else self._source_of(fn)
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")

@@ -187,3 +187,148 @@ variant are shown only from matching recorded provenance; inherited/mismatched s
 attributed as a new rewrite. Unrecorded file/draft changes explicitly have no inferred writer. Historical scores
 remain historical and every new match still goes through the ordinary judge. These views do not compile,
 select another source, or change a claim.
+
+
+## Responsive connections and claim recovery
+
+Compact `project_info` reads saved configuration and indexed project totals. Full overview, SDK/room facts,
+knowledge and compiler suggestions are deferred to `detail=true`; explicit project instructions are retained.
+MCP initialization, authenticated tool listing, authentication and transcript persistence run in workers,
+not on the HTTP event loop. Metadata and app-only health checks have dedicated capacity independent of
+ordinary tool workers. At most two app startup probes run concurrently; busy probes retry without a model
+request, using staggered backoff. Per-tool transcript responses include numeric queue, dispatch, SQL-read,
+build and pre-dispatch durations. Build duration includes compiler/build-lock waiting; SQL timing covers
+Store reads, not all transaction writes. Timings overlap and are not CPU measurements.
+
+Agent `claim_function` reserves ordinary leases and returns saved candidate C and a claim token without
+running diagnostic builds, drafting or imported-tree inspection. Same-agent/project claim requests serialize;
+unchanged retries return the existing receipt. Supporting assembly, notes and drafts remain available through
+`get_assembly` and `get_function(section="brief")`; `get_candidate` explicitly loads baseline evidence.
+Preparation is described as deferred, never falsely queued or completed. Low-level claim/UI APIs retain
+full briefs. The read-only `get_claims` tool lists up to 20 of the caller's live project claims and tokens;
+ownership errors identify held functions and point to this recovery path. No other agent's claims are exposed.
+
+Explicit CLI-reported MCP timeouts/unavailable tools are connection outcomes rather than no-compilation
+failures. During connection backoff, saved source and claims remain available; an explicit user stop still
+uses ordinary cleanup. A second consecutive CLI-reported connection failure pauses further model retries;
+normal paused-worker cleanup releases leases without abandon penalties. Old session replies cannot trigger
+a new connection outcome. Generic blockers and provider usage limits retain their existing handling.
+
+`try_compiler(compiler="current")` uses the effective function profile (including overlay selectors), retaining
+its flags unless explicit flags are supplied. Imported projects resolve their file's own compiler through the
+console adapter and keep their build-owned flag restrictions. Explicit compiler diagnostics rejecting a
+requested option are remembered for that pinned compiler ID; repeated diagnostic requests skip that known
+invalid flag, without claiming a successful compile or match. Other compiler versions and unrecognized
+failures are unaffected. Mismatch-focused assembly reads without a mapped target anchor return an explained,
+bounded raw target page; they do not infer a location or run another compile.
+
+
+## Paused-queue read snapshots
+
+Automatic selection reads lightweight pause records before loading full sources. Records without an exhausted
+current or historical count need no fingerprint. A batch shares header contexts, symbol indexes and scope
+revision reads while retaining byte-for-byte equivalent per-function signatures. Unchanged ROM decisions use
+the existing bounded single-flight read cache, keyed by recorded model/worker identity, input revision, project
+configuration, exact pause records and repair-rule digests. Returned IDs are copied; callers cannot mutate the
+cached result. Retry/resume edits and source, target, header, symbol or matched-callee changes invalidate the
+snapshot. Imported projects recheck external source/build dependencies on every decision rather than caching a
+pause behind a time limit. These are scheduling hints only; no scores, compile limits, claims or judge verdicts
+are changed.
+
+This addresses observed empty-queue calls with roughly 1,150 database reads and up to 88 seconds of elapsed
+work under contention. A synthetic 40-function regression uses 63 reads for a cold complete decision and 11
+for an unchanged same-model worker, compared with 360 reads for the individual fingerprints alone. These
+query counts do not predict wall time on a user's machine.
+
+
+Idle receipt revisions also seek pause records through the existing settings primary key. The legacy exact
+key and scoped `function-id:` range are separate, disjoint lookups, with a stable final key order. This avoids
+cross-scanning unrelated settings for every project function; function 1 cannot consume function 10's scopes.
+The complete legacy/model/worker key set and resulting work revision are unchanged. A synthetic 120-function,
+5,000-unrelated-setting regression executes about 4,500 SQLite VM instructions instead of 7.4 million. This
+follows slow-read logs attributing 12–79 seconds to the previous variable GLOB/OR join under live contention;
+synthetic wall times are not a live performance guarantee. No schema migration or extra index is required.
+
+### Include the lease token when handing work off
+
+Recent transcripts showed five first release calls rejected after the same worker
+reclaimed a function: agents supplied notes but omitted the claim token already
+present in their continuation state. Move-on feedback now provides a release call
+with the current function and lease token. Tool instructions ask for that token on
+the first call as well as retries. A delayed call with an old token still cannot
+release a newer claim; guidance neither acquires nor releases work. Synthetic
+regressions execute the suggested arguments across reclaim generations and verify
+that other workers cannot obtain a release token through this guidance.
+
+### Repair invalid batch anchors in one response
+
+Two recent independent patch batches failed on missing or ambiguous anchors without
+identifying the failing variant. Batch validation now reports every invalid variant
+by its one-based position, retains exact occurrence/line diagnostics and includes the
+current candidate revision. A rejected explicit batch runs no variants or baseline
+build and changes no candidate; valid alternatives are not silently compiled on their
+own. Fix each reported anchor against the same starting C and resubmit the batch.
+
+### Reuse discovery fingerprints within a pass
+
+Recent candidate reads took 15–21 seconds and about 1,000–1,200 SQL reads even when
+no new build ran. Proposal eligibility and final filtering rebuilt the same
+source/build/rule fingerprint for each candidate. They now compute revision scope
+once per pass and reuse it for indexed tried-target lookups, as already done for
+the durable compiled-source scope. The database lookup still runs for each target;
+trial records are not cached. A later discovery pass recomputes the fingerprint,
+so changed compiler inputs reopen old trials.
+
+Synthetic 100-proposal filtering needs four scope calculations instead of 103;
+generation eligibility needs three instead of 102. Regression tests verify the
+same suppressed/remaining proposals, fresh trial records and changed-input
+invalidation. These counts do not establish a live wall-time speedup or explain
+all observed candidate-read latency. Every submitted candidate still uses the
+ordinary judge.
+
+### One copied callee differs from the target
+
+A reused function can have the right structure but still call a donor overlay's
+function. The existing overlay alias family only covers the same address under
+another name. `target_callee_name` additionally offers a single spelling replacement
+when the MIPS target and declared candidate calls differ by exactly one symbol and
+have matching static call counts. It rewrites the owned prototype and calls together,
+without altering shared headers or guessing among multiple targets. Call-focused
+search prioritizes this hypothesis; acceptance remains the ordinary byte judge.
+
+### Imported function symbols in address reads
+
+Several recent `get_function` calls using generated address labels were refused
+as data even though a unique matched function owned the address. Their imported
+symbol records used `kind=func`; the resolver recognized only `function`. Read-only
+ownership now accepts both function-kind spellings. Canonical owners are still
+required: an orphan function symbol creates no boundary, overlapping images stay
+ambiguous without context, and genuine data/unknown symbols retain their data
+classification. No name, claim or match is changed by resolving an address.
+
+### Keep release tokens in compact claim queues
+
+A batch receipt retains the first function's details and lists the rest as a compact
+queue. That compaction previously dropped the queued functions' distinct claim
+tokens. Recent transcripts show repeated empty, stale or placeholder-token releases
+and extra recovery calls. Queue entries now retain each token already present in the
+original receipt, without fetching source or performing more database reads. Each
+function must be released with its own token. Missing receipt tokens and unchanged
+claim replies point to `get_claims` for cheap metadata recovery. No token is guessed,
+and stale-generation release guards remain unchanged.
+
+### Separate tool lock acquisition from computation
+
+Recent tool dispatches took over two minutes while recorded SQL reads and compiler
+builds accounted for only a small fraction of that time. This does not identify
+the cause. MCP transcript timings now include `write_lock_wait_ms` for transaction
+writer-lock and candidate-lock registry acquisition, and `candidate_lock_wait_ms`
+for per-agent/function attempt serialization. Both are numeric acquisition durations;
+time spent doing work while holding the locks is excluded. The lock scopes,
+transaction rollback and claim checks are unchanged in ROM and project modes.
+
+These fields cover only the instrumented Python locks, not every application lock
+or SQLite engine waits in BEGIN/COMMIT. Nested request timers can overlap, so do
+not add all timing fields as exclusive portions of dispatch time. Zero can mean
+no instrumented acquisition occurred. This adds diagnostic evidence, not a proven
+latency improvement.
