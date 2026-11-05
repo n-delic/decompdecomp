@@ -96,3 +96,49 @@ def test_record_fields_are_not_scalar_locals():
 def test_hex_letter_parameter_is_not_a_literal_condition():
     parent = 'int f(int a1) { return a1; }'
     assert unsafe_temporary(parent, 'int f(int a1) { int temp; if(a1) temp=2; return temp; }', 'f')
+
+
+@pytest.mark.parametrize('header,expression', [
+    ('#define ROOT (*(Record **)(buffer+4))', '(void)ROOT;'),
+    ('#define ROOT (*pointer)', '(void)ROOT;'),
+    ('#define use(a,b) ((Item*)use(a,b))', 'use(condition, condition);'),
+    ('#define ROOT \\\n (*(Record **)(buffer+4))', '(void)ROOT;'),
+])
+def test_unrelated_transparent_macros_do_not_disable_initialization_check(header, expression):
+    candidate = 'int f(int condition) { int temp; '+expression+' if(condition) temp=2; return temp; }'
+    assert unsafe_temporary(PARENT, candidate, 'f', header)
+    initialized = candidate.replace('if(condition) temp=2;', 'if(condition) temp=2; else temp=3;')
+    assert not unsafe_temporary(PARENT, initialized, 'f', header)
+
+
+@pytest.mark.parametrize('header,expression', [
+    ('#define ROOT (*(int *)&temp)', '(void)ROOT;'),
+    ('#define ROOT (*get())', '(void)ROOT;'),
+    ('#define ROOT (*(pointer++))', '(void)ROOT;'),
+    ('#define ROOT (*(pointer ? pointer : other))', '(void)ROOT;'),
+    ('#define STOP return 0', 'STOP;'),
+    ('#define use(a,b) ((Item*)use(b,a))', 'use(condition, condition);'),
+    ('#define use(a,b) ((Item*)use(a,a))', 'use(condition, condition);'),
+    ('#define Item temp\n#define use(a,b) ((Item*)use(a,b))', 'use(condition, condition);'),
+    ('#define ROOT (*pointer)\n#define ROOT initialize(temp)', '(void)ROOT;'),
+])
+def test_opaque_macros_still_receive_no_verdict(header, expression):
+    candidate = 'int f(int condition) { int temp; '+expression+' if(condition) temp=2; return temp; }'
+    assert not unsafe_temporary(PARENT, candidate, 'f', header)
+
+
+def test_generator_checks_bad_temporary_despite_unrelated_header_alias(tmp_path):
+    bad = 'int f(int condition) { int temp; (void)ROOT; if(condition) temp=2; return temp; }'
+    good = bad.replace('if(condition) temp=2;', 'temp=condition;')
+    script = tmp_path/'generator.py'
+    script.write_text('import json,sys\nfor line in sys.stdin:\n'
+                      ' for source in '+repr([bad, good])+':\n'
+                      '  print(json.dumps({"variant":source,"lineage":["perm_temp_for_expr"]}))\n'
+                      ' print(json.dumps({"done":True}),flush=True)\n')
+    gen = permute.Generator([sys.executable, str(script)])
+    try:
+        result = gen.batch(dict(source=PARENT, function='f', header='#define ROOT (*pointer)'))
+    finally:
+        gen.close()
+    assert result == [good]
+    assert result[0].lineage == ['perm_temp_for_expr']

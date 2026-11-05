@@ -4148,3 +4148,18 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   results for all byte inputs; the external-linkage negative control fails on
   duplicate helper symbols. Full-project verification is still required when
   accepting any candidate, especially if a helper cannot be fully inlined.
+
+### Unrelated memory aliases must not disable temporary initialization checks
+
+- A native rewrite from an N64 candidate introduced an integer temporary assigned
+  in only one branch and read in another. With KMC GCC 2.7.2, compiling and scoring
+  that candidate did not establish its validity. Previously, unrelated object
+  dereference macros disabled the entire bounded initialization check.
+- The check now recognizes narrow object dereference aliases and exact self-cast
+  function forwarders. Definitions mentioning tracked temporaries, unknown macro
+  dependencies, assignments, control flow or reordered arguments still receive no
+  verdict. This is not arbitrary macro expansion or a complete UB checker.
+- Private replay rejects the retained integer-temporary example; no new exact
+  match is claimed. Pointer temporaries and more complex function-like memory
+  aliases remain outside this change. Regressions cover initialized alternatives,
+  hidden dependencies, conflicting definitions and traced generator output.

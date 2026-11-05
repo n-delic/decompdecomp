@@ -52,6 +52,8 @@ def unsafe_temporary(parent, candidate, name, header=""):
     if not flow or flow.entry is None:
         return False
     names = flow.names
+    from .permuter_macro_effects import transparent_macros
+    opaque_macros = macros - transparent_macros(combined, names)
     # The native walk commonly wraps a single statement in do {...} while (0).
     # Prune only its literal-zero back edge; other constant controls receive no verdict.
     one_shot_conditions = set()
@@ -72,7 +74,7 @@ def unsafe_temporary(parent, candidate, name, header=""):
         if ((index not in one_shot_conditions and re.search(r'\d', text)
              and re.fullmatch(r'[\s0()+*/%<>=!&|^~.-]+', numbers_only))
                 or (not text.strip() and "'" in candidate[node.start:node.end])
-                or set(re.findall(IDENT, text)) & macros
+                or set(re.findall(IDENT, text)) & opaque_macros
                 or re.search(r'\b(?:sizeof|_Alignof|typeof|__typeof__|true|false)\b', text)):
             return False
         # Expression sequencing, embedded writes and macro-like calls are beyond this guard.
