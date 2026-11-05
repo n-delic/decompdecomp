@@ -3857,3 +3857,31 @@ a narrow local added truncation. Joining source lines, inserting blank lines,
 moving the global store, and lexical statement wrappers did not produce an
 exact match. Keep the normal compiler and linked/object judge as the acceptance
 path; inferred records are local hypotheses, not proven shared object layouts.
+
+### Verified case: sequenced byte guard storage across a branch
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian MIPS.
+A 201-instruction input scan had a stale induction copy in its draft. Target instructions independently
+showed the incremented byte counter supplying call arguments. Correcting those uses changed the
+ordinary linked mismatch from 60 to 70: fourteen register operands, with every opcode matching.
+
+Compiler RTL separated the promoted signed counter, live across the guard branch, from the byte
+bound and comparison result local to its predecessor block. Local allocation assigned the latter
+pair to register 2, forcing the counter into register 3. Capturing the bound in a 32-bit scratch,
+then assigning the comparison result to that same scratch in a **separate statement**, changed
+this allocation. Reusing the scratch for a later equality result only where the following branch
+unconditionally overwrote the previous equality destination recovered exact linked bytes (804 bytes).
+The generated repair reaches this source from the original draft at position nine in the broad
+proposal list and within an eight-candidate targeted query. An independent complete-image rebuild
+was byte-identical; all 2,059 previously selected C inputs, profiles and object hashes were preserved. This is one newly matched case, not a general register assignment guarantee.
+
+Failed controlled alternatives: reversing comparison operands, integer casts, standalone bound or
+counter captures, splitting equality/call-result locals, register storage qualifiers, identity inline
+helpers, and byte record views retained the fourteen differences or regressed. The neighboring
+`-fno-strength-reduce` profile and `-ffast-math` did not change the result; disabling instruction
+scheduling regressed substantially. A nested double assignment also emitted exact bytes but was
+rejected because C90 does not sequence those stores (see GCC
+[`-Wsequence-point`](https://gcc.gnu.org/onlinedocs/gcc-15.1.0/gcc/Warning-Options.html)). Comma-sequenced and separate-statement forms
+both retained exact bytes; only well-sequenced forms are generated. Synthetic regression fixtures
+check source constraints and compile under host C90 sequence-point diagnostics; these are generator
+tests, not additional game matches. Target bytes, context and effective compiler flags stayed fixed.

@@ -710,3 +710,10 @@ The shared inferred-record repair also recognizes implicit byte offsets for uniq
 unescaped initialized local byte pointers, retaining its two-field/three-access
 minimum. Explicit early scalar captures changed register allocation instead.
 Treat the inferred record as a local hypothesis and keep ordinary linked verification.
+
+For byte-counter guards whose promoted index survives into the body, inspect local/global allocation
+in `.lreg` and `.greg` dumps. A named 32-bit scratch can capture the byte bound, then receive the
+comparison result in a separate statement. This can change which local temporaries reserve return
+registers before the counter is allocated. Keep both stores sequenced; a nested double assignment
+can accidentally match while violating C90 sequence rules. Redirect an equality scratch only if the
+following branch overwrites its old destination before any read. Ordinary linking remains decisive.
