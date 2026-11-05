@@ -20,6 +20,7 @@ def test_plain_compiler_paths_need_no_runtime_copy(tmp_path, monkeypatch):
     assert toolchains._space_free_runtime(root) == root.resolve()
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='needs POSIX symlinks and private-directory permissions')
 def test_whitespace_and_symlinks_materialize_one_private_snapshot_per_install(tmp_path):
     root = pack(tmp_path / 'Application Support' / 'compiler')
     alias = tmp_path / 'alias'
@@ -68,6 +69,7 @@ def test_only_marked_native_packs_receive_the_copy(tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(toolchains, '_space_free_runtime', lambda directory: seen.append(directory) or copied)
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
+    monkeypatch.setattr(toolchains.wsl, 'wanted', lambda: False)
     for tid in ('ee-gcc-2.95.2', 'ee-gcc-2.95.3'):
         assert toolchains.runtime_dirs(tid) == (copied, runner)
     assert seen == [primary, primary]
