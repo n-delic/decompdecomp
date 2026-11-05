@@ -150,7 +150,8 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).name not in layout)
     if left:
         known = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
-        left = [name for name in left if Path(name).stem not in known]
+        known_files = {saves._source_file(function) for function in known}
+        left = [name for name in left if Path(name).name not in known_files]
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
         os.replace(folder / name, folder / "unlisted" / name)
@@ -217,7 +218,9 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
         source_files = {saves._source_file(name) for name in layout}
         for name in files:
             if name.startswith(("src/", "best/")) and Path(name).name not in source_files:
-                raise NetworkError(f"Add {Path(name).stem} to the function layout in progress/decompdecomp.json before continuing.")
+                symbol = next((function for function in layout if saves._source_file(function) == Path(name).name),
+                              Path(name).stem)
+                raise NetworkError(f"Add {symbol} to the function layout in progress/decompdecomp.json before continuing.")
         functions = {}
         for name, info in layout.items():
             if Path(name).name != name or "\\" in name or "/" in name:

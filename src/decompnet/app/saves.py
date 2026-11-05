@@ -36,6 +36,8 @@ FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
 SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")  # why an agent or user set a function aside
+SOURCE_COMPONENT_BYTES = 249  # leaves room for the publisher's .c.tmp suffix under common 255-byte limits
+SOURCE_PREFIX_BYTES = 80  # readable hint; the SHA-256 suffix distinguishes symbols with the same prefix
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
@@ -46,9 +48,9 @@ def _source_file(name: str) -> str:
     The layout retains the full symbol; its digest makes the shortened filename stable across computers and
     different from another template with the same prefix. Leave room for the publisher's .c.tmp suffix.
     """
-    if len(name.encode("utf-8")) <= 249:
+    if len(name.encode("utf-8")) <= SOURCE_COMPONENT_BYTES:
         return name + ".c"
-    prefix = name.encode("utf-8")[:80].decode("utf-8", errors="ignore")
+    prefix = name.encode("utf-8")[:SOURCE_PREFIX_BYTES].decode("utf-8", errors="ignore")
     return prefix + "_" + hashlib.sha256(name.encode("utf-8")).hexdigest() + ".c"
 
 
