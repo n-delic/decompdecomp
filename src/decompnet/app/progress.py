@@ -1090,7 +1090,11 @@ class Progress:
                                        "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
                                        (status, keep, keep, keep, row["id"]))
                             db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
-                    db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
+                    # A source-only edit must not replay the whole note history. Compare
+                    # with the fresh database render, retaining concurrent new notes too.
+                    restore_notes = applied_manifest.get('notes', []) != json.loads(rendered[saves.MANIFEST]).get('notes', [])
+                    if restore_notes:
+                        db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
                     db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (pid,))
                     units = set(applied_manifest.get("headers") or {})
                     for row in db.execute("SELECT DISTINCT unit FROM context_versions WHERE project_id=?",
@@ -1100,7 +1104,7 @@ class Progress:
                                        (pid, row["unit"]))
                     with compiler.cancellable(report.check_cancel):
                         by_name, _ = saves._apply_context(net, slug, folder, applied_manifest, report,
-                                                         files=applied_files)
+                                                         files=applied_files, restore_notes=restore_notes)
                     report.check_cancel()
                     if not saves._publish(folder, pending, removed, expected=disk,
                                           chosen=bool(cfg.get("progress_folder"))):

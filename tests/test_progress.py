@@ -1247,3 +1247,65 @@ def test_periodic_autosave_keeps_dirty_saves_prompt_and_finds_in_place_edits(pro
     clock[0]+=15
     auto.run_once(force=False)
     assert net._function('f','game')['best_source']=='changed draft\n'
+
+
+def test_source_edit_preserves_unchanged_note_history_and_ids(project, monkeypatch):
+    net, folder, judged = project
+    (folder / 'src').mkdir(exist_ok=True)
+    path = folder / 'src/f.c'
+    path.write_text('good original')
+    net.progress.sync('game', force=True)
+    agent, _ = net.local_agent('reviewer')
+    net.add_note(agent, 'game', 'temporary history', 'g')
+    temporary = net.store.one("SELECT id FROM notes WHERE text='temporary history'")['id']
+    net.add_note(agent, 'game', 'existing history', 'f')
+    with net.store.tx() as db:
+        db.execute('DELETE FROM notes WHERE id=?',(temporary,))
+    net.progress.sync('game', force=True)
+    before = [dict(r) for r in net.store.all('SELECT id,text,created_at FROM notes WHERE project_id=1 ORDER BY id')]
+    assert before
+    original = net.add_note
+    def no_replay(agent, slug, text, function=None, **kwargs):
+        assert text != 'existing history', 'An unchanged history must not be replayed'
+        return original(agent, slug, text, function, **kwargs)
+    monkeypatch.setattr(net, 'add_note', no_replay)
+    path.write_text('good edited')
+    net.progress.sync('game', force=True)
+    assert [dict(r) for r in net.store.all('SELECT id,text,created_at FROM notes WHERE project_id=1 ORDER BY id')] == before
+    assert judged[-1] == ('f', 'good edited')
+
+
+def test_manifest_note_changes_still_replace_history(project):
+    net, folder, _ = project
+    agent, _ = net.local_agent('reviewer')
+    net.add_note(agent, 'game', 'remove this history', 'f')
+    net.progress.sync('game', force=True)
+    manifest(folder, notes=[{'function': 'f', 'text': 'imported history', 'by': 'contributor'}])
+    net.progress.sync('game', force=True)
+    texts = [r['text'] for r in net.store.all('SELECT text FROM notes WHERE project_id=1')]
+    assert 'remove this history' not in texts
+    assert any('imported history' in text for text in texts)
+
+
+def test_source_edit_keeps_note_added_after_database_render(project, monkeypatch):
+    net, folder, _ = project
+    (folder / 'src').mkdir(exist_ok=True)
+    path = folder / 'src/f.c'
+    path.write_text('good original')
+    net.progress.sync('game', force=True)
+    agent, _ = net.local_agent('reviewer')
+    net.add_note(agent, 'game', 'original history', 'f')
+    net.progress.sync('game', force=True)
+    render = saves._render
+    inserted = []
+    def render_with_note(*args, **kwargs):
+        result = render(*args, **kwargs)
+        if not inserted:
+            inserted.append(True)
+            net.add_note(agent, 'game', 'concurrent history', 'f')
+        return result
+    monkeypatch.setattr(saves, '_render', render_with_note)
+    path.write_text('good edited')
+    net.progress.sync('game', force=True)
+    texts = [r['text'] for r in net.store.all('SELECT text FROM notes WHERE project_id=1')]
+    assert inserted and 'original history' in texts and 'concurrent history' in texts

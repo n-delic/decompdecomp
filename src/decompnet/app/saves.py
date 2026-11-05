@@ -669,7 +669,7 @@ def _saved_source(folder: Path, files: dict[str, str] | None, name: str) -> str 
 
 
 def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
-                   files: dict[str, str] | None = None) -> tuple[dict, dict]:
+                   files: dict[str, str] | None = None, *, restore_notes: bool = True) -> tuple[dict, dict]:
     """Put back everything a save changes before its C is judged: layout, names, settings, notes, set-aside."""
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = net._project(slug)
@@ -742,7 +742,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
         "SELECT id,name FROM functions WHERE project_id=?", pid)}
     authors = {}
     with net.store.tx() as db:
-        for note in manifest.get("notes") or []:
+        for note in (manifest.get("notes") or []) if restore_notes else []:
             check_cancel()
             name = note.get("function")
             if name and name not in functions:

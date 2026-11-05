@@ -2592,3 +2592,13 @@ need independent evidence before receiving this specific GNU C repair.
   from 2 to 5. Best scores were unchanged across the cohort. Individual recoveries
   moved from 6 to 9 trials and from 14 to 7 trials. This small comparison does not
   establish general match-rate or model-token savings; no live matches were adopted.
+
+
+- Done: shared `pointer_capture_reuse` draft, agent-local and deep repair family reuses dead typed
+  pointer captures without moving evaluations, with bounded independent pairs before singles.
+  Exact type/constant array bounds, CFG liveness and unique sink paths exclude unknown aliases,
+  qualifiers, escapes, macro effects and incoming jumps; ordinary verification remains authoritative.
+
+- Done: importing unchanged note metadata during a source edit preserves the existing note
+  rows instead of deleting and re-attributing the complete history. Explicit manifest note
+  edits still replace history; source edits retain notes added concurrently after the render.

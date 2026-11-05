@@ -15,6 +15,8 @@ LIMIT = 24
 def declarations(part):
     result = []
     signature = part.clean[max(part.clean.rfind(ch,0,part.opening) for ch in ';{}')+1:part.opening]
+    # A preceding macro's formal parameters are not function parameters.
+    signature = re.sub(r'^\s*#.*$', '', signature, flags=re.M)
     for decl in POINTER.finditer(part.clean,part.opening+1,part.end):
         name = decl['name']
         prefix = part.clean[part.opening+1:decl.start()].rstrip()

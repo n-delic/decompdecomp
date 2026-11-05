@@ -833,3 +833,20 @@ The minimal helper alone did not help. The shared `inline_byte_address` bundle t
 bounded, typed version of these shapes; it never adds volatile, changes the ABI or
 moves an effect. Keep qualifiers backed by actual behavior, preserve verified source
 line breaks, and check actual callback signatures before accepting a low-score draft.
+
+
+### Dead typed pointer captures can need a pair
+
+With KMC2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, reusing an existing dead typed pointer
+for two later independent array-cell captures recovered a 488-instruction exact linked function.
+One such change worsened25->40; the pair recovered0. Preserve the existing load/conversion
+boundaries and real intervening initialization. Try `pointer_capture_reuse` through local repairs
+before spending model turns on register renaming. Its bounded CFG/type checks reject live storage,
+escapes, qualifiers, calls and unknown/duplicating macros. This is one measured case, not a general
+allocation rule, and a linked match still needs a complete image rebuild before publication.
+
+When signatures disagree, inspect the selected definitions at both ends of the call. A stale
+parameter forwarded only to another unused parameter is not evidence of a real argument. Use
+the actual formal type (`void *` and a byte pointer are not compatible function parameter
+types), with an explicit conversion where needed. Reverify any corrected existing caller or
+callee and the entire image; a corrected declaration is not an additional function match.
