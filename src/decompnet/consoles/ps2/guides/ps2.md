@@ -43,3 +43,10 @@ Small data is `$gp`-relative (-G8 typical), so declare externs with their real s
 
 Libraries: Sony's libgraph, libdma, libpad, libcdvd, libkernl, libsd and libvu0 are linked as
 libraries; their prototypes are in the project's headers.
+
+SN EE-GCC 2.95.2/2.95.3 embeds an unquoted include path derived from its own real
+executable location. decompdecomp prepares a private runtime copy when the installed
+path contains spaces (including macOS Application Support). User-provided kit copies
+remain in place: choose a kit folder without spaces for these drivers. A symlink or `-nostdinc`
+does not fix that driver bug; do not change a game's source or compiler flags to
+work around a `Too many arguments` error before checking its compiler runtime.
