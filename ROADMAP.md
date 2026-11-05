@@ -2395,3 +2395,9 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   through initialized local byte pointers, with no other pointer uses. Shared repair
   paths retain the existing field/access bounds and ordinary judge; guards reject
   mutation, escape, shadows, unknown uses, qualifiers and preprocessor directives.
+
+- Done: MIPS ROM target diagnostics recognize constant `0xffff`-masked low addends
+  when an adjacent annotated high and raw register/address pair prove the full address.
+  Older target metadata receives the same completion in the display object, preserving
+  stored bytes, relocation records and ordinary linked verification. This shared MIPS
+  path reaches ROM consoles; object-project judging already reads object relocations.

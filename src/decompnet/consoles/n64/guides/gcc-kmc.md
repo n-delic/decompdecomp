@@ -717,3 +717,9 @@ comparison result in a separate statement. This can change which local temporari
 registers before the counter is allocated. Keep both stores sequenced; a nested double assignment
 can accidentally match while violating C90 sequence rules. Redirect an equality scratch only if the
 following branch overwrites its old destination before any read. Ordinary linking remains decisive.
+
+If an advisory diff shows a symbolic address disagreement around a masked `%lo` addend,
+compare the raw linked words before changing C. Older splits can omit the low annotation;
+the display now completes an adjacent pair only when its raw address and register flow
+agree with the annotated high. This changes diagnostic scores, never the linked-byte gate.
+An exact opcode sequence with different spill offsets still requires a genuine C solution.

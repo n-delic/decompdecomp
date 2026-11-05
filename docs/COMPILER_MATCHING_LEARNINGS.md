@@ -3885,3 +3885,25 @@ rejected because C90 does not sequence those stores (see GCC
 both retained exact bytes; only well-sequenced forms are generated. Synthetic regression fixtures
 check source constraints and compile under host C90 sequence-point diagnostics; these are generator
 tests, not additional game matches. Target bytes, context and effective compiler flags stayed fixed.
+
+### Controlled regression: omitted masked low relocation annotations
+
+Profile observed: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+32-bit big-endian MIPS. This was a diagnostic correction, not a newly matched function.
+A copied 251-instruction candidate differed in two linked stack accesses, but the advisory
+score was 62: six additional operand differences came from `%lo(base + (constant & 0xffff))`
+annotations omitted by the target reader. An annotated high relocation combined with an
+unannotated absolute low immediate displayed a fictitious address.
+
+The reader now accepts that constant mask only when an adjacent annotated high instruction,
+register flow and the raw instruction pair prove the full address. Existing targets receive
+that completion only in the advisory object; their bytes and stored relocation list stay fixed.
+The copied replay score became 2 and the ordinary linked verdict remained false, with exactly
+the same two differing words. Synthetic tests cover both byte orders, masks, incompatible
+addresses/registers, existing annotations, clobbers and unsupported expressions.
+
+Negative source experiments did not resolve the actual stack gap: putting the table pointer
+first and removing an unused eight-byte array fixed body spill offsets but shrank the frame
+by eight bytes. Padding scopes, register qualifiers, aligned unused locals, pointer copies,
+wide pointer carriers and caller-save/peephole/strength-reduction switches did not recover an
+exact linked match. Preserve those failures separately from the diagnostic correction.
