@@ -514,6 +514,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
+| Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -2384,6 +2385,12 @@ Automatic evidence checks and room services remain read-only here and use their 
   verified build changes, commits only sync-owned paths and pushes the configured upstream.
   Failed pushes retain the commit for retry. Imported-project commit/push UI remains planned;
   those projects already keep their source in their own checkout.
+
+- Done: bound ROM progress checkouts can review and commit app-saved matches, drafts,
+  notes, headers and settings without a standalone build. A private Git index captures
+  the checkpoint while helpers continue; later edits stay local. Unrelated files, staged
+  edits, merge conflicts and concurrent Git operations remain protected. Shared ROM
+  progress/Git integration is covered with homemade projects and local bare remotes.
 
 The background-work thread table explains registered thread roles, shows native IDs and sorts
 by measured CPU, name or purpose. macOS uses proc_pidinfo(PROC_PIDTHREADID64INFO); Linux
