@@ -1,5 +1,11 @@
 # Roadmap
 
+- Done: bounded terminal branch layouts reach shared local repairs, autopilot,
+  deep/iterative search and repair replay. Candidate-owned directly called inline
+  void helpers can be rewritten without editing shared headers. Unknown preprocessing,
+  moved declarations and unsupported control flow remain excluded; every candidate
+  still uses its destination compiler and ordinary exact judge.
+
 - Done: attempt source and full repair evidence use checksum-verified compressed shared payloads,
   preserving IDs and lazy exact reads. Explicit cancellable backfill, opt-in daily failed-source
   retention and indexed 100-row compile-history pages keep bulk data off ordinary list reads.
