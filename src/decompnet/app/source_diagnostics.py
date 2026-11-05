@@ -30,6 +30,10 @@ def hints(source, name, asm='', arch='', rows=None):
     if arch == "mips" and call_arguments(source, name, asm):
         result.append("The target supplies a first call argument that a candidate-owned void prototype omits. "
                       "Try the target_call_argument local family; shared declarations stay unchanged.")
+    from .hardware_operation_repairs import hints as hardware_hints
+    result.extend(hardware_hints(source,asm,arch,rows))
+    if arch=="mips" and rows and re.search(r"\bmfc1\b",asm or "") and any(r[0]=="i" and re.match(r"(?:b\w*|j)\s",r[1]) for r in rows):
+        result.append("Branch destinations near an FP conversion can depend on debug line markers and assembler hazard NOP placement. Try debug_conversion_tail with the original debug profile before flag sweeps. Preserve verified physical source lines through polishing and export; an equivalent one-line temporary may compile differently.")
     original=source[span[0]:span[1]]
     if all(re.search(r"case\s+'"+code+r"'\s*:",original) for code in ('s','f','c')):
         result.append('This resembles a formatting-library routine. Check local SDK/library leads before a broad search. '

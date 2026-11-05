@@ -591,3 +591,20 @@ preserved at every use. `plain_float_slots` tests ordinary local array storage o
 with target call-delay-slot stack-store evidence; never strip MMIO or pointer volatility.
 These families compose under ordinary budgets. Every hypothesis still needs the normal
 exact judge; missing target evidence is no reason to guess a contract.
+
+### Conversion joins and shared shift intermediates
+
+With the original `-g3` profile, try `debug_conversion_tail` for branch-target
+near misses around `mfc1`: a same-type conversion temporary on distinct physical
+lines can place the shared label after the assembler's hazard NOP. Keep successful
+line layout intact in saved C, exports and polishing; rejudge any formatting edit.
+`delayed_narrow_capture` can let a known narrow call parameter perform the ABI
+conversion before capturing that value after the call. `shared_shift_mask` tests
+redundant masks justified by an intermediate's known-zero low bits to preserve CSE.
+These bounded local families are hypotheses and still require exact linked bytes.
+
+If m2c emits `M2C_BREAK(9)` and the target has BREAK 9, use the fixed
+`__builtin_mips_debug_break()` supported by this compiler pack. It may resume;
+`noreturn` and an unknown trap builtin are not substitutes. Find missing non-NOP
+operations before interpreting downstream branch displacements or extra padding
+as progress. Other compiler packs need their own tested intrinsic registration.

@@ -195,6 +195,9 @@ def refine_draft(draft: str, name: str, asm: str) -> str | None:
     GCC games. Still uses m2c's macros for what it can't write plainly: the caller puts seeds.M2C_MACROS before it.
     None when the function's header can't be read."""
     body = overlay_call_aliases(draft,asm)
+    from .app.hardware_operation_repairs import variants as hardware_variants
+    if hardware := hardware_variants(body,name,"mips",asm):
+        body = hardware[0][1]
     globals_: dict[str, str] = {}
 
     def own_variable(m: re.Match) -> str:
