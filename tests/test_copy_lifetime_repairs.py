@@ -125,3 +125,10 @@ def test_out_of_scope_declaration_does_not_license_writes_to_global():
     for body in ('int b; {int a;a=1;use(a);} b=a; return b;',
                  'int b; struct {int a;} record; b=a; return b;'):
         assert not any(f=='dead_copy_source' for f,_ in repairs.variants('int a; int f(){'+body+'}','f'))
+
+
+def test_debug_probes_respect_last_flag_and_line_sensitive_macros():
+    source = 'int f(){int a; a=1;return a;}'
+    assert not debug_boundary_repairs.variants(source,'f',['-g3','-g0'])
+    assert not debug_boundary_repairs.variants(source,'f',['-g3'], '#define WHERE __LINE__')
+    assert not debug_boundary_repairs.variants('#line 20\n'+source,'f',['-g3'])
