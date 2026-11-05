@@ -125,3 +125,47 @@ def test_verified_match_ends_worker_without_waiting_for_deadline(tmp_path):
                             stop=lambda sid,by:s.stop.set(),_run_work=work)
     focused_agents.run(manager,s)
     assert 'complete' in reasons[0]
+
+
+def test_focused_creation_records_worker_without_saved_file_sync(tmp_path,quiet,monkeypatch):  # noqa: F811
+    net=_game(tmp_path)
+    manager=agents.Manager(net,tmp_path,URL)
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:pytest.fail('Creation waited for saved-file verification'))
+    monkeypatch.setattr(manager,'_prepare',lambda *_:pytest.fail('Focused creation prepared the whole project'))
+    sid=manager.start('codex','game',options={'focus_function':'f0','focus_minutes':15})[0]
+    assert manager.sessions[sid].options['focus_id']==net.store.one("SELECT id FROM functions WHERE name='f0'")['id']
+    assert not net.progress.viewing
+
+
+def test_focused_worker_skips_matching_waits_but_syncs_before_work(tmp_path,quiet,monkeypatch):  # noqa: F811
+    net=_game(tmp_path)
+    manager=agents.Manager(net,tmp_path,URL)
+    sid=manager.start('codex','game',options={'focus_function':'f0','focus_minutes':15})[0]
+    class Waiting:
+        def is_set(self):return False
+        def wait(self,*args):pytest.fail('Focused worker waited for unrelated matching preparation')
+    manager._prep['game']=Waiting()
+    monkeypatch.setattr(net.twins,'jobs',{'game':SimpleNamespace(ordered=Waiting())})
+    class Synced(Exception):pass
+    def sync(*args,**kwargs):
+        assert not net.progress.viewing
+        raise Synced()
+    monkeypatch.setattr(net.progress,'sync',sync)
+    with pytest.raises(Synced):manager._run_work(manager.sessions[sid])
+
+
+
+def test_focused_route_does_not_start_whole_project_work(tmp_path,quiet,monkeypatch):  # noqa: F811
+    from starlette.testclient import TestClient
+
+    from decompnet.app.server import build
+    from tests.test_app_server import PORT, SECRET, WINDOW
+    net=_game(tmp_path)
+    mcp,manager,security,_=build(net,tmp_path,PORT,SECRET)
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:pytest.fail('Route waited for saved files'))
+    monkeypatch.setattr(net,'warm_briefs_soon',lambda *_:pytest.fail('Focused route warmed the whole project'))
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
+    response=client.post('/api/agents/start',json={'slug':'game','kind':'codex','count':1,
+        'options':{'focus_function':'f0','focus_minutes':15}},headers={'X-Decomp':'1'})
+    assert response.status_code==200,response.text
+    assert len(response.json()['started'])==1

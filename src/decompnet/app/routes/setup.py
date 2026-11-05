@@ -213,8 +213,13 @@ def register(app: App) -> None:
             return fail(ValueError('Choose one agent and one model for a focused run.'))
         picked: list[str] = []
         try:
-            net.project_row(slug)
-            if options.get("task") not in {"readable", "boundary"}:
+            agents.report_start("Reading project metadata…")
+            if options.get('focus_function'):
+                with net.progress.view():
+                    net.project_row(slug)
+            else:
+                net.project_row(slug)
+            if not options.get('focus_function') and options.get("task") not in {"readable", "boundary"}:
                 net.warm_briefs_soon(slug)  # matching briefs and machine drafts are not polishing inputs
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]

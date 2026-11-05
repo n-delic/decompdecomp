@@ -614,6 +614,7 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- Focused agents are recorded through metadata-only creation, skip whole-project draft/reuse preparation and ordering waits, and show live creation stages with elapsed time. Worker-side saved-file synchronization remains required before work.
 - Background contention: autosave keeps one-second dirty checks with 15-second deep file checks; reuse and startup scans share one maintenance lane with cooperative UI yields and lower priority; SDK corpus indexes are shared across projects; persistent local connection failures back off to five minutes plus worker jitter.
 
 - Check again and helper startup reconsider obsolete agent tooling verdicts when

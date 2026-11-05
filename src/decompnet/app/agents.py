@@ -662,6 +662,13 @@ class Manager:
     # -- control
 
     def start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
+        # Creation only records the worker. Its thread synchronizes saved files before work.
+        if (options or {}).get('focus_function'):
+            with self.net.progress.view():
+                return self._start(kind, slug, count, options)
+        return self._start(kind, slug, count, options)
+
+    def _start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
         if getattr(self, 'source_update_pending', False):
             raise ValueError('A source update is queued. Cancel it before adding new agents.')
         report_start("Validating worker selection…")
@@ -685,7 +692,7 @@ class Manager:
             raise ValueError("decompdecomp is quitting")
         ids = []
         report_start("Preparing the project before creating workers…")
-        if options.get("task") not in {"readable", "boundary"}:
+        if not options.get("focus_id") and options.get("task") not in {"readable", "boundary"}:
             self._prepare(slug)
         report_start("Waiting for the worker registry, then reserving new identities…")
         with self._lock:
@@ -821,7 +828,7 @@ class Manager:
                 raise ValueError("its API endpoint was removed: start a new helper on another one")
             options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
             s.options, s.restarts = options, 0
-            if s.options.get("task") != "readable":
+            if not s.options.get("focus_id") and s.options.get("task") not in {"readable", "boundary"}:
                 self._prepare(s.slug)
             self._launch(s)
 
@@ -838,7 +845,7 @@ class Manager:
             except NetworkError:
                 continue
             options = self.options_now(s.kind, dict(s.options))
-            if options is not None and options.get("task") != "readable":
+            if options is not None and not options.get("focus_id") and options.get("task") not in {"readable", "boundary"}:
                 self._prepare(s.slug)
             with self._lock:
                 if self._down or not resumable(s):
@@ -1223,13 +1230,13 @@ class Manager:
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
         s.push("info", f"{s.label} starting on {s.slug}")
-        # Polishing consumes matched C, so matching preparation cannot unlock its work.
-        polishing = s.options.get("task") in {"readable", "boundary"}
-        if not polishing and (prep := self._prep.get(s.slug)) is not None:
+        # Targeted work already has its input; unrelated matching preparation cannot unlock it.
+        targeted = bool(s.options.get("focus_id")) or s.options.get("task") in {"readable", "boundary"}
+        if not targeted and (prep := self._prep.get(s.slug)) is not None:
             self._set(s, "starting", "first giving the game's code without a source file one (about a minute)")
             prep.wait(PREP_WAIT)
         twins = getattr(getattr(self.net, "twins", None), "jobs", {}).get(s.slug)
-        if not polishing and twins is not None and not twins.ordered.is_set():
+        if not targeted and twins is not None and not twins.ordered.is_set():
             self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)
