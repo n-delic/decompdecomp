@@ -4487,3 +4487,28 @@ Function briefs flag plain zero-argument void stubs with unspecified helper
 prototypes, including referenced matched stubs. This bounded advice does not
 infer signatures or change code. Cheap claim receipts inspect only their
 already loaded source, without another callee lookup.
+
+## KMC GCC: GP-relative literal failures are not placed candidates
+
+With `gcc-2.7.2-kmc -G8 -mips3 -mgp32 -mfp32 -O2 -ffast-math
+-fno-strength-reduce -g3`, a valid source hypothesis generated a double threshold
+in `.lit8` with `R_MIPS_LITERAL` (8). Its instruction referenced `$gp`; the object
+had `ri_gp_value=0x4000`, while the target configuration had no known `$gp` and
+no `$gp` instructions. The target addressed its threshold absolutely at another
+instruction offset. An object GP is not evidence of the game's GP. No literal
+address can be invented from the value or a different instruction site.
+
+A controlled `-G8` to `-G0` comparison, keeping the other flags/header/source,
+removed literal8 but still lacked a corresponding HI16/LO16 pool witness. An
+advisory945 did not make this a placed or exact candidate. The explicit original
+threshold-symbol alternative linked normally but remained nonexact2642.
+No profile was selected or changed from these experiments.
+
+The ROM judge now names literal8 and distinguishes missing target GP from
+unsupported linking with known GP. Both remain failures; no relocation support,
+pool placement or acceptance was added. A homemade period-compiler object
+reproduces the failure and verifies that it remains rejected with either GP
+state. Existing positive and negative ROM/data-link controls remain the gate.
+LLVM's [MIPS relocation definitions](https://raw.githubusercontent.com/llvm/llvm-project/main/llvm/include/llvm/BinaryFormat/ELFRelocs/Mips.def)
+identify type8. Future support requires target GP, correct signed/object-GP
+addends, a matching instruction witness and original pool-byte verification.

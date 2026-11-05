@@ -1,5 +1,9 @@
 # Roadmap
 
+- Planned: MIPS `R_MIPS_LITERAL` pool linking with independently known target `$gp`,
+  corresponding instruction/address witnesses and original data checks. The current
+  ROM judge explains missing `$gp` or unsupported literal linking and keeps rejecting it.
+
 - Done: room clients reopen their saved project immediately while reconnecting, with a nonblocking
   update notice. Applied-snapshot availability survives restarts independently of live sync/presence;
   first joins and host approval/refusal retain their existing gates.

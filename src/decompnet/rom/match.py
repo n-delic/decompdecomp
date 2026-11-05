@@ -32,6 +32,7 @@ from .split import RomFunction
 from .symbols import AUTO_NAME, SymbolTable
 
 R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16, R_MIPS_GPREL16 = 2, 4, 5, 6, 7
+R_MIPS_LITERAL = 8
 _REF = re.compile(r"%(hi|lo|gp_rel)\(\s*([A-Za-z_.$][\w.$]*)\s*(?:([+-])\s*(0x[0-9A-Fa-f]+|\d+))?\s*\)")
 _MASKED_LOW = re.compile(r"%(lo)\(\s*([A-Za-z_.$][\w.$]*)\s*([+-])\s*\(\s*"
                          r"(0x[0-9A-Fa-f]+|\d+)\s*&\s*(?:0x[fF]{4}|65535)\s*\)\s*\)")
@@ -234,6 +235,15 @@ class _Linker:
 
     def address(self, raw: list[dict], k: int, fn_shndx: int, fn_start: int) -> int | None:
         r = raw[k]
+        if r['type'] == R_MIPS_LITERAL:
+            if not self.target.gp:
+                self.problem('R_MIPS_LITERAL (8) needs the target $gp, which is not configured. Check actual target '
+                             '$gp use and compiler small-data settings (-G0 avoids generated $gp-relative literals); '
+                             'do not guess $gp or literal placement.')
+            else:
+                self.problem('R_MIPS_LITERAL (8) literal-pool linking is not supported here yet, even with a known '
+                             'target $gp. Do not guess literal placement.')
+            return None
         if r["type"] == R_MIPS_GPREL16:
             residual = r["value"] - 0x10000 if r["value"] & 0x8000 else r["value"]
         else:
