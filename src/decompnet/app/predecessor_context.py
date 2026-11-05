@@ -18,6 +18,20 @@ def entries(obj):
     return _function_symbols(ELFFile(BytesIO(obj)))
 
 
+def named_row(net, proj, name):
+    row = net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?', proj['id'], name)
+    if row is not None:
+        return row
+    # A rename regression judges proposed names before committing them to the database.
+    # Resolve only through that trial table; ordinary unknown names remain unknown.
+    trial = getattr(net, '_sym_override', {}).get(proj['id'])
+    address = trial.resolve(name) if trial is not None else None
+    if address is None:
+        return None
+    row = net.store.one('SELECT * FROM functions WHERE project_id=? AND vram=?', proj['id'], address)
+    return dict(row, name=name) if row is not None else None
+
+
 def verified(net, proj, fn, obj):
     """All auxiliary entries must be exact, matched, contiguous real predecessors."""
     if dict(proj).get('arch')!='mips':return None
@@ -31,8 +45,7 @@ def verified(net, proj, fn, obj):
     for name in ordered:
         sx,offset,length=found[name]
         if sx!=section or offset!=end:return None
-        row=fn if name==fn['name'] else net.store.one(
-            'SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],name)
+        row=fn if name==fn['name'] else named_row(net, proj, name)
         if row is None or row['vram']!=base+offset or row['size']!=length:return None
         if name!=fn['name'] and row['status']!='matched':return None
         rows.append(row);end=offset+length

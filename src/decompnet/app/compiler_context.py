@@ -43,8 +43,7 @@ def private_unit(net, proj, fn, obj):
         for px,at,amount in placeholders:
             if px==section and at==end and end<offset:end+=amount
         if sx!=section or offset!=end or offset+length>MAX_CODE:return None
-        row=fn if name==fn['name'] else net.store.one(
-            'SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],name)
+        row=fn if name==fn['name'] else predecessor_context.named_row(net, proj, name)
         if row is None or row['size']!=length:return None
         if public and name!=fn['name'] and row['status']!='matched':return None
         rows.append(row);end=offset+length

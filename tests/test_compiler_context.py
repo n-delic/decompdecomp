@@ -127,3 +127,15 @@ def test_single_source_never_guesses_an_unknown_or_macro_generated_definition(mo
     monkeypatch.setattr(context,'ELFFile',lambda _:object())
     monkeypatch.setattr(context,'_function_symbols',lambda _:{'entry':None,'unknown':None})
     assert context.single_source('int entry(void) { return 1; }','','entry',b'obj') is None
+
+
+def test_pending_rename_keeps_independently_verified_auxiliary_address(monkeypatch):
+    from decompnet.app import predecessor_context
+    net,p,rows,found,calls=setup(monkeypatch)
+    original=rows.pop('helper');original['name']='old_helper'
+    net.store.one=lambda sql,pid,key: original if key==original['vram'] else rows.get(key)
+    net._sym_override={p['id']:SimpleNamespace(resolve=lambda name: original['vram'] if name=='helper' else None)}
+    assert context.private_unit(net,p,rows['entry'],b'obj')['context_functions']==['helper']
+    assert calls==['helper','entry'] and original['name']=='old_helper'
+    net._sym_override={}
+    assert predecessor_context.named_row(net,p,'helper') is None
