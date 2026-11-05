@@ -36,6 +36,17 @@ from pathlib import Path
 KEEP = 0.6  # decomp-permuter's default chance of building on the last variant instead of starting again
 SOURCE_STARTS = "DECOMPDECOMP_SOURCE_STARTS"  # a typedef put between the header and the source, to find the seam
 
+TRIES_PER_VARIANT = 4  # rewrites can repeat or fail: give up on a job that yields nothing new this many times over
+MAX_SEED = 10**20
+# a comment, or a string or character literal (group 1), which keeps any /* inside it
+_COMMENT = re.compile(r'//[^\n]*|/\*.*?\*/|("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')', re.S)
+
+
+def plain_c(text: str, directives: bool = True) -> str:
+    """`text` without comments and continued lines, and without preprocessor lines unless `directives`."""
+    text = _COMMENT.sub(lambda m: m.group(1) or " ", text.replace("\\\n", ""))
+    return text if directives else "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
 
 def private_inline(original):
     """Keep newly generated helpers local to their candidate's translation unit."""
@@ -52,17 +63,6 @@ def private_inline(original):
                 node.decl.storage.append('static')
         return result
     return call
-TRIES_PER_VARIANT = 4  # rewrites can repeat or fail: give up on a job that yields nothing new this many times over
-MAX_SEED = 10**20
-# a comment, or a string or character literal (group 1), which keeps any /* inside it
-_COMMENT = re.compile(r'//[^\n]*|/\*.*?\*/|("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')', re.S)
-
-
-def plain_c(text: str, directives: bool = True) -> str:
-    """`text` without comments and continued lines, and without preprocessor lines unless `directives`."""
-    text = _COMMENT.sub(lambda m: m.group(1) or " ", text.replace("\\\n", ""))
-    return text if directives else "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-
 
 def main() -> int:
     sys.path.insert(0, sys.argv[1])  # decomp-permuter's folder: its `src` package and its own copy of pycparser
