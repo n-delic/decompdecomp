@@ -55,7 +55,7 @@ async function openProject(slug, tab = "overview") {
   mapRequest.catch(() => {});  // setup-only projects may not need this response
   try {
     const [ov] = await Promise.all([
-      api(`/api/project?slug=${slug}`, {signal:controller?.signal}).then(data => { steps.summary = true; paintLoading(); return data; }),
+      api(`/api/project?slug=${slug}&quick=1`, {signal:controller?.signal}).then(data => { steps.summary = true; paintLoading(); return data; }),
       S.st ? null : loadState().then(() => { steps.settings = true; paintLoading(); })]);
     if (gen !== S.gen) return;  // another project opened meanwhile
     S.ov = ov;
@@ -345,6 +345,7 @@ function renderHeader(ov) {
   if (comp) chips.push(`<span class="chip-s" title="${esc(fork ? "" : ov.compiler.flags.join(" "))}">${esc(comp)}</span>`);
   $("phChips").innerHTML = chips.join("");
   $("phTitle").textContent = ov.title;
+  $("projectDetailsPending").hidden = !ov.overview_pending;
   const pct = codePct(ov);
   $("phPct").textContent = pctNum(pct);
   $("phBar").style.width = pct + "%";

@@ -47,8 +47,16 @@ class GuiMixin:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
         return res
 
-    def overview(self, slug: str, *, room_members=True) -> dict:
+    def overview(self, slug: str, *, room_members=True, quick=False) -> dict:
         proj = self._project(slug)
+        if quick:
+            cfg = self.cfg(proj)
+            base = self._overview(slug, proj, room_members=False, quick=True)
+            return base | {'overview_pending':True, 'instructions':cfg.get('instructions') or '',
+                           'priority':cfg.get('priority',[]), 'spend':cfg.get('spend'),
+                           'suggestions':[], 'boundaries':[], 'compiler_ranges':base.get('compiler_ranges') or self._range_rows(cfg),
+                           'auto_compiler':self.auto_adjusts(proj), 'progress_syncing':self.progress.syncing(slug),
+                           'progress_sync':self.progress.status(slug)}
         last = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
         from .. import function_profile_suggestions
         cfg = self.cfg(proj)
@@ -88,9 +96,9 @@ class GuiMixin:
                        "compiler_ranges": base.get("compiler_ranges") or self._range_rows(cfg),
                        "auto_compiler": self.auto_adjusts(proj)}
 
-    def _overview(self, slug: str, proj, *, room_members=True) -> dict:
+    def _overview(self, slug: str, proj, *, room_members=True, quick=False) -> dict:
         if (fork := self.fork_slug(slug)):
-            return self.forks.overview(fork, room_members=room_members)
+            return self.forks.overview(fork, room_members=room_members, quick=quick)
         cfg = self.cfg(proj)
         agg = self.store.one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
             ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes','attempts'), 0)
@@ -116,7 +124,7 @@ class GuiMixin:
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
-            "context_version": self._context(proj["id"])["version"],
+            "context_version": (self.store.one("SELECT version FROM context_versions WHERE project_id=? AND unit='' ORDER BY version DESC LIMIT 1", proj["id"]) or {'version':0})['version'],
             "folder": proj["root"],
             "coverage_notes": cfg.get('coverage_notes', []),
             "export": cfg.get("export"),

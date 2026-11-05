@@ -4063,11 +4063,11 @@ class ForkEngine:
 
     # ------------------------------------------------------------------ for the GUI
 
-    def overview(self, slug: str, *, room_members=True) -> dict:
+    def overview(self, slug: str, *, room_members=True, quick=False) -> dict:
         from .libultra import report as libultra_report
 
         proj, fp, cfg = self.get(slug)
-        if cfg.get("ready"):
+        if cfg.get("ready") and not quick:
             self._preflight_once(slug)
         agg = self.net.store.one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
             ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes','attempts'),0)
@@ -4078,25 +4078,25 @@ class ForkEngine:
             **consoles.get(cfg.get("platform")).project_facts(),
             "repo_url": cfg.get("repo_url"), "fork_kind": cfg.get("fork_kind"), "version": cfg.get("version"),
             "origin": cfg.get("origin"), "compiler_name": cfg.get("compiler"),
-            "project_compiler": compiler_info.describe(fp, cfg.get("version")),
-            "libultra": libultra_report(self.net, proj),
-            "versions": fp.versions(), "ready": bool(cfg.get("ready")), "needs": need,
+            "project_compiler": None if quick else compiler_info.describe(fp, cfg.get("version")),
+            "libultra": None if quick else libultra_report(self.net, proj),
+            "versions": [cfg.get("version")] if quick and cfg.get("ready") else fp.versions(), "ready": bool(cfg.get("ready")), "needs": need,
             "rom": {"game_code": cfg.get("version") or "", "region": consoles.name(cfg.get("platform")),
                     "title": proj["name"]},
             "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
                          "proprietary": False, "supported": True},
             "compilers": [],
-            **(self._compiler_facts(fp, cfg) if cfg.get("ready") else {}),
+            **(self._compiler_facts(fp, cfg) if cfg.get("ready") and not quick else {}),
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug, refresh=room_members),
-            "coverage_notes": fp.objdiff_config().get("coverage_notes", []) if cfg.get("ready") else [],
+            "coverage_notes": fp.objdiff_config().get("coverage_notes", []) if cfg.get("ready") and not quick else [],
             "progress_populations": cfg.get("progress_populations", []),
-            "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
-            "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
+            "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and not quick and fp.linkable() else None,
+            "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" and not quick else None,
             "reimports": cfg.get("origin") == "scratch" and consoles.get(cfg.get("platform")).reimports,
-            **self._scope_facts(proj, fp, cfg),
+            **({} if quick else self._scope_facts(proj, fp, cfg)),
             # why it doesn't build on this computer (preflight; checked once a run when its page first opens)
             "build_problem": cfg.get("build_problem") if cfg.get("ready") else None,
         }

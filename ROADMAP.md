@@ -614,6 +614,7 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- Project opening uses an accurate compact summary on reserved UI capacity; expensive diagnostics, build preflight and room refreshes arrive after the page appears. Header version reads no longer fetch shared header text.
 - Optional startup work is split into named per-task threads with project context, progress and cooperative Stop controls in Background work. Heavy tasks remain serialized; unchanged ROM library archives are skipped using persistent input stamps.
 
 - Focused agents are recorded through metadata-only creation, skip whole-project draft/reuse preparation and ordering waits, and show live creation stages with elapsed time. Worker-side saved-file synchronization remains required before work.
