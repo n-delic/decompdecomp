@@ -11,7 +11,7 @@ import pytest
 
 from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
-from decompnet.app.progress import Progress, _read
+from decompnet.app.progress import Progress, _read, _repair
 from decompnet.network import NetworkError
 from decompnet.rom import split
 
@@ -89,6 +89,22 @@ def test_long_template_names_survive_saves_edits_and_deletions(project):
 def test_portable_source_names_preserve_names_that_already_fit():
     assert saves._source_file("f" * 249) == "f" * 249 + ".c"
     assert len((saves._source_file("f" * 250) + ".tmp").encode()) <= 255
+
+
+def test_repair_keeps_a_shortened_file_for_a_known_long_symbol(tmp_path):
+    name = "lower_bound__" + "template_argument_" * 40
+    file = saves._source_file(name)
+
+    class Store:
+        @staticmethod
+        def all(query, project_id):
+            return [{"name": name}]
+
+    disk = {saves.MANIFEST: json.dumps({"layout": [{"name": "g"}]}), f"src/{file}": "edited source"}
+    repaired = _repair(SimpleNamespace(store=Store()), 1, tmp_path, disk, lambda *_: None)
+
+    assert f"src/{file}" in repaired
+    assert not (tmp_path / "unlisted" / "src" / file).exists()
 
 
 def test_a_new_source_is_discovered_without_editing_the_function_index(project):
