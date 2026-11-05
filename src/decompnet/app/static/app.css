@@ -1980,3 +1980,10 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .compiler-inbox-evidence { margin-top: 14px; font-size: .9rem; }
 .compiler-inbox-evidence summary { color: var(--muted); cursor: pointer; }
 .compiler-inbox-evidence .said-text { margin-top: 12px; }
+
+/* Background saved-file checks never insert a banner into the page flow. */
+.progress-sync-indicator .spinner { width: 14px; height: 14px; border-width: 2px; border-top-color: var(--muted); }
+.progress-sync-indicator.paused .spinner { animation: none; border-color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .progress-sync-indicator .spinner { animation: none; } }
+.progress-sync-indicator { flex: none; }
+.progress-sync-indicator[hidden] { display: inline-flex !important; visibility: hidden; pointer-events: none; }

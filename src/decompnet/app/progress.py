@@ -772,7 +772,7 @@ class Progress:
                 return False
             if logger is not None:getattr(logger, "check_cancel", lambda: None)()
             self._check_paused(slug)
-            self._activity(slug, phase="Reading saved files", done=0, total=None, function=None)
+            self._activity(slug, phase="Reading saved files", done=0, total=None, function=None, full_recheck=False)
             self.local.busy = True
             try:
                 proj = self.net._project(slug)
@@ -1060,8 +1060,8 @@ class Progress:
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg)
-                affected = affected_functions(json.loads(comparison_manifest), merged_manifest, changed,
-                                              net.store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid))
+                function_rows = net.store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
+                affected = affected_functions(json.loads(comparison_manifest), merged_manifest, changed, function_rows)
                 all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
                 if toolchain and not toolchains.known(toolchain):
@@ -1086,7 +1086,8 @@ class Progress:
                 if needs_judging:
                     reason = ("Shared linking inputs or function layout changed. Saved functions must be rebuilt to confirm their original bytes."
                               if all_code else f"Build inputs changed for {len(affected or [])} functions. Only their saved sources are being rechecked; other matches are retained.")
-                    self._activity(slug, reason=reason)
+                    self._activity(slug, reason=reason, full_recheck=all_code or bool(function_rows) and
+                                   all(row["name"] in (affected or set()) for row in function_rows))
                 if toolchain and needs_judging:
                     if not toolchains.known(toolchain):
                         # #118: no Setup can install a compiler decompdecomp doesn't know. Open the project and
