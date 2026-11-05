@@ -963,6 +963,7 @@ class Progress:
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
             all_code = False
+            judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
             pending = {}
             if projected is not None:
                 rendered = comparison if comparison is not None else saves._render(net, slug)[0]
@@ -1113,7 +1114,10 @@ class Progress:
                         raise _FolderChanged
             except _FolderChanged:
                 return False
-            self.revisions[slug] = self.revisions.get(slug, 0) + 1
+            # Notes/instructions do not change the bytes being judged. Invalidating on every
+            # metadata import discarded concurrent compiles even though their inputs survived.
+            if judging_change:
+                self.revisions[slug] = self.revisions.get(slug, 0) + 1
             self.published[slug] = set(pending) | set(removed)
             disk = _read(folder)
             manifest = _manifest(disk, cfg)

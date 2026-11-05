@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: retain in-flight compile results during metadata-only progress imports;
+  source, header, compiler and layout changes still invalidate stale results.
+
 - Done: named autosave workers per ROM project, with saved Pause/Resume controls
   and thread CPU attribution in Background work. A shared slot bounds background
   sync concurrency; explicit saves and authoritative verification remain enabled.

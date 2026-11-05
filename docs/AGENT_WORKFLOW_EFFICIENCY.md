@@ -351,3 +351,15 @@ new token here invalidated a running worker's token. Both successful and failed 
 retain existing credentials; a missing identity is created without a usable bearer
 token. Starting a runner remains the explicit credential-issuing path. This fixes a
 reproducible invalidation path, not every observed authentication failure.
+
+### Metadata imports during compilation
+
+Progress imports previously advanced the compile invalidation revision even when
+only notes or project instructions changed. Concurrent compiles were then discarded
+with "Progress changed while this attempt compiled" despite unchanged build inputs.
+The revision now advances for the existing judging-change classification: source,
+best-source, headers, compiler settings, symbols, set-aside or layout changes.
+Metadata still imports normally and is retained when the candidate result is saved.
+Explicit reimports remain invalidating. Unrelated source imports can still invalidate
+an in-flight result; this change does not provide per-function revision tracking or
+remove the stale-result guard.

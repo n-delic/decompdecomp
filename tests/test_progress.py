@@ -613,7 +613,7 @@ def test_background_compile_discards_results_if_progress_changes(worker, project
     agent, _ = net.local_agent(worker)
 
     def compile_with_pull(*_args):
-        manifest(folder, instructions="changed during compile")
+        (folder / "include/common.h").write_text("typedef int AddedType;", encoding="utf-8")
         net.progress.sync("game", force=True)
         return SimpleNamespace(ok=True, obj=b"stub compiled bytes", log="")
 
@@ -1335,3 +1335,27 @@ def test_background_autosave_cancellation_rolls_back_restore_and_explicit_save_s
     assert not net.progress.syncing('game')
     assert net.progress.sync('game', force=True)
     assert net.store.one('SELECT text FROM notes')['text']=='contribution'
+
+
+@pytest.mark.parametrize('metadata',[
+    {'instructions':'Documented workflow guidance'},
+    {'notes':[{'function':'g','text':'A contributor note','by':'contributor'}]},
+])
+def test_metadata_pull_during_compile_does_not_discard_result(project,metadata):
+    net,folder,judged=project
+    agent,_=net.local_agent('helper')
+    errors=[]
+    def pull():
+        try:net.progress.sync('game',force=True)
+        except BaseException as error:errors.append(error)
+    with net.progress.judging('game'):
+        manifest(folder,**metadata)
+        worker=threading.Thread(target=pull);worker.start();worker.join(timeout=5)
+        assert not worker.is_alive() and not errors
+        net._record(net._function('f','game'),agent,10,'candidate C',1,matched=False)
+    assert net._function('f','game')['best_source']=='candidate C'
+    assert judged==[]
+    if 'instructions' in metadata:
+        assert net.instructions('game')==metadata['instructions']
+    else:
+        assert net.store.one("SELECT text FROM notes WHERE text='A contributor note'") is not None
