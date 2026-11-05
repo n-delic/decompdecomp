@@ -1480,3 +1480,37 @@ def test_progress_resource_failure_reports_the_actual_host_problem(project,monke
     error=net.progress.errors['game']
     assert expected in error
     assert 'git operation' not in error and 'permissions' not in error
+
+
+def test_background_checks_are_quiet_until_a_full_recheck_is_known(project, monkeypatch):
+    net, folder, _ = project
+    observed = []
+    original = net.attempt
+    def attempt(*args, **kwargs):
+        observed.append(net.progress.status('game'))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(net, 'attempt', attempt)
+    (folder/'src').mkdir(exist_ok=True)
+    for name in ('f', 'g'):
+        (folder/f'src/{name}.c').write_text('good original')
+    net.progress.sync('game', force=True)
+    observed.clear()
+    (folder/'src/f.c').write_text('good changed')
+    net.progress.sync('game', force=True)
+    assert observed and all(s['full_recheck'] is False for s in observed)
+    observed.clear()
+    data = json.loads((folder/saves.MANIFEST).read_text())
+    (folder/'include'/data['headers']['']).write_text('changed shared header')
+    net.progress.sync('game', force=True)
+    assert observed and all(s['full_recheck'] is True for s in observed)
+    assert net.progress.status('game') is None
+    initial = []
+    original_sync = net.progress._sync
+    def sync(*args):
+        initial.append(net.progress.status('game'))
+        return original_sync(*args)
+    monkeypatch.setattr(net.progress, '_sync', sync)
+    net.progress.signatures.clear()
+    net.progress.sync('game', force=True)
+    assert initial and initial[0]['phase'] == 'Comparing saved files'
+    assert initial[0]['full_recheck'] is False

@@ -229,6 +229,9 @@ linting). In short:
   cancellation is supported. Reuse `beginWork`, `followJob`, `showJobError` and `.workbar`; clean up in
   `finally`. Show real progress when totals exist, otherwise indeterminate progress. Keep errors actionable
   and visible. Distinguish the current run from saved totals and never show stale data from another project.
+- Routine background synchronization should use a compact header indicator with details on demand, without
+  inserting banners that shift content. Reserve prominent progress banners for full rechecks or work that
+  requires attention; use explicit task scope rather than guessing from progress text.
 - Make summary metrics actionable when details exist: use the shared side drawer and retain function links.
   Verify collapsed/expanded, working, empty, success and error states for the UI touched. Existing examples:
   `machineDraftPanel`, `savedMatchRecoveryPanel` and project settings in `app/static/index.html`.

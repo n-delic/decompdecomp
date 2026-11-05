@@ -579,3 +579,10 @@ def test_deep_permuter_reset_is_visible_without_expanding_more_actions():
     assert '<button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>' in tools
     assert 'deep-sweep-more' not in tools
     assert '<summary>More actions</summary>' not in tools
+
+
+def test_routine_saved_progress_checks_stay_in_the_header():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_quiet_sync.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

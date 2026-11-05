@@ -318,17 +318,66 @@ function markPlatforms() {
   $("platLegend").hidden = !any;
 }
 
+// Routine autosave checks stay in the header; only a full rebuild needs a page banner.
+let quietSyncDialog = null;
+function renderQuietProgressSync(sync) {
+  const indicator = $("progressSyncIndicator");
+  indicator.hidden = !sync || !!sync.full_recheck;
+  indicator.classList.toggle("paused", !!sync?.paused);
+  const counted = sync && Number.isFinite(sync.total) && sync.total > 0;
+  const summary = sync ? [sync.phase, counted ? `${sync.done} / ${sync.total} functions` : "", sync.function].filter(Boolean).join(" · ") : "Saved progress is up to date";
+  indicator.title = `${summary}. Show saved-progress details`;
+  indicator.setAttribute("aria-label", indicator.title);
+  indicator.onclick = () => {
+    const body = dialog("Saved progress", `<p class="small muted">Background checks keep saved work in sync with this project.</p>
+      <p data-sync-phase role="status"></p><progress class="deep-sweep-bar" data-sync-bar aria-label="Saved progress verification"></progress>
+      <p class="small muted" data-sync-function></p><button class="ghost small-btn" type="button" data-sync-pause>Pause verification</button><p class="err-msg" data-sync-error role="alert" hidden></p>`, 'saved-progress');
+    quietSyncDialog = {body, slug:S.slug, sync, pending:false};
+    body.querySelector('[data-sync-pause]').onclick = async () => {
+      const detail = quietSyncDialog;
+      if (!detail.sync || detail.pending) return;
+      detail.pending = true;
+      const button = body.querySelector('[data-sync-pause]');
+      const errorBox = body.querySelector('[data-sync-error]');
+      errorBox.hidden = true;
+      button.disabled = true;
+      try {
+        await api('/api/verification', {method:'POST', body:{slug:detail.slug, paused:!detail.sync.paused}});
+        if (S.slug === detail.slug) await refreshMap(true);
+      } catch (error) {
+        errorBox.textContent = error.message; errorBox.hidden = false;
+      } finally { detail.pending = false; button.disabled = false; }
+    };
+    renderQuietProgressSync(sync);
+  };
+  const detail = quietSyncDialog;
+  if (!detail?.body.isConnected || S.dialogKind !== "saved-progress") { quietSyncDialog = null; return; }
+  const sameProject = detail.slug === S.slug;
+  detail.sync = sameProject ? sync : null;
+  detail.body.querySelector('[data-sync-phase]').textContent = sameProject ? summary : 'Select the original project to see its saved-progress details.';
+  detail.body.querySelector('[data-sync-function]').textContent = sameProject && sync ? [sync.reason, `${sync.elapsed_seconds || 0}s elapsed`, sync.function].filter(Boolean).join(' · ') : '';
+  const bar = detail.body.querySelector('[data-sync-bar]');
+  bar.hidden = !detail.sync;
+  if (counted && sameProject) { bar.max = sync.total; bar.value = sync.done; } else { bar.removeAttribute('value'); }
+  const pause = detail.body.querySelector('[data-sync-pause]');
+  pause.hidden = !detail.sync;
+  pause.disabled = detail.pending;
+  pause.textContent = sync?.paused ? 'Resume verification' : 'Pause verification';
+}
+
 function renderHeader(ov) {
   const sync = ov.progress_sync;
-  $("progressSyncNotice").hidden = !sync;
+  $("progressSyncNotice").hidden = !sync?.full_recheck;
+  renderQuietProgressSync(sync);
   if (sync) {
     $("progressSyncNotice").classList.toggle("paused", !!sync.paused);
     $("progressSyncReason").textContent = sync.reason || "Saved project files are being compared with this checkout before their matches can be confirmed.";
     const pause = $("progressSyncPause");
     pause.textContent = sync.paused ? "Resume verification" : "Pause verification";
+    const syncSlug = S.slug;
     pause.onclick = async () => {
       pause.disabled = true;
-      try { await api("/api/verification", {method:"POST",body:{slug:S.slug,paused:!sync.paused}}); await refreshMap(true); }
+      try { await api("/api/verification", {method:"POST",body:{slug:syncSlug,paused:!sync.paused}}); if (S.slug === syncSlug) await refreshMap(true); }
       catch (error) { toast(esc(error.message), "err"); }
       finally { pause.disabled = false; }
     };
