@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse, Response
 from decompnet.hostenv import NO_WINDOW
 
 from ... import agents as kinds
-from ... import hostenv, toolchains
+from ... import hostenv, linuxvm, toolchains
 from ...network import NetworkError
 from .. import agents
 from ..support import session_options, spread_sessions
@@ -26,6 +26,12 @@ MAX_ENDPOINT_MODELS = 100  # an endpoint may list hundreds; the launcher shows t
 def register(app: App) -> None:
     net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
+
+    @mcp.custom_route("/api/linux-vm", methods=["POST"])
+    async def api_linux_vm(request: Request) -> Response:
+        if (bad := guard(request, write=True)):
+            return bad
+        return JSONResponse({'job': jobs.start('linux-vm', lambda log: linuxvm.setup(log=log))})
 
     @mcp.custom_route("/api/toolchain", methods=["POST"])
     async def api_toolchain(request: Request) -> Response:

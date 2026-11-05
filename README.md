@@ -39,6 +39,11 @@ move files, or start a build. It stops after 5,000 files, 2 GiB read or 30 secon
 the file manually if it stops. Clear the folder setting to disable searches. If a verified game is already in the
 project, **Retry setup** reuses it.
 
+For supported versioned N64 Splat projects, the search checks every original ROM hash declared by the build's
+versioned configs, or the original cartridge hashes listed in a decompressed-image project's README. It reports the
+matching version; setup puts the ROM at that version's path and passes `VERSION=…` to Make. A byte-swapped ROM already
+at the destination is converted before setup instead of being treated as ready.
+
 This works for public projects whose declared SHA-1 is the original file's hash. dtk and configure projects do not
 declare a game SHA-1 in their setup metadata yet, so select their game files manually. PlayStation splat projects
 often hash an extracted file rather than the whole disc; a library of disc images will not match that hash.
@@ -134,7 +139,9 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | Native window, file/folder pickers and export downloads | Cocoa and system WKWebView, no GTK or X11 |
 | m2c, decomp-permuter and objdiff | Pinned Mac/Python builds |
 | Other consoles and public decomp projects | Only where their pinned compiler/tool builds support this Mac |
-| Linux-only PS1/PS2 period compilers | Unavailable on macOS; use a supported Linux host |
+| PS2 Sony EE-GCC 2.9, 2.96 and 3.2 | Optional local Linux runner ([setup](docs/linux-compiler-vm.md)) |
+| PS2 SN Systems EE-GCC 2.95.2/2.95.3 and CodeWarrior 2.3.3/3.0.1 | Pinned Windows compilers through wibo; CodeWarrior requires license acceptance |
+| Linux-only PS1 period compilers | Use a supported Linux host |
 | Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
 
 For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`.
