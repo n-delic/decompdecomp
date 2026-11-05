@@ -2090,7 +2090,7 @@ def test_room_retry_all_processes_snapshot_beyond_five_and_continues_errors(app,
     rows=[{'key':f'{room_matches.PREFIX}{pid}:{i}','function':f'f{i}','direction':'host'} for i in range(8)]
     monkeypatch.setattr(room_matches,'pending',lambda *args:rows)
     calls=[]
-    def retry(n,s,key):
+    def retry(n,s,key, **kwargs):
         calls.append(key)
         if key==rows[1]['key']:raise NetworkError('Compiler unavailable')
         return {'matched':True}

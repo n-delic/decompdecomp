@@ -647,6 +647,7 @@ async function openRoomMatchReview() {
   const load=async () => {
     const data=await api('/api/collab/matches?slug='+encodeURIComponent(slug));
     box.innerHTML=`<p class="muted small">Client matches count on the host only after its own byte verification. Compiler profiles and private headers travel with new submissions. Older submissions can be recovered using bounded searches of installed host compilers.</p>
+      <section data-room-retry-progress class="default-profile-test" role="status" hidden><b data-room-retry-title>Preparing verification…</b><p class="mono small" data-room-retry-function></p><p class="small muted" data-room-retry-detail></p><progress class="deep-sweep-bar" data-room-retry-bar aria-label="Room submissions verified"></progress></section>
       ${data.rows.length ? `<div class="row"><button class="primary" type="button" data-retry-all-matches>Retry all · ${data.rows.length}</button></div><div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Why pending</th><th></th></tr></thead><tbody>${data.rows.map(r=>`<tr><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td>${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}
       <div class="row"><button class="ghost" data-refresh-matches>Refresh</button>${!data.guest ? '<button class="ghost" data-recover-matches>Recover older submissions</button>' : ''}</div><pre class="joblog" id="roomMatchLog" hidden></pre>`;
     let retrying=false;
@@ -654,12 +655,23 @@ async function openRoomMatchReview() {
       if(retrying)return;
       retrying=true;
       const log=box.querySelector('#roomMatchLog');log.hidden=false;log._showJobProgress=true;
+      const section=box.querySelector('[data-room-retry-progress]');section.hidden=false;
+      const started=Date.now();let progress={phase:'Starting verification job',finished:0,total:payload.all ? data.rows.length : payload.key ? 1 : 0};
+      const paint=()=>{
+        box.querySelector('[data-room-retry-title]').textContent=progress.phase || 'Verifying saved match';
+        box.querySelector('[data-room-retry-function]').textContent=progress.function || '';
+        const profile=progress.toolchain ? `${progress.toolchain} ${(progress.flags || []).join(' ')}` : '';
+        box.querySelector('[data-room-retry-detail]').textContent=[progress.total ? `${progress.finished || 0} / ${progress.total} submissions checked` : 'Preparing submission queue',progress.profile_total ? `Compiler profile ${progress.profile_index} / ${progress.profile_total}` : '',profile,`${Math.floor((Date.now()-started)/1000)}s elapsed`].filter(Boolean).join(' · ');
+        const bar=box.querySelector('[data-room-retry-bar]');
+        if(progress.total){bar.max=progress.total;bar.value=progress.finished || 0;}else{bar.removeAttribute('value');}
+      };
+      paint();const timer=setInterval(paint,1000);
       const original=button.innerHTML;
       const done=beginWork(log,'Verifying saved room matches',[...box.querySelectorAll('button')]);
       button.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Retrying…';
       button.setAttribute('aria-busy','true');
-      try { const {job}=await api('/api/collab/matches',{method:'POST',body:{slug,...payload}}); await followJob(job,log);await load(); }
-      catch(error){showJobError(log,error.message);}finally{done();button.innerHTML=original;button.removeAttribute('aria-busy');retrying=false;}
+      try { const {job}=await api('/api/collab/matches',{method:'POST',body:{slug,...payload}}); await followJob(job,log,(_lines,state)=>{if(state.progress){progress=state.progress;paint();}});await load(); }
+      catch(error){progress={...progress,phase:'Verification stopped — see the error below'};paint();showJobError(log,error.message);}finally{clearInterval(timer);done();button.innerHTML=original;button.removeAttribute('aria-busy');retrying=false;}
     };
     box.querySelectorAll('[data-retry-match]').forEach(b=>{b.onclick=()=>run({key:b.dataset.retryMatch},b);});
     const retryAll=box.querySelector('[data-retry-all-matches]');

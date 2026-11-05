@@ -61,6 +61,9 @@ def test_successful_retry_preserves_other_work_and_clears_submission(setup,monke
         return {'matched':True,'score':0}
     monkeypatch.setattr(net,'attempt',attempt)
     monkeypatch.setattr(room_matches,'attach_baseline',lambda *args:None)
-    result=room_matches.retry(net,'game',key)
+    updates=[]
+    result=room_matches.retry(net,'game',key,progress=updates.append)
+    assert [p['phase'] for p in updates]==['Loading saved submission','Checking function availability','Compiling and comparing with host settings','Saving verification result']
+    assert updates[2]['toolchain']
     assert result['matched'] and not room_matches.pending(net,'game')
     assert [dict(row) for row in net.store.all('SELECT * FROM claims')]==[original]
