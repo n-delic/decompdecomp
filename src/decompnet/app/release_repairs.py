@@ -85,7 +85,7 @@ def handoff(net, slug, fn):
                     pending.pop(fn['id'],None)
                     getattr(net,'_repair_handoff_jobs',{}).pop(fn['id'],None)
         try:
-            jid=jobs.start('CPU repair handoff',work,cancel_message='CPU repair handoff cancelled. Saved improvements are retained.')
+            jid=jobs.start('CPU repair handoff',work,foreground=False,cancel_message='CPU repair handoff cancelled. Saved improvements are retained.')
             net.__dict__.setdefault('_repair_handoff_jobs',{})[fn['id']]=jid
         except ValueError:
             pending.pop(fn['id'],None)

@@ -97,6 +97,7 @@ class Jobs:
     def __init__(self, log_path: Path | None = None):
         self.jobs: dict[str, dict] = {}
         self.cancel_events: dict[str, threading.Event] = {}
+        self.foreground_events: dict[str, threading.Event] = {}
         self._lock = threading.RLock()  # Some routes reserve a job under this lock before start().
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
@@ -107,11 +108,15 @@ class Jobs:
             if getattr(self, 'source_update_pending', False):
                 raise ValueError('A source update is queued. Wait for restart or cancel it before starting another job.')
 
-    def start(self, kind: str, fn, *, cancel_message="Opening the saved project was cancelled.") -> str:
+    def start(self, kind: str, fn, *, foreground=True, cancel_message="Opening the saved project was cancelled.") -> str:
+        """Start a user job immediately; automatic callers opt into background scheduling."""
         with self._lock:
             self.check_start()
             jid = uuid.uuid4().hex[:JOB_ID_CHARS]
             job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+            interactive=self.foreground_events[jid]=threading.Event()
+            if foreground:interactive.set()
+            job["foreground"]=foreground
             cancel = self.cancel_events[jid] = threading.Event()
             self.jobs[jid] = job
         logger = self.logger
@@ -139,8 +144,10 @@ class Jobs:
             job["thread_id"] = threading.get_native_id()
             try:
                 from ..compiler import background_thread
-                background_thread()
-                result = fn(log)
+                if not interactive.is_set():background_thread()
+                from . import maintenance
+                with maintenance.foreground(interactive):
+                    result = fn(log)
                 with self._lock:
                     check_cancel()
                     job["result"] = result
@@ -163,6 +170,17 @@ class Jobs:
                     raise
         threading.Thread(target=run, daemon=True, name=f"job-{kind}").start()
         return jid
+
+    def promote(self, jid: str) -> bool:
+        """A deliberate action wakes an existing automatic job without duplicating it."""
+        with self._lock:
+            job=self.jobs.get(jid)
+            if not job or job['state']!='running':return False
+            if not job.get('foreground'):
+                job['log'].append('User requested this action; starting without background maintenance delays.')
+            job['foreground']=True
+            self.foreground_events[jid].set()
+            return True
 
     def cancel(self, jid: str) -> bool:
         with self._lock:

@@ -176,3 +176,54 @@ def test_cpu_budget_accumulates_small_units(monkeypatch):
             wall[0] += .0001;cpu[0] += .0001
             maintenance._pace_cpu()
     assert .009 <= sum(sleeps) <= .011
+
+
+def test_explicit_job_bypasses_busy_maintenance_lane_and_pacing(monkeypatch):
+    from decompnet.app.support import Jobs
+    entered=threading.Event()
+    monkeypatch.setattr('decompnet.compiler.background_thread',lambda:(_ for _ in ()).throw(AssertionError('interactive job lowered priority')))
+    monkeypatch.setattr(maintenance,'_pace_cpu',lambda:(_ for _ in ()).throw(AssertionError('interactive job throttled')))
+    def work(log):
+        with maintenance.slot(log.cancel_event) as ready:
+            assert ready
+            maintenance.checkpoint()
+            entered.set()
+    jobs=Jobs()
+    with maintenance.slot():
+        jid=jobs.start('clicked action',work)
+        assert entered.wait(2),'Deliberate action waited for background maintenance'
+    assert jobs.jobs[jid]['foreground']
+
+
+def test_manual_cleanup_promotes_queued_retention_without_duplicate(monkeypatch):
+    from decompnet.app import database_cleanup
+    from decompnet.app.support import Jobs
+    entered=threading.Event();finished=threading.Event()
+    monkeypatch.setattr('decompnet.compiler.background_thread',lambda:None)
+    def clean(net,value,log):
+        entered.set()
+        assert finished.wait(2)
+        return {'messages':0}
+    monkeypatch.setattr(database_cleanup,'run',clean)
+    jobs=Jobs();value={'removed':True,'before':'2000-01-01','automatic':True}
+    try:
+        with maintenance.slot():
+            automatic=database_cleanup.start(None,jobs,value,foreground=False)
+            assert not entered.wait(.15)
+            manual=database_cleanup.start(None,jobs,value)
+            assert manual==automatic and len(jobs.jobs)==1
+            assert entered.wait(2),'Manual cleanup stayed queued behind the lane'
+            assert jobs.jobs[manual]['foreground']
+    finally:finished.set()
+
+
+def test_manual_header_cleanup_starts_during_background_maintenance(monkeypatch):
+    from decompnet.app import header_cleanup
+    from decompnet.app.support import Jobs
+    entered=threading.Event()
+    monkeypatch.setattr(header_cleanup,'prune',lambda *args:entered.set())
+    jobs=Jobs()
+    with maintenance.slot():
+        jid=header_cleanup.start(None,jobs,'headers')
+        assert entered.wait(2)
+    assert 'Waiting for the background maintenance lane' not in jobs.jobs[jid]['log']

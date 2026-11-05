@@ -95,18 +95,20 @@ def save(net,value):
     return value
 
 
-def start(net,jobs,value):
+def start(net,jobs,value, *, foreground=True):
     value,_=options(value)
     with jobs._lock:
         active=next((j for j in jobs.jobs.values() if j['kind']=='Database transcript cleanup' and j['state']=='running'),None)
-        if active:return active['id']
+        if active:
+            if foreground:jobs.promote(active['id'])
+            return active['id']
         def work(log):
-            from .maintenance import slot
-            log('Waiting for the background maintenance lane')
+            from .maintenance import is_foreground, slot
+            if not is_foreground():log('Waiting for the background maintenance lane')
             with slot(getattr(log,'cancel_event',None)) as acquired:
                 if not acquired:log.check_cancel()
                 return run(net,value,log)
-        return jobs.start('Database transcript cleanup',work,
+        return jobs.start('Database transcript cleanup',work,foreground=foreground,
                           cancel_message='Cleanup stopped. Records already removed stay deleted; you can run cleanup again.')
 
 
@@ -122,4 +124,4 @@ class Retention:
         if now<self.next_check:return
         self.next_check=now+300
         value=saved(self.net)
-        if value.get('automatic') and eligible(self.net,value):start(self.net,self.jobs,value)
+        if value.get('automatic') and eligible(self.net,value):start(self.net,self.jobs,value,foreground=False)

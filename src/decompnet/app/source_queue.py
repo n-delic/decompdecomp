@@ -44,7 +44,7 @@ class Queue:
             if len(result) >= 4:break
         return result
 
-    def start(self, slug, include_assembly=False):
+    def start(self, slug, include_assembly=False, *, foreground=True):
         if type(include_assembly) is not bool:raise NetworkError('Choose assembly reconsideration with its checkbox.')
         proj = self.net.project_row(slug)
         if not self.net.is_rom(proj) or self.net.fork_slug(slug) or slug in self.net.links:
@@ -72,7 +72,7 @@ class Queue:
             # Reservation precedes job start; the worker cannot outrun publication of its handle.
             self.active[slug] = None
             try:
-                job = self.jobs.start('source-recovery-queue', lambda log:self._run(slug, agent, log))
+                job = self.jobs.start('source-recovery-queue', lambda log:self._run(slug, agent, log),foreground=foreground)
             except BaseException:
                 self.active.pop(slug,None);state['state']='interrupted';self._save(proj['id'],state)
                 raise
@@ -105,7 +105,7 @@ class Queue:
                             db.execute('DELETE FROM claims WHERE agent_id=? AND function_id IN (SELECT id FROM functions WHERE project_id=? AND name=?)', (agent['id'], project_id, item['function']))
                             item['state']='pending'
             self._save(project_id, state)
-            if state['state']=='running':self.start(proj['slug'])
+            if state['state']=='running':self.start(proj['slug'],foreground=False)
 
     def _run(self, slug, agent, log):
         proj = self.net.project_row(slug)

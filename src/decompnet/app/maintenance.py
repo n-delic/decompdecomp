@@ -1,4 +1,4 @@
-"""One heavy maintenance lane, with bounded cooperative yields to foreground interaction."""
+"""Automatic maintenance shares a paced lane; explicit user jobs bypass it."""
 import threading
 import time
 from contextlib import contextmanager
@@ -32,7 +32,7 @@ def _pace_cpu():
     debt = (cpu - cpu_start) * 100 / limit - (now - wall_start)
     if 0 < debt <= .001:
         return  # Accumulate tiny slices instead of discarding their budget debt.
-    while debt > .001 and _cpu_limit == limit:
+    while debt > .001 and _cpu_limit == limit and not is_foreground():
         stop = getattr(_local, 'cancel', None) or getattr(_local, 'pacing_stop', None)
         if stop is not None and stop.is_set():
             raise Cancelled("Startup task stopped")
@@ -56,6 +56,19 @@ def cancellation(stop):
         _local.cancel = previous
 
 
+@contextmanager
+def foreground(event):
+    previous=getattr(_local,'foreground',None)
+    _local.foreground=event
+    try:yield
+    finally:_local.foreground=previous
+
+
+def is_foreground():
+    event=getattr(_local,'foreground',None)
+    return event is not None and event.is_set()
+
+
 def touch():
     global _last_ui
     _last_ui = time.monotonic()
@@ -65,6 +78,9 @@ def touch():
 def slot(stop=None):
     acquired = False
     while not acquired and (stop is None or not stop.is_set()):
+        if is_foreground():
+            yield True
+            return
         acquired = _lane.acquire(timeout=.1)
     if not acquired:
         yield False
@@ -87,7 +103,7 @@ def checkpoint():
     """Only maintenance threads yield; foreground callers and write transactions are not delayed."""
     stop = getattr(_local, 'cancel', None)
     if stop is not None and stop.is_set():raise Cancelled("Startup task stopped")
-    if not getattr(_local, 'active', False):
+    if is_foreground() or not getattr(_local, 'active', False):
         return
     _pace_cpu()
     now = time.monotonic()

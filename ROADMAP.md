@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: deliberate user jobs start on independent foreground threads and bypass the automatic
+  maintenance lane and its pacing. A cleanup click promotes an already queued automatic cleanup
+  without duplicating it. Scheduled retention, resumed automatic recovery and repair handoffs
+  retain background scheduling; database transaction/compaction guards remain intact.
+
 - Done: deep searches retain the full user time allowance without early no-progress or
   repeated-output rotation. Historical rotated turns become pending for a full retry.
   User candidate limits, cancellation, matches and genuine errors still end a turn.
