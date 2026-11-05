@@ -2,7 +2,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
 const elements = new Map();
 const get = id => {
-  if (!elements.has(id)) elements.set(id, { value: id === "crossGameFilter" ? "matches" : "", hidden: false, innerHTML: "", textContent: "", setAttribute(name,value) {this[name]=value;} });
+  if (!elements.has(id)) elements.set(id, { value: id === "crossGameFilter" ? "matches" : "", hidden: false, innerHTML: "", textContent: "", reportValidity() {return true;}, firstElementChild: {style: {}}, setAttribute(name,value) {this[name]=value;} });
   return elements.get(id);
 };
 const opened = [];
@@ -53,14 +53,58 @@ get('crossGameToggle').onclick();assert.equal(get('crossGameBody').hidden,false)
 assert.equal(get('crossGameToggle')['aria-expanded'],'true');
 assert.equal(typeof get('crossGameRun').onclick,'function');
 
-let started=0,finished=0,posted='';
-ctx.S={slug:'target-game'};
-ctx.showJobError=()=>{};
-ctx.beginWork=()=>{started++;return ()=>finished++;};
-ctx.api=async url=>{posted=url;return {job:'check'};};
-ctx.followJob=async()=>({matched:1,improved:2});
-ctx.poll=async()=>{};ctx.refreshMap=()=>{};ctx.toast=()=>{};
-get('crossGameRun').onclick().then(()=>{
-  assert.equal(posted,'/api/cross-game/run');assert.equal(started,1);assert.equal(finished,1);
-  assert.equal(get('crossGameRun')._working,false);
-}).catch(error=>{console.error(error);process.exitCode=1;});
+// Budgets survive renders and project changes; editing a preset marks it custom.
+const storage = new Map();
+ctx.localStorage = {getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value)};
+get('crossGamePreset').value = 'overnight'; get('crossGamePreset').onchange();
+assert.equal(Number(get('crossGameMinutes').value), 720);
+assert.equal(Number(get('crossGameAttempts').value), 100000);
+ctx.renderAutopilot({slug:'other',kind:'rom',matched:0});
+assert.equal(Number(get('crossGameMinutes').value),2);
+ctx.renderAutopilot({slug:'target-game',kind:'rom',matched:0});
+assert.equal(Number(get('crossGameMinutes').value),720);
+get('crossGameMinutes').value=1440; get('crossGameMinutes').onchange();
+assert.equal(get('crossGamePreset').value,'custom');
+
+async function checks() {
+  let started=0,finished=0,posted;
+  let resolveStart, rejectFollow, updates;
+  const starting = new Promise(resolve => {resolveStart=resolve;});
+  const following = new Promise((_resolve,reject) => {rejectFollow=reject;});
+  ctx.S={slug:'target-game'};
+  ctx.showJobError=(_log, message)=>{ctx.error=message;};
+  ctx.beginWork=(_log,_label,controls)=>{
+    started++; controls.forEach(c=>{c.disabled=true;});
+    return ()=>{finished++; controls.forEach(c=>{c.disabled=false;});};
+  };
+  ctx.api=async (url,options)=>{posted={url,body:options.body};return url.includes('cancel') ? {} : starting;};
+  ctx.followJob=async (_id,_log,callback)=>{updates=callback;return following;};
+  ctx.poll=async()=>{};ctx.refreshMap=()=>{};ctx.toast=()=>{};
+  const run=get('crossGameRun').onclick();
+  assert.equal(started,1); assert.equal(finished,0);
+  assert.equal(get('crossGameMinutes').disabled,true);
+  assert.equal(get('crossGameStop').disabled,true);
+  assert.equal(posted.url,'/api/cross-game/run');
+  assert.equal(posted.body.seconds,86400); assert.equal(posted.body.attempts,100000);
+  resolveStart({job:'check'});
+  for(let i=0;i<10;i++) await Promise.resolve();
+  assert.equal(get('crossGameStop').disabled,false);
+  updates([], {progress:{attempts:20,attempt_limit:100000,seconds:30,second_limit:86400,confirmed:2}});
+  assert.match(get('crossGameBudgetStatus').textContent,/20 \/ 100,000 checks used/);
+  assert.equal(get('crossGameBudgetBar')['aria-valuenow'],'20');
+  await get('crossGameStop').onclick();
+  assert.equal(posted.url,'/api/job/cancel'); assert.equal(posted.body.id,'check');
+  rejectFollow(new Error('Stopped; matches saved.')); await run;
+  assert.equal(finished,1); assert.equal(get('crossGameRun')._working,false);
+  assert.equal(get('crossGameMinutes').disabled,false); assert.equal(get('crossGameStop').hidden,true);
+  assert.equal(ctx.error,'Stopped; matches saved.');
+  ctx.api=async()=>{throw new Error('Could not start');};
+  await get('crossGameRun').onclick();
+  assert.equal(started,2);assert.equal(finished,2);assert.equal(ctx.error,'Could not start');
+  ctx.api=async()=>({job:'ok'});
+  ctx.followJob=async()=>({matched:1,improved:2});
+  await get('crossGameRun').onclick();
+  assert.equal(started,3);assert.equal(finished,3);
+  console.log('Cross-game budgets, progress, cancellation and cleanup passed');
+}
+checks().catch(error=>{console.error(error);process.exitCode=1;});

@@ -339,3 +339,16 @@ main().catch((error) => { console.error(error); process.exitCode = 1; });
   ctx.renderDeepSweepResults({improved:0, improvements:[]});
   assert.ok(!result.innerHTML.includes("<table>"));
 }
+
+{
+  const source = read('base');
+  const start = source.indexOf('function updateWorkProgress('), end = source.indexOf('async function followJob(', start);
+  const bar = element(); bar.style = {setProperty(key,value){this[key]=value;}}; bar.removeAttribute=key=>{delete bar.attrs[key];};
+  const log = {_workStatus:element(),_workBar:bar};
+  const ctx={};vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);
+  ctx.updateWorkProgress(log,{phase:'Finding shared machine code',game:'Demo',done:2,total:4});
+  assert.equal(bar.attrs['aria-valuenow'],'2');assert.equal(bar.style['--work-progress'],'50%');
+  ctx.updateWorkProgress(log,{phase:'Compiling candidate',game:'Demo',donor:'old<fn',function:'new',confirmed:1});
+  assert.match(log._workStatus.textContent,/Demo.*old<fn.*new.*1 matches confirmed/);
+  assert.equal(bar.className,'workbar');assert.equal(bar.attrs['aria-valuenow'],undefined);
+}

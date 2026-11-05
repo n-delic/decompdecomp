@@ -1,5 +1,6 @@
 """Shared detection never counts as C; transfers always go through the destination judge."""
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -39,13 +40,23 @@ def test_imported_destination_uses_judge_records_misses_and_matches(pair, monkey
     proj = setup(pair, monkeypatch, donor_fork=donor_fork)
     if donor_fork:
         monkeypatch.setattr(pair.forks, 'twin_source', lambda *args, **kw: 'int new(int x) { return x+60; }')
+    from decompnet.app.free_candidates import budget
+    reports = []
+    job = Job()
+    budget(job)
+    job.cross_report = reports.append
+    job.cross_started = time.monotonic()
+    job.cross_seconds = 120
     sources = []
     def judge(agent, slug, name, source, **kw):
         sources.append(source)
         assert slug == 'destination' and name == 'new' and 'new(int' in source
         return {'matched': False, 'score': 12, 'text': 'score 12'}
     monkeypatch.setattr(pair.forks, 'attempt', judge)
-    assert shared_reuse.transfer(pair.twins, proj, Job()) == 0
+    assert shared_reuse.transfer(pair.twins, proj, job) == 0
+    current = next(p for p in reports if p['phase'] == 'Compiling candidate')
+    assert (current['game'], current['donor'], current['function'], current['attempts']) == ('source', 'old', 'new', 1)
+    assert any(p['phase'] == 'Finding shared machine code' and p['total'] == 1 for p in reports)
     assert pair.twins.cross_game_results('destination')['counts'] == {'miss': 1}
     assert shared_reuse.transfer(pair.twins, proj, Job()) == 0
     assert len(sources) == 1  # identical rejected C is not compiled repeatedly

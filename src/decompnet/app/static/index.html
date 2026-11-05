@@ -300,8 +300,21 @@
         <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games</button></h2>
           <button type="button" class="ghost small-btn" id="crossGameRun">Run now</button>
           <span class="transfer-filter-wrap"><select class="transfer-filter" id="crossGameFilter" aria-label="Show transfer results"><option value="matches">Successful matches</option><option value="improved">Recent improvements</option><option value="all">All recent attempts</option></select></span></header>
-        <div id="crossGameWork" hidden><pre class="joblog" id="crossGameLog"></pre></div>
         <div id="crossGameBody">
+        <div class="transfer-controls">
+          <div class="transfer-budgets">
+            <label>Time limit (minutes)<input id="crossGameMinutes" type="number" min="1" max="1440" step="1" value="2" required></label>
+            <label>Candidate checks<input id="crossGameAttempts" type="number" min="1" max="1000000" step="1" value="128" required></label>
+            <label>Preset<select id="crossGamePreset"><option value="custom">Custom</option><option value="quick" selected>Quick · 2 minutes</option><option value="thorough">Thorough · 1 hour</option><option value="overnight">Overnight · 12 hours</option></select></label>
+            <button type="button" id="crossGameStop" class="ghost small-btn" hidden>Stop</button>
+          </div>
+          <p class="muted small">Stops at either limit or when eligible candidates run out. Budgets are remembered for this project on this device. Uses local CPU, no AI tokens.</p>
+          <div id="crossGameWork" hidden>
+            <p id="crossGameBudgetStatus" class="muted small" role="status"></p>
+            <div id="crossGameBudgetBar" class="upbar" role="progressbar" aria-label="Candidate check budget used" aria-valuemin="0" aria-valuemax="128" aria-valuenow="0"><i style="width:0%"></i></div>
+            <pre class="joblog" id="crossGameLog"></pre>
+          </div>
+        </div>
         <div class="transfer-summary" id="crossGameSummary"></div>
         <ol class="transfer-list" id="crossGameRecent"></ol>
         <details class="transfer-help"><summary>How to read these results</summary><p>Verified matches reproduce this game’s bytes exactly. Partial improvements are better saved candidates, still unmatched. A lower mismatch score is better; 0 is exact. Assembly similarity is only a search hint. Open either function name to inspect its code.</p></details>
@@ -738,7 +751,7 @@
 <!-- ================================================================ settings -->
 <main id="settingsPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">Settings</p><h1>How decompdecomp works for you</h1></header>
-  <details class="panel settings-disclosure" id="matchLibraryPanel"><summary class="panel-head"><h2>Local match library <span class="disclosure-context" id="matchLibraryCount">— Loading</span></h2></summary><div class="pad"><p class="small muted">Verified matches are retained in a separate database when projects are closed or removed. Shared functions are stored once, with links to their games and distinct verified source/compiler variants. New games must still pass their own byte or object verification.</p><div class="row"><label class="field grow"><span>Find a function or game</span><input id="matchLibrarySearch" type="search" placeholder="Function name or game"></label><button class="ghost small-btn" id="matchLibraryRefresh">Search</button><button class="ghost small-btn" id="matchLibraryIndex">Index existing matches</button></div><p class="small muted">Database size includes SQLite journal files. Showing up to 100 functions, most widely shared first. This library stays on this computer; no game data is uploaded.</p><div id="matchLibraryItems"></div><div id="matchLibraryLog"></div></div></details>
+  <details class="panel settings-disclosure" id="matchLibraryPanel"><summary class="panel-head"><h2>Local match library <span class="disclosure-context" id="matchLibraryCount">— Loading</span></h2></summary><div class="pad"><p class="small muted">Verified matches are retained in a separate database when projects are closed or removed. Shared functions are stored once, with links to their games and distinct verified source/compiler variants. New games must still pass their own byte or object verification.</p><div class="row"><label class="field grow"><span>Find a function or game</span><input id="matchLibrarySearch" type="search" placeholder="Function name or game"></label><button class="ghost small-btn" id="matchLibraryRefresh">Search</button><button class="ghost small-btn" id="matchLibraryIndex">Index existing matches</button></div><p class="small muted">Database size includes SQLite journal files. Showing up to 100 functions, most widely shared first. This library stays on this computer; no game data is uploaded.</p><div id="matchLibraryLog"></div><div id="matchLibraryItems"></div></div></details>
   <div class="cols">
     <section class="panel"><header class="panel-head"><h2>Pair a browser worker</h2></header><div class="pad">
       <p class="muted small">Authorize one browser origin for one KMC ROM project. The browser can read function tasks and submit source for this app to recheck; it cannot run commands or use private app APIs. Access expires after one hour and is lost when this app restarts.</p>

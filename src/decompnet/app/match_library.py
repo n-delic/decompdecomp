@@ -147,28 +147,53 @@ class Library:
         except Exception:  # archiving must never turn a committed exact verdict into a judge failure
             log.exception('Could not snapshot verified match for the local library')
 
-    def archive_project(self, proj, log=None):
-        rows = self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='matched'",proj['id'])
-        batch=[]
-        for i, row in enumerate(rows):
+    def archive_project(self, proj, log=None, *, rows=None, progress=None):
+        if rows is None:
+            rows=self.net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
+        def report(done, phase, name=''):
             if log:
                 log.check_cancel()
-                log.progress({'phase':'Saving verified matches', 'function':proj['name'], 'done':i,'total':len(rows)})
+                value={'phase':phase,'function':name,'game':proj['name'],'done':done,'total':len(rows)}
+                if progress:progress(value)
+                else:log.progress(value)
+        report(0,'Reading verified matches')
+        batch=[]
+        for i, row in enumerate(rows):
+            report(i,'Reading verified matches',row['name'])
             item=self.snapshot(proj,row['id'])
             if item:batch.append(item)
             if len(batch)>=64:
+                report(i,'Writing matches to library',row['name'])
                 self.write(batch);batch=[]
-        if batch:self.write(batch)
+        if batch:
+            report(len(rows)-1,'Writing matches to library')
+            self.write(batch)
+        report(len(rows),'Game indexed')
         return len(rows)
 
     def backfill(self, log=None):
         failures=[]
-        for proj in self.net.store.all('SELECT * FROM projects'):
+        if log:log.progress({'phase':'Counting verified matches','done':0,'total':0})
+        projects=[]
+        for proj in self.net.store.all('SELECT * FROM projects ORDER BY id'):
             if log:log.check_cancel()
-            try:self.archive_project(proj,log)
+            rows=self.net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
+            projects.append((proj,rows))
+        total=sum(len(rows) for _,rows in projects)
+        completed=0
+        for index,(proj,rows) in enumerate(projects,1):
+            if log:log.check_cancel()
+            game_total=len(rows)
+            def progress(value, game_total=game_total, game_index=index, offset=completed):
+                log.progress({**value,'game_done':value['done'],'game_total':game_total,
+                              'game_index':game_index,'games_total':len(projects),
+                              'done':offset+value['done'],'total':total})
+            try:self.archive_project(proj,log,rows=rows,progress=progress)
             except (NetworkError,OSError,ValueError) as error:
                 failures.append(proj['name']+': '+str(error))
+            completed+=len(rows)
         if failures:raise NetworkError('Some projects could not be indexed: '+'; '.join(failures))
+        if log:log.progress({'phase':'Indexing complete','done':total,'total':total})
         return self.summary()
 
     def summary(self, search=''):
@@ -235,6 +260,8 @@ class Library:
                 if job is not None:
                     job.cross_candidates+=1;job.cross_tried+=1
                     if bounded:job.reuse_attempts+=1
+                from .cross_game_progress import report
+                report(job, 'Compiling candidate', game=item['game'], function=b['name'], donor=item['name'])
                 outcome,why=twins._attempt_twin(agent,proj,{'name':item['name']},b,source,
                                               origin=' in '+item['game']+' (local match library)',theirs=fork)
                 if outcome=='miss':

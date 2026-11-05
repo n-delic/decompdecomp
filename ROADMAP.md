@@ -361,7 +361,11 @@ remain outstanding. Shared instruction diffs expose encoding-only disagreements
 hidden behind identical disassembly aliases without weakening the byte judge.
 
 PS2 Sony EE-GCC 2.9 (991111), 2.96 and 3.2 now use the same optional macOS
-Linux runner; SN Systems EE-GCC 2.95.2/2.95.3 use native Mac wibo. Original
+Linux runner; SN Systems EE-GCC 2.95.2/2.95.3 use native Mac wibo. Installed SN packs
+whose path contains spaces run from a private temporary copy; their old driver embeds
+an unquoted self-relative include path, so symlinks alone cannot fix it. User-provided
+kits remain in place and still need paths without whitespace for these old drivers;
+an adapter that preserves in-place kit access remains planned. Original
 compiler binaries and the linked byte judge are retained. Physical Intel Mac
 verification remains planned; Apple Silicon checks use isolated homemade programs.
 CodeWarrior PS2 2.3.3/3.0.1 also run through native Mac wibo after explicit
@@ -1398,6 +1402,8 @@ search remains ROM-only; tracking dependencies outside an imported checkout rema
 snapshots local source/header/build inputs (at most 10,000 files / 32 MiB).
 
 Cross-game transfer results use compact, responsive rows with separate provenance, result labels and score changes; recent partial improvements can be filtered independently.
+
+Cross-game checks show discovery progress and the current donor/target through the shared job bar, with a separate check-budget bar. Per-project device preferences, quick/hour/overnight presets and Stop support manual budgets up to 24 hours and 1,000,000 checks in ROM and imported modes, including unfinished C.
 
 Cross-game results can be collapsed per project without losing state on live refresh; Run now launches a dedicated, bounded cross-game check with progress and duplicate-run protection, in ROM and imported modes.
 
