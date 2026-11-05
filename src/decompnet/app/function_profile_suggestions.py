@@ -135,3 +135,18 @@ def accept_all(net, slug, log):
     net.progress.sync(slug, force=True, logger=log)
     return {'overview':net.overview(slug), 'results':results,
             'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results)}
+
+
+def dismiss_all(net, slug, ids):
+    """Dismiss only the displayed compiler inbox snapshot, in one config transaction."""
+    if not isinstance(ids, list) or any(type(sid) is not int for sid in ids):
+        raise NetworkError('Refresh the compiler suggestions and try dismissing them again.')
+    selected = set(ids)
+    dismissed = []
+    def change(cfg):
+        for item in cfg.get('suggestions', []):
+            if item['id'] in selected and item.get('toolchain') and item.get('status') == 'open':
+                item['status'] = 'dismissed'
+                dismissed.append(item['id'])
+    net._update_cfg(slug, change)
+    return len(dismissed)

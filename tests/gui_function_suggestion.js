@@ -46,3 +46,48 @@ assert.match(context.suggestionHtml({...item,ranges:[[1,4]]}),/Scope: selected a
  assert.match(node('[data-batch-results]').innerHTML,/Busy &lt;function&gt;/);
  assert.match(source,/data-apply-all>Accept all/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+// Compiler inbox uses short actions and preserves the full evidence in a disclosure.
+const inboxHtml=context.compilerSuggestionHtml({...item, text:'Original rationale', check:'C matches the game', ranges:[[1,4]]});
+assert.match(inboxHtml,/data-apply="1">Apply suggestion/);
+assert.match(inboxHtml,/data-dismiss="1">Dismiss/);
+assert.match(inboxHtml,/<code[^>]*>-O2<\/code>/);
+assert.match(inboxHtml,/<summary>Why this was suggested<\/summary>Original rationale/);
+assert.match(inboxHtml,/Matching C checked/);
+assert.doesNotMatch(inboxHtml,/>Use gcc -O2/);
+
+(async()=>{
+ let resolveRequest, cleanup=0, rendered=0, failed='';
+ const log={}; const button={textContent:'Dismiss all'},host={dataset:{},querySelector:()=>log,querySelectorAll:()=>[button]};
+ const env={S:{slug:'game',ov:{suggestions:[item]}},$:()=>host,compilerSuggestions:ov=>ov.suggestions,
+ beginWork:()=>{button.disabled=true;return()=>{button.disabled=false;cleanup++;};},
+ api:(_url,options)=>{assert.equal(options.body.action,'dismiss-all');assert.deepEqual(Array.from(options.body.ids),[1]);return new Promise(r=>resolveRequest=r);},
+ renderStats:()=>{},renderCompilerWaiting:()=>rendered++,toast:()=>{},showJobError:(_log,msg)=>failed=msg};
+ vm.createContext(env);vm.runInContext(source.slice(source.indexOf('async function dismissWaitingSuggestions(')),env);
+ const pending=env.dismissWaitingSuggestions(button);
+ assert.equal(button.textContent,'Dismissing…');assert.equal(button.disabled,true);
+ assert.equal(host.dataset.dismissing,'game');
+ await env.dismissWaitingSuggestions(button); // duplicate click does not start another request
+ resolveRequest({dismissed:1,overview:{suggestions:[]}});await pending;
+ assert.equal(cleanup,1);assert.equal(rendered,1);assert.equal(button.disabled,false);
+ assert.equal(host.dataset.dismissing,undefined);assert.equal(env.S.ov.suggestions.length,0);
+ env.api=async()=>{throw Error('Try again');};env.S.ov.suggestions=[item];
+ await env.dismissWaitingSuggestions(button);
+ assert.equal(failed,'Try again');assert.equal(cleanup,2);assert.equal(rendered,1);
+ assert.equal(env.S.ov.suggestions.length,1);
+ env.api=async()=>{env.S.slug='other';return {dismissed:1,overview:{suggestions:[]}};};
+ await env.dismissWaitingSuggestions(button);
+ assert.equal(env.S.ov.suggestions.length,1);assert.equal(rendered,1);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+
+{
+ let rendered='';const host={dataset:{}};
+ const env={S:{slug:'game'},$:()=>host,compilerSuggestions:ov=>ov.suggestions || [],
+ setHtml:(_host,html)=>rendered=html,compilerSuggestionHtml:context.compilerSuggestionHtml};
+ vm.createContext(env);vm.runInContext(source.slice(source.indexOf('function renderCompilerWaiting('),source.indexOf('$("closeProjectBtn").onclick')),env);
+ env.renderCompilerWaiting({suggestions:[item]});
+ assert.match(rendered,/<section class="compiler-inbox" aria-labelledby=/);
+ assert.match(rendered,/data-dismiss-all>Dismiss all/);
+ host.dataset.dismissing='game';env.renderCompilerWaiting({});assert.match(rendered,/Dismiss all/);
+ delete host.dataset.dismissing;env.renderCompilerWaiting({});assert.equal(rendered,'');
+}
