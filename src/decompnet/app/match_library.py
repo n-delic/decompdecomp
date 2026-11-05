@@ -312,7 +312,7 @@ class Library:
     def candidates(self, processor, big, fingerprint, size, exclude=()):
         with self.connect() as db:
             rows=db.execute('''SELECT s.id,s.compiler,src.text source,h.text header,p.text print,y.text symbols,
-                o.name,o.mode,g.name game FROM functions f JOIN solutions s ON s.function_id=f.id
+                o.name,o.mode,g.name game,g.slug source_slug FROM functions f JOIN solutions s ON s.function_id=f.id
                 JOIN occurrences o ON o.solution_id=s.id JOIN games g ON g.id=o.game_id
                 JOIN texts src ON src.hash=s.source JOIN texts h ON h.hash=s.header
                 JOIN texts p ON p.hash=o.print JOIN texts y ON y.hash=o.symbols
@@ -320,6 +320,18 @@ class Library:
                 AND g.id NOT IN (SELECT value FROM json_each(?))
                 GROUP BY s.id ORDER BY o.seen DESC LIMIT 16''',(processor,int(big),fingerprint,size,encoded(list(exclude)))).fetchall()
             return [dict(r) for r in rows]
+
+    def available(self, processor, big, fingerprints, exclude=()):
+        """Metadata-only shortlist; source/header blobs are fetched only for actual shared code."""
+        if not fingerprints:return {}
+        with self.connect() as db:
+            rows=db.execute("""SELECT f.fingerprint,f.size,COUNT(DISTINCT o.game_id) games
+                FROM functions f JOIN solutions s ON s.function_id=f.id
+                JOIN occurrences o ON o.solution_id=s.id
+                WHERE f.arch=? AND f.big=? AND f.fingerprint IN (SELECT value FROM json_each(?))
+                AND o.game_id NOT IN (SELECT value FROM json_each(?)) GROUP BY f.id""",
+                (processor,int(big),encoded(list(fingerprints)),encoded(list(exclude)))).fetchall()
+        return {(r['fingerprint'],r['size']):r['games'] for r in rows}
 
     def reuse(self, twins, proj, job=None):
         from ..rom.symbols import Symbol, SymbolTable
@@ -332,15 +344,38 @@ class Library:
         bounded=job is not None and hasattr(job,'reuse_limit')
         processor,big=machine(net,proj)
         agent,_=net.local_agent('autopilot')
-        # Live projects already have the richer existing donor path. The library supplies
-        # independent closed-project evidence without duplicating those attempts.
-        active={self.game_key(p) for p in net.store.all('SELECT * FROM projects')}
+        from ..project import compiler_for
+        from .cross_game_progress import report
+        # Archived evidence from open games is just as useful as closed-game evidence.
+        # Exclude only this game; every candidate still passes the destination judge.
+        exclude={self.game_key(proj)}
+        report(job,'Reading target fingerprints',game=proj['name'])
         prints=twins.prints(proj);matched=0
-        for b in net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open'",proj['id']):
+        rows=net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='open'",proj['id'])
+        targets=[r for r in rows if (p:=prints.get(r['id'])) and not p.asm and p.size>=ACROSS_MIN_BYTES]
+        report(job,'Looking up indexed matches',done=0,total=len(targets))
+        available=self.available(processor,big,{prints[r['id']].key for r in targets},exclude)
+        targets=[r for r in targets if (prints[r['id']].key,prints[r['id']].size) in available]
+        targets.sort(key=lambda r:(-available[(prints[r['id']].key,prints[r['id']].size)],prints[r['id']].size,r['id']))
+        if job is not None:job.cross_indexed=len(targets)
+        for index,row in enumerate(targets):
+            report(job,'Checking indexed matches',function=row['name'],done=index,total=len(targets))
+            b=net.store.one("SELECT * FROM functions WHERE id=? AND status='open'",row['id'])
+            if b is None:continue
             if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):break
             pb=prints.get(b['id'])
             if not pb or pb.asm or pb.size<ACROSS_MIN_BYTES or net.store.one('SELECT 1 FROM claims WHERE function_id=?',b['id']):continue
-            for item in self.candidates(processor,big,pb.key,pb.size,active):
+            candidates=self.candidates(processor,big,pb.key,pb.size,exclude)
+            if not fork:
+                own=compiler_for(net.cfg(proj),b['vram'],b)
+                own_flags=own['flags'].split() if isinstance(own['flags'],str) else own['flags']
+                def rank(item,toolchain=own['toolchain'],flags_used=own_flags):
+                    profile=json.loads(item['compiler'])
+                    flags=profile.get('flags',[])
+                    if isinstance(flags,str):flags=flags.split()
+                    return profile.get('toolchain')!=toolchain,flags!=flags_used
+                candidates.sort(key=rank)
+            for item in candidates:
                 if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):return matched
                 pa=Print(**json.loads(item['print']))
                 symbols=SymbolTable([Symbol(**s) for s in json.loads(item['symbols'])])
@@ -349,16 +384,23 @@ class Library:
                 if names is None:continue
                 header=(net._context(proj['id'],b['unit']) or {'header':''})['header']
                 source=_declared(item['header'],header,names,pa.name)+apply(item['source'],names)
-                if twins._missed(b['id'],source):continue
+                if twins._missed(b['id'],source):
+                    if job is not None:job.cross_cached=getattr(job,'cross_cached',0)+1
+                    continue
                 if job is not None:
                     job.cross_candidates+=1;job.cross_tried+=1
                     if bounded:job.reuse_attempts+=1
                 from .cross_game_progress import report
                 report(job, 'Compiling candidate', game=item['game'], function=b['name'], donor=item['name'])
-                outcome,why=twins._attempt_twin(agent,proj,{'name':item['name']},b,source,
+                live=net.store.one("SELECT f.name,p.slug,p.name AS game FROM cross_game_index i JOIN functions f ON f.id=i.function_id JOIN projects p ON p.id=i.project_id WHERE p.slug=? AND i.fingerprint=? AND i.size=? AND f.status='matched' ORDER BY f.name=? DESC LIMIT 1",item['source_slug'],pb.key,pb.size,item['name'])
+                donor_name=live['name'] if live else item['name']
+                outcome,why=twins._attempt_twin(agent,proj,{'name':donor_name},b,source,
                                               origin=' in '+item['game']+' (local match library)',theirs=fork)
+                import time
+                with net.store.tx() as db:
+                    db.execute('INSERT INTO library_transfers(project_id,function_id,source_game,source_name,source_slug,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?,?)',
+                               (proj['id'],b['id'],live['game'] if live else item['game'],donor_name,live['slug'] if live else '',outcome,why[:2000],time.time()))
                 if outcome=='miss':
-                    import time
                     with net.store.tx() as db:
                         db.execute('INSERT OR REPLACE INTO twin_misses(function_id,source_hash,project_id,at,why) VALUES(?,?,?,?,?)',
                                    (b['id'],twins._miss_key(source),proj['id'],time.time(),why))

@@ -324,14 +324,15 @@
         </div>
       </details>
       <section class="panel" id="crossGamePanel" hidden>
-        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games</button></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
+        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games <span class="disclosure-context" id="crossGameContext"></span></button></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
         <div id="crossGameBody">
-          <p class="transfer-intro">Find reusable C in your local projects and SDKs. Only byte-verified matches count toward this game.</p>
+          <p class="transfer-intro">Find reusable C from open and closed games and local SDKs. Saved indexed matches are checked first; every result must reproduce this game’s bytes.</p>
           <div class="transfer-dashboard">
             <div class="transfer-run-heading"><h3 id="crossGameState" role="status">Ready to search</h3><div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div></div>
             <div class="transfer-summary" id="crossGameSummary"></div>
             <div id="crossGameWork" hidden>
               <p id="crossGamePhaseStatus" class="transfer-phase" role="status"></p>
+              <p id="crossGameLeadStatus" class="transfer-lead-status" role="status">Checking saved fingerprints before scanning donor projects.</p>
               <div id="crossGameActivity" class="workbar" role="progressbar" aria-label="Preparing cross-game search" hidden><i></i></div>
               <progress id="crossGamePhaseBar" class="transfer-phase-bar" max="1" aria-label="Current search stage progress" hidden></progress>
               <p id="crossGameBudgetStatus" class="muted small" role="status"></p>
