@@ -258,6 +258,20 @@ an adjacent copy and increment of identically typed locals. Cross-branch lifetim
 still need investigation. Preserve a distinct allocation candidate even if its numeric
 score is worse. Optional GCC diagnostics expose loop notes and legacy reference weights;
 use them as leads only when diagnostic flags leave output unchanged.
+Compare canonical linked function bytes, not whole ELF hashes: diagnostic options
+can change ELF metadata without changing generated code. In a controlled
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` decoder, `-da` exposed a structured-loop
+hoist of a channel shift. A real goto backedge prevented it and restored the
+target frame (0x58 → 0x50), but worsened the score (2454 → 2650). A correct frame
+is a localization clue, not an acceptance criterion. Preserve the actual
+iteration, memory effects and input contracts when testing loop shapes.
+
+For missing halfword masks, check early RTL before searching register allocation.
+A controlled 305-score near miss contains both zero extensions initially; first
+CSE removes them by reusing already narrowed inline-getter values. Real
+switch/fallback forms and value transports did not recover them. This is a
+localized negative result, not a successful repair family. Do not preserve an
+incorrect predicate merely because it scores lower.
 
 For mixed allocator/scheduling misses, inspect the compact first-differing-block
 report before requesting another full diff. Local search now interleaves block and
