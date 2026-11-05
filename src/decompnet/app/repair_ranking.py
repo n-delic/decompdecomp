@@ -34,7 +34,7 @@ def order(families, rows):
                      'copy_register_reuse','split_integer_lifetime','merge_integer_lifetimes','local_declaration_order') + register_priority
     elif focus=='control' and (diagnose(rows)['branch_target'] or
             (diagnose(rows)['delay_slot'] and not diagnose(rows)['scheduling'])):
-        preferred = ('structured_backedge','guard_forward_jump','branch_orientation','loop_update_order',
+        preferred = ('unsigned_countdown_guard','structured_backedge','guard_forward_jump','branch_orientation','loop_update_order',
                      'goto_leaf','shared_return_tail','redundant_loop_guard','combined_scheduling')
     elif paired_loads(rows):
         preferred = ('paired_load_order','scalar_schedule_order','local_declaration_order','small_helper_expansion','combined_scheduling')

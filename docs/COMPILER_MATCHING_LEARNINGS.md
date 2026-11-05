@@ -22,6 +22,30 @@ Use these evidence levels:
 
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
+### Controlled regression: consumed unsigned countdown value
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
+An existing first-link walker used a signed countdown and integer-typed link loads.
+The bounded contract audit established a pointer result, actual pointer link storage and an
+unsigned index: the raw loop has no signed comparison. Merely using unsigned
+`while (count--)` changed the loop exit representation and scored 1115. Saving the
+old value, decrementing, then branching on that genuinely consumed old value recovered
+all 32 linked bytes (score 0). The generated `unsigned_countdown_guard` candidate also
+independently recovered those exact bytes. This is a regression of an existing matched
+function, **not another new function match**. Full cartridge acceptance of the wider
+contract package is a separate gate; this generator experiment does not establish it.
+
+The saved value controls the real branch; it is neither a dead dummy variable nor a
+reason to convert arbitrary signed counters to unsigned. Preserve the decrement on the
+zero/false test (unsigned wrap is defined), body updates and early returns. The shared
+ROM/project repair pipeline offers one bounded candidate for a plain unsigned binding
+and a braced loop body; it skips escaped/qualified/shadowed counters, unknown typedefs,
+preprocessor branches and unsupported transfers/nested loops. The ordinary compiler and
+judge remain required. Synthetic C90 execution controls cover zero entry, body counter
+updates and early returns; a pinned-compiler test independently checks the recovered
+instruction sequence without game data. No m2c type rule or target change is justified.
+
+
 ### Verified linked case: two dead typed-pointer captures recover allocation
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.

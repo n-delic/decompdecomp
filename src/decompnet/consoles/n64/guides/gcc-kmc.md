@@ -914,3 +914,11 @@ Prototype advice may show `?` for an unresolved typedef while flagging another,
 known scalar position. Investigate the known discrepancy without assuming what
 `?` means: an unfamiliar object type or return typedef is not resolved by equal
 machine widths. Validate the complete caller/callee correction jointly.
+
+
+For a real unsigned `while (count--)` mismatch, try local family
+`unsigned_countdown_guard`. A consumed snapshot (`old=count; count--; if(old)`)
+can preserve KMC's original predecrement-value test when the ordinary loop becomes
+an end-value comparison. Keep the zero-test decrement and pointer-link types correct;
+do not change signedness or invent dead variables to force allocation. One existing
+32-byte walker recovered exact bytes this way; it is not a universal loop rule.
