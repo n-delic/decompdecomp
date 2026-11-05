@@ -18,7 +18,7 @@ def order(families, rows):
     from .matching_investigations import paired_loads
     from .normalization_repairs import frame_gap
     register_priority = (
-            'return_contract', 'narrow_expression_inline', 'plain_float_slots',
+            'unsigned_byte_increment', 'return_contract', 'narrow_expression_inline', 'plain_float_slots',
             'narrow_call_destination', 'branch_scalar_lifetime', 'embedded_call_assignment', 'inline_call_count', 'typed_pointer_snapshot',
             'shared_scaled_offset', 'pointer_conditional_load_inline', 'branch_store_tail', 'address_association',
             'dead_index_scale', 'dead_pointer_clear', 'store_index_reuse', 'split_mask_assignment',
@@ -48,9 +48,9 @@ def order(families, rows):
         preferred = ('later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse','cfg_equal_value_increment','equal_value_increment','loop_weight_scope',
                      'shared_branch_locals','paired_operand_reuse','allocation_schedule_bridge','copy_register_reuse','masked_value_reuse') + register_priority
     elif diagnose(rows)['scheduling']:
-        preferred = ('embedded_call_assignment','inline_call_count','typed_pointer_snapshot','call_one_shot_scope', 'debug_initialization_group', 'debug_constant_initialization', 'typed_global_identity', 'block_accumulator_lifetime', 'shared_branch_locals', 'loop_exit_value', 'success_pointer_update', 'affine_counter_guard', 'affine_counter', 'initialization_cluster','allocation_initialization_order','byte_fill_constant','scalar_schedule_order','combined_scheduling')
+        preferred = ('unsigned_byte_increment','embedded_call_assignment','inline_call_count','typed_pointer_snapshot','call_one_shot_scope', 'debug_initialization_group', 'debug_constant_initialization', 'typed_global_identity', 'block_accumulator_lifetime', 'shared_branch_locals', 'loop_exit_value', 'success_pointer_update', 'affine_counter_guard', 'affine_counter', 'initialization_cluster','allocation_initialization_order','byte_fill_constant','scalar_schedule_order','combined_scheduling')
     elif diagnose(rows)['allocation_schedule']:
-        preferred = ('narrow_call_destination','branch_scalar_lifetime','inline_call_count','embedded_call_assignment','typed_pointer_snapshot','call_one_shot_scope', 'debug_initialization_group', 'paired_operand_reuse', 'affine_counter_guard', 'affine_counter',
+        preferred = ('unsigned_byte_increment','narrow_call_destination','branch_scalar_lifetime','inline_call_count','embedded_call_assignment','typed_pointer_snapshot','call_one_shot_scope', 'debug_initialization_group', 'paired_operand_reuse', 'affine_counter_guard', 'affine_counter',
                      'allocation_initialization_order', 'scalar_schedule_order', 'combined_scheduling')
     elif focus == 'call':
         preferred = ('target_callee_name', 'overlay_callee_alias', 'untouched_argument_forwarding', 'float_call_staging', 'success_pointer_update', 'branch_pointer_lifetimes', 'branch_pointer_declarations', 'known_call_excess_arguments', 'known_call_signature', 'call_postincrement', 'target_call_argument', 'target_local_bundle', 'float_argument_bits', 'runtime_scalar_signature', 'call_forwarded_arguments', 'call_arity', 'callee_parameter_width', 'callee_return_width', 'call_result_inline', 'parameter_width', 'parameter_storage')
