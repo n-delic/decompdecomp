@@ -265,7 +265,7 @@ class GuiMixin:
             return self.forks.function_diff(fork, name)
         fn = self._function(name, slug)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
-        latest = self.store.one("SELECT source FROM attempts WHERE function_id=? AND source IS NOT NULL "
+        latest = self.store.one("SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) "
                                 "ORDER BY id DESC LIMIT 1", fn["id"])
         picks = [("matched", fn["matched_source"]), ("best", fn["best_source"]),
                  ("latest", latest["source"] if latest else None)]
@@ -317,7 +317,7 @@ class GuiMixin:
         source = fn['matched_source'] or fn['best_source']
         kind = 'matched' if fn['matched_source'] else 'best' if fn['best_source'] else None
         if not source:
-            latest = self.store.one('SELECT source FROM attempts WHERE function_id=? AND source IS NOT NULL ORDER BY id DESC LIMIT 1', fn['id'])
+            latest = self.store.one('SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1', fn['id'])
             source = latest['source'] if latest else fn['seed']
             kind = 'latest' if latest else 'draft' if fn['seed'] else None
         return {**name_state(fn), **set_aside(fn), 'name': fn['name'], 'unit': fn['unit'],
@@ -342,7 +342,7 @@ class GuiMixin:
         from ..function_history import history
         saved_history = history(self.store, fn)
         latest = None if fn['matched_source'] or fn['best_source'] else self.store.one(
-            "SELECT source, score FROM attempts WHERE function_id=? AND source IS NOT NULL ORDER BY id DESC LIMIT 1", fn['id'])
+            "SELECT source, score FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1", fn['id'])
         x = self.xrefs(proj)
         syms = self.symbols(proj["id"])
         if not (fn["matched_source"] or fn["best_source"] or latest) and fn["status"] == "open":

@@ -610,6 +610,9 @@ function renderFnChart(d) {
   const fails = pts.filter((p) => p.score == null).length;
   const bp = best == null ? null : pctOf(best, d.insns);
   $("fnChartNote").innerHTML = `<b>${plural(d.scores_total ?? n, "compile")}</b>${bp != null ? ` · best ${best === 0 ? "byte-identical" : pctText(bp)}` : ""}${d.scores_sampled ? ` · chart shows ${n} representative attempts; full history retained` : fails ? ` · ${fails} didn't compile` : ""}${agents.length > 1 ? ` · ${agents.map(esc).join(", ")}` : ` · ${esc(agents[0] || "")}`}`;
+  const history=document.createElement('button');history.className='ghost';history.type='button';history.textContent='Browse compile history';
+  history.onclick=()=>browseAttemptHistory(S.slug,S.fn);
+  $('fnChartNote').append(history);
 }
 
 /* The judge's diff: target and attempt side by side, instruction by instruction. */
@@ -1007,3 +1010,35 @@ $("fnDeepStop").onclick = async () => {
     $("fnDeepStatus").textContent = "Stopping after the current compiler or generator finishes. Improvements are saved.";
   } catch (error) { showJobError($("fnDeepLog"), error.message); button.disabled = false; }
 };
+
+/* Pages contain metadata only; fetch a single candidate's source when requested. */
+async function browseAttemptHistory(slug,name) {
+  dialog('Compile history','<p class="small muted">Newest first · up to 100 attempts per page.</p><div id="attemptHistoryRows"></div><button id="attemptHistoryOlder" type="button">Load history</button><div id="attemptHistoryLog"></div><pre id="attemptHistorySource" hidden></pre>','attempt-history');
+  const rows=$('attemptHistoryRows'),older=$('attemptHistoryOlder'),log=$('attemptHistoryLog'),source=$('attemptHistorySource');
+  let before=0,sourceRead=0;
+  const current=()=>S.dialogKind==='attempt-history' && rows.isConnected && S.slug===slug && S.fn===name;
+  const query=()=>`/api/attempt-history?slug=${encodeURIComponent(slug)}&function=${encodeURIComponent(name)}`;
+  older.onclick=async()=>{
+    const done=beginWork(log,'Loading compile history',[older],'History loaded');
+    try{
+      const page=await api(query()+`&before=${before}`);if(!current())return;
+      rows.replaceChildren();sourceRead++;source.hidden=true;
+      for(const item of page.attempts){
+        const row=document.createElement('p');row.className='small';
+        row.textContent=`${clock(item.created_at)} · ${item.agent || 'Unknown agent'} · ${item.score==null ? 'Did not compile' : `Score ${item.score}`}`;
+        if(item.source_available){
+          const button=document.createElement('button');button.type='button';button.className='ghost';button.textContent='View source';
+          button.onclick=async()=>{
+            const read=++sourceRead;
+            const ready=beginWork(log,'Loading candidate source',[button],'Source loaded');
+            try{const detail=await api(query()+`&attempt=${item.id}`);if(current() && read===sourceRead){source.textContent=detail.source ?? 'Source no longer retained';source.hidden=false;}}
+            catch(error){if(current())showJobError(log,error.message);}finally{ready();}
+          };row.append(button);
+        }
+        rows.append(row);
+      }
+      before=page.before;older.hidden=before==null;older.textContent='Older attempts';
+    }catch(error){if(current())showJobError(log,error.message);}finally{done();}
+  };
+  await older.onclick();
+}

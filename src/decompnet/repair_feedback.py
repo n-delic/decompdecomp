@@ -93,6 +93,8 @@ class RepairFeedback:
         with self.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
+            from .payload_storage import install as install_payloads
+            install_payloads(db,'repair_examples')
             self.store._track_reads('repair_examples', 'repair_profiles', 'evidence,project_id')
             from .repair_profile_index import install
             install(db)
@@ -127,7 +129,7 @@ class RepairFeedback:
         if fn['status'] == 'matched' or not source:
             return  # polishing an existing match is not a new matching repair
         proj = db.execute('SELECT * FROM projects WHERE id=?', (fn['project_id'],)).fetchone()
-        before = db.execute('SELECT * FROM attempts WHERE function_id=? AND compiled=1 AND score>0 AND source IS NOT NULL '
+        before = db.execute('SELECT * FROM attempts WHERE function_id=? AND compiled=1 AND score>0 AND (source_hash IS NOT NULL OR source IS NOT NULL) '
                             'AND (? IS NULL OR id<?) ORDER BY score,id DESC LIMIT 1',
                             (fn['id'], attempt_id, attempt_id)).fetchone()
         old_settings = db.execute('SELECT settings FROM repair_attempt_settings WHERE attempt_id=?',
@@ -186,7 +188,7 @@ class RepairFeedback:
         # do not yet capture complete per-file inputs, so never suppress their evidence here.
         if current.get('mode') == 'rom' and all(current.get(key) for key in
                 ('compiler', 'context_sha256', 'scoring_revision')) and evidence['target_sha256']:
-            last = db.execute('SELECT evidence FROM repair_examples WHERE function_id=? AND agent_id IS ? '
+            last = db.execute('SELECT evidence FROM main.repair_examples WHERE function_id=? AND agent_id IS ? '
                               'ORDER BY id DESC LIMIT 1', (fn['id'], agent_id)).fetchone()
             if last and _same_recheck(json.loads(last['evidence']), evidence):
                 return
@@ -238,7 +240,7 @@ class RepairFeedback:
         partition = "project_id,category,status,CASE WHEN json_extract(evidence,'$.via')='unit diff' THEN 'build:' || COALESCE(json_extract(evidence,'$.unit'),'') || ':' || CAST(created_at/60 AS INTEGER) ELSE 'function:' || function_id END,CASE WHEN json_extract(evidence,'$.via')!='unit diff' OR json_extract(evidence,'$.via') IS NULL THEN json_extract(evidence,'$.target_sha256') END,CASE WHEN json_extract(evidence,'$.via')!='unit diff' OR json_extract(evidence,'$.via') IS NULL THEN json_extract(evidence,'$.after.source_sha256') END,json_extract(evidence,'$.after.settings'),json_extract(evidence,'$.after.context_version')"
         prefix = ('WITH grouped AS (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ' + partition +
                   ' ORDER BY id DESC) AS position,COUNT(*) OVER (PARTITION BY ' + partition +
-                  ') AS repetitions FROM repair_examples e WHERE ' + where + ') ')
+                  ') AS repetitions FROM main.repair_examples e WHERE ' + where + ') ')
         rows = self.store.all(prefix + 'SELECT e.id,e.created_at,e.category,e.explanation,e.automation,e.status,e.repetitions,'
                               "CASE WHEN json_extract(e.evidence,'$.via')='unit diff' THEN 'build report' WHEN e.before_attempt_id IS NULL THEN 'no failed baseline' WHEN json_extract(e.evidence,'$.before.source_sha256')=json_extract(e.evidence,'$.after.source_sha256') THEN 'same source / settings' WHEN json_extract(e.evidence,'$.comparable_settings')=1 THEN 'source repair' ELSE 'settings also changed' END AS evidence_kind,"
                               "(json_extract(e.evidence,'$.provenance.kind') IN ('deterministic draft repair','automatic agent local pass') AND "
@@ -249,7 +251,7 @@ class RepairFeedback:
                               'LEFT JOIN agents a ON a.id=e.agent_id WHERE e.position=1 '
                               ' AND (?=0 OR e.id<?) ORDER BY e.id DESC LIMIT 26', *args, before, before)
         total = self.store.one(prefix + 'SELECT COUNT(*) AS n FROM grouped e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id WHERE e.position=1', *args)['n']
-        groups = self.store.all('SELECT e.category,e.status,COUNT(*) AS count FROM repair_examples e WHERE ' + where +
+        groups = self.store.all('SELECT e.category,e.status,COUNT(*) AS count FROM main.repair_examples e WHERE ' + where +
                                 ' GROUP BY e.category,e.status', *args)
         from .app.adaptive_repairs import coverage
         return {'examples': [dict(r) | {'review_group': ('build' if r['evidence_kind']=='build report' else 'first' if r['evidence_kind']=='no failed baseline' else 'context' if r['evidence_kind'] in ('same source / settings','settings also changed') else 'source')} for r in rows[:25]], 'more': len(rows) > 25,
@@ -340,7 +342,7 @@ class RepairFeedback:
         seen, plans, counts = {}, [], {}
         scope, scope_args = self._where(slug)
         prior = self.store.all("SELECT e.id,e.project_id,json_extract(evidence,'$.target_sha256') AS target,"
-                               "json_extract(evidence,'$.after') AS after FROM repair_examples e WHERE " + scope +
+                               "json_extract(evidence,'$.after') AS after FROM main.repair_examples e WHERE " + scope +
                                " AND e.status IN ('reviewed','implemented') ORDER BY e.id", *scope_args)
         for row in prior:
             old = {'project_id':row['project_id'], 'evidence':{'target_sha256':row['target'],

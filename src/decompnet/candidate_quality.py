@@ -18,7 +18,7 @@ def capture(net,fn,agent,notes,progress):
         return
     current=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
     alternatives=net.store.all('SELECT id,source,score FROM attempts WHERE function_id=? AND agent_id=? '
-                               'AND created_at>=? AND compiled=1 AND score>0 AND source IS NOT NULL '
+                               'AND created_at>=? AND compiled=1 AND score>0 AND (source_hash IS NOT NULL OR source IS NOT NULL) '
                                'ORDER BY score,id DESC LIMIT 30',fn['id'],agent.id,
                                progress['claimed_at'] if progress else time.time())
     seen={current['best_source']};ids=[]
@@ -34,7 +34,7 @@ def capture(net,fn,agent,notes,progress):
     if reference:
         revision=reference[1].lower()
         recent=net.store.all('SELECT id,source FROM attempts WHERE function_id=? AND compiled=1 AND score IS NOT NULL '
-                             'AND source IS NOT NULL ORDER BY id DESC LIMIT 200',fn['id'])
+                             'AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 200',fn['id'])
         linked=next((r for r in recent if hashlib.sha256(r['source'].encode()).hexdigest().startswith(revision)
                      and r['source']!=current['best_source']),None)
         if linked:
@@ -174,7 +174,7 @@ def report(net, agent, slug, function, revision, issue, reason, alternative_revi
     for value in (revision, alternative_revision):
         if value and not re.fullmatch(r'(?:[0-9a-f]{20}|[0-9a-f]{64})',value):
             raise NetworkError('Use a 20-character candidate revision or full source hash.')
-    rows = net.store.all('SELECT id,source,compiled,score FROM attempts WHERE function_id=? AND source IS NOT NULL ORDER BY id DESC LIMIT 1000',fn['id'])
+    rows = net.store.all('SELECT id,source,compiled,score FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1000',fn['id'])
     def find(value, *, compiled=False):
         return next((r for r in rows if hashlib.sha256(r['source'].encode()).hexdigest().startswith(value)
                      and (not compiled or r['compiled'] and r['score'] is not None)),None)

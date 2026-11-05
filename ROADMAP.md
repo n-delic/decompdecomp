@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: attempt source and full repair evidence use checksum-verified compressed shared payloads,
+  preserving IDs and lazy exact reads. Explicit cancellable backfill, opt-in daily failed-source
+  retention and indexed 100-row compile-history pages keep bulk data off ordinary list reads.
+  Existing atomic database compaction remains a separate idle-time action.
+
 - Done: header cleanup waits cancellably for SQLite write-lock acquisition, with visible
   retry status and no transaction-body replay. Failed UI jobs expose a bounded recent
   application-log tail and their error details directly in an opened, copyable log panel.
