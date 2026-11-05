@@ -5,6 +5,9 @@
   and retry recovered failed drafts through the ordinary compiler and exact judge.
   Background draft planning now supplies the complete function inputs it uses.
 
+- Done: allow flag context in reusable knowledge proposals while retaining explicit
+  compiler-selection routing, function-note scoping and model/user review.
+
 - Done: numeric MCP transaction-writer and candidate lock acquisition timings,
   with synthetic rollback, release and claim-check regressions. This diagnoses
   contention without changing concurrency or exact matching.

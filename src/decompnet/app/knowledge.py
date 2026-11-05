@@ -30,7 +30,9 @@ OPEN_SHOWN = 8  # open proposals an agent is shown, newest first
 COMPILER_MENTION = re.compile(r"\b(compil(er|ed)|toolchain|flags?|gcc|ido|mwcc|codewarrior|mwcps2|mwccpsp|snc|msvc)\b|(^|\s)-[OG]\d",
                            re.I)
 
-COMPILER_SELECTION = re.compile(r"built\s+(?:with|by|using)|compiler\s+(?:is|was)|\b(?:use|switch|change|select|try)\s+(?:the\s+)?(?:compiler|flags?|gcc|ido|mwcc)|(^|\s)-[OG]\d", re.I)
+# A flag can describe the conditions of a source technique. Reject selection language,
+# not the mere presence of -O2/-g3; proposals still need the normal model/user review.
+COMPILER_SELECTION = re.compile(r"built\s+(?:with|by|using)|compiler\s+(?:is|was)|\b(?:use|switch|change|select|try)\s+(?:(?:the|to)\s+)?(?:compiler|flags?|gcc|ido|mwcc|-[OG]\d)", re.I)
 
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS knowledge(
