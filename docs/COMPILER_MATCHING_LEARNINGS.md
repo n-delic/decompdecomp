@@ -3715,3 +3715,35 @@ cartridge comparison. Every prior object stayed unchanged except the intentional
 recompiled target object (whose debug information changed between cast and union
 source). This validates generated source through the full link, while remaining
 controlled replay rather than a native search result.
+
+
+### One byte-load macro address can account for the final operand mismatch
+
+A 426-instruction function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` had a score-5 draft. Its source-owned
+load macro was of the form `LOAD(p,o) (*(char**)((char*)(p)+(o)))`.
+Changing one outer access from `LOAD(LOAD(base,140),index)` to
+`*(char**)(index + (int)(LOAD(base,140)))` recovered exact linked code/data.
+The inner pointer load remains in place and each operand is still evaluated once.
+An accompanying unsigned-to-signed cast change elsewhere was unnecessary: that
+change alone retained score 5; the outer address edit alone matched at score 0.
+Do not infer a coupled repair from a multi-edit agent submission without isolating it.
+
+The existing 64 deterministic proposals did not match this captured draft. Pinned
+preprocessing alone preserved score 5, and existing address proposals on that
+expanded source also missed. Macro statements are normally opaque to generic
+repairs; arbitrary macro expansion or operand swapping would lose their effects.
+The new `macro_byte_address_order` family instead recognizes only unconditional,
+source-owned, single-use byte-load macro definitions. It requires explicit 32-bit
+pointer metadata, a plain word index and a declared byte-pointer base; the nested
+load uses a literal field displacement. Conditional/redefined directives, unknown
+macro effects, updates, arbitrary calls, volatile source, array indices posing as
+scalars, conflicting types and wide/unknown ABIs remain excluded.
+
+Controlled evidence: the family generated one candidate, exact at score 0, and
+the shared draft-repair route included it first. The actual generated source
+passed standalone checking and the full 12,582,912-byte cartridge comparison;
+only the intentionally rebuilt target object changed. This replays an independently
+produced match, not a new live/native autopilot match. The normal judge and flags
+are unchanged. Other macro shapes and more complex index expressions remain
+unsupported; names in this example describe the grammar, not game-specific rules.
