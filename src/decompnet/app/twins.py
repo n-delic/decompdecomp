@@ -685,6 +685,8 @@ class Twins:
         proj = self.net.project_row(slug)
         fork = bool(self.net.fork_slug(slug))
         from . import shared_reuse
+        from .cross_game_progress import report
+        report(job, 'Reading the local verified-match library')
         archived = self.net.match_library.reuse(self, proj, job) if hasattr(self.net, "match_library") else 0
         shared_reuse.discover(self, proj, job=job)
         if fork:

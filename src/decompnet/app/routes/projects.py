@@ -614,7 +614,7 @@ def register(app: App) -> None:
             # Manual budgets also govern partial donors, rather than silently stopping them at 64 trials.
             check.partial_limit = attempts
             try:
-                report(check, 'Preparing local match library')
+                report(check, 'Reading saved transfer results')
                 log(f'Budget: {seconds:,} seconds · {attempts:,} candidate checks. Stops at either limit or when candidates run out.')
                 before = net.twins.cross_game_results(slug)['counts'].get('improved', 0)
                 matched = net.twins.across_games(slug, check)

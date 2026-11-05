@@ -409,17 +409,29 @@ function renderAutopilot(ov) {
     status.textContent = `Preparing · 0 / ${limit.toLocaleString()} checks used · ${Number(minutes.value).toLocaleString()} min limit`;
     bar.setAttribute('aria-valuemax', String(limit)); bar.setAttribute('aria-valuenow', '0');
     bar.firstElementChild.style.width = '0%'; bar.hidden = true;
-    $("crossGamePhaseStatus").textContent = 'Preparing the search…';
+    $('crossGamePhaseStatus').textContent = 'Requesting a search worker…';
+    $('crossGameActivity').hidden = false;
     $("crossGamePhaseBar").hidden = true;
-    log._state = 'Searching other games'; $("crossGameState").textContent = log._state;
+    log._state = 'Starting search…'; $("crossGameState").textContent = log._state;
     log._showJobProgress = false;
     run._working = true; run.hidden = true; run.textContent = "Starting…"; log._slug = slug; $("crossGameWork").hidden = false;
     showJobError(log, '');
     const finish = beginWork(log, 'Checking other games', [run, minutes, attempts, preset], 'Cross-game check finished.');
-    stop.hidden = false; stop.disabled = true;
+    stop.hidden = false; stop.disabled = true; stop.textContent = 'Starting…';
+    const startedAt = Date.now();
+    let latestProgress = null;
+    const updateElapsed = () => {
+      if (S.slug !== slug) return;
+      const p = latestProgress, elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      status.textContent = `${(p?.attempts || 0).toLocaleString()} / ${(p?.attempt_limit || limit).toLocaleString()} checks used · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s elapsed · ${Math.round((p?.second_limit || seconds) / 60)} min limit · ${p?.confirmed || 0} verified this run`;
+    };
+    updateElapsed();
+    const elapsedTimer = setInterval(updateElapsed, 1000);
     try {
       const {job} = await api('/api/cross-game/run', {method:'POST', body:{slug, seconds, attempts: limit}});
-      stop.disabled = false; run.textContent = 'Searching…';
+      stop.disabled = false; stop.textContent = 'Stop'; run.textContent = 'Searching…';
+      log._state = 'Searching other games';
+      if (S.slug === slug) { $('crossGameState').textContent = log._state; $('crossGamePhaseStatus').textContent = 'Waiting for the search worker to report its current step…'; }
       stop.onclick = async () => {
         stop.disabled = true; stop.textContent = 'Stopping…';
         if (S.slug === slug) $("crossGameState").textContent = 'Stopping search…';
@@ -429,11 +441,12 @@ function renderAutopilot(ov) {
       const result = await followJob(job, log, (_lines, snapshot) => {
         const p = snapshot.progress;
         if (!p || S.slug !== slug) return;
-        const elapsed = snapshot.state === 'running' && snapshot.t ? Math.max(0, Date.now() / 1000 - snapshot.t) : p.seconds;
-        status.textContent = `${p.attempts.toLocaleString()} / ${p.attempt_limit.toLocaleString()} checks used · ${Math.floor(elapsed / 60)}m ${Math.floor(elapsed % 60)}s elapsed · ${Math.round(p.second_limit / 60)} min limit · ${p.confirmed} verified this run`;
+        latestProgress = p; updateElapsed();
         const known = p.total > 0 && p.done != null;
         $("crossGamePhaseStatus").textContent = `${p.phase || 'Checking candidates'}${known ? ` · ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${Math.floor(100 * p.done / p.total)}%)` : ''}${p.game ? ` · ${p.game}` : ''}${p.function ? ` · ${p.function}` : ''}`;
         const phaseBar = $("crossGamePhaseBar"); phaseBar.hidden = !known;
+        $("crossGameActivity").hidden = known;
+        $("crossGameActivity").setAttribute("aria-label", p.phase || "Checking candidates");
         if (known) { phaseBar.max = p.total; phaseBar.value = p.done; }
         bar.hidden = !p.attempts;
         bar.setAttribute('aria-valuemax', String(p.attempt_limit)); bar.setAttribute('aria-valuenow', String(p.attempts));
@@ -452,7 +465,7 @@ function renderAutopilot(ov) {
       if (S.slug === slug) { $("crossGameState").textContent = log._state; $("crossGamePhaseStatus").textContent = error.message; $("crossGamePhaseBar").hidden = true; }
       showJobError(log, error.message);
     }
-    finally { finish(); stop.hidden = true; stop.textContent = 'Stop'; run._working = false; run.hidden = false; run.textContent = 'Start search'; }
+    finally { clearInterval(elapsedTimer); if (S.slug === slug) $('crossGameActivity').hidden = true; finish(); stop.hidden = true; stop.textContent = 'Stop'; run._working = false; run.hidden = false; run.textContent = 'Start search'; }
   };
   const cross = ov.cross_game || { counts: {}, recent: [] };
   const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
