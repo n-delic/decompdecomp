@@ -164,7 +164,9 @@ def verify(net,slug,agent,function,source,evidence=None):
     return result
 
 
-def retry(net,slug,key, *, recover_profiles=True):
+def retry(net,slug,key, *, recover_profiles=True, progress=None):
+    report=progress or (lambda value:None)
+    report({'phase':'Loading saved submission'})
     proj=net.project_row(slug)
     if not key.startswith(PREFIX+str(proj['id'])+':'):
         raise NetworkError('Choose a submission belonging to this project.')
@@ -184,6 +186,7 @@ def retry(net,slug,key, *, recover_profiles=True):
         else:
             # Recovered submissions share one attribution identity. Verification is
             # scoped to this candidate, not that identity's ongoing work elsewhere.
+            report({'phase':'Checking function availability', 'function':fn['name']})
             with net.store.tx() as db:
                 net._expire_claims(db)
                 claim=db.execute('SELECT agent_id FROM claims WHERE function_id=?',(fn['id'],)).fetchone()
@@ -195,12 +198,14 @@ def retry(net,slug,key, *, recover_profiles=True):
                     verification_claim=True
             own=compiler_for(net.cfg(proj),fn['vram'], fn)
             if toolchains.installed(own['toolchain']):
+                report({'phase':'Compiling and comparing with host settings', 'toolchain':own['toolchain'], 'flags':own['flags']})
                 res=net.attempt(agent,fn['name'],item['source'],slug)
             else:
                 res={'matched':False,'score':None}
             result.update(score=res['score'],matched=res['matched'])
             fn=net._function(fn['name'],slug);proj=net.project_row(slug)
             if not res['matched']:
+                report({'phase':'Checking client evidence and preparing compiler profiles'})
                 evidence=item.get('evidence')
                 header=net._context(proj['id'],fn['unit'])['header']
                 if evidence:
@@ -225,11 +230,14 @@ def retry(net,slug,key, *, recover_profiles=True):
                 scope=hashlib.sha256((candidate_scope.key(net,proj,fn)+json.dumps(identities,sort_keys=True)+build_info.commit()).encode()).hexdigest()
                 if item.get('scope')!=scope:item.update(scope=scope,tried=[])
                 tested=0
+                remaining=[p for p in profiles if json.dumps(p,sort_keys=True) not in item['tried']][:6]
                 for profile in profiles:
                     marker=json.dumps(profile,sort_keys=True)
                     if marker in item['tried']:continue
                     if tested>=6:break
                     tested+=1
+                    report({'phase':'Rechecking source, header and linked bytes', 'profile_index':tested,
+                            'profile_total':len(remaining), 'toolchain':profile['toolchain'], 'flags':profile['flags']})
                     try:
                         expected=source_preparation.inputs(net,net.project_row(slug),net._function(fn['name'],slug))
                         prepared_evidence.promote_measured(net,net.project_row(slug),net._function(fn['name'],slug),
@@ -248,6 +256,7 @@ def retry(net,slug,key, *, recover_profiles=True):
         if verification_claim:
             with net.store.tx() as db:
                 db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(fn['id'],agent.id))
+    report({'phase':'Saving verification result'})
     if result['matched']:
         attach_baseline(net,fn,agent,item['source'],item.get('evidence'))
         item.update(status='accepted',reason='Host verified exact bytes',source='',evidence=None,tried=[])

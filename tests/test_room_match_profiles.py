@@ -100,7 +100,11 @@ def test_legacy_candidates_walk_installed_profiles_with_a_budget(pair,monkeypatc
     monkeypatch.setattr(room_matches.prepared_evidence,'promote_measured',miss)
     result=room_matches.verify(host,slug,agent,'func_80000808',DAMAGE)
     assert result['pending'] and len(seen)==0
-    room_matches.retry(host,slug,result['submission'])
+    updates=[]
+    room_matches.retry(host,slug,result['submission'],progress=updates.append)
+    trials=[p for p in updates if p.get('profile_index')]
+    assert [p['profile_index'] for p in trials]==list(range(1,7))
+    assert all(p['profile_total']==6 and p['toolchain']=='gcc-2.7.2-kmc' for p in trials)
     assert len(seen)==6
     room_matches.retry(host,slug,result['submission'])
     assert len(seen)==10
@@ -197,7 +201,7 @@ def test_pending_match_review_routes_are_guarded_and_project_scoped(pair,tmp_pat
     assert client.post(url,json={'slug':slug,'key':key}).status_code==403
     assert client.post(url,json={'slug':slug,'key':'room-match:999:other'},headers={'X-Decomp':'1'}).status_code==400
     called=[]
-    monkeypatch.setattr(room_matches,'retry',lambda *args: called.append(args[-1]) or {'matched':True,'reason':'Host confirmed'})
+    monkeypatch.setattr(room_matches,'retry',lambda *args, **kwargs: called.append(args[-1]) or {'matched':True,'reason':'Host confirmed'})
     job=client.post(url,json={'slug':slug,'key':key},headers={'X-Decomp':'1'}).json()['job']
     for _ in range(100):
         state=client.get('/api/job?id='+job).json()

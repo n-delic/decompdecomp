@@ -145,7 +145,9 @@ def register(app: App) -> None:
             if key and not key.startswith(room_matches.PREFIX+str(net.project_row(slug)['id'])+':'):
                 raise NetworkError('Choose a submission in this project.')
             def work(log):
+                log.progress({'finished':0,'total':0,'phase':'Loading pending room submissions'})
                 if data.get('recover') and slug not in net.links:
+                    log.progress({'finished':0,'total':0,'phase':'Recovering older submissions'})
                     log(f'Recovered {room_matches.recover_legacy(net,slug)} older submissions.')
                 rows=[r for r in room_matches.pending(net,slug) if not key or r['key']==key]
                 if data.get('all') is not True:
@@ -158,8 +160,13 @@ def register(app: App) -> None:
                     try:
                         if row['direction']=='client':
                             if slug not in net.links:raise NetworkError('Reconnect to this room before resubmitting.')
+                            log.progress({'finished':index,'total':len(rows),'function':row['function'],
+                                          'phase':'Sending saved match to the host and waiting for verification'})
                             result=room_matches.resend(net.links[slug],row['key'])
-                        else:result=room_matches.retry(net,slug,row['key'])
+                        else:
+                            def report(value, index=index, row=row):
+                                log.progress({'finished':index,'total':len(rows),'function':row['function'],**value})
+                            result=room_matches.retry(net,slug,row['key'],progress=report)
                         matched+=bool(result.get('matched'))
                         log(result.get('reason') or ('Host confirmed match' if result.get('matched') else 'Still pending'))
                     except (NetworkError,ValueError) as error:
