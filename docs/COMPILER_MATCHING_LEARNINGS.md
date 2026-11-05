@@ -4276,3 +4276,17 @@ selection, fingerprint categories and regional regressions. Private frozen compi
 replays remain outside the repository and compare to a previously verified exact control;
 these do not count as new game matches. The original 330-point plateau remains a useful
 negative control rather than evidence that scheduling alone fixes structural errors.
+
+### Frozen replay result
+
+With the same private KMC profile/header/control and a sixteen-candidate allowance,
+shared family ranking plus source-mapped ordering/combination feedback recovered the
+30-point precursor in **6** candidate compiles versus **16** with the previous policy.
+The 10-point precursor recovered in **2** versus **3**. Both recovered the complete
+previously verified compiler-output control, including allocated sections. The
+330-point plateau stayed at 330 after sixteen trials under both policies; output
+fingerprints showed fifteen inert trials previously and sixteen under the new policy.
+Thus the measured benefit is quicker late recovery, not a new match or a demonstrated
+improvement on the structural plateau. These are offline policy replays, not a full
+running-app timing or model-token benchmark. Mapping came from each exact baseline
+object, with no diagnostic flag changes or guessed source locations.
