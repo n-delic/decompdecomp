@@ -285,3 +285,13 @@ same suppressed/remaining proposals, fresh trial records and changed-input
 invalidation. These counts do not establish a live wall-time speedup or explain
 all observed candidate-read latency. Every submitted candidate still uses the
 ordinary judge.
+
+### One copied callee differs from the target
+
+A reused function can have the right structure but still call a donor overlay's
+function. The existing overlay alias family only covers the same address under
+another name. `target_callee_name` additionally offers a single spelling replacement
+when the MIPS target and declared candidate calls differ by exactly one symbol and
+have matching static call counts. It rewrites the owned prototype and calls together,
+without altering shared headers or guessing among multiple targets. Call-focused
+search prioritizes this hypothesis; acceptance remains the ordinary byte judge.

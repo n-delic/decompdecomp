@@ -2425,3 +2425,8 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   draft/agent/permuter candidates reuse an existing unused scalar, preserve opaque
   unrelated macros, reject observable or out-of-scope locals, and retain the
   ordinary compiler and byte/object judge as the acceptance gate.
+
+- Done: shared draft and agent repair searches can propose one unambiguous copied
+  callee-name correction from MIPS symbolic direct calls, preserving source-owned
+  prototype types and the ordinary exact judge. Other processor call-syntax adapters
+  remain planned; ambiguous multi-callee remapping is intentionally unsupported.
