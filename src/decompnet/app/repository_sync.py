@@ -102,13 +102,13 @@ def checkout_changes(raw):
     return changes
 
 
-def checkout(folder):
-    """Require a clean checkout root before starting or publishing verified work."""
+def checkout(folder, *, clean=True):
+    """Validate the checkout root, normally requiring it to be clean before export verification."""
     root = Path(folder).expanduser().resolve()
     if not root.is_dir() or Path(git(root,'rev-parse','--show-toplevel').decode().strip()).resolve() != root:
         raise NetworkError('Choose the root folder of a local Git checkout.')
     raw = git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
-    if raw:
+    if raw and clean:
         changes = checkout_changes(raw)
         # Large autosaved projects can have thousands of dirty files; keep the error readable.
         shown = changes[:MAX_CHECKOUT_CHANGES]
@@ -144,10 +144,22 @@ def status(net, slug):
     message = ''
     if not net.is_rom(proj):
         message = 'Imported projects already keep their source in their own checkout.'
-    elif not cfg.get('repository_sync_folder') and folder and cfg.get('progress_folder') and not (Path(folder) / 'build.json').is_file():
-        message = ('This checkout already receives saved progress automatically. '
-                   'Verified export sync needs a rebuildable export checkout.')
-    return {'folder': folder, 'supported': net.is_rom(proj), 'message': message}
+    elif folder and progress_checkout(net, slug, Path(folder)):
+        message = ('This checkout receives saved progress automatically. Commit and push includes matches, '
+                   'drafts, notes and settings; newer helper work stays uncommitted.')
+    return {'folder': folder, 'supported': net.is_rom(proj), 'message': message,
+            'mode': 'progress' if folder and net.is_rom(proj) and progress_checkout(net, slug, Path(folder)) else 'export'}
+
+
+def progress_checkout(net, slug, root):
+    """Only the project's bound save is eligible; an arbitrary dirty repository is never adopted."""
+    from . import saves
+    if (root/'build.json').is_file() or (root/'build.py').is_file():
+        return False
+    proj = net.project_row(slug)
+    cfg = net.cfg(proj)
+    folder = Path(cfg.get('progress_folder') or Path(proj['root']) / saves.SAVE_FOLDER).resolve()
+    return folder.is_relative_to(root.resolve()) and (folder/saves.MANIFEST).is_file()
 
 
 def copy_checkout(root, stage):
@@ -290,7 +302,12 @@ def run(net, slug, folder, log=print, *, commit_push=False):
         proj=net.project_row(slug)
         if not net.is_rom(proj):
             raise NetworkError('This project already works in its checkout. Commit its source there; no export sync is needed.')
-        root=checkout(folder);head=git(root,'rev-parse','HEAD')
+        root=checkout(folder, clean=False)
+        if progress_checkout(net, slug, root):
+            from . import repository_progress
+            return repository_progress.run(net, slug, root, log, commit_push=commit_push)
+        checkout(root)
+        head=git(root,'rev-parse','HEAD')
         upstream = None
         if commit_push:
             from . import repository_git

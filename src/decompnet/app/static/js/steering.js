@@ -124,13 +124,25 @@ function loadRepositoryFolder(slug) {
   if (field.dataset.slug === slug) return;
   field.dataset.slug = slug;
   field.value = "";
+  field.dataset.progressFolder = "";
+  const setMode = progress => {
+    $("repositorySyncGo").textContent = progress ? "Review saved progress" : "Verify and sync";
+    $("repositoryCommitGo").textContent = progress ? "Commit and push" : "Verify, commit and push";
+  };
+  setMode(false);
   const defaultHint = "Commit or move any existing checkout changes first.";
   hint.textContent = defaultHint;
-  field.oninput = () => { hint.textContent = defaultHint; };
+  field.oninput = () => {
+    const progress = field.value.trim() === field.dataset.progressFolder;
+    setMode(progress);
+    hint.textContent = progress ? "App-saved progress can be committed; newer helper edits stay local." : defaultHint;
+  };
   api(`/api/repository-sync?slug=${encodeURIComponent(slug)}`).then(result => {
     if (S.slug !== slug || field.dataset.slug !== slug) return;
     if (!field.value) {
       field.value = result.folder || "";
+      field.dataset.progressFolder = result.mode === "progress" ? field.value : "";
+      setMode(result.mode === "progress");
       hint.textContent = result.message || defaultHint;
     }
   }).catch(() => {});
@@ -1815,7 +1827,9 @@ async function syncRepository(commitPush = false) {
     const {job} = await api("/api/repository-sync", {method:"POST", body:{slug:S.slug, folder:$("repositoryFolder").value.trim(), commit_push:commitPush}});
     repositorySyncJob = job; stop.hidden = false;
     const result = await followJob(job, log);
-    log.textContent += `\n${result.verified_build ? "Full rebuilt image verified." : "No source additions; no full rebuild was needed."}\n${result.accepted.length} functions synced; ${result.skipped.length} could not be integrated.\n${result.changes || "No Git changes."}`;
+    log.textContent += result.mode === "progress"
+      ? `\nSaved progress: ${result.matched} matches and ${result.best} best drafts. No standalone rebuild was run.\n${result.commit ? "Newer helper edits remain local." : result.changes || "No Git changes."}`
+      : `\n${result.verified_build ? "Full rebuilt image verified." : "No source additions; no full rebuild was needed."}\n${result.accepted.length} functions synced; ${result.skipped.length} could not be integrated.\n${result.changes || "No Git changes."}`;
     if (result.commit) log.textContent += `\nCommit: ${result.commit}\n${result.pushed ? "Pushed to " + result.upstream : result.push_error || "Saved locally."}`;
     for (const item of result.skipped) log.textContent += `\n${item.function}: ${item.reason}`;
     if (result.commit_url && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/[a-f0-9]+$/.test(result.commit_url)) {

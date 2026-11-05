@@ -7,19 +7,23 @@ const source = fs.readFileSync(path.join(__dirname, "../src/decompnet/app/static
 const start = source.indexOf("function loadRepositoryFolder(slug) {");
 const end = source.indexOf("/* What agents said,", start);
 const field = {dataset:{}, value:""}, hint = {textContent:""};
+const buttons = {repositorySyncGo:{},repositoryCommitGo:{}};
 const requests = [];
-const ctx = {S:{slug:"first"}, $:id=>id === "repositoryFolder" ? field : hint,
+const ctx = {S:{slug:"first"}, $:id=>id === "repositoryFolder" ? field : buttons[id] || hint,
   api:url=>new Promise(resolve=>requests.push({url,resolve}))};
 vm.createContext(ctx); vm.runInContext(source.slice(start,end),ctx);
 (async () => {
   ctx.loadRepositoryFolder("first");
-  requests[0].resolve({folder:"/known/checkout",message:"Already saves here"});
+  requests[0].resolve({folder:"/known/checkout",message:"Already saves here",mode:"progress"});
   await Promise.resolve(); await Promise.resolve();
   assert.equal(field.value,"/known/checkout");
+  assert.equal(buttons.repositoryCommitGo.textContent,"Commit and push");
+  assert.equal(buttons.repositorySyncGo.textContent,"Review saved progress");
   assert.equal(hint.textContent,"Already saves here");
   ctx.loadRepositoryFolder("first"); assert.equal(requests.length,1);
   field.value="/my/export";field.oninput();
   assert.ok(hint.textContent.includes("Commit or move"));
+  assert.equal(buttons.repositoryCommitGo.textContent,"Verify, commit and push");
   ctx.S.slug="second";ctx.loadRepositoryFolder("second");
   field.value="/typed/while/loading";
   requests[1].resolve({folder:"/second/checkout",message:"Wrong hint"});

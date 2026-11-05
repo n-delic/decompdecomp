@@ -10,12 +10,12 @@ from .. import hostenv
 from ..network import NetworkError
 
 
-def git(root, *args):
+def git(root, *args, env=None, input=None):
     """Never prompt invisibly for credentials in the app's background worker."""
     try:
         result = subprocess.run([shutil.which('git') or 'git', '-C', str(root), *args],
-                                capture_output=True, timeout=120,
-                                env={**os.environ, 'GIT_TERMINAL_PROMPT':'0'},
+                                capture_output=True, timeout=120, input=input,
+                                env={**os.environ, 'GIT_TERMINAL_PROMPT':'0', **(env or {})},
                                 creationflags=hostenv.NO_WINDOW if os.name == 'nt' else 0)
     except (OSError, subprocess.TimeoutExpired):
         raise NetworkError('Git timed out or could not start. Check the checkout and your Git credentials, then retry.') from None
@@ -60,6 +60,11 @@ def finish(root, files, upstream, log):
     if staged:
         git(root, 'commit', '-m', 'Save verified matches and all decompilation progress')
     commit = git(root, 'rev-parse', 'HEAD')
+    return push(root, commit, upstream, log)
+
+
+def push(root, commit, upstream, log):
+    """A failed network operation leaves the checkpoint available for a later retry."""
     remote, ref = upstream
     result = {'commit':commit, 'upstream':remote+'/'+ref.removeprefix('refs/heads/'), 'pushed':False}
     url = git(root, 'remote', 'get-url', remote)

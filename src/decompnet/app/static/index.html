@@ -682,17 +682,18 @@
               <header class="repository-sync-heading">
                 <span class="repository-sync-label">Git repository</span>
                 <h3 id="repositorySyncTitle">Sync your verified matches</h3>
-                <p>Copy matching C into your decompdecomp export checkout.</p>
+                <p>Commit your saved progress, or copy matching C into a rebuildable export checkout.</p>
               </header>
               <label class="field"><span>Repository folder</span><span class="pick-row"><input id="repositoryFolder" class="mono" placeholder="Choose an existing export checkout" aria-describedby="repositorySyncHint"><button class="ghost small-btn" type="button" data-pick="folder" data-for="repositoryFolder" data-title="Git checkout root">Choose…</button></span></label>
-              <p class="small muted" id="repositorySyncHint">Commit or move any existing checkout changes first.</p>
+              <p class="small muted" id="repositorySyncHint">App-saved progress can be committed. Other checkout edits must be committed or moved first.</p>
               <div class="repository-sync-actions">
                 <div><button class="primary small-btn" id="repositorySyncGo" type="button">Verify and sync</button><p>Leave changes ready to review.</p></div>
                 <div><button class="ghost small-btn" id="repositoryCommitGo" type="button">Verify, commit and push</button><p>Save progress and push the current branch.</p></div>
                 <button class="ghost small-btn" id="repositorySyncStop" type="button" hidden>Stop</button>
               </div>
               <details class="repository-sync-help"><summary>How syncing works</summary><ul>
-                <li>Checks the build in a private copy before updating your checkout.</li>
+                <li>A linked progress checkout includes matches, drafts, notes and settings. Newer helper work stays uncommitted.</li>
+                <li>A rebuildable export checks the build in a private copy before updating your checkout.</li>
                 <li>Updates app-generated sources; keeps your build setup and hand-written C.</li>
                 <li>Commit and push also saves portable progress and uses your configured upstream and Git credentials.</li>
               </ul></details>

@@ -337,6 +337,7 @@ def test_status_recovers_imported_progress_checkout_without_requiring_clean_git(
     progress = root / 'progress'
     progress.mkdir(parents=True)
     (root / '.git').mkdir()
+    (progress / 'decompdecomp.json').write_text('{}')
     (root / 'local-edit.c').write_text('uncommitted work')
     cfg = {'progress_folder': str(progress), 'repo_url': 'https://example.test/project'}
     net = SimpleNamespace(project_row=lambda slug: {'root': str(tmp_path / 'game')},
