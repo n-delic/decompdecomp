@@ -2730,3 +2730,17 @@ need independent evidence before receiving this specific GNU C repair.
   one trial instead of seven; the new normalization recovery took two. These cases
   informed the changes, so this is a regression result, not held-out generalization
   or a measurement of AI-token savings. No live game progress was adopted.
+
+
+### Completed: selected empty-callee and incoming-copy repair
+
+- Shared bounded `matched_zero_argument_call`, `incoming_parameter_alias` and
+  `zero_argument_parameter_alias` proposals reach drafts, agent local variants,
+  autopilot and deep/permuter local passes in ROM and PROJECT modes. Selected
+  matched explicit empty `void(void)` C is required; source-owned declarations
+  only, no callee or shared-header edits.
+- Pure scalar arguments, compatible unchanged formal copies and dominating
+  assignments are checked. Macros, escapes, shadowing, mutations and uncertain
+  definitions block proposals. Pinned homemade compiler controls and a copied
+  cartridge check confirm the measured composition. Complex expressions and
+  shared interface migrations remain manual investigations.

@@ -922,3 +922,25 @@ can preserve KMC's original predecrement-value test when the ordinary loop becom
 an end-value comparison. Keep the zero-test decrement and pointer-link types correct;
 do not change signedness or invent dead variables to force allocation. One existing
 32-byte walker recovered exact bytes this way; it is not a universal loop rule.
+
+
+Selected empty callees and incoming parameter copies
+- Argument-register setup in a conditional delay slot can belong to a later call
+  on another path. Do not infer the immediately following callee's arity from it.
+  Inspect selected matched C and actual callers first.
+- `matched_zero_argument_call` only proposes a caller-owned `void(void)` contract
+  when selected matched C explicitly defines an empty `void helper(void)` body.
+  It drops only ordinary scalar values or literals, never side-effecting argument
+  expressions. Shared declarations, macros and uncertain definitions block it.
+- `incoming_parameter_alias` removes a same-type scalar copy only when the incoming
+  parameter remains unchanged and its assignment dominates every alias use. The
+  composed `zero_argument_parameter_alias` proposal tests both changes together,
+  before unrelated lifetime rewrites. Both physical-line-preserving and compact
+  forms are bounded hypotheses. The ordinary judge still decides acceptance.
+- In a measured KMC case the corrected call alone recovered scheduling, while the
+  parameter copies still reversed saved-register allocation. Their composition
+  matched without changing compiler flags or removing a required loop reset.
+  A relocation-rendering score may remain nonzero in diagnostics: inspect actual
+  linked bytes and the ordinary exact verdict; do not weaken the judge.
+- This is not permission to rewrite every unused-looking argument. Nonempty
+  callees, mixed-arity interfaces and hidden side effects need separate review.
