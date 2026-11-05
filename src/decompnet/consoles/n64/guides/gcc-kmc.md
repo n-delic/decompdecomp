@@ -909,3 +909,8 @@ made all four callers and the callee exact. Audit all declarations and argument
 conversions together; do not fall back to unspecified `()` to hide a conflict.
 The joint correction preserved the full cartridge, but did not resolve unrelated
 legacy indirect-call defects. See `docs/COMPILER_MATCHING_LEARNINGS.md` for scope.
+
+Prototype advice may show `?` for an unresolved typedef while flagging another,
+known scalar position. Investigate the known discrepancy without assuming what
+`?` means: an unfamiliar object type or return typedef is not resolved by equal
+machine widths. Validate the complete caller/callee correction jointly.
