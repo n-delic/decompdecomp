@@ -80,6 +80,7 @@ class Toolchain:
     def __post_init__(self):
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
     linux_vm: bool = False  # this Linux pack may use the optional macOS VM runner
+    space_free_runtime: bool = False  # an old driver embeds unquoted paths derived from its own executable
     case_sensitive: bool = False  # proxy hosts must preserve archives until extraction on Linux
     assembly_preprocess: list[str] = field(default_factory=list)
     assembly_compile: list[str] = field(default_factory=list)
@@ -334,13 +335,57 @@ def require(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> P
     return path(tid, linux, vm=vm)
 
 
+_runtime_copy_lock = threading.Lock()
+_runtime_copy_home = None
+_runtime_copies: dict[tuple, Path] = {}
+
+
+def _space_free_runtime(directory: Path) -> Path:
+    """SN's driver canonicalizes symlinks and embeds an unquoted self-relative include path.
+
+    Copy the verified installed pack once per process, only when its real path has whitespace.
+    A private temporary directory avoids changing installs or sharing writable executables between users.
+    The manifest stamp changes on reinstall; existing compiles can keep using their old snapshot.
+    """
+    global _runtime_copy_home
+    directory = directory.resolve()
+    if not any(character.isspace() for character in str(directory)):
+        return directory
+    try:
+        stamp = (directory / MANIFEST).stat()
+        key = (str(directory), stamp.st_mtime_ns, stamp.st_size)
+        with _runtime_copy_lock:
+            if key in _runtime_copies:
+                return _runtime_copies[key]
+            if _runtime_copy_home is None:
+                _runtime_copy_home = tempfile.TemporaryDirectory(prefix='decompnet-tools-',
+                                                                 dir='/tmp' if os.name == 'posix' else None)
+            cache = Path(_runtime_copy_home.name)
+            if any(character.isspace() for character in str(cache.resolve())):
+                raise ToolchainError('The compiler needs a temporary folder without spaces. Set TMPDIR to one and retry.')
+            target = cache / hashlib.sha256(repr(key).encode()).hexdigest()[:16]
+            try:
+                # Materialize symlinks too: the driver asks the runner for its real executable path.
+                shutil.copytree(directory, target)
+            except OSError:
+                shutil.rmtree(target, ignore_errors=True)
+                raise
+            _runtime_copies[key] = target
+            return target
+    except OSError as error:
+        raise ToolchainError(f'Could not prepare a compiler path without spaces. Check free space and temporary-folder permissions: {error}') from None
+
+
 def runtime_dirs(tid: str) -> tuple[Path, ...]:
     """The toolchain plus everything it requires, for mounting into the sandbox (all Linux builds for WSL)."""
     tc = get(tid)
     linux = tc.via_wsl
     if tc.via_vm:
         return (require(tid, vm=True), *(require(dep, vm=True) for dep in tc.requires))
-    return (require(tid, linux), *(require(dep, linux) for dep in tc.requires))
+    primary = require(tid, linux)
+    if tc.space_free_runtime and not linux:
+        primary = _space_free_runtime(primary)
+    return (primary, *(require(dep, linux) for dep in tc.requires))
 
 
 # ---------------------------------------------------------------------------- install

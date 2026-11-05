@@ -349,6 +349,7 @@ sha256 = "99cb5db603cd985b50fc6851157020ad69489f2227309ccf825bd43ac7bc19dd"
 platforms = ["linux-x86_64"]
 
 ["ee-gcc-2.95.2"]
+space_free_runtime = true
 cplusplus = true
 name = "EE-GCC 2.95.2 (SN Systems 273a)"
 platform = "PS2"
@@ -365,6 +366,7 @@ sha256 = "ee9d9a7fccb59aebfa78a5587f6f8059660b91f705acddbc292ad2243c8e562e"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-2.95.3"]
+space_free_runtime = true
 cplusplus = true
 name = "EE-GCC 2.95.3 (SN Systems 136)"
 platform = "PS2"
