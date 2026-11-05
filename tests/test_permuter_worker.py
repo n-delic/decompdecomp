@@ -3,7 +3,7 @@
 import threading
 import time
 
-from decompnet.app import permuter_worker
+from decompnet.app import permuter_worker, workers
 from decompnet.app.engine import RomNetwork
 from decompnet.app.permuter_worker import PermuterWorker
 from tests.test_loading import tiny_game
@@ -23,6 +23,7 @@ def test_permuter_restarts_without_replacing_the_app_engine(tmp_path, monkeypatc
     internal.mkdir()
     net = RomNetwork(internal / "decomp.db", tmp_path)
     tiny_game(net, functions=0)
+    previous_workers=workers.WORKERS
     worker = net.permuter = PermuterWorker(net)
     try:
         worker.configure({"permuter_seconds": 9, "worker_threads": 1})
@@ -43,3 +44,4 @@ def test_permuter_restarts_without_replacing_the_app_engine(tmp_path, monkeypatc
         assert net.project_row("game")["slug"] == "game"
     finally:
         worker.close()
+        workers.configure(previous_workers)
