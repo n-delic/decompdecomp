@@ -886,8 +886,24 @@ function renderFunctionCompilerComparison(c, slug, name) {
 }
 function wireFunctionCompilerTable(table, ranked, slug, name) {
   const summary = $("fnCompilerSummary");
-  setHtml(table, compilerRankedTable(ranked, true, S.fnDetail?.compiler_profile_usage ?? null));
+  const scope = JSON.stringify([slug, name]);
+  if (table._compilerSortScope !== scope) {
+    table._compilerSortScope = scope;
+    table._compilerSort = null;
+  }
+  const render = () => setHtml(table, compilerRankedTable(ranked, true, S.fnDetail?.compiler_profile_usage ?? null, table._compilerSort));
+  render();
   table.onclick = async (event) => {
+    if (S.slug !== slug || S.fn !== name) return;
+    const sortButton = event.target.closest('button[data-compiler-sort]');
+    const key = sortButton?.dataset.compilerSort;
+    if (['match', 'compiler', 'flags', 'used', 'result'].includes(key)) {
+      const previous = table._compilerSort || {key: S.fnDetail?.compiler_profile_usage ? 'used' : 'match', descending: true};
+      table._compilerSort = {key, descending: previous.key === key ? !previous.descending : ['match', 'used'].includes(key)};
+      render();
+      table.querySelector?.(`[data-compiler-sort="${key}"]`)?.focus();
+      return;
+    }
     const button = event.target.closest("button[data-compiler-choice]");
     if (!button || S.slug !== slug || S.fn !== name) return;
     const row = ranked[Number(button.dataset.compilerChoice)];

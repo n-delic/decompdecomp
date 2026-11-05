@@ -419,9 +419,27 @@ function compilerProfileUsage(row, usage) {
   const count = usage.find(p => p.toolchain === row.toolchain && JSON.stringify(p.flags) === JSON.stringify(row.flags));
   return `${count?.functions ?? 0} functions · ${count?.matched ?? 0} matched`;
 }
-function compilerRankedTable(rows, selectable = false, usage = null) {
+function compilerRankedTable(rows, selectable = false, usage = null, sort = null) {
   if (!rows.length) return "";
-  return `<div class="compiler-table"><table><thead><tr><th>Match</th><th>Compiler</th><th>Flags</th>${usage ? '<th title="Functions in this project currently using this exact compiler and flag order, including this function">Used by</th>' : ""}<th>Result</th>${selectable ? "<th>Action</th>" : ""}</tr></thead><tbody>${rows.map((r, index) => ({r, index})).sort((a, b) => Number(!!(b.r.default && b.r.exact)) - Number(!!(a.r.default && a.r.exact))).map(({r, index}) => `<tr><td><b>${r.percent == null ? "—" : `${r.percent.toFixed(2)}%`}</b></td><td>${esc(r.toolchain)}${r.default ? ` <span class="chip-s">Default</span>` : ""}${r.selected ? ` <span class="chip-s compiler-selected">Currently selected</span>` : ""}</td><td class="mono">${esc(r.flags.join(" "))}</td>${usage ? `<td>${compilerProfileUsage(r, usage)}</td>` : ""}<td>${r.untested ? "Not verified with this source" : r.exact ? "Exact match" : r.percent == null ? "Could not compile or compare" : "Partial match"}${r.current && !r.selected ? " · settings at test time" : ""}</td>${selectable ? `<td><button type="button" class="ghost small-btn" data-compiler-choice="${index}" ${r.percent == null || r.apply_disabled ? "disabled" : ""}>${r.selected ? "Selected" : r.default ? "Use default" : "Apply"}</button></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  sort ||= {key: usage ? 'used' : 'match', descending: true};
+  const headings = [['match', 'Match'], ['compiler', 'Compiler'], ['flags', 'Flags'],
+    ...(usage ? [['used', 'Used by']] : []), ['result', 'Result']];
+  const header = headings.map(([key, label]) => `<th scope="col" aria-sort="${sort.key === key ? sort.descending ? 'descending' : 'ascending' : 'none'}"><button type="button" class="table-sort" data-compiler-sort="${key}"${key === 'used' ? ' title="Functions using this exact compiler and flag order in this project"' : ''}>${label}<span aria-hidden="true">${sort.key === key ? sort.descending ? ' ↓' : ' ↑' : ' ↕'}</span></button></th>`).join('');
+  const usageByProfile = new Map((usage || []).map(p => [JSON.stringify([p.toolchain, p.flags]), p]));
+  const resultLabel = r => r.untested ? 'Not verified with this source' : r.exact ? 'Exact match' : r.percent == null ? 'Could not compile or compare' : 'Partial match';
+  const indexed = rows.map((r, index) => ({r, index, uses: usageByProfile.get(JSON.stringify([r.toolchain, r.flags])) || {functions: 0, matched: 0}}));
+  indexed.sort((a, b) => {
+    const value = item => sort.key === 'used' ? item.uses.functions : sort.key === 'match' ? item.r.percent
+      : sort.key === 'compiler' ? item.r.toolchain : sort.key === 'flags' ? item.r.flags.join(' ') : resultLabel(item.r);
+    const av = value(a), bv = value(b);
+    // Unscored results stay at the bottom in either direction.
+    if (av == null || bv == null) return av == null ? bv == null ? a.index - b.index : 1 : -1;
+    const order = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv), undefined, {numeric: true});
+    return order * (sort.descending ? -1 : 1)
+      || (sort.key === 'used' ? b.uses.matched - a.uses.matched : 0)
+      || Number(!!(b.r.default && b.r.exact)) - Number(!!(a.r.default && a.r.exact)) || a.index - b.index;
+  });
+  return `<div class="compiler-table"><table><thead><tr>${header}${selectable ? '<th scope="col">Action</th>' : ""}</tr></thead><tbody>${indexed.map(({r, index}) => `<tr><td><b>${r.percent == null ? "—" : `${r.percent.toFixed(2)}%`}</b></td><td>${esc(r.toolchain)}${r.default ? ` <span class="chip-s">Default</span>` : ""}${r.selected ? ` <span class="chip-s compiler-selected">Currently selected</span>` : ""}</td><td class="mono">${esc(r.flags.join(" "))}</td>${usage ? `<td>${compilerProfileUsage(r, usage)}</td>` : ""}<td>${r.untested ? "Not verified with this source" : r.exact ? "Exact match" : r.percent == null ? "Could not compile or compare" : "Partial match"}${r.current && !r.selected ? " · settings at test time" : ""}</td>${selectable ? `<td><button type="button" class="ghost small-btn" data-compiler-choice="${index}" ${r.percent == null || r.apply_disabled ? "disabled" : ""}>${r.selected ? "Selected" : r.default ? "Use default" : "Apply"}</button></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
 }
 
 // Shared secondary context stays visible when a settings disclosure is collapsed.

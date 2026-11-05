@@ -21,7 +21,7 @@ const rows = [
 ];
 ctx.renderFunctionCompilerComparison({ ranked: rows, best: 90, before: 80, tested: 3, exact_matches: 0 }, "demo", "function_one");
 assert.match(get("fnCompilerMatches").innerHTML, /data-compiler-choice="2" disabled/);
-(async () => {
+const originalActions = (async () => {
   await get("fnCompilerMatches").onclick({ target: { closest: () => ({ dataset: { compilerChoice: "1" } }) } });
   assert.equal(requests.length, 1);
   assert.equal(requests[0].toolchain, "chosen");
@@ -30,7 +30,7 @@ assert.match(get("fnCompilerMatches").innerHTML, /data-compiler-choice="2" disab
   ctx.S.fn = "another_function";
   await get("fnCompilerMatches").onclick({ target: { closest: () => ({ dataset: { compilerChoice: "0" } }) } });
   assert.equal(requests.length, 1);
-})().catch(e => { console.error(e); process.exitCode = 1; });
+})();
 const defaults = ctx.compilerRankedTable([
   {toolchain:'alternate',flags:['-O1'],exact:true,percent:100},
   {toolchain:'default',flags:['-O2'],exact:true,percent:100,default:true},
@@ -52,3 +52,48 @@ assert.match(counted, /Used by/);
 assert.match(counted, /12 functions · 9 matched/);
 assert.match(counted, /0 functions · 0 matched/);
 assert.doesNotMatch(selected, /Used by/);
+
+
+originalActions.then(async () => {
+  ctx.S.fn = 'function_one';
+  ctx.S.fnDetail = {compiler_profile_usage: [
+    {toolchain:'zeta',flags:['-O2'],functions:87,matched:52},
+    {toolchain:'alpha',flags:['-O1'],functions:9,matched:3},
+  ]};
+  const ranked = [
+    {toolchain:'alpha',flags:['-O1'],percent:100,exact:true},
+    {toolchain:'zeta',flags:['-O2'],percent:50},
+    {toolchain:'missing',flags:[],percent:null},
+  ];
+  const order = () => Array.from(get('fnCompilerMatches').innerHTML.matchAll(/data-compiler-choice="(\d+)"/g), m => Number(m[1]));
+  const sort = key => get('fnCompilerMatches').onclick({target:{closest:selector=>selector.includes('compiler-sort') ? {dataset:{compilerSort:key}} : null}});
+  ctx.wireFunctionCompilerTable(get('fnCompilerMatches'),ranked,'demo','function_one');
+  assert.deepEqual(order(),[1,0,2]); // numeric usage, not match percentage or lexical count
+  assert.match(get('fnCompilerMatches').innerHTML,/aria-sort="descending"><button[^>]+data-compiler-sort="used"/);
+  for (const key of ['match','compiler','flags','used','result']) assert.match(get('fnCompilerMatches').innerHTML,new RegExp('data-compiler-sort="'+key+'"'));
+  await sort('used');
+  assert.deepEqual(order(),[2,0,1]);
+  ctx.wireFunctionCompilerTable(get('fnCompilerMatches'),ranked,'demo','function_one');
+  assert.deepEqual(order(),[2,0,1]); // polling preserves the selected order
+  await sort('match');
+  assert.deepEqual(order(),[0,1,2]);
+  await sort('match');
+  assert.deepEqual(order(),[1,0,2]); // unknown match stays last when ascending
+  await sort('compiler');
+  assert.deepEqual(order(),[0,2,1]);
+  await sort('compiler');
+  assert.deepEqual(order(),[1,2,0]);
+  await sort('flags');
+  assert.deepEqual(order(),[2,0,1]);
+  await sort('result');
+  assert.deepEqual(order(),[2,0,1]);
+  const beforeRequests=requests.length;
+  await get('fnCompilerMatches').onclick({target:{closest:selector=>selector.includes('compiler-choice') ? {dataset:{compilerChoice:'1'}} : null}});
+  assert.equal(requests.length,beforeRequests+1);
+  assert.equal(requests.at(-1).toolchain,'zeta'); // selection retains original identity after sorting
+  assert.deepEqual(Array.from(requests.at(-1).flags),['-O2']);
+  ctx.S.fn='function_two';
+  ctx.wireFunctionCompilerTable(get('fnCompilerMatches'),ranked,'demo','function_two');
+  assert.deepEqual(order(),[1,0,2]); // a different function starts with the relevance default
+  console.log('Compiler table sorting, persistence and row actions passed');
+}).catch(e => { console.error(e); process.exitCode=1; });
