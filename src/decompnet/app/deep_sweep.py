@@ -228,10 +228,11 @@ class Sweeps:
         return sorted(issues, key=lambda issue: issue['function'])
 
     def recover_room_transport(self, slug):
+        """Requeue transient failures and turns cut short by the retired budget policy."""
         from .deep_room import unavailable
         proj=self.net.project_row(slug)
-        rows=self.net.store.all("SELECT function_id,error FROM deep_permutation_passes WHERE state='error' AND function_id IN (SELECT id FROM functions WHERE project_id=?)",proj['id'])
-        ids=[r['function_id'] for r in rows if unavailable(r['error'])]
+        rows=self.net.store.all("SELECT function_id,state,error FROM deep_permutation_passes WHERE state IN ('error','rotated') AND function_id IN (SELECT id FROM functions WHERE project_id=?)",proj['id'])
+        ids=[r['function_id'] for r in rows if r['state']=='rotated' or unavailable(r['error'])]
         if ids:
             with self.net.store.tx() as db:
                 db.executemany("UPDATE deep_permutation_passes SET state='pending',error='' WHERE function_id=?",[(fid,) for fid in ids])
@@ -353,7 +354,7 @@ class Sweeps:
         proj = self.net.project_row(slug)
         stable = build_scope == candidate_scope.key(self.net, proj, before)
         self.record(fresh, signature(self.net, proj, fresh, minutes, variants, result.get('compiler_profiles')),
-                    ('rotated' if str(result.get('reason','')).startswith('Budget rotation:') else 'completed') if stable else 'pending', minutes, variants, result)
+                    'completed' if stable else 'pending', minutes, variants, result)
 
     def record(self, fn, scope, state, minutes, variants, result=None, error=''):
         with self.lock:
@@ -520,7 +521,6 @@ class Sweeps:
             log(f'{fn["name"]}: {line}')
         function_log.check_cancel = log.check_cancel
         function_log.progress = progress
-        function_log.adaptive_budget = True
         try:
             count = self.config(slug).get('compiler_profiles', 1)
             if count == 1:

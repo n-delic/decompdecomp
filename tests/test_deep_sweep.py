@@ -413,19 +413,16 @@ def test_measurements_accumulate_by_family_and_phase_without_rewriting_old_total
     assert obj.recipes(fn['project_id'])[0]['tested'] == 7
 
 
-def test_rotated_functions_remain_eligible_next_sweep_without_looping_in_this_one(sweep,monkeypatch):
+def test_project_sweeps_do_not_enable_early_rotation(sweep,monkeypatch):
     obj,net,calls,_=sweep
-    def rotate(net,slug,name,minutes,variants,log):
-        assert log.adaptive_budget
-        calls.append(name)
-        return {'tested':32,'matched':False,'reason':'Budget rotation: repeated function output without improvement'}
-    monkeypatch.setattr(deep_permuter,'run',rotate)
-    assert obj.run('game',1,100,Log())['functions_tested']==2
-    assert calls==['f0','f1']
-    assert net.store.one('SELECT state FROM deep_permutation_passes LIMIT 1')['state']=='rotated'
-    assert obj.run('game',1,100,Log())['functions_tested']==2
-    assert calls==['f0','f1','f0','f1']
-    assert net._function('f0','game')['status']=='open'
+    def search(net,slug,name,minutes,variants,log):
+        assert not getattr(log,'adaptive_budget',False)
+        calls.append((name,minutes))
+        return {'tested':32,'matched':False,'reason':'Time limit reached'}
+    monkeypatch.setattr(deep_permuter,'run',search)
+    assert obj.run('game',2,100,Log())['functions_tested']==2
+    assert calls==[('f0',2),('f1',2)]
+    assert net.store.one('SELECT state FROM deep_permutation_passes LIMIT 1')['state']=='completed'
 
 
 def test_room_client_can_start_a_deep_pass(sweep, monkeypatch):
@@ -540,7 +537,7 @@ def test_queue_separates_rotated_errors_and_removed_functions(sweep):
         fn = net._function(name, 'game')
         obj.record(fn, deep_sweep.signature(net, proj, fn, 1, 10), state, 1, 10, error='compile failed' if state == 'error' else '')
     status = obj.status('game')
-    assert (status['queue_left'], status['queue_rotated'], status['queue_blocked']) == (1, 1, 1)
+    assert (status['queue_left'], status['queue_rotated'], status['queue_blocked']) == (1, 0, 1)
     with net.store.tx() as db:
         db.execute("UPDATE functions SET gone_mark='removed' WHERE name='f0'")
     obj.queue_cache.clear()
