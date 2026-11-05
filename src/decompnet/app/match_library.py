@@ -15,6 +15,8 @@ from pathlib import Path
 from ..network import NetworkError
 
 log = logging.getLogger(__name__)
+ARCHIVE_BATCH = 256
+ARCHIVE_VERSION = 1  # Bump when the archived representation changes, not for unrelated app updates.
 SCHEMA = '''
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS functions(
@@ -67,49 +69,82 @@ class Library:
         with self.net.progress.view():
             return self._snapshot(proj, fid)
 
-    def _snapshot(self, proj, fid):
-        from ..project import compiler_for
+    def _inputs(self, proj):
+        """Share project reads within one bounded batch; the next batch observes live changes."""
         from .shared_reuse import machine
+        fork = bool(self.net.fork_slug(proj['slug']))
+        symbols = {} if fork else self.net.symbols(proj['id']).by_name
+        # Preserve the existing archive's symbol order without scanning the inventory
+        # per function. A changed symbol revision or replacement table rebuilds the index.
+        order = self.net.store.read_cache.get(('library-symbol-order',proj['id']),
+            (self.net.store.read_version('scope_symbols',proj['id']),id(symbols)),
+            lambda:(symbols,{name:index for index,name in enumerate(symbols)}))[1] if not fork else {}
+        return {'fork':fork, 'cfg':self.net.cfg(proj),
+                'prints':self.net.twins.prints(proj), 'machine':machine(self.net, proj),
+                'game':self.game_key(proj), 'headers':{}, 'reserved':{}, 'fork_project':None, 'file_compilers':{},
+                'symbols':symbols, 'symbol_order':order,
+                'proofs':bool(self.net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"))}
+
+    def _snapshot(self, proj, fid, *, inputs=None, fn=None, proof=None):
+        from ..project import compiler_for
         net = self.net
-        proj = net.store.one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
-        fn = net.store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'", fid, proj['id'])
-        if not fn:
-            return None
-        p = net.twins.prints(proj).get(fid)
+        if inputs is None:
+            proj = net.store.one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
+            fn = net.store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'", fid, proj['id'])
+            if not fn:return None
+            inputs = self._inputs(proj)
+            if inputs['proofs']:
+                proof = net.store.one('SELECT source,header,details FROM verified_matches WHERE function_id=?',fid)
+        p = inputs['prints'].get(fid)
         source = fn['matched_source']
-        fork = bool(net.fork_slug(proj['slug']))
-        compiler = compiler_for(net.cfg(proj), fn['vram'], fn) if not fork else {}
+        fork = inputs['fork']
+        # Most matches have a saved original compiler; do not search every configured
+        # function profile for a fallback which that evidence will immediately replace.
         if fork:
             from .twins import _file_compiler
-            _, fp, _ = net.forks.get(proj['slug'])
+            if inputs['fork_project'] is None:
+                inputs['fork_project'] = net.forks.get(proj['slug'])[1]
+            fp = inputs['fork_project']
             source = source or net.forks._current_source(fp, fn)
-            compiler = {'toolchain':_file_compiler(net.console(proj), fp, fn), 'flags':[]}
         if not source:
             return None
-        header = (net._context(proj['id'], fn['unit']) or {'header':''})['header']
-        if net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
-            proof=net.store.one('SELECT source,header,details FROM verified_matches WHERE function_id=?',fid)
-            if proof and proof['source']==source:
-                header=proof['header']
-                compiler=json.loads(proof['details']).get('compiler') or compiler
+        compiler = (json.loads(proof['details']).get('compiler') if proof and proof['source']==source else None)
+        if not compiler:
+            if fork:
+                unit = fn['unit'] or ''
+                if unit not in inputs['file_compilers']:
+                    inputs['file_compilers'][unit] = _file_compiler(net.console(proj), fp, fn)
+                compiler = {'toolchain':inputs['file_compilers'][unit], 'flags':[]}
+            else:
+                compiler = compiler_for(inputs['cfg'], fn['vram'], fn)
+        if proof and proof['source']==source:
+            header = proof['header']
+        else:
+            unit = fn['unit'] or ''
+            if unit not in inputs['headers']:
+                inputs['headers'][unit] = (net._context(proj['id'], unit) or {'header':''})['header']
+            header = inputs['headers'][unit]
         # Store only the named symbols needed to relocate this C, not the game's full symbol table.
         words = set(re.findall(r'\b[A-Za-z_]\w*\b', source))
-        symbols = [] if fork else [asdict(s) for s in net.symbols(proj['id']).by_name.values() if s.name in words]
-        processor, big = machine(net, proj)
+        names = [name for name in words if name in inputs['symbols']]
+        symbols = [asdict(inputs['symbols'][name]) for name in sorted(names,key=inputs['symbol_order'].__getitem__)]
+        processor, big = inputs['machine']
         # Same source copied under a generated function name shares its stored body.
-        from .twins import apply
         if p is None:
             from .twins import Print
             p=Print('source-only:'+hashlib.sha256(source.encode()).hexdigest(),[],fn['size'] or 0)
         own_name = p.name or fn['name']
         token='__library_function'
-        while token!=own_name and re.search(r'\b'+token+r'\b',source+'\n'+header):token+='_'
+        if header not in inputs['reserved']:
+            inputs['reserved'][header] = set(re.findall(r'\b__library_function_*\b', header))
+        while token!=own_name and (token in words or token in inputs['reserved'][header]):token+='_'
         mapping = {own_name:token} if re.fullmatch(r'[A-Za-z_]\w*', own_name) else {}
-        source = apply(source, mapping)
+        if mapping:
+            source = re.sub(r'\b[A-Za-z_]\w*\b', lambda match: mapping.get(match[0], match[0]), source)
         p = asdict(p);p['name'] = mapping.get(own_name, own_name)
         for s in symbols:
             s['name'] = mapping.get(s['name'], s['name'])
-        game = self.game_key(proj)
+        game = inputs['game']
         return {'arch':processor,'big':int(big),'fingerprint':p['key'],'size':p['size'],
                 'source':source,'header':header,'compiler':encoded(compiler),
                 'game':game,'game_name':proj['name'],'slug':proj['slug'],'name':fn['name'],
@@ -117,23 +152,41 @@ class Library:
 
     def write(self, rows):
         with self.connect() as db:
+            texts, functions, solutions, games = {}, {}, {}, set()
             for item in rows:
                 hashes = {}
                 for kind in ('source','header','print','symbols'):
                     value = item[kind]
-                    digest = hashlib.sha256(value.encode()).hexdigest()
-                    db.execute('INSERT OR IGNORE INTO texts VALUES(?,?)',(digest,value))
+                    digest = texts.get(value)
+                    if digest is None:
+                        digest = hashlib.sha256(value.encode()).hexdigest()
+                        db.execute('INSERT OR IGNORE INTO texts VALUES(?,?)',(digest,value))
+                        texts[value] = digest
                     hashes[kind] = digest
-                db.execute('INSERT OR IGNORE INTO functions(arch,big,fingerprint,size) VALUES(?,?,?,?)',
-                           tuple(item[k] for k in ('arch','big','fingerprint','size')))
-                fid = db.execute('SELECT id FROM functions WHERE arch=? AND big=? AND fingerprint=? AND size=?',
-                                 tuple(item[k] for k in ('arch','big','fingerprint','size'))).fetchone()['id']
-                db.execute('INSERT OR IGNORE INTO solutions(function_id,source,header,compiler) VALUES(?,?,?,?)',
-                           (fid,hashes['source'],hashes['header'],item['compiler']))
-                sid = db.execute('SELECT id FROM solutions WHERE function_id=? AND source=? AND header=? AND compiler=?',
-                                 (fid,hashes['source'],hashes['header'],item['compiler'])).fetchone()['id']
-                db.execute('INSERT OR REPLACE INTO games VALUES(?,?,?)',(item['game'],item['game_name'],item['slug']))
-                db.execute('INSERT OR REPLACE INTO occurrences VALUES(?,?,?,?,?,?,?)',
+                identity = tuple(item[k] for k in ('arch','big','fingerprint','size'))
+                fid = functions.get(identity)
+                if fid is None:
+                    db.execute('INSERT OR IGNORE INTO functions(arch,big,fingerprint,size) VALUES(?,?,?,?)',identity)
+                    fid = db.execute('SELECT id FROM functions WHERE arch=? AND big=? AND fingerprint=? AND size=?',
+                                     identity).fetchone()['id']
+                    functions[identity] = fid
+                variant = (fid,hashes['source'],hashes['header'],item['compiler'])
+                sid = solutions.get(variant)
+                if sid is None:
+                    db.execute('INSERT OR IGNORE INTO solutions(function_id,source,header,compiler) VALUES(?,?,?,?)',variant)
+                    sid = db.execute('SELECT id FROM solutions WHERE function_id=? AND source=? AND header=? AND compiler=?',
+                                     variant).fetchone()['id']
+                    solutions[variant] = sid
+                game = (item['game'],item['game_name'],item['slug'])
+                if game not in games:
+                    db.execute("""INSERT INTO games VALUES(?,?,?) ON CONFLICT(id) DO UPDATE
+                        SET name=excluded.name,slug=excluded.slug
+                        WHERE name!=excluded.name OR slug!=excluded.slug""",game)
+                    games.add(game)
+                # Retrying an interrupted scan should not rewrite unchanged memberships.
+                db.execute("""INSERT INTO occurrences VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(game_id,solution_id,name,print,symbols) DO UPDATE
+                    SET mode=excluded.mode,seen=excluded.seen WHERE mode!=excluded.mode OR seen!=excluded.seen""",
                            (item['game'],sid,item['name'],item['mode'],hashes['print'],hashes['symbols'],item['seen']))
 
     def capture(self, proj, fid):
@@ -158,19 +211,35 @@ class Library:
                 if progress:progress(value)
                 else:log.progress(value)
         report(0,'Reading verified matches')
-        batch=[]
-        for i, row in enumerate(rows):
+        for start in range(0,len(rows),ARCHIVE_BATCH):
             from .maintenance import checkpoint
             checkpoint()
-            report(i,'Reading verified matches',row['name'])
-            item=self.snapshot(proj,row['id'])
-            if item:batch.append(item)
-            if len(batch)>=64:
-                report(i,'Writing matches to library',row['name'])
-                self.write(batch);batch=[]
-        if batch:
-            report(len(rows)-1,'Writing matches to library')
-            self.write(batch)
+            if log:log.check_cancel()
+            # Narrow reads avoid loading target bytes and unfinished candidate/history
+            # data. Never hold a main-database transaction while writing the library.
+            with self.net.progress.view():
+                current=self.net.store.one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
+                inputs=self._inputs(current)
+                ids=[row['id'] for row in rows[start:start+ARCHIVE_BATCH]]
+                marks=','.join('?' for _ in ids)
+                fields='id,name,unit,vram,rom_offset,size,matched_source,matched_at,meta'
+                functions={row['id']:row for row in self.net.store.all(
+                    f"SELECT {fields} FROM functions WHERE project_id=? AND status='matched' AND id IN ({marks})",
+                    proj['id'],*ids)}
+                proofs={row['function_id']:row for row in self.net.store.all(
+                    f'SELECT function_id,source,header,details FROM verified_matches WHERE function_id IN ({marks})',
+                    *ids)} if inputs['proofs'] else {}
+                batch=[]
+                for offset,row in enumerate(rows[start:start+ARCHIVE_BATCH]):
+                    checkpoint()
+                    report(start+offset,'Reading verified matches',row['name'])
+                    fn=functions.get(row['id'])
+                    if fn is not None:
+                        item=self._snapshot(current,row['id'],inputs=inputs,fn=fn,proof=proofs.get(row['id']))
+                        if item:batch.append(item)
+            if batch:
+                report(start+len(ids)-1,'Writing matches to library',rows[start+len(ids)-1]['name'])
+                self.write(batch)
         report(len(rows),'Game indexed')
         return len(rows)
 
@@ -179,8 +248,7 @@ class Library:
         # Imported objects can change outside SQLite; keep their full file-based scan.
         revisions = [self.net.store.read_version(kind, proj['id']) for kind in
                      ('inputs','scope_context','scope_symbols','matched_evidence','fingerprints')]
-        from . import build_info
-        return encoded([1,build_info.commit(),str(self.net.store.path),proj['id'],proj['slug'],revisions,proj['config'],proj['root'],proj['name']])
+        return encoded([ARCHIVE_VERSION,str(self.net.store.path),proj['id'],proj['slug'],revisions,proj['config'],proj['root'],proj['name']])
 
     def backfill(self, log=None, *, only_changed=False):
         failures=[]

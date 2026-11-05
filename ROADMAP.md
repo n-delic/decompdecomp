@@ -2520,6 +2520,9 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   normalized function fingerprints and per-game occurrences after projects are closed/removed.
   Identical source/context blobs are shared. ROM and imported destinations retain their normal
   byte/objdiff judge; reopening inputs never turns a fingerprint into automatic acceptance.
+- Done: archive scans batch saved evidence, use direct symbol lookups and reuse shared header
+  analysis/text hashes. Persistent ROM input stamps survive unrelated app updates; completed
+  batches remain available after Stop.
 - Imported candidates whose dependencies exist only in external project headers still need those
   declarations in the destination build, as with the existing cross-project transfer adapter.
 

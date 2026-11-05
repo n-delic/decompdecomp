@@ -227,3 +227,175 @@ def test_startup_archiving_skips_unchanged_roms_but_not_changed_inputs(library,m
     assert calls==[1]
     calls.clear();lib.backfill()
     assert calls==[1,2], 'Explicit indexing must always rescan'
+
+
+def test_archive_looks_up_source_symbols_without_walking_the_inventory(library):
+    from decompnet.rom.symbols import Symbol, SymbolTable
+    net,lib=library
+    class IndexedSymbols(dict):
+        def values(self):pytest.fail('Do not scan the whole game for each function')
+        def items(self):pytest.fail('Do not scan the whole game for each function')
+        scans=0
+        def __iter__(self):
+            self.scans+=1
+            assert self.scans==1, 'Build symbol order once, never per function'
+            return super().__iter__()
+    symbols=SymbolTable([Symbol('zebra',4),Symbol('alpha',8),Symbol('unused',12)])
+    symbols.by_name=IndexedSymbols(symbols.by_name)
+    net._syms[1]=symbols
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='int f1(void) {return zebra+alpha;}' WHERE id=1")
+    lib.archive_project(net.project_row('game1'))
+    saved=lib.candidates('mips',1,'same-code',32)[0]
+    assert [s['name'] for s in json.loads(saved['symbols'])]==['zebra','alpha']
+    lib.snapshot(net.project_row('game1'),1)
+    lib.archive_project(net.project_row('game1'))
+    assert symbols.by_name.scans==1
+
+
+def test_archive_batches_narrow_reads_and_preserves_single_capture_evidence(library,monkeypatch):
+    from decompnet.app import match_library
+    net,lib=library
+    with net.store.tx() as db:
+        db.executemany("INSERT INTO functions(id,project_id,name,status,size,vram,matched_source,matched_at) VALUES(?,1,?,'matched',32,4096,?,1)",
+                       [(i,f'f{i}',f'int f{i}(void) {{return {i};}}') for i in range(3,43)])
+    proj=net.project_row('game1')
+    ids=net.store.all("SELECT id FROM functions WHERE project_id=1 ORDER BY id")
+    expected={row['id']:lib.snapshot(proj,row['id']) for row in ids}
+    reads=[];writes=[]
+    for method in ('one','all'):
+        original=getattr(net.store,method)
+        def track(sql,*args,_original=original):
+            reads.append(sql);return _original(sql,*args)
+        monkeypatch.setattr(net.store,method,track)
+    monkeypatch.setattr(match_library,'ARCHIVE_BATCH',16)
+    monkeypatch.setattr(lib,'write',lambda rows:writes.extend(rows))
+    lib.archive_project(proj)
+    assert sorted(writes,key=lambda r:r['name'])==sorted(expected.values(),key=lambda r:r['name'])
+    assert len(reads)<40, 'Shared reads must grow by batches, not by functions'
+    assert not any('SELECT * FROM functions' in sql for sql in reads)
+
+
+def test_archive_refreshes_shared_inputs_and_matched_status_between_batches(library,monkeypatch):
+    from decompnet.app import match_library
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,unit,version,header) VALUES(1,'',1,'old header')")
+        for i in (3,4):
+            db.execute("INSERT INTO functions(id,project_id,name,status,size,vram,matched_source) VALUES(?,1,?,'matched',32,4096,?)",
+                       (i,f'f{i}',f'int f{i}(void) {{return {i};}}'))
+    monkeypatch.setattr(match_library,'ARCHIVE_BATCH',1)
+    saved=[]
+    def write(rows):
+        saved.extend(rows)
+        if len(saved)==1:
+            with net.store.tx() as db:
+                db.execute("INSERT INTO context_versions(project_id,unit,version,header) VALUES(1,'',2,'new header')")
+                db.execute("UPDATE functions SET status='open' WHERE id=3")
+    monkeypatch.setattr(lib,'write',write)
+    lib.archive_project(net.project_row('game1'),rows=[{'id':i,'name':f'f{i}'} for i in (1,3,4)])
+    assert [(r['name'],r['header']) for r in saved]==[('f1','old header'),('f4','new header')]
+
+
+def test_archive_uses_original_verified_header_and_compiler_without_current_profile_search(library,monkeypatch):
+    from decompnet import match_bundle, project
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute(match_bundle.SCHEMA)
+        db.execute('INSERT INTO verified_matches VALUES(?,?,?,?,?)',
+                   (1,0,json.dumps({'compiler':{'toolchain':'verified','flags':['-O1']}}),
+                    'int f1(void) {return 42;}','original verified header'))
+    monkeypatch.setattr(project,'compiler_for',lambda *a:pytest.fail('Verified profile needs no fallback search'))
+    monkeypatch.setattr(net,'_context',lambda *a:pytest.fail('Verified header needs no current-context lookup'))
+    lib.archive_project(net.project_row('game1'))
+    saved=lib.candidates('mips',1,'same-code',32)[0]
+    assert json.loads(saved['compiler'])=={'toolchain':'verified','flags':['-O1']}
+    assert saved['header']=='original verified header'
+
+
+def test_archive_normalization_respects_reserved_tokens_in_headers(library):
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,unit,version,header) VALUES(1,'',1,?)",
+                   ('extern int __library_function, __library_function_;',))
+    assert lib.snapshot(net.project_row('game1'),1)['source']=='int __library_function__(void) {return 42;}'
+
+
+def test_startup_archive_survives_app_updates_and_invalidates_for_archive_format(library,monkeypatch):
+    from decompnet.app import build_info, match_library
+    net,lib=library
+    with net.store.tx() as db:db.execute("UPDATE projects SET config=json_set(config,'$.kind','rom')")
+    monkeypatch.setattr(build_info,'commit',lambda:'old-build')
+    lib.backfill(only_changed=True)
+    calls=[]
+    archive=lib.archive_project
+    monkeypatch.setattr(lib,'archive_project',lambda proj,*args,**kw:(calls.append(proj['id']),archive(proj,*args,**kw))[-1])
+    monkeypatch.setattr(build_info,'commit',lambda:'unrelated-new-build')
+    lib.backfill(only_changed=True)
+    assert calls==[]
+    monkeypatch.setattr(match_library,'ARCHIVE_VERSION',match_library.ARCHIVE_VERSION+1)
+    lib.backfill(only_changed=True)
+    assert calls==[1,2]
+
+
+def test_stopping_between_batches_keeps_completed_matches_and_retry_deduplicates(library,monkeypatch):
+    from decompnet.app import maintenance, match_library
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,status,size,vram,matched_source) VALUES(3,1,'f3','matched',32,4096,'int f3(void) {return 43;}')")
+    monkeypatch.setattr(match_library,'ARCHIVE_BATCH',1)
+    stopped=False
+    original=lib.write
+    def write(rows):
+        nonlocal stopped
+        original(rows);stopped=True
+    monkeypatch.setattr(lib,'write',write)
+    def log(line):pass
+    def cancel():
+        if stopped:raise maintenance.Cancelled('Stopped')
+    log.check_cancel=cancel;log.progress=lambda _:None
+    with pytest.raises(maintenance.Cancelled):lib.archive_project(net.project_row('game1'),log)
+    assert lib.summary()['occurrences']==1
+    monkeypatch.setattr(lib,'write',original)
+    lib.archive_project(net.project_row('game1'))
+    assert lib.summary()['occurrences']==2
+
+
+def test_reindex_avoids_unchanged_writes_and_refreshes_game_and_seen_metadata(library,monkeypatch):
+    from contextlib import contextmanager
+    net,lib=library
+    item=lib.snapshot(net.project_row('game1'),1)
+    with lib.connect() as db:
+        @contextmanager
+        def connection():
+            with db:yield db
+        monkeypatch.setattr(lib,'connect',connection)
+        lib.write([item])
+        changes=db.total_changes
+        lib.write([item,item])
+        assert db.total_changes==changes
+        lib.write([{**item,'game_name':'Renamed game','seen':20}])
+        assert db.total_changes==changes+2
+        saved=lib.candidates('mips',1,'same-code',32)[0]
+        assert saved['game']=='Renamed game'
+        assert db.execute('SELECT seen FROM occurrences').fetchone()['seen']==20
+
+
+def test_imported_archive_shares_project_and_file_compiler_reads_per_batch(library,monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.app import twins
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,status,size,vram,matched_source) VALUES(3,1,'f3','matched',32,4096,'int f3(void) {return 43;}')")
+    monkeypatch.setattr(net,'fork_slug',lambda slug:slug if slug=='game1' else None)
+    projects=[];compilers=[]
+    def get(slug):
+        projects.append(slug);return net.project_row(slug),SimpleNamespace(),{}
+    def compiler(*args):
+        compilers.append(args);return 'file-compiler'
+    monkeypatch.setattr(net.forks,'get',get)
+    monkeypatch.setattr(twins,'_file_compiler',compiler)
+    lib.archive_project(net.project_row('game1'))
+    assert projects==['game1'] and len(compilers)==1
+    assert lib.summary()['occurrences']==2
