@@ -132,10 +132,10 @@ def start(net, jobs, action):
         if active:
             expected = 'C header cleanup' if action=='headers' else 'Database compaction'
             if active['kind'] != expected: raise ValueError('Another database maintenance task is running. Wait for it or stop it first.')
+            jobs.promote(active['id'])
             return active['id']
         def work(log):
             from .maintenance import slot
-            log('Waiting for the background maintenance lane')
             with slot(log.cancel_event) as acquired:
                 if not acquired: log.check_cancel()
                 return prune(net, log) if action == 'headers' else compact(net, log)

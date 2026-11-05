@@ -189,7 +189,7 @@ def test_unknown_repair_references_preserve_the_project_history(tmp_path):
 
 
 def test_distinct_maintenance_actions_do_not_reuse_the_wrong_job():
-    jobs=SimpleNamespace(_lock=threading.RLock(),jobs={'existing':{'id':'existing','kind':'C header cleanup','state':'running'}})
+    jobs=SimpleNamespace(promote=lambda _:True,_lock=threading.RLock(),jobs={'existing':{'id':'existing','kind':'C header cleanup','state':'running'}})
     assert header_cleanup.start(None,jobs,'headers')=='existing'
     with pytest.raises(ValueError,match='Another database maintenance task'):
         header_cleanup.start(None,jobs,'compact')

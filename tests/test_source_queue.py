@@ -10,7 +10,7 @@ from tests.test_prepared_evidence import prepared_net
 
 class Jobs:
     def __init__(self):self.work={}
-    def start(self,kind,work):
+    def start(self,kind,work,**kwargs):
         key=str(len(self.work));self.work[key]=work;return key
 
 
@@ -126,7 +126,7 @@ def test_exact_bundle_is_freshly_applied_with_queue_identity_and_explicit_assemb
 
 def test_start_failure_does_not_leave_a_phantom_active_job(monkeypatch):
     net,proj,q=setup()
-    monkeypatch.setattr(q.jobs,'start',lambda *args:(_ for _ in ()).throw(OSError('thread unavailable')))
+    monkeypatch.setattr(q.jobs,'start',lambda *args,**kwargs:(_ for _ in ()).throw(OSError('thread unavailable')))
     with pytest.raises(OSError):q.start('game')
     assert not q.active and q.status('game')['state']=='interrupted'
 
