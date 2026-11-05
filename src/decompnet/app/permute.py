@@ -144,7 +144,9 @@ class Generator:
                 log.info("permuter: decomp-permuter can't read %s: %s", job["function"], str(out["error"])[:300])
                 variants = None
             elif variants is not None and isinstance(out.get("variant"), str):
-                variants.append(TracedVariant(out["variant"], out["lineage"]) if isinstance(out.get("lineage"), list) else out["variant"])
+                from .permuter_initialization import unsafe_temporary
+                if not unsafe_temporary(job["source"], out["variant"], job["function"], job.get("header", "")):
+                    variants.append(TracedVariant(out["variant"], out["lineage"]) if isinstance(out.get("lineage"), list) else out["variant"])
     def _line(self, deadline: float):
         """The generator's next line, or None when it has stopped or hasn't answered by `deadline`."""
         try:
