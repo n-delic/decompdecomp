@@ -41,15 +41,17 @@ def dependencies(root, source):
     return sorted((str(p),value) for p,value in seen.items())
 
 
-def callees(net, proj, fn, source):
+def callees(net, proj, fn, source, max_source_chars=None):
     """Only referenced matched helpers can supply new signature/write-footprint evidence."""
     from .forks.csource import _blank
     names=sorted(set(re.findall(r'\b([A-Za-z_]\w*)\s*\(',_blank(source))) -
                  {fn['name'],'if','for','while','switch','sizeof'})[:16]
     if not names:
         return []
+    bound = ' AND length(matched_source)<=?' if max_source_chars is not None else ''
+    args = (proj['id'],json.dumps(names)) + ((max_source_chars,) if max_source_chars is not None else ())
     return net.store.all("SELECT name,matched_source FROM functions WHERE project_id=? AND status='matched' "
-                         'AND name IN (SELECT value FROM json_each(?)) ORDER BY name',proj['id'],json.dumps(names))
+                         'AND name IN (SELECT value FROM json_each(?))'+bound+' ORDER BY name',*args)
 
 
 def batch_context(net, proj):

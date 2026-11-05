@@ -4447,3 +4447,43 @@ products divided by positive literals. It rejects qualified or conflicting
 objects, shadows, unknown typedef widths, macros and side effects. Paired sites
 precede singles within a ten-candidate cap. It is a source hypothesis for both
 ROM and project judges; no compiler, header, ABI or target change is proposed.
+
+## KMC GCC: forwarding stubs and padding representation copies
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, three existing
+28-byte wrappers remained linked byte-exact after restoring explicit forwarding
+of three actual vector arguments. One also needed to return the downstream
+pointer. Earlier `void wrapper(void) { helper(); }` reconstructions used
+unspecified helper prototypes: exact instructions had not established their C
+contracts. Callers and downstream definitions supplied the interfaces. A copied
+full 12,582,912-byte image with all three corrections is identical; all 2,069
+selected profiles and other selected objects are preserved. These are corrective
+controls for existing matches, not additional matches.
+
+A separate existing record transpose transports unused tail words. Modeling the
+tail as genuine unnamed padding, then replacing its three typed scalar reads
+with three aligned, four-byte `__builtin_memcpy` representation transfers
+preserved exact linked bytes. Byte arithmetic starts at the enclosing object;
+aligned casts are only builtin arguments, never scalar dereferences or invented
+integer arrays. Local record views preserve the opaque `void *(void *, void *)`
+interface. Period-compiler checks establish size32/alignment4. All eight known
+direct callers use distinct local outputs; nonoverlap is a required memcpy
+precondition, not inferred merely from different parameter names. The copied full-image gate with all four corrections also passes byte equality;
+2,065 other selected objects and all profiles remain unchanged. Live import is
+separate and was still pending when this evidence was recorded.
+
+Negative controls: one aligned twelve-byte builtin copy scored760; unaligned
+copy2130; direct halfword field indexing790; transport through a real local
+word820. This compiler did not resolve `__builtin_memmove`. Do not generalize
+arbitrary uninitialized scalar fields into padding or invent alignment. See
+WG14 [DR222](https://www.open-std.org/jtc1/sc22/wg14/www/docs/dr_222.htm) on
+aggregate representation versus member values and
+[DR451](https://www.open-std.org/jtc1/sc22/wg14/www/docs/dr_451.htm) on the separate
+indeterminate-character-value issue. The focal caller remains nonexact and its wider cross-unit record declarations
+are not globally reconciled. No padding-copy rewrite is enabled automatically
+from this case.
+
+Function briefs flag plain zero-argument void stubs with unspecified helper
+prototypes, including referenced matched stubs. This bounded advice does not
+infer signatures or change code. Cheap claim receipts inspect only their
+already loaded source, without another callee lookup.

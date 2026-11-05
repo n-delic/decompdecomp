@@ -44,6 +44,8 @@ def brief(net, fn, agent, header):
            'get_function(section="brief") loads full supporting evidence. compile_patch/compile_and_diff use the ordinary judge.']
     diagnostic = summary(read(net,fn['id']))
     if diagnostic:lines.append(diagnostic)
+    from .wrapper_contracts import source_hint
+    if note:=source_hint(source,fn['name']):lines.append(note)
     if source:
         lines += ['Candidate C (complete):','```c',source,'```']
     else:
