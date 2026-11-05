@@ -29,14 +29,18 @@ def stable_reads(fn, indices, writes, reads, blocked=(), typedefs=()):
             declarations.setdefault(node.name, []).append(node)
     escaped = {n.expr.name for n, _ in nodes if type(n).__name__ == 'UnaryOp'
                and n.op == '&' and type(n.expr).__name__ == 'ID'}
-    aliases = {t.name: t.type for t in typedefs}
+    aliases = {}
+    # A shadowed alias may differ between blocks. Conservatively retain every
+    # definition rather than treating a later nonvolatile alias as proof.
+    for node in [*typedefs, *(n for n, _ in nodes if type(n).__name__ == 'Typedef')]:
+        aliases.setdefault(node.name, []).append(node.type)
 
     def qualified(node, seen=frozenset()):
         if set(getattr(node, 'quals', ())) & {'volatile', '_Atomic'}:
             return True
         if type(node).__name__ == 'IdentifierType':
-            return any(name in aliases and name not in seen and qualified(aliases[name], seen | {name})
-                       for name in node.names)
+            return any(name not in seen and qualified(alias, seen | {name})
+                       for name in node.names for alias in aliases.get(name, ()))
         return any(qualified(child, seen) for _, child in node.children())
 
     locals_ = {name for name, decls in declarations.items() if len(decls) == 1
