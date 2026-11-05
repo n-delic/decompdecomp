@@ -21,9 +21,13 @@ def limits(data):
 
 def report(job, phase, *, game="", function="", donor="", done=None, total=None):
     """Publish a replaceable snapshot rather than retaining one log line per million possible trials."""
-    if job is None or not getattr(job, "cross_report", None):
+    if job is None:
         return
-    job.cross_report({"phase": phase, "game": game, "function": function, "donor": donor,
-                      "done": done, "total": total, "attempts": job.cross_tried,
-                      "attempt_limit": job.reuse_limit, "seconds": round(time.monotonic() - job.cross_started, 1),
-                      "second_limit": job.cross_seconds, "confirmed": job.cross_matched})
+    snapshot = {"phase": phase, "game": game, "function": function, "donor": donor,
+                "done": done, "total": total, "attempts": getattr(job, 'cross_tried', 0),
+                "attempt_limit": getattr(job, 'reuse_limit', 0),
+                "seconds": round(time.monotonic() - getattr(job, 'cross_started', time.monotonic()), 1),
+                "second_limit": getattr(job, 'cross_seconds', 0), "confirmed": getattr(job, 'cross_matched', 0)}
+    job.progress = snapshot
+    if callback := getattr(job, 'cross_report', None):
+        callback(snapshot)

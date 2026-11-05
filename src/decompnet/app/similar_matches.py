@@ -364,7 +364,9 @@ def run(twins, slug: str, job) -> int:
     work = [(phase, b) for phase in (0, 1) for b in targets]
     position = (int(cursor < 0), abs(cursor))
     work.sort(key=lambda item: ((item[0], item[1]['id']) < position, item[0], item[1]['id']))
-    for phase, b in work:
+    from .cross_game_progress import report as publish_progress
+    for index, (phase, b) in enumerate(work):
+        publish_progress(job, 'Checking similar matched functions', function=b['name'], done=index, total=len(work))
         if job.stop.is_set() or job.reuse_attempts >= job.reuse_limit or time.monotonic() >= deadline:
             return matched
         if transfers_exhausted():

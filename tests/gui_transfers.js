@@ -132,4 +132,33 @@ async function checks() {
   assert.match(get('crossGamePhaseStatus').textContent,/1 verified match · 2 partial improvements saved/);
   console.log('Cross-game budgets, progress, cancellation and cleanup passed');
 }
-checks().catch(error=>{console.error(error);process.exitCode=1;});
+
+
+// A standalone reuse pass is active even when the previous autopilot pass is already done.
+async function autopilotProgressChecks() {
+  const base = fs.readFileSync('src/decompnet/app/static/js/base.js','utf8');
+  vm.runInContext(base.slice(base.indexOf('function updateWorkProgress('),base.indexOf('async function followJob(')),ctx);
+  get('autopilot').classList={toggle(){}};
+  get('apBar').style={setProperty(key,value){this[key]=value;}};
+  get('apBar').removeAttribute=function(key){delete this[key];};
+  ctx.plural=(n,word)=>`${n} ${word}`;
+  const ov={slug:'target-game',kind:'rom',matched:0,autopilot:{state:'done',matched:209,tried:3840},
+    twins:{state:'running',matched:2,progress:{phase:'Checking identical code',done:5,total:20,function:'current_function'}}};
+  ctx.renderAutopilot(ov);
+  assert.equal(get('apBtn').textContent,'Stop');
+  assert.equal(get('apBar').className,'workbar counted');
+  assert.equal(get('apBar')['aria-valuenow'],'5');
+  assert.equal(get('apBar').style['--work-progress'],'25%');
+  assert.match(get('apSub').textContent,/5 \/ 20.*25%.*current_function.*2 verified matches/);
+  let action;
+  ctx.api=async (_url,options)=>{action=options.body.action;return {...ov,twins:{state:'stopped',matched:2}};};
+  await get('apBtn').onclick();
+  assert.equal(action,'stop');
+  assert.equal(get('apBar').hidden,true);
+  assert.equal(get('apBtn').textContent,'Run again');
+  ctx.renderAutopilot({...ov,twins:{state:'running',matched:0,progress:{phase:'Fingerprinting this game'}}});
+  assert.equal(get('apBar').className,'workbar');
+  assert.equal(get('apBar')['aria-valuenow'],undefined);
+  assert.match(get('apSub').textContent,/Fingerprinting.*Total not yet known/);
+}
+checks().then(autopilotProgressChecks).catch(error=>{console.error(error);process.exitCode=1;});

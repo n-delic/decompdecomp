@@ -501,14 +501,17 @@ function renderAutopilot(ov) {
   const perm = pm && (pm.tried || pm.state === "running")
     ? ` The permuter ${pm.state === "running" ? `is rewriting near misses${pm.threads ? ` on ${plural(pm.threads, "thread")}` : ""}${pm.current ? ` (now ${pm.current})` : ""}` : "rewrote near misses"}: ${plural(pm.tried, "function")}, ${pm.matched} matched.` : "";
   const twinsDone = (ap && ap.twins) || (tw && tw.matched) || 0;
-  if (running && ap.phase === "twins") {
+  if (reuseRunning) {
     $("apTitle").textContent = "Autopilot: trying verified C from this game and other projects";
-    $("apSub").textContent = `Exact and close candidates are compiled locally; only byte-for-byte matches count.${perm}`;
+    const progress = tw?.progress || {phase: 'Preparing reusable-code search'};
+    updateWorkProgress({_workBar: $('apBar'), _workStatus: $('apSub')}, {...progress, confirmed: null});
+    if (!(Number(progress.total) > 0)) $('apSub').textContent += ' · Total not yet known';
+    $('apSub').textContent += ` · ${(tw?.matched || 0).toLocaleString()} verified matches${perm}`;
     $("apBtn").textContent = "Stop";
   } else if (running) {
     $("apTitle").textContent = `Autopilot: trying each function's machine draft · ${ap.matched.toLocaleString()} matched for free`;
     $("apSub").textContent = `${ap.tried.toLocaleString()} of ${ap.total.toLocaleString()} tried${ap.near ? ` · ${ap.near} more are 90%+ there` : ""}${ap.twins ? ` · ${ap.twins.toLocaleString()} from reused C` : ""}. Agents work alongside it.${perm}`;
-    $("apBar").firstElementChild.style.width = `${(100 * ap.tried) / Math.max(1, ap.total)}%`;
+    updateWorkProgress({_workBar: $('apBar'), _workStatus: {textContent: ''}}, {phase: 'Trying machine drafts', done: ap.tried, total: ap.total});
     $("apBtn").textContent = "Stop";
   } else if (ap || tw) {
     const total = (ap ? ap.matched : 0) + (ap ? 0 : twinsDone);
@@ -529,11 +532,13 @@ function renderAutopilot(ov) {
     $("apBtn").textContent = "Run autopilot";
   }
   $("apBtn").onclick = async () => {
+    const label = $("apBtn").textContent;
     $("apBtn").disabled = true;
+    $("apBtn").textContent = running || twinsRunning ? "Stopping…" : "Starting…";
     try {
-      S.ov = await api("/api/autopilot", { method: "POST", body: { slug: S.slug, action: running ? "stop" : "start" } });
+      S.ov = await api("/api/autopilot", { method: "POST", body: { slug: S.slug, action: running || twinsRunning ? "stop" : "start" } });
       renderAutopilot(S.ov);
-    } catch (e) { toast(esc(e.message), "err"); } finally { $("apBtn").disabled = false; }
+    } catch (e) { $("apBtn").textContent = label; toast(esc(e.message), "err"); } finally { $("apBtn").disabled = false; }
   };
 }
 
