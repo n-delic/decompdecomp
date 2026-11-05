@@ -1949,3 +1949,8 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 [data-boundary-agent] { padding:12px; margin:16px 0; }
 [data-boundary-agent] summary { cursor:pointer; font-weight:700; }
 [data-boundary-evidence] { scroll-margin-top:16px; }
+
+.verification-banner { display: grid; gap: 10px; }
+.verification-banner[hidden] { display: none; }
+.verification-banner p { margin: 0; }
+.verification-banner .row { flex-wrap: wrap; justify-content: space-between; }

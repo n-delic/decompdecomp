@@ -193,10 +193,6 @@
         <div class="ph-name"><h1 id="phTitle"></h1><button class="ghost icon sm ph-rename" id="phRename" type="button" aria-label="Rename this project" title="Rename"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.3 1.9a1.6 1.6 0 0 1 2.3 0l.5.5a1.6 1.6 0 0 1 0 2.3L5.5 13.3 2 14l.7-3.5 8.6-8.6Zm-.6 2.4-6.6 6.6-.3 1.3 1.3-.3 6.6-6.6-1-1Z"/></svg></button></div>
       </div>
       <div class="ph-actions">
-        <details class="verification-status" id="progressSyncNotice" hidden>
-          <summary id="progressSyncToggle" title="Verifying saved files — show details"><span class="spin-dot" aria-hidden="true"></span><span class="sr-only">Saved files verification details</span></summary>
-          <div class="popover verification-pop"><div class="row"><div id="progressSyncText"></div><button id="progressSyncPause" class="ghost small-btn" type="button">Pause verification</button></div><div class="small muted" id="progressSyncDetails"></div><div class="workbar" id="progressSyncBar" role="progressbar" aria-label="Saved progress verification"><i></i></div></div>
-        </details>
         <button class="pill-btn" id="phWorking" type="button" hidden title="See what your agents do"><span class="dot on"></span><span id="phWorkingText"></span></button>
         <button class="pill-btn room" id="phRoom" type="button" hidden title="Who's in the room, the invite link"></button>
         <button class="ghost together" id="phTogether" type="button" hidden title="Friends who own this game work on it with you, each from their own computer"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Zm5.5 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4ZM1 13c0-2.4 2-4 4.5-4S10 10.6 10 13v1H1v-1Zm10.5 1v-1c0-1.3-.4-2.4-1.1-3.3.2 0 .4-.1.6-.1 2.2 0 4 1.3 4 3.4v1h-3.5Z"/></svg><span>Decompile together</span></button>
@@ -222,6 +218,14 @@
     </nav>
   </header>
 
+  <section class="notice verification-banner" id="progressSyncNotice" role="status" hidden>
+    <div class="row"><strong>Rechecking saved progress</strong><button id="progressSyncPause" class="ghost small-btn" type="button">Pause verification</button></div>
+    <p id="progressSyncReason"></p>
+    <div id="progressSyncText"></div>
+    <div class="workbar" id="progressSyncBar" role="progressbar" aria-label="Saved progress verification" aria-valuemin="0"><i></i></div>
+    <div class="small muted" id="progressSyncDetails"></div>
+    <p class="small muted">Saved source is retained while matches are checked. The matched percentage may temporarily fall, then rise as exact matches are confirmed.</p>
+  </section>
   <div class="notice" id="coverageNotice" hidden></div>
   <div class="panel" id="progressPopulations" hidden></div>
   <div class="notice" id="compilerNotice" hidden></div>

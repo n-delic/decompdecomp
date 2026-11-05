@@ -308,10 +308,9 @@ function markPlatforms() {
 function renderHeader(ov) {
   const sync = ov.progress_sync;
   $("progressSyncNotice").hidden = !sync;
-  if (!sync) $("progressSyncNotice").open = false;
   if (sync) {
     $("progressSyncNotice").classList.toggle("paused", !!sync.paused);
-    $("progressSyncToggle").title = `${sync.paused ? "Verification paused" : sync.phase} — show verification details`;
+    $("progressSyncReason").textContent = sync.reason || "Saved project files are being compared with this checkout before their matches can be confirmed.";
     const pause = $("progressSyncPause");
     pause.textContent = sync.paused ? "Resume verification" : "Pause verification";
     pause.onclick = async () => {
@@ -323,7 +322,8 @@ function renderHeader(ov) {
     const counted = Number.isFinite(sync.total) && sync.total > 0;
     $("progressSyncText").textContent = `${sync.phase}${counted ? ` · ${sync.done.toLocaleString()} / ${sync.total.toLocaleString()} functions (${Math.floor(100 * sync.done / sync.total)}%)` : ""}`;
     $("progressSyncDetails").textContent = [sync.function ? `Checking ${sync.function}` : sync.message,
-      `${sync.elapsed_seconds}s elapsed`, sync.matched != null ? `${sync.matched} matches confirmed · ${sync.lost} no longer match` : null,
+      `${sync.elapsed_seconds}s elapsed`, sync.paused ? "Time estimate paused" :
+        Number.isFinite(sync.remaining_seconds) ? `About ${sync.remaining_seconds < 60 ? `${sync.remaining_seconds}s` : `${Math.ceil(sync.remaining_seconds / 60)} min`} remaining (estimate)` : "Estimating time remaining…", sync.matched != null ? `${sync.matched} matches confirmed · ${sync.lost} no longer match` : null,
       sync.idle_seconds >= 30 ? `No step completed for ${sync.idle_seconds}s; the current operation may still be running.` : null].filter(Boolean).join(" · ");
     const bar = $("progressSyncBar");
     bar.classList.toggle("determinate", counted);

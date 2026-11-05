@@ -1359,3 +1359,33 @@ def test_metadata_pull_during_compile_does_not_discard_result(project,metadata):
         assert net.instructions('game')==metadata['instructions']
     else:
         assert net.store.one("SELECT text FROM notes WHERE text='A contributor note'") is not None
+
+
+def test_verification_estimate_uses_completed_functions_and_hides_when_paused(monkeypatch):
+    from decompnet.app import progress
+    worker=Progress.__new__(Progress)
+    worker.activity={}
+    worker.activity_lock=threading.Lock()
+    now=[100.0]
+    monkeypatch.setattr(progress.time,'monotonic',lambda:now[0])
+    worker._activity('game',phase='Verifying saved functions',done=0,total=10)
+    assert worker.status('game')['remaining_seconds'] is None
+    now[0]=112.0
+    worker._activity('game',done=3)
+    assert worker.status('game')['remaining_seconds']==28
+    assert worker.status('other') is None
+    worker._activity('game',paused=True)
+    assert worker.status('game')['remaining_seconds'] is None
+    worker._activity('game',phase='Saving verified progress',paused=False,done=10,total=10)
+    assert worker.status('game')['remaining_seconds'] is None
+
+
+def test_verification_banner_exposes_reason_counters_and_progress():
+    root=Path(__file__).parents[1]/'src/decompnet/app/static'
+    html=(root/'index.html').read_text()
+    js=(root/'js/project.js').read_text()
+    assert '<section class="notice verification-banner" id="progressSyncNotice"' in html
+    assert 'id="progressSyncReason"' in html
+    assert 'id="progressSyncBar" role="progressbar"' in html
+    assert 'remaining_seconds' in js and 'Estimating time remaining' in js
+    assert 'sync.done / sync.total' in js
