@@ -273,7 +273,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
         ctx=net._context(proj['id'],fn['unit'])
         header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
         labels={}
-        for candidate in draft_repairs.variants(source,fn['name'],proj['arch'],fn['asm'] or '',flags,labels,limit=None,header=header,tables=switch_tables.read(net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source)):
+        for candidate in draft_repairs.variants(source,fn['name'],proj['arch'],fn['asm'] or '',flags,labels,limit=None,header=header,tables=switch_tables.read(net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source),entry_scope=draft_repairs.promoted_entry_repairs.scope(net,proj,fn)):
             family=labels[candidate]
             if family in pools and family in draft_repairs.AGENT_FAMILIES:
                 pools[family].append(candidate)

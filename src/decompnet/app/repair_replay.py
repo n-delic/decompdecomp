@@ -78,6 +78,9 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
     profile = settings.get('compiler') or {}
     platform = consoles.get(settings.get('platform'))
     name = evidence['function']
+    # Injected PROJECT judges do not establish language/width from a registry id.
+    entry_scope = (draft_repairs.promoted_entry_repairs.profile_scope(platform.arch,profile)
+                   if measure is None and settings.get('mode') == 'rom' else {})
     if measure is None:
         if settings.get('mode') != 'rom':
             return report | {'skipped':'Imported projects need a copied build and diagnostic judge; standalone exports lack their build inputs.'}
@@ -160,7 +163,7 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
             return iterative_repairs.targeted_variants(source,measured,
                 {'name':name,'asm':evidence.get('target_asm') or ''},platform.arch,
                 profile.get('flags',[]),header=after['header'],tagged=True,
-                selection=selection,pool_cache=pool_cache)
+                selection=selection,pool_cache=pool_cache,entry_scope=entry_scope)
         result = repair_benchmark.run(before['source'], baseline_score, evaluate, generate, trials=trials,
                                       deadline=deadline, check_cancel=check_cancel, progress=progress,
                                       generate_report=True, arch=platform.arch,header=after['header'])
@@ -168,7 +171,7 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
                                   'elapsed_seconds': time.monotonic()-started}
     labels = {}
     candidates = draft_repairs.variants(before['source'],name,platform.arch,evidence.get('target_asm') or '',
-                                        profile.get('flags',[]),labels,limit=None,header=after['header'])
+                                        profile.get('flags',[]),labels,limit=None,header=after['header'],entry_scope=entry_scope)
     # Round-robin families so a long first family cannot consume the whole replay allowance.
     pools = {}
     for candidate in candidates:

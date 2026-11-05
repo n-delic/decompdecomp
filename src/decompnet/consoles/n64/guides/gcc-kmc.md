@@ -944,3 +944,18 @@ Selected empty callees and incoming parameter copies
   linked bytes and the ordinary exact verdict; do not weaken the judge.
 - This is not permission to rewrite every unused-looking argument. Nonempty
   callees, mixed-arity interfaces and hidden side effects need separate review.
+
+### Promoted input versus a byte local
+
+With KMC GCC 2.7.2, `-G8 -mips3 -mgp32 -mfp32 -O2 -ffast-math
+-fno-strength-reduce -g3`, a grounded decoder control improved from score 1100
+to 705 when a signed-int input narrowed at entry became a genuinely consumed
+`u8` local initialized from that input. A declaration followed by assignment
+reproduced 705 too. This is a near-miss improvement, not an exact match.
+
+Keep the public signed-int parameter and caller contract. Replacing the parameter
+itself with `u8` can make callers incompatible and is a different experiment.
+The bounded `promoted_entry_local` family tries both local forms only for proven
+C/32-bit-int builds, a dominating entry conversion and an otherwise stable input.
+It skips escapes, hidden includes/conditional types, type inspection, variadics,
+C++ and unknown compiler commands. No dummy local or signature widening is needed.

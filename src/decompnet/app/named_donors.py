@@ -209,7 +209,7 @@ def run(twins,slug,job=None,*,only=None):
                             labels={}
                             context=net.forks.permuter_header(slug,b['name']) if fork else header
                             variants=draft_repairs.variants(candidate,b['name'],shared_reuse.machine(net,proj)[0],b['asm'] or '',
-                                                            labels=labels,header=context,limit=None)
+                                                            labels=labels,header=context,limit=None,entry_scope=draft_repairs.promoted_entry_repairs.scope(net,proj,b))
                             order=repair_ranking.order(dict.fromkeys(labels.get(s,'local_repair') for s in variants),
                                                        repair_ranking.evidence(net,b['id'],agent.id))
                             variants.sort(key=lambda s:order.index(labels.get(s,'local_repair')))

@@ -403,7 +403,7 @@ class Search(Permuter):
             self.local_seen.add(source)
             rows = source_rows.get(source,[])
             labels = {}
-            choices = draft_repairs.variants(source, fn['name'], proj['arch'], fn['asm'] or '', flags, labels=labels, limit=None, header=header, tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,source))
+            choices = draft_repairs.variants(source, fn['name'], proj['arch'], fn['asm'] or '', flags, labels=labels, limit=None, header=header, tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,source),entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
             from . import hazard_line_repairs
             for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
                 labels[candidate]=family
@@ -517,7 +517,7 @@ class Search(Permuter):
                             and residual_followups.kind(parent_rows,measured_rows,proj['arch'])):
                         followup_labels = {}
                         followup = draft_repairs.variants(candidate,fn['name'],proj['arch'],fn['asm'] or '',flags,
-                            followup_labels,limit=None,header=header)
+                            followup_labels,limit=None,header=header,entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
                         selected = residual_followups.select([(followup_labels[c],c) for c in followup
                             if c not in self.local_seen and c not in queue],parent_rows,measured_rows,proj['arch'])
                         if selected:
