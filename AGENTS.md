@@ -230,13 +230,17 @@ linting). In short:
 Always submit decompdecomp changes on a feature or fix branch through a pull request; do not commit directly to main.
 
 The user has asked that completed PRs be merged to main after inspection and required checks, until they
-revoke this preference. After each merge, they explicitly authorize stopping and updating their running
-app in `/Volumes/Data/Github/decompdecomp-rr`, using `git pull origin main` followed by
+revoke this preference. The user updates their running app themselves: merging a PR does not authorize
+pulling into its checkout, stopping, updating or restarting it. Leave the running app in
+`/Volumes/Data/Github/decompdecomp-rr` and its home `/Volumes/Data/Decomps/decompdecomp` alone unless the
+user explicitly requests deployment. This replaces the previous automatic-update authorization.
+
+When the user explicitly requests deployment, use `git pull origin main` followed by
 `DECOMP_HOME=/Volumes/Data/Decomps/decompdecomp /Volumes/Data/Github/decompdecomp-rr/.venv/bin/decomp`.
 Use a clean checkout of main (a detached origin/main runtime checkout is acceptable when main is held by
 another worktree), preserve all other branches and local changes, stop only this home's app gracefully,
-launch it persistently and verify health/revision. This authorization applies to deployment after tested
-merges; experiments must still use isolated homes and must not mutate live projects.
+launch it persistently and verify health/revision. Experiments must still use isolated homes and must
+not mutate live projects.
 
 When a change requires clients to update, build a fresh shareable macOS app after testing
 with `bash packaging/macos/build.sh --app-only`. Deliver the .app folder directly in Downloads,
