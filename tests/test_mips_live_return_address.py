@@ -110,3 +110,49 @@ def test_hint_explains_atomic_profile_check_without_changing_default_budget():
     assert "one profile keeps its default-only meaning" in hint
     assert "exact source/profile verdict" in hint
     assert not live_return_address_repairs.hint(ASM, "ppc")
+
+
+CALL_ASM=('/* 0 80000FF8 0040F809 */ jalr $v0\n'
+          '/* 4 80000FFC 00000000 */ nop\n'+ASM)
+ENTRY_SOURCE=('extern int other, D_800B2000;\n'
+              'int f(int x) { int result=0; callback();\n'
+              'D_800B2000 = (int) __builtin_return_address(0);\n'
+              'return result + (x & 0xffff0000); }')
+
+
+def test_entry_builtin_repair_is_target_backed_and_bundles_statement_boundary():
+    choices=live_return_address_repairs.variants(ENTRY_SOURCE,'f','mips',CALL_ASM)
+    assert [family for family,_ in choices[:2]]==['live_return_address','live_return_address_initializers']
+    assert '__builtin_return_address' not in choices[0][1]
+    assert 'do { D_800B2000 = (int) __builtin_mips_live_return_address(); } while (0);' in choices[1][1]
+    assert all(text.count('\n')==ENTRY_SOURCE.count('\n') for _,text in choices)
+    labels={}
+    shared=draft_repairs.variants(ENTRY_SOURCE,'f','mips',CALL_ASM,labels=labels,limit=2)
+    assert [labels[text] for text in shared]==['live_return_address','live_return_address_initializers']
+
+
+def test_entry_builtin_repair_rejects_entry_restore_no_call_other_registers_and_abi():
+    restored=CALL_ASM.replace('/* 4 80000FFC 00000000 */ nop','/* 4 80000FFC 8FBF0010 */ lw $ra, 0x10($sp)')
+    for asm in (ASM,restored,CALL_ASM.replace('AC3F2000','AC222000'),
+                CALL_ASM.replace('0040F809','00408009'),CALL_ASM.replace('80000FFC','80000FF0')):
+        assert not live_return_address_repairs.variants(ENTRY_SOURCE,'f','mips',asm)
+    for source in (ENTRY_SOURCE.replace('return_address(0)','return_address(1)'),
+                   ENTRY_SOURCE.replace('extern int','extern short'),
+                   ENTRY_SOURCE.replace('extern int other, D_800B2000;',''),
+                   ENTRY_SOURCE.replace('D_800B2000 =','int D_800B2000; D_800B2000 ='),
+                   '#define D_800B2000 other\n'+ENTRY_SOURCE):
+        assert not live_return_address_repairs.variants(source,'f','mips',CALL_ASM)
+    assert not live_return_address_repairs.variants(ENTRY_SOURCE,'f','ppc',CALL_ASM)
+    assert mips_live_return_address.stores(CALL_ASM,after_call=True)=={0x800b2000}
+    assert not mips_live_return_address.stores(restored,after_call=True)
+
+
+def test_existing_live_read_gets_one_shot_companion_without_nesting():
+    source=ENTRY_SOURCE.replace('__builtin_return_address(0)','__builtin_mips_live_return_address()')
+    choices=live_return_address_repairs.variants(source,'f','mips',CALL_ASM)
+    wrapped=next(text for _,text in choices if 'do {' in text)
+    assert 'do { D_800B2000 = (int) __builtin_mips_live_return_address(); } while (0);' in wrapped
+    assert all(text.count('do {')<=1 for _,text in live_return_address_repairs.variants(wrapped,'f','mips',CALL_ASM))
+    assert not any('do {' in text for _,text in live_return_address_repairs.variants(source,'f','mips',ASM))
+    for macro in ('__builtin_return_address(x) other(x)','__builtin_mips_live_return_address() other()'):
+        assert not live_return_address_repairs.variants('#define '+macro+'\n'+ENTRY_SOURCE,'f','mips',CALL_ASM)

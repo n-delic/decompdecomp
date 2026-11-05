@@ -677,3 +677,12 @@ For a proven `LOAD(p,o) (*(char**)((char*)(p)+(o)))` shape,
 unchanged, requiring a literal field offset, word index and explicit 32-bit ABI.
 Isolate each edit: an accompanying signedness change need not contribute.
 Do not expand unknown macros or reorder side effects; verify linked bytes/data.
+
+If a draft already uses `__builtin_return_address(0)` for a raw global `$ra` store
+following a callback, the same family tests the fixed live intrinsic and an atomic
+`do { global = (s32)__builtin_mips_live_return_address(); } while (0);` boundary.
+The direct swap can worsen the score by allowing mask arithmetic to move before
+the store; judge the bounded companion even then. This requires encoded target
+call/store evidence and a declared 32-bit scalar or pointer destination. Genuine
+entry snapshots without that evidence stay unchanged. Keep physical source lines
+when testing with `-g3`.
