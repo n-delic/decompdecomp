@@ -558,3 +558,11 @@ keeps ordinary search. Changed-output and score-improvement history can suggest
 continuations under the same compiler/flags, but only the exact judge proves a match.
 Imported ELF trials now retain their function-output fingerprint before restoration;
 COFF section-level evidence is useful for rotation, not an earned deeper function path.
+
+Before permuting a register-only tail, check the function's return contract against
+its callers. A caller consuming `$v0` can expose a draft incorrectly declared `void`;
+returning the already computed index may restore the missing copy and reserve the
+right registers. Once the ABI agrees, compare a byte-narrowed packing temporary with
+its equivalent repeated inline expression, keeping the conversion at each use. A
+173-instruction live case recovered exactly through that sequence. Plain float-array
+storage also restored its call-delay-slot store; adding `volatile` had blocked it.
