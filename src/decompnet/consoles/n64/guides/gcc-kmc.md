@@ -994,3 +994,13 @@ rejected artificial-branch draft, not proven original game source. Inspect the
 allocation and late jump dumps before treating a dead constant as a loop bound.
 Do not add duplicate arms, padding or dummy operations to reproduce it. Correct
 object views and actual callee contracts before trusting a lower matching score.
+
+### Order of real preheader setup
+
+A genuine backward-edge control improved from score 795 to 580 when its resource
+identifier calculation moved after independent callback-address and mode setup.
+The shared `pure_preheader_order` family tries bounded permutations of these
+pure local assignments before loops or labels. Calls and memory operations stay
+in place; no dummy local or operation is added. This control is not exact and
+is not better than the differently shaped saved 565 draft. The remaining callback
+dispatch contract must be audited separately; pointer casts alone do not prove it.
