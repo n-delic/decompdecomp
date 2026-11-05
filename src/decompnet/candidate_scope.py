@@ -52,11 +52,24 @@ def callees(net, proj, fn, source):
                          'AND name IN (SELECT value FROM json_each(?)) ORDER BY name',proj['id'],json.dumps(names))
 
 
+def batch_context(net, proj):
+    """Shared read-only inputs for one bounded scheduling decision, never a judge verdict."""
+    return {'contexts':{}, 'versions':{kind:net.store.read_version(kind,proj['id'])
+            for kind in ('scope_context','scope_symbols','matched_evidence')},
+            'fork':bool(getattr(net,'fork_slug',lambda _:None)(proj['slug']))}
+
+
+def _version(net, proj, kind, shared):
+    if shared is not None and kind in shared.get('versions',{}):
+        return shared['versions'][kind]
+    return net.store.read_version(kind,proj['id'])
+
+
 def context(net, proj, unit, shared=None):
     def load():
         if hasattr(net.store, 'read_cache'):
             return net.store.read_cache.get(('candidate-header', proj['id'], unit),
-                (net.store.read_version('scope_context', proj['id']), getattr(net._context, '__func__', net._context)),
+                (_version(net,proj,'scope_context',shared), getattr(net._context, '__func__', net._context)),
                 lambda: net._context(proj['id'], unit))
         return net._context(proj['id'], unit)
     if shared is None:
@@ -84,8 +97,12 @@ def state(net,proj,fn,shared=None):
             by_name.setdefault(row[0], []).append(index)
             by_address.setdefault(row[1], []).append(index)
         return {'symbols': rows, 'by_name': by_name, 'by_address': by_address}
-    lookup = (net.store.read_cache.get(('candidate-symbols', proj['id']), net.store.read_version('scope_symbols', proj['id']), build_index)
-              if hasattr(net.store, 'read_cache') else build_index())
+    lookup = shared.get('symbol_lookup') if shared is not None and 'versions' in shared else None
+    if lookup is None:
+        lookup = (net.store.read_cache.get(('candidate-symbols', proj['id']), _version(net,proj,'scope_symbols',shared), build_index)
+                  if hasattr(net.store, 'read_cache') else build_index())
+        if shared is not None and 'versions' in shared:
+            shared['symbol_lookup']=lookup
     selected = {i for name in names for i in lookup['by_name'].get(name, ())}
     selected.update(i for address in addresses for i in lookup['by_address'].get(address, ()))
     symbols = [lookup['symbols'][i] for i in sorted(selected)]
@@ -96,11 +113,12 @@ def state(net,proj,fn,shared=None):
                 for r in callees(net,proj,fn,source)]
     if hasattr(net.store, 'read_cache'):
         evidence = net.store.read_cache.get(('candidate-callees', proj['id'], fn['name'], hashlib.sha256(source.encode()).hexdigest()),
-            net.store.read_version('matched_evidence', proj['id']), callee_hashes)
+            _version(net,proj,'matched_evidence',shared), callee_hashes)
     else:
         evidence = callee_hashes()
     result.append(evidence)
-    if getattr(net,'fork_slug',lambda _:None)(proj['slug']):
+    fork=shared['fork'] if shared is not None and 'fork' in shared else getattr(net,'fork_slug',lambda _:None)(proj['slug'])
+    if fork:
         try:
             _,fp,_=net.forks.get(proj['slug']);unit=fp.unit(fn['unit'])
             target=getattr(unit,'target',None)

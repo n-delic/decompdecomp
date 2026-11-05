@@ -221,3 +221,21 @@ requested option are remembered for that pinned compiler ID; repeated diagnostic
 invalid flag, without claiming a successful compile or match. Other compiler versions and unrecognized
 failures are unaffected. Mismatch-focused assembly reads without a mapped target anchor return an explained,
 bounded raw target page; they do not infer a location or run another compile.
+
+
+## Paused-queue read snapshots
+
+Automatic selection reads lightweight pause records before loading full sources. Records without an exhausted
+current or historical count need no fingerprint. A batch shares header contexts, symbol indexes and scope
+revision reads while retaining byte-for-byte equivalent per-function signatures. Unchanged ROM decisions use
+the existing bounded single-flight read cache, keyed by recorded model/worker identity, input revision, project
+configuration, exact pause records and repair-rule digests. Returned IDs are copied; callers cannot mutate the
+cached result. Retry/resume edits and source, target, header, symbol or matched-callee changes invalidate the
+snapshot. Imported projects recheck external source/build dependencies on every decision rather than caching a
+pause behind a time limit. These are scheduling hints only; no scores, compile limits, claims or judge verdicts
+are changed.
+
+This addresses observed empty-queue calls with roughly 1,150 database reads and up to 88 seconds of elapsed
+work under contention. A synthetic 40-function regression uses 63 reads for a cold complete decision and 11
+for an unchanged same-model worker, compared with 360 reads for the individual fingerprints alone. These
+query counts do not predict wall time on a user's machine.

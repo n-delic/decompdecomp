@@ -1,5 +1,9 @@
 # Roadmap
 
+Implemented: batched candidate-scope inputs and revision-keyed, model-scoped paused-queue read snapshots.
+Unchanged ROM queues reuse immutable scheduling results; source/header/symbol/callee changes and retry
+records invalidate immediately, while imported external files are inspected on every decision.
+
 Implemented: lightweight agent project facts and claim receipts, serialized claim retries, read-only live-claim
 recovery, dedicated MCP health/metadata workers and bounded startup probes, numeric tool timing, connection
 failure outcomes, current-profile compiler diagnostics with remembered rejected flags, and bounded assembly
