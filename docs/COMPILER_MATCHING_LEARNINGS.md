@@ -3790,3 +3790,38 @@ at most four proposals and alone records matches; nonmatches remain available fo
 further work. A private copied-project replay matched the second proposal without
 an agent, using unchanged source context and compiler settings. Unit tests exercise
 eligibility and routing; they are controlled regressions, not additional matches.
+
+### Separate invariant pointer field arguments from the pointer's later lifetime
+
+A private 74-instruction MIPS function built with `gcc-2.7.2-kmc -G0 -mips3
+-mgp32 -mfp32 -O2 -g3` differed only in where it formed a saved global pointer:
+its address pair preceded a by-value aggregate argument copy, while the original
+formed it after that copy. The advisory score was 190; ordinary linked bytes
+confirmed that the address-pair movement was the only real difference.
+
+The source had an assignment-valued field argument `(p = state(input))->field`.
+A source-owned inline helper returned the same declared global array on both
+branches, including an identity `array + zero` branch. Replacing that argument
+with `array[0].field` and moving the pointer assignment immediately after the
+call produced an exact 296-byte linked function. Retaining the earlier pointer
+capture and existing scopes mattered. The score remained 70 because seven
+relocation-display operands differed; the ordinary judge reported exact and the
+linked bytes equalled the original bytes. No judge rule was changed.
+
+The shared `constant_pointer_capture_timing` proposal reproduced the exact result
+at rank 6 of 34 from the original stored source, before ABI cleanup. All 33
+previous shared proposals failed to improve 190. Separately, the actual matched
+callee established a six-word aggregate beginning in the fourth argument; a
+source using that correct prototype also linked exactly after the same timing
+change. Old matched caller prototypes are evidence of syntax that compiled, not
+proof of a callee's ABI.
+
+Negative evidence: explicitly staging the whole aggregate made an extra copy;
+directly replacing the pointer helper with a constant address enabled separate
+absolute field accesses; removing the early pointer capture, unwrapping scopes,
+and eliminating an address temporary each lost the exact match. Two profiles
+already verified on nearby functions (plain `-O2`, and `-O2 -ffast-math
+-fno-schedule-insns`) did not solve it. These are one private game match plus
+controlled synthetic guard tests, not a claim of broad profile superiority or an
+autopilot replay. The repair is shared across architectures and modes, but the
+new exact compiler observation is MIPS GCC evidence only.
