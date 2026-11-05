@@ -355,3 +355,39 @@ def test_room_recovers_body_queued_on_wrong_overlay_only_after_exact_judgment(pa
     assert result['matched'] is (not changed),result['reason']
     assert host._function('func_80000808',slug)['status']=='open'
     assert (host._function(name,slug)['status']=='matched') is (not changed)
+
+
+def test_deep_profile_probe_sends_exact_bundle_to_real_host_judge(pair):
+    from types import SimpleNamespace
+
+    from decompnet.app import deep_permuter, deep_profiles
+    from tests.test_deep_permuter import Log
+    host,slug,guest,gslug=pair
+    name='func_80000808'
+    profile={k:v for k,v in json.loads(json.dumps(guest.cfg(guest.project_row(gslug))['compiler'])).items() if k in ('toolchain','flags')}
+    for net,project in ((host,slug),(guest,gslug)):
+        cfg=net.cfg(net.project_row(project));cfg['compiler']['flags']=['-O0']
+        with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE slug=?',(json.dumps(cfg),project))
+    source=DAMAGE.replace('= 60;','= ROOM_TIMER;')
+    proj=guest.project_row(gslug)
+    with guest.store.tx() as db:
+        db.execute("UPDATE context_versions SET header=header || '\n#define ROOM_TIMER 60\n' WHERE project_id=?",(proj['id'],))
+    agent,_=guest.local_agent('deep-client');remote,_=host.local_agent('remote-deep-client')
+    packets=[];synced=[]
+    def request(method,path,data):
+        assert method=='POST' and path=='/collab/attempt'
+        packets.append(data)
+        return room_matches.verify(host,slug,remote,data['function'],data['source'],data['evidence'])
+    link=SimpleNamespace(net=guest,slug=gslug,url='http://host',room='room',_req=request,sync=lambda:synced.append(True))
+    guest.links[gslug]=link
+    fn=guest._function(name,gslug)
+    search=deep_permuter.Search(guest,1,10,Log(),fn)
+    assert deep_profiles.probe(search,agent,proj,fn,source,profile)==0,search.log.lines
+    assert synced==[True] and packets[0]['evidence']['compiler']==profile
+    hfn=host._function(name,slug)
+    assert hfn['status']=='matched'
+    assigned=compiler_for(host.cfg(host.project_row(slug)),hfn['vram'],hfn)
+    assert {k:assigned[k] for k in ('toolchain','flags')}==profile
+    assert 'ROOM_TIMER 60' in host._context(hfn['project_id'],hfn['unit'])['header']
+    assert host.cfg(host.project_row(slug))['compiler']['flags']==['-O0']
+    assert guest.cfg(guest.project_row(gslug))['compiler']['flags']==['-O0']

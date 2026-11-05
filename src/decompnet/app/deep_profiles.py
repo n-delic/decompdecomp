@@ -1,4 +1,4 @@
-"""Bounded, match-ranked compiler profiles for local ROM deep searches."""
+"""Bounded, match-ranked compiler profiles for ROM deep searches, including host-verified room submissions."""
 import hashlib
 import json
 
@@ -39,6 +39,7 @@ def probe(search, agent, proj, fn, source, profile):
     if cached and cached['outcome'] == 'miss':
         search.skipped += 1
         return None
+    header=search.net._context(proj['id'],fn['unit'])['header']
     search.tested += 1
     search.report()
     exact, diff, _ = search.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
@@ -55,6 +56,28 @@ def probe(search, agent, proj, fn, source, profile):
         current = search.net._function(fn['name'], proj['slug'])
         if agent_tokens.target_scope(search.net, {**dict(current), 'best_source':source}, '') != scope:
             raise NetworkError('Deep profile inputs changed during verification. Run the function again.')
+        link=search.net.links.get(proj['slug'])
+        if link:
+            from .. import match_bundle
+            from . import room_matches
+            # Freeze the tested compiler and private header into the durable room packet.
+            # Never change local assignments or report a win before the host accepts it.
+            evidence=room_matches.packet(search.net,proj['slug'],fn['name'],source)
+            evidence.update(compiler=profile,compiler_identity=match_bundle.compiler_identity(profile),
+                            header=header,header_sha256=match_bundle.digest(header))
+            search.log.check_cancel()
+            search.phase='awaiting host profile verification'
+            search.report()
+            search.log('Submitting exact source/header/compiler bundle for host verification…')
+            result=room_matches.send(link,agent,fn['name'],source,evidence=evidence)
+            search.room_holds.pop(fn['id'],None)
+            if result.get('matched'):
+                link.sync()
+                search.log('Host verified the alternate compiler profile match.')
+                return 0
+            from .deep_permuter import SearchLimit
+            raise SearchLimit('Exact alternate profile submitted; awaiting host verification. '+
+                              (result.get('reason') or 'Evidence retained for room verification retry.'))
         evidence = {'exact':True, 'score':0, 'source':source,
                     'header':search.net._context(proj['id'], fn['unit'])['header'],
                     **profile, 'inputs':prepared_evidence.digest(search.net, fresh, current),

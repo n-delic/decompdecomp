@@ -284,8 +284,8 @@ class Sweeps:
         if not isinstance(loop, bool):
             raise NetworkError('Loop indefinitely must be true or false.')
         deep_profiles.validate(compiler_profiles)
-        if compiler_profiles > 1 and (self.net.fork_slug(slug) or slug in self.net.links):
-            raise NetworkError('Multiple compiler profiles require a local ROM project.')
+        if compiler_profiles > 1 and self.net.fork_slug(slug):
+            raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
         if (isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 120 or
                 isinstance(max_variants, bool) or not isinstance(max_variants, int) or not 1 <= max_variants <= 1000000):
             raise NetworkError('Choose 1–120 minutes and 1–1,000,000 variants per function.')

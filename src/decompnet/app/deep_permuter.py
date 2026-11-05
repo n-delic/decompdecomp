@@ -597,8 +597,6 @@ class Search(Permuter):
                     score = measured
                     best = min(best, measured)
             else:
-                if proj['slug'] in self.net.links:
-                    continue  # A room host owns profile changes; no local profile promotion can bypass it.
                 measured = deep_profiles.probe(self, agent, proj, fn, source, profile)
             if measured == 0:
                 if self.best != 0:
@@ -721,10 +719,10 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
         build_scope = key(net, proj, fn)
     from . import deep_profiles
     deep_profiles.validate(compiler_profiles)
-    if compiler_profiles > 1 and (net.fork_slug(slug) or slug in net.links):
-        raise NetworkError('Multiple compiler profiles require a local ROM project; imported builds and rooms own their compiler settings.')
+    if compiler_profiles > 1 and net.fork_slug(slug):
+        raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
     search = Search(net, minutes, max_variants, log, fn)
-    if not net.fork_slug(slug) and slug not in net.links:
+    if not net.fork_slug(slug) and (slug not in net.links or compiler_profiles>1):
         search.compiler_profiles = deep_profiles.selected(net, proj, compiler_profiles)
         for profile in search.compiler_profiles:
             log('Selected profile: '+profile['toolchain']+' '+' '.join(profile['flags']))

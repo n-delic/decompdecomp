@@ -110,3 +110,44 @@ def test_confirmed_alternate_profile_match_updates_progress_once(monkeypatch):
     assert log.updates[-1]['last_score']==0 and log.updates[-1]['last_outcome']=='matched'
     assert search._score(AGENT,proj,fn,'exact source',40,None)==0
     assert search.improvements==1
+
+
+@pytest.mark.parametrize('accepted',[False,True])
+def test_room_exact_profile_requires_host_acceptance_and_preserves_packet(monkeypatch,accepted):
+    import json
+
+    from decompnet.app import room_matches
+    net=setup(monkeypatch);fn=net.function();proj=net.project_row('game')
+    net._judge_with=lambda *args:(True,SimpleNamespace(score=0),'')
+    sync=[];requests=[]
+    def request(method,path,data):
+        requests.append(data)
+        return {'matched':accepted,'pending':not accepted,'reason':'Host needs compiler installed'}
+    link=SimpleNamespace(net=net,slug='game',url='http://host',room='room',_req=request,sync=lambda:sync.append(True))
+    monkeypatch.setattr(net,'links',{'game':link})
+    monkeypatch.setattr(room_matches,'packet',lambda *args:{'compiler':{'toolchain':'old','flags':[]},'target_sha256':'target','source_sha256':'source','header':'old'})
+    search=deep_permuter.Search(net,1,1,Log(),fn)
+    profile={'toolchain':'other','flags':['-O2']}
+    before=net.project_row('game')['config']
+    if accepted:assert deep_profiles.probe(search,AGENT,proj,fn,'exact C',profile)==0
+    else:
+        with pytest.raises(deep_permuter.SearchLimit,match='awaiting host verification'):
+            deep_profiles.probe(search,AGENT,proj,fn,'exact C',profile)
+    assert requests[0]['evidence']['compiler']==profile
+    assert requests[0]['evidence']['header']==net._context(proj['id'],fn['unit'])['header']
+    saved=net.store.one("SELECT value FROM settings WHERE key LIKE 'room-match:%'")
+    assert json.loads(saved['value'])['status']==('accepted' if accepted else 'pending')
+    assert sync==([True] if accepted else [])
+    assert net.function()['status']=='open' and net.project_row('game')['config']==before
+    assert search.tested==1  # host checks do not consume local compilation slots
+
+
+def test_room_search_tests_alternate_profiles_instead_of_skipping_them(monkeypatch):
+    net=setup(monkeypatch);fn=net.function();proj=net.project_row('game')
+    monkeypatch.setattr(net,'links',{'game':object()})
+    search=deep_permuter.Search(net,1,20,Log(),fn)
+    search.compiler_profiles=[{'toolchain':'other','flags':[]}]
+    seen=[]
+    monkeypatch.setattr(deep_profiles,'probe',lambda *args:seen.append(args[-1]) or 0)
+    assert search._score(AGENT,proj,fn,'candidate',40,None)==0
+    assert seen==search.compiler_profiles

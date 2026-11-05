@@ -432,7 +432,7 @@ def test_room_client_can_start_a_deep_pass(sweep, monkeypatch):
     obj, net, *_ = sweep
     net.links['game'] = object()
     monkeypatch.setattr(obj.jobs, 'start', lambda *args, **kwargs: 'room-pass')
-    assert obj.start('game', minutes=1, max_variants=10, threads=2)['job'] == 'room-pass'
+    assert obj.start('game', minutes=1, max_variants=10, threads=2,compiler_profiles=2)['job'] == 'room-pass'
 
 
 def test_function_runner_credentials_survive_other_workers_starting(sweep):
