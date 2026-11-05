@@ -120,7 +120,7 @@ const NOTIFY_POLL_MS = 2000;
 const BURST_SECONDS = 30;  // the same kind of news from one project this close together is one line
 const HISTORY_KEEP = 300;  // events the panel keeps
 const NOTE_TOAST_MS = 6000, NOTE_TOASTS_SHOWN = 3;
-const N = { last: null, polling: false, history: new Map(), live: [], unread: 0, loaded: false };
+const N = { last: null, polling: false, history: new Map(), live: [], unread: 0, loaded: false, loading: null, epoch: 0 };
 
 /* The autopilot's summary ("20 of 95 functions matched from machine drafts") ends the burst of its own matches: one
    line, not a line of matches and another saying the same thing. */
@@ -230,12 +230,29 @@ async function openNotes() {
   N.unread = 0; markUnread();
   for (const t of N.live) t.el.remove();  // (their news is in the panel now)
   N.live = [];
-  if (!N.loaded) {  // the history once; live news joins it as it comes
-    try { for (const ev of (await api("/api/events?recent=1")).events) N.history.set(ev.id, ev); N.loaded = true; } catch { /* shown empty */ }
-    trimHistory();
-  }
   renderNotes();
   $("notifClose").focus();
+  if (N.loaded || N.loading) return;
+  const epoch = N.epoch, log = $("notifLoading");
+  log.hidden = false; showJobError(log, "");
+  const finish = beginWork(log, "Loading recent events", []);
+  N.loading = (async () => {
+    try {
+      const result = await api("/api/events?recent=1");
+      if (epoch !== N.epoch) return; // Clear all while the request was in flight.
+      for (const ev of result.events) N.history.set(ev.id, ev);
+      N.loaded = true; trimHistory(); renderNotes();
+      log.hidden = true;
+    } catch (error) {
+      if (epoch !== N.epoch) return;
+      showJobError(log, error);
+      const retry = document.createElement("button");
+      retry.type = "button"; retry.textContent = "Retry loading events";
+      retry.onclick = () => { retry.remove(); openNotes(); };
+      log.append(retry);
+    } finally { finish(); N.loading = null; }
+  })();
+  await N.loading;
 }
 function closeNotes(back = true) {
   if ($("notifPanel").hidden) return;
@@ -250,6 +267,7 @@ $("notifClose").onclick = () => closeNotes();
 /* Clear all: the history up to the newest event goes, and stays gone after a restart (the server keeps where) */
 $("notifClear").onclick = async () => {
   const upTo = Math.max(N.last || 0, ...N.history.keys());
+  N.epoch++; N.loaded = true; $("notifLoading").hidden = true;
   N.history.clear();
   for (const t of N.live) t.el.remove();
   N.live = [];

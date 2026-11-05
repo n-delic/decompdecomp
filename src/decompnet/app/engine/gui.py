@@ -480,7 +480,13 @@ class GuiMixin:
 
     def recent_events(self, limit: int = EVENTS_PER_ASK) -> list[dict]:
         """The notification centre's history: the latest notable events of every project, newest first."""
-        return [dict(r) for r in self.store.all(f"{EVENT_ROWS} ORDER BY e.id DESC LIMIT ?", limit)]
+        # Bound each indexed kind before merging, rather than scanning through routine worker events.
+        branches = ["SELECT id FROM (SELECT e.id FROM events e INDEXED BY idx_events_kind_id "
+                    "JOIN projects p ON p.id=e.project_id WHERE e.kind=? ORDER BY e.id DESC LIMIT ?)"
+                    for _ in NOTIFY_KINDS]
+        ids = "SELECT id FROM (" + " UNION ALL ".join(branches) + ") ORDER BY id DESC LIMIT ?"
+        args = [value for kind in NOTIFY_KINDS for value in (kind,limit)] + [limit]
+        return [dict(r) for r in self.store.all(f"{EVENT_ROWS} AND e.id IN ({ids}) ORDER BY e.id DESC", *args)]
 
     def record_event(self, slug: str, kind: str, detail: str, agent_name: str = "") -> None:
         """Something that happened outside the judge (a helper paused on an error), in the project's feed and the

@@ -246,9 +246,9 @@ def register(app: App) -> None:
         q = request.query_params
         if q.get("recent"):
             cleared = int(settings.data.get("notes_cleared_to") or 0)
-            return JSONResponse({"events": [e for e in await call(net.recent_events) if e["id"] > cleared]})
+            return JSONResponse({"events": [e for e in await (app.ui_call or call)(net.recent_events) if e["id"] > cleared]})
         after = q.get("after", "")
-        return JSONResponse(await call(net.events_after, int(after) if after.isdigit() else None))
+        return JSONResponse(await (app.ui_call or call)(net.events_after, int(after) if after.isdigit() else None))
 
     def split_extras(game: Path, size: int, extras: str | None) -> None:
         """The files dropped with a game, sent after it in one upload (`extras`: [[name, bytes], ...]): a PC game's

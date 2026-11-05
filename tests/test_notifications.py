@@ -88,3 +88,34 @@ def test_the_compiler_answer_checks_by_itself(tmp_path, monkeypatch):
     net.surveys["game"] = {"state": "running"}
     net.compiler_answer("game")
     assert surveys == ["game"]  # (one survey at a time)
+
+
+def test_recent_history_limits_each_kind_and_ignores_routine_events(tmp_path):
+    net=RomNetwork(tmp_path/'events.db',tmp_path)
+    tiny_game(net,'a')
+    with net.store.tx() as db:
+        pid=net.project_row('a')['id']
+        db.executemany('INSERT INTO events(project_id,kind,detail,created_at) VALUES(?,?,?,0)',
+                       [(pid,'match',str(i)) for i in range(20)]+
+                       [(pid,'claim','routine') for _ in range(1000)]+
+                       [(pid,'paused','paused')])
+    recent=net.recent_events(3)
+    assert [e['detail'] for e in recent]==['paused','19','18']
+    statements=[]
+    net.store._reader().set_trace_callback(statements.append)
+    net.recent_events(3)
+    query=next(q for q in statements if q.startswith('SELECT e.id'))
+    plan=net.store.all('EXPLAIN QUERY PLAN '+query)
+    assert any('idx_events_kind_id' in row['detail'] for row in plan)
+    assert net.recent_events(0)==[]
+
+
+def test_notification_dialog_renders_before_loading_and_shares_request():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+    node=shutil.which('node')
+    if not node:pytest.skip('needs Node')
+    subprocess.run([node,str(Path(__file__).with_name('gui_notifications_loading.js'))],check=True,capture_output=True,text=True,timeout=30)

@@ -62,6 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_functions_status ON functions(project_id, status,
 CREATE INDEX IF NOT EXISTS idx_attempts_fn ON attempts(function_id);
 CREATE INDEX IF NOT EXISTS idx_attempts_worker ON attempts(function_id,agent_id);
 CREATE INDEX IF NOT EXISTS idx_events_time ON events(created_at);
+CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind,id);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress_state(
   project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
