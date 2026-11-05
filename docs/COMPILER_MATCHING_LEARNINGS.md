@@ -4749,3 +4749,27 @@ An old lower-score predicate is excluded independently: `(a & a) == 2` forces
 `a == 2`, so `(b & a) == 4` is impossible. The target's independent halfword
 comparisons admit initialized `(2, 4)` fields; no dynamic trace is claimed.
 Compiler score and undefined or incorrect C must remain separate evidence.
+
+## Terminal helper layout can finish a KMC allocation near miss
+
+A private ordinary linked control with KMC GCC 2.7.2,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, became byte-exact (1,272 bytes)
+when a candidate-owned `static __inline__ void` helper used an inverted outer
+condition, the real state-update arm and a terminal `return;`, followed by the
+other original arm. The compiler inlines this helper: no extra runtime call,
+dummy operation, stack padding or change to the stores is required. Two bounded
+machine-generated terminal forms reproduced scores 260 and 0. This is ordinary
+linked evidence; full-cartridge acceptance and source-contract reconciliation
+are separate gates, not implied by a local score.
+
+The shared `terminal_guard_layout` family tries terminal void if/else layouts
+and a value-return guard's positive-body layout. Conditions are evaluated once;
+logical negation preserves scalar truth without guessing an inverse comparison.
+It visits the requested function and at most two directly called, candidate-owned
+static inline void helpers. It leaves header-owned helpers alone. Moved local
+declarations, nonterminal tails, labels, loops, explicit control transfers,
+unknown macros/includes, preprocessing splices and visible C++ overloads are
+excluded. The ordinary destination compiler/judge still decides acceptance.
+Do not infer that an arbitrary branch rewrite is equivalent or that missing
+callee arguments can be repaired by changing layout: concrete call contracts
+must be audited separately.

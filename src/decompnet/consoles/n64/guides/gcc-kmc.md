@@ -973,3 +973,14 @@ The bounded `promoted_entry_local` family tries both local forms only for proven
 C/32-bit-int builds, a dominating entry conversion and an otherwise stable input.
 It skips escapes, hidden includes/conditional types, type inspection, variadics,
 C++ and unknown compiler commands. No dummy local or signature widening is needed.
+
+### Terminal branches in real inline helpers
+
+A KMC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` control reached
+1,272 byte-exact linked bytes by making a real static inline void helper's
+state-update branch terminal (`return;`) and placing its other original arm
+afterward. Both conditions and all stores remained intact. The bounded
+`terminal_guard_layout` repair tries these layouts locally, including directly
+called helpers owned by the candidate. It also tries positive-body layout for
+simple value-return guards. Keep missing-argument/interface checks separate;
+an exact object does not prove a caller contract or whole-game C soundness.
