@@ -4127,3 +4127,6 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   not general type conversion, aliasing or equivalence of other random rewrites.
   Ordinary exact judging and semantic review remain mandatory; no new game match
   is claimed by this regression.
+- Volatile aliases declared inside a function need the same guard. Alias names
+  shadowed in nested blocks retain all definitions conservatively, so a later
+  plain alias cannot hide an earlier volatile declaration.
