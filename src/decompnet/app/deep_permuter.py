@@ -392,6 +392,10 @@ class Search(Permuter):
             for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
                 labels[candidate]=family
                 choices.append(candidate)
+            from . import targeted_storage_repairs
+            for family,candidate in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source)):
+                labels[candidate]=family
+                choices.append(candidate)
             from . import expression_recipes
             for candidate in expression_recipes.variants(self.net, lineage.profile, source):
                 labels[candidate] = 'learned_expression'
@@ -407,6 +411,8 @@ class Search(Permuter):
                 choices.append(candidate)
             families = list(dict.fromkeys(labels.get(c, 'local_repair') for c in choices))
             ranked = adaptive_repairs.order(self.net, proj, fn, rows, repair_ranking.order(families, rows))
+            from .repair_selection import order as combination_order
+            ranked = combination_order(ranked,path)
             # Every other burst keeps the original order for exploration.
             if self.refinement_rounds % 2 == 0:
                 preferred = lineage.preferred(source)
@@ -418,7 +424,9 @@ class Search(Permuter):
             localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
             choices=[c for family,c in localised]
             labels.update({c:family for family,c in localised})
-            queue = list(dict.fromkeys(choices))
+            from . import proposal_progress
+            progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
+            queue = list(dict.fromkeys(c for _,c in progressed))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             parents = {}
             while queue:
@@ -461,6 +469,9 @@ class Search(Permuter):
                         measured_output,exact=score==0)
                     source_locations[candidate]=getattr(self,'_trial_locations',None)
 
+                if cursor and parent_source == source:cursor.measured(labels.get(candidate),candidate,score)
+                counters['output_feedback'] = feedback.summary()
+                self.local_status.update(counters)
                 if candidate in feedback.loan_sources:counters['sequence_evaluations']=counters.get('sequence_evaluations',0)+1
                 if score is None:
                     counters['compile_failed'] += 1

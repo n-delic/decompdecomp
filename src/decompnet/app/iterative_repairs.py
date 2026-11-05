@@ -89,7 +89,7 @@ def children(state, parent, variants, *, priority=0, arch=None):
                         ceiling=min(parent['ceiling'], parent['score']),
                         region_baseline=parent.get('regions'), baseline_rows=parent['report'].get('rows'),
                         path=parent.get('path', [])+[family], parent_source=parent['source'],
-                        parent_output=output_key(parent['report']),
+                        parent_output=output_key(parent['report']), parent_score=parent['score'],
                         unchanged_steps=parent.get('unchanged_steps', 0),
                         productive_steps=parent.get('productive_steps',0),sequence_loan=loan))
     # Finish up to three direct siblings before an immediate residual burst. The measured
@@ -117,8 +117,8 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
         if report is None:  # busy work stays retryable
             return False
         state['pending'].pop(0)
-        if isinstance(report.get('score'), (int, float)):
-            repair_effects.observe(state, node, output_key(report))
+        if isinstance(report.get('score'), (int, float)) and not report.get('cached'):
+            repair_effects.observe(state, node, output_key(report),score=report.get('score'),parent_score=node.get('parent_score'))
         counts = state.setdefault('counts', {})
         if node.get('sequence_loan'):counts['sequence_evaluations']=counts.get('sequence_evaluations',0)+1
         if (node.get('path') or [''])[-1]=='paired_local':
@@ -288,7 +288,9 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     from . import hazard_line_repairs
     hazards=hazard_line_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [])
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
-    operand_focused = hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    from . import targeted_storage_repairs
+    storage=targeted_storage_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
+    operand_focused = storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
     labels.update({text: family for family, text in operand_focused})
     for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):
@@ -460,7 +462,7 @@ def _run(twins, slug, job):
                 cached = net.store.one("SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=? AND outcome='miss'",
                                        fn['id'], key)
                 if cached:
-                    return initial_trace(source,json.loads(cached['feedback']))
+                    return initial_trace(source,{**json.loads(cached['feedback']),'cached':True})
             key = similar_matches.trial_key(source, header, settings, fn, ['iterative-v2', build_scope, symbols])
             with guard:
                 job.reuse_attempts += 1

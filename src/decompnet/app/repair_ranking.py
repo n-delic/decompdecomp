@@ -78,8 +78,10 @@ def order(families, rows):
 
     # These families only exist after a narrow target/source guard. Generic delay-slot
     # or register-shape heuristics must not spend the whole budget before that operation.
-    preferred=GUARDED+preferred
-    return sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
+    preferred=GUARDED+('mapped_spill_storage','mapped_register_lifetime')+preferred
+    ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
+    from .trial_evidence import order as evidence_order
+    return evidence_order(ranked,rows)
 
 
 def evidence(net, function_id, agent_id):

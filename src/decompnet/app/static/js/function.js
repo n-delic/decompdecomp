@@ -357,6 +357,14 @@ async function refreshFn(first) {
       finally { handover.disabled = false; }
     };
 
+    const draftPanel = $('fnMachineDraft');
+    if (draftPanel) {
+      const report = d.machine_draft_report;
+      draftPanel.hidden = !report || !report.key;
+      if (!draftPanel.hidden) $('fnMachineDraftReport').textContent =
+        `${report.compiled ? 'C compiled' : 'No compiling draft'}${report.scored ? ' · judged' : ''}${report.matched ? ' · exact match' : ''}\n` +
+        (report.failures || []).map(f => `${f.phase} (${f.family}): ${f.reason}`).join('\n\n');
+    }
     const verificationPanel = $("fnVerification");
     if (verificationPanel) {
       const bundle = d.verification;

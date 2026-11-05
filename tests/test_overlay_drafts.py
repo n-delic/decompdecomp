@@ -142,15 +142,15 @@ def test_stale_drafts_keep_the_function_specific_overlay_compiler(network):
 
 @pytest.mark.parametrize('previous,current,joined,expected', [
     ('', 'int f(void) { return 1; }', False, 1),
-    ('', '', False, 0),
+    ('', '', False, 1),
     ('', 'int f(void) { return 1; }', True, 0),
-    (None, 'int f(void) { return 1; }', False, 0),
+    (None, 'int f(void) { return 1; }', False, 1),
 ])
 def test_recovered_failed_drafts_get_a_compile_even_without_an_attempt(previous, current, joined, expected, monkeypatch):
     from decompnet.app import boundary_repairs
     monkeypatch.setattr(boundary_repairs, 'blocked', lambda *args: set())
     calls = []
-    fn = dict(id=1, status='open', seed=previous)
+    fn = dict(id=1, status='open', seed=previous, best_source=None)
     def one(query, *args):
         return fn if 'SELECT *' in query else None
     net = SimpleNamespace(store=SimpleNamespace(one=one), links={'demo': object()} if joined else {},

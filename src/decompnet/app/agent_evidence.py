@@ -95,7 +95,7 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         result=net.forks._attempt(agent,slug,fn['name'],source,keep=False,diagnostic=True)
         if result.get('score') is None:
             return failed(result.get('error') or result.get('diff') or result.get('message') or result.get('text') or 'The project baseline could not be built/scored.')
-        measured={'score':result['score'],'rows':result.get('rows'),'source':source,'verified':True,'exact':result['matched'],'line_note':result.get('line_note','')}
+        measured={'score':result['score'],'rows':result.get('rows'),'source':source,'verified':True,'exact':result['matched'],'line_note':result.get('line_note',''),'repair_locations':result.get('repair_locations')}
     else:
         context=net._context(proj['id'],fn['unit'])
         if context is None:
@@ -111,7 +111,11 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         from ..source_lines import mismatches, render
         mapped = mismatches(compiled.obj, fn['name'], diff.rows, source,
                             filename='func.cpp' if getattr(compiled,'language','c') == 'c++' else 'func.c')
+        from .repair_localisation import bind
+        measured['repair_locations']=bind(source,mapped)
         measured['line_note'] = render(mapped, source, limit=4)
+        from .repair_localisation import bind
+        measured['repair_locations'] = bind(source,mapped)
         measured['header_sha256']=hashlib.sha256(context['header'].encode()).hexdigest()
         measured['compiler']=(getattr(compiled,'effective_settings',None) or {}).get('compiler')
         if not measured['compiler']:

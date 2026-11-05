@@ -811,3 +811,14 @@ set even when the source alone scores worse. Preserve source layout. A `beq` ver
 `beql` mismatch changes delay-slot execution, so only linked bytes establish a
 match. See `docs/COMPILER_MATCHING_LEARNINGS.md` for controlled scores and failed
 experiments; this is not a recommendation to change the project's global flags.
+
+### Isolated spill slots and register chains
+
+Equal frames with one differing spill store/load pair need a local storage/lifetime
+hypothesis before global frame padding. `mapped_spill_storage` uses the actual object's
+C-line association to select the assignment's local; `mapped_register_lifetime` uses
+a small consistent register chain to try same-type conversion lifetime changes.
+A source association is not a register prescription. Stale/missing line information
+provides no proposal. Preserve compiler flags and exact checking; the first held-out
+sweep did not improve the two motivating residuals, so do not repeat exhausted shapes
+without a new source/context/evidence hypothesis.

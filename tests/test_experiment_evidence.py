@@ -34,7 +34,7 @@ def test_identical_function_outputs_regressions_and_real_edits_are_distinct():
 def test_ineffective_input_priority_keeps_exploration_and_resets_when_source_changes():
     net=FakeNet();fn=net.function();proj=net.project_row('game');key=evidence.scope(net,proj,fn)
     for _ in range(8):evidence.record(net,fn,key,'no_win','old','changed',40,45,None,None,3)
-    assert evidence.factors(net,proj,fn)=={'no_win':0.25}
+    assert evidence.factors(net,proj,fn)=={'no_win':0.65}
     assert set(adaptive_repairs.order(net,proj,fn,[],['no_win','fresh']))=={'no_win','fresh'}
     changed={**dict(fn),'best_source':'new source'}
     assert evidence.factors(net,proj,changed)=={}

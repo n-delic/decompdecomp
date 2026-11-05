@@ -16,7 +16,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import scoring, toolchains
+from . import limits, scoring, toolchains
 from .elfobj import FunctionObj
 
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
@@ -331,14 +331,14 @@ class DraftError(Exception):
 
 def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, context_header: str = "",
                       data_asm: str | None = None, timeout: float = 20, valid: bool = False,
-                      strict: bool = False) -> str | None:
+                      strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     """C draft from GNU/splat-style assembly text (plus optional data, for jump tables and strings). `valid`:
     m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is.
     `strict`: a context m2c can't read raises DraftError instead of drafting without it."""
     target = m2c_target(toolchain_id or "")
     if not target:
         return None
-    return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict)
+    return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
 
 
 MAX_REASON_CHARS = 600  # of m2c's reason for a failure, passed on to an agent
@@ -352,8 +352,10 @@ def _failure(res: subprocess.CompletedProcess) -> str:
 
 
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
-            timeout: float = 20, valid: bool = False, strict: bool = False) -> str | None:
+            timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++)."""
+    if any(option not in ('--no-switches', '--no-stack-spill', '--gotos-only', '--stack-structs') for option in options):
+        raise ValueError('Unsupported machine-draft option.')
     if not available():
         return None
     if target.startswith('mips-'):
@@ -371,7 +373,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
     with tempfile.TemporaryDirectory(prefix="decompnet-m2c-") as tmp:
         asm = Path(tmp) / f"{name}.s"
         asm.write_text(asm_text, encoding="utf-8")
-        argv = [str(m2c), *(["--valid-syntax"] if valid else []), "-t", target, "-f", name, str(asm)]
+        argv = [str(m2c), *options, *(["--valid-syntax"] if valid else []), "-t", target, "-f", name, str(asm)]
         if data_asm:
             (Path(tmp) / "data.s").write_text(data_asm, encoding="utf-8")
             argv.append(str(Path(tmp) / "data.s"))
@@ -380,7 +382,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             ctx.write_text(_context_for_m2c(context_header), encoding="utf-8")
             argv[1:1] = ["--context", str(ctx)]
         try:
-            res = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+            res = subprocess.run(limits.capped(argv), capture_output=True, text=True, timeout=timeout,
                                  encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         except subprocess.TimeoutExpired:
             if strict:
@@ -390,7 +392,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             raise DraftError(_failure(res))
         if res.returncode != 0 and "--context" in argv:  # an unparsable context must not cost us the seed
             i = argv.index("--context")
-            res = subprocess.run(argv[:i] + argv[i + 2:], capture_output=True, text=True, timeout=timeout,
+            res = subprocess.run(limits.capped(argv[:i] + argv[i + 2:]), capture_output=True, text=True, timeout=timeout,
                                  encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         out = res.stdout.strip()
         return out if res.returncode == 0 and out else None

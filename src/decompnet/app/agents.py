@@ -423,6 +423,7 @@ class Session:
     def snapshot(self, since: int = 0) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "can_login": agents.get(self.kind).supports_login, "label": self.label,
                 "selection": self.options.get("selection") or {},
+                "boundary_function":self.options.get("boundary_function"), "boundary_until":self.options.get("boundary_until"),
                 "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
                 "per_session": self.options.get("per_session", PER_SESSION),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
@@ -663,6 +664,8 @@ class Manager:
         options["selection"] = self.net.validate_selection(options.get("selection"))
         from . import focused_agents
         options = focused_agents.configure(self.net,slug,options,count)
+        from . import boundary_investigations
+        options = boundary_investigations.configure(self.net,slug,options,count)
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
@@ -677,7 +680,7 @@ class Manager:
             raise ValueError("decompdecomp is quitting")
         ids = []
         report_start("Preparing the project before creating workers…")
-        if options.get("task") != "readable":
+        if options.get("task") not in {"readable", "boundary"}:
             self._prepare(slug)
         report_start("Waiting for the worker registry, then reserving new identities…")
         with self._lock:
@@ -752,6 +755,9 @@ class Manager:
                 db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
 
     def app_instructions(self, session):
+        if session.options.get('task') == 'boundary':
+            from .boundary_investigations import INSTRUCTIONS
+            return INSTRUCTIONS
         from .prompt_settings import for_session
         return for_session(self.net, session)['instructions']
 
@@ -944,7 +950,7 @@ class Manager:
                  "SUM(cache_write_tokens) AS cache_write_tokens, SUM(output_tokens) AS output_tokens FROM helper_sessions WHERE project=? AND started_at >= ? {} "
                  "GROUP BY kind, model")
         rows = self.net.store.all(query.format(""), slug, 0)
-        recent = [dict(r) for r in self.net.store.all(query.format("AND task != 'readable'"), slug,
+        recent = [dict(r) for r in self.net.store.all(query.format("AND task NOT IN ('readable','boundary')"), slug,
                                                       time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
         out = []
@@ -1193,8 +1199,10 @@ class Manager:
         return True
 
     def _run(self, s: Session) -> None:
-        from .focused_agents import run
-        run(self,s)
+        from . import boundary_investigations, focused_agents
+        if s.options.get("task") == boundary_investigations.TASK:
+            return boundary_investigations.run(self,s)
+        focused_agents.run(self,s)
 
     def _run_work(self, s: Session) -> None:
         from . import focused_agents
@@ -1202,14 +1210,16 @@ class Manager:
         self.net.set_selection(s.slug, agent.name, s.options.get("selection"))
         self.assignments[agent.id] = s.slug
         focused_agents.bind(self.net,s,agent)
+        from . import boundary_investigations
+        boundary_investigations.bind(self.net,s,agent)
         if not hasattr(self.net, '_agent_tool_tasks'): self.net._agent_tool_tasks = {}
-        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'matching'
+        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'matching'
 
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
         s.push("info", f"{s.label} starting on {s.slug}")
         # Polishing consumes matched C, so matching preparation cannot unlock its work.
-        polishing = s.options.get("task") == "readable"
+        polishing = s.options.get("task") in {"readable", "boundary"}
         if not polishing and (prep := self._prep.get(s.slug)) is not None:
             self._set(s, "starting", "first giving the game's code without a source file one (about a minute)")
             prep.wait(PREP_WAIT)
@@ -1229,11 +1239,15 @@ class Manager:
                               'Your work is saved. Sessions resume after restart, or within 15 seconds if active work needs longer.')
                 s.stop.wait(1)
                 continue
-            if self._left(s.slug, task := s.options.get("task") or "") == 0:
+            task = s.options.get("task") or ""
+            if task == 'boundary' and boundary_investigations.reported(self.net,s):
+                self._finish(s,'Boundary recommendation saved; review it in Review function boundaries.')
+                break
+            if task != 'boundary' and self._left(s.slug, task) == 0:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
                 break
             policy = self.net.selection(s.slug, agent.name)
-            if task != "readable" and (policy.get("match_below") is not None or policy.get("max_tries") or policy.get("model_untried")):
+            if task not in {"readable", "boundary"} and (policy.get("match_below") is not None or policy.get("max_tries") or policy.get("model_untried")):
                 if not self.net.selection_remaining(s.slug, agent, include_paused=True) and not self.net.store.one(
                         "SELECT 1 FROM claims WHERE agent_id=?", agent.id):
                     below = policy.get("match_below")
@@ -1241,7 +1255,7 @@ class Manager:
                     self._pause(s, why + " for this worker (unscored functions also count)",
                                 "Change Work selection, then press Start again.")
                     break
-            if not s.options.get('focus_id') and task != 'readable' and not self.net.selection_remaining(s.slug,agent) and not self.net.store.one(
+            if not s.options.get('focus_id') and task not in {'readable', 'boundary'} and not self.net.selection_remaining(s.slug,agent) and not self.net.store.one(
                     'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
                 why, todo = self.net.selection_wait_reason(s.slug, agent)
                 self._wait(s, why, time.time()+30, todo)
@@ -1251,7 +1265,7 @@ class Manager:
                 break
             if self._room_away(s):
                 continue
-            if (broken := self._build_problem(s.slug)) is not None:
+            if task != "boundary" and (broken := self._build_problem(s.slug)) is not None:
                 self._pause(s, f"the project doesn't build on this computer, so no session starts: {broken}",
                             "Fix the project's setup (its page says what's wrong), then press Start again.")
                 break
@@ -1329,7 +1343,10 @@ class Manager:
             connection_failures = transport_failures = 0
             compiled = self._progress(agent.id) - before
             investigation = session_followups.investigation_outcome(self.net, agent, began) if compiled == 0 else None
-            followup = ok and not investigation and session_followups.premature(self, s, agent, compiled)
+            if task == 'boundary' and boundary_investigations.reported(self.net,s):
+                ok = True
+                investigation = 'Boundary recommendation submitted'
+            followup = task != "boundary" and ok and not investigation and session_followups.premature(self, s, agent, compiled)
             if compiled >= 2:
                 s.continuation_attempts = 0
             if followup:
@@ -1337,15 +1354,24 @@ class Manager:
                 s.continuation_note = session_followups.CONTINUATION
                 s.push('info', 'Session ended early; continuing once with explicit compilation guidance.')
             readable_progress = task == 'readable' and self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
-            work_remains = self._left(s.slug,task) > 0
+            work_remains = task != "boundary" and self._left(s.slug,task) > 0
             if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
                 s.error = "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
                 ok = False
+            if task == 'boundary' and ok and not boundary_investigations.reported(self.net,s):
+                s.error = 'The agent ended without a structured boundary recommendation. Read its transcript or start another investigation.'
+                ok = False
             if investigation and ok:
                 s.push("info", investigation+"; no compilation was needed for this report.")
-            self._session_end(s, row, agent, began, "stopped" if s.stop.is_set() else "rotated" if s.rotated else "early_finish" if followup else "investigated" if ok and investigation else "ok" if ok else
+            self._session_end(s, row, agent, began, "investigated" if task == "boundary" and investigation else "stopped" if s.stop.is_set() else "rotated" if s.rotated else "early_finish" if followup else "investigated" if ok and investigation else "ok" if ok else
                               "limit" if s.limited else "signin" if s.auth_failed else "failed")
+            if task == 'boundary' and ok:
+                self._finish(s, 'Boundary recommendation saved; review it in Review function boundaries.')
+                break
+            if task == 'boundary' and not ok and not (s.limited or s.throttled or s.auth_failed):
+                self._pause(s, s.error or 'Boundary investigation failed. Review the transcript before retrying.')
+                break
             if s.stop.is_set():
                 break
             if s.context_budget and s.context_budget.waiting:
@@ -1495,7 +1521,7 @@ class Manager:
         from .session_efficiency import finish
         finish(self.net,agent,s.slug,row,began)
         spent = f", ${u['usd']:.2f}" if u["usd"] else f", {u['tokens'] // 1000}k tokens" if u["tokens"] else ""
-        ending = 'ended early; helper continues with compilation guidance' if outcome == 'early_finish' else 'completed; helper continues' if outcome in ('ok', 'rotated', 'investigated') and not s.stop.is_set() else 'ended ('+outcome+')'
+        ending = 'ended early; helper continues with compilation guidance' if outcome == 'early_finish' else 'completed; boundary investigation finished' if s.options.get('task') == 'boundary' and outcome == 'investigated' else 'completed; helper continues' if outcome in ('ok', 'rotated', 'investigated') and not s.stop.is_set() else 'ended ('+outcome+')'
         s.push("info", f"session {s.runs} {ending}: {u['tool_calls']} tool calls, {compiles} compiles, {matches} "
                        f"matched{spent}")
         self._save(s)
@@ -1507,6 +1533,9 @@ class Manager:
     def prepare_session(self, s: Session, agent=None, *, token=None) -> None:
         """Preload facts and one ordinary claim, once; previews never claim work."""
         if s.startup_context is not None:
+            return
+        if s.options.get('task') == 'boundary':
+            s.startup_context = 'First check project_info(detail=false), then get_boundary_evidence. No function has been claimed.'
             return
         if agent is None:
             agent = self.net.authenticate(token)
@@ -1529,6 +1558,9 @@ class Manager:
     def prompt(self, s: Session) -> str:
         from . import focused_agents
         from .session_handoffs import previous
+        if s.options.get('task') == 'boundary':
+            from .boundary_investigations import prompt
+            return prompt(s)
         text = (focused_agents.prompt(s) if s.options.get('focus_id') else self._prompt(s)) + previous(self.net, s.id, s.slug)
         if s.options.get('focus_id'):
             text += (f"\nUSER FOCUS: Work only on {s.options['focus_function']} until the app's deadline. "
