@@ -366,14 +366,15 @@ class Library:
             pb=prints.get(b['id'])
             if not pb or pb.asm or pb.size<ACROSS_MIN_BYTES or net.store.one('SELECT 1 FROM claims WHERE function_id=?',b['id']):continue
             candidates=self.candidates(processor,big,pb.key,pb.size,exclude)
-            own=compiler_for(net.cfg(proj),b['vram'],b)
-            own_flags=own['flags'].split() if isinstance(own['flags'],str) else own['flags']
-            def rank(item,toolchain=own['toolchain'],flags_used=own_flags):
-                profile=json.loads(item['compiler'])
-                flags=profile.get('flags',[])
-                if isinstance(flags,str):flags=flags.split()
-                return profile.get('toolchain')!=toolchain,flags!=flags_used
-            candidates.sort(key=rank)
+            if not fork:
+                own=compiler_for(net.cfg(proj),b['vram'],b)
+                own_flags=own['flags'].split() if isinstance(own['flags'],str) else own['flags']
+                def rank(item,toolchain=own['toolchain'],flags_used=own_flags):
+                    profile=json.loads(item['compiler'])
+                    flags=profile.get('flags',[])
+                    if isinstance(flags,str):flags=flags.split()
+                    return profile.get('toolchain')!=toolchain,flags!=flags_used
+                candidates.sort(key=rank)
             for item in candidates:
                 if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):return matched
                 pa=Print(**json.loads(item['print']))

@@ -134,6 +134,9 @@ def test_archived_candidate_reaches_both_destination_modes(library,monkeypatch,d
     net,lib=library
     net.remove_project('game1')
     monkeypatch.setattr(net,'fork_slug',lambda slug:slug if slug=='game2' and destination_fork else None)
+    if destination_fork:
+        cfg=net.cfg
+        monkeypatch.setattr(net,'cfg',lambda proj:{k:v for k,v in cfg(proj).items() if k!='compiler'} if proj['slug']=='game2' else cfg(proj))
     with net.store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE id=2")
     calls=[]
     def judge(*args,**options):
