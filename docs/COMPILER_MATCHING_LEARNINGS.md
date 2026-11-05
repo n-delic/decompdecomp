@@ -3985,3 +3985,33 @@ conversions and all source line breaks. Synthetic tests reject mixed widths,
 qualifiers, unions, arrays, macros, escaped bases and RHS side effects. Inspect
 local SDK/library sources before treating assembly store order as original C order;
 judge each layout and expression hypothesis normally.
+
+## Scoped scalar normalization copies can stop old GCC CSE substitution
+
+KMC GCC 2.7.2 with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian MIPS,
+can lower `value=value<0?-value-width:value` with a separate negation temporary
+and an interfering conditional-result register. An ordinary copied local alone
+can be substituted back to the original by CSE. A bounded alternative is
+`do {saved=value; if(value<0){value=0;saved=-saved-width;}} while(0); value=saved;`
+using an existing unused, compatible signed scalar. The zero assignment ends the
+old value within this replacement; the original local is restored before the
+next source statement. The one-shot scope also matters: an unscoped copied form,
+a split negation/subtraction, and separate if/else arms did not reproduce the
+measured allocation.
+
+Evidence: a private 343-instruction function went from advisory score 90 to exact
+linked bytes (advisory 70 remained solely from seven equivalent symbol/literal
+relocation renderings). An independent full 12,582,912-byte cartridge rebuild
+preserved all 2,062 preceding C objects and compiler profiles. The captured input
+was manually cleaned first to remove a dead uninitialized read; this is not
+claimed as automatic arbitrary-macro cleanup. The shared repair generated one
+scoped candidate at index 0 of the actual 40-candidate first page and its first
+ordinary compile/link was exact. Synthetic tests cover expression grouping,
+observable locals, qualifiers, scopes, escapes, macros and shared pipeline reach;
+they are safety regression evidence, not another game match.
+
+Only a fixed scalar normalization grammar is recognized. Parentheses are parsed,
+not deleted; signed scalar declarations must be available and unescaped, and an
+unused compatible scratch must exist. Unrelated macro bodies remain untouched;
+tracked aliases and continued directives are rejected. No assembly, compiler
+profile, score normalization or acceptance rule is changed.

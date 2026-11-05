@@ -745,3 +745,12 @@ must remain identical. The bounded `equal_type_field_chain_order` repair preserv
 line breaks and requires the ordinary exact judge. In one measured initializer,
 manual source/context recovery reached 20 and this first-page proposal reached zero;
 constant reuse and broad declaration changes had not recovered it.
+
+For a signed `value<0?-value-width:value` normalization whose arithmetic matches
+but copy/negation registers differ, try the bounded `scalar_normalization_scope`
+repair. A saved scalar, a branch-local dead reset of the original, and a one-shot
+scope can prevent old GCC CSE from replacing the saved value with its source.
+The original is restored before the next statement. Split negation, unscoped
+copies and simple if/else arms are not equivalent allocation evidence. Only the
+ordinary linked-byte judge can accept the candidate; advisory symbol/literal
+renderings can remain different after the linked bytes are exact.
