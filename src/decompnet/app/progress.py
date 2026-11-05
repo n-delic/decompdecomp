@@ -767,7 +767,10 @@ class Progress:
             return False
         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
         self._check_paused(slug)
-        with self._project_lock(slug), self.verification_slot:
+        from ..request_timing import span, timed_lock
+        with (span('progress_sync'),
+              timed_lock(self._project_lock(slug), 'progress_project_lock_wait'),
+              timed_lock(self.verification_slot, 'progress_verification_wait')):
             if self._batching(slug):
                 return False
             if logger is not None:getattr(logger, "check_cancel", lambda: None)()

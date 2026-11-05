@@ -1544,3 +1544,42 @@ def test_background_checks_are_quiet_until_a_full_recheck_is_known(project, monk
     net.progress.sync('game', force=True)
     assert initial and initial[0]['phase'] == 'Comparing saved files'
     assert initial[0]['full_recheck'] is False
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_sync_reports_project_and_verification_waits_without_changing_lock_behavior(project, monkeypatch, fails):
+    from decompnet import request_timing
+    net, _, _ = project
+    worker = net.progress
+    clock = [0.]
+    events = []
+    class Lock:
+        def __init__(self, name, wait):
+            self.name, self.wait = name, wait
+        def __enter__(self):
+            events.append('enter '+self.name)
+            clock[0] += self.wait
+            if fails and self.name == 'verification':
+                raise RuntimeError('synthetic lock failure')
+        def __exit__(self, *args):
+            events.append('exit '+self.name)
+    checks = iter([False, True])
+    monkeypatch.setattr(worker, '_batching', lambda slug: next(checks))
+    monkeypatch.setattr(worker, '_check_paused', lambda slug: None)
+    monkeypatch.setattr(worker, '_project_lock', lambda slug: Lock('project', 5.))
+    monkeypatch.setattr(worker, 'verification_slot', Lock('verification', 7.))
+    monkeypatch.setattr(request_timing, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    with request_timing.capture() as metrics:
+        if fails:
+            with pytest.raises(RuntimeError, match='synthetic lock failure'):
+                worker.sync('game')
+        else:
+            assert worker.sync('game') is False
+    assert metrics['progress_project_lock_wait'] == 5.
+    assert metrics['progress_sync'] == 12.
+    if not fails:
+        assert metrics['progress_verification_wait'] == 7.
+        assert events == ['enter project', 'enter verification', 'exit verification', 'exit project']
+    else:
+        assert events == ['enter project', 'enter verification', 'exit project']
+    assert request_timing._current.get() is None

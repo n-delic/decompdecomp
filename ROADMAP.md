@@ -87,6 +87,9 @@
   with preserved explicit casts, unchanged shared headers and ordinary exact judging. Complex interfaces
   and argument-count changes remain review items.
 
+- Done: separate saved-progress project-lock and shared-verification wait timings in MCP
+  transcripts, plus inclusive sync duration on return/failure, without changing synchronization.
+
 - Done: MCP SQL connection, fallback-lock, execute and fetch timings on successful and failed
   tool calls; failed database-open/execute phases retain elapsed time without logging SQL or bindings.
 

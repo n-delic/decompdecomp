@@ -102,3 +102,16 @@ connection's Python lock; SQLite's own busy wait is included in execute/fetch,
 not that lock field. These numeric fields contain no SQL text or bindings.
 They supplement `sql_read_ms`, `sql_reads`, writer-lock and candidate-lock timings;
 they do not account for every part of dispatch or identify a blocking writer.
+
+
+### Saved-progress synchronization waits
+
+Agent tool transcripts also record `progress_project_lock_wait_ms` and
+`progress_verification_wait_ms`: time waiting to enter the project's progress
+synchronization lock and the shared verification slot. `progress_sync_ms` is the
+inclusive synchronization duration (including both waits, work and cleanup),
+retained on early return and failure. These durations accumulate per request;
+they are not CPU percentages. Do not add the inclusive total to its wait fields.
+The lock ordering and verification requirements are unchanged. These measurements
+help distinguish waiting behind another saved-progress check from work in the
+current check; they do not establish the owner or cause of every dispatch delay.

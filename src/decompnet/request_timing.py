@@ -75,3 +75,17 @@ def timed_lock(lock, key):
     with lock:
         metrics[key]=metrics.get(key,0.)+max(0.,time.monotonic()-began)
         yield
+
+
+@contextmanager
+def span(key):
+    """Accumulate an inclusive operation duration, retaining failures and early returns."""
+    metrics = _current.get()
+    if metrics is None:
+        yield
+        return
+    began = time.monotonic()
+    try:
+        yield
+    finally:
+        metrics[key] = metrics.get(key, 0.) + max(0., time.monotonic() - began)

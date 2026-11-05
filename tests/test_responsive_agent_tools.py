@@ -219,10 +219,12 @@ def test_failed_diagnostic_learns_only_explicit_requested_rejected_option(tmp_pa
 
 @pytest.mark.parametrize('fails', [False, True])
 def test_mcp_transcripts_include_accumulated_sql_phases_on_success_and_error(tmp_path, monkeypatch, fails):
-    from decompnet.request_timing import sql_read
+    from decompnet.request_timing import span, sql_read
     net, agent, fn = game(tmp_path)
     monkeypatch.setattr(Context, 'headers', property(lambda self: {}))
     def dispatch(*args, **kwargs):
+        with span('progress_sync'):
+            pass
         # Fixed values avoid timing-sensitive assertions and verify units and accumulation.
         sql_read(.1, {'connection': .01, 'lock_wait': .02, 'execute': .03, 'fetch': .04})
         sql_read(.2, {'connection': .02, 'lock_wait': .04, 'execute': .06, 'fetch': .08})
@@ -243,6 +245,9 @@ def test_mcp_transcripts_include_accumulated_sql_phases_on_success_and_error(tmp
     record = records[-1]
     assert ('error' in record) == fails
     assert record['timings']['sql_reads'] == 2
+    assert record['timings']['progress_sync_ms'] >= 0
+    assert record['timings']['progress_project_lock_wait_ms'] == 0
+    assert record['timings']['progress_verification_wait_ms'] == 0
     for key, expected in [('connection', 30.), ('lock_wait', 60.), ('execute', 90.), ('fetch', 120.)]:
         assert record['timings']['sql_' + key + '_ms'] == expected
     assert all(isinstance(v, (float, int)) for v in record['timings'].values())
