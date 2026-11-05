@@ -208,6 +208,8 @@ linting). In short:
   keep missing values last, and preserve the choice across refreshes of the same view. Default to the most
   useful ordering (compiler comparisons: Used by, highest first). Keep action-only columns unsortable and
   preserve each row's identity when sorting so its actions still affect the correct item.
+- Within a panel, group status, counters and controls with spacing and subtle dividers rather than an
+  extra bordered card inside the card. Reserve nested boxes for genuinely separate content.
 - Keep standalone actions directly visible in the active card. Do not hide buttons such as Reset metrics
   inside a generic “More actions” disclosure. Disclosures are for optional settings, explanations and
   diagnostic details; use a labeled action button for a single secondary action. Use ⋮ menus only when
