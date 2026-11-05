@@ -119,3 +119,22 @@ def test_notification_dialog_renders_before_loading_and_shares_request():
     node=shutil.which('node')
     if not node:pytest.skip('needs Node')
     subprocess.run([node,str(Path(__file__).with_name('gui_notifications_loading.js'))],check=True,capture_output=True,text=True,timeout=30)
+
+
+def test_progress_rechecks_stay_out_of_matcher_feeds_and_notifications(tmp_path):
+    net=RomNetwork(tmp_path/'quiet.db',tmp_path)
+    tiny_game(net,'a')
+    judge,_=net.local_agent('progress-judge')
+    matcher,_=net.local_agent('real-matcher')
+    start=net.events_after(None)['last']
+    net.record_event('a','match','real_function',matcher.name)
+    for _ in range(5):
+        net.record_event('a','claim','rechecked_function',judge.name)
+        net.record_event('a','match','rechecked_function',judge.name)
+    news=net.events_after(start)
+    assert [e['agent'] for e in news['events']]==['real-matcher']
+    assert net.events_after(news['last'])['events']==[]
+    assert [e['agent'] for e in net.recent_events(1)]==['real-matcher']
+    assert [e['agent'] for e in net.live('a')['events']]==['real-matcher']
+    # Verification history is retained for auditing, even though it is not matcher news.
+    assert net.store.one('SELECT COUNT(*) n FROM events WHERE agent_id=?',judge.id)['n']==10

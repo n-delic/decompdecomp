@@ -23,9 +23,11 @@ NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "kn
 EVENTS_PER_ASK = 200  # events the notification centre gets per ask (it asks again for more)
 # what the project's page gets on each poll (about once a second): the newest since its last ask, at most
 LIVE_EVENTS, LIVE_ATTEMPTS = 60, 80
+# Rechecking retained source is verification activity, not a new matcher contribution.
+MATCHER_ACTIVITY = "COALESCE(a.name, '') NOT IN ('progress-judge', '@progress-judge')"
 EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.slug, p.name AS project FROM events e "
               "JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id "
-              f"WHERE e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
+              f"WHERE {MATCHER_ACTIVITY} AND e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
 
 
 from ..boundary_repairs import reason as boundary_reason
@@ -450,15 +452,15 @@ class GuiMixin:
                 self._expire_claims(db)
         events = self.store.all(
             "SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
-            f"ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT {LIVE_EVENTS}", proj["id"],
+            f"ON a.id=e.agent_id WHERE {MATCHER_ACTIVITY} AND e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT {LIVE_EVENTS}", proj["id"],
             since_event)
         attempts = self.store.all(
             "SELECT t.id, t.score, t.score_before, t.score_improved, t.compiled, t.created_at, f.name AS function, f.n_insns, a.name AS agent "
             "FROM attempts t JOIN functions f ON f.id=t.function_id LEFT JOIN agents a ON a.id=t.agent_id "
-            f"WHERE f.project_id=? AND t.id>? ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj["id"], since_attempt)
+            f"WHERE {MATCHER_ACTIVITY} AND f.project_id=? AND t.id>? ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj["id"], since_attempt)
         claims = self.store.all(
             "SELECT f.name, f.n_insns, f.best_score, f.attempts, a.name AS agent, c.claimed_at FROM claims c "
-            "JOIN functions f ON f.id=c.function_id JOIN agents a ON a.id=c.agent_id WHERE f.project_id=?", proj["id"])
+            f"JOIN functions f ON f.id=c.function_id JOIN agents a ON a.id=c.agent_id WHERE {MATCHER_ACTIVITY} AND f.project_id=?", proj["id"])
         claims = [dict(c) for c in claims]
         if slug in self.links:
             link = self.links[slug]
@@ -494,7 +496,7 @@ class GuiMixin:
         """The notification centre's history: the latest notable events of every project, newest first."""
         # Bound each indexed kind before merging, rather than scanning through routine worker events.
         branches = ["SELECT id FROM (SELECT e.id FROM events e INDEXED BY idx_events_kind_id "
-                    "JOIN projects p ON p.id=e.project_id WHERE e.kind=? ORDER BY e.id DESC LIMIT ?)"
+                    f"JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id WHERE {MATCHER_ACTIVITY} AND e.kind=? ORDER BY e.id DESC LIMIT ?)"
                     for _ in NOTIFY_KINDS]
         ids = "SELECT id FROM (" + " UNION ALL ".join(branches) + ") ORDER BY id DESC LIMIT ?"
         args = [value for kind in NOTIFY_KINDS for value in (kind,limit)] + [limit]
