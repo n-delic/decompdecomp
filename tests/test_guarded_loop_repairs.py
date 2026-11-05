@@ -107,3 +107,26 @@ def test_exact_pair_failed_adoption_is_logged_and_retryable(monkeypatch,failure)
     assert not first['applied'] and any('stale check' in s or 'inputs changed' in s for s in logs)
     second=matching_preflight.run(net,proj,fn,log=logs.append)
     assert second['applied'] and len(calls)==2 and second['tested']==0
+
+
+def test_autopilot_deterministic_round_reaches_joint_lane_with_its_remaining_budget(monkeypatch):
+    import json
+    import threading
+
+    from decompnet.app.permute import Permuter, State
+    from tests.test_permute import AGENT, FakeNet
+    net=FakeNet();net._comparison_digest=lambda *a:'scope'
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?',(json.dumps({'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}),))
+        db.execute('UPDATE functions SET best_source=?,best_score=210,n_insns=87',(SOURCE,))
+    calls=[]
+    def preflight(net,proj,fn,log,check,max_profiles):
+        assert check() and max_profiles==2
+        assert not net.store.one('SELECT 1 FROM claims')
+        calls.append(fn['name'])
+        with net.store.tx() as db:db.execute("UPDATE functions SET status='matched',best_score=0")
+        return {'tested':2,'applied':True}
+    monkeypatch.setattr(matching_preflight,'run',preflight)
+    state=State(stop=threading.Event())
+    Permuter(net)._repair_round(AGENT,net.project_row('game'),state,budget=2)
+    assert calls==['f'] and state.matched==1 and state.variants==2
