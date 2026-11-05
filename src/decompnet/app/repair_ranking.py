@@ -9,6 +9,7 @@ def order(families, rows):
     from .matching_investigations import paired_loads
     from .normalization_repairs import frame_gap
     register_priority = (
+            'return_contract', 'narrow_expression_inline', 'plain_float_slots',
             'narrow_call_destination', 'branch_scalar_lifetime', 'embedded_call_assignment', 'inline_call_count', 'typed_pointer_snapshot',
             'shared_scaled_offset', 'pointer_conditional_load_inline', 'branch_store_tail', 'address_association',
             'dead_index_scale', 'dead_pointer_clear', 'store_index_reuse', 'split_mask_assignment',
@@ -58,7 +59,8 @@ def order(families, rows):
     elif 'i' in markers:
         preferred = ('known_address_alias', 'target_call_argument', 'target_local_bundle', 'local_widening', 'integer_address_order', 'signedness', 'narrowing', 'constant_local')
     else:
-        return list(families)
+        preferred=()
+    preferred=('plain_float_slots','return_contract','narrow_expression_inline')+preferred
     return sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
 
 

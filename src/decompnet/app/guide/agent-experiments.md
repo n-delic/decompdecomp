@@ -29,3 +29,12 @@ Omit `ranges` for one function: this uses fresh linked-byte/data verification an
 its source/header/profile together when automatic compiler changes are enabled. Otherwise
 it waits for user review. Do not propose or wait for a neighbouring range to save a
 verified single-function pair. Broader ranges require separate neighbouring evidence.
+
+## Return and lifetime hypotheses
+
+Local repair search includes `return_contract`, `narrow_expression_inline` and
+`plain_float_slots`. Check target-backed return diagnostics before more register
+permutations. Caller-backed m2c context is a private draft hypothesis, not a shared
+header change. Preserve narrowing on each repeated expression; volatile local storage
+changes require target evidence and never extend to MMIO. After repeated identical
+output, use a different evidence-backed family rather than resending unchanged trials.

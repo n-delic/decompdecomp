@@ -120,6 +120,8 @@ class BriefMixin:
         roots = self._current_names(proj, seeds.asm_names(fn["asm"] or "") if names is None else names)
         used = self._header_index(proj["id"], ctx).used(roots)
         context = "\n".join(d.text for d in used if not d.text.startswith("#"))
+        from ..return_contract_evidence import m2c_context
+        context = m2c_context(self,proj,fn,context,ctx['header'])
         key = hashlib.sha1(json.dumps([target, own["toolchain"], own.get("flags", []), sorted(roots), context])
                            .encode()).hexdigest()[:16]
         return key, own["toolchain"], context
@@ -254,10 +256,14 @@ class BriefMixin:
             if fn["seed"]:
                 fn = dict(fn) | {"seed": self._draft_shown(fn, proj)}
         text = review + super()._brief(fn, agent, header)
+        from ..return_contract_evidence import brief as return_hint
+        advice=return_hint(self,proj,fn,fn['best_source'] or fn['seed'] or '')
+        if advice:text+='\n\n'+advice
         if fn['status'] == 'open' and fn['best_source']:
             from .. import compiler_preflight, repair_ranking, source_diagnostics
             suggestions = source_diagnostics.hints(fn['best_source'], fn['name'], fn['asm'], proj['arch'],
                                                    repair_ranking.evidence(self, fn['id'], agent.id))
+            if advice:suggestions=[s for s in suggestions if not s.startswith('Return-contract hypothesis:')]
             if suggestions:
                 text += '\n\nSource checks (advisory):\n' + '\n'.join(suggestions)
             warning = compiler_preflight.warnings(self, proj, fn)

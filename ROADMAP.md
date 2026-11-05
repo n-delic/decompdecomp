@@ -2295,3 +2295,13 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   BREAK 9 compatibility intrinsic. Submitted assembly remains rejected; ordinary C
   without the intrinsic compiles unchanged. Other MIPS compiler packs still need
   compatible, tested registrations; compiler dialects and existing intrinsic headers differ.
+
+### Return-contract and narrow-expression recovery
+
+- Done: bounded target-backed return candidates, caller-backed private m2c context,
+  pure narrow-expression inlining with conversions preserved, and gated plain local
+  float slots. Shared local/deep search composes them and redirects repeated identical
+  output while retaining exploration; the exact judges remain unchanged.
+- Planned: return/delay-store evidence readers beyond MIPS and multi-exit return
+  analysis; imported target-text/caller-graph adapters where unavailable. Shared pure
+  expression repair already reaches supported 32-bit ROM and imported projects.

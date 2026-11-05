@@ -11,6 +11,9 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'plain_float_slots': ('return_contract','narrow_expression_inline'),
+    'return_contract': ('plain_float_slots','narrow_expression_inline'),
+    'narrow_expression_inline': ('return_contract','plain_float_slots'),
     'branch_scalar_lifetime': ('inline_call_count','embedded_call_assignment','typed_pointer_snapshot'),
     'inline_call_count': ('branch_scalar_lifetime','embedded_call_assignment','typed_pointer_snapshot'),
     'embedded_call_assignment': ('branch_scalar_lifetime','inline_call_count','typed_pointer_snapshot','narrow_call_destination'),

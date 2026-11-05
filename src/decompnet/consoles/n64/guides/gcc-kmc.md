@@ -573,3 +573,14 @@ fixed BREAK 9 compatibility intrinsic for debugger/assertion paths. It is not na
 ISO C/GCC 2.7 syntax, takes no arguments, and can resume afterward. A noreturn annotation
 or an unresolved `__builtin_trap` call does not substitute for that hardware operation.
 Keep submitted assembly forbidden and verify the complete linked bytes as usual.
+
+### Return contracts and narrow expression lifetimes
+
+Before register permutations, inspect an explicit target return-register copy and
+actual callers consuming it. A void draft can hide the intended returned scalar.
+`return_contract` tests this without changing shared prototypes.
+`narrow_expression_inline` repeats a pure expression with its byte/short conversion
+preserved at every use. `plain_float_slots` tests ordinary local array storage only
+with target call-delay-slot stack-store evidence; never strip MMIO or pointer volatility.
+These families compose under ordinary budgets. Every hypothesis still needs the normal
+exact judge; missing target evidence is no reason to guess a contract.

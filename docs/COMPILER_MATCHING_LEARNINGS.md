@@ -3478,3 +3478,11 @@ resume execution, so the operation is not a C noreturn assertion. Submitted asm
 remains rejected. Compiler tests check the fixed instruction, resumed memory
 access, argument rejection and unchanged ordinary-C machine code. This is
 hardware-intrinsic support, not evidence of a new real-game match.
+
+## Target-backed return contracts and narrow expression lifetimes
+
+A fixed KMC GCC 2.7.2 copied replay recovered three precursors of one existing match
+in 6, 2 and 4 trials; main recovered none within 32. The useful changes were plain
+local float slots, an explicit returned index, and repeated byte expressions with
+conversion preserved. An initial ranking failed from the earliest precursor until
+complementary families were connected. See [evidence and limits](RETURN_CONTRACT_REPAIRS.md).

@@ -17,6 +17,8 @@ def hints(source, name, asm='', arch='', rows=None):
     from .preparation_diagnostics import allocations
     macro_note = diagnostic(source)
     result = ([macro_note] if macro_note else []) + investigation_hints(rows,arch) + suggestions(rows) + allocations(source, rows)
+    from .return_contract_repairs import hint as return_hint
+    if note:=return_hint(source,name,asm,arch):result.insert(0,note)
     if classify(rows) == 'register':
         result.append('Only register operands differ in the displayed instructions. Prioritise local lifetimes and declaration shapes over constants: try branch_tail_lifetimes, staged_call_arguments or combined_call_lifetimes when offered. Inline helpers can enlarge the frame; check instruction count and frame size before expanding that direction. This is search advice, not an exact verdict.')
 
