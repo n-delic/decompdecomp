@@ -84,3 +84,26 @@ def test_backedge_destination_and_delay_slot_diagnostic_reaches_agent_brief():
     rows=[('i','beqz $v0, 0x14','beqz $v0, 0x1c'),('i','sltu $v0, $a0, $a1','nop')]
     assert any('delay-slot comparison' in h for h in hints(SOURCE,'f',arch='mips',rows=rows))
     assert not any('delay-slot comparison' in h for h in loops.hints(SOURCE,'f',rows[:1]))
+
+
+@pytest.mark.parametrize('failure',['returned','raised'])
+def test_exact_pair_failed_adoption_is_logged_and_retryable(monkeypatch,failure):
+    from decompnet.network import NetworkError
+    net,proj,fn,state=setup();proj['arch']='mips';state['auto']=True
+    fn.update(best_source=SOURCE,n_insns=87,best_score=210)
+    net.cfg(proj)['compiler']={'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}
+    monkeypatch.setattr(matching_preflight.toolchains,'installed',lambda *a:True)
+    net._judge_with=lambda p,f,t,flags,s:(s!=SOURCE,SimpleNamespace(score=0 if s!=SOURCE else 210),'')
+    calls=[];logs=[]
+    def suggest(*a,**k):
+        calls.append(k)
+        if len(calls)==1:
+            if failure=='raised':raise NetworkError('not suggested: stale check')
+            return 'Exact bundle not applied: inputs changed.'
+        fn['status']='matched'
+        return 'Exact bundle applied.'
+    net.suggest=suggest
+    first=matching_preflight.run(net,proj,fn,log=logs.append)
+    assert not first['applied'] and any('stale check' in s or 'inputs changed' in s for s in logs)
+    second=matching_preflight.run(net,proj,fn,log=logs.append)
+    assert second['applied'] and len(calls)==2 and second['tested']==0
