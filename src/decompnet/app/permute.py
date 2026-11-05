@@ -244,7 +244,8 @@ class Permuter:
         return [r for r in candidates if r["id"] not in held]
 
     def _loop(self, slug: str, st: State) -> None:
-        agent, _ = self.net.local_agent("permuter")
+        # Concurrent background and explicit passes only need credit, not rotating bearer tokens.
+        agent = self.net.attribution_agent("permuter")
         idle = 0
         try:
             while not st.stop.is_set():
@@ -276,7 +277,7 @@ class Permuter:
         """Autopilot's Run again can try these without starting agents or random permutation."""
         st = State(stop=stop)
         if slug not in self.net.links:
-            agent, _ = self.net.local_agent("permuter")
+            agent = self.net.attribution_agent("permuter")
             from .source_preparation import run as prepare_sources
             prepare_sources(self, self.net.project_row(slug), st)
             self._repair_round(agent, self.net.project_row(slug), st)

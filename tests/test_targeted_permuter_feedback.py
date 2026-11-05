@@ -200,3 +200,20 @@ def test_deep_budget_exit_retains_scored_output_feedback(monkeypatch):
     monkeypatch.setattr(Permuter,'_score',lambda *args:40)
     result=deep_permuter.run(net,'game','f',30,1,Log())
     assert result['local_search']['output_feedback']['unknown']>=1
+
+
+def test_concurrent_internal_repair_passes_do_not_rotate_runner_credentials(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app.engine import RomNetwork
+    from decompnet.app.permute import Permuter
+    from tests.test_loading import tiny_game
+    net=RomNetwork(tmp_path/'test.db',tmp_path)
+    tiny_game(net,functions=0)
+    agent,token=net.local_agent('permuter')
+    permuter=Permuter(net)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        jobs=[pool.submit(permuter.repair_pass,'game',threading.Event()) for _ in range(2)]
+        assert all(job.result().matched==0 for job in jobs)
+    assert net.authenticate(token).id==agent.id
