@@ -2401,3 +2401,60 @@ def test_project_autosave_controls_are_exposed_in_background_api(app, monkeypatc
                              json={'kind':'autosave','key':'game','action':action})
         assert result.status_code==200
     assert calls == [('game',), ('game',False)]
+
+
+@pytest.mark.parametrize('hosting',[False,True])
+def test_sharing_dialog_reads_while_saved_progress_holds_project_lock(app,monkeypatch,hosting):
+    import asyncio
+
+    from decompnet.app import collab
+    client,net,*_=app
+    slug='sharing-read-'+str(hosting).lower()
+    cfg={'kind':'rom','rom':{},'collab':{'mode':'address','address':'https://rooms.example.invalid','port':6481}}
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+                   (slug,slug,str(net.workspace),json.dumps(cfg)))
+    checked=[]
+    def check_read(label):
+        assert net.progress.viewing
+        try:asyncio.get_running_loop()
+        except RuntimeError:pass
+        else:pytest.fail('Sharing helper ran on the HTTP event loop')
+        checked.append(label)
+    project_row=net.project_row
+    def read_project(name):
+        if name==slug:check_read('project')
+        return project_row(name)
+    monkeypatch.setattr(net,'project_row',read_project)
+    def addresses():
+        check_read('addresses')
+        return [{'label':'LAN','address':'http://192.0.2.1:6481'}]
+    monkeypatch.setattr(collab,'local_addresses',addresses)
+    monkeypatch.setattr(collab,'cloudflared_available',lambda:False)
+    if hosting:
+        class Hosted:
+            def members(self,refresh=True):
+                check_read('members');return []
+            @property
+            def settings(self):
+                check_read('settings');return {'visibility':'private','approve':False}
+            def pending(self):
+                check_read('pending');return []
+        monkeypatch.setitem(net.rooms,slug,Hosted())
+    # A different request thread must answer without acquiring this main test thread's
+    # project lock. Checking viewing above also prevents an accidental synchronous scan.
+    with net.progress._project_lock(slug):
+        response=client.get('/api/collab?slug='+slug)
+    assert response.status_code==200
+    data=response.json()
+    assert data['sharing']==hosting and data['address']==cfg['collab']['address']
+    assert data['addresses'][0]['label']=='LAN'
+    assert 'project' in checked and 'addresses' in checked
+    if hosting:assert {'members','settings','pending'}<=set(checked)
+
+
+def test_sharing_dialog_reports_missing_project(app):
+    client,*_=app
+    response=client.get('/api/collab?slug=missing-sharing-project')
+    assert response.status_code==400
+    assert 'no project' in response.json()['error']

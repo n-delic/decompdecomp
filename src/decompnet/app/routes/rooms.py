@@ -12,7 +12,6 @@ import time
 import uuid
 from pathlib import Path
 
-import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -110,23 +109,28 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         slug = request.query_params.get("slug", "")
+        def snapshot():
+            # Project/room helpers may synchronize progress. This UI read must not wait
+            # for thousands of rechecks, nor run database/network work on the event loop.
+            with net.progress.view():
+                info = net._room_info(slug)
+                room = net.rooms.get(slug)
+                cfg = (json.loads(net.project_row(slug)["config"]).get("collab") or {}) if slug else {}
+                return JSONResponse({"sharing": room is not None, "link": share["links"].get(slug), "room": info,
+                                     "settings": room.settings if room else {"visibility": cfg.get("visibility", "private"),
+                                                                               "approve": bool(cfg.get("approve"))},
+                                     "pending": room.pending() if room else [],
+                                     "mode": cfg.get("mode", "tunnel"), "address": cfg.get("address", ""), "port": cfg.get("port", 6481),
+                                     "was_sharing": bool(cfg.get("open")) and room is None,
+                                     "restoring": bool(share['restore_job'] and jobs.jobs.get(share['restore_job'], {}).get('state') == 'running'),
+                                     "restore_error": share['restore_errors'].get(slug),
+                                     "stable_link": cfg.get('mode') == 'address',
+                                     "addresses": collab.local_addresses(),
+                                     "tunnel_supported": collab.cloudflared_available()})
         try:
-            info = await call(net._room_info, slug)
-        except NetworkError as e:
-            return fail(e)
-        room = net.rooms.get(slug)
-        cfg = (json.loads(net.project_row(slug)["config"]).get("collab") or {}) if slug else {}
-        return JSONResponse({"sharing": room is not None, "link": share["links"].get(slug), "room": info,
-                             "settings": room.settings if room else {"visibility": cfg.get("visibility", "private"),
-                                                                       "approve": bool(cfg.get("approve"))},
-                             "pending": room.pending() if room else [],
-                             "mode": cfg.get("mode", "tunnel"), "address": cfg.get("address", ""), "port": cfg.get("port", 6481),
-                             "was_sharing": bool(cfg.get("open")) and room is None,
-                             "restoring": bool(share['restore_job'] and jobs.jobs.get(share['restore_job'], {}).get('state') == 'running'),
-                             "restore_error": share['restore_errors'].get(slug),
-                             "stable_link": cfg.get('mode') == 'address',
-                             "addresses": await anyio.to_thread.run_sync(collab.local_addresses),
-                             "tunnel_supported": collab.cloudflared_available()})
+            return await (app.ui_call or call)(snapshot)
+        except (NetworkError, OSError) as error:
+            return fail(error)
 
     @mcp.custom_route('/api/collab/matches', methods=['GET','POST'])
     async def api_room_matches(request: Request) -> Response:

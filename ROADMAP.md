@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: sharing-dialog reads run in the UI worker lane against the current database,
+  so saved-progress verification cannot make them synchronize on the HTTP event loop.
+  Network discovery, member/settings reads and response encoding stay off that loop.
+
 - Done: bounded named-donor materialization; indexed/revision-cached latest headers;
   bounded room match/attempt deltas with a race-safe cursor; layout-versioned audit caching.
 
