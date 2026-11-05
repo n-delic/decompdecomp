@@ -282,8 +282,11 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
             functions[r["name"]] = {"vram": r["vram"], "best_score": r["best_score"],
                                     "best_by": names.get(r["best_agent_id"], "")}
     units = {""} | net._unit_contexts(pid)
-    notes = [{"function": r["fn"], "text": r["text"], "by": r["agent"] or ""} for r in net.store.all(
-        "SELECT n.text, a.name AS agent, f.name AS fn FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
+    notes = [{"function": r["fn"], "text": r["text"], "by": r["agent"] or "",
+              "created_at": r["created_at"], "score_before": r["score_before"],
+              "score_after": r["score_after"]} for r in net.store.all(
+        "SELECT n.text,n.created_at,n.score_before,n.score_after, a.name AS agent, f.name AS fn "
+        "FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
         "LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)]
     knowledge = [r["text"] for r in net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
@@ -732,12 +735,30 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             if not db.execute("SELECT 1 FROM knowledge WHERE project_id=? AND text=?", (pid, text)).fetchone():
                 db.execute("INSERT INTO knowledge(project_id, text, status, created_at, decided_at) VALUES(?,?,?,?,?)",
                            (pid, text, "accepted", time.time(), time.time()))
-    for note in manifest.get("notes") or []:
-        check_cancel()
-        try:
-            net.add_note(net.attribution_agent(note.get("by") or "restored"), slug, note["text"], note.get("function"))
-        except NetworkError:
-            continue  # its function is gone (a split the layout couldn't make again)
+    # Restored notes are historical records, not new agent handoffs. Going through add_note
+    # recalculates attempt/session history once per note and can hold the writer for minutes.
+    # Resolve the small identity/function sets once; old saves without measurements stay unknown.
+    functions = {r["name"]: r["id"] for r in net.store.all(
+        "SELECT id,name FROM functions WHERE project_id=?", pid)}
+    authors = {}
+    with net.store.tx() as db:
+        for note in manifest.get("notes") or []:
+            check_cancel()
+            name = note.get("function")
+            if name and name not in functions:
+                continue  # A split may have removed this function.
+            author = note.get("by") or "restored"
+            if author not in authors:
+                authors[author] = net.attribution_agent(author).id
+            before, after = note.get("score_before"), note.get("score_after")
+            if not all(type(value) is int and value >= 0 for value in (before, after)):
+                before = after = None
+            at = note.get("created_at")
+            if type(at) not in (int, float):
+                at = time.time()
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) "
+                       "VALUES(?,?,?,?,?,?,?)", (pid, functions.get(name), authors[author], note["text"],
+                                               at, before, after))
     with net.store.tx() as db:
         for item in manifest.get("set_aside") or []:
             row = _set_aside_row(db, pid, item)

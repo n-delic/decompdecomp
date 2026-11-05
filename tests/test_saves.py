@@ -16,6 +16,36 @@ from .test_app_engine import CLAMP
 from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
 
 
+def test_restore_notes_preserves_measurements_without_scanning_history(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')",
+                         (str(tmp_path),)).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'f',4096,4,1,'open','')", (pid,))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    monkeypatch.setattr(net, "add_note", lambda *args: pytest.fail("restore must not infer a new session"))
+    statements = []
+    net.store.conn.set_trace_callback(statements.append)
+    notes = [{"by": "worker", "function": "f", "text": f"note {i}", "created_at": 123,
+              "score_before": 120, "score_after": 120} for i in range(100)]
+    notes += [{"by": "worker", "text": "legacy"},
+              {"by": "worker", "function": "gone", "text": "removed function"}]
+    saves._apply_context(net, "game", tmp_path, {"notes": notes}, lambda *_: None)
+    net.store.conn.set_trace_callback(None)
+    rows = net.store.all("SELECT * FROM notes ORDER BY id")
+    assert len(rows) == 101
+    assert (rows[0]["score_before"], rows[0]["score_after"], rows[0]["created_at"]) == (120, 120, 123)
+    assert rows[-1]["score_before"] is None
+    assert not any("FROM attempts" in sql or "FROM helper_sessions" in sql for sql in statements)
+    proj = net._project("game")
+    manifest = saves._render(net, "game")[0]
+    saved = json.loads(manifest[saves.MANIFEST])["notes"]
+    assert saved[0]["score_before"] == saved[0]["score_after"] == 120
+    assert saved[0]["created_at"] == 123
+    assert proj["id"] == pid
+
+
 @pytest.mark.parametrize("author", ["@alex.claude-opus-1", "claude-sonnet-5-5-1"])
 def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, monkeypatch, author):
     """A room credit starts with @; opening its save used runner-name validation and aborted restoration."""

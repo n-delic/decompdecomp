@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: restore saved notes directly without per-note session/attempt history scans;
+  retain original timestamps and measured score changes in ROM progress saves.
+
 - Done: retry paused functions using attribution only, preserving running helper
   credentials on successful and failed scans without issuing new bearer tokens.
 
