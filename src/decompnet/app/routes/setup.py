@@ -17,7 +17,7 @@ from decompnet.hostenv import NO_WINDOW
 from ... import agents as kinds
 from ... import hostenv, linuxvm, toolchains
 from ...network import NetworkError
-from .. import agents, workers
+from .. import agents, maintenance, workers
 from ..support import session_options, spread_sessions
 from . import App
 
@@ -384,6 +384,9 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
+        if "maintenance_cpu_percent" in data and (type(data["maintenance_cpu_percent"]) is not int
+                or not 0 <= data["maintenance_cpu_percent"] <= 100):
+            return fail(ValueError("Enter a whole CPU percentage from 1 to 100, or 0 for unlimited."))
         if any(key in data for key in ('agent_local_enabled','agent_local_trials','agent_local_seconds')):
             from ..agent_local_pass import configure
             if 'agent_local_enabled' in data and not isinstance(data['agent_local_enabled'],bool):
@@ -428,6 +431,9 @@ def register(app: App) -> None:
                 settings.data[key] = max(1, min(maximum, int(data[key])))
         if any(key in data for key in ('permuter_max_insns', 'permuter_seconds', 'permuter_max_turns')):
             net.permuter.configure(settings.data)
+        if "maintenance_cpu_percent" in data:
+            maintenance.configure_cpu(data["maintenance_cpu_percent"])
+            settings.data["maintenance_cpu_percent"] = data["maintenance_cpu_percent"]
         if "worker_threads" in data:  # nothing or 0: as many as the computer can spare (workers.py)
             settings.data["worker_threads"] = max(0, int(data["worker_threads"] or 0))
             workers.configure(net.permuter.parent_threads(settings.data["worker_threads"]))

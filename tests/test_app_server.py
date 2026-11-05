@@ -36,6 +36,23 @@ def test_agent_local_pass_settings_are_opt_in_and_validate_budgets(app):
     client.post('/api/settings',json={'agent_local_enabled':False},headers=headers)
 
 
+def test_maintenance_cpu_setting_is_validated_saved_and_applied_live(app):
+    from decompnet.app import maintenance
+    client, net, *_ = app
+    headers = {'X-Decomp':'1'}
+    for value in (-1, 101, 50.5, True, '50', None):
+        assert client.post('/api/settings', json={'maintenance_cpu_percent':value}, headers=headers).status_code == 400
+    try:
+        response = client.post('/api/settings', json={'maintenance_cpu_percent':50}, headers=headers)
+        assert response.json()['maintenance_cpu_percent'] == 50
+        assert maintenance._cpu_limit == 50
+        assert client.get('/api/background-work').json()['maintenance_cpu_percent'] == 50
+        saved = json.loads((net.workspace / '.decomp' / 'settings.json').read_text())
+        assert saved['maintenance_cpu_percent'] == 50
+    finally:
+        client.post('/api/settings', json={'maintenance_cpu_percent':0}, headers=headers)
+
+
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     home = tmp_path_factory.mktemp("home")

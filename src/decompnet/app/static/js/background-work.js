@@ -6,7 +6,7 @@ async function showBackgroundWork(){
   await readBackgroundWork();
 }
 function renderBackgroundWork(data){
-  if(!backgroundReady)$('backgroundLimit').value=data.worker_setting || 0;
+  if(!backgroundReady){$('backgroundLimit').value=data.worker_setting || 0;$('maintenanceCpuLimit').value=data.maintenance_cpu_percent || 0;}
   $('backgroundCpu').textContent=data.cpu_percent==null ? 'Measuring…' : `${data.cpu_percent.toFixed(1)}%`;
   $('backgroundThreads').textContent=data.threads.length.toLocaleString();
   $('backgroundCount').textContent=`— ${data.items.length} active jobs & services`;
@@ -67,3 +67,12 @@ $('backgroundLimitSave').onclick=async()=>{
 setInterval(readBackgroundWork,3000);
 
 $('backgroundThreadSort').onchange=renderBackgroundActivity;
+
+$('maintenanceCpuSave').onclick=async()=>{
+  const value=Number($('maintenanceCpuLimit').value);
+  if(!Number.isInteger(value) || value<0 || value>100){showJobError($('backgroundWorkStatus'),'Enter a whole CPU percentage from 1 to 100, or 0 for unlimited.');return;}
+  const finish=beginWork($('backgroundWorkStatus'),'Updating maintenance CPU limit',[$('maintenanceCpuSave')],'CPU limit saved; running maintenance uses it at its next safe checkpoint.');
+  try{await api('/api/settings',{method:'POST',body:{maintenance_cpu_percent:value}});await readBackgroundWork();}
+  catch(error){showJobError($('backgroundWorkStatus'),error.message);}
+  finally{finish();}
+};

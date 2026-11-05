@@ -268,6 +268,7 @@ class Settings:
                 "permuter_max_insns": self.data.get("permuter_max_insns", 400),
                 "permuter_seconds": self.data.get("permuter_seconds", 60),
                 "permuter_max_turns": self.data.get("permuter_max_turns", 4),
+                "maintenance_cpu_percent": self.data.get("maintenance_cpu_percent", 0),
                 "worker_threads": self.data.get("worker_threads", 0), "worker_threads_default": workers.default_workers(),
                 "iterative_enabled": self.data.get("iterative_enabled", False),
                 "iterative_seconds": self.data.get("iterative_seconds", 120),

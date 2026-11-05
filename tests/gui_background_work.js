@@ -21,5 +21,9 @@ vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js'
  assert.match($('backgroundRows').innerHTML,/role="progressbar"/);
  await stopButton.onclick();assert.equal(stopped,'task-1');
  ctx.document.hidden=true;await ctx.readBackgroundWork();assert.equal(reads,1);
+ let savedCpu;
+ ctx.api=async(url,options)=>{savedCpu=options.body.maintenance_cpu_percent;};
+ $('maintenanceCpuLimit').value='50';await $('maintenanceCpuSave').onclick();assert.equal(savedCpu,50);
+ $('maintenanceCpuLimit').value='101';await $('maintenanceCpuSave').onclick();assert.equal(savedCpu,50);
  console.log('background visibility, request deduplication and escaping passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

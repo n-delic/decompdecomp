@@ -25,7 +25,7 @@ from starlette.responses import JSONResponse, Response
 from .. import agents as kinds
 from .. import hostenv, wine
 from ..network import NetworkError
-from . import agents, collab, routes, saves, tools, updates, window, workers
+from . import agents, collab, maintenance, routes, saves, tools, updates, window, workers
 from .engine import RomNetwork
 from .routes import browser_bridge, forks, life, pages, projects, repair_feedback, repository_sync, rooms, setup, state
 from .support import Jobs, Settings, session_options
@@ -78,6 +78,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
             jobs.logger.exception("could not flush progress before exit")
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
+    maintenance.configure_cpu(settings.data.get("maintenance_cpu_percent", 0))
     if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
         # updated here from 1.0.2 on Windows: the way back is 1.0.2, which shares these settings and mustn't update
         # itself into this version again (README: Coming from an older version)

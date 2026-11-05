@@ -456,7 +456,8 @@ def register(app: App) -> None:
                 data = await body(request)
                 return JSONResponse(await call(monitor.stop, str(data.get('kind','')), str(data.get('key',''))))
             snapshot = await (app.ui_call or call)(monitor.snapshot)
-            return JSONResponse(snapshot | {'worker_setting':settings.data.get('worker_threads',0)})
+            return JSONResponse(snapshot | {'worker_setting':settings.data.get('worker_threads',0),
+                                             'maintenance_cpu_percent':settings.data.get('maintenance_cpu_percent',0)})
         except NetworkError as error:
             return fail(error)
 

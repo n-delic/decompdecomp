@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: saved, live maintenance CPU budget in Background work. Indexing, SDK naming
+  and identical-function reuse share a cooperative percentage of one CPU core;
+  foreground work and compiler subprocesses are outside this budget.
+
 - Done: restore saved notes directly without per-note session/attempt history scans;
   retain original timestamps and measured score changes in ROM progress saves.
 

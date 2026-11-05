@@ -93,3 +93,71 @@ def test_duplicate_reuse_waits_without_occupying_the_lane(monkeypatch):
     assert not attempted.wait(.05)
     job.state='done';worker.join(2)
     assert result==[job] and not attempted.is_set()
+
+
+def test_cpu_budget_measures_cpu_not_io_and_is_shared_by_nested_slots(monkeypatch):
+    wall, cpu, sleeps = [100.0], [0.0], []
+    monkeypatch.setattr(maintenance, '_cpu_limit', 50)
+    monkeypatch.setattr(maintenance.time, 'monotonic', lambda: wall[0])
+    monkeypatch.setattr(maintenance.time, 'thread_time', lambda: cpu[0])
+    monkeypatch.setattr(maintenance, '_last_ui', float('-inf'))
+    def sleep(seconds):
+        sleeps.append(seconds)
+        wall[0] += seconds
+    monkeypatch.setattr(maintenance.time, 'sleep', sleep)
+    with maintenance.slot():
+        # 100ms CPU in 100ms wall needs another 100ms wall at a 50% limit.
+        cpu[0] += .1; wall[0] += .1
+        with maintenance.slot():
+            maintenance.checkpoint()
+        assert .099 <= sum(sleeps) <= .112
+        sleeps.clear()
+        # Disk waits never create debt, and do not bank credit for the next burst.
+        wall[0] += 10
+        maintenance.checkpoint()
+        assert sum(sleeps) < .01
+        sleeps.clear()
+        cpu[0] += .1; wall[0] += .1
+        maintenance.checkpoint()
+        assert sum(sleeps) >= .099
+    sleeps.clear()
+    cpu[0] += 1
+    maintenance.checkpoint()
+    assert not sleeps  # foreground work is never paced
+
+
+def test_cpu_budget_changes_and_cancellation_take_effect_while_waiting(monkeypatch):
+    import pytest
+    wall, cpu = [100.0], [0.0]
+    monkeypatch.setattr(maintenance, '_cpu_limit', 50)
+    monkeypatch.setattr(maintenance.time, 'monotonic', lambda: wall[0])
+    monkeypatch.setattr(maintenance.time, 'thread_time', lambda: cpu[0])
+    stop = threading.Event()
+    def sleep(seconds):
+        wall[0] += seconds
+        stop.set()
+    monkeypatch.setattr(maintenance.time, 'sleep', sleep)
+    with maintenance.slot(stop):
+        cpu[0] += 1; wall[0] += 1
+        with pytest.raises(maintenance.Cancelled):maintenance.checkpoint()
+    maintenance.configure_cpu(0)
+    for value in (-1, 101, 50.5, True, '50', None):
+        with pytest.raises(ValueError):maintenance.configure_cpu(value)
+    maintenance.configure_cpu(100)
+    assert maintenance._cpu_limit == 100
+
+
+def test_cpu_limit_can_be_removed_without_waiting_out_old_debt(monkeypatch):
+    wall, cpu, sleeps = [100.0], [0.0], []
+    monkeypatch.setattr(maintenance, '_cpu_limit', 1)
+    monkeypatch.setattr(maintenance.time, 'monotonic', lambda: wall[0])
+    monkeypatch.setattr(maintenance.time, 'thread_time', lambda: cpu[0])
+    monkeypatch.setattr(maintenance, '_last_ui', float('-inf'))
+    def sleep(seconds):
+        sleeps.append(seconds);wall[0] += seconds
+        maintenance.configure_cpu(0)
+    monkeypatch.setattr(maintenance.time, 'sleep', sleep)
+    with maintenance.slot():
+        cpu[0] += 1;wall[0] += 1
+        maintenance.checkpoint()
+    assert sum(sleeps) < .1
