@@ -2354,3 +2354,8 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   pass attempts one fresh verification; failed newer evidence no longer hides
   older untried exact pairs. Claims, input freshness and ordinary byte/data gates
   remain required; imported project builds retain their existing exclusion.
+
+- Done: applicable target-backed breakpoint/live-register proposals retain priority
+  through learned ordering and the final deep queue, ahead of generic rewrites.
+  Alternate-profile exact matches update best score/percentage and improvement
+  counts and discard the stale previous-profile diff.

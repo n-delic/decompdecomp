@@ -3656,3 +3656,25 @@ investigation, check a separately verified neighbour profile with the repaired
 source directly instead of widening every random variant's compiler search. Never
 infer a compiler range from adjacency alone, and never replace a saved source or
 profile on a merely improved score: require an exact fresh pair verdict.
+
+### A generated exact repair still needs an opportunity to run
+
+A copied dispatcher case exposed budget starvation rather than a missing source
+transformation. The live five-profile deep search spent its entire 64-compile
+allowance on generic statement-boundary proposals without reaching the already
+applicable live-register repair. Generic shape priorities and learned family
+ordering can displace a more narrowly guarded operation.
+
+Keep the finite target-backed breakpoint/live-register families ahead of generic
+line-boundary, allocation and learned rewrites, including the final deep queue.
+Their source/target guards and the ordinary judge remain unchanged; no absent
+family is invented and other proposals retain their order. Multi-profile counts
+and compile budgets remain explicit.
+
+Evidence: normal engine replay in a separate project/database copy matched in a
+16-compile allowance, including baseline/preflight and profile verification. Its
+first local proposal was the existing live-register candidate. Source SHA was
+identical to the previously full-cartridge-verified candidate. This was copied
+engine replay, not another live match. An alternate-profile match must also report
+best score 0, 100%, and one improvement; stale previous-profile diff evidence must
+not overwrite its display afterward.
