@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: deep searches retain the full user time allowance without early no-progress or
+  repeated-output rotation. Historical rotated turns become pending for a full retry.
+  User candidate limits, cancellation, matches and genuine errors still end a turn.
+
 - Done: compiler-profile changes select affected identities before loading source/target rows and retain
   final race/byte guards. Boundary caches use project revisions and ignore room cursor churn; completed
   agent session history, cost estimates and efficiency summaries reuse revision-backed snapshots.

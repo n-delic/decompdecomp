@@ -27,7 +27,6 @@ from . import (
     repair_sequences,
     residual_followups,
     search_frontier,
-    search_turns,
     stack_padding_repairs,
     switch_tables,
 )
@@ -94,7 +93,6 @@ class Search(Permuter):
         self.allocation_trials = 0
         self.allocation_captures = 0
         self.allocation_diagnostic_compiles = 0
-        self.allowance = search_turns.Allowance(minutes*60,time.monotonic()) if getattr(log,"adaptive_budget",False) else None
 
     def _hold(self, agent, fn, **kwargs):
         proj = self.net.store.one('SELECT slug FROM projects WHERE id=?', fn['project_id'])
@@ -190,12 +188,8 @@ class Search(Permuter):
                 self.room_holds[key] = (link, agent, name, time.monotonic())
         if time.monotonic() >= self.deadline:
             raise SearchLimit('Time limit reached')
-        if self.allowance and (reason := self.allowance.reason(time.monotonic())):
-            raise SearchLimit(reason)
         if self.tested >= self.limit:
             raise SearchLimit('Variant limit reached')
-        if self.visited >= self.limit*20:
-            raise SearchLimit('Cached/rejected visit limit reached')
 
     def metrics(self):
         """Use the ordinary score scale; a near miss must never round up to a displayed 100%."""
@@ -671,8 +665,6 @@ class Search(Permuter):
             started = time.monotonic()
             score = super()._score(agent, proj, fn, source, best, fork)
             elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
-            if self.allowance and not self.measuring_baseline and getattr(self,'_trial_outcome','') == 'scored':
-                self.allowance.observe(score is not None and score < best,getattr(self,'_trial_output',None),time.monotonic())
             if getattr(self, '_trial_outcome', '') == 'no_edit':
                 self.tested -= 1
                 self.skipped += 1
