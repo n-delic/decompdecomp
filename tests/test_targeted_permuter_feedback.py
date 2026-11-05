@@ -190,3 +190,13 @@ def test_boundary_progress_deduplicates_sources_before_rotating():
     assert ordered==pool
     cursor.measured(boundaries.FAMILY,pool[0][1],10)
     assert proposal_progress.order(net,proj,fn,'source',pool+pool)[0]==pool[1:]+pool[:1]
+
+
+def test_deep_budget_exit_retains_scored_output_feedback(monkeypatch):
+    from decompnet.app import deep_permuter
+    from decompnet.app.permute import Permuter
+    from tests.test_deep_permuter import Log, setup
+    net=setup(monkeypatch)
+    monkeypatch.setattr(Permuter,'_score',lambda *args:40)
+    result=deep_permuter.run(net,'game','f',30,1,Log())
+    assert result['local_search']['output_feedback']['unknown']>=1

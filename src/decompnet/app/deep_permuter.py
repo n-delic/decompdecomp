@@ -467,6 +467,7 @@ class Search(Permuter):
 
                 if cursor and parent_source == source:cursor.measured(labels.get(candidate),candidate,score)
                 counters['output_feedback'] = feedback.summary()
+                self.local_status.update(counters)
                 if candidate in feedback.loan_sources:counters['sequence_evaluations']=counters.get('sequence_evaluations',0)+1
                 if score is None:
                     counters['compile_failed'] += 1
