@@ -1311,7 +1311,7 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
     tables, bytes_at = [], []
     # which byte table's byte each register holds now (a load puts it there, a plain `mov` moves it on, anything else
     # that writes the register ends it), and the byte tables a jump's index came from
-    holds, indexing = {}, set()
+    holds, indexing = {}, {}  # (indexing: byte table -> the jump table it indexes)
     for ins in _disasm(md, pe.read(start, code_end - start), start):
         ops = ins.operands
         load = ins.id in _LOADS and len(ops) == 2 and ops[0].type == x86.X86_OP_REG
@@ -1325,7 +1325,7 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
             if op.mem.scale == 4 and ins.id == x86.X86_INS_JMP:
                 tables.append(disp)
                 if (b := holds.get(_full_reg(md, op.mem.index))) is not None:
-                    indexing.add(b)
+                    indexing[b] = disp
             elif op.size == 1:
                 bytes_at.append(disp)
                 if load and i == 1:
@@ -1335,7 +1335,7 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
         if gets is not None:
             holds[_full_reg(md, ops[0].reg)] = gets
     code_end = min([code_end, *tables, *bytes_at])
-    data_end, entries = code_end, []
+    data_end, entries, cases = code_end, [], {}  # (cases: each jump table's entry count)
     for t in sorted(set(tables)):
         at = t
         while at + 4 <= limit and (at == t or at not in tables):  # (one table ends where the next one starts: its
@@ -1345,14 +1345,14 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
                 break
             entries.append(at - start)
             at += 4
+        cases[t] = (at - t) // 4
         data_end = max(data_end, at)
     for b in sorted(set(bytes_at)):  # a byte table runs to the next function, less its padding
         tail = pe.read(b, limit - b).rstrip(b"\x90\xcc")
-        if entries and b in indexing:
-            # a byte table that indexes the jump table (the byte it loads is the jump's index) has every byte below its
-            # entry count: the first one that isn't is past the table (an x86 game: code that only a vtable reaches
-            # followed a byte table and was swallowed). Any other byte table (a lookup) keeps its whole run
-            n = len(entries)
+        if n := cases.get(indexing.get(b)):
+            # a byte table that indexes a jump table (the byte it loads is the jump's index) has every byte below that
+            # table's entry count: the first one that isn't is past the table (an x86 game: code that only a vtable
+            # reaches followed a byte table and was swallowed). Any other byte table (a lookup) keeps its whole run
             tail = tail[:next((k for k, v in enumerate(tail) if v >= n), len(tail))]
         data_end = max(data_end, b + len(tail))
     return code_end, data_end, entries

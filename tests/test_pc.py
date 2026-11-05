@@ -3576,6 +3576,10 @@ def test_two_jump_tables_and_a_byte_table_relocate_each_entry_once():
     fn = scratch_pe.analyse(_code(code + t1 + t2 + bytes([0, 1, 1, 0]) + b"\xcc" * 4), rows)[0]
     assert [o for o, *_ in fn.relocs] == [3, 10, 17, 0x1A, 0x1E, 0x22, 0x26, 0x2A]  # the tables, each entry once
     assert fn.size == 0x32  # the byte table is the function's, the int3s after it aren't
+    # B indexes T2 (2 cases), not both tables (5): the next function, starting with a byte below 5 but not below 2
+    # (`add eax, eax`), was cut a byte in
+    assert _one_switch(code + t1 + t2, 0x101A, bytes([0, 1]) + bytes.fromhex("03c0c3")) == [(LOW + 0x1000, 0x30),
+                                                                                           (LOW + 0x1030, 0x3)]
 
 
 def test_a_jumps_index_table_ends_at_its_first_byte_past_the_cases_and_a_lookup_table_runs_on():
