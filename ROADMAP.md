@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: numeric MCP transaction-writer and candidate lock acquisition timings,
+  with synthetic rollback, release and claim-check regressions. This diagnoses
+  contention without changing concurrency or exact matching.
+
 - Done: keep newly generated native inline helpers private, with a real two-unit
   GNU89 link/execution regression and traced/untraced generator coverage. Extra
   helper code still requires complete project build verification.

@@ -701,6 +701,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             timings={'queue_ms':round((started-queued)*1000,2),'dispatch_ms':round(elapsed*1000,2),
                      'sql_read_ms':round(metrics['sql']*1000,2),'sql_reads':metrics['queries'],
                      'build_ms':round(metrics.get('build',0)*1000,2),
+                     'write_lock_wait_ms':round(metrics.get('write_lock_wait',0)*1000,2),
+                     'candidate_lock_wait_ms':round(metrics.get('candidate_lock_wait',0)*1000,2),
                      'before_dispatch_ms':round((dispatch-started)*1000,2)}
             if observe:
                 payload={'name':name,'call_id':call_id,'timings':timings}

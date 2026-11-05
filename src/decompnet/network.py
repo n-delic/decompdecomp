@@ -901,9 +901,10 @@ class Network:
     def attempt_turn(self, agent: Agent, fn):
         # A CLI can submit parallel tool calls: serialize this worker's candidates so two submissions cannot
         # both spend the last allowed try. Never hold the database write lock while compiling.
-        with self.store.lock:
+        from .request_timing import timed_lock
+        with timed_lock(self.store.lock,'write_lock_wait'):
             lock = self._attempt_locks.setdefault((agent.id, fn["id"]), threading.RLock())
-        with lock:
+        with timed_lock(lock,'candidate_lock_wait'):
             self.ensure_agent_active(agent)
             self.check_attempt_limit(agent, fn)
             yield

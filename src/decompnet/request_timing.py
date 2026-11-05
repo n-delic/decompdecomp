@@ -61,3 +61,17 @@ def build(function):
             if metrics is not None:
                 metrics['build']=metrics.get('build',0)+time.monotonic()-began
     return run
+
+
+@contextmanager
+def timed_lock(lock, key):
+    """Measure acquisition only, retaining the lock's ordinary context/exception behavior."""
+    metrics=_current.get()
+    if metrics is None:
+        with lock:
+            yield
+        return
+    began=time.monotonic()
+    with lock:
+        metrics[key]=metrics.get(key,0.)+max(0.,time.monotonic()-began)
+        yield

@@ -316,3 +316,19 @@ original receipt, without fetching source or performing more database reads. Eac
 function must be released with its own token. Missing receipt tokens and unchanged
 claim replies point to `get_claims` for cheap metadata recovery. No token is guessed,
 and stale-generation release guards remain unchanged.
+
+### Separate tool lock acquisition from computation
+
+Recent tool dispatches took over two minutes while recorded SQL reads and compiler
+builds accounted for only a small fraction of that time. This does not identify
+the cause. MCP transcript timings now include `write_lock_wait_ms` for transaction
+writer-lock and candidate-lock registry acquisition, and `candidate_lock_wait_ms`
+for per-agent/function attempt serialization. Both are numeric acquisition durations;
+time spent doing work while holding the locks is excluded. The lock scopes,
+transaction rollback and claim checks are unchanged in ROM and project modes.
+
+These fields cover only the instrumented Python locks, not every application lock
+or SQLite engine waits in BEGIN/COMMIT. Nested request timers can overlap, so do
+not add all timing fields as exclusive portions of dispatch time. Zero can mean
+no instrumented acquisition occurred. This adds diagnostic evidence, not a proven
+latency improvement.

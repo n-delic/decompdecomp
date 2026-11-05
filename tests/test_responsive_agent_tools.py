@@ -174,6 +174,7 @@ def test_mcp_health_bypasses_busy_work_pool_and_records_numeric_timing(tmp_path,
             finally:release.set()
     anyio.run(run)
     assert records[-1]['timings']['sql_reads']>=1
+    assert {'write_lock_wait_ms','candidate_lock_wait_ms'}<=records[-1]['timings'].keys()
     assert all(isinstance(v,(float,int)) for v in records[-1]['timings'].values())
 
 
