@@ -772,10 +772,12 @@ class CompilerMixin:
     RANGE_PROOF_BYTES, RANGE_PROOF_FUNCTIONS = 256, 3
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
-                     source: str = "", keep_match: bool = True) -> str:
+                     source: str = "", keep_match: bool = True, structured: bool = False) -> str | dict:
         """A function's C (`source`, else its best attempt) built with another compiler and flags, judged like an
         attempt but recorded nowhere: to work out which compiler built a part of the game before suggesting it (on GTA
         San Andreas an agent tried compilers by suggesting them: 128 of its 149 suggestions were disproved)."""
+        def outcome(text, exact=False, score=None):
+            return {'text':text,'exact':bool(exact),'score':score} if structured else text
         if self.fork_slug(slug):  # where the project lets each file have its own compiler (DS), the fork engine's
             return self.forks.try_compiler(agent, slug, function, compiler, flags, source, keep_match=keep_match)
         proj = self._project(slug)
@@ -791,12 +793,12 @@ class CompilerMixin:
         ok, d, problem = self._judge_with(proj, fn, tc, flag_list, source)
         what = f"{consoles.compiler_name(tc)} {' '.join(flag_list)}"
         if d is None:
-            return f"{what}: doesn't compile:\n{problem.strip()[-1500:]}"
+            return outcome(f"{what}: doesn't compile:\n{problem.strip()[-1500:]}")
         if ok:
             self.rangechecks.tried(proj, fn, tc, flag_list, source, True)
-            return (f"{what}: MATCHES the game byte for byte. Suggest it: suggest(compiler=\"{tc}\", flags=\"{' '.join(flag_list)}\", "
-                    f"function=\"{fn['name']}\", source=<this exact C>). A function-specific suggestion rechecks and saves only this function; broader ranges require separate neighbour evidence.")
-        return f"{what}: score {d.score} ({d.percent:.1f}%), not a match\n{d.render(context=1, max_rows=40)}"
+            return outcome(f"{what}: MATCHES the game byte for byte. Suggest it: suggest(compiler=\"{tc}\", flags=\"{' '.join(flag_list)}\", "
+                    f"function=\"{fn['name']}\", source=<this exact C>). A function-specific suggestion rechecks and saves only this function; broader ranges require separate neighbour evidence.", exact=True, score=0)
+        return outcome(f"{what}: score {d.score} ({d.percent:.1f}%), not a match\n{d.render(context=1, max_rows=40)}", score=max(1,d.score))
 
     @staticmethod
     def debug_flag_variants(toolchain: str, base: list[str]) -> list[list[str]]:

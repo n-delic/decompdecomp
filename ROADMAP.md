@@ -2513,6 +2513,14 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   aliases, macros, shadows, cycles and used assignment values skip the family.
   Compiler and ordinary byte/object judging remain unchanged across supported processors.
 
+### Completed: bounded loop/source/profile preflight
+
+Normal and deep ROM permuter runs share a small paired return-guard/jump-threading
+search for supported old MIPS GCC bounds loops, with branch-delay diagnostics and
+normal exact bundle promotion. Imported projects own their compiler settings and
+do not receive this ROM-only profile probe; other architectures/compiler families
+need independent evidence before receiving this specific GNU C repair.
+
 ### Compiler-mapped local storage follow-ups
 
 - Done: bounded same-frame spill-pair and single-register-chain hypotheses, bound to

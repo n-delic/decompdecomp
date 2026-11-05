@@ -190,3 +190,47 @@ def test_explicit_refresh_rejudges_complete_stale_evidence_against_current_input
     monkeypatch.setattr(export,'_single_definition',lambda *args:True)
     assert evidence.apply(net,proj,'local-source-profile-v2:stale',lambda line:None,refresh=True)['matched']
     assert net.store.one('SELECT matched_source FROM functions')['matched_source']==item['source']
+
+
+@pytest.mark.parametrize('change',['range_checks','compiler_survey','compiler','source','claim'])
+def test_reverified_bundle_ignores_only_nonbuild_progress(monkeypatch,change):
+    from types import SimpleNamespace
+
+    from decompnet.app import compiler_context
+    net,proj,fn=prepared_net()
+    net.is_rom=lambda p:True;net.fork_slug=lambda s:None
+    net.project_row=lambda slug:net._project(slug)
+    net._function=lambda *a:net.store.one('SELECT * FROM functions WHERE id=1')
+    expected=prep.inputs(net,proj,fn)
+    settings={'toolchain':'gcc-2.7.2-kmc','flags':['-O2','-fno-thread-jumps']}
+    calls=[]
+    def compile(*args):
+        calls.append(True)
+        with net.store.tx() as db:
+            if change=='source':db.execute("UPDATE functions SET best_source='concurrent C'")
+            elif change=='claim':db.execute('DELETE FROM claims')
+            else:
+                cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=1').fetchone()['config'])
+                cfg[change]={'toolchain':'gcc-2.7.2-kmc','flags':['-O1']} if change=='compiler' else {'finished':True}
+                db.execute('UPDATE projects SET config=?',(json.dumps(cfg),))
+        return SimpleNamespace(ok=True,obj=b'object',effective_settings={'compiler':settings})
+    net._compile=compile;net._evaluate=lambda *a:(object(),True,[])
+    monkeypatch.setattr(compiler_context,'acceptable',lambda *a:True)
+    if change in ('range_checks','compiler_survey'):
+        # publish_profile expects range-check lists; use a genuine progress structure.
+        original=compile
+        def compile_valid(*args):
+            result=original(*args)
+            with net.store.tx() as db:
+                cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=1').fetchone()['config'])
+                if change=='range_checks':cfg[change]=[{'id':1,'origin':0,'status':'finished'}]
+                db.execute('UPDATE projects SET config=?',(json.dumps(cfg),))
+            return result
+        net._compile=compile_valid
+        assert evidence.promote_measured(net,proj,fn,'exact C','private types',settings,Agent(1,'autopilot',None),expected)
+        assert net._function('f','game')['status']=='matched'
+    else:
+        with pytest.raises(NetworkError):
+            evidence.promote_measured(net,proj,fn,'exact C','private types',settings,Agent(1,'autopilot',None),expected)
+        assert net._function('f','game')['status']=='open'
+    assert len(calls)==1

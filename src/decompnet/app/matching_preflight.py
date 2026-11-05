@@ -57,6 +57,13 @@ def _run(net, proj, fn, log, check, max_profiles):
         if source := candidate(dict(fn).get('asm', ''), fn['name']):
             ranked = prioritized(proj, fn, own)
             probes.insert(1, (ranked[0] if ranked else list(own['flags']), source))
+    from . import guarded_loop_repairs
+    context = net._context(proj['id'],fn['unit']) if hasattr(net,'_context') else None
+    paired = guarded_loop_repairs.probes(proj,fn,own,context['header'] if context else '')
+    # Preserve this tiny joint frontier independently of isolated source scores.
+    probes[1:1] = [(list(flags),source) for flags,source in paired]
+    probes = list(dict.fromkeys((tuple(flags),source) for flags,source in probes))
+    probes = [(list(flags),source) for flags,source in probes]
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
     key = 'matching-preflight-v3:'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
@@ -129,17 +136,21 @@ def _run(net, proj, fn, log, check, max_profiles):
                 if not best.get('notified'):
                     agent, _ = net.local_agent('autopilot')
                     try:
-                        net.suggest(agent, proj['slug'], 'Compiler preflight found a rejudged improvement.',
+                        said = net.suggest(agent, proj['slug'], 'Compiler preflight found a rejudged improvement.',
                                     compiler=best['toolchain'], flags=' '.join(best['flags']), function=fn['name'],
                                     ranges=f"0x{fn['vram']:X}-0x{fn['vram']+fn['size']:X}", source=best.get('source', fn['best_source']))
                     except NetworkError as error:
                         # A partial/stale hypothesis may fail the exact suggestion gate. It must not
                         # abort source search or apply settings without the normal revalidation.
                         if not str(error).startswith('not suggested:'):raise
-                        result['suggestion_rejected'] = str(error)
+                        said = str(error)
+                        result['suggestion_rejected'] = said
                         log('Compiler preflight kept the working settings and will continue source search: '+str(error))
+                    if best['exact']:
+                        result['applied'] = net._function(fn['name'],proj['slug'])['status']=='matched'
+                        if not result['applied']:log(said)
                     if best_key:
-                        best['notified']=True
+                        best['notified']=not best['exact'] or bool(result.get('applied')) or not net.auto_adjusts(fresh)
                         with net.store.tx() as db:
                             db.execute('UPDATE reuse_trials SET feedback=? WHERE function_id=? AND signature=?',
                                        (json.dumps(best),fn['id'],best_key))
