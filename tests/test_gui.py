@@ -569,3 +569,13 @@ def test_header_storage_controls_preview_cleanup_compaction_and_stop():
     if NODE is None:pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_header_storage.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+
+def test_deep_permuter_reset_is_visible_without_expanding_more_actions():
+    html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
+    start = html.index('<div class="deep-sweep-tools">')
+    tools = html[start:html.index('id="deepSweepStatus"', start)]
+    assert '<button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>' in tools
+    assert 'deep-sweep-more' not in tools
+    assert '<summary>More actions</summary>' not in tools
