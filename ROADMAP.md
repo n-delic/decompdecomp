@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: compiler-profile changes select affected identities before loading source/target rows and retain
+  final race/byte guards. Boundary caches use project revisions and ignore room cursor churn; completed
+  agent session history, cost estimates and efficiency summaries reuse revision-backed snapshots.
 - Done: cross-game exact reuse loads and tries one donor project before visiting the next, including
   imported destinations. Imported donor scans fingerprint only matched-function units, report object
   progress and check cancellation/time budgets between objects; incremental discovery preserves prior leads.

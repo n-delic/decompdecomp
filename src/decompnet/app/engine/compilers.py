@@ -1008,8 +1008,11 @@ class CompilerMixin:
         not expose trial flags to working helpers, erase drafts or announce a change that never happened."""
         before = self.cfg(proj)
         keys = ("compiler", "compiler_ranges",'function_compilers')
-        rows = self.store.all("SELECT * FROM functions WHERE project_id=? ORDER BY id", proj["id"])
-        affected = [f for f in rows if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
+        # Profile selection needs identity only. Narrow range edits must not load every source/target blob.
+        identities = "id,name,vram,rom_offset"
+        rows = self.store.all(f"SELECT {identities} FROM functions WHERE project_id=? ORDER BY id", proj["id"])
+        ids = [f['id'] for f in rows if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
+        affected = self.store.all("SELECT * FROM functions WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id", json.dumps(ids))
         trial = dict(proj) | {"config": json.dumps(cfg)}
         contexts = [tuple(r) for r in self.store.all("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", proj["id"])]
         matched = [f for f in affected if f["status"] == "matched"]
@@ -1047,13 +1050,15 @@ class CompilerMixin:
                 log(f"Updating score {done} of {len(rescored)}: {name}")
         # An agent can finish while checks run. Never overwrite its work with a verdict from an older snapshot.
         def population(items):
-            return [tuple(r[k] for k in ("id", "name", "vram", "unit", "size", "target", "relocs", "meta",
+            return [tuple(r[k] for k in ("id", "name", "vram", "rom_offset", "unit", "size", "target", "relocs", "meta",
                                          "status", "matched_source", "best_source", "best_score")) for r in items]
         with self.store.tx() as db:
             current = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
-            latest = db.execute("SELECT * FROM functions WHERE project_id=? ORDER BY id", (proj["id"],)).fetchall()
+            latest = db.execute(f"SELECT {identities} FROM functions WHERE project_id=? ORDER BY id", (proj["id"],)).fetchall()
             headers = [tuple(r) for r in db.execute("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", (proj["id"],))]
-            latest_affected = [f for f in latest if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
+            latest_ids = [f['id'] for f in latest if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
+            latest_affected = db.execute("SELECT id,name,vram,rom_offset,unit,size,target,relocs,meta,status,matched_source,best_source,best_score "
+                                         "FROM functions WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id", (json.dumps(latest_ids),)).fetchall()
             if any(current.get(k) != before.get(k) for k in keys) or population(latest_affected) != population(affected) or headers != contexts:
                 raise NetworkError("The project's code or settings changed during the compiler check. Try again after pausing its helpers.")
             for key in keys:

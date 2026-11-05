@@ -10,8 +10,13 @@ def _view(net, proj, kind, build):
     # invalidate the map revision; audit reviews and project mappings have their own keys.
     if getattr(net.store._local, 'in_tx', False):
         return build()
+    if kind in ('coverage-boundaries','boundary-blocked'):
+        cfg = net.cfg(proj)
+        version = (net.store.read_version('targets',proj['id']), net.store.read_version('naming',proj['id']),
+                   net.store.read_version('compiler_rows',proj['id']), proj['arch'], proj['big_endian'], cfg.get('kind'), cfg.get('platform'))
+        return net.store.read_cache.get((kind,proj['id']),version,build)
     audit = net.store.one('SELECT value FROM settings WHERE key=?', code_audit_reviews.key(proj['id']))
-    version = (net.store.read_version('targets'), net.store.read_version('naming'), net.store.read_version('compiler_rows', proj['id']),
+    version = (net.store.read_version('targets', proj['id']), net.store.read_version('naming', proj['id']), net.store.read_version('compiler_rows', proj['id']),
                proj['config'], audit['value'] if audit else None)
     return net.store.read_cache.get((kind, proj['id']), version, build)
 

@@ -26,9 +26,12 @@ def reason(console, row):
 
 def blocked(net, proj):
     if not proj or not getattr(net,'is_rom',lambda _:False)(proj):return set()
-    from .code_coverage import boundaries
-    names={r['function'] for r in boundaries(net,proj) if not r.get('override')}
-    return {r['id'] for r in net.store.all('SELECT id,name,gone_mark FROM functions WHERE project_id=?',proj['id']) if r['gone_mark'] is not None or r['name'] in names}
+    from .code_coverage import _view, boundaries
+    def build():
+        names={r['function'] for r in boundaries(net,proj) if not r.get('override')}
+        return frozenset(r['id'] for r in net.store.all('SELECT id,name,gone_mark FROM functions WHERE project_id=?',proj['id'])
+                         if r['gone_mark'] is not None or r['name'] in names)
+    return _view(net,proj,'boundary-blocked',build)
 
 
 def _rows(net, proj):

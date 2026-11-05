@@ -580,6 +580,8 @@ class Manager:
                            "json_extract(h.options, '$.task') END FROM helpers h "
                            "WHERE h.id=helper_sessions.helper_id AND h.project=helper_sessions.project "
                            "AND h.name=helper_sessions.agent), '')")
+            from .session_history import prepare
+            prepare(db)
         # End process accounting; supported CLIs can still resume their saved conversation.
         with net.store.tx() as db:
             db.execute("UPDATE helper_sessions SET ended_at=?, outcome='interrupted' WHERE ended_at IS NULL",
@@ -1065,24 +1067,27 @@ class Manager:
         out = []
         for s in sessions:
             row = s.snapshot(int(since.get(s.id, 0)))
-            records = self.net.store.all("SELECT * FROM helper_sessions WHERE helper_id=? AND agent=? AND ended_at IS NOT NULL",
-                                         s.id, s.agent_name)
-            estimates = [agents.get(s.kind).estimate_cost(r["model"], {
-                k: r[k + "_tokens"] for k in TOKEN_KINDS} | {"tokens": r["tokens"]}) for r in records if r["tokens"]]
-            if s.record and s.session_id not in {r["id"] for r in records} and s.usage["tokens"]:
+            from . import session_history
+            history_version, records = session_history.records(self.net,s.id,s.agent_name)
+            def history_costs(records=records, kind=s.kind):
+                estimates = [agents.get(kind).estimate_cost(r["model"], {
+                    k: r[k + "_tokens"] for k in TOKEN_KINDS} | {"tokens": r["tokens"]}) for r in records if r["tokens"]]
+                return estimates, sum(r['tokens'] for r in records), {r['id'] for r in records}
+            saved_costs, recorded_tokens, session_ids = self.net.store.read_cache.get(
+                ('helper-history-cost',s.id,s.agent_name,s.kind),history_version,history_costs)
+            estimates = list(saved_costs)  # Active usage is live, never appended to the cached completed totals.
+            if s.record and s.session_id not in session_ids and s.usage["tokens"]:
                 active = self.net.store.one("SELECT model FROM helper_sessions WHERE id=?", s.session_id)
                 model = active["model"] if active else s.model
                 estimates.append(agents.get(s.kind).estimate_cost(model, s.usage))
-            recorded_tokens = sum(r["tokens"] for r in records)
-            if s.record and s.session_id not in {r["id"] for r in records}:
+            if s.record and s.session_id not in session_ids:
                 recorded_tokens += s.usage["tokens"]
             row["estimated_cost"] = (sum(estimates) if estimates and all(x is not None for x in estimates)
                                      and recorded_tokens == s.tokens else None)
             baseline = s.options.get('_metrics', {})
             row['metrics'] = board.get(s.agent_name, {})
             row['metrics_since'] = baseline.get('at')
-            from .session_efficiency import for_sessions
-            row['efficiency']=for_sessions(self.net,[r for r in records if r['started_at']>=baseline.get('at',0)])
+            row['efficiency']=session_history.efficiency(self.net,s.id,s.agent_name,history_version,baseline.get('at',0),records)
             row['metrics_after'] = baseline.get('attempt', 0)
             row['lifetime_tokens'] = s.tokens
             for key in ('tokens', 'usd', 'runs', 'restarts'):
