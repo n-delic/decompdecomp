@@ -120,3 +120,35 @@ def test_known_reported_shape_cannot_replace_the_reviewed_correction(recovery):
     fresh = net._function('caller', 'game')
     assert fresh['best_source'] == good and fresh['best_score'] == 20
     assert net.store.one('SELECT score FROM attempts ORDER BY id DESC LIMIT 1')['score'] == 5
+
+
+@pytest.mark.parametrize('revision', [1, 1000])
+def test_progress_autosave_during_judge_does_not_invalidate_review(recovery, monkeypatch, revision):
+    net, fn, digest, ident, good, calls = recovery
+    original = net.attempt
+    def attempt(*args):
+        result = original(*args)
+        config = dict(net.cfg(net.project_row('game')))
+        config['progress_revision'] = revision
+        with net.store.tx() as db:
+            db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(config), fn['project_id']))
+        return result
+    monkeypatch.setattr(net, 'attempt', attempt)
+    result = candidate_recovery.adopt(net, 'game', 'caller', digest, ident)
+    assert result['score'] == 20
+    assert net._function('caller', 'game')['best_source'] == good
+    assert net.cfg(net.project_row('game'))['progress_revision'] == revision
+
+
+def test_autosave_does_not_hide_a_real_compiler_change(recovery, monkeypatch):
+    net, fn, digest, ident, good, calls = recovery
+    def attempt(*args):
+        config = dict(net.cfg(net.project_row('game')))
+        config.update(progress_revision=1000, compiler={'toolchain':'another-compiler'})
+        with net.store.tx() as db:
+            db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(config), fn['project_id']))
+        return {'score':20, 'matched':False}
+    monkeypatch.setattr(net, 'attempt', attempt)
+    with pytest.raises(NetworkError, match='Build settings changed'):
+        candidate_recovery.adopt(net, 'game', 'caller', digest, ident)
+    assert net._function('caller', 'game')['best_source'] != good
