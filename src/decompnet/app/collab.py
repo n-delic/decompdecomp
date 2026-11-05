@@ -709,6 +709,8 @@ class Link:
         # kept with the link: from 0 after every restart, the room's whole history came again, twice in the feed
         self.cursor = {"e": 0, "a": 0, "v": 0} | (info.get("cursor") or {})
         self.saved = dict(self.cursor)
+        # A prior applied snapshot remains usable while reconnecting. Old clients persisted only cursors.
+        self.cached = bool(info.get("cached") or any(self.cursor.values()))
         self.claims: list[dict] = []
         self.members: list[dict] = []
         self.error = ""
@@ -803,10 +805,12 @@ class Link:
                     if field in snapshot:st[field]=snapshot[field]
                 self._recovered_matches=True
             self.apply(st)
+            had_cache = self.cached
+            self.cached = True
             self.behind = int(st.get("behind") or 0)
             self.received += len(st.get("events") or []) if self.behind or self.received else 0
             self.synced = self.synced or not self.behind
-            if self.cursor != self.saved:
+            if self.cursor != self.saved or not had_cache:
                 self._save_cursor()
         with self._saved_progress_lock:
             saved_progress = self.saved_progress
@@ -860,6 +864,7 @@ class Link:
         cfg = json.loads(proj["config"])
         if "link" in cfg:  # (left the room meanwhile: nothing to keep)
             cfg["link"]["cursor"] = self.saved = dict(self.cursor)
+            cfg["link"]["cached"] = self.cached
             with self.net.store.tx() as db:
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
 
@@ -873,7 +878,8 @@ class Link:
             state = "offline"  # (never answered yet and no error: just started, getting the host's work)
         else:
             state = "connected" if self.synced else "syncing"
-        return {"state": state, "received": self.received, "behind": self.behind}
+        return {"state": state, "received": self.received, "behind": self.behind,
+                "cached": getattr(self, "cached", False)}
 
     def apply(self, st: dict) -> None:
         if self.fork:

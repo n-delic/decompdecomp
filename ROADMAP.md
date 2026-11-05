@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: room clients reopen their saved project immediately while reconnecting, with a nonblocking
+  update notice. Applied-snapshot availability survives restarts independently of live sync/presence;
+  first joins and host approval/refusal retain their existing gates.
 - Done: pending room submissions use indexed project-key bounds and SQL status filtering;
   the review drawer fetches metadata without loading completed evidence or private source/header bodies.
 - Done: remaining room controls, repair selection, imported-project preflights, agent settings/tool

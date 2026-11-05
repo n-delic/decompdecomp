@@ -391,16 +391,22 @@ function renderHeader(ov) {
 const ROOM_PILL = {
   waiting: () => ["work", "Waiting to be let in"],
   out: () => ["err", "Not in the room"],
-  syncing: () => ["work", "Getting the host's work"],
+  syncing: (r) => ["work", r.cached ? "Updating room" : "Getting the host's work"],
   connected: (r) => ["on", `In a room as ${r.member}`],
   offline: () => ["err", "Room offline"],
 };
 
-/* A guest's project is covered until the host's work is here: while it waits to be let in, then while it gets what
-   the room has done. It showed an empty project and a red "offline" instead, then everything at once. */
+/* First joins wait for host data; restarts keep the last applied project usable during catch-up. */
 function renderRoomCover(room) {
   const st = room && room.role === "guest" ? room.state : null;
-  const on = st === "waiting" || st === "out" || st === "syncing";
+  const cached = !!room?.cached;
+  const notice = $("roomSyncNotice");
+  notice.hidden = !(cached && (st === "syncing" || st === "offline"));
+  $("roomSyncText").textContent = st === "offline"
+    ? "Showing saved work. The host is unavailable; shared claims and submissions need a connection."
+    : "Showing saved work while room updates load. You can browse and edit; shared claims and submissions still go through the host.";
+  $("roomSyncBar").hidden = st !== "syncing";
+  const on = st === "waiting" || st === "out" || (st === "syncing" && !cached);
   $("project").classList.toggle("covered", on);
   $("roomCover").hidden = !on;
   if (S.covered && !on) refreshMap();  // the room's matches came in under the cover
