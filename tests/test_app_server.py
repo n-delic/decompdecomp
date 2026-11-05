@@ -2169,6 +2169,16 @@ def test_retry_paused_route_is_bounded_guarded_and_does_not_start_helpers(tmp_pa
     assert response.status_code==200,response.text
     assert response.json()['resumed']==1
     assert session.runs==0 and not net.store.all('SELECT * FROM claims')
+    response=client.post('/api/agents/retry-paused',json={**payload,'background':True},headers={'X-Decomp':'1'})
+    job_id=response.json()['job']
+    import time
+    for _ in range(200):
+        job=client.get('/api/job',params={'id':job_id}).json()
+        if job['state'] in {'done','error'}:break
+        time.sleep(0.01)
+    assert job['state']=='done',job
+    assert 'resumed' in job['result']
+    assert any('checked' in line.lower() for line in job['log'])
     assert client.post('/api/agents/retry-paused',json={'id':'missing'},headers={'X-Decomp':'1'}).status_code==400
 
 

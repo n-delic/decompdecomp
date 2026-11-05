@@ -308,6 +308,9 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):return bad
         data=await body(request)
         try:
+            if data.get('background'):
+                return JSONResponse({'job':jobs.start('Retry paused functions',
+                    lambda log: manager.retry_paused(str(data.get('id','')),data.get('limit',5),log=log))})
             result=await call(manager.retry_paused,str(data.get('id','')),data.get('limit',5))
         except (NetworkError,ValueError) as error:return fail(error)
         return JSONResponse(result)

@@ -1430,3 +1430,22 @@ def test_ordinary_codex_command_persists_and_resumes_exact_conversation(tmp_path
     resumed, _, prompt = manager._command(session,'new-secret',work)
     assert resumed[-3:] == ['resume',sid,'-']
     assert 'f0' in prompt and 'reacquire' in prompt and 'Resume this conversation' in prompt
+
+
+def test_retry_paused_releases_worker_registry_before_scanning(tmp_path, quiet, monkeypatch):
+    from decompnet.app import retry_paused
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    session = manager._record('game', 'codex', 'retry-worker', 'Worker', {})
+    def retry(*args, **kwargs):
+        acquired = threading.Event()
+        def read_registry():
+            with manager._lock:
+                acquired.set()
+        thread = threading.Thread(target=read_registry)
+        thread.start()
+        assert acquired.wait(2), 'Retry held the registry while scanning candidates'
+        thread.join()
+        return {'resumed': 0}
+    monkeypatch.setattr(retry_paused, 'retry', retry)
+    assert manager.retry_paused(session.id) == {'resumed': 0}

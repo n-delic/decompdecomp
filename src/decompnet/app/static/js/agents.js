@@ -1120,15 +1120,18 @@ function addThoughts(sessions, first) {
 
 function showRetryPaused(session) {
   if (!session) return;
-  const panel = dialog("Retry paused functions", `<p>Give ${esc(session.model || session.label)} one fresh turn on each selected paused function. Workers using the same recorded model share this allowance.</p><label class="field"><span>Maximum functions</span><input data-retry-limit type="number" min="1" max="50" step="1" value="5"></label><p class="muted small">Existing compile limits, work filters and active claims stay in place. Running workers may use AI credits when they next check. Stopped workers stay stopped.</p><button class="primary" data-confirm-retry>Retry paused functions</button><button class="ghost" data-cancel-retry>Cancel</button>`);
+  const panel = dialog("Retry paused functions", `<p>Give ${esc(session.model || session.label)} one fresh turn on each selected paused function. Workers using the same recorded model share this allowance.</p><label class="field"><span>Maximum functions</span><input data-retry-limit type="number" min="1" max="50" step="1" value="5"></label><p class="muted small">Existing compile limits, work filters and active claims stay in place. Running workers may use AI credits when they next check. Stopped workers stay stopped.</p><pre class="joblog" data-retry-progress hidden></pre><button class="primary" data-confirm-retry>Retry paused functions</button><button class="ghost" data-cancel-retry>Cancel</button>`);
   panel.querySelector('[data-cancel-retry]').onclick = closeDialog;
   const button = panel.querySelector('[data-confirm-retry]');
   button.onclick = async () => {
     const limit = Number(panel.querySelector('[data-retry-limit]').value);
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) { toast('Choose a whole number from 1 to 50.', 'err'); return; }
-    const finish = beginWork(panel, 'Preparing fresh candidate turns', [button]);
+    const log = panel.querySelector('[data-retry-progress]');
+    log.hidden = false;
+    const finish = beginWork(log, 'Checking paused candidates', [button]);
     try {
-      const result = await api('/api/agents/retry-paused', {method:'POST',body:{id:session.id,limit}});
+      const response = await api('/api/agents/retry-paused', {method:'POST',body:{id:session.id,limit,background:true}});
+      const result = response.job ? await followJob(response.job, log) : response;
       closeDialog();
       toast(result.resumed ? `${result.resumed} functions ready for one fresh turn. Waiting workers check within 30 seconds.` : 'No paused functions meet this worker’s filters or are free to retry.', result.resumed ? 'match' : '');
       poll(false);

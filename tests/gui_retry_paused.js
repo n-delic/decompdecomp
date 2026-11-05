@@ -10,7 +10,11 @@ vm.createContext(c);vm.runInContext(source.slice(source.indexOf('function showRe
  panel.querySelector('[data-retry-limit]').value='51';await fields.get('[data-confirm-retry]').onclick();assert.equal(calls.length,0);
  panel.querySelector('[data-retry-limit]').value='5';await fields.get('[data-confirm-retry]').onclick();
  assert.equal(calls[0][0],'/api/agents/retry-paused');assert.equal(calls[0][1].body.id,'a');assert.equal(calls[0][1].body.limit,5);assert.equal(finished,1);assert.equal(closed,1);
- c.api=async()=>{throw Error('failed');};await fields.get('[data-confirm-retry]').onclick();assert.equal(errors,1);assert.equal(finished,2);
- fields.get('[data-cancel-retry]').onclick();assert.equal(closed,2);
+ assert.equal(calls[0][1].body.background,true);
+ let followed=false; c.api=async()=>({job:'retry-job'});
+ c.followJob=async(id,log)=>{assert.equal(id,'retry-job');assert.strictEqual(log,panel.querySelector('[data-retry-progress]'));followed=true;return {resumed:1};};
+ await fields.get('[data-confirm-retry]').onclick();assert(followed);assert.equal(closed,2);
+ c.api=async()=>{throw Error('failed');};await fields.get('[data-confirm-retry]').onclick();assert.equal(errors,1);assert.equal(finished,3);
+ fields.get('[data-cancel-retry]').onclick();assert.equal(closed,3);
  assert(source.includes('data-retry-paused="${id}"'));
 })().catch(e=>{console.error(e);process.exitCode=1;});

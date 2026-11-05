@@ -151,3 +151,32 @@ def test_same_worker_switching_models_does_not_inherit_old_release_cooldown(tmp_
         db.execute('INSERT INTO helper_sessions(id,project,agent,model,ended_at) VALUES(1,?,?,?,?)',('game','a','alpha#low',time.time()))
         db.execute("UPDATE helpers SET model='beta' WHERE name='a'")
     assert net.claim_row(a,'game')['name']=='f0'
+
+
+def test_retry_stops_fingerprinting_at_limit_and_reports_progress(tmp_path,monkeypatch):
+    net,(a,_,_)=setup(tmp_path,70)
+    for fn in net.store.all('SELECT * FROM functions'):
+        claim_stalls.released(net,fn,agent=a,exhausted=True)
+    original=claim_stalls.signature
+    checked=[]
+    def signature(net,proj,fn,common=None):
+        checked.append(fn['id'])
+        return original(net,proj,fn,common)
+    monkeypatch.setattr(claim_stalls,'signature',signature)
+    logs=[]
+    result=retry_paused.retry(net,'game',a,5,log=logs.append)
+    assert result['functions']==['f0','f1','f2','f3','f4']
+    assert len(checked)==5  # Selected stamps are reused when recording the grants.
+    assert logs[-1]=='Checked 5 candidates · 5 / 5 ready'
+
+
+def test_retry_rechecks_candidate_changes_between_grants(tmp_path):
+    net,(a,_,_)=setup(tmp_path,3)
+    for fn in net.store.all('SELECT * FROM functions'):
+        claim_stalls.released(net,fn,agent=a,exhausted=True)
+    def progress(line):
+        if line=='Checked 1 candidates · 1 / 2 ready':
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET status='matched' WHERE name='f1'")
+    result=retry_paused.retry(net,'game',a,2,log=progress)
+    assert result['functions']==['f0','f2']

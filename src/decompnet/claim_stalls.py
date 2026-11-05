@@ -78,11 +78,12 @@ def blocked(net, proj, agent=None):
     return list(dict.fromkeys(result))
 
 
-def resume(net, fn, agent=None, *, single_turn=False):
+def resume(net, fn, agent=None, *, single_turn=False, _stamp=None):
     """Explicit review resets one input; retry grants only one further unchanged release."""
     from .pause_scope import identity
     proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
-    stamp = signature(net,proj,fn)
+    # Retry already checked this stamp under the same Store lock; do not hash it twice.
+    stamp = _stamp if _stamp is not None else signature(net,proj,fn)
     prefix=PREFIX+str(fn['id'])
     keys=([prefix+identity(net,proj,agent)[0]] if agent is not None else
           [r['key'] for r in net.store.all('SELECT key FROM settings WHERE key=? OR key LIKE ?',prefix,prefix+':%')] or [prefix])

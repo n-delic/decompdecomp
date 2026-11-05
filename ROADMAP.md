@@ -525,6 +525,8 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- Paused retries check filtered candidates incrementally, stop at the requested allowance, release shared locks between candidates, and report checked/ready counts in a background job.
+
 - Polishing agents skip matching-only preparation and waits on start, restart and resume; agent creation remains visible in the Agents panel when the launcher closes.
 
 - **Your own compiler on every ROM console.** N64, PS1, PS2, PSP and GBA games can be built with your own copy of
