@@ -101,10 +101,15 @@ class Jobs:
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
-    def start(self, kind: str, fn, *, cancel_message="Opening the saved project was cancelled.") -> str:
+    def check_start(self) -> None:
+        """Reject work before receiving a large upload when a source update is taking over."""
         with self._lock:
             if getattr(self, 'source_update_pending', False):
                 raise ValueError('A source update is queued. Wait for restart or cancel it before starting another job.')
+
+    def start(self, kind: str, fn, *, cancel_message="Opening the saved project was cancelled.") -> str:
+        with self._lock:
+            self.check_start()
             jid = uuid.uuid4().hex[:JOB_ID_CHARS]
             job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
             cancel = self.cancel_events[jid] = threading.Event()
