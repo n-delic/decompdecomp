@@ -288,20 +288,27 @@
         <button class="ghost small-btn" id="apBtn" type="button"></button>
       </div>
       <details class="panel settings-disclosure" id="machineDraftPanel">
-        <summary>Regenerate machine drafts</summary>
-        <div class="settings-content">
-          <p class="muted small">Make fresh starting C for open functions and test it locally. Matches, saved attempts and shared headers are kept. Claimed functions and targets needing boundary review are skipped. No AI calls.</p>
-          <div class="row"><button id="regenerateMachineDrafts" class="ghost" type="button">Regenerate drafts</button><button id="machineDraftStop" type="button" hidden>Stop</button></div>
+        <summary class="panel-head"><h2>Regenerate machine drafts <span class="disclosure-context">— Refresh starting C</span></h2></summary>
+        <div class="pad maintenance-body">
+          <p class="maintenance-intro">Create fresh starting C for unmatched functions, then test it for matches.</p>
+          <p class="muted small">Use after changing headers or compiler settings. Saved work stays safe; functions claimed by agents or needing boundary review are skipped.</p>
+          <div class="maintenance-actions"><button id="regenerateMachineDrafts" class="primary" type="button">Regenerate drafts</button><button id="machineDraftStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
           <pre id="machineDraftLog" class="joblog" hidden></pre>
         </div>
       </details>
       <details class="panel settings-disclosure" id="savedMatchRecoveryPanel">
-        <summary>Recover saved matches</summary>
-        <div class="settings-content">
-        <p class="muted small">Recheck previously successful C and headers against the current project. This can restore matches lost after project changes. No AI tokens; every match is verified again.</p>
-        <div class="row"><label>Seconds<input id="savedMatchSeconds" type="number" min="1" max="600" value="120"></label><label>Compile budget<input id="savedMatchAttempts" type="number" min="1" max="1024" value="128"></label></div>
-        <div class="row"><button id="recoverSavedMatches" class="ghost" type="button">Recover saved matches</button><button id="savedMatchStop" type="button" hidden>Stop</button><span id="savedMatchSummary" role="status"></span></div>
-        <pre id="savedMatchLog" class="joblog" hidden></pre>
+        <summary class="panel-head"><h2>Recover saved matches <span class="disclosure-context">— Recheck earlier successes</span></h2></summary>
+        <div class="pad maintenance-body">
+          <p class="maintenance-intro">Restore lost matches by testing previously successful C and headers against this project.</p>
+          <p class="muted small">Use when matches disappear after project changes. Only code that passes verification again counts as matched.</p>
+          <div class="maintenance-limits">
+            <label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds" type="number" min="1" max="600" value="120"></label>
+            <label class="field"><span>Compile limit</span><input id="savedMatchAttempts" type="number" min="1" max="1024" value="128"></label>
+          </div>
+          <p class="muted small">Stops at either limit or when saved candidates run out.</p>
+          <div class="maintenance-actions"><button id="recoverSavedMatches" class="primary" type="button">Recover saved matches</button><button id="savedMatchStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
+          <p id="savedMatchSummary" class="small" role="status"></p>
+          <pre id="savedMatchLog" class="joblog" hidden></pre>
         </div>
       </details>
       <section class="panel" id="crossGamePanel" hidden>

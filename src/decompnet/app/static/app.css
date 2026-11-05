@@ -1369,6 +1369,21 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-cleanup { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
 #compilerRareLimit { width: 64px; padding: 4px; }
 
+/* Maintenance tasks use the same disclosure shell as project settings. */
+.maintenance-body { display: grid; gap: 12px; }
+.maintenance-body > p { margin: 0; max-width: 78ch; line-height: 1.55; }
+.maintenance-intro { font-size: 14px; }
+.maintenance-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 200px)); gap: 16px; }
+.maintenance-limits .field { margin: 0; min-width: 0; }
+.maintenance-limits input { width: 100%; box-sizing: border-box; }
+.maintenance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.maintenance-body > .joblog { margin: 0; max-height: 220px; }
+.maintenance-body > [role="status"]:empty { display: none; }
+@media (max-width: 480px) {
+  .maintenance-limits { grid-template-columns: minmax(0, 1fr); }
+  .maintenance-actions > .muted { flex-basis: 100%; }
+}
+
 /* Native disclosures keep their open state while settings data is refreshed. */
 .settings-disclosure { margin-bottom: 20px; }
 .settings-disclosure > summary { cursor: pointer; list-style: none; justify-content: flex-start; text-align: left; flex-wrap: nowrap; }
