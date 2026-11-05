@@ -423,7 +423,7 @@ def register(app: App) -> None:
             net.permuter.configure(settings.data)
         if "worker_threads" in data:  # nothing or 0: as many as the computer can spare (workers.py)
             settings.data["worker_threads"] = max(0, int(data["worker_threads"] or 0))
-            workers.configure(settings.data["worker_threads"])
+            workers.configure(net.permuter.parent_threads(settings.data["worker_threads"]))
         if "auto_update" in data:
             settings.data["auto_update"] = bool(data["auto_update"])
         if "check_updates" in data:

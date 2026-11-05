@@ -37,7 +37,7 @@ def system_name() -> str:
 
 
 def register(app: App) -> None:
-    net, mcp, home, mcp_url, build_id = app.net, app.mcp, app.home, app.mcp_url, app.build_id
+    net, mcp, home, mcp_url = app.net, app.mcp, app.home, app.mcp_url
     manager, jobs, settings, guard, call, body = app.manager, app.jobs, app.settings, app.guard, app.call, app.body
     fail = app.fail
 
@@ -55,7 +55,7 @@ def register(app: App) -> None:
         for t in tcs:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
             t["name"] = consoles.compiler_name(t["id"]) if t["id"] in COMPILERS else t["name"]
-        return {"version": __version__, "fork": build_info.FORK, "build": build_id, "install": updates.installed(), "dev": edition.DEV,
+        return {"version": __version__, "fork": build_info.FORK, "build": app.build_id, "install": updates.installed(), "dev": edition.DEV,
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "linux_vm": ({'ready': linuxvm.status()[0], 'why': linuxvm.status()[1]} if linuxvm.wanted() else None),
