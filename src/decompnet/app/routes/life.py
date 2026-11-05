@@ -48,7 +48,7 @@ def register(app: App) -> None:
                 return fail(e)
         refresh = request.query_params.get("refresh") == "1"
         if not refresh and not checking():  # the user turned checks off: only "Check now" asks
-            return JSONResponse({"disabled": True, "available": False, "current": updates.installed(),
+            return JSONResponse({"disabled": True, "available": False, "current": await call(updates.installed),
                                  "job": updater.job})
         return JSONResponse(await call(lambda: updater.status(refresh)))
 
@@ -60,7 +60,7 @@ def register(app: App) -> None:
             if request.method == 'POST':
                 data = await body(request)
                 return JSONResponse(await call(updater.checkout.start, str(data.get('path') or '')))
-            return JSONResponse(updater.checkout.status())
+            return JSONResponse(await call(updater.checkout.status))
         except ValueError as e:
             return fail(e)
 
@@ -75,11 +75,11 @@ def register(app: App) -> None:
             if request.method == "POST":
                 data = await body(request)
                 if data.get('action') == 'automatic':
-                    return JSONResponse(runtime.configure(data.get('enabled')))
+                    return JSONResponse(await call(runtime.configure, data.get('enabled')))
                 if data.get('action') == 'cancel':
-                    return JSONResponse(runtime.stop())
+                    return JSONResponse(await call(runtime.stop))
                 return JSONResponse(await call(runtime.start, str(data.get('path') or ''), str(data.get('data_mode') or '')))
-            return JSONResponse(runtime.status())
+            return JSONResponse(await call(runtime.status))
         except (ValueError,OSError) as error:
             return fail(error)
 
@@ -117,17 +117,20 @@ def register(app: App) -> None:
         if (bad := guard(request, write=request.method == "POST")):
             return bad
         if request.method == "GET":
-            running = set(manager.running())
-            projects = {p['slug']: p['name'] for p in app.net.store.all('SELECT slug,name FROM projects')}
-            workers = [{'id': s.id, 'name': s.agent_name or s.label, 'project': projects.get(s.slug, s.slug),
-                        'slug': s.slug, 'state': s.state, 'why': s.why or ''}
-                       for s in list(manager.sessions.values()) if s.id in running]
-            with app.jobs._lock:
-                tasks = [{'name': j['kind'], 'phase': (j.get('progress') or {}).get('phase', ''),
-                          'function': (j.get('progress') or {}).get('function', '')}
-                         for j in app.jobs.jobs.values() if j['state'] == 'running']
-            return JSONResponse({"helpers": len(workers), "workers": workers, "tasks": tasks,
-                                 "busy": app.busy(), "tray": window.IN_TRAY})
+            def closing_snapshot():
+                running = set(manager.running())
+                projects = {p['slug']: p['name'] for p in app.net.store.all('SELECT slug,name FROM projects')}
+                workers = [{'id': s.id, 'name': s.agent_name or s.label, 'project': projects.get(s.slug, s.slug),
+                            'slug': s.slug, 'state': s.state, 'why': s.why or ''}
+                           for s in list(manager.sessions.values()) if s.id in running]
+                with app.jobs._lock:
+                    tasks = [{'name': j['kind'], 'phase': (j.get('progress') or {}).get('phase', ''),
+                              'function': (j.get('progress') or {}).get('function', '')}
+                             for j in app.jobs.jobs.values() if j['state'] == 'running']
+                return JSONResponse({"helpers": len(workers), "workers": workers, "tasks": tasks,
+                                     "busy": app.busy(), "tray": window.IN_TRAY})
+            return await call(closing_snapshot)
+
         if (await body(request)).get("keep"):
             await call(window.close_app)
             return JSONResponse({"ok": True})

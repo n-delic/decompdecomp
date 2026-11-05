@@ -38,7 +38,7 @@ def register(app: App) -> None:
         if not app.web_login and not secrets.compare_digest(window.request_token(request), secret):
             return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
         revisions = await app.call(frontend_reload.snapshot) if frontend_reload.enabled() else None
-        page=static_file("index.html").decode()
+        page=(await app.call(static_file, "index.html")).decode()
         if revisions:
             page=page.replace('</head>', f'<meta name="decomp-live-reload" data-css="{revisions["css"]}" data-page="{revisions["page"]}"></head>')
             page=page.replace('</body>', '<script src="/assets/js/live-reload.js"></script></body>')
@@ -59,7 +59,7 @@ def register(app: App) -> None:
     async def service_worker(request: Request) -> Response:
         if request.headers.get('host') not in allowed_hosts:
             return Response(status_code=403)
-        script = static_file('sw.js').decode().replace('__BUILD__', build_id or __version__)
+        script = (await app.call(static_file, 'sw.js')).decode().replace('__BUILD__', build_id or __version__)
         return Response(script, media_type='text/javascript', headers={'Cache-Control':'no-cache', 'Service-Worker-Allowed':'/'})
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])
@@ -67,7 +67,7 @@ def register(app: App) -> None:
         if request.headers.get("host") not in allowed_hosts:
             return Response(status_code=403)
         name = request.path_params["name"]
-        data = static_file(name)
+        data = await app.call(static_file, name)
         if data is None:
             return Response(status_code=404)
         ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"

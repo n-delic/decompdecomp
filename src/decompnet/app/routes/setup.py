@@ -305,7 +305,7 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         try:
-            label = manager.rename(str(data.get("id", "")), data.get("label", ""))
+            label = await call(manager.rename, str(data.get("id", "")), data.get("label", ""))
         except ValueError as e:
             return fail(e)
         return JSONResponse({"label": label})
@@ -328,7 +328,7 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         try:
-            policy = manager.set_selection(str(data.get("id", "")), data.get("selection") or {}, data.get("per_session"))
+            policy = await call(manager.set_selection, str(data.get("id", "")), data.get("selection") or {}, data.get("per_session"))
         except (NetworkError, ValueError) as e:
             return fail(e)
         return JSONResponse({"selection": policy})
@@ -360,7 +360,7 @@ def register(app: App) -> None:
             if session is None:
                 raise ValueError("This helper no longer exists.")
             kind = kinds.get(session.kind)
-            exe = agents._which(kind.command)
+            exe = await app.call(lambda: agents._which(kind.command))
             if not exe:
                 raise ValueError(f"{kind.name} is not installed.")
             await call(kind.login, exe)
@@ -384,70 +384,72 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
-        if "maintenance_cpu_percent" in data and (type(data["maintenance_cpu_percent"]) is not int
-                or not 0 <= data["maintenance_cpu_percent"] <= 100):
-            return fail(ValueError("Enter a whole CPU percentage from 1 to 100, or 0 for unlimited."))
-        if any(key in data for key in ('agent_local_enabled','agent_local_trials','agent_local_seconds')):
-            from ..agent_local_pass import configure
-            if 'agent_local_enabled' in data and not isinstance(data['agent_local_enabled'],bool):
-                return fail(ValueError('Automatic local repairs must be true or false.'))
-            for key,maximum in (('agent_local_trials',6),('agent_local_seconds',15)):
-                if key in data and (isinstance(data[key],bool) or not isinstance(data[key],int) or not 1<=data[key]<=maximum):
-                    return fail(ValueError(f'{key}: choose an integer from 1 to {maximum}.'))
-            settings.data.update({key:data[key] for key in ('agent_local_enabled','agent_local_trials','agent_local_seconds') if key in data})
-            configure(net,settings.data)
-        if isinstance(data.get("api"), dict):  # (before 0.10.1: the one endpoint there was) the first one
-            first = settings.endpoints()[0]["id"] if settings.endpoints() else ""
-            settings.save_endpoint(data["api"] | {"id": first})
-        if isinstance(data.get("endpoint"), dict):
-            settings.save_endpoint(data["endpoint"])
-        if data.get("remove_endpoint"):
-            settings.remove_endpoint(str(data["remove_endpoint"]))
-            for sid, sess in list(manager.sessions.items()):  # its sessions stop with it
-                if sess.options.get("endpoint") == str(data["remove_endpoint"]) and sess.state in agents.LIVE:
-                    manager.stop(sid)
-        if "per_session" in data:
-            settings.data["per_session"] = max(1, min(int(data["per_session"]), 20))
-        if "autopilot" in data:
-            settings.data["autopilot"] = bool(data["autopilot"])
-        if "budget_usd" in data:
-            settings.data["budget_usd"] = max(0.0, float(data["budget_usd"] or 0))
-        if 'iterative_enabled' in data:
-            settings.data['iterative_enabled'] = bool(data['iterative_enabled'])
-        if 'reuse_auto' in data:
-            settings.data['reuse_auto'] = bool(data['reuse_auto'])
-        for key, maximum in [('reuse_seconds', 600), ('reuse_attempts', 1024), ('iterative_seconds', 600), ('iterative_attempts', 1024)]:
-            if key in data:
-                settings.data[key] = max(1, min(maximum, int(data[key])))
-        if 'iterative_threads' in data:  # nothing or 0: as many as the computer can spare
-            settings.data['iterative_threads'] = max(0, int(data['iterative_threads'] or 0))
-        if any(key in data for key in ('reuse_auto', 'reuse_seconds', 'reuse_attempts', 'iterative_enabled', 'iterative_seconds', 'iterative_attempts', 'iterative_threads')):
-            net.cascades.configure(settings.data.get('reuse_auto', True), settings.data.get('reuse_seconds', 120),
-                                   settings.data.get('reuse_attempts', 128), settings.data.get('iterative_enabled', False),
-                                   settings.data.get('iterative_seconds', 120), settings.data.get('iterative_attempts', 128),
-                                   settings.data.get('iterative_threads', 0))
-        for key, maximum in [('permuter_max_insns', 100000), ('permuter_seconds', 3600), ('permuter_max_turns', 1000)]:
-            if key in data:
-                settings.data[key] = max(1, min(maximum, int(data[key])))
-        if any(key in data for key in ('permuter_max_insns', 'permuter_seconds', 'permuter_max_turns')):
-            net.permuter.configure(settings.data)
-        if "maintenance_cpu_percent" in data:
-            maintenance.configure_cpu(data["maintenance_cpu_percent"])
-            settings.data["maintenance_cpu_percent"] = data["maintenance_cpu_percent"]
-        if "worker_threads" in data:  # nothing or 0: as many as the computer can spare (workers.py)
-            settings.data["worker_threads"] = max(0, int(data["worker_threads"] or 0))
-            workers.configure(net.permuter.parent_threads(settings.data["worker_threads"]))
-        if "auto_update" in data:
-            settings.data["auto_update"] = bool(data["auto_update"])
-        if "check_updates" in data:
-            settings.data["check_updates"] = bool(data["check_updates"])
-        if "auto_compiler" in data:
-            settings.data["auto_compiler"] = net.auto_compiler = bool(data["auto_compiler"])
-        if "notes_cleared_to" in data:  # the notification centre's Clear all: events up to this id stay hidden
-            settings.data["notes_cleared_to"] = max(0, int(data["notes_cleared_to"] or 0))
-        if "bridges_removed_seen" in data:  # the notice of what the cleanup removed (cleanup.report), seen
-            settings.data["bridges_removed_seen"] = bool(data["bridges_removed_seen"])
-        if "rom_library" in data:
-            settings.data["rom_library"] = str(data["rom_library"] or "").strip()
-        settings.save()
-        return JSONResponse(settings.public())
+        def save_settings():
+            if "maintenance_cpu_percent" in data and (type(data["maintenance_cpu_percent"]) is not int
+                    or not 0 <= data["maintenance_cpu_percent"] <= 100):
+                return fail(ValueError("Enter a whole CPU percentage from 1 to 100, or 0 for unlimited."))
+            if any(key in data for key in ('agent_local_enabled','agent_local_trials','agent_local_seconds')):
+                from ..agent_local_pass import configure
+                if 'agent_local_enabled' in data and not isinstance(data['agent_local_enabled'],bool):
+                    return fail(ValueError('Automatic local repairs must be true or false.'))
+                for key,maximum in (('agent_local_trials',6),('agent_local_seconds',15)):
+                    if key in data and (isinstance(data[key],bool) or not isinstance(data[key],int) or not 1<=data[key]<=maximum):
+                        return fail(ValueError(f'{key}: choose an integer from 1 to {maximum}.'))
+                settings.data.update({key:data[key] for key in ('agent_local_enabled','agent_local_trials','agent_local_seconds') if key in data})
+                configure(net,settings.data)
+            if isinstance(data.get("api"), dict):  # (before 0.10.1: the one endpoint there was) the first one
+                first = settings.endpoints()[0]["id"] if settings.endpoints() else ""
+                settings.save_endpoint(data["api"] | {"id": first})
+            if isinstance(data.get("endpoint"), dict):
+                settings.save_endpoint(data["endpoint"])
+            if data.get("remove_endpoint"):
+                settings.remove_endpoint(str(data["remove_endpoint"]))
+                for sid, sess in list(manager.sessions.items()):  # its sessions stop with it
+                    if sess.options.get("endpoint") == str(data["remove_endpoint"]) and sess.state in agents.LIVE:
+                        manager.stop(sid)
+            if "per_session" in data:
+                settings.data["per_session"] = max(1, min(int(data["per_session"]), 20))
+            if "autopilot" in data:
+                settings.data["autopilot"] = bool(data["autopilot"])
+            if "budget_usd" in data:
+                settings.data["budget_usd"] = max(0.0, float(data["budget_usd"] or 0))
+            if 'iterative_enabled' in data:
+                settings.data['iterative_enabled'] = bool(data['iterative_enabled'])
+            if 'reuse_auto' in data:
+                settings.data['reuse_auto'] = bool(data['reuse_auto'])
+            for key, maximum in [('reuse_seconds', 600), ('reuse_attempts', 1024), ('iterative_seconds', 600), ('iterative_attempts', 1024)]:
+                if key in data:
+                    settings.data[key] = max(1, min(maximum, int(data[key])))
+            if 'iterative_threads' in data:  # nothing or 0: as many as the computer can spare
+                settings.data['iterative_threads'] = max(0, int(data['iterative_threads'] or 0))
+            if any(key in data for key in ('reuse_auto', 'reuse_seconds', 'reuse_attempts', 'iterative_enabled', 'iterative_seconds', 'iterative_attempts', 'iterative_threads')):
+                net.cascades.configure(settings.data.get('reuse_auto', True), settings.data.get('reuse_seconds', 120),
+                                       settings.data.get('reuse_attempts', 128), settings.data.get('iterative_enabled', False),
+                                       settings.data.get('iterative_seconds', 120), settings.data.get('iterative_attempts', 128),
+                                       settings.data.get('iterative_threads', 0))
+            for key, maximum in [('permuter_max_insns', 100000), ('permuter_seconds', 3600), ('permuter_max_turns', 1000)]:
+                if key in data:
+                    settings.data[key] = max(1, min(maximum, int(data[key])))
+            if any(key in data for key in ('permuter_max_insns', 'permuter_seconds', 'permuter_max_turns')):
+                net.permuter.configure(settings.data)
+            if "maintenance_cpu_percent" in data:
+                maintenance.configure_cpu(data["maintenance_cpu_percent"])
+                settings.data["maintenance_cpu_percent"] = data["maintenance_cpu_percent"]
+            if "worker_threads" in data:  # nothing or 0: as many as the computer can spare (workers.py)
+                settings.data["worker_threads"] = max(0, int(data["worker_threads"] or 0))
+                workers.configure(net.permuter.parent_threads(settings.data["worker_threads"]))
+            if "auto_update" in data:
+                settings.data["auto_update"] = bool(data["auto_update"])
+            if "check_updates" in data:
+                settings.data["check_updates"] = bool(data["check_updates"])
+            if "auto_compiler" in data:
+                settings.data["auto_compiler"] = net.auto_compiler = bool(data["auto_compiler"])
+            if "notes_cleared_to" in data:  # the notification centre's Clear all: events up to this id stay hidden
+                settings.data["notes_cleared_to"] = max(0, int(data["notes_cleared_to"] or 0))
+            if "bridges_removed_seen" in data:  # the notice of what the cleanup removed (cleanup.report), seen
+                settings.data["bridges_removed_seen"] = bool(data["bridges_removed_seen"])
+            if "rom_library" in data:
+                settings.data["rom_library"] = str(data["rom_library"] or "").strip()
+            settings.save()
+            return JSONResponse(settings.public())
+        return await app.call(save_settings)

@@ -57,3 +57,10 @@ class App:
     headless: bool = False
     autopilot: Callable[[str], None] | None = None  # state: start autopilot on a project
     with_project: Callable[..., Any] | None = None  # projects: a project route from fn(slug, request, data)
+
+    async def read(self, fn, *args):
+        """Read current state in a worker without waiting for saved-progress verification."""
+        def snapshot():
+            with self.net.progress.view():
+                return fn(*args)
+        return await (self.ui_call or self.call)(snapshot)

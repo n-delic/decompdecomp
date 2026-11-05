@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: remaining room controls, repair selection, imported-project preflights, agent settings/tool
+  metadata, upload disk I/O, static assets and status/log reads run outside the HTTP event loop.
+  Read-only snapshots bypass saved-progress synchronization; mutations keep verification gates.
+  Synthetic stalled-helper tests require health requests to remain responsive.
 - Done: sharing-dialog reads run in the UI worker lane against the current database,
   so saved-progress verification cannot make them synchronize on the HTTP event loop.
   Network discovery, member/settings reads and response encoding stay off that loop.

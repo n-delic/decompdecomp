@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -91,20 +92,20 @@ def register(app: App) -> None:
         if q.get("confirmed") != "1":
             return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
         try:
-            proj = fork_of(slug)
+            proj = await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         tmp = Path(proj["root"]) / ".decomp-wtf" / f"upload-{uuid.uuid4().hex[:8]}.tmp"
-        tmp.parent.mkdir(parents=True, exist_ok=True)
+        await app.call(lambda: tmp.parent.mkdir(parents=True, exist_ok=True))
         size = 0
-        with open(tmp, "wb") as f:
+        async with await anyio.open_file(tmp, "wb") as f:
             async for chunk in request.stream():
                 size += len(chunk)
                 if size > MAX_DISC:
-                    f.close()
-                    tmp.unlink(missing_ok=True)
+                    await f.aclose()
+                    await app.call(lambda: tmp.unlink(missing_ok=True))
                     return fail(ValueError("that file is larger than any game disc"))
-                f.write(chunk)
+                await f.write(chunk)
         name = Path(q.get("name") or "game.iso").name
 
         def work(log):
@@ -126,7 +127,7 @@ def register(app: App) -> None:
         data = await body(request)
         slug = str(data.get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         def work(log):
@@ -144,7 +145,7 @@ def register(app: App) -> None:
         data = await body(request)
         slug = str(data.get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         path = str(data.get("path") or "").strip().strip('"')
@@ -152,7 +153,7 @@ def register(app: App) -> None:
             if not data.get("confirmed"):
                 return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
             src = Path(path).expanduser()
-            if not src.is_file():
+            if not await app.call(lambda: src.is_file()):
                 return fail(ValueError(f"no file at {src}"))
 
         def work(log):
@@ -172,7 +173,7 @@ def register(app: App) -> None:
             return bad
         slug = str((await body(request)).get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         return JSONResponse({"job": jobs.start("fork-check", lambda log: net.forks.check(slug, log=log, build=True))})
@@ -187,10 +188,10 @@ def register(app: App) -> None:
         data = await body(request)
         kind, slug = str(data.get("agent") or ""), str(data.get("slug", ""))
         try:
-            fork_of(slug)
-            if not any(a["id"] == kind and a["installed"] for a in setup_fix.choices()):
+            proj = await app.read(fork_of, slug)
+            if not any(a["id"] == kind and a["installed"] for a in await call(setup_fix.choices)):
                 raise NetworkError("Choose an installed coding CLI.")
-            folder = Path(hostenv.local_path(net.overview(slug)["folder"]))
+            folder = Path(proj["root"])
         except (NetworkError, ValueError) as e:
             return fail(e)
         return JSONResponse({"job": jobs.start("fix-setup", lambda log: setup_fix.launch(
@@ -203,7 +204,7 @@ def register(app: App) -> None:
             return bad
         slug = str((await body(request)).get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         return JSONResponse({"job": jobs.start("rom-check", lambda log: net.forks.check_rom(slug, log=log))})
@@ -215,7 +216,7 @@ def register(app: App) -> None:
             return bad
         slug = str((await body(request)).get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         return JSONResponse({"job": jobs.start("fork-start-files", lambda log: net.forks.start_files(slug, log=log))})

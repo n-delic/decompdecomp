@@ -12,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -191,22 +192,26 @@ def register(app: App) -> None:
                         await call(manager.set_tool, helper.id, name, enabled)
                     else:
                         await call(tool_policy.set_global, net, name, enabled)
-            blocked = tool_policy.disabled(net)
-            own = set((helper.options.get('selection') or {}).get('disabled_tools', [])) if helper else set()
-            usage = {r['name']:dict(r) for r in net.store.all('SELECT * FROM agent_tool_usage')}
-            tasks = {}
-            for row in net.store.all('SELECT * FROM agent_tool_task_usage'):
-                tasks.setdefault(row['name'], {})[row['task']] = row['calls']
             definitions = await mcp.list_tools()
-            if helper:
-                names = set(tools.project_tools(net, helper.slug, include_disabled=True))
-                definitions = [t for t in definitions if t.name in names]
-            return JSONResponse({'tools':[{**t.model_dump(mode='json', by_alias=True),
-                'calls':usage.get(t.name, {}).get('calls', 0), 'task_calls':tasks.get(t.name, {}), 'schema_chars':len(json.dumps(t.model_dump(mode='json', by_alias=True))), 'required':t.name in tool_policy.REQUIRED,
-                'global_disabled':t.name in blocked, 'enabled':t.name not in blocked | own}
-                for t in definitions], 'helper':helper.id if helper else None,
-                'presets':[{'id':key, 'label':label, 'tools':sum(t.name not in tool_policy.preset_disabled(key) and (not helper or t.name not in blocked) for t in definitions)} for key,(label,_) in tool_policy.PRESETS.items()],
-                'coverage':'Local counts include surviving saved transcript requests plus calls recorded since tool tracking began. Older unrecorded calls cannot be reconstructed. Counts survive app restarts and agent removal.'})
+            def tool_snapshot():
+                blocked = tool_policy.disabled(net)
+                own = set((helper.options.get('selection') or {}).get('disabled_tools', [])) if helper else set()
+                usage = {r['name']:dict(r) for r in net.store.all('SELECT * FROM agent_tool_usage')}
+                tasks = {}
+                for row in net.store.all('SELECT * FROM agent_tool_task_usage'):
+                    tasks.setdefault(row['name'], {})[row['task']] = row['calls']
+                if helper:
+                    names = set(tools.project_tools(net, helper.slug, include_disabled=True))
+                    selected = [t for t in definitions if t.name in names]
+                else:
+                    selected = definitions
+                return JSONResponse({'tools':[{**t.model_dump(mode='json', by_alias=True),
+                    'calls':usage.get(t.name, {}).get('calls', 0), 'task_calls':tasks.get(t.name, {}), 'schema_chars':len(json.dumps(t.model_dump(mode='json', by_alias=True))), 'required':t.name in tool_policy.REQUIRED,
+                    'global_disabled':t.name in blocked, 'enabled':t.name not in blocked | own}
+                    for t in selected], 'helper':helper.id if helper else None,
+                    'presets':[{'id':key, 'label':label, 'tools':sum(t.name not in tool_policy.preset_disabled(key) and (not helper or t.name not in blocked) for t in selected)} for key,(label,_) in tool_policy.PRESETS.items()],
+                    'coverage':'Local counts include surviving saved transcript requests plus calls recorded since tool tracking began. Older unrecorded calls cannot be reconstructed. Counts survive app restarts and agent removal.'})
+            return await app.read(tool_snapshot)
         except (NetworkError, ValueError, KeyError) as error:
             return fail(error)
 
@@ -224,7 +229,7 @@ def register(app: App) -> None:
                 if data.get('action') != 'create':
                     raise ValueError('Choose create or revoke.')
                 item = await call(manual_mcp.create, net, settings, str(data.get('slug') or ''))
-                return JSONResponse({**item, 'url': mcp_url, 'instructions': prompt_settings.effective(net, {})['instructions']})
+                return JSONResponse({**item, 'url': mcp_url, 'instructions': (await app.read(prompt_settings.effective, net, {}))['instructions']})
             slug = request.query_params.get('slug')
             def project_tool_names():
                 if slug:
@@ -248,7 +253,7 @@ def register(app: App) -> None:
         if not data.get("confirmed"):
             return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
         source, game = str(data.get("source") or "").strip(), hostenv.local_path(str(data.get("path") or ""))
-        if not source or not game.is_file():
+        if not source or not await app.call(lambda: game.is_file()):
             return fail(ValueError("pick the saved project (a folder or a git address) and your copy of the game"))
         return JSONResponse({"job": jobs.start("restore", lambda log: saves.restore(net, source, game, log=log))})
 
@@ -328,30 +333,30 @@ def register(app: App) -> None:
                 return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
             if q.get("path"):
                 game = hostenv.local_path(q["path"])
-                if not game.exists():  # (a folder too: a PC game's, whose own DLLs come along)
+                if not await app.call(lambda: game.exists()):  # (a folder too: a PC game's, whose own DLLs come along)
                     return fail(ValueError(f"no file or folder at {game}"))
                 name = game.name
             else:
                 name = Path(q.get("name") or "game.bin").name
                 upload_dir = home / "uploads" / uuid.uuid4().hex[:8]  # keeps the file's own name
-                upload_dir.mkdir(parents=True, exist_ok=True)
+                await app.call(lambda: upload_dir.mkdir(parents=True, exist_ok=True))
                 game = upload_dir / name
                 size = 0
-                with open(game, "wb") as f:
+                async with await anyio.open_file(game, "wb") as f:
                     async for chunk in request.stream():
                         size += len(chunk)
                         if size > MAX_DISC:
-                            f.close()
-                            game.unlink(missing_ok=True)
+                            await f.aclose()
+                            await app.call(lambda: game.unlink(missing_ok=True))
                             return fail(ValueError("that file is larger than any game disc"))
-                        f.write(chunk)
+                        await f.write(chunk)
                 if size == 0:
-                    game.unlink(missing_ok=True)
+                    await app.call(lambda: game.unlink(missing_ok=True))
                     return fail(ValueError("the file was empty"))
                 try:
-                    split_extras(game, size, q.get("extras"))
+                    await call(split_extras, game, size, q.get("extras"))
                 except ValueError as e:
-                    shutil.rmtree(game.parent, ignore_errors=True)
+                    await app.call(lambda: shutil.rmtree(game.parent, ignore_errors=True))
                     return fail(e)
         uploaded = isinstance(game, Path) and game.parent.parent == home / "uploads"
 
@@ -373,7 +378,7 @@ def register(app: App) -> None:
         except ValueError as e:
             # A source update can queue while a disc is uploading, before it becomes a job.
             if uploaded:
-                shutil.rmtree(game.parent, ignore_errors=True)
+                await app.call(lambda: shutil.rmtree(game.parent, ignore_errors=True))
             return fail(e, 503)
 
     COLUMN_KEYS = ("vram", "cc", "ccx")
@@ -454,14 +459,17 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         path = home / "logs" / "decomp.log"
-        try:
-            with open(path, "rb") as f:
-                f.seek(max(0, path.stat().st_size - (512 << 10)))
-                text = f.read().decode("utf-8", "replace")
-        except OSError:
-            text = "(nothing logged yet)"
-        return Response(text, media_type="text/plain; charset=utf-8",
-                        headers={"Content-Disposition": 'inline; filename="decomp.log"'})
+        def read_log():
+            try:
+                with open(path, "rb") as f:
+                    f.seek(max(0, path.stat().st_size - (512 << 10)))
+                    text = f.read().decode("utf-8", "replace")
+            except OSError:
+                text = "(nothing logged yet)"
+            return Response(text, media_type="text/plain; charset=utf-8",
+                            headers={"Content-Disposition": 'inline; filename="decomp.log"'})
+
+        return await app.call(read_log)
 
     from ..work_monitor import Monitor
     monitor = Monitor(net, jobs, manager)

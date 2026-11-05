@@ -43,19 +43,23 @@ def register(app):
                 raise NetworkError('Choose either edit minimization or combination benchmarking for this run.')
             category,status=str(data.get('category') or ''),str(data.get('status') or '')
             comparable=bool(data.get('comparable',True))
-            if data.get('id') is not None:
-                case_id=data['id']
-                if isinstance(case_id,bool) or not isinstance(case_id,int):raise NetworkError('Choose an example number.')
-                feedback.detail(slug,case_id,include_source=False)
-                ids=[case_id]
-            else:
-                ids, seen = [], set()
-                for row in feedback.listing(slug,category,status,comparable=comparable)['examples']:
-                    key = (row['slug'],row['function'])
-                    if key not in seen:
-                        ids.append(row['id']); seen.add(key)
-                    if len(ids) == 20:
-                        break
+            def select_examples():
+                if data.get('id') is not None:
+                    case_id=data['id']
+                    if isinstance(case_id,bool) or not isinstance(case_id,int):raise NetworkError('Choose an example number.')
+                    feedback.detail(slug,case_id,include_source=False)
+                    ids=[case_id]
+                else:
+                    ids, seen = [], set()
+                    for row in feedback.listing(slug,category,status,comparable=comparable)['examples']:
+                        key = (row['slug'],row['function'])
+                        if key not in seen:
+                            ids.append(row['id']); seen.add(key)
+                        if len(ids) == 20:
+                            break
+                return ids
+            ids = await app.read(select_examples)
+
             if not ids:raise NetworkError('No examples match these filters.')
             with app.jobs._lock:
                 if any(j['kind']=='repair-replay' and j['state']=='running' for j in app.jobs.jobs.values()):
@@ -85,10 +89,10 @@ def register(app):
             if not slug and q.get('all') != '1':
                 raise NetworkError('Choose a project or explicitly select all projects.')
             if q.get('function'):
-                fn = app.net._function(q['function'], slug)
-                return JSONResponse({'evidence': await app.call(candidate_quality.view, app.net, fn)})
+                fn = await app.read(app.net._function, q['function'], slug)
+                return JSONResponse({'evidence': await app.read(candidate_quality.view, app.net, fn)})
             from .. import candidate_rechecks
-            return JSONResponse({'reports': await app.call(candidate_rechecks.listing, app.net, slug)})
+            return JSONResponse({'reports': await app.read(candidate_rechecks.listing, app.net, slug)})
         except (NetworkError, ValueError, KeyError) as error:
             return app.fail(error)
 
@@ -103,11 +107,11 @@ def register(app):
                 slug = str(q.get('slug') or '')
                 if not slug:
                     raise NetworkError('Choose a project for candidate recovery.')
-                return JSONResponse(await app.call(candidate_rechecks.evidence, app.net, slug, str(q['function']),
+                return JSONResponse(await app.read(candidate_rechecks.evidence, app.net, slug, str(q['function']),
                                                    str(q['source_hash']), int(q['attempt_id'])))
             data = await app.body(request)
             slug = str(data.get('slug') or '')
-            app.net.project_row(slug)
+            await app.read(app.net.project_row, slug)
             limit = data.get('limit', 20)
             if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
                 raise NetworkError('Choose 1–200 functions per recovery batch.')
@@ -137,8 +141,8 @@ def register(app):
                 return JSONResponse(await app.call(feedback.review, slug, int(data['id']), str(data['status']),
                                                    str(data.get('category', '')), data.get('note')))
             if q.get('id'):
-                return JSONResponse(await app.call(feedback.detail, slug, int(q['id'])))
-            return JSONResponse(await app.call(feedback.listing, slug, q.get('category', ''), q.get('status', ''),
+                return JSONResponse(await app.read(feedback.detail, slug, int(q['id'])))
+            return JSONResponse(await app.read(feedback.listing, slug, q.get('category', ''), q.get('status', ''),
                                                int(q.get('before', 0)), q.get('comparable') == '1'))
         except (NetworkError, ValueError, KeyError) as error:
             return app.fail(error)
@@ -168,9 +172,9 @@ def register(app):
             slug = '' if data.get('all') else str(data.get('slug') or '')
             if not slug and not data.get('all'):
                 raise NetworkError('Choose a project or explicitly select all projects.')
-            example = await app.call(feedback.detail, slug, int(data['id']))
+            example = await app.read(feedback.detail, slug, int(data['id']))
             kind = str(data.get('agent') or '')
-            if not any(a['id'] == kind and a['installed'] for a in repair_investigations.choices()):
+            if not any(a['id'] == kind and a['installed'] for a in await app.call(repair_investigations.choices)):
                 raise NetworkError('Choose an installed coding CLI for this investigation.')
             job = app.jobs.start('repair investigation', lambda log: repair_investigations.launch(app.home, example, kind, log))
             return JSONResponse({'job': job})
@@ -186,7 +190,7 @@ def register(app):
             slug = '' if q.get('all') == '1' else q.get('slug', '')
             if not slug and q.get('all') != '1':
                 raise NetworkError('Choose a project or explicitly select all projects.')
-            feedback._where(slug, q.get('category', ''), q.get('status', ''), q.get('comparable') == '1')
+            await app.read(feedback._where, slug, q.get('category', ''), q.get('status', ''), q.get('comparable') == '1')
             chunks = feedback.export(slug, q.get('category', ''), q.get('status', ''), q.get('include_source') == '1', q.get('comparable') == '1')
             return StreamingResponse(chunks, media_type='application/json',
                                      headers={'Content-Disposition': 'attachment; filename="repair-examples.json"'})
