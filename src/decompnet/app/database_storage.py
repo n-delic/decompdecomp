@@ -84,7 +84,7 @@ def _protection(store):
     # Some captured stages retain references inside JSON in addition to their direct foreign keys.
     clauses.append("SELECT j.atom FROM main.repair_examples r,json_tree(CASE WHEN json_valid(r.evidence) THEN r.evidence ELSE '{}' END) j "
                    "WHERE j.key IN ('attempt_id','before_attempt_id','after_attempt_id','baseline_attempt_id','previous_attempt_id') AND j.type='integer'")
-    return 'a.id NOT IN ('+' UNION '.join(dict.fromkeys(clauses))+')' 
+    return 'a.id NOT IN ('+' UNION '.join(dict.fromkeys(clauses))+')'
 
 
 def prune(net,value,log):
