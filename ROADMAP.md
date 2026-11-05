@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: header cleanup waits cancellably for SQLite write-lock acquisition, with visible
+  retry status and no transaction-body replay. Failed UI jobs expose a bounded recent
+  application-log tail and their error details directly in an opened, copyable log panel.
+
 - Done: deliberate user jobs start on independent foreground threads and bypass the automatic
   maintenance lane and its pacing. A cleanup click promotes an already queued automatic cleanup
   without duplicating it. Scheduled retention, resumed automatic recovery and repair handoffs

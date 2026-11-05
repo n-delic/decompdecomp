@@ -262,12 +262,17 @@ async function main() {
   const copyTest = setup(...cases[0]);
   const raw = "mips-linux-gnu-cpp: missing\nmake: *** Error 127";
   copyTest.log.textContent = raw;
+  const collapsedDetails={open:false};copyTest.log.closest=()=>collapsedDetails;
   let copied = null;
   copyTest.ctx.copyText = async (text) => { copied = text; return true; };
   copyTest.ctx.showJobError(copyTest.log, "setup step failed: make\nMissing preprocessor.\n\nBuild output:\n" + raw);
+  assert.equal(collapsedDetails.open,true);
+  assert.match(copyTest.log.className,/joblog/);
   assert.equal(copyTest.log._errorBox.textContent, "setup step failed: make");
   assert.equal(copyTest.log.textContent.split("mips-linux-gnu-cpp: missing").length - 1, 1);
   const toolbar = copyTest.log._copyToolbar;
+  assert.equal(toolbar.children[0].textContent,"Job log");
+  assert.equal(copyTest.log.scrollTop,copyTest.log.scrollHeight);
   await toolbar.children[1].onclick();
   assert.equal(copied, copyTest.log.textContent);
   assert.ok(copied.includes("Missing preprocessor."));

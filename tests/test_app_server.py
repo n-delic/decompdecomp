@@ -840,6 +840,8 @@ def test_a_job_always_ends_and_says_why(tmp_path):
     job = wait(jobs.start("import", bug))
     assert job["state"] == "error" and "KeyError" in job["error"] and "report" in job["error"]
     assert "Traceback" in job["trace"]
+    assert "Recent application log:" in job["log"]
+    assert "KeyError" in "\n".join(job["log"]) and "Traceback" in "\n".join(job["log"])
     assert "dtk took longer than 30 minutes" in wait(jobs.start("import", slow))["error"]
     assert wait(jobs.start("build", failed))["error"] == "ninja failed (2): ld: undefined symbol foo"
     logged = (tmp_path / "logs" / "decomp.log").read_text()

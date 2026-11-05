@@ -240,11 +240,12 @@ function showJobError(logEl, message) {
     const extra = message.split("\n").filter((line) => line.trim() && line !== "Build output:" && !current.includes(line));
     logEl.textContent = [extra.join("\n"), current].filter(Boolean).join("\n\n");
     logEl.hidden = false;
+    if (!/\bjoblog\b/.test(logEl.className || "")) logEl.className = `${logEl.className || ""} joblog tall`.trim();
     if (!logEl._copyToolbar) {
       const toolbar = document.createElement("div");
       toolbar.className = "row joblog-toolbar";
       const label = document.createElement("b");
-      label.textContent = "Build log";
+      label.textContent = "Job log";
       const button = document.createElement("button");
       button.type = "button";
       button.className = "ghost small-btn";
@@ -258,6 +259,9 @@ function showJobError(logEl, message) {
       logEl._copyToolbar = toolbar;
     }
     logEl._copyToolbar.hidden = false;
+    const details = logEl.closest?.("details");
+    if (details) details.open = true;
+    logEl.scrollTop = logEl.scrollHeight;
   } else {
     logEl.textContent = "";
     logEl.hidden = false;

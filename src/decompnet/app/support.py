@@ -34,6 +34,18 @@ MIN_CONTEXT_TOKENS = 2048  # an endpoint's context is at least this: the work pr
 MAX_SESSIONS = 32  # helpers on one endpoint at once, at most
 
 
+def recent_log(path, *, lines=30, chars=6000):
+    """A bounded local diagnostic tail; never read a growing log in its entirety."""
+    if path is None:return ''
+    try:
+        with Path(path).open('rb') as stream:
+            stream.seek(0,2)
+            size=stream.tell();stream.seek(max(0,size-65536))
+            tail=stream.read(65536).decode('utf-8',errors='replace')
+        return '\n'.join(tail.splitlines()[-lines:])[-chars:]
+    except OSError:return ''
+
+
 def file_log(path: Path) -> logging.Logger:
     """decompdecomp's log (logs/decomp.log in its data folder), always on: every job and what it said, decompdecomp's
     own debug messages, the web server's and the libraries' warnings, and every uncaught error in any thread with its
@@ -164,8 +176,13 @@ class Jobs:
                 elif not isinstance(e, (NetworkError, RomError, ValueError)):
                     job["trace"] = traceback.format_exc()[-TRACE_CHARS:]
                 job["error"] = job_error(e, self.log_path)
-                job["state"] = "error"  # last: whoever sees the state sees the rest
                 logger.error("job %s %s failed: %s\n%s", kind, jid, job["error"], traceback.format_exc())
+                tail=recent_log(self.log_path)
+                details=job.get('trace','')
+                if details and details.strip() not in tail:
+                    job['log'].extend(['Failure details:',*details.splitlines()])
+                if tail:job['log'].extend(['Recent application log:',*tail.splitlines()])
+                job['state']='error'  # Publish only after diagnostic lines are ready for the UI.
                 if isinstance(e, (KeyboardInterrupt, SystemExit)):
                     raise
         threading.Thread(target=run, daemon=True, name=f"job-{kind}").start()
