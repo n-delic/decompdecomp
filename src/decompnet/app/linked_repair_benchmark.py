@@ -101,7 +101,7 @@ def benchmark(root, name, source, header, *, trials=128, seconds=120, families=(
     def generate(parent):
         labels = {}
         candidates = draft_repairs.variants(parent,name,arch,asm,scope['compiler'].get('flags',[]),labels,
-                                            limit=None,header=header)
+                                            limit=None,header=header,entry_scope=draft_repairs.promoted_entry_repairs.profile_scope(arch,scope['compiler']))
         order = region_repairs.order(list(dict.fromkeys(labels[c] for c in candidates)),cache[parent].get('rows') or [])
         return sorted([(labels[c],c) for c in candidates if not families or labels[c] in families],
                       key=lambda item:order.index(item[0]))

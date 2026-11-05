@@ -4681,3 +4681,26 @@ zero. The inferred-record control was recovered in one trial rather than seven,
 and the supported normalization case in two rather than exhausting 24. This cohort
 was used to investigate and develop the fixes; it is not independent held-out
 validation. No linked ROM verdict or live match was created by these replays.
+
+## A promoted integer input can benefit from a real narrow local
+
+Evidence: controlled private decoder compilation, not a new exact match. Pinned
+KMC GCC 2.7.2 with `-G8 -mips3 -mgp32 -mfp32 -O2 -ffast-math
+-fno-strength-reduce -g3`: a compatible signed-int interface with entry byte
+self-assignment scored 1100. Renaming only that formal and consuming a real
+`unsigned char` local scored 705, both with an initializer and with the conversion
+left at its original statement. Shared generation independently reproduced both
+705 candidates through the ordinary compiler and linked judge. The function
+remains open; the byte representation is evidence, not a full C semantics proof
+for the surrounding raw-memory code.
+
+The `promoted_entry_local` family preserves the public function type. Its guards
+require C with 32-bit int, an unescaped signed-int parameter, one dominating
+narrowing assignment, no earlier use and no later mutation. Type inspection,
+inferred locals, builtin/variadic constructs, conditional types and hidden
+includes are excluded. Direct pinned GCC profiles with known-safe flags provide
+the initial mode/width evidence; unknown commands and external project builds do
+not. Macro-expanded recursion cannot grant that evidence. Native homemade C
+boundary controls cover signed/unsigned char and short conversions against an
+independent integer oracle. This does not justify narrowing or widening a shared
+callee declaration, altering profiles, or automatically accepting a near miss.

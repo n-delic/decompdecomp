@@ -285,7 +285,7 @@ def output_key(report):
     return hashlib.sha256(repr((report['candidate_target'], report.get('candidate_relocs'))).encode()).hexdigest()
 
 
-def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees='', *, focused=True):
+def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees='', *, focused=True, entry_scope=None):
     from . import (
         draft_repairs,
         independent_address_repairs,
@@ -294,7 +294,7 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
         value_trace_repairs,
     )
     labels = {}
-    proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees)
+    proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees,entry_scope=entry_scope)
     from . import hazard_line_repairs
     hazards=hazard_line_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [])
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
@@ -331,12 +331,12 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
-                      selection=None, limit=20, pool_cache=None, focused=True):
+                      selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None):
     key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'), report.get('repair_locations'), fn['name'], fn['asm'],
-                              arch, flags, header, tables, callees, focused)).encode()).hexdigest()
+                              arch, flags, header, tables, callees, focused, entry_scope)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None
     if result is None:
-        result = targeted_pool(source, report, fn, arch, flags, header, tables, callees, focused=focused)
+        result = targeted_pool(source, report, fn, arch, flags, header, tables, callees, focused=focused, entry_scope=entry_scope)
         if pool_cache is not None:
             pool_cache[key] = result
             while len(pool_cache) > 2:
@@ -562,7 +562,7 @@ def _run(twins, slug, job):
                 compiled = dict(target=bytes.fromhex(report['candidate_target']), relocs=report.get('candidate_relocs', '[]'))
                 guided += similar_matches.literal_variants(source, compiled, fn, bool(proj['big_endian']))
             from . import draft_repairs, switch_tables
-            targeted = targeted_variants(source, report, fn, proj['arch'], settings.get('flags', []), header, switch_tables.read(net,proj,fn), draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source), tagged=True, selection=state.setdefault('proposal_cursors', {}), limit=8, pool_cache=pool_cache)
+            targeted = targeted_variants(source, report, fn, proj['arch'], settings.get('flags', []), header, switch_tables.read(net,proj,fn), draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source), tagged=True, selection=state.setdefault('proposal_cursors', {}), limit=8, pool_cache=pool_cache, entry_scope=draft_repairs.promoted_entry_repairs.scope(net,proj,fn))
             families = list(dict.fromkeys(family for family, _ in targeted))
             ordered = repair_selection.order(adaptive_repairs.order(net, proj, fn, report.get('rows') or [], families),
                                              report.get('repair_path', []))

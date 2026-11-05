@@ -2747,3 +2747,17 @@ need independent evidence before receiving this specific GNU C repair.
   definitions block proposals. Pinned homemade compiler controls and a copied
   cartridge check confirm the measured composition. Complex expressions and
   shared interface migrations remain manual investigations.
+
+- Done: bounded `promoted_entry_local` proposals preserve signed-int interfaces
+  while representing a stable entry narrowing as a real byte/short local. Shared
+  agent variants, local/deep permuters, iterative repair, donor follow-ups and
+  offline replay/benchmarks receive explicit C32 eligibility from direct pinned
+  GCC profiles. Unknown flags/commands, C++, conditional type contexts and
+  macro-expanded recursion stay excluded. Two private decoder proposals reproduce
+  score 1100 → 705 (not a new match); homemade native boundary controls verify the
+  integer conversion behavior.
+- Planned gap — promoted entry locals in external PROJECT builds and compiler
+  adapters: their build commands may compile nominal `.c` as C++ or change integer
+  widths. Do not enable this family from a filename. Supply complete current
+  invocation language and target-width evidence before enabling it there; existing
+  repair families remain available.
