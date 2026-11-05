@@ -707,13 +707,14 @@ class Twins:
                     wanted[target.key].append(row["id"])
             from .partial_reuse import run as reuse_partial
             partial_state = {'tried':0}
-            for other in shared_reuse.compatible(self.net, proj):
-                from .free_candidates import exhausted
-                if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):
-                    return matched
-                snapshot = shared_reuse.discover(self, proj, job=job, donors=[other], matched_only=True)
-                matched += shared_reuse.transfer(self, proj, job, snapshot=snapshot, donors=[other])
-                matched += reuse_partial(self, proj, wanted, mine, job, projects=[other], budget_state=partial_state)
+            from .free_candidates import exhausted
+            for other in shared_reuse.compatible(self.net,proj):
+                if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):return matched
+                snapshot=shared_reuse.discover(self,proj,job=job,donors=[other],matched_only=True)
+                matched+=shared_reuse.transfer(self,proj,job,snapshot=snapshot,donors=[other])
+            for other in shared_reuse.compatible(self.net,proj):
+                if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):return matched
+                matched+=reuse_partial(self,proj,wanted,mine,job,projects=[other],budget_state=partial_state)
             return matched
         if not (fork or self.net.is_rom(proj)) or slug in self.net.links:
             return 0
@@ -743,11 +744,15 @@ class Twins:
                         matched += self._rom_to_rom(agent, proj, other, wanted, mine, job)
                 else:
                     matched += self._fork_to_rom(agent, proj, other, wanted, mine, job)
-                matched += reuse_partial(self, proj, wanted, mine, job, projects=[other], budget_state=partial_state)
-                # Publish leads for this donor after trying it, without crawling the next project first.
-                shared_reuse.discover(self, proj, job=job, donors=[other], matched_only=True)
+                # Verified donors in every game get priority over unfinished C.
+                # Discovery and partial reuse run only after the exact pass.
             except (NetworkError, OSError, ValueError):
                 log.exception("twins: donor %s for %s", other['slug'], slug)
+        for other in shared_reuse.compatible(self.net,proj):
+            if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):return matched
+            report(job,'Checking unfinished donor candidates',game=other['name'])
+            matched+=reuse_partial(self,proj,wanted,mine,job,projects=[other],budget_state=partial_state)
+            shared_reuse.discover(self,proj,job=job,donors=[other],matched_only=True)
         return matched
 
     def _rom_to_rom(self, agent, proj, other, wanted, mine, job):
@@ -890,9 +895,15 @@ class Twins:
             "WHERE a.project_id=? AND a.outcome='match' ORDER BY a.id DESC LIMIT 30", proj["id"])
         counts = self.net.store.all("SELECT outcome,COUNT(*) AS n FROM cross_game_attempts WHERE project_id=? "
                                     "GROUP BY outcome", proj["id"])
+        archived=self.net.store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_name AS source,a.source_game AS game,COALESCE((SELECT slug FROM projects WHERE slug=a.source_slug),'') AS source_slug FROM library_transfers a JOIN functions f ON f.id=a.function_id WHERE a.project_id=? ORDER BY a.id DESC LIMIT 30",proj['id'])
+        archived_matches=self.net.store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_name AS source,a.source_game AS game,COALESCE((SELECT slug FROM projects WHERE slug=a.source_slug),'') AS source_slug FROM library_transfers a JOIN functions f ON f.id=a.function_id WHERE a.project_id=? AND a.outcome='match' ORDER BY a.id DESC LIMIT 30",proj['id'])
+        totals={r['outcome']:r['n'] for r in counts}
+        for r in self.net.store.all('SELECT outcome,COUNT(*) n FROM library_transfers WHERE project_id=? GROUP BY outcome',proj['id']):
+            totals[r['outcome']]=totals.get(r['outcome'],0)+r['n']
+        recent=sorted([dict(r) for r in [*rows,*archived]],key=lambda r:r['created_at'],reverse=True)[:30]
+        verified=sorted([dict(r) for r in [*matches,*archived_matches]],key=lambda r:r['created_at'],reverse=True)[:30]
         from .shared_reuse import summary
-        return {"counts": {r["outcome"]: r["n"] for r in counts}, "recent": [dict(r) for r in rows],
-                "matches": [dict(r) for r in matches], "discovery": summary(self, proj)}
+        return {'counts':totals,'recent':recent,'matches':verified,'discovery':summary(self,proj)}
 
     def suggestions(self, slug: str, function: str, limit: int = 5) -> list[dict]:
         """Read-only cross-game and local SDK name hints. Similar code is a lead, never a verified match."""

@@ -176,3 +176,7 @@ async function autopilotProgressChecks() {
   assert.match(get('apSub').textContent,/Fingerprinting.*Total not yet known/);
 }
 checks().then(autopilotProgressChecks).catch(error=>{console.error(error);process.exitCode=1;});
+
+ctx.renderCrossGameProgress({phase:'Checking indexed matches',done:3,total:12,indexed_candidates:12,cached_skips:4,game:'Example game',function:'target_fn',donor:'source_fn'});
+assert.match(get('crossGameLeadStatus').textContent,/12 target functions.*4 unchanged.*source_fn/);
+assert.match(get('crossGamePhaseStatus').textContent,/3 \/ 12.*25%.*Example game.*target_fn/);

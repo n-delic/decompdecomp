@@ -1970,7 +1970,7 @@ class Network:
             for table in ("claims", "attempts"):
                 db.executemany(f"DELETE FROM {table} WHERE function_id=?", [(i,) for i in ids])
             for table in ("notes", "events", "context_versions", "functions", "symbols", "twin_misses",
-                          "cross_game_index"):
+                          "cross_game_index", "library_transfers"):
                 db.execute(f"DELETE FROM {table} WHERE project_id=?", (proj["id"],))
             db.execute("DELETE FROM cross_game_attempts WHERE project_id=? OR source_project_id=?",
                        (proj["id"], proj["id"]))

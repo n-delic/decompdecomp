@@ -431,3 +431,33 @@ def test_archive_batch_hashes_repeated_text_once_and_refreshes_project(library,m
     assert len(calls)==len({item[k] for k in ('source','header','print','symbols')})
     with net.store.tx() as db:db.execute("UPDATE projects SET name='Changed title' WHERE id=1")
     assert lib.snapshot(net.project_row('game1'),1)['game_name']=='Changed title'
+
+
+def test_open_donor_matches_before_any_live_project_reindex(library,monkeypatch):
+    net,lib=library
+    monkeypatch.setattr(net,'is_rom',lambda _:True)
+    lib.archive_project(net.project_row('game1'))
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE id=2")
+    monkeypatch.setattr(net.twins,'index_project',lambda *_:pytest.fail('first match must use the saved index'))
+    def accept(agent,proj,a,b,source,**kwargs):
+        with net.store.tx() as db:db.execute("UPDATE functions SET status='matched' WHERE id=?",(b['id'],))
+        return 'match','Destination bytes verified'
+    monkeypatch.setattr(net.twins,'_attempt_twin',accept)
+    assert net.twins.across_games('game2')==1
+    results=net.twins.cross_game_results('game2')
+    assert results['counts']['match']==1 and results['matches'][0]['game']=='First game'
+
+
+def test_library_shortlists_shared_fingerprints_before_fetching_source(library,monkeypatch):
+    net,lib=library
+    lib.archive_project(net.project_row('game1'))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE id=2")
+        db.executemany("INSERT INTO functions(id,project_id,name,status,size,vram) VALUES(?,2,?,'open',32,4096)",[(i,f'unrelated_{i}') for i in range(3,103)])
+    prints={i:Print('same-code' if i==2 else f'unrelated-{i}',[],32) for i in range(2,103)}
+    monkeypatch.setattr(net.twins,'prints',lambda _:prints)
+    queried=[];candidates=lib.candidates
+    monkeypatch.setattr(lib,'candidates',lambda *args:(queried.append(args[2]),candidates(*args))[-1])
+    monkeypatch.setattr(net.twins,'_attempt_twin',lambda *args,**kwargs:('match','verified'))
+    assert lib.reuse(net.twins,net.project_row('game2'))==1
+    assert queried==['same-code']

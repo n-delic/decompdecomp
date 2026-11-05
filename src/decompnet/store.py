@@ -129,6 +129,10 @@ CREATE TABLE IF NOT EXISTS cross_game_index(
   function_id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, fingerprint TEXT NOT NULL,
   compiler TEXT NOT NULL, size INTEGER NOT NULL, matched_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_cross_game_fingerprint ON cross_game_index(fingerprint, compiler);
+CREATE TABLE IF NOT EXISTS library_transfers(
+ id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL,function_id INTEGER NOT NULL,
+ source_game TEXT NOT NULL,source_name TEXT NOT NULL,source_slug TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL,reason TEXT,created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_library_transfers_project ON library_transfers(project_id,created_at);
 CREATE TABLE IF NOT EXISTS cross_game_attempts(
   id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, function_id INTEGER NOT NULL,
   source_project_id INTEGER NOT NULL, source_function_id INTEGER NOT NULL,
@@ -426,6 +430,7 @@ class Store:
         # ran into them
         self.conn.execute("DELETE FROM symbols WHERE project_id NOT IN (SELECT id FROM projects)")
         self.conn.execute("DELETE FROM cross_game_index WHERE project_id NOT IN (SELECT id FROM projects)")
+        self.conn.execute("DELETE FROM library_transfers WHERE project_id NOT IN (SELECT id FROM projects)")
         self.conn.execute("DELETE FROM cross_game_attempts WHERE project_id NOT IN (SELECT id FROM projects) "
                           "OR source_project_id NOT IN (SELECT id FROM projects)")
         # before 0.10.4 a twin's try left the function claimed by the autopilot for 30 minutes, and each expiry

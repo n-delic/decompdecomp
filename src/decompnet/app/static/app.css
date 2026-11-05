@@ -1987,3 +1987,11 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 @media (prefers-reduced-motion: reduce) { .progress-sync-indicator .spinner { animation: none; } }
 .progress-sync-indicator { flex: none; }
 .progress-sync-indicator[hidden] { display: inline-flex !important; visibility: hidden; pointer-events: none; }
+
+/* Cross-game search: visible evidence and a readable current operation. */
+.transfer-dashboard .transfer-totals { gap:12px; }
+.transfer-dashboard .transfer-totals > span { border:1px solid var(--line-soft); border-radius:var(--r); padding:14px 16px; background:var(--code-bg); }
+#crossGameWork { padding:16px; border:1px solid var(--line-soft); border-left:3px solid var(--match); border-radius:var(--r); background:var(--code-bg); }
+.transfer-phase { font-size:13px; font-weight:600; }
+.transfer-lead-status { font-size:12px; color:var(--muted); line-height:1.65; margin:0 0 12px; }
+.transfer-diagnostic { grid-column:1/-1; margin:0; padding-top:8px; border-top:1px solid var(--line-soft); font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
