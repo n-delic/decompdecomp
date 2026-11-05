@@ -1351,7 +1351,7 @@ details.more[open] > summary::before { content: "− "; }
 
 .compiler-view-controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
 .compiler-view-controls label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; min-width: 150px; }
-.compiler-profile { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0; overflow: hidden; }
+.compiler-profile { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0; }
 .compiler-profile > summary { padding: 12px; cursor: pointer; }
 .compiler-profile-count { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
 .compiler-arguments { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; margin-top: 5px; color: var(--muted); background: transparent; }
@@ -1394,6 +1394,10 @@ details.more[open] > summary::before { content: "− "; }
 
 .compiler-selected { background: var(--hl); color: var(--hl-ink); border-color: var(--hl); font-weight: 600; }
 
+.compiler-profile-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.compiler-profile-menu .agent-menu-items { width: min(300px, calc(100vw - 80px)); min-width: 0; }
+.compiler-profile-menu .agent-menu-items button { white-space: normal; line-height: 1.45; }
+.compiler-profile-menu button:disabled { opacity: .5; cursor: not-allowed; }
 .compiler-profile-action { padding: 10px 12px; border-top: 1px solid var(--line); }
 
 /* Keep comparison choices together and finished results free of empty per-function scores. */

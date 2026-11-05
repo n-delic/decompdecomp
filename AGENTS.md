@@ -203,6 +203,11 @@ linting). In short:
   and a `<div class="pad">` body. Include the full shell: `settings-disclosure` alone does not provide
   header spacing. Keep independent tools as sibling cards, collapsed by default; preserve open state
   during refreshes. Use `disclosure-context` for a short purpose or count beside the title.
+- Avoid rows of secondary action buttons. Keep the main action visible and group related secondary actions
+  in a vertical ⋮ overflow menu using the existing `agent-menu` / `agent-menu-items` pattern (also used by
+  compiler profiles). Give the trigger a descriptive accessible label, show one action per line, retain
+  disabled states, close on selection/outside click/Escape, and restore focus to the trigger. Keep actions
+  such as Stop visible while work is running; do not hide essential progress or errors inside menus.
 - Start with one sentence explaining the outcome and when the tool is useful. Put limits beside their
   labeled inputs, use a clear action verb on the primary button, and keep technical details in a secondary
   disclosure. Avoid generic “Finished” messages, repeated descriptions and unexplained internal terms.
