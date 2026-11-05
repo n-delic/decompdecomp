@@ -256,3 +256,30 @@ assert(!grouped.includes("<table>"));
 assert.match(grouped,/Functions currently claimed/);
 assert.match(grouped,/— 2/);
 assert(!failureContext.profileFailureGroups([{function:'<unsafe>',reason:'<unsafe>'}]).includes('<unsafe>'));
+
+// A changing project must not hide freshly verified adoption of individual trial successes.
+(async()=>{
+  const nodes=new Map();
+  const node=key=>{if(!nodes.has(key))nodes.set(key,{hidden:false,textContent:'',innerHTML:'',classList:{contains:()=>false}});return nodes.get(key);};
+  let requests=[], result={stale:true,total:2,checked:2,passed:1,failed:1,matches:['candidate'],failures:[]};
+  const body={querySelector:node,addEventListener:()=>{}};
+  const env={compilerDisplayedGroups:[{compiler:'Example compiler',parts:[{toolchain:'gcc',flag_list:['-O2']}]}],
+    S:{slug:'example',dialogKind:'compiler-default-test'},$:()=>({hidden:false}),esc:String,
+    dialog:()=>body,beginWork:()=>()=>{},profileFailureGroups:()=>'',
+    api:async(url,options)=>{requests.push(options.body);return {job:1};},
+    followJob:async()=>result,showJobError:(_,message)=>{throw new Error(message);}};
+  vm.createContext(env);
+  vm.runInContext(scopeSource.slice(scopeSource.indexOf('async function testProfileAsDefault'),scopeSource.indexOf('const compilerGroupsOpen')),env);
+  await env.testProfileAsDefault({dataset:{profileTestDefault:'0'}},'nonmatches');
+  assert.equal(node('[data-apply-matches]').hidden,false);
+  assert.match(node('[data-apply-matches-button]').textContent,/Recheck & apply 1/);
+  assert.match(node('[data-default-verdict]').textContent,/only functions that still match/);
+  // Follow the actual button handler through its request and final refreshed result.
+  env.S.slug='different-project';
+  result={total:1,checked:1,passed:0,failed:1,matches:[],failures:[]};
+  await node('[data-apply-matches-button]').onclick();
+  assert.equal(requests[1].action,'apply-matches');
+  assert.deepEqual(Array.from(requests[1].functions),['candidate']);
+  assert.equal(node('[data-apply-matches]').hidden,true);
+  assert.match(node('[data-default-verdict]').textContent,/0 new matches saved/);
+})().catch(error=>{console.error(error);process.exitCode=1;});

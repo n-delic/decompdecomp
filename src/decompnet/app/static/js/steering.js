@@ -1015,10 +1015,10 @@ async function testProfileAsDefault(button, action="test") {
     if(!active() || !out)return;
     if(out.replaced){get('[data-default-verdict]').textContent=`Default replaced. ${out.preserved} functions kept their previous compiler profile. All existing matches remain verified.`; if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();} return;}
     render(out);
-    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? 'Inputs changed during testing; rerun before using these results.' : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
-      if(!out.stale && out.matches?.length){
+    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? `Inputs changed during testing. Recheck and apply the ${out.matches?.length || 0} passing results; only functions that still match will be saved.` : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
+      if(out.matches?.length){
         get('[data-apply-matches]').hidden=false;
-        const apply=get('[data-apply-matches-button]');apply.textContent=`Apply ${out.matches.length} matches`;
+        const apply=get('[data-apply-matches-button]');apply.textContent=out.stale ? `Recheck & apply ${out.matches.length} matches` : `Apply ${out.matches.length} matches`;
         apply.onclick=async()=>{
           const done=beginWork(work,'Rechecking and applying matches',[apply],'Apply finished.');
           try{
