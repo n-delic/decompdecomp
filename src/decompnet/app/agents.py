@@ -935,9 +935,15 @@ class Manager:
                 self.stop(s.id)
 
     def remove(self, sid: str) -> None:
-        """Stop a helper and forget its record (its matches stay credited to its name)."""
+        """Stop a helper and clear its transcripts; saved work, attribution and cost totals remain."""
+        session=self.sessions.get(sid)
         self.stop(sid)
+        # Backfill lifetime tool counters before dropping the older exchanges they may still depend on.
+        from . import tool_policy
+        tool_policy.ensure(self.net)
         with self.net.store.tx() as db:
+            if session is not None:
+                self.transcripts.clear_helper(sid,session.slug,session.agent_name)
             db.execute("DELETE FROM helpers WHERE id=?", (sid,))
             db.execute("DELETE FROM settings WHERE key=?", ("helper-conversation:" + sid,))
         self.sessions.pop(sid, None)
@@ -1488,7 +1494,7 @@ class Manager:
         agent_row=self.net.store.one('SELECT id FROM agents WHERE name=?',s.agent_name)
         s.context_budget=start(self.net,agent_row['id'],s.slug,s.options) if agent_row else None
         s.rotated=False
-        s.record = lambda kind, value: self.transcripts.append(row, kind, value, (s.options.get('api_key'),))
+        s.record = lambda kind, value: self.transcripts.append(row, kind, value, (s.options.get('api_key'),), helper=s.id)
         return row
 
     def record_agent(self, agent, slug, kind, value):

@@ -25,7 +25,35 @@ class Transcripts:
             db.execute('CREATE INDEX IF NOT EXISTS idx_helper_messages_kind ON helper_messages(session_id,kind,id)')
             db.execute('CREATE TABLE IF NOT EXISTS helper_score_events(session_id INTEGER,attempt_id INTEGER, PRIMARY KEY(session_id,attempt_id))')
 
-    def append(self, session, kind, value, secrets=()):
+    def clear_helper(self, helper, project, agent):
+        """Forget recorded exchanges while retaining session cost/attribution summaries."""
+        with self.store.tx() as db:
+            if not db.execute('SELECT 1 FROM helpers WHERE id=? UNION ALL '
+                              'SELECT 1 FROM helper_sessions WHERE helper_id=? AND project=? AND agent=? LIMIT 1',
+                              (helper,helper,project,agent)).fetchone():
+                return
+            # Removed helper IDs are never recycled. A durable marker also rejects late worker callbacks.
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
+                       ('helper-transcripts-removed:'+str(helper),'1'))
+            last=db.execute('SELECT COALESCE(MAX(id),0) FROM helper_messages').fetchone()[0]
+            # SQLite may reuse a deleted maximum rowid. Keep paged readers/exports and automation cursors monotonic.
+            db.execute("INSERT INTO settings VALUES('helper-message-id-floor',?) ON CONFLICT(key) DO UPDATE SET "
+                       "value=CAST(MAX(CAST(value AS INTEGER),CAST(excluded.value AS INTEGER)) AS TEXT)",(str(last),))
+            db.execute('DELETE FROM helper_messages WHERE session_id IN '
+                       '(SELECT id FROM helper_sessions WHERE helper_id=? AND project=? AND agent=?)',
+                       (helper,project,agent))
+            db.execute('DELETE FROM helper_score_events WHERE session_id IN '
+                       '(SELECT id FROM helper_sessions WHERE helper_id=? AND project=? AND agent=?)',
+                       (helper,project,agent))
+
+    @staticmethod
+    def _insert(db, session, created, kind, text):
+        db.execute('INSERT INTO helper_messages(id,session_id,created_at,kind,text) '
+                   "VALUES((SELECT MAX(COALESCE((SELECT MAX(id) FROM helper_messages),0),"
+                   "COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key='helper-message-id-floor'),0))+1),?,?,?,?)",
+                   (session,created,kind,text))
+
+    def append(self, session, kind, value, secrets=(), *, helper=None):
         text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
         for secret in secrets:
             if secret:
@@ -35,8 +63,13 @@ class Transcripts:
                       r'\1"[redacted]"', text)
         text = re.sub(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+', 'Bearer [redacted]', text)
         with self.store.tx() as db:
-            db.execute('INSERT INTO helper_messages(session_id,created_at,kind,text) VALUES(?,?,?,?)',
-                       (session, time.time(), kind, text))
+            if helper is None and db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
+                owner=db.execute('SELECT helper_id FROM helper_sessions WHERE id=?',(session,)).fetchone()
+                helper=owner['helper_id'] if owner else None
+            if helper is not None and db.execute('SELECT 1 FROM settings WHERE key=?',
+                                                 ('helper-transcripts-removed:'+str(helper),)).fetchone():
+                return
+            self._insert(db,session,time.time(),kind,text)
             if kind == 'tool_response' and db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
                 changes = db.execute('SELECT t.id,t.score_before,t.score,t.created_at,f.name FROM attempts t '
                                      'JOIN functions f ON f.id=t.function_id JOIN projects p ON p.id=f.project_id '
@@ -46,8 +79,7 @@ class Transcripts:
                                      'ORDER BY t.id', (session,)).fetchall()
                 for change in changes:
                     db.execute('INSERT INTO helper_score_events VALUES(?,?)', (session, change['id']))
-                    db.execute('INSERT INTO helper_messages(session_id,created_at,kind,text) VALUES(?,?,?,?)',
-                               (session, change['created_at'], 'score_improvement', json.dumps(dict(change))))
+                    self._insert(db,session,change['created_at'],'score_improvement',json.dumps(dict(change)))
 
 
     def read(self, slug, helper, session=0, after=0, before=0, whole=False):

@@ -295,3 +295,65 @@ def test_deep_note_updates_preserve_measured_scores(setup):
     rows = net.store.all('SELECT score_before,score_after FROM notes WHERE function_id=?', fid)
     assert len(rows) == 1
     assert (rows[0]['score_before'], rows[0]['score_after']) == (120, 120)
+
+
+def test_removing_helper_clears_all_its_exchanges_and_keeps_summaries_and_other_work(setup):
+    net,manager,session,first=setup
+    session.record('prompt','old private prompt')
+    second=manager._session_begin(session)
+    session.record('tool_request',{'name':'get_function','arguments':{'function':'f'}})
+    late=session.record
+    other=Session('2','codex','other','demo','other',{})
+    manager.sessions['2']=other;other_row=manager._session_begin(other)
+    other.record('text','keep this transcript')
+    # Historical helper IDs could be reused by much older app versions; do not erase that other identity.
+    with net.store.tx() as db:
+        legacy=db.execute("INSERT INTO helper_sessions(helper_id,project,kind,model,agent,started_at) "
+                          "VALUES(1,'other-project','codex','model','legacy',0)").lastrowid
+        db.execute("INSERT INTO helper_messages(session_id,created_at,kind,text) VALUES(?,0,'text','legacy history')",(legacy,))
+        db.execute('UPDATE helper_sessions SET usd=2,input_tokens=123 WHERE id=?',(first,))
+        db.execute("INSERT INTO notes(project_id,text,created_at) SELECT id,'saved finding',0 FROM projects WHERE slug='demo'")
+        db.execute('INSERT INTO helper_score_events VALUES(?,99)',(first,))
+    author=net.attribution_agent(session.agent_name)
+    with net.store.tx() as db:
+        fid=db.execute("INSERT INTO functions(project_id,name,status,matched_source,matched_agent_id) "
+                       "SELECT id,'kept_match','matched','int kept_match(void) { return 1; }',? "
+                       "FROM projects WHERE slug='demo'",(author.id,)).lastrowid
+        aid=db.execute('INSERT INTO attempts(function_id,agent_id,score,compiled,source) VALUES(?,?,0,1,?)',
+                       (fid,author.id,'int kept_match(void) { return 1; }')).lastrowid
+    from decompnet.app import session_recovery
+    session_recovery.api_messages(net,session,'endpoint',[{'role':'assistant','content':'private conversation'}])
+    # Make the removed helper own the highest ID; future transcript cursors must not move backwards.
+    session.record('text','newest private text')
+    last=net.store.one('SELECT MAX(id) n FROM helper_messages')['n']
+    manager.remove(session.id)
+    assert not net.store.all('SELECT * FROM helper_messages WHERE session_id IN (?,?)',first,second)
+    assert not net.store.all('SELECT * FROM helper_score_events WHERE session_id=?',first)
+    assert net.store.one('SELECT text FROM helper_messages WHERE session_id=?',other_row)['text']=='keep this transcript'
+    assert net.store.one('SELECT text FROM helper_messages WHERE session_id=?',legacy)['text']=='legacy history'
+    summary=net.store.one('SELECT usd,input_tokens FROM helper_sessions WHERE id=?',first)
+    assert summary['input_tokens']==123 and summary['usd']==2
+    assert net.store.one('SELECT matched_agent_id FROM functions WHERE id=?',fid)['matched_agent_id']==author.id
+    assert net.store.one('SELECT source FROM attempts WHERE id=?',aid)['source']=='int kept_match(void) { return 1; }'
+    assert net.store.one("SELECT text FROM notes WHERE text='saved finding'")
+    assert net.store.one("SELECT calls FROM agent_tool_usage WHERE name='get_function'")['calls']==1
+    assert not net.store.one('SELECT value FROM settings WHERE key=?','helper-conversation:'+session.id)
+    late('text','late private callback')
+    session_recovery.api_messages(net,session,'endpoint',[{'role':'assistant','content':'late private conversation'}])
+    assert not net.store.one('SELECT value FROM settings WHERE key=?','helper-conversation:'+session.id)
+    assert not net.store.all('SELECT * FROM helper_messages WHERE session_id=?',second)
+    other.record('text','new surviving message')
+    assert net.store.one('SELECT MAX(id) n FROM helper_messages')['n']>last
+
+
+def test_cleared_transcripts_stay_cleared_after_restart_and_late_session_start(setup,tmp_path):
+    net,manager,session,row=setup
+    session.record('text','discard')
+    manager.remove(session.id)
+    restored=Manager(net,tmp_path,'http://127.0.0.1/mcp')
+    restored.transcripts.append(row,'text','stale callback after restart')
+    # A worker already starting when removed can reach _session_begin after removal.
+    restored._session_begin(session)
+    session.record('text','late new session')
+    assert not net.store.all('SELECT * FROM helper_messages')
+    assert net.store.one('SELECT COUNT(*) n FROM helper_sessions')['n']==2

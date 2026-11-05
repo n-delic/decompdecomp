@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: removing an agent clears its app transcripts and API conversation while
+  retaining saved work and usage totals; late callbacks cannot recreate cleared logs.
+
 - Done: retain in-flight compile results during metadata-only progress imports;
   source, header, compiler and layout changes still invalidate stale results.
 

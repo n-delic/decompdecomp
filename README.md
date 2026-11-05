@@ -789,6 +789,11 @@ session keeps the full app prompt (including guides and project instructions), e
 replies, app tool arguments/results, and reported input/cache/output usage. API helpers
 also record each request after context trimming, including tool definitions. CLI provider
 system prompts, hidden reasoning, shell output and internal compaction are not available.
+**Remove agent** deletes that agent's recorded app transcripts and saved API conversation.
+Its saved matches, candidates, notes, attribution and lifetime usage/cost totals remain.
+Export transcripts before removing an agent if you want to keep them. Deletion makes
+SQLite pages reusable; reducing the database file itself requires separate compaction.
+
 The transcript is local, paged separately from the short live feed, survives restarts,
 and redacts known credentials. It contains source and can grow with long sessions;
 older sessions recorded before this feature cannot be reconstructed. Token counts and
