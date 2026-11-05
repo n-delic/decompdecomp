@@ -30,6 +30,8 @@ def _pace_cpu():
     # The lane serializes these tasks, so a thread budget is also the shared maintenance
     # budget. Count CPU only: disk waits must not earn an unbounded future CPU burst.
     debt = (cpu - cpu_start) * 100 / limit - (now - wall_start)
+    if 0 < debt <= .001:
+        return  # Accumulate tiny slices instead of discarding their budget debt.
     while debt > .001 and _cpu_limit == limit:
         stop = getattr(_local, 'cancel', None) or getattr(_local, 'pacing_stop', None)
         if stop is not None and stop.is_set():

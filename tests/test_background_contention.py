@@ -161,3 +161,18 @@ def test_cpu_limit_can_be_removed_without_waiting_out_old_debt(monkeypatch):
         cpu[0] += 1;wall[0] += 1
         maintenance.checkpoint()
     assert sum(sleeps) < .1
+
+
+def test_cpu_budget_accumulates_small_units(monkeypatch):
+    wall, cpu, sleeps = [100.0], [0.0], []
+    monkeypatch.setattr(maintenance, '_cpu_limit', 50)
+    monkeypatch.setattr(maintenance.time, 'monotonic', lambda: wall[0])
+    monkeypatch.setattr(maintenance.time, 'thread_time', lambda: cpu[0])
+    def sleep(seconds):
+        sleeps.append(seconds);wall[0] += seconds
+    monkeypatch.setattr(maintenance.time, 'sleep', sleep)
+    with maintenance.slot():
+        for _ in range(100):
+            wall[0] += .0001;cpu[0] += .0001
+            maintenance._pace_cpu()
+    assert .009 <= sum(sleeps) <= .011
