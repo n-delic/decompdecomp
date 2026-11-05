@@ -723,17 +723,17 @@ async function openRoomMatchReview() {
       status.replaceChildren();
       const label=document.createElement('b');
       label.className=result.matched ? 'ok' : 'muted';
-      label.textContent=result.matched ? 'Applied — host verified' : 'Not applied — still pending';
+      label.textContent=result.matched ? 'Applied — host verified' : result.rejected ? 'Removed — no compiler profile matched' : 'Not applied — still pending';
       const reason=document.createElement('p');reason.className='small';reason.textContent=result.reason;
       status.append(label,reason);
       if(result.compiler){const compiler=document.createElement('p');compiler.className='mono small muted';compiler.textContent=`${result.compiler.toolchain} ${result.compiler.flags.join(' ')}`;status.append(compiler);}
       const button=row.querySelector('[data-retry-match]');
-      button.hidden=!!result.matched;
+      button.hidden=!!(result.matched || result.rejected);
     }
   };
   const load=async () => {
     const data=await api('/api/collab/matches?slug='+encodeURIComponent(slug));
-    reviewRows=[...data.rows,...reviewRows.filter(r=>!data.rows.some(n=>n.key===r.key) && retryResults.some(result=>result.key===r.key && result.matched))];
+    reviewRows=[...data.rows,...reviewRows.filter(r=>!data.rows.some(n=>n.key===r.key) && retryResults.some(result=>result.key===r.key && (result.matched || result.rejected)))];
     box.innerHTML=`<p class="muted small">Client matches count on the host only after its own byte verification. Compiler profiles and private headers travel with new submissions. Older submissions can be recovered using bounded searches of installed host compilers.</p>
       <section data-room-retry-progress class="default-profile-test" role="status" hidden><b data-room-retry-title>Preparing verification…</b><p class="mono small" data-room-retry-function></p><p class="small muted" data-room-retry-detail></p><progress class="deep-sweep-bar" data-room-retry-bar aria-label="Room submissions verified"></progress></section>
       ${reviewRows.length ? `<div class="row"><button class="primary" type="button" data-retry-all-matches>Retry all · ${data.rows.length}</button></div><div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Status</th><th></th></tr></thead><tbody>${reviewRows.map(r=>`<tr data-room-match-row="${esc(r.key)}" data-function="${esc(r.function)}"><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td data-room-match-status aria-live="polite">${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}

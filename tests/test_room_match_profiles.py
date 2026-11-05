@@ -109,6 +109,7 @@ def test_legacy_candidates_walk_installed_profiles_with_a_budget(pair,monkeypatc
     assert [p['profile_index'] for p in trials]==list(range(1,7))
     assert all(p['profile_total']==6 and p['toolchain']=='gcc-2.7.2-kmc' for p in trials)
     assert len(seen)==6
+    assert room_matches.pending(host,slug)  # Six trials do not exhaust the ten-profile search.
     room_matches.retry(host,slug,result['submission'])
     assert len(seen)==10
     before=room_matches.retry(host,slug,result['submission'])['reason']
@@ -141,7 +142,9 @@ def test_room_bundle_isolates_entry_but_still_requires_exact_original_bytes(pair
         assert csource.find(fn['matched_source'],'unrelated') is None
         assert csource.get(fn['matched_source'],'func_80000808')==csource.get(source,'func_80000808')
     else:
-        assert fn['status']=='open' and room_matches.pending(host,slug)[0]['source']==source
+        assert fn['status']=='open' and result['rejected']
+        saved=json.loads(host.store.one('SELECT value FROM settings WHERE key=?',result['submission'])['value'])
+        assert saved['source']==source and not room_matches.pending(host,slug)
 
 
 def test_saved_match_profile_is_preserved_across_join_and_host_sync(pair,built):  # noqa: F811
@@ -301,7 +304,7 @@ def test_missing_compiler_tries_every_project_profile_automatically(pair,monkeyp
         raise NetworkError('Linked bytes differ')
     monkeypatch.setattr(room_matches.prepared_evidence,'promote_measured',miss)
     result=room_matches.verify(host,slug,agent,'func_80000808',DAMAGE)
-    assert result['pending'] and seen==profiles
+    assert result['rejected'] and not result['pending'] and seen==profiles
 
 
 def test_room_rechecks_saved_entry_with_different_overlay_name(pair):
@@ -432,3 +435,36 @@ def test_offline_best_scores_require_identical_host_inputs(pair):
     assert not deep_room.comparable(host,slug,name,{**evidence,'target_sha256':'changed'})
     assert not deep_room.comparable(host,slug,name,{**evidence,'header_sha256':'changed'})
     assert not deep_room.comparable(host,slug,name,{**evidence,'compiler':{'toolchain':evidence['compiler']['toolchain'],'flags':['-O0']}})
+
+
+def test_exhausted_profiles_leave_queue_but_keep_evidence(pair,monkeypatch):
+    host,slug,_,_=pair
+    agent,_=host.local_agent('client')
+    monkeypatch.setattr(host,'attempt',lambda *args:{'matched':False,'score':1})
+    profile={'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}
+    monkeypatch.setattr(room_matches,'project_profiles',lambda *args:[profile])
+    def miss(*args):
+        from decompnet.network import NetworkError
+        raise NetworkError('Automatic bundle recheck failed linked-byte/data verification. Bytes differ.')
+    monkeypatch.setattr(room_matches.prepared_evidence,'promote_measured',miss)
+    result=room_matches.verify(host,slug,agent,'func_80000808',DAMAGE)
+    assert result['rejected'] and not result['pending'] and not result['matched']
+    assert not room_matches.pending(host,slug)
+    saved=json.loads(host.store.one('SELECT value FROM settings WHERE key=?',result['submission'])['value'])
+    assert saved['status']=='rejected' and saved['source']==DAMAGE
+    assert host._function('func_80000808',slug)['status']=='open'
+
+
+@pytest.mark.parametrize('message',['Prepared inputs changed; retry.','Compiler timed out; retry.','Host resource limit: disk quota exceeded.'])
+def test_changed_inputs_are_not_retired_as_failed_profiles(pair,monkeypatch,message):
+    host,slug,_,_=pair
+    agent,_=host.local_agent('client')
+    monkeypatch.setattr(host,'attempt',lambda *args:{'matched':False,'score':1})
+    monkeypatch.setattr(room_matches,'project_profiles',lambda *args:[{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}])
+    def changed(*args):
+        from decompnet.network import NetworkError
+        raise NetworkError(message)
+    monkeypatch.setattr(room_matches.prepared_evidence,'promote_measured',changed)
+    result=room_matches.verify(host,slug,agent,'func_80000808',DAMAGE)
+    assert result['pending'] and not result.get('rejected')
+    assert room_matches.pending(host,slug)

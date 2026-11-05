@@ -173,7 +173,7 @@ def register(app: App) -> None:
                             def report(value, index=index, row=row):
                                 log.progress({'finished':index,'total':len(rows),'function':row['function'],'results':list(results),**value})
                             result=room_matches.retry(net,slug,row['key'],progress=report)
-                        results.append({'key':row['key'],'function':row['function'],'matched':bool(result.get('matched')),
+                        results.append({'key':row['key'],'function':row['function'],'matched':bool(result.get('matched')),'rejected':bool(result.get('rejected')),
                                         'reason':result.get('reason') or ('Host verified exact bytes' if result.get('matched') else 'Still pending'),
                                         'compiler':result.get('compiler')})
                         matched+=bool(result.get('matched'))

@@ -1852,3 +1852,5 @@ or failure. An unavailable selected parent produces an error rather than silentl
 another drive. Disk-full, quota and open-file-limit failures are reported as host resource
 problems and do not consume a candidate repair attempt. This does not relocate SQLite
 sort files or imported projects' own build-system scratch files.
+
+Room submissions leave the active verification queue when every profile in their current search has failed. Their source and diagnostics remain archived; a new source/header submission creates new evidence. Partial searches and temporary claim/input failures remain pending.

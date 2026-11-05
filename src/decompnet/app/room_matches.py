@@ -340,10 +340,13 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
                         break
                     except NetworkError as error:
                         item['failure_reason']=str(error)
-                        if not any(word in str(error).lower() for word in ('claim','changed','expired','busy')):
+                        if not any(word in str(error).lower() for word in ('claim','changed','expired','busy','timeout','timed out','temporar','unavailable','cancel','install','memory','killed','connection','no space','permission','resource','quota','disk full','too many open')):
                             item['tried'].append(marker)
                 if not result['matched']:
                     item['reason']=item['failure_reason']+f" Tried {len(item['tried'])}/{len(profiles)} profiles in this context; evidence retained."
+                    if profiles and all(json.dumps(profile,sort_keys=True) in item['tried'] for profile in profiles):
+                        item.update(status='rejected',reason='Removed from queue: no tried compiler profile produced an exact match. '+item['reason'])
+                        result.update(pending=False,rejected=True)
     except (NetworkError,ValueError,toolchains.ToolchainError) as error:
         item['reason']=item['failure_reason']=str(error)
     finally:
@@ -369,7 +372,7 @@ def send(link,agent,function,source, *, evidence=None):
         result=link._req('POST','/collab/attempt',{'agent':agent.name,'function':function,'source':source,'evidence':evidence})
     except NetworkError as error:
         item['reason']=str(error);update(net,key,item);raise
-    item.update(status='accepted' if result.get('matched') else 'pending',reason=result.get('reason') or 'Host did not confirm the match; evidence retained.')
+    item.update(status='accepted' if result.get('matched') else 'rejected' if result.get('rejected') else 'pending',reason=result.get('reason') or 'Host did not confirm the match; evidence retained.')
     if result.get('matched'):item.update(source='',evidence=None)
     update(net,key,item)
     return result
@@ -400,7 +403,7 @@ def resend(link,key):
     # Preserve the originally successful evidence, even after host settings have synced locally.
     result=link._req('POST','/collab/attempt',{'agent':agent_row['name'],'function':item['function'],
                                            'source':item['source'],'evidence':item['evidence']})
-    item.update(status='accepted' if result.get('matched') else 'pending',reason=result.get('reason') or 'Awaiting host verification')
+    item.update(status='accepted' if result.get('matched') else 'rejected' if result.get('rejected') else 'pending',reason=result.get('reason') or 'Awaiting host verification')
     if result.get('matched'):item.update(source='',evidence=None)
     update(link.net,key,item)
     return result
