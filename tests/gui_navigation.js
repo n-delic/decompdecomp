@@ -172,6 +172,38 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   wire.signal=new AbortController().signal;
   await vm.runInContext('api("/api/project", {signal})',wire);
   assert.equal(forwarded,wire.signal);
+  wire.fetch=async()=>{throw new TypeError('Load failed');};
+  await assert.rejects(vm.runInContext('api("/api/project?slug=game")',wire),error=>{
+    assert.equal(error.connectionFailure,true);
+    assert.equal(error.request,'GET /api/project?slug=game');
+    assert.match(error.diagnostic,/Load failed/);
+    assert.match(error.message,/Could not reach the app server/);
+    return true;
+  });
+  wire.fetch=async()=>({ok:false,status:503,statusText:'Unavailable',json:async()=>({error:'Database is busy; retry shortly.'})});
+  await assert.rejects(vm.runInContext('api("/api/map?slug=game")',wire),error=>{
+    assert.equal(error.status,503);assert.match(error.message,/Database is busy/);return true;
+  });
+  wire.fetch=async()=>({ok:true,status:200,json:async()=>{throw new SyntaxError('bad JSON');}});
+  await assert.rejects(vm.runInContext('api("/api/project")',wire),/unreadable response/);
+  wire.fetch=async()=>({ok:true,status:204,json:async()=>{throw new SyntaxError('empty');}});
+  assert.equal(await vm.runInContext('api("/api/empty")',wire),null);
+  const unavailable=setup();
+  vm.runInContext(project.slice(project.indexOf('const POLL_MS'),project.indexOf('function stopPolling')),unavailable.ctx);
+  const failedProject=unavailable.ctx.openProject('offline');
+  unavailable.calls[1].reject(Object.assign(Error('Could not reach the app server'),{
+    connectionFailure:true,request:'GET /api/project?slug=offline&quick=1',diagnostic:'TypeError: Load failed'}));
+  await failedProject;
+  assert.equal(unavailable.el('projectLoadError').hidden,false);
+  assert.equal(unavailable.el('project').attrs['aria-busy'],'false');
+  assert.match(unavailable.el('projectLoadDiagnostic').textContent,/Failed step: Reading project summary/);
+  assert.match(unavailable.el('projectLoadDiagnostic').textContent,/GET \/api\/project/);
+  assert.match(unavailable.el('projectLoadRecovery').textContent,/restarting/);
+  const reloading=unavailable.ctx.openProject('new');
+  assert.equal(unavailable.el('projectLoadError').hidden,true);
+  assert.equal(unavailable.el('projectLoadDiagnostic').textContent,'');
+  unavailable.calls.at(-1).reject(Error('server error'));await reloading;
+
   const close=setup(); let dialogs=0, navLoads=0, workFinishes=0;
   close.ctx.dialog=()=>{dialogs++;}; close.ctx.closeDialog=()=>{dialogs--;};
   close.ctx.loadNav=()=>{navLoads++;};

@@ -1958,3 +1958,5 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .verification-banner[hidden] { display: none; }
 .verification-banner p { margin: 0; }
 .verification-banner .row { flex-wrap: wrap; justify-content: space-between; }
+
+#projectLoadDiagnostic { white-space: pre-wrap; overflow-wrap: anywhere; }

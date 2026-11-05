@@ -83,13 +83,33 @@ async function api(path, { method = "GET", body, raw, signal } = {}) {
   if (raw !== undefined) { opts.body = raw; opts.headers["Content-Type"] = "application/octet-stream"; }
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
   const timing=uiTimingEnabled() ? performance.now() : null;
-  const res = await fetch(path, opts);
+  let res;
+  try { res = await fetch(path, opts); }
+  catch (cause) {
+    if (cause.name === "AbortError") throw cause;
+    const error = new Error("Could not reach the app server. It may be restarting or temporarily unavailable.");
+    error.request = `${method} ${path}`;
+    error.diagnostic = `${cause.name || "Error"}: ${cause.message || cause}`;
+    error.connectionFailure = true;
+    throw error;
+  }
   if (typeof window !== "undefined") window.decompConnection?.(res);
-  let data = null;
-  try { data = await res.json(); } catch { /* not json */ }
+  let data = null, decoded = true;
+  try { data = await res.json(); } catch { decoded = false; }
   uiTiming(path.split('?')[0],timing,{server:res.headers?.get?.('Server-Timing') || ''});
   if (res.status === 401 && serverMode) location.assign("/login");
-  if (!res.ok) throw new Error((data && data.error) || `request failed (${res.status})`);
+  if (!res.ok) {
+    const error = new Error((data && data.error) || `The app server returned HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}.`);
+    error.request = `${method} ${path}`;
+    error.status = res.status;
+    throw error;
+  }
+  if (!decoded && res.status !== 204) {
+    const error = new Error("The app server returned an unreadable response. Retry after the app finishes restarting.");
+    error.request = `${method} ${path}`;
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 

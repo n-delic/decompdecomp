@@ -8,6 +8,25 @@ function cancelProjectLoad() {
   projectLoad?.abort(); projectLoad = null;
   clearInterval(projectLoadTimer); projectLoadTimer = null;
 }
+function showProjectLoadError(slug, error, step, retry) {
+  clearInterval(projectLoadTimer); projectLoadTimer = null;
+  $("project").setAttribute("aria-busy", "false");
+  $("projectLoadingText").textContent = `Could not load ${slug}: ${error.message}`;
+  $("projectLoading").querySelector(".workbar").hidden = true;
+  $("projectLoadError").hidden = false;
+  $("projectLoadRecovery").textContent = error.connectionFailure
+    ? "Wait for the app server to finish restarting, then choose Retry. If it stays unavailable, reopen the app."
+    : "Choose Retry. If it fails again, include the error details below when reporting the problem.";
+  $("projectLoadDiagnostic").textContent = [
+    `Project: ${slug}`, `Failed step: ${step}`, error.request && `Request: ${error.request}`,
+    error.status != null && `HTTP status: ${error.status}`, `Error: ${error.message}`,
+    error.diagnostic && `Underlying error: ${error.diagnostic}`, `Time: ${new Date().toISOString()}`,
+    $("projectLoadingDetail").textContent
+  ].filter(Boolean).join("\n");
+  $("projectRetry").hidden = false;
+  $("projectRetry").onclick = retry;
+}
+
 async function openProject(slug, tab = "overview") {
   cancelProjectLoad();
   const controller = projectLoad = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -21,6 +40,8 @@ async function openProject(slug, tab = "overview") {
   $("projectLoading").hidden = false;
   $("projectLoadingText").textContent = `Loading ${(S.projects || []).find(p => p.slug === slug)?.name || slug}…`;
   $("projectRetry").hidden = true;
+  $("projectLoadError").hidden = true;
+  $("projectLoadDiagnostic").textContent = "";
   $("projectLoading").querySelector(".workbar").hidden = false;
   S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false; S.roomSig = null;
   S.apFeed = null; S.stats = null; S.map = []; S.byName = new Map(); S.mapSig = null; resetMap();
@@ -61,11 +82,7 @@ async function openProject(slug, tab = "overview") {
     S.ov = ov;
   } catch (e) {
     if (gen !== S.gen) return;
-    clearInterval(projectLoadTimer);
-    $("projectLoadingText").textContent = `Could not load ${slug}: ${e.message}`;
-    $("projectLoading").querySelector(".workbar").hidden = true;
-    $("projectRetry").hidden = false;
-    $("projectRetry").onclick = () => openProject(slug, tab);
+    showProjectLoadError(slug, e, "Reading project summary or app settings", () => openProject(slug, tab));
     return;
   }
   document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => { a.href = `#/p/${slug}/${a.dataset.ptab}`; });
@@ -88,11 +105,7 @@ async function openProject(slug, tab = "overview") {
   try { await refreshMap(true, mapRequest); }
   catch (e) {
     if (gen !== S.gen) return;
-    clearInterval(projectLoadTimer);
-    $("projectLoadingText").textContent = `Could not load functions for ${slug}: ${e.message}`;
-    $("projectLoading").querySelector(".workbar").hidden = true;
-    $("projectRetry").hidden = false;
-    $("projectRetry").onclick = () => openProject(slug, S.tab);
+    showProjectLoadError(slug, e, "Loading functions and map details", () => openProject(slug, S.tab));
     return;
   }
   if (gen !== S.gen) return;
