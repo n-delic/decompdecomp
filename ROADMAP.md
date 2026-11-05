@@ -2379,4 +2379,9 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   counts and discard the stale previous-profile diff.
 
 - Done: move-on guidance includes the current release claim token, avoiding rejected first handoffs after a same-worker reclaim while preserving stale-lease guards.
+- Done: shared deterministic repairs can separate a proven constant global
+  pointer field argument from the pointer's later capture. The bounded proposal
+  preserves helper purity, pointer types and evaluation constraints, reaches ROM
+  and project repair consumers, and reproduced a private MIPS GCC linked match at
+  rank 6 of 34. It leaves callee prototypes to verified source context.
 - Done: independent patch batches identify all invalid variant anchors and their current revision before any trial compiles, allowing one precise correction without partial edits.

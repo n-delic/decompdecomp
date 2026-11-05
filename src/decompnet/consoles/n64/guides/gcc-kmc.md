@@ -692,3 +692,13 @@ when the active compiler supports the fixed intrinsic and the existing source ha
 a target-backed shared repair. It preserves the old votes in audit metadata and
 runs a bounded ordinary autopilot judge. A nonmatch stays available for further C
 work; explicit user and valid assembly verdicts are preserved.
+
+If a saved global pointer's address pair appears before an aggregate argument
+copy but the target forms it afterward, inspect assignment-valued pointer field
+arguments. For a source-owned helper proven to return one nonvolatile global
+array on every path, try the direct `array[0].field` argument and capture the
+pointer immediately after the call. Preserve the earlier capture and scopes
+until the ordinary linked judge verifies simplification. The shared
+`constant_pointer_capture_timing` repair proposes this bounded change; it does
+not infer or rewrite the callee ABI. Verify aggregate arguments against the
+actual callee, since old matched callers can carry misleading prototypes.
