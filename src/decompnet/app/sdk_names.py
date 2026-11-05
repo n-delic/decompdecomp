@@ -54,6 +54,8 @@ def _name_functions(net, slug, job=None):
         taken |= set(net.symbols(proj['id']).by_name)
     candidates = []
     for row in rows:
+        from .maintenance import checkpoint
+        checkpoint()
         if job is not None and job.stop.is_set():
             return 0
         hint = hints.get(row['id'])
@@ -86,6 +88,8 @@ def _name_functions(net, slug, job=None):
             return 0
     renamed = 0
     for row, name, hint, key in candidates:
+        from .maintenance import checkpoint
+        checkpoint()
         if fork:
             if job is not None and job.stop.is_set():
                 break

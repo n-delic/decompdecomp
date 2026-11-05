@@ -342,3 +342,12 @@ Explicit compiler guesses and selection requests still go to compiler tools;
 function progress reports still go to function notes. Accepted proposals still need
 the existing model agreement and user/automatic acceptance policy. This classifier
 fix does not validate the proposed compiler behavior or change any compiler settings.
+
+### Retry paused functions without rotating runner credentials
+
+Retrying paused functions only needs the worker identity for model-scoped eligibility
+and attribution. It now uses attribution_agent rather than local_agent: issuing a
+new token here invalidated a running worker's token. Both successful and failed scans
+retain existing credentials; a missing identity is created without a usable bearer
+token. Starting a runner remains the explicit credential-issuing path. This fixes a
+reproducible invalidation path, not every observed authentication failure.

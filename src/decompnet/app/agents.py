@@ -540,6 +540,11 @@ def _terminate(proc: subprocess.Popen) -> None:
     threading.Thread(target=end, daemon=True, name=f"end-{proc.pid}").start()
 
 
+def connection_retry_delay(failures, worker_id):
+    """Fast initial recovery, then at most one reconnect per five minutes during a sustained outage."""
+    return min(300, 5 * 2 ** min(max(0, failures-1), 6)) + (int(worker_id) % 31)
+
+
 class Manager:
     def __init__(self, net: RomNetwork, home: Path, mcp_url: str):
         self.net, self.home, self.mcp_url = net, home, mcp_url
@@ -727,7 +732,7 @@ class Manager:
             if session is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
             if session.options.get('task')=='readable':raise ValueError('Retry paused functions applies to matching agents.')
             slug, name = session.slug, session.agent_name
-        agent,_=self.net.local_agent(name)
+        agent=self.net.attribution_agent(name)
         return retry_paused.retry(self.net,slug,agent,limit,log=log)
 
     def set_selection(self, sid: str, policy: dict, per_session: int | None = None) -> dict:
@@ -1311,7 +1316,7 @@ class Manager:
                 s.error = str(error)
                 s.push('error', s.error)
                 self._session_end(s, row, agent, began, 'connection_retry')
-                delay = min(60, 5 * 2 ** min(connection_failures-1, 4)) + (int(s.id) % 11)
+                delay = connection_retry_delay(connection_failures, s.id)
                 self._wait(s, f'Local tool connection unavailable; retry {connection_failures} in {delay}s. '+('The CLI session did not complete its handshake.' if s.tool_handshake_failures else 'No model request started.'),
                            time.time()+delay, 'This helper reconnects automatically; saved work is retained.')
                 continue
@@ -1340,7 +1345,7 @@ class Manager:
                     self._pause(s,'The CLI repeatedly reported local tool connection failures. Automatic model retries paused; saved work is retained.',
                                 'Review MCP startup diagnostics and restart this helper when the connection is available.')
                     break
-                delay=min(60,5*2**min(connection_failures-1,4))+(int(s.id)%11)
+                delay=connection_retry_delay(connection_failures, s.id)
                 self._wait(s,transport,time.time()+delay,'Local tool connection retry; saved work remains available.')
                 continue
             if ok and not s.stop.is_set() and not s.limited and not s.throttled and not s.auth_failed:

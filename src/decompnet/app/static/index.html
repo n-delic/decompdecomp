@@ -288,44 +288,55 @@
         <button class="ghost small-btn" id="apBtn" type="button"></button>
       </div>
       <details class="panel settings-disclosure" id="machineDraftPanel">
-        <summary>Regenerate machine drafts</summary>
-        <div class="settings-content">
-          <p class="muted small">Make fresh starting C for open functions and test it locally. Matches, saved attempts and shared headers are kept. Claimed functions and targets needing boundary review are skipped. No AI calls.</p>
-          <div class="row"><button id="regenerateMachineDrafts" class="ghost" type="button">Regenerate drafts</button><button id="machineDraftStop" type="button" hidden>Stop</button></div>
+        <summary class="panel-head"><h2>Regenerate machine drafts <span class="disclosure-context">— Refresh starting C</span></h2></summary>
+        <div class="pad maintenance-body">
+          <p class="maintenance-intro">Create fresh starting C for unmatched functions, then test it for matches.</p>
+          <p class="muted small">Use after changing headers or compiler settings. Saved work stays safe; functions claimed by agents or needing boundary review are skipped.</p>
+          <div class="maintenance-actions"><button id="regenerateMachineDrafts" class="primary" type="button">Regenerate drafts</button><button id="machineDraftStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
           <pre id="machineDraftLog" class="joblog" hidden></pre>
         </div>
       </details>
       <details class="panel settings-disclosure" id="savedMatchRecoveryPanel">
-        <summary>Recover saved matches</summary>
-        <div class="settings-content">
-        <p class="muted small">Recheck previously successful C and headers against the current project. This can restore matches lost after project changes. No AI tokens; every match is verified again.</p>
-        <div class="row"><label>Seconds<input id="savedMatchSeconds" type="number" min="1" max="600" value="120"></label><label>Compile budget<input id="savedMatchAttempts" type="number" min="1" max="1024" value="128"></label></div>
-        <div class="row"><button id="recoverSavedMatches" class="ghost" type="button">Recover saved matches</button><button id="savedMatchStop" type="button" hidden>Stop</button><span id="savedMatchSummary" role="status"></span></div>
-        <pre id="savedMatchLog" class="joblog" hidden></pre>
+        <summary class="panel-head"><h2>Recover saved matches <span class="disclosure-context">— Recheck earlier successes</span></h2></summary>
+        <div class="pad maintenance-body">
+          <p class="maintenance-intro">Restore lost matches by testing previously successful C and headers against this project.</p>
+          <p class="muted small">Use when matches disappear after project changes. Only code that passes verification again counts as matched.</p>
+          <div class="maintenance-limits">
+            <label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds" type="number" min="1" max="600" value="120"></label>
+            <label class="field"><span>Compile limit</span><input id="savedMatchAttempts" type="number" min="1" max="1024" value="128"></label>
+          </div>
+          <p class="muted small">Stops at either limit or when saved candidates run out.</p>
+          <div class="maintenance-actions"><button id="recoverSavedMatches" class="primary" type="button">Recover saved matches</button><button id="savedMatchStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
+          <p id="savedMatchSummary" class="small" role="status"></p>
+          <pre id="savedMatchLog" class="joblog" hidden></pre>
         </div>
       </details>
       <section class="panel" id="crossGamePanel" hidden>
-        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games</button></h2>
-          <button type="button" class="ghost small-btn" id="crossGameRun">Run now</button>
-          <span class="transfer-filter-wrap"><select class="transfer-filter" id="crossGameFilter" aria-label="Show transfer results"><option value="matches">Successful matches</option><option value="improved">Recent improvements</option><option value="all">All recent attempts</option></select></span></header>
+        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games</button></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
         <div id="crossGameBody">
-        <div class="transfer-controls">
-          <div class="transfer-budgets">
-            <label>Time limit (minutes)<input id="crossGameMinutes" type="number" min="1" max="1440" step="1" value="2" required></label>
-            <label>Candidate checks<input id="crossGameAttempts" type="number" min="1" max="1000000" step="1" value="128" required></label>
-            <label>Preset<select id="crossGamePreset"><option value="custom">Custom</option><option value="quick" selected>Quick · 2 minutes</option><option value="thorough">Thorough · 1 hour</option><option value="overnight">Overnight · 12 hours</option></select></label>
-            <button type="button" id="crossGameStop" class="ghost small-btn" hidden>Stop</button>
+          <p class="transfer-intro">Find reusable C in your local projects and SDKs. Only byte-verified matches count toward this game.</p>
+          <div class="transfer-dashboard">
+            <div class="transfer-run-heading"><h3 id="crossGameState" role="status">Ready to search</h3><div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div></div>
+            <div class="transfer-summary" id="crossGameSummary"></div>
+            <div id="crossGameWork" hidden>
+              <p id="crossGamePhaseStatus" class="transfer-phase" role="status"></p>
+              <progress id="crossGamePhaseBar" class="transfer-phase-bar" max="1" aria-label="Current search stage progress" hidden></progress>
+              <p id="crossGameBudgetStatus" class="muted small" role="status"></p>
+              <div id="crossGameBudgetBar" class="upbar" role="progressbar" aria-label="Candidate check budget used" aria-valuemin="0" aria-valuemax="128" aria-valuenow="0" hidden><i style="width:0%"></i></div>
+              <details class="transfer-technical"><summary>Technical output</summary><pre class="joblog" id="crossGameLog"></pre></details>
+            </div>
           </div>
-          <p class="muted small">Stops at either limit or when eligible candidates run out. Budgets are remembered for this project on this device. Uses local CPU, no AI tokens.</p>
-          <div id="crossGameWork" hidden>
-            <p id="crossGameBudgetStatus" class="muted small" role="status"></p>
-            <div id="crossGameBudgetBar" class="upbar" role="progressbar" aria-label="Candidate check budget used" aria-valuemin="0" aria-valuemax="128" aria-valuenow="0"><i style="width:0%"></i></div>
-            <pre class="joblog" id="crossGameLog"></pre>
+          <div class="transfer-controls">
+            <label class="transfer-time">Time limit<input id="crossGameMinutes" type="number" min="1" max="1440" step="1" value="20" required><span class="muted small">minutes</span></label>
+            <details class="transfer-advanced"><summary>Advanced search limits</summary><div class="transfer-budgets">
+              <label>Candidate checks<input id="crossGameAttempts" type="number" min="1" max="1000000" step="1" value="128" required></label>
+              <label>Preset<select id="crossGamePreset"><option value="custom">Custom</option><option value="standard" selected>Standard · 20 minutes</option><option value="quick">Quick · 2 minutes</option><option value="thorough">Thorough · 1 hour</option><option value="overnight">Overnight · 12 hours</option></select></label>
+            </div></details>
+            <p class="muted small">Stops at the time or check limit, or when candidates run out. Limits are remembered for this project.</p>
           </div>
-        </div>
-        <div class="transfer-summary" id="crossGameSummary"></div>
-        <ol class="transfer-list" id="crossGameRecent"></ol>
-        <details class="transfer-help"><summary>How to read these results</summary><p>Verified matches reproduce this game’s bytes exactly. Partial improvements are better saved candidates, still unmatched. A lower mismatch score is better; 0 is exact. Assembly similarity is only a search hint. Open either function name to inspect its code.</p></details>
+          <div class="transfer-results-heading"><h3>Search results</h3><label>Show <span class="transfer-filter-wrap"><select class="transfer-filter" id="crossGameFilter" aria-label="Show transfer results"><option value="matches">Successful matches</option><option value="improved">Recent improvements</option><option value="all">All recent attempts</option></select></span></label></div>
+          <ol class="transfer-list" id="crossGameRecent"></ol>
+          <details class="transfer-help"><summary>How to read these results</summary><p>Results are saved across runs. Verified matches reproduce this game’s bytes exactly. Partial improvements are better saved candidates, still unmatched. A lower mismatch score is better; 0 is exact. Assembly similarity is only a search hint. Open either function name to inspect its code.</p></details>
         </div>
       </section>
     </div>

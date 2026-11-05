@@ -159,6 +159,8 @@ class Library:
         report(0,'Reading verified matches')
         batch=[]
         for i, row in enumerate(rows):
+            from .maintenance import checkpoint
+            checkpoint()
             report(i,'Reading verified matches',row['name'])
             item=self.snapshot(proj,row['id'])
             if item:batch.append(item)
@@ -182,6 +184,8 @@ class Library:
         total=sum(len(rows) for _,rows in projects)
         completed=0
         for index,(proj,rows) in enumerate(projects,1):
+            from .maintenance import checkpoint
+            checkpoint()
             if log:log.check_cancel()
             game_total=len(rows)
             def progress(value, game_total=game_total, game_index=index, offset=completed):

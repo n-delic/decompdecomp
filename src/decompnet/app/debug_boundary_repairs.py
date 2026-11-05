@@ -1,7 +1,8 @@
 """Token-preserving statement boundaries for debug-sensitive legacy scheduling."""
 import re
 
-from .integer_repair_support import edit, view
+from .integer_repair_support import IDENT, edit, view
+from .pattern_repairs import close
 
 FAMILY = 'debug_statement_boundary'
 FAMILIES = (FAMILY,)
@@ -46,4 +47,36 @@ def variants(source, name, flags=(), header='', *, offset=0, limit=LIMIT):
     stop_at = len(pool) if limit is None else offset+limit
     for _, start, stop, replacement in pool[offset:stop_at]:
         result.append((FAMILY, edit(source, [(start, stop, replacement)])))
+    return result
+
+
+def call_pairs(source, name, header):
+    """Join adjacent standalone calls without changing any preprocessing or C token."""
+    text = header+"\n"+source
+    if re.search(r"\b__LINE__\b|^\s*#\s*(?:line\b|\d)|\\\n", text, re.M):
+        return []
+    part = view(source, name)
+    if not part:
+        return []
+    macros = set(re.findall(r"^\s*#\s*define\s+("+IDENT+r")", text, re.M))
+    if "#" in part.clean or macros & set(re.findall(IDENT, part.clean)):
+        return []
+    result = []
+    # Closing parentheses are balanced below, so arguments may contain nested expressions.
+    for hit in re.finditer(rf'(?<=[;{{}}])\s*{IDENT}\s*\(', part.clean[part.opening:part.end]):
+        opening = part.opening+hit.end()-1
+        ending = close(part.clean, opening)
+        if not ending:
+            continue
+        tail = re.match(r';([ \t\r\n]+)'+IDENT+r'\s*\(', source[ending:])
+        if not tail or '\n' not in tail[1]:
+            continue
+        second = ending+tail.end()-1
+        second_end = close(part.clean, second)
+        if not second_end or not re.match(r'\s*;', part.clean[second_end:]):
+            continue
+        a, b = ending+1, ending+1+len(tail[1])
+        result.append(edit(source, [(a, b, ' ')]))
+        if len(result) == 4:
+            break
     return result

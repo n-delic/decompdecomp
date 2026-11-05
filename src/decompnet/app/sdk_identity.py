@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from .sdk_library import allowed
+from .maintenance import checkpoint
 
 
 def identify(net, proj, recorded):
@@ -22,19 +22,24 @@ def _identify(net, proj):
     recorded = {}
     from .shared_reuse import machine
     processor, big = machine(net, proj)
-    signatures = net.store.all("SELECT corpus,name,fingerprint,size FROM sdk_signatures WHERE arch=? AND big_endian=?",
-                               processor, big)
-    if not signatures:
-        return recorded
-    by_key = defaultdict(list)
-    for row in signatures:
-        if row["size"] >= 32 and allowed(net, proj, row["corpus"]):
-            by_key[row["fingerprint"]].append(row)
+    def corpus_index():
+        grouped = defaultdict(list)
+        for row in net.store.all("SELECT corpus,name,fingerprint,size FROM sdk_signatures WHERE arch=? AND big_endian=? AND size>=32",
+                                 processor, big):
+            checkpoint()
+            grouped[row['fingerprint']].append(dict(row))
+        return dict(grouped)
+    by_key = net.store.read_cache.get(('sdk-corpus-index', processor, big),
+                                     net.store.read_version('sdk_names'), corpus_index)
     if not by_key:
         return recorded
+    selection = net.cfg(proj).get('sdk_libraries')
+    selected = set(selection) if selection is not None else None
     out = dict(recorded)
     for fid, target in net.twins.prints(proj).items():
-        hints = [r for r in by_key.get(target.key, []) if r["size"] == target.size]
+        checkpoint()
+        hints = [r for r in by_key.get(target.key, []) if r["size"] == target.size
+                 and (selected is None or r["corpus"] in selected)]
         names = {r["name"] for r in hints}
         if not target.asm and target.size >= 32 and len(names) == 1:
             out[fid] = {"names": sorted(names), "corpora": sorted({r["corpus"] for r in hints}),

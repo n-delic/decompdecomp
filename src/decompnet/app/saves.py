@@ -982,17 +982,23 @@ class Autosave:
         self.net = net
         self.stop = threading.Event()
         self.retry_after = {}
+        self.deep_check_after = {}
 
     def start(self) -> None:
         threading.Thread(target=self._loop, daemon=True, name="autosave").start()
 
     def _loop(self) -> None:
+        from .workers import lower_priority
+        lower_priority()
         while not self.stop.is_set():
-            self.run_once()
+            self.run_once(force=False)
             self.stop.wait(1)
 
-    def run_once(self) -> list[str]:
-        """Synchronize every ROM project, including file changes that have no database event."""
+    def run_once(self, *, force=True) -> list[str]:
+        """Save dirty work each cycle; background cycles deeply inspect unchanged files every 15 seconds.
+
+        Explicit callers retain forced checks, including external edits with unchanged directory timestamps.
+        """
         saved = []
         store = self.net.store
         if hasattr(store, 'read_cache'):
@@ -1004,8 +1010,11 @@ class Autosave:
             if time.monotonic() < self.retry_after.get(row['slug'], 0):
                 continue
             try:
-                if self.net.progress.sync(row["slug"], force=True, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
+                deep = force or time.monotonic() >= self.deep_check_after.get(row["slug"], 0)
+                if self.net.progress.sync(row["slug"], force=deep, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
                     saved.append(row["slug"])
+                if deep:
+                    self.deep_check_after[row["slug"]] = time.monotonic() + 15
                 self.retry_after.pop(row['slug'], None)
             except Exception as error:  # keep other projects saving; do not flood logs every second
                 from .progress import _StillFailing

@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: retry paused functions using attribution only, preserving running helper
+  credentials on successful and failed scans without issuing new bearer tokens.
+
 - Done: compiler-tested fresh drafts, bounded private MIPS callback/argument/frame recovery,
   owner-aware ROM data context, persistent generation/compiler/link diagnostics and cancellable
   draft regeneration without clearing matches or attempts. Imported m2c projects use their own build.
@@ -612,6 +615,7 @@ similar C through objdiff. Other processors need an instruction reader for this 
 ## Recently done
 
 - Focused agents are recorded through metadata-only creation, skip whole-project draft/reuse preparation and ordering waits, and show live creation stages with elapsed time. Worker-side saved-file synchronization remains required before work.
+- Background contention: autosave keeps one-second dirty checks with 15-second deep file checks; reuse and startup scans share one maintenance lane with cooperative UI yields and lower priority; SDK corpus indexes are shared across projects; persistent local connection failures back off to five minutes plus worker jitter.
 
 - Check again and helper startup reconsider obsolete agent tooling verdicts when
   the effective compiler supports a target-backed live return-address C repair,
@@ -2533,3 +2537,9 @@ need independent evidence before receiving this specific GNU C repair.
   imported/debug-object formats. Missing or stale maps cannot supply targeted edits.
 - Measured limit: the 22-case copied held-out sweep produced no new matches or score
   improvements. Sixteen fewer broad line trials did not reduce total trial count.
+
+- Done: shared draft, agent and deep repair discovery includes bounded pure integer
+  byte-address inline helpers, conservative if/else expression-arm scopes and adjacent
+  call-line bridges. It preserves types/evaluation order, rejects opaque preprocessing
+  and qualifiers, rotates bridges across accessor sites, and relies on ordinary exact
+  judging; host semantic and pinned period-compiler regressions cover the supported C.
