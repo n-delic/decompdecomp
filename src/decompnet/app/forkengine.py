@@ -2917,7 +2917,15 @@ class ForkEngine:
                 was_matched = fn["status"] == "matched"
             hit, old_span = self._find(before, names)
             base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
-            if old_span and self._hidden(fp, before, old_span[0]):
+            parked = self._hidden(fp, before, old_span[0]) if old_span else None
+            at = old_span
+            while parked and at and (later := csource.find(before[at[1]:], hit)):
+                # a draft parked in `#ifdef` before the build's own definition in its `#else`: the one the build sees
+                # is the one tried (the parked one taken out, a new one put in, the visible one stayed: defined twice)
+                at = (at[1] + later[0], at[1] + later[1])
+                if not self._hidden(fp, before, at[0]):
+                    old_span, parked = at, None
+            if parked:
                 # parked in an #if branch the build leaves out: written there, the compile was judged on other code,
                 # and moved out with edit_file it was refused when it broke a matched neighbour (where whole-program
                 # optimisation couples them), so an agent could do nothing with it. It goes where the build sees it,

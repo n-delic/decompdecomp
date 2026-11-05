@@ -985,6 +985,15 @@ def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
     assert not ok and [Path(t).as_posix() for t in failed] == ["build/b/part.o"]  # the step, not the object
     assert fp.failed_units(failed) == {"b"}
     assert fp.failed_units([]) == set()
+    # the build file custom_args names is the one queried (the query ran on build.ninja: no unit failed)
+    (tmp_path / "build.ninja").rename(tmp_path / "other.ninja")
+    cfg = json.loads((tmp_path / "objdiff.json").read_text())
+    (tmp_path / "objdiff.json").write_text(json.dumps({**cfg, "custom_args": ["-f", "other.ninja"]}))
+    shutil.rmtree(tmp_path / "build", ignore_errors=True)
+    fp = ForkProject(tmp_path)
+    failed = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and fp.failed_units(failed) == {"b"}
 
 
 def test_which_if_branch_leaves_code_out_is_told_only_when_certain():
@@ -1041,3 +1050,16 @@ def test_a_macro_counts_as_never_defined_only_when_nothing_could_define_it(tmp_p
     assert ForkEngine._hidden(fp, text, text.index("int f")) == (1, "#ifdef PARKED")
     (tmp_path / "include" / "cfg.h").write_text("#define PARKED\n")
     assert ForkEngine._hidden(fp, text, text.index("int f")) is None
+
+
+@pytest.mark.parametrize("macro", ["MACH", "R5900"])
+def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
+    """The pinned KMC GCC 2.7.2 defines MACH and EE-GCC 2.96 R5900 (their `-dM -E`): code under `#ifdef MACH` was
+    said to be left out of the build, though it's compiled."""
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
+    (tmp_path / "src" / "a.c").write_text(text)
+    assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None
