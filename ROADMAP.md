@@ -2414,3 +2414,9 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   path reaches ROM consoles; object-project judging already reads object relocations.
 
 - Done: local repair discovery reuses its revision fingerprint across one proposal pass while retaining fresh tried-target lookups and recomputing scope on the next pass.
+
+- Done: bounded scalar normalization scopes preserve a saved signed value while
+  ending its copied-from lifetime inside one expression replacement. Shared
+  draft/agent/permuter candidates reuse an existing unused scalar, preserve opaque
+  unrelated macros, reject observable or out-of-scope locals, and retain the
+  ordinary compiler and byte/object judge as the acceptance gate.

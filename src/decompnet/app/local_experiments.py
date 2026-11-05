@@ -213,7 +213,13 @@ def _available(net, agent, slug, fn, source, revision, requested):
         boundary_header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
         for family, candidate in _generated(debug_boundary_repairs.variants, source, fn['name'], flags, boundary_header):
             pools[family].append(candidate)
-    for module in (copy_lifetime_repairs, address_association_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
+    if any(family in pools for family in copy_lifetime_repairs.FAMILIES):
+        ctx = net._context(proj['id'],fn['unit'])
+        copy_header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+        for family, candidate in _generated(copy_lifetime_repairs.variants, source, fn['name'], copy_header):
+            if family in pools:
+                pools[family].append(candidate)
+    for module in (address_association_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
         for family, candidate in _generated(module.variants, source, fn['name']):
             if family in pools:
                 pools[family].append(candidate)
