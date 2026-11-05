@@ -4263,3 +4263,43 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   recommendation. Shared runtime resolution covers live judging, profile comparison
   and exported builds. Temporary copies are private to a process, reused by threads
   and replaced after reinstall. Physical Intel Mac and Windows checks remain open.
+
+## Bounds-loop exits and a joint jump-threading profile (5 November 2026)
+
+- **Compiler:** `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`; the winning
+  function-only profile additionally uses `-fno-thread-jumps`.
+- **Controlled evidence:** an 87-instruction parsing loop had score 210 with a
+  bounds-failure goto that bypassed the outer condition. Correcting that inner
+  exit to `break` scored 410; adding only the profile scored 200. Adding an
+  explicit early return of the bound to the outer pure comparison scored 710
+  under the original profile. The corrected exit, return guard and profile
+  together scored zero and passed linked-byte verification. The whole image was
+  separately rebuilt byte-identically before this automation was added.
+- **Automation replay:** starting with that same saved score-210 checkpoint,
+  `guarded_loop_repairs` generated the accepted source with unchanged surrounding
+  layout. A private ROM copy and the ordinary compiler/link judge reproduced
+  score 210, then exact/zero on the first paired candidate (two diagnostic
+  compiles total). This is recovery of a known match, not a new match or timing
+  benchmark. Evidence remains private; no game body is a test fixture.
+- **Search:** shared compiler preflight keeps at most three named-comparison,
+  terminal-bound-return source/profile hypotheses ahead of broad flag sweeps.
+  A pure-score greedy filter would discard the useful source. The hypotheses
+  consume the existing resumable preflight allowance, stop on exact, and do not
+  replace saved C unless the normal source/header/function-profile promotion
+  succeeds. Imported projects retain their own build settings; non-MIPS and
+  other compiler families do not receive this specific GNU C hypothesis.
+- **Diagnostics:** a backedge to the condition versus the body and ordinary
+  versus branch-likely instructions need separate investigation. Annulled delay
+  slots are not equivalent; never mask these opcodes or accept score zero alone.
+- **Negative evidence:** debug `-g3`, scheduling/peephole toggles, CPU variants,
+  inline comparison helpers and ordinary loop rewrites did not solve the tested
+  baseline. `-fno-crossjumping` was unsupported. This case neither proves the
+  retail flags nor justifies globally disabling jump threading.
+- **Workflow:** range-check and survey bookkeeping are excluded from prepared
+  compilation fingerprints; the effective compiler, all unknown build options,
+  source/header, target, symbols and claims stay guarded. This addresses a
+  reproducible false-staleness class, not a proven retrospective diagnosis of
+  every historical promotion failure. A failed exact adoption remains retryable
+  and its reason is logged. ROM compiler experiments expose the judge's exact
+  boolean and score as structured evidence; imported diagnostic text remains a
+  compatibility fallback.

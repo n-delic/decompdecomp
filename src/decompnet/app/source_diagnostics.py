@@ -17,6 +17,8 @@ def hints(source, name, asm='', arch='', rows=None):
     from .preparation_diagnostics import allocations
     macro_note = diagnostic(source)
     result = ([macro_note] if macro_note else []) + investigation_hints(rows,arch) + suggestions(rows) + allocations(source, rows)
+    from .guarded_loop_repairs import hints as loop_hints
+    if arch=='mips':result.extend(loop_hints(source,name,rows))
     from .return_contract_repairs import hint as return_hint
     if note:=return_hint(source,name,asm,arch):result.insert(0,note)
     if classify(rows) == 'register':
