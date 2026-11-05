@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: keep newly generated native inline helpers private, with a real two-unit
+  GNU89 link/execution regression and traced/untraced generator coverage. Extra
+  helper code still requires complete project build verification.
+
 Implemented: native expression expansion checks captured operand stability before
 rewriting or deleting an initializer. ROM, imported-project and deep native jobs
 share the generator guard. Unsupported control/memory/qualifier cases are skipped;
