@@ -1725,3 +1725,11 @@ agents receive the function handoff and existing saved project notes in a new co
 sessions still rotate normally. Missing native CLI transcripts fall back to the saved handoff. This applies to
 conversations recorded after updating; previously discarded context cannot be reconstructed.
 Suspicious MIPS function extents can be audited in Settings → Code coverage → **Review & repair boundaries**. Preview original assembly, repair delay slots/joins/end addresses, classify padding/data, or explicitly keep intentional entries. Automatic work waits for review; decisions retain source/history and have guarded undo. See [coverage review](docs/CODE_COVERAGE_REVIEW.md).
+
+Legacy MIPS GCC compatibility exposes `__builtin_mips_debug_break()` for the fixed
+hardware debugger breakpoint used by assertion/error paths. This is a decompdecomp
+compiler compatibility intrinsic, not an ISO C feature or a native GCC 2.7 builtin.
+It emits BREAK 9, takes no arguments and permits execution to resume in a debugger.
+The implementation is selected by the pinned KMC-compatible compiler pack; submitted
+assembly and arbitrary instruction encodings remain forbidden. Other compiler packs
+need their own verified intrinsic integration before this call can be used there.

@@ -2290,3 +2290,8 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 - Done: indexed metadata-first cross-project suggestion ranking, narrow and single-flight ROM fingerprint
   invalidation, transactionally maintained compact profile evidence, coalesced/batched room members, shared
   worker scope inputs and an LRU read cache that protects active builds from eviction.
+
+- Done: the KMC-compatible legacy MIPS GCC pack provides a fixed, no-argument debugger
+  BREAK 9 compatibility intrinsic. Submitted assembly remains rejected; ordinary C
+  without the intrinsic compiles unchanged. Other MIPS compiler packs still need
+  compatible, tested registrations; compiler dialects and existing intrinsic headers differ.

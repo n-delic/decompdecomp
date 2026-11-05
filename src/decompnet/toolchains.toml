@@ -34,6 +34,7 @@ subdir = "usr/lib32"
 platforms = ["wsl-x86_64"]
 
 ["gcc-2.7.2-kmc"]
+intrinsics = "decompnet.arch.mips_debug_break"
 name = "GCC 2.7.2 (KMC-compatible) + binutils 2.6"
 platform = "N64"
 arch = "mips"
