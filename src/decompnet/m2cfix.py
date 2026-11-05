@@ -234,7 +234,16 @@ def static_helpers(source: str) -> str:
     """`source` with its `inline` functions made `static inline`, so the compiler writes no copy of them out: a
     global helper (the permuter moves code into one named inline_fn) would be defined again by every function that
     got one, and the project would not link."""
-    return re.sub(r"(^|\n)(?!static )(inline )", r"\1static \2", source)
+    from .forks.csource import _blank
+
+    clean = _blank(source)
+    insertions = []
+    for match in re.finditer(r"(?m)^[ \t]*inline\b[^;{}(]*", clean):
+        if not re.search(r"\bstatic\b", match.group()):
+            insertions.append(clean.index("inline", match.start(), match.end()))
+    for offset in reversed(insertions):
+        source = source[:offset] + "static " + source[offset:]
+    return source
 
 
 def stack_array(draft: str, name: str, canonical=False) -> str | None:
