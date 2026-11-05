@@ -324,6 +324,9 @@ def test_your_own_compiler_is_a_card_per_console_and_runs_like_the_pack_its_vers
     _add(own["psp"], tmp_path / "psp")
     _add(own["n64"], tmp_path / "gcc")
     _add(own["ps"], tmp_path / "gcc")  # (one GCC 2.7.2 folder, set up for both consoles)
+    own_n64 = ids("n64")[0]
+    row = next(r for r in toolchains.status() if r["id"] == own_n64)
+    assert row["kind"] == "compiler" and row["installed"] and row["supported"]
     # the CodeWarrior PS2 whose version its program names
     [mw] = ids("ps2")
     assert mw.startswith("mwcps2-3.0.1-own-") and toolchains.known(mw)  # (its id: what the PS2's flags go by)
@@ -337,6 +340,30 @@ def test_your_own_compiler_is_a_card_per_console_and_runs_like_the_pack_its_vers
     # program on its own
     psp = _own(_own(tmp_path / "psp131", "bin/psp-gcc", b"psp-gcc 1.3.1"), "psp/bin/gcc", b"gcc")
     assert [c.like for c in kits.get(own["psp"]).compilers(psp)] == ["psp-gcc-1.3.1"]
+
+
+def test_user_supplied_n64_compiler_is_in_picker_state(tmp_path, monkeypatch):
+    from starlette.testclient import TestClient
+
+    from decompnet.app import window
+    from decompnet.app.engine import RomNetwork
+    from decompnet.app.server import build
+
+    _setup(monkeypatch, tmp_path)
+    _add('own-n64', _own(tmp_path / 'compiler', 'gcc', b'gcc version 2.7.2'))
+    own = next(c for c in consoles.get('n64').compilers if '-own-' in c.id)
+    home = tmp_path / '.decomp'
+    home.mkdir()
+    net = RomNetwork(home / 'test.db', tmp_path)
+    mcp, _, security, _ = build(net, home, 6503, 'picker-secret')
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host='127.0.0.1'),
+                        base_url='http://127.0.0.1:6503',
+                        headers={'User-Agent': window.TOKEN_AGENT + 'picker-secret'})
+    state = client.get('/api/state').json()
+    row = next(t for t in state['toolchains'] if t['id'] == own.id)
+    n64 = next(c for c in state['consoles'] if c['id'] == 'n64')
+    assert row['kind'] == 'compiler' and row['installed'] and row['supported']
+    assert row['use'] and own.id in {c['id'] for c in n64['compilers']}
 
 
 @pytest.mark.parametrize("pack", ["gcc-2.7.2-kmc", "gcc-2.7.2-psx", "ee-gcc-2.96", "mwcps2-2.3.3", "ido-5.3", "agbcc"])
@@ -392,14 +419,15 @@ def test_each_installed_pack_is_known_as_itself():
     are one version run two ways: a copy of either is offered as both."""
     from decompnet.kits import owncompiler
 
-    both = {"gcc-2.7.2-psx", "gcc-2.7.2-cdk-psx"}
+    paired = ({"gcc-2.7.2-psx", "gcc-2.7.2-cdk-psx"},
+              {"gcc-2.8.1-pm", "gcc-2.8.1-pm-sn-as"})
     checked = 0
     for kit in owncompiler.OWN_COMPILERS:
         for pack in owncompiler.packs(kit.platform):
             if toolchains.installed(pack) is None:
                 continue
             got = [c.like for c in kit.compilers(toolchains.require(pack))]
-            assert got == [pack] or (pack in both and set(got) == both), (pack, got)
+            assert got == [pack] or any(pack in pair and set(got) == pair for pair in paired), (pack, got)
             checked += 1
     if not checked:
         pytest.skip("needs a ROM console's compiler pack")

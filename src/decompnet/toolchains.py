@@ -169,7 +169,8 @@ def get(tid: str) -> Toolchain:
     reg = registry()
     if tid not in reg and (own := _own(tid)) is not None:
         return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
-                         description="A compiler in your own SDK copy.", flags=list(own.flags))
+                         description="A compiler in your own SDK copy.", flags=list(own.flags),
+                         kind="compiler", local_files=[own.exe.name])
     if tid not in reg:
         raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(reg))}")
     return reg[tid]
@@ -232,7 +233,7 @@ def fingerprint(tc: Toolchain, linux: bool = False) -> str:
     else INSTALLED_FROM names. Its name and description don't change an install."""
     parts = tc.linux_parts() if linux else tc.parts_for()
     entry = {"parts": [{k: v for k, v in p.items() if k != "platforms"} for p in parts],
-             **{k: getattr(tc, k) for k in INSTALLED_FROM}}
+             **{k: getattr(tc, k) for k in INSTALLED_FROM if k != 'build' or tc.build}}
     return hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -1025,4 +1026,11 @@ def status() -> list[dict]:
                      "changed": m is None and _manifest(tc.id) is not None,
                      "wsl": tc.via_wsl, "linux_vm": tc.via_vm, "local": tc.local, **(_local_status(tc, m) if tc.local and m else {}),
                      "pinned": all(p.get("sha256") for p in tc.parts) or bool(tc.commit)})
+    from . import kits
+    for own in kits.compilers(k.id for k in kits.KITS):
+        tc = get(own.version)
+        rows.append({"id": tc.id, "name": tc.name, "kind": "compiler", "platform": "",
+                     "license": tc.license, "source": tc.source, "installed": True,
+                     "supported": tc.supported, "description": tc.description, "changed": False,
+                     "wsl": False, "local": True, "pinned": False})
     return rows

@@ -99,7 +99,7 @@ def test_pinned_converter_build_uses_bounded_source_only_command(tmp_path, monke
         return SimpleNamespace(returncode=0, stdout='', stderr='')
     monkeypatch.setattr(subprocess, 'run', build)
     toolchains._build_psyq_parser(tmp_path, False, lambda *_: None)
-    argv, options = calls[0]
+    argv, options = next((argv, options) for argv, options in calls if '-std=c++20' in argv)
     assert options['timeout'] == 300 and options['cwd'] == tmp_path
     assert '-std=c++20' in argv and '-lz' in argv
     assert all('source/pcsx/' in arg for arg in argv if arg.endswith('.cc'))

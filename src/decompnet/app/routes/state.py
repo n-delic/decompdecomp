@@ -40,9 +40,11 @@ def register(app: App) -> None:
     fail = app.fail
 
     def state() -> dict:
-        tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
+        own = {c.id: c.built for console in consoles.CONSOLES if hasattr(console, 'fixed_compilers')
+               for c in console.kit_compilers()}
+        tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS or t["id"] in own]
         for t in tcs:
-            t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
+            t["use"] = COMPILERS.get(t["id"]) or TOOLS.get(t["id"]) or own[t["id"]]
             t["name"] = consoles.compiler_name(t["id"]) if t["id"] in COMPILERS else t["name"]
         return {"version": __version__, "build": build_id, "install": updates.installed(), "dev": edition.DEV,
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
