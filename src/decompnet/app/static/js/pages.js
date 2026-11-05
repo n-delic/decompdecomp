@@ -244,6 +244,7 @@ async function renderWebGithubSettings(onSaved) {
 async function showSettingsPage() {
   show("settingsPage");
   const st = await loadState();
+  loadDatabaseStorage().catch(error=>{$('databaseStorageEstimate').textContent=error.message;});
   loadHeaderStorage().catch(error=>{$('headerStorageEstimate').textContent=error.message;});
   loadDatabaseCleanup().catch(error=>{$('databaseCleanupEstimate').textContent=error.message;});
   loadMatchLibrary().catch(error=>{$("matchLibraryCount").textContent=error.message;});

@@ -802,6 +802,18 @@
       <details class="more"><summary>What gets removed?</summary><p class="small muted">The selected rules are combined: removed agents, plus completed sessions older than the date. Enable automatic cleanup and save your rules to enforce the cutoff in the background. Stopping a run keeps completed deletions; disable automatic cleanup to prevent future runs. Clearing transcripts is permanent; export any history you need first. Space becomes reusable inside SQLite, so the database file may stay the same size. Saved source and exact matches are kept.</p></details>
     </div>
   </details>
+  <details class="panel settings-disclosure" id="databaseStoragePanel">
+    <summary class="panel-head"><h2>Candidate storage <span class="disclosure-context" id="databaseStorageSize"></span></h2></summary>
+    <div class="pad">
+      <p>Store repeated source and repair evidence once, compressed, while keeping exact history available on demand.</p>
+      <p id="databaseStorageEstimate" class="small muted" role="status"></p>
+      <label class="field"><span>Keep unsuccessful compile source for at least this many days</span><input id="databaseStorageDays" type="number" min="1" max="3650" value="90"><small>Current, best, matched and referenced source is kept. Attempt scores and metrics are never removed.</small></label>
+      <label class="check"><input id="databaseStorageAutomatic" type="checkbox"><span>Clean old unsuccessful source automatically, once a day</span></label>
+      <div class="row"><button id="databaseStoragePack" class="primary" type="button">Compress existing history</button><details class="agent-menu"><summary aria-label="More candidate storage actions">⋮</summary><div class="agent-menu-items"><button id="databaseStorageSave" type="button">Save retention rules</button><button id="databaseStoragePrune" type="button">Clean old unsuccessful source</button></div></details><button id="databaseStorageStop" type="button" hidden>Stop</button></div>
+      <div id="databaseStorageLog"></div>
+      <p class="small muted">Compression preserves exact text. Cleanup permanently removes only eligible source payloads. Use Compact database file under Saved C header history to return reusable space to disk when workers are idle.</p>
+    </div>
+  </details>
   <details class="panel settings-disclosure" id="headerStoragePanel">
     <summary class="panel-head"><h2>Saved C header history <span class="disclosure-context" id="headerStorageContext">— Compressed, shared content</span></h2></summary>
     <div class="pad">

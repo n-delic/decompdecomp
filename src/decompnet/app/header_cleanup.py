@@ -28,7 +28,7 @@ def _references(store):
                                        (f"json_extract(evidence,'$.{stage}.context_version')", 'version')):
                 fields.append(f"CASE WHEN json_valid(evidence) THEN {expression} END AS {stage}_{suffix}")
         # Return only small reference metadata, never whole captured source/assembly payloads.
-        for row in store.all('SELECT project_id,json_valid(evidence) valid,' + ','.join(fields) + ' FROM repair_examples'):
+        for row in store.all('SELECT project_id,json_valid(evidence) valid,' + ','.join(fields) + ' FROM main.repair_examples'):
             stages = [stage for stage in ('before', 'after', 'previous') if row[stage+'_type'] not in (None, 'null')]
             if not row['valid'] or not stages:
                 unknown.add(row['project_id'])

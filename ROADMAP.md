@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: attempt source and full repair evidence use checksum-verified compressed shared payloads,
+  preserving IDs and lazy exact reads. Explicit cancellable backfill, opt-in daily failed-source
+  retention and indexed 100-row compile-history pages keep bulk data off ordinary list reads.
+  Existing atomic database compaction remains a separate idle-time action.
+
 - Done: cross-game searches shortlist indexed fingerprints from open and closed games before
   live donor indexing, prioritize widely shared code and compatible compiler profiles, and try
   verified donors before unfinished candidates. Indexed transfers appear in saved results,

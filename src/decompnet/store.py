@@ -317,7 +317,8 @@ class _ThreadReader:
     alone can leave their WAL/database descriptors open until cyclic GC runs.
     """
     def __init__(self,path,header_codec):
-        self.conn=sqlite3.connect(path,isolation_level=None,check_same_thread=False)
+        from .payload_storage import Connection
+        self.conn=sqlite3.connect(path,isolation_level=None,check_same_thread=False,factory=Connection)
         try:
             self.conn.row_factory=sqlite3.Row
             header_codec.register(self.conn)
@@ -336,7 +337,8 @@ class _ThreadReader:
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+        from .payload_storage import Connection
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None,factory=Connection)
         self.conn.row_factory = sqlite3.Row
         from .header_storage import Codec
         self.header_codec = Codec()
@@ -353,6 +355,8 @@ class Store:
                 added.add(column)
         from .header_storage import install as install_headers
         install_headers(self.conn)
+        from .payload_storage import install as install_payloads
+        install_payloads(self.conn)
         self.conn.executescript(DIRTY_TRIGGERS.replace("ON context_versions", "ON context_history").replace("project_id,header,unit", "project_id,header_hash,unit"))
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is
@@ -611,6 +615,7 @@ class Store:
         if reader is None:
             reader = _ThreadReader(self.path,self.header_codec)
             self._local.reader = reader
+        reader.conn.detail_tables=set(self.conn.detail_tables)
         return reader.conn
 
     def _read(self, sql: str, args: tuple, single: bool):

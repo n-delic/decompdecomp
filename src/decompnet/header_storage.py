@@ -40,6 +40,8 @@ class Codec:
         return self.unpack(digest, payload)
 
     def register(self, conn):
+        from .payload_storage import register
+        register(conn)
         conn.create_function('header_digest', 1, self.digest, deterministic=True)
         conn.create_function('header_pack', 1, self.pack, deterministic=True)
         # Reading also pins the version, so this function must not be marked deterministic.

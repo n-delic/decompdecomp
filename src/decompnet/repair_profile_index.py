@@ -13,7 +13,7 @@ def install(db):
             expressions.append(f"CASE WHEN json_valid({alias}.evidence) THEN json_extract({alias}.evidence,'$.{path}') END")
         return ','.join(expressions)
     if not exists:
-        db.execute('INSERT INTO repair_profile_evidence SELECT ' + fields('e') + ' FROM repair_examples e')
+        db.execute('INSERT INTO repair_profile_evidence SELECT ' + fields('e') + ' FROM main.repair_examples e')
     for event in ('INSERT', 'UPDATE'):
         update = ' OF evidence,project_id' if event == 'UPDATE' else ''
         when = ' WHEN OLD.evidence IS NOT NEW.evidence OR OLD.project_id IS NOT NEW.project_id' if update else ''

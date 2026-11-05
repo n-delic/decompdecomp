@@ -59,3 +59,33 @@ $("databaseCleanupBefore").onchange=()=>{
   $("databaseCleanupAutomatic").checked=Boolean($("databaseCleanupBefore").value);
   $("databaseCleanupEstimate").textContent='Rules changed. Preview to check eligible transcripts, then save or clean up now.';
 };
+
+let databaseStorageJob=null;
+async function loadDatabaseStorage() {
+  if(databaseStorageJob)return;
+  const data=await api('/api/database-storage');
+  const size=n=>`${(Number(n)/1048576).toLocaleString(undefined,{maximumFractionDigits:1})} MiB`;
+  $('databaseStorageSize').textContent=`— ${size(data.stored_bytes)} shared content`;
+  $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of source and evidence stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database.`;
+  $('databaseStorageDays').value=data.retention.days;
+  $('databaseStorageAutomatic').checked=data.retention.automatic;
+}
+async function runDatabaseStorage(action) {
+  if(databaseStorageJob)return;
+  const log=$('databaseStorageLog'),stop=$('databaseStorageStop');
+  const controls=['Pack','Save','Prune','Days','Automatic'].map(x=>$('databaseStorage'+x));
+  const done=beginWork(log,action==='pack'?'Compressing saved history':action==='save'?'Saving retention rules':'Cleaning old unsuccessful source',controls,'Storage maintenance complete');
+  try {
+    const result=await api('/api/database-storage',{method:'POST',body:{action,days:Number($('databaseStorageDays').value),automatic:$('databaseStorageAutomatic').checked}});
+    if(result.job){databaseStorageJob=result.job;stop.hidden=false;await followJob(result.job,log,(_lines,state)=>updateWorkProgress(log,state.progress));}
+  }catch(error){showJobError(log,error.message);}
+  finally{databaseStorageJob=null;stop.hidden=true;stop.disabled=false;done();}
+  try{await loadDatabaseStorage();}catch(error){showJobError(log,error.message);}
+}
+for(const action of ['pack','save','prune'])$('databaseStorage'+action[0].toUpperCase()+action.slice(1)).onclick=()=>runDatabaseStorage(action);
+$('databaseStorageStop').onclick=async()=>{
+  if(!databaseStorageJob)return;
+  $('databaseStorageStop').disabled=true;
+  try{await api('/api/job/cancel',{method:'POST',body:{id:databaseStorageJob}});}
+  catch(error){$('databaseStorageStop').disabled=false;showJobError($('databaseStorageLog'),error.message);}
+};

@@ -452,7 +452,7 @@ def recover_legacy(net,slug):
     rows=net.store.all("SELECT t.agent_id,t.source,f.name FROM attempts t JOIN functions f ON f.id=t.function_id "
                        "WHERE t.id IN (SELECT MAX(a.id) FROM attempts a JOIN functions f ON f.id=a.function_id "
                        "JOIN agents g ON g.id=a.agent_id WHERE f.project_id=? AND f.status='open' "
-                       "AND g.origin=? AND a.via='agent' AND a.source IS NOT NULL GROUP BY f.id) LIMIT 20",
+                       "AND g.origin=? AND a.via='agent' AND (a.source_hash IS NOT NULL OR a.source IS NOT NULL) GROUP BY f.id) LIMIT 20",
                        proj['id'],'collab:'+slug)
     for row in rows:
         a=net.store.one('SELECT id,name,owner,trusted FROM agents WHERE id=?',row['agent_id'])

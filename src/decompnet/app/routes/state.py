@@ -70,6 +70,19 @@ def register(app: App) -> None:
             return JSONResponse({'job':database_cleanup.start(net,jobs,value)})
         except (ValueError,NetworkError) as error:return fail(error)
 
+    @mcp.custom_route('/api/database-storage', methods=['GET','POST'])
+    async def api_database_storage(request):
+        from .. import database_storage
+        if bad := guard(request,write=request.method=='POST'):return bad
+        try:
+            if request.method=='GET':return JSONResponse(await call(database_storage.stats,net))
+            data=await body(request)
+            if data.get('action')=='save':return JSONResponse({'retention':await call(database_storage.save,net,data)})
+            if data.get('action') not in ('pack','prune'):raise ValueError('Choose pack, prune or save.')
+            if data['action']=='prune':database_storage.options(data)
+            return JSONResponse({'job':database_storage.start(net,jobs,data['action'],data)})
+        except (NetworkError,ValueError) as error:return fail(error)
+
     @mcp.custom_route('/api/header-storage', methods=['GET','POST'])
     async def api_header_storage(request):
         from .. import header_cleanup

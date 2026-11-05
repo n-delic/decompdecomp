@@ -2518,3 +2518,27 @@ def test_dismiss_compiler_inbox_passes_explicit_project_snapshot(app, monkeypatc
     assert response.status_code == 200
     assert response.json() == {'dismissed':2, 'overview':{'slug':'inbox', 'suggestions':[]}}
     assert calls == [('inbox', [4, 7])]
+
+
+def test_candidate_storage_routes_guard_validate_and_keep_history_scoped(app):
+    client,net,*_=app
+    headers={'X-Decomp':'1'}
+    assert client.get('/api/database-storage',headers={'User-Agent':'outside'}).status_code==401
+    assert client.post('/api/database-storage',json={'action':'pack'}).status_code==403
+    assert client.post('/api/database-storage',json={'action':'prune','days':0},headers=headers).status_code==400
+    data=client.get('/api/database-storage').json()
+    assert 'stored_bytes' in data and 'history_plan' in data
+    assert any('COVERING INDEX' in plan for plan in data['history_plan'])
+    assert client.post('/api/database-storage',json={'action':'save','days':90,'automatic':False},headers=headers).status_code==200
+    with net.store.tx() as db:
+        pid=db.execute("INSERT INTO projects(slug,name,root,config) VALUES('payload-history','History','/scratch','{}')").lastrowid
+        fid=db.execute("INSERT INTO functions(project_id,name) VALUES(?,'target')",(pid,)).lastrowid
+        other=db.execute("INSERT INTO functions(project_id,name) VALUES(?,'other')",(pid,)).lastrowid
+        a=db.execute("INSERT INTO attempts(function_id,source,score,compiled) VALUES(?,'candidate',12,1)",(fid,)).lastrowid
+    query='/api/attempt-history?slug=payload-history&function=target'
+    page=client.get(query).json()
+    assert page['attempts'][0]['id']==a and page['attempts'][0]['source_available']
+    assert client.get(query+'&attempt='+str(a)).json()['source']=='candidate'
+    assert client.get(query.replace('function=target','function=other')+'&attempt='+str(a)).status_code==400
+    assert client.get(query+'&before=invalid').status_code==400
+    assert other!=fid

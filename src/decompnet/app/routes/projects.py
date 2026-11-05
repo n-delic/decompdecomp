@@ -562,6 +562,12 @@ def register(app: App) -> None:
 
     draft_jobs = {}
 
+    def p_attempt_history(slug, request, data):
+        from ..database_storage import history
+        q=request.query_params
+        return history(net,slug,q.get('function',''),int(q.get('before',0)),int(q['attempt']) if q.get('attempt') else None)
+    mcp.custom_route('/api/attempt-history',methods=['GET'])(with_project(p_attempt_history))
+
     def p_machine_drafts(slug, request, data):
         from .. import draft_regeneration, draft_reports
         proj = net.project_row(slug)

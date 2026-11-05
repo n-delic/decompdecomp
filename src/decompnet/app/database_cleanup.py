@@ -117,11 +117,19 @@ class Retention:
     def __init__(self,net,jobs):
         self.net,self.jobs=net,jobs
         self.next_check=0
+        self.next_payload_check=0
 
     def tick(self,now=None):
         import time
         now=time.monotonic() if now is None else now
         if now<self.next_check:return
         self.next_check=now+300
+        if now>=self.next_payload_check:
+            self.next_payload_check=now+86400
+            from . import database_storage
+            row=self.net.store.one("SELECT value FROM settings WHERE key=?",database_storage.KEY)
+            rules=json.loads(row["value"]) if row else {}
+            if rules.get("automatic"):
+                database_storage.start(self.net,self.jobs,'prune',rules,foreground=False)
         value=saved(self.net)
         if value.get('automatic') and eligible(self.net,value):start(self.net,self.jobs,value,foreground=False)

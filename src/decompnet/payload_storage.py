@@ -1,0 +1,91 @@
+"""Compressed immutable text payloads with stable attempt IDs and lazy SQL detail views.
+
+Physical tables retain metadata, foreign keys and INSERT/lastrowid semantics. Store connections
+route reads through detail views; maintenance uses explicit main.table names to inspect raw storage.
+Old rows remain readable until an explicit, bounded backfill packs them.
+"""
+import hashlib
+import json
+import re
+import sqlite3
+import zlib
+from functools import lru_cache
+
+
+@lru_cache(maxsize=32)
+def unpack(digest, payload):
+    if payload is None:raise ValueError('Missing database payload; restore a database backup.')
+    text=zlib.decompress(payload).decode('utf-8')
+    if hashlib.sha256(text.encode()).hexdigest()!=digest:raise ValueError('Database payload checksum failed.')
+    return text
+
+
+def digest(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest() if text is not None else None
+
+
+def metadata(text):
+    # Listing/grouping fields remain queryable; exact complete evidence stays in the immutable blob.
+    try:value=json.loads(text)
+    except (ValueError,TypeError):return text
+    def small(item):
+        if isinstance(item,dict):
+            return {k:small(v) for k,v in item.items() if k not in
+                    {'source','header','asm','assembly','target_asm','candidate_asm','diff','rows','log','diagnostics'}}
+        if isinstance(item,list):return [small(v) for v in item]
+        return item
+    return json.dumps(small(value),separators=(',',':'))
+
+
+def register(conn):
+    conn.create_function('payload_digest',1,digest,deterministic=True)
+    conn.create_function('payload_pack',1,lambda text:zlib.compress(text.encode('utf-8')),deterministic=True)
+    conn.create_function('payload_read',2,unpack,deterministic=True)
+    conn.create_function('repair_metadata',1,metadata,deterministic=True)
+    if isinstance(conn,Connection):
+        conn.detail_tables={r[0].removesuffix('_details') for r in sqlite3.Connection.execute(conn,
+            "SELECT name FROM sqlite_master WHERE type='view' AND name IN ('attempt_details','repair_details')")}
+        conn.detail_tables={'attempts' if x=='attempt' else 'repair_examples' for x in conn.detail_tables}
+
+
+# Quoted values/comments must never be rewritten (including JSON paths and recorded SQL text).
+QUOTED=re.compile(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|--[^\n]*|/\*[\s\S]*?\*/)")
+TABLE=re.compile(r'\b(FROM|JOIN)\s+(attempts|repair_examples)\b',re.I)
+
+
+class Connection(sqlite3.Connection):
+    detail_tables=frozenset()
+    def execute(self,sql,parameters=(),/):
+        if self.detail_tables and not re.match(r'\s*(CREATE|DROP|ALTER|PRAGMA)',sql,re.I):
+            def part(text):
+                def table(match):
+                    if match.group(2).lower() not in self.detail_tables:return match.group()
+                    if re.search(r'\bDELETE\s*$',text[:match.start()],re.I):return match.group()
+                    return match.group(1)+' '+('attempt_details' if match.group(2).lower()=='attempts' else 'repair_details')
+                return TABLE.sub(table,text)
+            bits=QUOTED.split(sql)
+            sql=''.join(part(bit) if i%2==0 else bit for i,bit in enumerate(bits))
+        return super().execute(sql,parameters)
+
+
+def install(conn,table='attempts'):
+    conn.execute('CREATE TABLE IF NOT EXISTS text_payloads(hash TEXT PRIMARY KEY,payload BLOB NOT NULL,raw_bytes INTEGER NOT NULL)')
+    field,ref,view=('source','source_hash','attempt_details') if table=='attempts' else ('evidence','evidence_hash','repair_details')
+    columns=[r[1] for r in conn.execute('PRAGMA table_info('+table+')')]
+    if ref not in columns:
+        conn.execute(f'ALTER TABLE {table} ADD COLUMN {ref} TEXT')
+        columns.append(ref)
+    expression=f'CASE WHEN {ref} IS NULL THEN {field} ELSE payload_read({ref},(SELECT payload FROM text_payloads WHERE hash={ref})) END AS {field}'
+    conn.execute(f'DROP VIEW IF EXISTS {view}')
+    conn.execute(f'CREATE VIEW {view} AS SELECT '+','.join(expression if col==field else col for col in columns)+f' FROM {table}')
+    put=f'INSERT OR IGNORE INTO text_payloads SELECT payload_digest(NEW.{field}),payload_pack(NEW.{field}),length(CAST(NEW.{field} AS BLOB)) WHERE NOT EXISTS(SELECT 1 FROM text_payloads WHERE hash=payload_digest(NEW.{field}));'
+    stored='NULL' if table=='attempts' else f'repair_metadata(NEW.{field})'
+    for event in ('INSERT','UPDATE'):
+        condition=f'NEW.{field} IS NOT NULL AND '+(f'NEW.{ref} IS NULL' if event=='INSERT' else f'NEW.{ref} IS OLD.{ref}')
+        conn.execute(f'CREATE TRIGGER IF NOT EXISTS pack_{table}_{event.lower()} AFTER {event}'+(f' OF {field}' if event=='UPDATE' else '')+f' ON {table} WHEN {condition} BEGIN '+put+
+                     f'UPDATE {table} SET {ref}=payload_digest(NEW.{field}),{field}={stored} WHERE id=NEW.id; END')
+    if table=='attempts':
+        conn.execute('CREATE TRIGGER IF NOT EXISTS clear_attempt_source AFTER UPDATE OF source ON attempts '
+                     'WHEN NEW.source IS NULL AND OLD.source IS NULL AND NEW.source_hash IS OLD.source_hash AND NEW.source_hash IS NOT NULL '
+                     'BEGIN UPDATE attempts SET source_hash=NULL WHERE id=NEW.id; END')
+    if isinstance(conn,Connection):conn.detail_tables=set(conn.detail_tables)|{table}
