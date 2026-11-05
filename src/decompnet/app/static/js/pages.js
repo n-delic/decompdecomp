@@ -244,6 +244,7 @@ async function renderWebGithubSettings(onSaved) {
 async function showSettingsPage() {
   show("settingsPage");
   const st = await loadState();
+  loadDatabaseCleanup().catch(error=>{$('databaseCleanupEstimate').textContent=error.message;});
   loadMatchLibrary().catch(error=>{$("matchLibraryCount").textContent=error.message;});
   const projects = await api('/api/projects');
   $("browserBridgeProject").innerHTML = projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join('');

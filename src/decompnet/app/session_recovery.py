@@ -48,7 +48,9 @@ def api_messages(net, session, identity, messages=None):
         value = json.dumps({'identity':identity, 'messages':messages})
         if len(value.encode()) <= 16 * 1024 * 1024:
             with net.store.tx() as db:
-                if not db.execute('SELECT 1 FROM settings WHERE key=?',('helper-transcripts-removed:'+str(session.id),)).fetchone():
+                if not db.execute('SELECT 1 FROM settings WHERE key IN (?,?)',
+                                  ('helper-transcripts-removed:'+str(session.id),
+                                   'helper-transcript-session-cleared:'+str(getattr(session,'session_id',0)))).fetchone():
                     db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (key,value))
         return None
     row = net.store.one('SELECT value FROM settings WHERE key=?', key)

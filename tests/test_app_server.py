@@ -2458,3 +2458,24 @@ def test_sharing_dialog_reports_missing_project(app):
     response=client.get('/api/collab?slug=missing-sharing-project')
     assert response.status_code==400
     assert 'no project' in response.json()['error']
+
+
+def test_database_cleanup_routes_validate_preview_and_schedule_guarded_jobs(app):
+    from decompnet.app import database_cleanup
+    client,net,_=app
+    headers={'X-Decomp':'1'}
+    assert client.get('/api/database-cleanup',headers={'User-Agent':'outside'}).status_code==401
+    assert client.post('/api/database-cleanup',json={'action':'start'}).status_code==403
+    for value in [{'action':'start','removed':False,'before':''},
+                  {'action':'save','automatic':True,'before':''},
+                  {'action':'save','before':'3000-01-01'}]:
+        assert client.post('/api/database-cleanup',json=value,headers=headers).status_code==400
+    data=client.post('/api/database-cleanup',json={'action':'preview','removed':True},headers=headers).json()
+    assert data['messages']>=0 and data['sessions']>=0 and 'disk_bytes' in data
+    value={'removed':True,'before':'2000-01-01','automatic':True}
+    result=client.post('/api/database-cleanup',json=dict(value,action='save'),headers=headers)
+    assert result.status_code==200 and database_cleanup.saved(net)==value
+    assert client.get('/api/database-cleanup').json()['options']==value
+    response=client.post('/api/database-cleanup',json={'action':'start','removed':True},headers=headers)
+    assert response.status_code==200 and response.json()['job']
+    database_cleanup.save(net,{'removed':True,'before':'','automatic':False})

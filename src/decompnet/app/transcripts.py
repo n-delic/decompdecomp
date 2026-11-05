@@ -63,6 +63,8 @@ class Transcripts:
                       r'\1"[redacted]"', text)
         text = re.sub(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+', 'Bearer [redacted]', text)
         with self.store.tx() as db:
+            if db.execute('SELECT 1 FROM settings WHERE key=?',('helper-transcript-session-cleared:'+str(session),)).fetchone():
+                return
             if helper is None and db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
                 owner=db.execute('SELECT helper_id FROM helper_sessions WHERE id=?',(session,)).fetchone()
                 helper=owner['helper_id'] if owner else None

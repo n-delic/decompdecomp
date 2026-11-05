@@ -1087,6 +1087,8 @@ class Autosave:
         while not self.stop.is_set():
             try:
                 self._reconcile()
+                retention=getattr(self.net,'database_retention',None)
+                if retention is not None:retention.tick()
             except Exception:
                 log.exception('Could not refresh project autosave workers')
             self.stop.wait(2)

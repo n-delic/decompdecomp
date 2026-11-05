@@ -557,3 +557,9 @@ def test_maintenance_tools_use_shared_disclosure_cards():
         assert ' open' not in card.split('>', 1)[0]
     assert '<label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds"' in html
     assert '<label class="field"><span>Compile limit</span><input id="savedMatchAttempts"' in html
+
+
+def test_database_cleanup_preview_save_progress_stop_and_error_controls():
+    if NODE is None:pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_database_cleanup.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

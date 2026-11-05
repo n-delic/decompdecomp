@@ -148,6 +148,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         slug = row['slug']
         startup.add('SDK naming', lambda log, slug=slug: (log.check_cancel(), name_functions(net, slug)), project=slug, with_log=True)
     startup.start()
+    from .database_cleanup import Retention
+    net.database_retention = Retention(net,jobs)
     net.autosave = saves.Autosave(net, settings)
     net.autosave.start()  # follow work and contributions in each ROM project's authoritative progress folder
 

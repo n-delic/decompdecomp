@@ -779,6 +779,21 @@
 <!-- ================================================================ settings -->
 <main id="settingsPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">Settings</p><h1>How decompdecomp works for you</h1></header>
+  <details class="panel settings-disclosure" id="databaseCleanupPanel">
+    <summary class="panel-head"><h2>Database cleanup <span class="disclosure-context" id="databaseCleanupContext">— Agent transcript history</span></h2></summary>
+    <div class="pad">
+      <p>Clear old agent transcripts while keeping saved matches, candidates, notes and usage totals.</p>
+      <div class="row">
+        <label class="check"><input id="databaseCleanupRemoved" type="checkbox" checked><span>Transcripts from removed agents</span></label>
+        <label class="field"><span>Also clear completed sessions before (UTC)</span><input id="databaseCleanupBefore" type="date"><small class="muted">Optional · ongoing sessions are kept.</small></label>
+      </div>
+      <label class="check"><input id="databaseCleanupAutomatic" type="checkbox"><span>Automatically enforce the saved cutoff date<br><small class="muted">Checks every five minutes while the app is running.</small></span></label>
+      <p class="small muted" id="databaseCleanupEstimate" role="status">Preview cleanup to see eligible transcripts.</p>
+      <div class="row"><button id="databaseCleanupStart" class="primary" type="button">Clean up now</button><button id="databaseCleanupSave" class="ghost" type="button">Save cleanup rules</button><button id="databaseCleanupPreview" class="ghost" type="button">Preview cleanup</button><button id="databaseCleanupStop" class="ghost" type="button" hidden>Stop cleanup</button></div>
+      <div id="databaseCleanupLog"></div>
+      <details class="more"><summary>What gets removed?</summary><p class="small muted">The selected rules are combined: removed agents, plus completed sessions older than the date. Enable automatic cleanup and save your rules to enforce the cutoff in the background. Stopping a run keeps completed deletions; disable automatic cleanup to prevent future runs. Clearing transcripts is permanent; export any history you need first. Space becomes reusable inside SQLite, so the database file may stay the same size. Saved source and exact matches are kept.</p></details>
+    </div>
+  </details>
   <details class="panel settings-disclosure" id="matchLibraryPanel"><summary class="panel-head"><h2>Local match library <span class="disclosure-context" id="matchLibraryCount">— Loading</span></h2></summary><div class="pad"><p class="small muted">Verified matches are retained in a separate database when projects are closed or removed. Shared functions are stored once, with links to their games and distinct verified source/compiler variants. New games must still pass their own byte or object verification.</p><div class="row"><label class="field grow"><span>Find a function or game</span><input id="matchLibrarySearch" type="search" placeholder="Function name or game"></label><button class="ghost small-btn" id="matchLibraryRefresh">Search</button><button class="ghost small-btn" id="matchLibraryIndex">Index existing matches</button></div><p class="small muted">Database size includes SQLite journal files. Showing up to 100 functions, most widely shared first. This library stays on this computer; no game data is uploaded.</p><div id="matchLibraryLog"></div><div id="matchLibraryItems"></div></div></details>
   <div class="cols">
     <section class="panel"><header class="panel-head"><h2>Pair a browser worker</h2></header><div class="pad">
@@ -988,6 +1003,7 @@
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/background-work.js"></script>
 <script src="/assets/js/pages.js"></script>
+<script src="/assets/js/database-cleanup.js"></script>
 <script src="/assets/js/pwa.js"></script>
 </body>
 </html>

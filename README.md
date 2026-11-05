@@ -789,6 +789,14 @@ session keeps the full app prompt (including guides and project instructions), e
 replies, app tool arguments/results, and reported input/cache/output usage. API helpers
 also record each request after context trimming, including tool definitions. CLI provider
 system prompts, hidden reasoning, shell output and internal compaction are not available.
+**Settings → Database cleanup** previews and clears transcripts from agents already
+removed, and optionally from completed sessions before a chosen date (00:00 UTC).
+Enable automatic cutoff enforcement and save the rules to check every five minutes
+while the app is running, or use **Clean up now**. The existing background coordinator
+schedules cleanup without another polling thread and respects the saved maintenance CPU budget. Tasks show progress and can stop
+between bounded batches; completed deletions remain. Ongoing sessions and current
+agents' resumable conversations are kept. Empty automatic checks do not create jobs.
+
 **Remove agent** deletes that agent's recorded app transcripts and saved API conversation.
 Its saved matches, candidates, notes, attribution and lifetime usage/cost totals remain.
 Export transcripts before removing an agent if you want to keep them. Deletion makes

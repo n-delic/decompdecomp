@@ -4,6 +4,10 @@
   so saved-progress verification cannot make them synchronize on the HTTP event loop.
   Network discovery, member/settings reads and response encoding stay off that loop.
 
+
+- Done: Settings database cleanup with removed-agent history, a saved UTC cutoff,
+  automatic enforcement, counted cancellable batches and preserved work/usage totals.
+
 - Done: bounded named-donor materialization; indexed/revision-cached latest headers;
   bounded room match/attempt deltas with a race-safe cursor; layout-versioned audit caching.
 

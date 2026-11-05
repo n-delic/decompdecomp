@@ -50,6 +50,25 @@ def register(app: App) -> None:
         return JSONResponse(await call(net.match_library.summary, str(request.query_params.get('search',''))[:200]))
 
 
+    @mcp.custom_route('/api/database-cleanup', methods=['GET','POST'])
+    async def api_database_cleanup(request):
+        from .. import database_cleanup
+        if bad := guard(request,write=request.method=='POST'):
+            return bad
+        try:
+            if request.method=='GET':
+                return JSONResponse(await call(database_cleanup.summary,net))
+            data=await body(request)
+            value,_=database_cleanup.options(data)
+            if data.get('action')=='preview':
+                return JSONResponse(await call(database_cleanup.summary,net,value))
+            if data.get('action')=='save':
+                return JSONResponse({'options':await call(database_cleanup.save,net,value)})
+            if data.get('action')!='start':raise ValueError('Choose preview, save or start for database cleanup.')
+            await call(database_cleanup.save,net,value)
+            return JSONResponse({'job':database_cleanup.start(net,jobs,value)})
+        except (ValueError,NetworkError) as error:return fail(error)
+
     def state() -> dict:
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:
