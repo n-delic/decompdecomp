@@ -771,10 +771,18 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             if checked and checked.get('exact'):
                 return _compile(net,agent,slug,function,source)
         candidates = []
-        for p in patches:
-            if not isinstance(p,dict):
-                raise NetworkError('Every patch needs old and new text.')
-            candidates.append(agent_targets.replace_anchor(source,p.get('old'),p.get('new'),p.get('occurrence',0)))
+        invalid = []
+        for index,p in enumerate(patches,1):
+            try:
+                if not isinstance(p,dict):
+                    raise NetworkError('Every patch needs old and new text.')
+                candidates.append(agent_targets.replace_anchor(source,p.get('old'),p.get('new'),p.get('occurrence',0)))
+            except NetworkError as error:
+                invalid.append(f'Variant {index}: {error}')
+        if invalid:
+            raise NetworkError('Batch rejected before variant compilation. No patches applied.\n'
+                               + '\n'.join(invalid) + f'\nCurrent candidate revision {actual}. '
+                               'Correct these variants against the same starting candidate; patches are independent, not cumulative.')
         results = ['Independent variants against revision '+revision+' (not cumulative):']
         last = None
         observations = []

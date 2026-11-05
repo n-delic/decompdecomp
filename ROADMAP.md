@@ -2384,3 +2384,4 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   preserves helper purity, pointer types and evaluation constraints, reaches ROM
   and project repair consumers, and reproduced a private MIPS GCC linked match at
   rank 6 of 34. It leaves callee prototypes to verified source context.
+- Done: independent patch batches identify all invalid variant anchors and their current revision before any trial compiles, allowing one precise correction without partial edits.
