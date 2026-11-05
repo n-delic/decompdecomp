@@ -256,6 +256,7 @@ def _file_compiler(console, fp, fn) -> str | None:
 @dataclass
 class Job:
     state: str = "running"
+    progress: dict = field(default_factory=lambda: {"phase": "Waiting for background CPU"})
     pairs: int = 0
     tried: int = 0
     matched: int = 0
@@ -568,28 +569,37 @@ class Twins:
             return self._execute_full_pass(slug, job)
 
     def _execute_full_pass(self, slug, job):
+        from .cross_game_progress import report
         try:
+            report(job, 'Preparing reusable-code search')
             proj = self.net.project_row(slug)
             job.asm += self.set_aside_asm(proj)
             self.update_boosts(proj, pending=True)
             job.ordered.set()
             self.run(slug, job)
             job.state = "running"  # run() finishes its local pass; cross-project work is still cancellable
+            report(job, 'Searching other games and local SDKs')
             job.matched += self.across_games(slug, job)
             from . import free_candidates, named_donors, similar_matches
 
             free_candidates.budget(job, self.net.cascades.seconds, self.net.cascades.attempts)
             started = time.monotonic()
+            report(job, 'Checking same-name source candidates')
             job.matched += named_donors.run(self, slug, job)
+            report(job, 'Checking reusable source candidates')
             job.matched += free_candidates.run(self, slug, job)
+            report(job, 'Checking similar matched functions')
             job.matched += similar_matches.run(self, slug, job)
             with self.net.store.tx() as db:
                 db.execute('INSERT INTO reuse_runs(project_id,attempts,matched,bytes,seconds,created_at) VALUES(?,?,?,?,?,?)',
                            (proj['id'], job.reuse_attempts, job.reuse_matched,
                             job.reuse_bytes, time.monotonic() - started, time.time()))
+            report(job, 'Repairing near matches')
             job.matched += self.net.permuter.repair_pass(slug, job.stop).matched
             from .iterative_repairs import optional_phase
+            report(job, 'Trying additional local repairs')
             job.matched += optional_phase(self, slug, job)
+            report(job, 'Recovering shared function names')
             self.reuse_names(slug, job)
             from .sdk_names import name_functions
             name_functions(self.net, slug, job)
@@ -1228,14 +1238,30 @@ class Twins:
 
                 fresh: set[int] = set()
 
-                def one(pair: tuple[int, int]) -> None:
+                progress_lock = threading.Lock()
+                tally = {"done": 0, "total": 0}
+                active = {}
+                from .cross_game_progress import report
+                def publish(active=active, tally=tally):
+                    report(job, 'Checking identical code in this game', done=tally['done'],
+                           total=tally['total'], function=', '.join(active.values()))
+                def one(pair: tuple[int, int], active=active, tally=tally,
+                        progress_lock=progress_lock, publish=publish) -> None:
                     if job.stop.is_set():
                         return
+                    with progress_lock:
+                        fn = self.net.store.one('SELECT name FROM functions WHERE id=?', pair[1])
+                        active[pair[1]] = fn['name'] if fn else str(pair[1])
+                        publish()
                     try:
                         outcome = self.try_pair(agent, proj, *pair)
                     except Exception as e:  # one odd function must not stop the rest
                         log.info("twins: %s failed: %s", pair, e)
                         outcome = "skip"
+                    with progress_lock:
+                        active.pop(pair[1], None)
+                        tally['done'] += 1
+                        publish()
                     job.tried += outcome not in ("skip", "asm", "known")
                     job.matched += outcome == "match"
                     job.asm += outcome == "asm"
@@ -1248,6 +1274,8 @@ class Twins:
                         by_target[p[1]] = p
                 with self.net.store.tx() as db:  # agents leave these for last meanwhile: they may be free in a minute
                     db.executemany("UPDATE functions SET boost=-1 WHERE id=? AND status='open'", [(b,) for b in by_target])
+                tally['total'] = len(by_target)
+                publish()
                 with ThreadPoolExecutor(max_workers=workers) as pool:
                     list(pool.map(one, by_target.values()))
                 if job.matched == before:

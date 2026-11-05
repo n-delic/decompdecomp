@@ -123,7 +123,9 @@ def run(twins,slug,job=None,*,only=None):
     agent,_=net.local_agent('autopilot-named-donors')
     matched=0
     eligible=targets(net,proj,only)
-    for b in eligible[:MAX_FUNCTIONS]:
+    from .cross_game_progress import report as publish_progress
+    for index, b in enumerate(eligible[:MAX_FUNCTIONS]):
+        publish_progress(job, 'Checking same-name source candidates', function=b['name'], done=index, total=len(eligible[:MAX_FUNCTIONS]))
         if exhausted():break
         if only is not None and b['id'] not in only:continue
         with net.store.tx() as db:

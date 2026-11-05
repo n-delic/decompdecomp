@@ -122,7 +122,9 @@ def run(twins, slug, job):
     functions = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY size,id", proj['id'])
     with reuse_traversal.rotating(net, proj['id'], functions,
                                   ready=lambda: not exhausted(job) and time.monotonic() < phase_deadline) as rows:
-        for fn in rows:
+        from .cross_game_progress import report as publish_progress
+        for index, fn in enumerate(rows):
+            publish_progress(job, 'Checking reusable source candidates', function=fn['name'], done=index, total=len(functions))
             if exhausted(job) or time.monotonic() >= phase_deadline:
                 break
             if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
