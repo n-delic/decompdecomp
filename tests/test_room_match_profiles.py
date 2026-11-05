@@ -302,3 +302,56 @@ def test_missing_compiler_tries_every_project_profile_automatically(pair,monkeyp
     monkeypatch.setattr(room_matches.prepared_evidence,'promote_measured',miss)
     result=room_matches.verify(host,slug,agent,'func_80000808',DAMAGE)
     assert result['pending'] and seen==profiles
+
+
+def test_room_rechecks_saved_entry_with_different_overlay_name(pair):
+    host,slug,guest,gslug=pair
+    source=DAMAGE.replace('func_80000808','func_80000808_overlay_024')
+    evidence=room_matches.packet(guest,gslug,'func_80000808',source)
+    agent,_=host.local_agent('room-client')
+    result=room_matches.verify(host,slug,agent,'func_80000808',source,evidence)
+    assert result['matched'],result['reason']
+    fn=host._function('func_80000808',slug)
+    assert 'func_80000808_overlay_024' not in fn['matched_source']
+
+
+def test_room_entry_rename_preserves_literals_and_other_overlay_symbols():
+    fn={'name':'func_80100000_overlay_011','vram':0x80100000}
+    source='void func_80100000_overlay_024(void) { func_80100004_overlay_024(); } // func_80100000_overlay_024\n'
+    header='void func_80100000_overlay_024(void);\nchar *name="func_80100000_overlay_024";'
+    rewritten, declarations=room_matches.entry_source(fn,source,header)
+    assert rewritten.startswith('void func_80100000_overlay_011(void)')
+    assert 'func_80100004_overlay_024();' in rewritten
+    assert '// func_80100000_overlay_024' in rewritten
+    assert '"func_80100000_overlay_024"' in declarations
+    assert declarations.startswith('void func_80100000_overlay_011(void);')
+
+
+@pytest.mark.parametrize('source',[
+    'void func_80100004_overlay_024(void) {}',
+    'void func_80100000_overlay_024(void) {} void func_80100000_overlay_018(void) {}',
+])
+def test_room_entry_rename_rejects_missing_or_ambiguous_identity(source):
+    from decompnet.network import NetworkError
+    with pytest.raises(NetworkError,match='Cannot identify one client entry'):
+        room_matches.entry_source({'name':'func_80100000_overlay_011','vram':0x80100000},source,'')
+
+
+@pytest.mark.parametrize('changed',[False,True])
+def test_room_recovers_body_queued_on_wrong_overlay_only_after_exact_judgment(pair,changed):
+    host,slug,_,_=pair
+    fn=host._function('func_80000808',slug)
+    name='func_80000808_overlay_024'
+    columns=[r['name'] for r in host.store.all('PRAGMA table_info(functions)') if r['name']!='id']
+    with host.store.tx() as db:
+        db.execute('INSERT INTO functions ('+','.join(columns)+') SELECT '+
+                   ','.join('?' if col=='name' else col for col in columns)+' FROM functions WHERE id=?',(name,fn['id']))
+        db.execute('UPDATE functions SET target=? WHERE id=?',(bytes(len(fn['target'])),fn['id']))
+    source=DAMAGE.replace('func_80000808',name)
+    if changed:source=source.replace('= 60;','= 61;')
+    evidence=room_matches.packet(host,slug,'func_80000808',source)
+    agent,_=host.local_agent('room-client')
+    result=room_matches.verify(host,slug,agent,'func_80000808',source,evidence)
+    assert result['matched'] is (not changed),result['reason']
+    assert host._function('func_80000808',slug)['status']=='open'
+    assert (host._function(name,slug)['status']=='matched') is (not changed)

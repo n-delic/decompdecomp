@@ -1804,3 +1804,5 @@ heavy task runs at a time. Startup tasks are offered again after restarting the 
 Unchanged ROM match archives keep a persistent input stamp, avoiding repeated
 archiving; explicit indexing and imported projects retain full checks.
 Room matches send the compiler and flags recorded with each verified function. When older submissions lack compiler settings, the host tries the installed profiles assigned to the project, including compiler ranges and individual functions, and still requires exact linked bytes.
+
+Room verification recovers generated entry names that changed between overlay imports. Historical bodies queued against another overlay at the same RAM address are checked against the named entry; only an exact rebuild can count, and the original submission identity is retained.

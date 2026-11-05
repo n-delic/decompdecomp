@@ -169,6 +169,57 @@ def project_profiles(net, proj, fn):
     return profiles
 
 
+def entry_function(net, proj, fn, item):
+    """Old address-only mirroring could queue one overlay's body on another overlay's row.
+    Recover only a named definition at the same address; the normal judge must prove its actual bytes."""
+    from ..forks import csource
+    from .function_names import _C_TOKEN
+
+    evidence = item.get('evidence') or {}
+    submitted = net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?',
+                             item.get('submitted_function_id', fn['id']), proj['id'])
+    if (not submitted or evidence.get('source_sha256') != match_bundle.digest(item['source']) or
+        evidence.get('target_sha256') != match_bundle.digest(submitted['target'] or b'') or
+        evidence.get('vram') != submitted['vram']):
+        return fn
+    if csource.find(item['source'], fn['name']) is not None:
+        return fn
+    names = {token.group() for token in _C_TOKEN.finditer(item['source'])
+             if re.fullmatch(r'func_[0-9A-Fa-f]{8}_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3})', token.group())}
+    rows = [row for row in net.store.all('SELECT * FROM functions WHERE project_id=? AND vram=?',
+                                       proj['id'], submitted['vram'])
+            if row['name'] in names and csource.find(item['source'], row['name']) is not None]
+    if len(rows) == 1:
+        item.setdefault('submitted_function_id', submitted['id'])
+        item.setdefault('submitted_function', submitted['name'])
+        item.update(function_id=rows[0]['id'], function=rows[0]['name'])
+        return rows[0]
+    return fn
+
+
+def entry_source(fn, source, header):
+    """Overlay numbering can change between imports. Rename only an unambiguous generated entry at this
+    address; callers must validate the submitted target hash first and rejudge the rewritten source."""
+    from ..forks import csource
+    from .function_names import _C_TOKEN
+
+    if csource.find(source, fn['name']) is not None:
+        return source, header
+    pattern = re.compile(r'func_([0-9A-Fa-f]{8})(?:_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3}))?\Z')
+    names = set()
+    for token in _C_TOKEN.finditer(source):
+        name = token.group()
+        match = pattern.fullmatch(name)
+        if match and int(match[1], 16) == fn['vram'] and csource.find(source, name) is not None:
+            names.add(name)
+    if len(names) != 1:
+        raise NetworkError('Cannot identify one client entry at the host function address. Resubmit with its current function name.')
+    old = names.pop()
+    def rewrite(text):
+        return _C_TOKEN.sub(lambda token: fn['name'] if token.group() == old else token.group(), text)
+    return rewrite(source), rewrite(header)
+
+
 def verify(net,slug,agent,function,source,evidence=None):
     key,item=save(net,slug,'host',agent,function,source,evidence)
     result=retry(net,slug,key,recover_profiles=bool(evidence))
@@ -191,6 +242,7 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
     item=json.loads(row['value']);fn=net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?',item['function_id'],proj['id'])
     item['failure_reason']=failure_reason(item)
     if not fn:raise NetworkError('Room submission function was removed.')
+    fn=entry_function(net,proj,fn,item)
     agent_row=net.store.one('SELECT id,name,owner,trusted FROM agents WHERE id=?',item['agent_id'])
     if not agent_row:raise NetworkError('Room submission agent no longer exists.')
     agent=Agent(agent_row['id'],agent_row['name'],agent_row['owner'],bool(agent_row['trusted']))
@@ -224,16 +276,20 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
             fn=net._function(fn['name'],slug);proj=net.project_row(slug)
             if not res['matched']:
                 report({'phase':'Checking client evidence and preparing compiler profiles'})
+                source=item['source']
                 evidence=item.get('evidence')
                 header=net._context(proj['id'],fn['unit'])['header']
                 if evidence:
-                    if (evidence.get('source_sha256')!=match_bundle.digest(item['source']) or
-                        evidence.get('target_sha256')!=match_bundle.digest(fn['target'] or b'') or evidence.get('vram')!=fn['vram']):
+                    submitted=net.store.one('SELECT target FROM functions WHERE id=? AND project_id=?',
+                                             item.get('submitted_function_id',fn['id']),proj['id'])
+                    if (not submitted or evidence.get('source_sha256')!=match_bundle.digest(item['source']) or
+                        evidence.get('target_sha256')!=match_bundle.digest(submitted['target'] or b'') or evidence.get('vram')!=fn['vram']):
                         raise NetworkError('Client source/target identity differs from the host. Resubmit from the same game/function.')
                     header=evidence.get('header')
                     if (not isinstance(header,str) or len(header.encode())>source_preparation.MAX_HEADER or
                         evidence.get('header_sha256',match_bundle.digest(header))!=match_bundle.digest(header)):
                         raise NetworkError('Invalid room header evidence.')
+                    source,header=entry_source(fn,source,header)
                     profiles=([settings(net,proj,evidence['compiler'])] if evidence.get('compiler')
                               else project_profiles(net,proj,fn))
                     current={k:own[k] for k in ('toolchain','flags')}
@@ -266,7 +322,7 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
                     try:
                         expected=source_preparation.inputs(net,net.project_row(slug),net._function(fn['name'],slug))
                         prepared_evidence.promote_measured(net,net.project_row(slug),net._function(fn['name'],slug),
-                                                          item['source'],header,profile,agent,expected)
+                                                          source,header,profile,agent,expected)
                         result.update(matched=True,score=0,pending=False,compiler=profile)
                         break
                     except NetworkError as error:
