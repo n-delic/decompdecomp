@@ -73,7 +73,7 @@ def prototype(context, name, arch=None):
         for a,b in split_args(match[2]):
             spelling=match[2][a:b].strip()
             named=re.fullmatch(r'(.+?)(?:\s+|(?<=\*))('+IDENT+r')',spelling)
-            if named and (integer_abi.scalar(named[1].strip(),context,arch) is not None or re.fullmatch(IDENT+r'\s*\*',named[1].strip())):
+            if named and named[2] not in {'char','short','int','long','signed','unsigned','float','double','void'} and (integer_abi.scalar(named[1].strip(),context,arch) is not None or re.fullmatch(IDENT+r'\s*\*',named[1].strip())):
                 spelling=named[1].strip()
             if not re.fullmatch(rf'{IDENT}(?:\s+{IDENT})*\s*\**',spelling):return None
             types.append(spelling)

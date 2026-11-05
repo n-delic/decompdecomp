@@ -7,8 +7,11 @@ FAMILY = 'debug_statement_boundary'
 LIMIT = 12
 
 
-def variants(source, name, flags=()):
-    if not any(re.fullmatch(r'-g(?:[1-3]|gdb[1-3]?)?', f) for f in flags):
+def variants(source, name, flags=(), header=''):
+    if re.search(r'\b__LINE__\b|^\s*#\s*(?:line\b|\d)', header+'\n'+source,re.M):
+        return []
+    debug = [f for f in flags if re.fullmatch(r'-g(?:[0-3]|gdb[0-3]?)?', f)]
+    if not debug or debug[-1] in {'-g0','-ggdb0'}:
         return []
     part = view(source, name)
     if not part:

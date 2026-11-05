@@ -500,13 +500,14 @@
             <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
             <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. Local ROM projects only.</small></label>
             <label class="field"><span>Parallel threads</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
+            <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label>
             <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
           </div></details>
         </div>
         <div class="deep-sweep-tools">
         <details class="deep-sweep-help"><summary>How it works</summary>
           <p class="small muted">Completed passes are saved across restarts. Start the pass again after restarting the app to continue. Changes to source, headers or compiler inputs make a function eligible again.</p>
-          <p class="small muted">Each thread picks a different eligible function in random order. Turns start with half the time allowance and extend after improvements, up to your maximum. Repeated identical output can rotate sooner; rotated functions remain eligible next run. Local searches can run alongside agents using saved, scored C; agents keep their claims. Compiler/header changes are deferred while claimed. Room guests still follow the host’s claims. Functions without scored C wait for a draft. Only the ordinary byte judge can save a match. A completed pass means its bounded turn finished, not that every possible rewrite was tried.</p>
+          <p class="small muted">Each thread picks a different eligible function in random order. Turns start with half the time allowance and extend after improvements, up to your maximum. Repeated identical output can rotate sooner; rotated functions remain eligible next run, or the next pass with Loop indefinitely. Local searches can run alongside agents using saved, scored C; agents keep their claims. Compiler/header changes are deferred while claimed. Room guests still follow the host’s claims. Functions without scored C wait for a draft. Only the ordinary byte judge can save a match. A completed pass means its bounded turn finished, not that every possible rewrite was tried.</p>
         </details>
         <details class="deep-sweep-more"><summary>More actions</summary><button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button></details>
         </div>

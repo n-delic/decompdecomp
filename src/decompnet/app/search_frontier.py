@@ -42,6 +42,14 @@ def mismatch_positions(rows):
     return positions
 
 
+def missing_operations(rows):
+    """Target-only non-NOP operations are root-cause leads, not branch displacement noise."""
+    rows=permuter_focus.normalized(rows)
+    if any(not isinstance(r,(tuple,list)) or len(r)!=3 or not all(isinstance(v,str) for v in r) for r in rows):return 1000000000
+    return sum(1 for marker,target,_ in rows
+               if marker=='<' and target.strip() and target.split()[0] not in {'nop','b','beq','bne','j'})
+
+
 def structure(rows):
     rows = permuter_focus.normalized(rows)
     if not rows or any(not isinstance(row, (list, tuple)) or len(row) != 3 for row in rows):
@@ -93,6 +101,7 @@ class Frontier:
         summary = summarize(rows)
         node = {'rows':rows, 'summary': summary, 'source': source, 'score': score, 'fitness': structure(rows),
                 'frame_distance': permuter_focus.stack_distance(rows),
+                'missing_operations':missing_operations(rows),
                 'repaired':tuple(sorted(repaired)), 'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows,arch),
                 'allocation': allocation_evidence.signature(rows,arch),
                 'region_gain': region_repairs.gain(region_repairs.snapshot(baseline,arch),region_repairs.snapshot(rows,arch)),
@@ -103,6 +112,12 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        # Keep a root-operation recovery even if compensating instructions gave a lower score.
+        operations = [n for n in pool if baseline_score is not None and n['score']<=baseline_score*2
+                      and n['missing_operations']<missing_operations(baseline)]
+        if operations:
+            candidate=min(operations,key=lambda n:(n['missing_operations'],n['fitness'],n['score']))
+            if candidate not in selected:selected.append(candidate)
         # Reserve one sibling that repairs the original target locations even when a new
         # scheduling difference raises its score. Still bounded by WIDTH and ordinary budgets.
         repaired_nodes = sorted((n for n in pool if n.get('repaired')),

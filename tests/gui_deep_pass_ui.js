@@ -233,7 +233,10 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   timeout();await slow;
   assert.match(element('deepSweepQueueReason').textContent,/15 seconds/);
   assert.equal(element('deepSweepStatusRetry').disabled,false);
-  ctx.api=async()=>{throw new Error('A deep pass is already running');};
+  ctx.renderDeepQueueState({state:'running',loop:true,progress:{cycle:3,functions_tested:8}});
+  assert.match(element('deepSweepRunChecked').textContent,/Pass 3 · looping/);
+  element('deepSweepLoop').checked=true;
+  ctx.api=async(url, options)=>{assert.equal(options.body.loop,true);throw new Error('A deep pass is already running');};
   vm.runInContext(source.slice(source.indexOf('$("deepSweepStart").onclick'),source.indexOf('$("deepSweepStop").onclick')),ctx);
   await element('deepSweepStart').onclick();
   assert.match(element('deepSweepQueueTitle').textContent,/could not start/);
@@ -243,7 +246,7 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
 // Integration with the match-ranked profile controls: one field in the compact Advanced disclosure.
 const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
 const panel=html.slice(html.indexOf('id="deepSweepPanel"'),html.indexOf('id="deepSweepAttention"'));
-for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepThreads','deepSweepRepeat']) {
+for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepThreads','deepSweepRepeat','deepSweepLoop']) {
   assert.equal((panel.match(new RegExp('id="'+id+'"','g')) || []).length,1,`${id} must occur exactly once`);
 }
 assert.match(panel,/<details class="deep-advanced">[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/details>/);
