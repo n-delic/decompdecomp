@@ -36,7 +36,8 @@ def test_shared_dispatch_runs_pass_for_api_and_mcp_entry_points(monkeypatch):
     seen=[]
     monkeypatch.setitem(tools.HANDLERS,'project_info',lambda *a,**kw:'facts')
     monkeypatch.setattr(agent_local_pass,'after_tool',lambda *args:seen.append(args[3]) or args[-1])
-    assert tools._dispatch(None,None,'game','project_info',{})=='facts'
+    from types import SimpleNamespace
+    assert tools._dispatch(SimpleNamespace(),SimpleNamespace(id=1),'game','project_info',{})=='facts'
     assert seen==['project_info']
 
 
