@@ -295,3 +295,13 @@ when the MIPS target and declared candidate calls differ by exactly one symbol a
 have matching static call counts. It rewrites the owned prototype and calls together,
 without altering shared headers or guessing among multiple targets. Call-focused
 search prioritizes this hypothesis; acceptance remains the ordinary byte judge.
+
+### Imported function symbols in address reads
+
+Several recent `get_function` calls using generated address labels were refused
+as data even though a unique matched function owned the address. Their imported
+symbol records used `kind=func`; the resolver recognized only `function`. Read-only
+ownership now accepts both function-kind spellings. Canonical owners are still
+required: an orphan function symbol creates no boundary, overlapping images stay
+ambiguous without context, and genuine data/unknown symbols retain their data
+classification. No name, claim or match is changed by resolving an address.

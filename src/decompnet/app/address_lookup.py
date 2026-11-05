@@ -61,7 +61,9 @@ def resolve(net, agent, slug, queries, context_function=''):
         # A registered data name is not silently reinterpreted as code, even when analysis overlaps it.
         if not symbols:
             symbols=net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? AND address<=? AND address+MAX(size,1)>? ORDER BY name LIMIT 16',proj['id'],address,address)
-        data=any(r['kind']!='function' for r in symbols)
+        # Saved/imported symbol tables use 'func'; older integrations also use
+        # 'function'. Neither spelling turns a conflicting data record into code.
+        data=any(r['kind'] not in ('func','function') for r in symbols)
         if data:
             kind='data'
         elif len(owners)>1:
@@ -69,7 +71,7 @@ def resolve(net, agent, slug, queries, context_function=''):
         elif owners:
             kind='function_entry' if owners[0]['vram']==address else 'function_interior'
         else:
-            kind='data' if net.store.one('SELECT 1 FROM symbols WHERE project_id=? AND kind!=\'function\' AND address<=? AND address+MAX(size,1)>?',proj['id'],address,address) else 'unknown'
+            kind='data' if net.store.one('SELECT 1 FROM symbols WHERE project_id=? AND kind NOT IN (\'func\',\'function\') AND address<=? AND address+MAX(size,1)>?',proj['id'],address,address) else 'unknown'
         result.append({'query':query,'kind':kind,'address':address,'symbols':[dict(r) for r in symbols],
                        'candidates':[function_info(r,address) for r in owners[:12]],'candidate_count':len(owners),
                        'next':'Choose a full function name or supply context_function to identify the overlay.' if kind=='ambiguous' else

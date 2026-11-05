@@ -2437,3 +2437,6 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   callee-name correction from MIPS symbolic direct calls, preserving source-owned
   prototype types and the ordinary exact judge. Other processor call-syntax adapters
   remain planned; ambiguous multi-callee remapping is intentionally unsupported.
+
+- Done: read-only address resolution recognizes both imported `func` and legacy
+  `function` symbol kinds while preserving data conflicts and overlay ambiguity.
