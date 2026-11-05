@@ -1,9 +1,9 @@
+# Roadmap
+
 Implemented: bounded, sequenced byte-loop guard storage proposals in shared source repairs,
 with MIPS target-evidenced stale counter-copy hypotheses and conservative local-use checks.
 Guard storage proposals work in ROM and imported-source searches; counter-copy evidence adapters
 for other processors remain planned.
-
-# Roadmap
 
 Implemented: bounded source-owned byte-load macro address repairs in the shared deterministic
 search, with explicit 32-bit ABI/type guards and normal exact-byte verification. Unknown
