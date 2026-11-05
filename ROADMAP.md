@@ -2339,3 +2339,8 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 - Planned: tested registrations for other compiler packs and explicit real-name
   symbol adapters for this hardware-store repair. Other processor link-register
   snapshots require their own semantics/evidence; no cross-processor guesses.
+
+- Done: target-backed live return-address repairs can combine a fixed hardware
+  read with bounded typed literal inlining or declaration staging. Shared draft
+  repair consumers use the family on MIPS; other processors have no corresponding
+  proven hardware reader. Ordinary linked-byte or objdiff judging still applies.

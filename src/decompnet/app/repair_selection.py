@@ -11,6 +11,7 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'live_return_address': ('live_return_address_initializers',),
     'mips_debug_break': ('shared_shift_mask','delayed_narrow_capture','debug_conversion_tail'),
     'shared_shift_mask': ('delayed_narrow_capture','debug_conversion_tail'),
     'delayed_narrow_capture': ('debug_conversion_tail','shared_shift_mask'),
