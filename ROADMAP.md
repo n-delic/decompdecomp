@@ -1,5 +1,9 @@
 # Roadmap
 
+Implemented: bounded source-owned byte-load macro address repairs in the shared deterministic
+search, with explicit 32-bit ABI/type guards and normal exact-byte verification. Unknown
+macro effects, conditional definitions and complex index expressions remain opaque.
+
 Implemented: indexed legacy/scoped pause-record lookups for idle work receipts. Project-local point and
 binary-range seeks replace the settings/function cross-scan while preserving the exact revision digest.
 

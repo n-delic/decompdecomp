@@ -667,3 +667,13 @@ position. Require a defined scalar phase, no subsequent pointer read on any CFG
 path or loop back edge, unescaped storage and explicit 32-bit pointer metadata.
 The normal linked byte/data judge must verify every proposal; later word compound
 updates keep their original type, while narrow compound updates stay excluded.
+
+
+A final `addu` operand-order miss can be hidden inside a byte-load macro.
+For a proven `LOAD(p,o) (*(char**)((char*)(p)+(o)))` shape,
+`LOAD(LOAD(base,offset),index)` may need the outer address written as
+`*(char**)(index + (int)(LOAD(base,offset)))`. The bounded
+`macro_byte_address_order` repair preserves both reads and leaves directives
+unchanged, requiring a literal field offset, word index and explicit 32-bit ABI.
+Isolate each edit: an accompanying signedness change need not contribute.
+Do not expand unknown macros or reorder side effects; verify linked bytes/data.
