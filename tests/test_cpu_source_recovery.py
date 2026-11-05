@@ -348,3 +348,62 @@ def test_only_measured_terminal_branch_shape_is_lifted_and_byte_offsets_explicit
     assert not mips.tail_branch(asm.replace('ori $t2, $t1, 8','ori $t2, $t7, 8'))
     assert not mips.tail_branch(asm.replace('jr $ra','jr $t0'))
     assert not mips.tail_branch(asm.replace('or $a2, $a1, $zero','addiu $a2, $a1, 4'))
+
+
+def test_budget_limited_deep_exact_is_reverified_without_another_profile_search(monkeypatch):
+    from decompnet.app import deep_permuter, deep_profiles
+    from tests.test_deep_permuter import Log, setup
+    from tests.test_permute import AGENT
+    net=setup(monkeypatch);fn=net.function();proj=net.project_row('game')
+    net._judge_with=lambda *args:(True,SimpleNamespace(score=0),'')
+    net.suggest=lambda *a,**k:pytest.fail('The original budget cannot afford promotion')
+    search=deep_permuter.Search(net,1,1,Log(),fn)
+    profile={'toolchain':'saved-toolchain','flags':['-O2']}
+    assert deep_profiles.probe(search,AGENT,proj,fn,'exact source',profile) is None
+    monkeypatch.setattr(prep,'settings',lambda *a:{'auto_exact':False})
+    assert bundles.auto_existing(net,proj,fn,AGENT) is None
+    monkeypatch.setattr(prep,'settings',lambda *a:{'auto_exact':True})
+    calls=[]
+    monkeypatch.setattr(bundles,'promote_measured',lambda *a:calls.append(a))
+    assert bundles.auto_existing(net,proj,fn,AGENT)=={'tested':1,'matched':True}
+    assert calls[0][3:6]==('exact source',net._context(proj['id'],fn['unit'])['header'],profile)
+    assert search.tested==1  # no new broad profile sweep or hidden original-budget extension
+
+
+def test_failed_newer_bundle_does_not_hide_older_exact_pair(monkeypatch):
+    net,proj,fn=prepared_net()
+    monkeypatch.setattr(prep,'settings',lambda *a:{'auto_exact':True})
+    monkeypatch.setattr(bundles,'digest',lambda *a:'same-scope')
+    item={'exact':True,'toolchain':'ido-5.3','flags':['-O3'],'source':'older exact','header':'context'}
+    with net.store.tx() as db:
+        for signature,source in [('local-source-deep-profile-v1:older','older exact'),
+                                 ('local-source-profile-v3:newer','stale source')]:
+            db.execute('INSERT INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(1,?,?,?,?)',
+                       (signature,'0','test',json.dumps({**item,'source':source})))
+    calls=[]
+    def promote(*args):
+        calls.append(args[3])
+        if args[3]=='stale source':raise NetworkError('fresh byte/data check failed')
+    monkeypatch.setattr(bundles,'promote_measured',promote)
+    assert bundles.auto_existing(net,proj,fn,None)['matched'] is False
+    assert bundles.auto_existing(net,proj,fn,None)['matched'] is True
+    assert calls==['stale source','older exact']
+
+
+def test_repeated_passes_eventually_reach_exact_beyond_eight_cached_failures(monkeypatch):
+    net,proj,fn=prepared_net()
+    monkeypatch.setattr(prep,'settings',lambda *a:{'auto_exact':True})
+    monkeypatch.setattr(bundles,'digest',lambda *a:'same-scope')
+    item={'exact':True,'toolchain':'ido-5.3','flags':['-O3'],'source':'older exact','header':'context'}
+    with net.store.tx() as db:
+        for n in range(11):
+            db.execute('INSERT INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(1,?,?,?,?)',
+                       ('local-source-deep-profile-v1:'+str(n),'0','test',json.dumps({**item,'source':'older exact' if n==0 else 'stale '+str(n)})))
+    calls=[]
+    def promote(*args):
+        calls.append(args[3])
+        if args[3]!='older exact':raise NetworkError('fresh byte/data check failed')
+    monkeypatch.setattr(bundles,'promote_measured',promote)
+    for _ in range(10):assert bundles.auto_existing(net,proj,fn,None)=={'tested':1,'matched':False,'error':'fresh byte/data check failed'}
+    assert bundles.auto_existing(net,proj,fn,None)=={'tested':1,'matched':True}
+    assert calls==['stale '+str(n) for n in range(10,0,-1)]+['older exact']
