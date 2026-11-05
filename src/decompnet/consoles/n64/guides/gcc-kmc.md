@@ -723,3 +723,14 @@ compare the raw linked words before changing C. Older splits can omit the low an
 the display now completes an adjacent pair only when its raw address and register flow
 agree with the annotated high. This changes diagnostic scores, never the linked-byte gate.
 An exact opcode sequence with different spill offsets still requires a genuine C solution.
+
+When an integer index dies before a local-array address is repeatedly passed to
+calls, a union can give those disjoint phases one carrier. Assign the integer member
+and later the pointer member before reading each; do not reinterpret the old value.
+One measured 257-instruction `-O2 -g3` case improved from a persisted score 70 to 10
+with this phase reuse, then matched by capturing a pure unescaped local immediately
+before the preceding call. Keep separate C90 statements and debug line boundaries.
+Never move the capture across an argument-side write, address escape or read of its
+old destination. The shared bounded repair proves local dominance, preserves unrelated
+volatile operations, and still requires exact linking. Its first-page replay is a
+regression of that same match, not an additional matched function.
