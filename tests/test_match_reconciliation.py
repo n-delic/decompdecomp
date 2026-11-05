@@ -9,13 +9,14 @@ from decompnet.app import match_reconciliation as recovery
 from tests.test_prepared_evidence import prepared_net
 
 
-def setup(monkeypatch, *, best=20, exact=True):
+def setup(monkeypatch, *, best=20, exact=True, worker=False):
     from decompnet.app.permute import Permuter
+    from decompnet.app.permuter_worker import PermuterWorker
     net,proj,fn=prepared_net()
     net.is_rom=lambda p:True;net.fork_slug=lambda s:None;net.links={}
     net.project_row=lambda slug:net.store.one('SELECT * FROM projects WHERE id=1')
     net.local_agent=lambda name:(SimpleNamespace(id=1,name='autopilot'), '')
-    net.permuter=Permuter(net)
+    net.permuter=PermuterWorker(net) if worker else Permuter(net)
     with net.store.tx() as db:
         db.execute('DELETE FROM claims')
         db.execute('UPDATE functions SET best_score=?,matched_source=NULL', (best,))
@@ -31,8 +32,9 @@ def setup(monkeypatch, *, best=20, exact=True):
 
 
 @pytest.mark.parametrize('best',[20,0])
-def test_only_fresh_exact_adopts_private_header_even_if_old_open_score_is_zero(monkeypatch,best):
-    net,log=setup(monkeypatch,best=best)
+@pytest.mark.parametrize('worker',[False,True])
+def test_only_fresh_exact_adopts_private_header_even_if_old_open_score_is_zero(monkeypatch,best,worker):
+    net,log=setup(monkeypatch,best=best,worker=worker)
     out=recovery.run(net,'game',30,1,log)
     assert out['matched']==1 and out['attempts']==1
     fn=net.store.one('SELECT * FROM functions')

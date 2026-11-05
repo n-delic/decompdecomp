@@ -41,7 +41,7 @@ from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
 from ..repair_feedback import trial as repair_trial
-from . import draft_repairs, switch_tables, workers
+from . import draft_repairs, local_claims, switch_tables, workers
 
 log = logging.getLogger("decompdecomp")
 NEAR = 0.06  # a near miss: at most this much of the function differs (best_score <= 6% of n_insns * 100)
@@ -59,7 +59,7 @@ MAX_INSNS = 400  # default size ceiling; larger functions cost more time per var
 REPAIR_MAX_INSNS = 1024  # deterministic hypotheses keep their own 32-attempt / 20-second cap
 IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
 IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
-HOLD_SPARE_SECONDS = 120  # a turn's hold on a function lasts this much longer than the turn, in case it runs over
+HOLD_SPARE_SECONDS = local_claims.HOLD_SPARE_SECONDS
 _EOF = object()
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
 FAMILIES = (("ido", "ido"), ("gcc", "gcc"), ("ee-gcc", "gcc"), ("psp-gcc", "gcc"), ("ps3", "gcc"), ("agbcc", "gcc"),
@@ -425,19 +425,11 @@ class Permuter:
             log.info("permuter: %s: %s", fn["name"], e, exc_info=True)
 
     def _hold(self, agent, fn, *, count_turn=True, seconds=None) -> bool:
-        now = time.time()
-        with self.net.store.tx() as db:
-            self.net._expire_claims(db)
-            if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
-                return False
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + (self.seconds if seconds is None else seconds) + HOLD_SPARE_SECONDS))
-            if count_turn:
-                db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
-        return True
+        return local_claims.hold(self.net, agent, fn, self.seconds if seconds is None else seconds,
+                                 count_turn=count_turn)
 
     def _let_go(self, agent, fn) -> None:
-        with self.net.store.tx() as db:
-            db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
+        local_claims.release(self.net, agent, fn)
 
     def _after_improvement(self, agent, proj, fn, st, fork, best, source):
         """Deep search can run bounded local repairs here without changing normal random turns."""

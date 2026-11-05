@@ -20,10 +20,10 @@ from types import SimpleNamespace
 
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
-from . import edition, workers
+from . import edition, local_claims, workers
 
 log = logging.getLogger("decompdecomp")
-WATCHED = ("app/permute.py", "app/permuter_initialization.py", "app/permuter_local.py",
+WATCHED = ("app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
            "app/permuter_macro_effects.py", "permuter_gen.py", "permuter_capture.py")
 POLL_SECONDS = 1
 STOP_SECONDS = 5
@@ -77,6 +77,14 @@ class PermuterWorker:
         with self._lock:
             if self._process is not None:
                 self._send("configure", settings=self._settings)
+
+    def _hold(self, agent, fn, *, count_turn=True, seconds=None) -> bool:
+        """Parent-side checks own their claims locally; no child round trip is needed."""
+        return local_claims.hold(self.net, agent, fn, self.seconds if seconds is None else seconds,
+                                 count_turn=count_turn)
+
+    def _let_go(self, agent, fn) -> None:
+        local_claims.release(self.net, agent, fn)
 
     def parent_threads(self, configured) -> int:
         """The app keeps one worker while the child owns the rest of the CPU budget."""
