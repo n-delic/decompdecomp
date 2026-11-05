@@ -217,8 +217,8 @@ def _sidecar(base: Path) -> dict | None:
     harness mode kept them, and they confirmed its 100%) and missing checks of a unit the build makes them for."""
     path = base.with_suffix(".ltcg.json")
     for _ in range(SIDECAR_TRIES):
-        if not path.is_file() and not checked(base):
-            return {}
+        if not path.is_file():  # (nothing half-written to wait for: dll2coff writes the checks before the object)
+            return None if checked(base) else {}
         try:
             found = json.loads(path.read_text(encoding="utf-8"))
             of = found.get("object_sha1")

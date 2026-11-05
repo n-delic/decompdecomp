@@ -72,8 +72,6 @@ def main() -> int:
     args = parser.parse_args()
     flags = args.flags[1:] if args.flags[:1] == ["--"] else args.flags
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    # a unit built plain has no LTCG checks: one left from its harness builds would be read as this object's
-    Path(args.output).with_suffix(".ltcg.json").unlink(missing_ok=True)
     env, path, wine = None, str, ""
     if args.wine:
         wine, env = wine_setup()
@@ -101,8 +99,11 @@ def main() -> int:
                 sys.stdout.flush()
     else:
         result = subprocess.run(command, timeout=COMPILE_SECONDS, creationflags=NO_WINDOW)
-    if result.returncode:
+    if result.returncode:  # (the old object stays, and so do its checks: removed, its 99.99% read 100)
         return result.returncode
+    # a unit built plain has no LTCG checks: one left from its harness builds would be read as this object's (their
+    # object_sha1 says they're another's anyway; gone, they're no longer read at all)
+    Path(args.output).with_suffix(".ltcg.json").unlink(missing_ok=True)
     return subprocess.run([sys.executable, str(Path(__file__).with_name("names.py")), args.config, args.output],
                           timeout=COMPILE_SECONDS, creationflags=NO_WINDOW).returncode
 

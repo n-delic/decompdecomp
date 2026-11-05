@@ -77,25 +77,38 @@ def _past(clean: str, brace: int) -> int:
     return k
 
 
-def definition(text: str, clean: str, pos: int, bound: int) -> str | None:
-    """The first line of the function definition in text[pos:bound], up to its "(" (a declaration, a type or a brace
-    initialiser before it is skipped), or None. An inline helper before it (`static inline int Tail(...) { ... }`) is
-    never the annotated function when another definition follows: the first that isn't inline, else the first, as
-    the app's csource finds it (the helper's code was judged as the function's, with no problem said)."""
-    start_pos, first = pos, None
+def definition(text: str, clean: str, pos: int, bound: int, name: str | None = None) -> str | None:
+    """The first line of the annotated function's definition in text[pos:bound], up to its "(" (a declaration, a type
+    or a brace initialiser before it is skipped), or None. Of the definitions there: the one the original's name for
+    the address (`name`, functions.json's: `?G@@YAXXZ`) is of, when it says; else the first that isn't inline, else
+    the first, as the app's csource finds it. An inline helper before the function (`static inline int Tail(...)`)
+    was judged as the function, with no problem said; and an annotated `inline void G()` is G, not the `void H()`
+    after it."""
+    found = list(_definition_lines(text, clean, pos, bound))
+    if name and not name.startswith(("_func_", "func_", "@func_")):
+        named = [d for d, _ in found if (hint := symbol_hint(d)) is not None and hint in name]
+        if named:
+            return named[0]
+    return next((d for d, inline in found if not inline), found[0][0] if found else None)
+
+
+def _definition_lines(text: str, clean: str, pos: int, bound: int):
+    """Each function definition's first line in text[pos:bound], up to its "(", and whether it's inline."""
+    start_pos, any_found = pos, False
     while True:
         brace = clean.find("{", pos, bound)
-        if brace < 0 and first is not None:
-            return first
+        if brace < 0 and any_found:
+            return
         if brace < 0:  # no body here: a definition a macro writes (`HEADER_INLINE(void F(int a))`), the first line
             at = start_pos  # with a "(" that isn't a declaration (`;`) or a preprocessor line
             for ln in clean[start_pos:bound].split("\n"):
                 s = ln.strip()
                 if "(" in s and not s.startswith("#") and not s.endswith(";"):
                     lead = at + len(ln) - len(ln.lstrip())
-                    return text[lead:at + ln.rindex("(") + 1]
+                    yield text[lead:at + ln.rindex("(") + 1], False
+                    return
                 at += len(ln) + 1
-            return None
+            return
         head_at = max(clean.rfind(";", pos, brace), clean.rfind("}", pos, brace), pos - 1) + 1
         head = "\n".join(ln for ln in clean[head_at:brace].split("\n") if not ln.lstrip().startswith("#"))
         if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
@@ -109,9 +122,10 @@ def definition(text: str, clean: str, pos: int, bound: int) -> str | None:
                 found = text[start:at + ln.rindex("(") + 1]
                 break
             at += len(ln) + 1
-        if found is None or not _INLINE_HEAD.search(head):
-            return found or first
-        first = first or found
+        if found is None:
+            return
+        yield found, bool(_INLINE_HEAD.search(head))
+        any_found = True
         pos = _past(clean, brace)
 TARGET = re.compile(r"//[ \t]*TARGET[ \t]+(0x[0-9a-fA-F]+)[ \t]+(\S+)")
 # "// GLOBAL: 0x<va> [map symbol]" then a declaration or definition of the global at that original address
@@ -284,8 +298,9 @@ def symbol_hint(decl: str) -> str | None:
     return "?" + "@".join([last] + parts[-2::-1]) + "@@"
 
 
-def annotations(paths: list[Path]) -> tuple[dict[int, str], list[str]]:
-    """original address -> map symbol substring, from the sources' FUNCTION and TARGET annotations; and problems."""
+def annotations(paths: list[Path], named: dict[int, str] | None = None) -> tuple[dict[int, str], list[str]]:
+    """original address -> map symbol substring, from the sources' FUNCTION and TARGET annotations; and problems.
+    `named`: the original's names by address (functions.json), which say which definition an annotation is of."""
     out, problems = {}, []
     for p in paths:
         text = p.read_text(encoding="utf-8", errors="replace")
@@ -298,7 +313,7 @@ def annotations(paths: list[Path]) -> tuple[dict[int, str], list[str]]:
             if sym and "::" in sym:  # `// FUNCTION: 0x29080 Mode::Tick (NONMATCHING ...)`: the source's name, which
                 sym = symbol_hint(sym + "(")  # no decorated map symbol contains; looked for as "Mode::Tick" it never
             bound = found[n + 1].start() if n + 1 < len(found) else len(text)  # was found, and never compiled in
-            decl = None if sym else definition(text, clean, m.end(), bound)
+            decl = None if sym else definition(text, clean, m.end(), bound, (named or {}).get(int(va, 16)))
             if not sym and decl is None:
                 problems.append(f"{p}: FUNCTION {va}: no function definition follows it")
                 continue
@@ -650,7 +665,7 @@ def main() -> None:
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
 
-    hints, problems = annotations(sources)
+    hints, problems = annotations(sources, {a: fn["name"] for a, fn in functions.items()})
     for va in sorted(hints):
         if va not in functions:
             where = f"it is in unit {unit_of[va]}" if va in unit_of else "no function starts there"
@@ -667,6 +682,11 @@ def main() -> None:
                 found[addr] = (m[0], syms[m[0]])
             continue
         sym, why = find_symbol(syms, want)
+        if (sym is not None and (obj := objects.get(sym)) and re.match(r"\d\d_", obj.rsplit(":", 1)[-1])
+                and not any(obj.endswith(o) for o in own_objects(sources))):
+            # another object of the harness link (tools/ltcg.py's <NN>_<file>.obj): a stand-in from harness/, not the
+            # unit's own code, which the build left out or inlined
+            sym, why = None, f"is only in {obj}, a stand-in from harness/, not in the unit's own code"
         if sym is None:  # `// FUNCTION:`, then a helper inlined into the function, then the function itself
             sym = own_symbol(syms, objects, fn["name"], own_objects(sources))
         if sym is None:
