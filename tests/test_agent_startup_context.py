@@ -40,7 +40,7 @@ def test_polishing_facts_have_no_function_claim_and_large_briefs_are_bounded(mon
     claims=[]
     monkeypatch.setattr(tools,'_claim',lambda *a,**kw:claims.append(True) or ('large brief\n'*2000))
     tidy=Session('a','codex','A','game','worker',{'task':'readable'})
-    manager.prepare_session(tidy,object())
+    manager.prepare_session(tidy,SimpleNamespace(id=1))
     assert not claims and 'Project facts' in tidy.startup_context
     matching=Session('b','api','B','game','worker',{})
     manager.prepare_session(matching,SimpleNamespace(id=1))

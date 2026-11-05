@@ -3513,3 +3513,71 @@ in 6, 2 and 4 trials; main recovered none within 32. The useful changes were pla
 local float slots, an explicit returned index, and repeated byte expressions with
 conversion preserved. An initial ranking failed from the earliest precursor until
 complementary families were connected. See [evidence and limits](RETURN_CONTRACT_REPAIRS.md).
+
+## Copied scalar lifetimes and debug statement boundaries (2026-11-05)
+
+- **Compiler:** native KMC GCC 2.7.2, MIPS, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+- **Original evidence:** a 529-instruction controller function was independently linked and
+  rebuilt byte-identically before this app change. Its last two differing operands selected the
+  original register instead of an already-made copy. Ending the original scalar's lifetime with
+  a dead assignment after the copy disappeared from output and recovered the exact instructions.
+  This did not require register bindings, changed compiler flags, header changes or assembly edits.
+- **Automation:** `dead_copy_source` requires ordinary unescaped scalar locals and CFG proof that
+  every outgoing path is dead. It rejects unknown control flow, volatile/assembly, shadows and
+  unbraced insertion sites. It supports comma declarations, initialized copies and opaque local
+  object aliases. Division families separate values and flags or move an existing signed rounding
+  sequence into its saved copy; they preserve existing arithmetic and require scratch redefinition.
+  Regional reuse is limited to an adjacent repeated local-array load with no intervening action.
+- **Scheduling:** physical statement/line boundaries affected `mflo` hazard NOP placement with
+  the above debug profile. Token-preserving probes are gated by debug flags and bounded, with
+  arithmetic boundaries first. Their effects must be compiled; whitespace is not generally causal.
+- **Search:** use the existing structural frontier and two-step residual lane; newly recovered
+  structures now prioritize these specific lifetime/flag families. No change to adoption rules,
+  search budgets, cached-input scope or the linked/objdiff judge.
+- **Diagnostics:** compare unique mapped source-line groups for actual GCC allocation ranks,
+  reference counts, live lengths and hard-register dispositions. Never align renumbered pseudos
+  between compilations or claim a line is a unique C-variable identity. Ambiguous/truncated
+  groups are omitted. Compact agent advice names applicable families and leaves source intact.
+- **Negative evidence:** the original broad deep search spent 482 compiler invocations over
+  three minutes at score 330 with no improvement. Simple declaration shuffles were often inert.
+  New local families are not a demonstrated general solution for all earlier structural misses.
+- **Reproduction:** private frozen source/header/checkpoint files remain outside the repository;
+  public tests use synthetic C only. Offline replay compares against previously verified compiled
+  output and is a regression, never a newly adopted game match. See PR validation for measured
+  equal-budget results; neither game bytes nor extracted game C are distributed here.
+
+### Controlled regressions: conversion capture, shared shifts and debug branch joins
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian
+32-bit MIPS. A previously verified 868-instruction renderer supplies private replay
+inputs; these tests do not represent additional newly matched functions.
+
+- The generated `debug_conversion_tail` candidate reproduced score **20 → 0**, with
+  exact linked bytes. Preserve the destination's integer type, declare a temporary,
+  assign the expression to it, then copy it to the destination on separate physical
+  lines in the branch arm. A one-line equivalent did not fix the branch destinations.
+  Debug line markers affected where the shared label fell relative to an assembler
+  hazard NOP following `mfc1`; do not normalize branch targets as an exact verdict.
+- `delayed_narrow_capture` reproduced **140 → 20**. Pass the original scalar to an
+  explicitly prototyped narrow formal, then capture the original narrowing after the
+  call. The argument conversion still occurs before the call. Movement requires the
+  input to be unescaped and unchanged and must not reorder other argument effects.
+- `shared_shift_mask` reproduced **410 → 140** from the plain wide-intermediate
+  spelling. The target shared a shifted intermediate between two uses; a redundant
+  mask of its known-zero low bits preserved that intermediate instead of folding
+  a later shift into the original expression. Never infer low zero bits from a
+  variable name or remove a meaningful narrow conversion without range evidence.
+- m2c's explicit `M2C_BREAK(9)` can become the pinned compiler's fixed
+  `__builtin_mips_debug_break()`. Require target BREAK 9 and retain the marker's
+  control-flow position. Never guess where a missing marker belongs or treat the
+  resumable breakpoint as `noreturn`. Only registered compiler packs support it.
+- Extra masks previously compensated numerically for a missing non-NOP operation
+  and improved branch-displacement scores without fixing the cause. Reserve a
+  bounded frontier alternative that restores target-only operations, even if its
+  scalar score temporarily worsens. This changes search priorities, never the judge.
+
+The prior completed case also passed a complete 12,582,912-byte cartridge rebuild.
+This follow-up reruns isolated candidate generation and linked-byte checks against
+those saved inputs; it does not claim another full-image rebuild or fresh match.
+Broader compiler sweeps, unknown `__builtin_trap` calls, artificial padding and
+one-line conversion temporaries had failed to resolve the final mismatch.

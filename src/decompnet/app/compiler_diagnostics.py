@@ -144,5 +144,8 @@ def compare(before,after):
     scheduling=bool(changed & {'sched','sched2','dbr'})
     lead = ('allocation/lifetime' if allocation else 'lifetime and scheduling' if lifetime and scheduling
             else 'lifetime' if lifetime else 'scheduling' if scheduling else 'earlier optimization' if changed else 'no comparable phase changes')
+    from .gcc_allocation import priority_changes
+    priority = priority_changes(before.get('allocation'), after.get('allocation'))
     return {'comparable':True,'changed':phases,'lead':lead,'value_changes':values,
+            'allocation_priority_changes':priority,
             'note':'Different input source can renumber pseudos and dumps. Phase changes are investigation leads, not causal proof. allocation_priority uses the legacy GCC floor(log2(references))*references/live_insns heuristic; it is advisory, not a claim about every compiler build.'}

@@ -49,3 +49,30 @@ def brief(evidence, cycles):
         parts.append(f"pseudo {v['pseudo']} → {v['aliases'][0]}: rank {v['allocation_rank']}, "
                      f"{v['references']} refs/{v['live_insns']} live insns, C lines {lines}")
     return 'GCC allocation evidence (candidate only): '+'; '.join(parts)+'. Internal conversions may share a line; do not assume C-variable identity.'
+
+
+def priority_changes(before, after):
+    """Compare uniquely mapped source-line groups, never pseudo numbers across compilations.
+
+    A line may contain conversions or several variables. These are places to investigate, not C
+    identities or causal proofs. Missing/ambiguous mappings deliberately produce no paired claim.
+    """
+    def indexed(evidence):
+        groups = {}
+        if not evidence or evidence.get('truncated'):
+            return groups
+        for value in evidence.get('values', []):
+            key = tuple(value.get('source_lines', []))
+            if key:
+                groups.setdefault(key, []).append(value)
+        return {key: values[0] for key, values in groups.items() if len(values) == 1}
+    left, right = indexed(before), indexed(after)
+    result = []
+    for lines in sorted(left.keys() & right.keys()):
+        a, b = left[lines], right[lines]
+        fields = ('allocation_rank', 'references', 'live_insns', 'hard_register')
+        changes = {key: {'before': a.get(key), 'after': b.get(key)} for key in fields if a.get(key) != b.get(key)}
+        if changes:
+            result.append({'source_lines': list(lines), 'changes': changes,
+                           'next_action': 'Inspect this source-line group for copy propagation, value/flag sharing or lifetime changes; try bounded local variants before declaration shuffling.'})
+    return result[:6]

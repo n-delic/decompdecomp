@@ -134,7 +134,7 @@ def test_agent_release_runs_phase_only_after_accepted_tried_release(tmp_path,mon
     net.claim_row(a,'game','f')
     monkeypatch.setattr(net,'claim_progress',lambda *a:{'compiles':1})
     monkeypatch.setattr(net,'_push_back',lambda *a:None)
-    monkeypatch.setattr(net,'release',lambda *a:'Released')
+    monkeypatch.setattr(net,'release',lambda *a,**kw:'Released')
     monkeypatch.setattr(net,'fork_slug',lambda _: 'game' if mode=='fork' else None)
     seen=[]
     monkeypatch.setattr(release_repairs,'run',lambda *a:seen.append(a[2]['name']) or ' automatic')

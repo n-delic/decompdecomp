@@ -519,6 +519,9 @@ def _run(twins, slug, job):
                         state['value_trace']=after['value_trace']
                         state['value_trace_rows']=report.get('rows') or []
                     note = evidence.get('comparison', {}).get('lead') or evidence.get('skipped') or 'No comparable allocation evidence.'
+                    changes = evidence.get('comparison', {}).get('allocation_priority_changes', [])
+                    if changes:
+                        note += '; '+ '; '.join('C lines '+','.join(map(str,c['source_lines']))+': '+c['next_action'] for c in changes[:2])
                     net.add_note(agent, slug, 'Optional compiler lifetime diagnostics: '+note,
                                  fn['name'])
             outcome = 'match' if report.get('matched') else 'miss'

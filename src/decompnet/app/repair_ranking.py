@@ -60,7 +60,12 @@ def order(families, rows):
         preferred = ('known_address_alias', 'target_call_argument', 'target_local_bundle', 'local_widening', 'integer_address_order', 'signedness', 'narrowing', 'constant_local')
     else:
         preferred=()
-    preferred=('hazard_statement_lines','known_zero_mask','post_call_narrow_capture','plain_float_slots','return_contract','narrow_expression_inline')+preferred
+    preferred=('mips_debug_break',)+(('debug_conversion_tail',) if focus=='control' else ())+(('delayed_narrow_capture','shared_shift_mask') if focus in {'register','call'} or diagnose(rows)['scheduling'] else ())+('plain_float_slots','return_contract','narrow_expression_inline')+preferred
+    if diagnose(rows)['register_only']:
+        preferred = ('dead_copy_source','divisor_normalization_copy', 'divisor_value_scope', 'divisor_flag_split', 'regional_load_reuse') + preferred
+    elif diagnose(rows)['scheduling'] or diagnose(rows)['delay_slot']:
+        preferred = ('debug_statement_boundary',) + preferred
+    preferred=('hazard_statement_lines','known_zero_mask','post_call_narrow_capture')+preferred
     return sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
 
 
