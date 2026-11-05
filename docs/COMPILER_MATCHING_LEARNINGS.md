@@ -4512,3 +4512,24 @@ state. Existing positive and negative ROM/data-link controls remain the gate.
 LLVM's [MIPS relocation definitions](https://raw.githubusercontent.com/llvm/llvm-project/main/llvm/include/llvm/BinaryFormat/ELFRelocs/Mips.def)
 identify type8. Future support requires target GP, correct signed/object-GP
 addends, a matching instruction witness and original pool-byte verification.
+
+## Explicit zero-argument stubs do not establish unused caller arguments
+
+A 124-instruction MIPS GCC 2.7.2 KMC caller (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
+retained a required loop-counter reset at score140. Six local boolean accumulation controls
+scored140,940 or1206; none matched. Their local arithmetic equivalence did not establish
+whole-program validity: selected empty/zero callees used explicit `(void)` definitions even
+though the caller supplied arguments. Other selected resource helpers also exposed pointer
+versus integer declaration discrepancies. These are investigation leads, not proof of recovered
+original signatures and not a new match.
+
+Full briefs now flag bounded direct argument-bearing calls to selected plain `void f(void) {}`
+or integer `f(void) { return 0; }` stubs. This complements forwarding-stub advice: the stub
+itself contains no use that could recover the missing parameter types. Inspect all callers,
+then validate corrected caller declarations and callee definitions jointly. Never remove
+machine-observed caller argument setup merely to agree with an incomplete matched stub.
+The hint changes no C, profile, claim, target or verdict and runs no compiler. It shares the
+existing bounded matched-callee lookup and three-lead budget across ROM and project briefs.
+Synthetic tests cover explicit/unspecified parameters, calls versus declarations, comments,
+macros, effectful bodies, no-argument calls and the shared budget. Private game controls are
+negative evidence only; initialization checks alone are not a semantic proof.
