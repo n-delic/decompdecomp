@@ -15,7 +15,11 @@ LIMIT = 6
 INTEGER = r'(?:unsigned(?:\s+(?:int|long|short|char))?|signed(?:\s+(?:int|long|short|char))?|int|long|short|char|[su](?:8|16|32|64))'
 
 
-def variants(source, name, header=''):
+def variants(source, name, header='', *, language=None, int_bits=None):
+    # Reuse the current macro-free direct-C invocation proof; source text alone
+    # cannot reveal -D/-include or a custom compiler command's hidden qualifiers.
+    if language != 'c' or int_bits != 32:
+        return []
     if max(len(source), len(header)) > 128000:
         return []
     part = view(source, name)
@@ -46,11 +50,19 @@ def variants(source, name, header=''):
         return []  # A declaration macro can hide volatile/atomic qualification.
     for hit in re.finditer(pattern, local_context):
         variable = hit[2]
-        declarations.setdefault(variable, []).append(hit[1])
+        if signature and hit.start() < len(signature[0]):
+            prefix = local_context[:hit.start()]
+            own_scope = prefix.count('(')-prefix.count(')') == 1 and prefix.rstrip()[-1:] in {'(', ','}
+        else:
+            prefix = part.body[:hit.start()-(len(signature[0]) if signature else 0)-1]
+            own_scope = (prefix.count('{') == prefix.count('}') and prefix.count('(') == prefix.count(')')
+                         and prefix.rstrip()[-1:] in {'', ';', '{', '}'})
+        declarations.setdefault(variable, []).append((hit[1],own_scope))
     # Unparsed pointer/array declarators, ambiguous shadows and escapes are ineligible.
     eligible = {}
-    for variable, kinds in declarations.items():
-        if (len(kinds) == 1 and kinds[0] in types and kinds[0] not in macros and variable not in macros
+    for variable, definitions in declarations.items():
+        kinds = [kind for kind,_ in definitions]
+        if (len(definitions) == 1 and definitions[0][1] and kinds[0] in types and kinds[0] not in macros and variable not in macros
                 and len(re.findall(r'\b(?:'+INTEGER+r'|'+IDENT+r')\s+\**\s*'+re.escape(variable)+r'\s*(?=[;,=)\[])',local_context)) == 1
                 and not re.search(r'&\s*\b'+re.escape(variable)+r'\b|\b(?:volatile|_Atomic|static|extern|register)\b[^;{}]*\b'+re.escape(variable)+r'\b',local_context)):
             eligible[variable] = kinds[0]

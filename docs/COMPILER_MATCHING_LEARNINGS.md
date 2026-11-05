@@ -4820,7 +4820,9 @@ used. Explicit downstream callback-dispatch type and raw-storage assumptions
 remain unresolved; address casts do not prove invocation compatibility.
 
 The bounded repair permutes two or three independent integer/function-address
-setup assignments immediately before a visible loop or label. It requires visible
+setup assignments immediately before a visible loop or label. It reuses the
+verified macro-free direct C32 GCC invocation scope; external commands/adapters
+without that evidence remain excluded, regardless of a plausible source file. It requires visible
 ordinary local types, rejects dependencies, calls, memory expressions, volatile
 or hidden declaration qualifiers, referenced macros, includes and unsupported
 syntax, and introduces no dummy computation. It reaches shared local repairs,
