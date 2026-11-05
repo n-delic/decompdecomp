@@ -60,6 +60,7 @@ def test_a_diff_says_what_differs_once_registers_and_order_are_set_aside():
     ("ARM", ["ARM"], "02019de7", "82019de7", False),  # [sp, r2, lsl #2] vs lsl #3
     ("ARM", ["ARM"], "02019de7", "42019de7", False),  # [sp, r2, lsl #2] vs asr #2: another shift
     ("ARM64", ["ARM"], "e05b61b8", "e0db61b8", False),  # [sp, w1, uxtw #2] vs sxtw #2: another extend
+    ("ARM", ["ARM"], "010cc1e3", "020cc1e3", False),  # bic r0, r1, #0x100 vs #0x200: a mask, not a branch target
     ("ARM", ["ARM"], "10009de5", "14109de5", True),  # ldr r0, [sp, #0x10] vs ldr r1, [sp, #0x14]
     # MIPS and PowerPC: a load of another size differs, another slot doesn't
     ("MIPS", ["MIPS32", "BIG_ENDIAN"], "8fa20054", "87a20054", False),
