@@ -37,6 +37,7 @@ class Nintendo64(Console):
     demo_tools = ("gcc-2.7.2-kmc", "binutils-mips", "ld.lld", "llvm-objcopy")
     own_features = frozenset({EXPORT})
     as_flags = ("-EB", "-march=vr4300", "-mabi=32")
+    reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
     image_ext = ".z64"
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n'
 

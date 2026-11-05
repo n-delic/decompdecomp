@@ -137,7 +137,9 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | Native window, file/folder pickers and export downloads | Cocoa and system WKWebView, no GTK or X11 |
 | m2c, decomp-permuter and objdiff | Pinned Mac/Python builds |
 | Other consoles and public decomp projects | Only where their pinned compiler/tool builds support this Mac |
-| Linux-only PS1/PS2 period compilers | Unavailable on macOS; use a supported Linux host |
+| PS2 Sony EE-GCC 2.9, 2.96 and 3.2 | Optional local Linux runner ([setup](docs/linux-compiler-vm.md)) |
+| PS2 SN Systems EE-GCC 2.95.2/2.95.3 and CodeWarrior 2.3.3/3.0.1 | Pinned Windows compilers through wibo; CodeWarrior requires license acceptance |
+| Linux-only PS1 period compilers | Use a supported Linux host |
 | Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
 
 For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`. On a
@@ -191,11 +193,11 @@ A project's own folder isn't a save, and neither is its `.decomp.wtf.json`: that
 Keep that file's name as it is. decompdecomp still reads it as `.decomp.wtf.json`.
 
 1. **Install the new version** the same way as before: the install command above or the latest `.deb`, `.rpm`,
-   AppImage or Windows setup bundle. The installer removes an older `.deb` or `.rpm` of decompdecomp, so your
-   apps menu shows one. Going the other way, from the install command to a package? Remove the old copy first:
-    `uv tool uninstall decompnet`.
-3. **Start it** with `decomp` or from your apps menu. It opens in its own window now, not in your browser.
-4. **Start your agents again.** Helper agents that were working in the old version don't restart by themselves the
+   AppImage or Windows setup bundle. The installer removes an older `.deb` or `.rpm` of decompdecomp,
+   so your apps menu shows one. Going the other way, from the install command to a package? Remove the
+   old copy first: `uv tool uninstall decompnet`.
+2. **Start it** with `decomp` or from your apps menu. It opens in its own window now, not in your browser.
+3. **Start your agents again.** Helper agents that were working in the old version don't restart by themselves the
    first time. Open each project and start them; from then on they restart by themselves.
 
 What changed on the way:
@@ -279,8 +281,7 @@ its C, built by the game's own compiler, gives exactly the original bytes. That'
 the base for ports and mods.
 
 **What does the C look like?** At first, raw. A match proves the code is right, not that it's easy to read. Here is one function
-of Demo Quest 64 as the autopilot matched it, and the same function made readable. Both compile to
-the same bytes:
+of Demo Quest 64 as the autopilot matched it, and the same function made readable. Both compile to the same bytes:
 
 ```c
 /* As matched */
