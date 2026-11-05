@@ -3747,3 +3747,25 @@ only the intentionally rebuilt target object changed. This replays an independen
 produced match, not a new live/native autopilot match. The normal judge and flags
 are unchanged. Other macro shapes and more complex index expressions remain
 unsupported; names in this example describe the grammar, not game-specific rules.
+
+### Verified linked-byte case: entry-caller workaround plus statement boundary
+
+A private 55-instruction GNU MIPS function stored current `$ra` to an absolute
+global after an optional callback. Its saved draft used `__builtin_return_address(0)`.
+With pinned `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the ordinary
+linked judge scored that draft 145. Replacing only the builtin with
+`__builtin_mips_live_return_address()` worsened it to 270: `lui`/`and` mask arithmetic
+moved before the store. Wrapping just that assignment in `do { ... } while (0);`
+retained evaluation and physical source lines and produced score **0 / exact linked
+bytes**, with no source assembly or compiler-profile change. Scope-only wrappers,
+condition spelling changes and separately tested fast-math/no-schedule-insns flags
+failed to fix the direct swap. Full image publication is a separate gate.
+
+The old shared generator emitted 12 proposals with no live-register repair because
+it recognized only an uninitialized placeholder or an already fixed intrinsic.
+The corrected shared route emits 14 proposals: raw replacement at rank 1 (270),
+atomic one-shot companion at rank 2 (**0, exact**). This is private real-target
+linked replay evidence, separate from the synthetic regression tests. Reuse only
+with encoded call-before-raw-store evidence, no intervening RA restoration, and an
+explicit 32-bit scalar/pointer global; entry snapshots and other store registers
+are not evidence. The judge remains unchanged.

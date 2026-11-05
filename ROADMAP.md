@@ -2343,6 +2343,11 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 
 ### Fixed live MIPS return-address snapshots
 
+- Done: callback-backed live return-address repairs also recognize an existing
+  entry-caller builtin workaround. A bounded one-shot statement companion is judged
+  atomically, retaining source lines and hardware-family priority; restored entry
+  registers, no-call targets and unsupported destination widths are excluded.
+
 - Done: a no-argument current live-link-register intrinsic in the registered KMC
   compiler template, used-template portable export selection, raw absolute-store
   evidence and a shared local repair for single-use uninitialized placeholders.
