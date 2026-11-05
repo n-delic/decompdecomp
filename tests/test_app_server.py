@@ -2101,7 +2101,10 @@ def test_room_retry_all_processes_snapshot_beyond_five_and_continues_errors(app,
         job=client.get('/api/job',params={'id':response.json()['job']}).json()
         if job['state']!='running':break
         time.sleep(.01)
-    assert job['state']=='done' and job['result']=={'matched':7,'failed':1,'total':8}
+    assert job['state']=='done' and {k:job['result'][k] for k in ('matched','failed','total')}=={'matched':7,'failed':1,'total':8}
+    assert len(job['result']['results'])==8
+    assert job['progress']['results'][1]['reason']=='Compiler unavailable'
+    assert job['progress']['results'][0]['matched'] is True
     assert calls==[r['key'] for r in rows]
     assert job['progress']['finished']==8 and job['progress']['total']==8
     calls.clear()

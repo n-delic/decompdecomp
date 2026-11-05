@@ -197,7 +197,9 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
                     db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],agent.id,now,now+net.claim_ttl))
                     verification_claim=True
             own=compiler_for(net.cfg(proj),fn['vram'], fn)
-            if toolchains.installed(own['toolchain']):
+            # Portable submissions carry the exact compiler/header bundle. Verify it first;
+            # an ordinary host attempt can use different declarations and obscure that evidence.
+            if not item.get('evidence') and toolchains.installed(own['toolchain']):
                 report({'phase':'Compiling and comparing with host settings', 'toolchain':own['toolchain'], 'flags':own['flags']})
                 res=net.attempt(agent,fn['name'],item['source'],slug)
             else:
@@ -237,12 +239,14 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
                     if tested>=6:break
                     tested+=1
                     report({'phase':'Rechecking source, header and linked bytes', 'profile_index':tested,
-                            'profile_total':len(remaining), 'toolchain':profile['toolchain'], 'flags':profile['flags']})
+                            'profile_total':len(remaining), 'toolchain':profile['toolchain'], 'flags':profile['flags'],
+                            'profile_source':'Client settings + client header' if evidence and profile==profiles[0] else
+                                             'Host fallback + client header' if evidence else 'Host recovery profile (client settings unavailable)'})
                     try:
                         expected=source_preparation.inputs(net,net.project_row(slug),net._function(fn['name'],slug))
                         prepared_evidence.promote_measured(net,net.project_row(slug),net._function(fn['name'],slug),
                                                           item['source'],header,profile,agent,expected)
-                        result.update(matched=True,score=0,pending=False)
+                        result.update(matched=True,score=0,pending=False,compiler=profile)
                         break
                     except NetworkError as error:
                         item['failure_reason']=str(error)

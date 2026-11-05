@@ -33,7 +33,9 @@ def test_header_and_function_profile_travel_and_host_rechecks(pair,monkeypatch):
     changed=json.loads(json.dumps(original));changed['compiler']['flags']=['-O0']
     with host.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE slug=?',(json.dumps(changed),slug))
     remote,_=host.local_agent('room-client')
+    monkeypatch.setattr(host,'attempt',lambda *args:pytest.fail('portable bundle must use client settings before any host attempt'))
     result=room_matches.verify(host,slug,remote,'func_80000808',source,evidence)
+    assert result['compiler']=={k:evidence['compiler'][k] for k in ('toolchain','flags')}
     assert result['matched'],result.get('reason')
     fn=host._function('func_80000808',slug);cfg=host.cfg(host.project_row(slug))
     assert cfg['compiler']==changed['compiler']  # Default and neighbours do not adopt the client's profile.
