@@ -3477,7 +3477,34 @@ barrier; it accepts neither text nor instruction parameters. The debugger may
 resume execution, so the operation is not a C noreturn assertion. Submitted asm
 remains rejected. Compiler tests check the fixed instruction, resumed memory
 access, argument rejection and unchanged ordinary-C machine code. This is
-hardware-intrinsic support, not evidence of a new real-game match.
+hardware-intrinsic support; those synthetic tests alone do not establish a game match.
+
+A private 868-instruction reference replay reached linked score 0 with the same
+compiler/assembler and flags once the fixed hardware intrinsic was supplied.
+The running app subsequently saved the same source at score 0 with exact linked bytes,
+all 868 instructions exact and a ready standalone layout. A complete-image build remains
+a separate required gate. Three additional source details were necessary:
+
+- For a doubled vertex-index temporary, masking off its already-zero low bit
+  before a later shift preserved a shared intermediate. The compiler removed the
+  redundant mask but stopped distributing the later shift back into the original
+  addition. Narrowing to signed/unsigned bytes instead introduced extra sign or
+  zero extensions; an unmasked expression folded too aggressively.
+- Passing the original vertex value to an unsigned-halfword call argument and
+  capturing its truncated temporary afterward let CSE retain the same value
+  across the call, while recovering the target argument-load schedule. An explicit
+  temporary initialized before the call produced the wrong load/mask ordering.
+- In a floating-to-integer branch tail, a block-local integer temporary with its
+  declaration, conversion assignment and final copy on separate physical source
+  lines changed DWARF line-marker placement. The assembler's hazard NOP then
+  preceded the shared branch destination instead of belonging to it. The actual
+  instruction sequence was otherwise identical, but two branch encodings changed
+  (score 20 → 0). A one-line equivalent, self-assignment, empty scope, switch/goto
+  restructuring and several debug-format changes did not recover the exact bytes.
+
+Do not normalize a branch through a NOP as an exact match: the raw branch bytes
+still matter. Preserve verified source line breaks when debug labels affect the
+period assembler's scheduling or label binding.
 
 ## Target-backed return contracts and narrow expression lifetimes
 

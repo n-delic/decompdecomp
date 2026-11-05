@@ -574,6 +574,13 @@ ISO C/GCC 2.7 syntax, takes no arguments, and can resume afterward. A noreturn a
 or an unresolved `__builtin_trap` call does not substitute for that hardware operation.
 Keep submitted assembly forbidden and verify the complete linked bytes as usual.
 
+With `-O2 -g3` (DWARF), a branch-tail float-to-int conversion can need a block-local
+integer temporary on separate declaration, conversion and copy lines. In one verified
+reference, this placed the assembler's hazard NOP before the common branch label;
+the one-line equivalent branched to the NOP instead. Both execute equivalently, but
+two branch encodings differed (score 20 versus linked score 0). Preserve tested line
+breaks and verify raw bytes; do not relax the judge to accept equivalent NOP targets.
+
 ### Return contracts and narrow expression lifetimes
 
 Before register permutations, inspect an explicit target return-register copy and

@@ -279,7 +279,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         src = out / "src" / f["seg"] / f"{f['name']}.{'cpp' if compiled.language == 'c++' else 'c'}"  # as it compiled
         src.parent.mkdir(parents=True, exist_ok=True)
         include = "common.h" if not unit else f"common_{unit}.h"
-        prelude = toolchains.get(compiler_for(cfg, row["vram"], row)["toolchain"]).prelude
+        prelude = toolchains.source_prelude(toolchains.get(compiler_for(cfg, row["vram"], row)["toolchain"]), row["matched_source"]+"\n"+hdr)
         src.write_text(exported_source(prelude, include, row["matched_source"]), encoding="utf-8")
         f["kind"] = "c"
         f["src"] = src.relative_to(out).as_posix()

@@ -1733,3 +1733,6 @@ It emits BREAK 9, takes no arguments and permits execution to resume in a debugg
 The implementation is selected by the pinned KMC-compatible compiler pack; submitted
 assembly and arbitrary instruction encodings remain forbidden. Other compiler packs
 need their own verified intrinsic integration before this call can be used there.
+Referenced fixed intrinsic templates travel with rebuildable ROM exports and verified
+repository sync headers, so standalone builds that invoke the compiler directly retain
+the same operation. Unrelated sources keep their existing prelude.

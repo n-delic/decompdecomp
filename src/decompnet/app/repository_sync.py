@@ -225,7 +225,7 @@ def integrate(net, proj, root, stage, log):
         unchanged=False
         if target.exists():
             for h in contexts(net,proj,row):
-                ctx=source_text(toolchains.get(compiler_for(cfg,row['vram'], row)['toolchain']).prelude+h,row['name'],fn['name'])
+                ctx=source_text(toolchains.source_prelude(toolchains.get(compiler_for(cfg,row['vram'], row)['toolchain']),row['matched_source']+'\n'+h)+h,row['name'],fn['name'])
                 hn='decompdecomp_sync_'+hashlib.sha256(ctx.encode()).hexdigest()[:20]+'.h'
                 original=source_text(canonical_source(row,row['matched_source']),row['name'],fn['name'])
                 original=re.sub(r'(?m)^([ \t]*#[ \t]*include[ \t]*)"context\.h"',lambda m,hn=hn:m[1]+'"'+hn+'"',original)
@@ -240,7 +240,7 @@ def integrate(net, proj, root, stage, log):
         candidate,private_header,entry_only=prepared
         if entry_only and 'def normalize_entry(' not in (stage/'build.py').read_text(encoding='utf-8'):
             skipped.append({'function':row['name'],'reason':'This exact candidate needs verified-entry extraction. Update the exported build.py before syncing non-contiguous constant pools.'});continue
-        context=source_text(toolchains.get(profile['toolchain']).prelude+private_header,row['name'],fn['name'])
+        context=source_text(toolchains.source_prelude(toolchains.get(profile['toolchain']),candidate+'\n'+private_header)+private_header,row['name'],fn['name'])
         header='include/decompdecomp_sync_'+hashlib.sha256(context.encode()).hexdigest()[:20]+'.h'
         source=source_text(candidate,row['name'],fn['name'])
         source=re.sub(r'(?m)^([ \t]*#[ \t]*include[ \t]*)"context\.h"',lambda m,header=header:m[1]+'"'+Path(header).name+'"',source)

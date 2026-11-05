@@ -40,3 +40,20 @@ def test_debug_trap_and_resumption_compile_through_normal_judge_inputs(tmp_path)
     original = compile_source(cfg, '', plain)
     assert original.ok and supported.ok
     assert extract_function(original.obj, 'f').code == extract_function(supported.obj, 'f').code
+
+
+def test_portable_export_preserves_intrinsics_for_direct_compiler_builds(tmp_path):
+    from decompnet.compiler import run_in
+    if toolchains.installed('gcc-2.7.2-kmc') is None:pytest.skip('needs installed legacy MIPS GCC')
+    tc = toolchains.get('gcc-2.7.2-kmc')
+    assert toolchains.source_prelude(tc, 'int f(void) { return 1; }') == tc.prelude
+    body = 'int f(int *p) { __builtin_mips_debug_break(); return *p; }'
+    cfg = compiler_config(tmp_path, {'compiler':{'toolchain':tc.id,
+                            'flags':['-G0','-mips3','-mgp32','-mfp32','-O2','-g3']}})
+    app = compile_source(cfg, '', body)
+    source = toolchains.source_prelude(tc, body)+'\n#line 1 "func.c"\n'+body+'\n'
+    (tmp_path/'export.c').write_text(source)
+    argv = [part.replace('{src}','export.c').replace('{obj}','export.o').replace('{include}','.') for part in cfg.cmd]
+    direct = run_in(cfg, tmp_path, argv, inputs=['export.c'], outputs=['export.o'])
+    assert direct.returncode == 0, direct.stderr
+    assert extract_function((tmp_path/'export.o').read_bytes(),'f').code == extract_function(app.obj,'f').code

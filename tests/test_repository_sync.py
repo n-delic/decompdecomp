@@ -402,3 +402,16 @@ def test_large_checkout_error_counts_changes_and_limits_the_preview(project):
     assert message.count('untracked:') == sync.MAX_CHECKOUT_CHANGES
     assert 'draft-000.c' in message
     assert f'draft-{count-1:03}.c' not in message
+
+
+def test_sync_exports_only_referenced_fixed_intrinsics(project):
+    root, net, rows = project
+    rows[0]['matched_source'] = 'void f(void) { __builtin_mips_debug_break(); }'
+    result = sync.run(net, 'game', str(root))
+    assert result['accepted'] == ['f']
+    source = (root/'src/game/f.c').read_text()
+    assert '__builtin_mips_debug_break();' in source
+    header = next((root/'include').glob('decompdecomp_sync_*.h')).read_text()
+    assert '#define __builtin_mips_debug_break()' in header and 'break 9' in header
+    commit(root)
+    assert not sync.run(net, 'game', str(root))['accepted']

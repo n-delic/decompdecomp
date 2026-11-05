@@ -172,6 +172,23 @@ def get(tid: str) -> Toolchain:
     return reg[tid]
 
 
+
+def source_prelude(tc, source: str) -> str:
+    """Carry used fixed intrinsics into portable C exports, including direct compiler builds.
+
+    The app injects these templates itself; an exported Makefile/build.py may invoke the period
+    compiler directly. Include only templates referenced by the source/context so unrelated
+    checkpoints keep their existing headers and source lines.
+    """
+    import importlib
+    intrinsic = getattr(tc, 'intrinsics', '')
+    if not intrinsic:return tc.prelude
+    header = importlib.import_module(intrinsic).header()
+    provided = set(re.findall(r'^#define[ \t]+([A-Za-z_]\w*)', header, re.M))
+    used = set(re.findall(r'[A-Za-z_]\w*', source))
+    return tc.prelude + (header if provided & used else '')
+
+
 def compiler_family(tid: str) -> str:
     """An explicitly declared backend family; custom command ids may be unknown."""
     return _registry_data().get(tid, {}).get("family", "")
