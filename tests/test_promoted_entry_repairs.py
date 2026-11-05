@@ -187,3 +187,9 @@ def test_unknown_directives_do_not_hide_type_contracts(directive):
 def test_alternative_preprocessor_tokens_cannot_hide_escape(directive):
     source = directive+'\nint helper(int *p);int sample(int x){x=(u8)x;return OBS(x);}'
     assert proposals(source) == []
+
+
+@pytest.mark.parametrize('newline', ['\r', '\r\n', '\n'])
+def test_all_physical_line_endings_reject_continuations(newline):
+    source = 'int sample(int x){x=(u8)x;return __align'+chr(92)+newline+'of__(x);}'
+    assert proposals(source) == []
