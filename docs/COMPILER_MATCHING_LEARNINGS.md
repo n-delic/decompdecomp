@@ -4704,3 +4704,48 @@ not. Macro-expanded recursion cannot grant that evidence. Native homemade C
 boundary controls cover signed/unsigned char and short conversions against an
 independent integer oracle. This does not justify narrowing or widening a shared
 callee declaration, altering profiles, or automatically accepting a near miss.
+
+
+## Structured loop notes can explain a frame mismatch without solving it
+
+Controlled decoder evidence under pinned KMC GCC 2.7.2,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: the corrected, compatible draft scores 2454.
+A `-da` diagnostic build has identical canonical linked candidate bytes to the
+ordinary build, despite different raw ELF metadata. Compare code after linking
+before deciding whether diagnostics changed the experiment.
+
+The loop dump identifies a hoisted invariant channel shift, extending a saved
+register lifetime and producing a 0x58 frame. A genuine label/backedge spelling,
+with the same iteration and termination, removes that hoist and recovers the
+original 0x50 frame, but scores 2650. Meaningful selector coalescing scores 2575;
+36 controlled layout/backedge/lifetime/selector trials found no exact match or
+improvement over 2454. These negatives do not justify a new accepted repair,
+artificial padding, dummy register pressure, or selection by stack-frame size.
+Retain the compiler-pass localization for a future real interference hypothesis.
+
+The old score 1465 draft is excluded: uninitialized selector use, double-scaled
+halfword pointer arithmetic and loop-invariant mutations changed its behavior.
+A better numerical score cannot validate that source. The correction preserves
+ordinary byte addresses, selector/channel invariants and modulo-u32 arithmetic;
+raw global storage/effective-type, channel bounds and nonzero-divisor assumptions
+remain explicit. Neither draft is an exact match or a global C-conformance proof.
+
+
+## Locate missing halfword masks before trying allocation rewrites
+
+A second controlled KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+case scores 305 with 612 linked candidate bytes versus a 620-byte target. Initial
+and jump RTL contain both desired halfword zero extensions. First CSE removes
+them by substituting the inline getters' already zero-extended values into the
+comparison; combine subsequently forms LHU. The missing instructions are not a
+final register-allocation problem. Ordinary and diagnostic canonical linked
+bytes agree; raw ELF metadata differs.
+
+Genuine aggregate/output-pointer/object-representation transports and three
+actual-predicate switch/fallback forms did not recover the masks. There is no
+successful automatic source repair to promote. Localize disappearance to the
+first compiler phase before spending on repeated copies or register pressure.
+An old lower-score predicate is excluded independently: `(a & a) == 2` forces
+`a == 2`, so `(b & a) == 4` is impossible. The target's independent halfword
+comparisons admit initialized `(2, 4)` fields; no dynamic trace is claimed.
+Compiler score and undefined or incorrect C must remain separate evidence.
