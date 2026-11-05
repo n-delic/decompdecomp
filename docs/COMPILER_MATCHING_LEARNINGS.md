@@ -4421,3 +4421,29 @@ they did not solve these cases. See [constraints and failed experiments](TARGETE
   and call/effect counts across both branch paths and signed-halfword edge values; a
   pinned compiler control verifies the helper fully inlines without an extra function.
   The shared shortlist/agent/deep consumers retain explicit family provenance.
+
+## KMC GCC: stage a byte compound update through a byte local
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, two independent
+four-byte update loops differed only in register allocation. Rewriting
+`bytes[i] += bytes[i] >> 1` as `u8 value; value=bytes[i]; value += value >> 1;
+bytes[i]=value` (and similarly a byte-product percentage update) matched all
+860 linked instruction bytes when both sites changed together. Either single
+change remained a miss. A direct `bytes[i]=value+(value>>1)` did not recover the
+same allocation: retain the compound update to the same-type local.
+
+Evidence: private ordinary compile/link comparison, linked SHA-256
+`c9985315abcb8f7268a488807f5158bd07bb40eb27a2c4bf820717f37c66dcfd`.
+The starting distance140 used a separately audited four-byte memory-record view;
+that representation also needs consistent declarations in its other users.
+This repair does not fix an invalid scalar-overrun expression or infer an
+aggregate from adjacency. Full cartridge acceptance is a separate gate.
+Symbolic relocation rendering still reported80 despite raw linked equality;
+use the existing linked judge's verdict, never rewrite the target to silence it.
+
+The shared `loaded_byte_compound` family considers only uniquely declared ordinary
+unsigned-byte global arrays, known local integer indices, bounded shifts and byte
+products divided by positive literals. It rejects qualified or conflicting
+objects, shadows, unknown typedef widths, macros and side effects. Paired sites
+precede singles within a ten-candidate cap. It is a source hypothesis for both
+ROM and project judges; no compiler, header, ABI or target change is proposed.
