@@ -61,6 +61,10 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
+- **Long C++ names in exports and Windows paths.** Progress saves shorten source filenames to fit a filesystem
+  component, but ROM exports still write the full symbol name (`rom/export_build.py`), and the save change does not
+  account for Windows' 260-character path limit. Extend the same safe naming and path handling to exports and check
+  complete paths on Windows.
 - **Public project build prerequisite hints** run in `ForkProject.run` for public checkouts. The other columns
   describe starting a game from scratch and do not use public-project setup.
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
