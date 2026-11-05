@@ -571,11 +571,14 @@ def register(app: App) -> None:
             reports = [json.loads(row['value']) for row in rows]
             return {'checked':len(reports), 'compiled':sum(bool(r.get('compiled')) for r in reports),
                     'failed':sum(not r.get('compiled',False) for r in reports), 'job':draft_jobs.get(slug)}
+        include_all = data.get('include_all',False)
+        if not isinstance(include_all,bool):
+            raise ValueError('Include all unmatched functions must be true or false.')
         draft_regeneration.validate(net,slug)
         previous = draft_jobs.get(slug)
         if previous and jobs.jobs.get(previous,{}).get('state') == 'running':
             return {'job':previous}
-        draft_jobs[slug] = jobs.start('Regenerate machine drafts',lambda log:draft_regeneration.run(net,slug,log),
+        draft_jobs[slug] = jobs.start('Regenerate machine drafts',lambda log:draft_regeneration.run(net,slug,log,include_all=include_all),
                                      cancel_message='Draft refresh stopped. Completed drafts and verified attempts are saved.')
         return {'job':draft_jobs[slug]}
 

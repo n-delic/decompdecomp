@@ -57,7 +57,7 @@ limits and the read-only command-line audit.
 ## Automatic repairs before paid agents
 
 Open **Regenerate machine drafts** under a project's overview, then choose **Regenerate drafts** to refresh
-starting C and test it with the project's compiler. Matches, best attempts and shared headers are preserved.
+starting C for functions without compiling C and test it with the project's compiler. Select **Include all unmatched functions** for a full refresh. Room members can run this locally, with potential matches confirmed by the host. Matches, best attempts and shared headers are preserved.
 Claimed functions and unresolved boundaries are skipped; Stop keeps completed work. **Starting C diagnostics**
 in a function shows separate generation, compiler and linking failures. Unchanged failed inputs are cached;
 explicit regeneration opens a new pass. No AI calls are made.

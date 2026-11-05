@@ -124,8 +124,11 @@ class BriefMixin:
         from ..return_contract_evidence import m2c_context
         context = m2c_context(self,proj,fn,context,ctx['header'])
         bindings = [(name,self.symbols(proj['id']).resolve(name)) for name in sorted(roots)]
-        key = hashlib.sha1(json.dumps([DRAFT_REVISION, self.cfg(proj).get("draft_generation", 0), hashlib.sha256((fn["asm"] or "").encode()).hexdigest(), fn["name"], target, own["toolchain"], own.get("flags", []), sorted(roots), bindings, context])
-                           .encode()).hexdigest()[:16]
+        from ..draft_reports import generation
+        inputs = [DRAFT_REVISION, self.cfg(proj).get("draft_generation", 0), hashlib.sha256((fn["asm"] or "").encode()).hexdigest(), fn["name"], target, own["toolchain"], own.get("flags", []), sorted(roots), bindings, context]
+        if refresh := generation(self,fn['id']):
+            inputs.append(('regeneration',refresh))
+        key = hashlib.sha1(json.dumps(inputs).encode()).hexdigest()[:16]
         return key, own["toolchain"], context
 
     def _seed_for(self, fn, proj) -> str | None:

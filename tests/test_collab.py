@@ -81,11 +81,11 @@ def test_host_work_reaches_the_guest(room):
     hagent, _ = host.local_agent("codex-1")
     assert host.compile_and_diff(hagent, "func_80000808", DAMAGE, slug).startswith("✅ MATCH")
     assert host.rename_symbol(hagent, slug, "func_800007D0", "clamp_s32").startswith("✅")
-    assert host.edit_context(hagent, slug, "", "s32 clamp_s32(s32 v, s32 lo, s32 hi);", "prototype").startswith("✅")
+    assert host.edit_context(hagent, slug, "", "s32 clamp_s32(s32 v, s32 lo, s32 hi);", "prototype", function="clamp_s32").startswith("✅")
     guest.links[gslug].sync()
     assert guest._function("func_80000808", gslug)["status"] == "matched"
     assert guest._function("clamp_s32", gslug)["status"] == "matched"
-    assert "clamp_s32(s32 v" in guest.get_context(gslug)
+    assert "clamp_s32(s32 v" in guest.get_context(gslug, "clamp_s32")
     feed = [e["kind"] for e in guest.live(gslug)["events"]]
     assert "match" in feed
     assert guest.overview(gslug)["room"]["role"] == "guest"

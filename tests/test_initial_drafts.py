@@ -178,7 +178,7 @@ def test_regeneration_preserves_matches_and_attempts_and_skips_claimed_functions
     assert result['skipped']==1 and not called
     assert net.store.one('SELECT seed,best_source,status FROM functions WHERE id=?',fn['id'])['status']=='open'
     assert net.store.one('SELECT count(*) AS n FROM attempts')['n']==0
-    assert json.loads(net.project_row(proj['slug'])['config'])['draft_generation']==1
+    assert draft_reports.generation(net,fn['id'])==0
 
 
 @pytest.mark.skipif(not seeds.available() or toolchains.installed('gcc-2.7.2-kmc') is None,
@@ -249,7 +249,8 @@ def test_regeneration_cancellation_does_not_clear_saved_work(network, monkeypatc
     assert tuple(row)==('matched','saved exact C','saved best C',0)
 
 
-def test_machine_draft_api_scopes_reports_and_starts_a_reviewable_job(network, tmp_path, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('include_all',[None,True])
+def test_machine_draft_api_scopes_reports_and_starts_a_reviewable_job(network, tmp_path, monkeypatch, include_all):  # noqa: F811
     from starlette.testclient import TestClient
 
     from decompnet.app.server import build
@@ -258,7 +259,7 @@ def test_machine_draft_api_scopes_reports_and_starts_a_reviewable_job(network, t
     monkeypatch.setattr(net,'can_draft',lambda proj:True)
     monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:False)
     queued=[]
-    monkeypatch.setattr(draft_regeneration,'run',lambda net,slug,log:queued.append(slug) or {'completed':0})
+    monkeypatch.setattr(draft_regeneration,'run',lambda net,slug,log,**kwargs:queued.append((slug,kwargs)) or {'completed':0})
     draft_reports.save(net,fn['id'],{'key':'input','compiled':True,'scored':False})
     mcp,_,security,_=build(net,internal,6509,'draft-tests')
     client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),
@@ -266,13 +267,16 @@ def test_machine_draft_api_scopes_reports_and_starts_a_reviewable_job(network, t
     response=client.get('/api/drafts',params={'slug':proj['slug'],'function':fn['name']})
     assert response.status_code==200 and response.json()['report']['compiled']
     assert client.get('/api/drafts',params={'slug':'other','function':fn['name']}).status_code==400
-    response=client.post('/api/drafts',json={'slug':proj['slug']})
+    assert client.post('/api/drafts',json={'slug':proj['slug'],'include_all':'false'}).status_code==400
+    body={'slug':proj['slug']}
+    if include_all is not None:body['include_all']=include_all
+    response=client.post('/api/drafts',json=body)
     assert response.status_code==200 and response.json()['job']
     import time
     for _ in range(100):
         if queued:break
         time.sleep(.01)
-    assert queued==[proj['slug']]
+    assert queued==[(proj['slug'],{'include_all':bool(include_all)})]
     assert net.store.one('SELECT status FROM functions WHERE id=?',fn['id'])['status']=='open'
 
 

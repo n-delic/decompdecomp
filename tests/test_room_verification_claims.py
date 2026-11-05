@@ -29,6 +29,8 @@ def test_failed_verification_does_not_block_the_next_submission(setup,monkeypatc
         compiled.append(fn['name'])
         return SimpleNamespace(ok=False,log='synthetic compile error')
     monkeypatch.setattr(net,'_attempt_compilation',compile)
+    # Private fallback bundles bypass the attempt cache and must fail synthetically too.
+    monkeypatch.setattr(net,'_compile',lambda *args:SimpleNamespace(ok=False,log='synthetic compile error'))
     monkeypatch.setattr(net,'_record',lambda *args,**kwargs:None)
     for name in ['func_1','func_2']:
         result=room_matches.verify(net,'game',agent,name,'int candidate;')

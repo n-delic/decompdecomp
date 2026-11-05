@@ -2948,12 +2948,14 @@ class ForkEngine:
             return res
         name = self._fn(slug, function)["name"]
         if res["matched"]:  # the host builds it in its own tree, against its own copy, and commits it for everyone
+            res['host_confirmed'] = False
             try:
                 verdict = link.attempt(agent, name, source)
             except NetworkError as e:
                 res["text"] += f"\n⚠️ Not shared with the room yet: {e}"
                 return res
             if verdict.get("matched"):
+                res['host_confirmed'] = True
                 res["text"] += "\nShared with the room: the host confirmed the match."
                 threading.Thread(target=self._follow, args=(link,), daemon=True).start()
             else:
@@ -3507,7 +3509,10 @@ class ForkEngine:
                 return "skip"
             names = self._names(self._meta(fn), fn)
             from . import draft_reports
-            input_key = draft_reports.key(repr((self._draft_key(cfg, unit, fp.root),cfg.get('draft_generation',0))), self._known(fp,unit), '', fn)
+            inputs = (self._draft_key(cfg, unit, fp.root),cfg.get('draft_generation',0))
+            if refresh := draft_reports.generation(self.net,fid):
+                inputs += (refresh,)
+            input_key = draft_reports.key(repr(inputs), self._known(fp,unit), '', fn)
             previous = draft_reports.read(self.net, fid)
             if previous.get('key') == input_key and previous.get('complete'):
                 return 'skip'
@@ -3523,6 +3528,10 @@ class ForkEngine:
                 report['scored'] |= res.get('score') is not None
                 report['matched'] |= res['matched']
                 if res["matched"]:
+                    if proj['slug'] in self.net.links:
+                        report['host_confirmed'] = res.get('host_confirmed',False)
+                        if not report['host_confirmed']:
+                            draft_reports.failure(report,'host confirmation','room',res['text'])
                     report['complete'] = True
                     draft_reports.save(self.net, fid, report)
                     return "match"

@@ -4,6 +4,12 @@ import json
 import time
 
 PREFIX = 'machine-draft:'
+GENERATION_PREFIX = 'machine-draft-generation:'
+
+
+def generation(net, fid):
+    row = net.store.one('SELECT value FROM settings WHERE key=?',GENERATION_PREFIX+str(fid))
+    return int(row['value']) if row else 0
 
 
 def key(plan, header, data, fn):
@@ -35,6 +41,8 @@ def failure(report, phase, family, reason):
 def summary(report):
     if not report:return ''
     state = 'matched' if report.get('matched') else 'scored' if report.get('scored') else 'compiled; linking needs review' if report.get('compiled') else 'no compiling draft'
+    if report.get('matched') and report.get('host_confirmed') is False:
+        state = 'locally matched; awaiting host confirmation'
     failures = report.get('failures') or []
     reason = (' Last '+failures[-1]['phase']+': '+failures[-1]['reason'][-500:]) if failures else ''
     return 'Machine draft check: '+state+'.'+reason

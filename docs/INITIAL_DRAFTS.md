@@ -1,7 +1,7 @@
 # Compiler-tested starting drafts
 
 In a project's overview, open **Regenerate machine drafts** and choose **Regenerate drafts**.
-The app refreshes open functions and tests their starting C locally, with no model requests.
+By default, the app refreshes open functions without saved compiling C and tests their starting C locally, with no model requests. A scored best source, a saved successful compilation, or retained compiled source counts as compiling C. Select **Include all unmatched functions** to refresh existing compiling baselines too.
 **Stop** keeps completed work. Claims and unresolved function boundaries are skipped; release a
 claim or review the boundary, then run another pass to revisit those functions.
 
@@ -23,7 +23,7 @@ object and common build configuration files; their ordinary build/objdiff remain
 The operator API is `POST /api/drafts` with `{"slug":"your-project"}`. It returns a normal job ID;
 read/cancel that job through the existing jobs API. `GET /api/drafts?slug=your-project` summarizes the
 latest cached receipts. Add `&function=your-function` to inspect one receipt. These are the app's
-usual authenticated operator routes. Run a joined project's refresh on its room host.
+usual authenticated operator routes. The default scope is missing compiling C; send `include_all: true` for all unmatched functions. Room members can refresh locally: each trial obtains a host lease, improved attempts are shared, and potential matches use the existing host confirmation and saved-evidence retry flow. Only host-confirmed matches count in the room refresh result.
 
 ## Bounded recovery
 

@@ -291,8 +291,10 @@
       <details class="panel settings-disclosure" id="machineDraftPanel">
         <summary class="panel-head"><h2>Regenerate machine drafts <span class="disclosure-context">— Refresh starting C</span></h2></summary>
         <div class="pad maintenance-body">
-          <p class="maintenance-intro">Create fresh starting C for unmatched functions, then test it for matches.</p>
+          <p class="maintenance-intro">Create fresh starting C for functions without compiling C, then test it for matches.</p>
           <p class="muted small">Use after changing headers or compiler settings. Saved work stays safe; functions claimed by agents or needing boundary review are skipped.</p>
+          <label class="check"><input id="machineDraftIncludeAll" type="checkbox"><span>Include all unmatched functions, even those with compiling C</span></label>
+          <p class="muted small">Room members generate and compile locally; the host confirms potential matches.</p>
           <div class="maintenance-actions"><button id="regenerateMachineDrafts" class="primary" type="button">Regenerate drafts</button><button id="machineDraftStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
           <pre id="machineDraftLog" class="joblog" hidden></pre>
         </div>
