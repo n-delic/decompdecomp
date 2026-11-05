@@ -678,8 +678,8 @@
       </div>
     </div>
     <section class="panel danger-zone">
-      <header class="panel-head"><h2>Remove project</h2></header>
-      <div class="pad row"><p class="muted small grow">Matched functions and notes are deleted from decompdecomp. You can keep or delete the project folder.</p><button class="ghost danger" id="deleteBtn" type="button">Remove project…</button></div>
+      <header class="panel-head"><h2>Close or remove project</h2></header>
+      <div class="pad row"><p class="muted small grow">Verified matches stay in your local match library for other games. Project notes are removed. You can keep or delete the project folder.</p><button class="ghost" id="closeProjectBtn" type="button">Close project…</button><button class="ghost danger" id="deleteBtn" type="button">Remove project…</button></div>
     </section>
   </section>
 </main>
@@ -738,6 +738,7 @@
 <!-- ================================================================ settings -->
 <main id="settingsPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">Settings</p><h1>How decompdecomp works for you</h1></header>
+  <details class="panel settings-disclosure" id="matchLibraryPanel"><summary class="panel-head"><h2>Local match library <span class="disclosure-context" id="matchLibraryCount">— Loading</span></h2></summary><div class="pad"><p class="small muted">Verified matches are retained in a separate database when projects are closed or removed. Shared functions are stored once, with links to their games and distinct verified source/compiler variants. New games must still pass their own byte or object verification.</p><div class="row"><label class="field grow"><span>Find a function or game</span><input id="matchLibrarySearch" type="search" placeholder="Function name or game"></label><button class="ghost small-btn" id="matchLibraryRefresh">Search</button><button class="ghost small-btn" id="matchLibraryIndex">Index existing matches</button></div><p class="small muted">Showing up to 100 functions, most widely shared first. This library stays on this computer; no game data is uploaded.</p><div id="matchLibraryItems"></div><div id="matchLibraryLog"></div></div></details>
   <div class="cols">
     <section class="panel"><header class="panel-head"><h2>Pair a browser worker</h2></header><div class="pad">
       <p class="muted small">Authorize one browser origin for one KMC ROM project. The browser can read function tasks and submit source for this app to recheck; it cannot run commands or use private app APIs. Access expires after one hour and is lost when this app restarts.</p>

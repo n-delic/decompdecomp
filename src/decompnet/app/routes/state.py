@@ -41,6 +41,15 @@ def register(app: App) -> None:
     manager, jobs, settings, guard, call, body = app.manager, app.jobs, app.settings, app.guard, app.call, app.body
     fail = app.fail
 
+    @mcp.custom_route('/api/match-library', methods=['GET','POST'])
+    async def api_match_library(request):
+        if bad := guard(request, write=request.method=='POST'):
+            return bad
+        if request.method=='POST':
+            return JSONResponse({'job':jobs.start('Index verified match library', net.match_library.backfill)})
+        return JSONResponse(await call(net.match_library.summary, str(request.query_params.get('search',''))[:200]))
+
+
     def state() -> dict:
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:

@@ -1102,8 +1102,9 @@ function renderCompilerWaiting(ov) {
   const sg = compilerSuggestions(ov);
   setHtml($("compilerWaiting"), sg.length ? `<div class="row" style="justify-content:space-between"><p class="col-title">Waiting for you · ${sg.length}</p><button type="button" class="primary small-btn" data-apply-all>Accept all ${sg.length} suggestions</button></div>${sg.map(suggestionHtml).join("")}` : "");
 }
+$("closeProjectBtn").onclick=()=>closeUnfinishedProject(S.slug,S.ov.title);
 $("deleteBtn").onclick = () => {
-  dialog("Remove project", `<p>Remove <b>${esc(S.ov.title)}</b> from decompdecomp? Matched functions and notes are deleted.</p>
+  dialog("Remove project", `<p>Remove <b>${esc(S.ov.title)}</b> from decompdecomp? Verified matches stay in your local match library. Project notes are removed.</p>
     <label class="check"><input type="checkbox" id="delFiles"><span>Also delete the project folder (your ROM copy and exported sources in it)</span></label>
     <div class="row"><button class="primary" id="delGo" type="button">Remove</button><button class="ghost" data-close type="button">Cancel</button></div>`);
   $("delGo").onclick = async () => {

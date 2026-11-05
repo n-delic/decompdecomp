@@ -1741,3 +1741,17 @@ need their own verified intrinsic integration before this call can be used there
 Referenced fixed intrinsic templates travel with rebuildable ROM exports and verified
 repository sync headers, so standalone builds that invoke the compiler directly retain
 the same operation. Unrelated sources keep their existing prelude.
+
+### Keep matches when closing projects
+
+Settings → **Local match library** lists saved functions and the games that share them, most widely
+shared first. Verified matches are saved automatically in `.decomp/match-library.sqlite3`, separately
+from the active project database. Existing matches are indexed in the background; **Index existing
+matches** runs that pass manually. Closing/removing a project saves its matches before deleting its
+app records, even if you also remove the project folder. Notes and unfinished attempts are not archived.
+
+A shared function has one fingerprint record and links to its games/original function names. Identical
+source and header blobs are stored once; distinct verified source/compiler variants remain available.
+Matches from closed projects participate in normal free cross-project searches. A destination still
+has to compile and pass its own exact byte or object comparison. No game bytes are stored in the library,
+and it is not uploaded. Copy this database with your app data when moving to another computer.

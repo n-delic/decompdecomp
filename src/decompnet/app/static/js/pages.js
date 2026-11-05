@@ -244,6 +244,7 @@ async function renderWebGithubSettings(onSaved) {
 async function showSettingsPage() {
   show("settingsPage");
   const st = await loadState();
+  loadMatchLibrary().catch(error=>{$("matchLibraryCount").textContent=error.message;});
   const projects = await api('/api/projects');
   $("browserBridgeProject").innerHTML = projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join('');
   const browserAction = async action => {
@@ -741,3 +742,17 @@ async function sourceRuntimeDialog() {
     }
   } catch(error){get('[data-runtime-status]').textContent=error.message;}
 }
+
+
+async function loadMatchLibrary() {
+  const data=await api('/api/match-library?search='+encodeURIComponent($("matchLibrarySearch").value || ''));
+  $("matchLibraryCount").textContent=`— ${data.functions.toLocaleString()} functions · ${data.games.toLocaleString()} games · ${data.solutions.toLocaleString()} variants`;
+  $("matchLibraryItems").innerHTML=data.items.length ? `<div class="compiler-table"><table><thead><tr><th>Function</th><th>Games</th><th>Verified variants</th></tr></thead><tbody>${data.items.map(r=>`<tr><td class="mono">${esc(r.name)}<br><span class="small muted">${esc(r.arch)} · ${r.size} bytes</span></td><td><b>${r.games}</b><br><span class="small muted">${esc(r.game_names)}</span></td><td>${r.variants}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No saved matches found. Existing matches are indexed in the background, and new matches are saved automatically.</p>';
+}
+$("matchLibraryRefresh").onclick=()=>loadMatchLibrary().catch(e=>toast(e.message,'err'));
+$("matchLibrarySearch").onkeydown=e=>{if(e.key==='Enter')$("matchLibraryRefresh").click();};
+$("matchLibraryIndex").onclick=async()=>{
+  const log=$("matchLibraryLog"),done=beginWork(log,'Indexing existing verified matches',[$("matchLibraryIndex")],'Match library updated');
+  try{const {job}=await api('/api/match-library',{method:'POST',body:{}});await followJob(job,log);await loadMatchLibrary();}
+  catch(error){showJobError(log,error.message);}finally{done();}
+};
