@@ -44,3 +44,5 @@ A lower native-permuter score is not proof of sound C. In particular, check that
 expanding a captured address does not recompute it after an index changes. The
 generator guards supported local captures, but other transformations and type
 conversions still need review before using a variant as a new search baseline.
+Generated inline helpers are private, but check complete build output too: a
+function-window match alone does not verify extra helper code or its placement.

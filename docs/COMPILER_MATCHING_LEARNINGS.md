@@ -4130,3 +4130,21 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
 - Volatile aliases declared inside a function need the same guard. Alias names
   shadowed in nested blocks retain all definitions conservatively, so a later
   plain alias cannot hide an earlier volatile declaration.
+
+### Generated inline helpers need private linkage
+
+- With KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`), a native
+  `perm_inline` candidate emitted a 16-byte global helper even though its call
+  was inlined into the selected function. A selected-function byte comparison
+  does not prove that extra helper text will fit in the complete cartridge.
+- The same source with a static inline helper emitted no helper symbol and
+  retained its advisory score. It was not an exact match; no cartridge equality
+  or new game match is claimed by this experiment.
+- The generator now adds static linkage only to inline definitions newly created
+  by this native rewrite. Pre-existing source definitions and the pinned tool
+  remain unchanged. Traced and untraced generation use the same safeguard.
+- A regression generates two independent units with the actual pinned rewrite.
+  GNU89 compilation/linking succeeds with private helpers and verifies their
+  results for all byte inputs; the external-linkage negative control fails on
+  duplicate helper symbols. Full-project verification is still required when
+  accepting any candidate, especially if a helper cannot be fully inlined.

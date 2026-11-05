@@ -30,10 +30,28 @@ import json
 import random
 import re
 import sys
+from functools import wraps
 from pathlib import Path
 
 KEEP = 0.6  # decomp-permuter's default chance of building on the last variant instead of starting again
 SOURCE_STARTS = "DECOMPDECOMP_SOURCE_STARTS"  # a typedef put between the header and the source, to find the seam
+
+
+def private_inline(original):
+    """Keep newly generated helpers local to their candidate's translation unit."""
+    @wraps(original)
+    def call(fn, ast, indices, region, random):
+        existing = {id(node) for node in ast.ext}
+        result = original(fn, ast, indices, region, random)
+        for node in ast.ext:
+            if (id(node) not in existing and type(node).__name__ == 'FuncDef'
+                    and 'inline' in node.decl.funcspec and not node.decl.storage):
+                # GNU89 external inline still emits an out-of-line global body.
+                # Separate accepted functions could otherwise define the same
+                # helper, or add text outside the judged function's byte range.
+                node.decl.storage.append('static')
+        return result
+    return call
 TRIES_PER_VARIANT = 4  # rewrites can repeat or fail: give up on a job that yields nothing new this many times over
 MAX_SEED = 10**20
 # a comment, or a string or character literal (group 1), which keeps any /* inside it
@@ -100,6 +118,8 @@ def main() -> int:
                 if method.__name__ == "perm_expand_expr":
                     return protect_expand(method, blocked, lambda: [
                         node for node in candidate.ast.ext if isinstance(node, c_ast.Typedef)])
+                if method.__name__ == "perm_inline":
+                    return private_inline(method)
                 return method
             candidate.randomizer.methods = [(wrap(guarded(method)), weight)
                                              for method, weight in candidate.randomizer.methods]
