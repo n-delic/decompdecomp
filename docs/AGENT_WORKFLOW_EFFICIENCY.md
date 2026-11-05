@@ -239,3 +239,12 @@ This addresses observed empty-queue calls with roughly 1,150 database reads and 
 work under contention. A synthetic 40-function regression uses 63 reads for a cold complete decision and 11
 for an unchanged same-model worker, compared with 360 reads for the individual fingerprints alone. These
 query counts do not predict wall time on a user's machine.
+
+
+Idle receipt revisions also seek pause records through the existing settings primary key. The legacy exact
+key and scoped `function-id:` range are separate, disjoint lookups, with a stable final key order. This avoids
+cross-scanning unrelated settings for every project function; function 1 cannot consume function 10's scopes.
+The complete legacy/model/worker key set and resulting work revision are unchanged. A synthetic 120-function,
+5,000-unrelated-setting regression executes about 4,500 SQLite VM instructions instead of 7.4 million. This
+follows slow-read logs attributing 12–79 seconds to the previous variable GLOB/OR join under live contention;
+synthetic wall times are not a live performance guarantee. No schema migration or extra index is required.

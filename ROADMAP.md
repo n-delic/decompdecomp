@@ -1,5 +1,8 @@
 # Roadmap
 
+Implemented: indexed legacy/scoped pause-record lookups for idle work receipts. Project-local point and
+binary-range seeks replace the settings/function cross-scan while preserving the exact revision digest.
+
 Implemented: batched candidate-scope inputs and revision-keyed, model-scoped paused-queue read snapshots.
 Unchanged ROM queues reuse immutable scheduling results; source/header/symbol/callee changes and retry
 records invalidate immediately, while imported external files are inspected on every decision.
