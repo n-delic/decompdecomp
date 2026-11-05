@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: named autosave workers per ROM project, with saved Pause/Resume controls
+  and thread CPU attribution in Background work. A shared slot bounds background
+  sync concurrency; explicit saves and authoritative verification remain enabled.
+
 - Done: saved, live maintenance CPU budget in Background work. Indexing, SDK naming
   and identical-function reuse share a cooperative percentage of one CPU core;
   foreground work and compiler subprocesses are outside this budget.

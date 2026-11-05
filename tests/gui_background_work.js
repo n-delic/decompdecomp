@@ -21,6 +21,12 @@ vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js'
  assert.match($('backgroundRows').innerHTML,/role="progressbar"/);
  await stopButton.onclick();assert.equal(stopped,'task-1');
  ctx.document.hidden=true;await ctx.readBackgroundWork();assert.equal(reads,1);
+ let autosaveAction;
+ ctx.api=async(url,options)=>{autosaveAction=options.body;};
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Project autosave',kind:'autosave',key:'game',project:'game',state:'paused',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/Resume/);await stopButton.onclick();assert.equal(autosaveAction.action,'resume');
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Project autosave',kind:'autosave',key:'game',project:'game',state:'running',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/Pause/);await stopButton.onclick();assert.equal(autosaveAction.action,'stop');
  let savedCpu;
  ctx.api=async(url,options)=>{savedCpu=options.body.maintenance_cpu_percent;};
  $('maintenanceCpuLimit').value='50';await $('maintenanceCpuSave').onclick();assert.equal(savedCpu,50);

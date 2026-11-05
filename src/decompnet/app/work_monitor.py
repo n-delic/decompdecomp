@@ -33,6 +33,13 @@ class Monitor:
         startup_tasks = startup.snapshot() if startup is not None else []
         for task in startup_tasks:
             add('startup', task['key'], task['title'], task['state'], task['project'], task['detail'])
+        autosave = getattr(self.net, 'autosave', None)
+        autosaves = autosave.snapshot() if autosave is not None else []
+        for task in autosaves:
+            add('autosave', task['key'], 'Project autosave', task['state'], task['key'],
+                'Automatic checks paused; explicit saves and judging still verify files.'
+                if task['state'] == 'paused' else ('Pausing at the next safe checkpoint; saved work is kept.'
+                if task['state'] == 'pausing' else task['detail']))
         with self.jobs._lock:
             for jid, job in list(self.jobs.jobs.items()):
                 if job['state'] != 'running':
@@ -78,6 +85,8 @@ class Monitor:
             ids, names = [], []
             if kind == 'startup':
                 ids = [next((t['thread_id'] for t in startup_tasks if t['key'] == key), None)]
+            elif kind == 'autosave':
+                ids = [next((t['thread_id'] for t in autosaves if t['key'] == key), None)]
             elif kind == 'job':
                 job = self.jobs.jobs.get(key, {})
                 ids = [job.get('thread_id')]
@@ -107,6 +116,10 @@ class Monitor:
             startup = getattr(self.net, 'startup', None)
             if startup is None or not startup.cancel(key):
                 raise NetworkError('This startup task has already finished. Refresh the list.')
+        elif kind == 'autosave':
+            if getattr(self.net, 'autosave', None) is None:
+                raise NetworkError('Project autosave is not available. Refresh the list.')
+            self.net.autosave.pause(key)
         elif kind == 'job':
             if not self.jobs.cancel(key):
                 raise NetworkError('This job has already finished. Refresh the list.')
@@ -123,4 +136,10 @@ class Monitor:
             self.manager.stop(key)
         else:
             raise NetworkError('This service cannot be stopped here. Use its project controls.')
+        return {'requested':True}
+
+    def resume(self, kind, key):
+        if kind != 'autosave' or getattr(self.net, 'autosave', None) is None:
+            raise NetworkError('This worker cannot be resumed here. Refresh the list.')
+        self.net.autosave.pause(key, False)
         return {'requested':True}

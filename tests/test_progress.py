@@ -1309,3 +1309,29 @@ def test_source_edit_keeps_note_added_after_database_render(project, monkeypatch
     net.progress.sync('game', force=True)
     texts = [r['text'] for r in net.store.all('SELECT text FROM notes WHERE project_id=1')]
     assert inserted and 'original history' in texts and 'concurrent history' in texts
+
+
+def test_background_autosave_cancellation_rolls_back_restore_and_explicit_save_still_works(project, monkeypatch):
+    net, folder, judged = project
+    manifest(folder, notes=[{'by':'worker','text':'contribution','function':'f'}])
+    changed = (folder / saves.MANIFEST).read_text()
+    cancelled = threading.Event()
+    original = saves._apply_context
+    def apply(*args, **kwargs):
+        result = original(*args, **kwargs)
+        cancelled.set()
+        return result
+    def report(message):pass
+    def check():
+        if cancelled.is_set():raise saves._AutosavePaused('Paused')
+    report.check_cancel = check
+    with monkeypatch.context() as patch:
+        patch.setattr(saves, '_apply_context', apply)
+        with pytest.raises(saves._AutosavePaused):
+            net.progress.sync('game', force=True, logger=report)
+    assert not net.store.all('SELECT * FROM notes')
+    assert (folder / saves.MANIFEST).read_text() == changed
+    assert 'game' not in net.progress.errors
+    assert not net.progress.syncing('game')
+    assert net.progress.sync('game', force=True)
+    assert net.store.one('SELECT text FROM notes')['text']=='contribution'

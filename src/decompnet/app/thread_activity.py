@@ -45,6 +45,7 @@ def purpose(name):
         'MainThread':('Server','Runs the local HTTP/MCP event loop and coordinates app requests.'),
         'AnyIO worker thread':('Requests','Runs synchronous request handlers off the server event loop; may be idle.'),
         'autosave':('Saved progress','Checks saved project files and synchronizes verified progress.'),
+        'autosave-coordinator':('Autosave scheduler','Discovers ROM projects and maintains their individual autosave workers.'),
         'compiler-process-tracker':('Compilers','Tracks compiler subprocesses and their resource budgets.'),
         'detect-agents':('Agent discovery','Finds installed agent apps and their available models.'),
         'sdk-names':('SDK indexing','Identifies project symbols using local SDK signatures.'),
@@ -60,6 +61,7 @@ def purpose(name):
     prefixes = [
         ('startup-task-','Startup task','Runs one optional startup scan; stop it using its named task row.'),
         ('background-worker','Background pool','Shared machine-draft and permutation worker; may be idle.'),
+        ('autosave-', 'Saved progress', 'Checks and saves this project’s progress files; pause or resume in Background work.'),
         ('progress-compile','Saved progress','Compiles saved C to verify imported or synchronized matches.'),
         ('deep-pass','Deep permuter','Searches C rewrites for a function during a deep pass.'),
         ('iterative-repair','Local repairs','Tests successive local source repairs.'),

@@ -61,6 +61,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     def quit_app() -> None:
         """Quit means quit: the window, every helper with everything it started, then the server."""
         startup.close()
+        if getattr(net, "autosave", None):net.autosave.close()
         window.close_app()
         net.deep_sweeps.shutdown()
         net.permuter.close()
@@ -147,7 +148,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         slug = row['slug']
         startup.add('SDK naming', lambda log, slug=slug: (log.check_cancel(), name_functions(net, slug)), project=slug, with_log=True)
     startup.start()
-    saves.Autosave(net).start()  # follow work and contributions in each ROM project's authoritative progress folder
+    net.autosave = saves.Autosave(net, settings)
+    net.autosave.start()  # follow work and contributions in each ROM project's authoritative progress folder
 
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
@@ -280,6 +282,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
         startup.close()
+        if getattr(net, "autosave", None):net.autosave.close()
         net.deep_sweeps.shutdown()
         net.permuter.close()
         manager.shutdown()

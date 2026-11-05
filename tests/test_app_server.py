@@ -59,6 +59,8 @@ def app(tmp_path_factory):
     (home / ".decomp").mkdir()
     net = RomNetwork(home / ".decomp" / "decomp.db", home)
     mcp, manager, security, _ = build(net, home / ".decomp", PORT, SECRET)
+    # Route tests drive saves explicitly; live autosave scheduling has its own integration tests.
+    net.autosave.close()
     app = mcp.streamable_http_app(transport_security=security, host="127.0.0.1")
     client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
     return client, net, manager
@@ -2383,3 +2385,19 @@ def test_match_library_api_is_guarded_and_does_not_expose_source(app):
     assert all('source' not in item and 'header' not in item for item in data['items'])
     response=client.post('/api/match-library',json={},headers={'X-Decomp':'1'})
     assert response.status_code==200 and response.json()['job']
+
+
+def test_project_autosave_controls_are_exposed_in_background_api(app, monkeypatch):
+    from types import SimpleNamespace
+    client, net, *_ = app
+    calls = []
+    auto = SimpleNamespace(snapshot=lambda:[dict(key='game',state='paused',thread_id=None,detail='Paused')],
+                           pause=lambda *args:calls.append(args))
+    monkeypatch.setattr(net, 'autosave', auto)
+    rows = client.get('/api/background-work').json()['items']
+    assert any(r['kind']=='autosave' and r['project']=='game' and r['state']=='paused' for r in rows)
+    for action in ('stop','resume'):
+        result = client.post('/api/background-work', headers={'X-Decomp':'1'},
+                             json={'kind':'autosave','key':'game','action':action})
+        assert result.status_code==200
+    assert calls == [('game',), ('game',False)]

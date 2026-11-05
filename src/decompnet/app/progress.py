@@ -702,8 +702,10 @@ class Progress:
         changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed."""
         if self.applying or getattr(self.net.store._local, "in_tx", False):
             return False
+        if logger is not None:getattr(logger, "check_cancel", lambda: None)()
         self._check_paused(slug)
         with self._project_lock(slug), self.verification_slot:
+            if logger is not None:getattr(logger, "check_cancel", lambda: None)()
             self._check_paused(slug)
             self._activity(slug, phase="Reading saved files", done=0, total=None, function=None)
             self.local.busy = True

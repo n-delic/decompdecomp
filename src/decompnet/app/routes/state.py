@@ -454,7 +454,8 @@ def register(app: App) -> None:
         try:
             if request.method == "POST":
                 data = await body(request)
-                return JSONResponse(await call(monitor.stop, str(data.get('kind','')), str(data.get('key',''))))
+                operation = monitor.resume if data.get('action') == 'resume' else monitor.stop
+                return JSONResponse(await call(operation, str(data.get('kind','')), str(data.get('key',''))))
             snapshot = await (app.ui_call or call)(monitor.snapshot)
             return JSONResponse(snapshot | {'worker_setting':settings.data.get('worker_threads',0),
                                              'maintenance_cpu_percent':settings.data.get('maintenance_cpu_percent',0)})

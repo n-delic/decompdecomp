@@ -996,47 +996,152 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
     net._syms.pop(pid, None)
 
 
+class _AutosavePaused(RuntimeError):
+    """Cancel only a background check; foreground saves remain enabled."""
+
+
 class Autosave:
     """Follow local work and contributions in progress/, including while no project window is open."""
 
-    def __init__(self, net):
-        self.net = net
+    def __init__(self, net, settings=None):
+        self.net, self.settings = net, settings
         self.stop = threading.Event()
         self.retry_after = {}
         self.deep_check_after = {}
+        self.lock = threading.RLock()
+        self.lane = threading.Semaphore(1)
+        self.workers = {}
+        self.paused = set(settings.data.get('autosave_paused', [])) if settings else set()
+        self.thread = None
 
     def start(self) -> None:
-        threading.Thread(target=self._loop, daemon=True, name="autosave").start()
+        with self.lock:
+            if self.thread is not None:
+                return
+            self.thread = threading.Thread(target=self._loop, daemon=True, name="autosave-coordinator")
+            self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        with self.lock:
+            for worker in self.workers.values():
+                worker['cancel'].set()
+
+    def snapshot(self):
+        with self.lock:
+            return [dict(key=slug, state=('pausing' if worker['running'] else 'paused')
+                         if slug in self.paused else ('running' if worker['running'] else 'waiting'),
+                         thread_id=worker['thread'].native_id, detail=worker['detail'])
+                    for slug, worker in self.workers.items()]
+
+    def pause(self, slug, paused=True):
+        with self.lock:
+            if slug not in self.workers:
+                raise NetworkError('This project autosave is no longer available. Refresh the list.')
+            worker = self.workers[slug]
+            if paused:
+                self.paused.add(slug)
+                worker['cancel'].set()
+            else:
+                self.paused.discard(slug)
+                # Never clear an active operation's cancellation request before it acknowledges it.
+                if not worker['running']:
+                    worker['cancel'].clear()
+                self.retry_after.pop(slug, None)
+                self.deep_check_after.pop(slug, None)
+            if self.settings is not None:
+                self.settings.data['autosave_paused'] = sorted(self.paused)
+                self.settings.save()
+
+    def _projects(self):
+        store = self.net.store
+        if hasattr(store, 'read_cache'):
+            return store.read_cache.get('autosave-projects', store.read_version('project_list'),
+                                        lambda: store.all("SELECT slug,root,config FROM projects"))
+        return store.all("SELECT slug,root,config FROM projects")
+
+    def _reconcile(self):
+        projects = {}
+        for row in self._projects():
+            cfg = json.loads(row['config'])
+            if cfg.get('kind') == 'rom' and cfg.get('rom', {}).get('sha1'):
+                projects[row['slug']] = row
+        with self.lock:
+            for slug in list(self.workers):
+                if slug not in projects:
+                    self.workers.pop(slug)['cancel'].set()
+            for slug, row in projects.items():
+                if slug in self.workers:
+                    self.workers[slug]['row'] = row
+                    continue
+                worker = dict(row=row, cancel=threading.Event(), running=False,
+                              detail='Background file checks; explicit saves remain enabled.')
+                worker['thread'] = threading.Thread(target=self._project_loop, args=(slug, worker),
+                                                     daemon=True, name=f'autosave-{slug}')
+                self.workers[slug] = worker
+                worker['thread'].start()
 
     def _loop(self) -> None:
         from .workers import lower_priority
         lower_priority()
         while not self.stop.is_set():
-            self.run_once(force=False)
+            try:
+                self._reconcile()
+            except Exception:
+                log.exception('Could not refresh project autosave workers')
+            self.stop.wait(2)
+
+    def _project_loop(self, slug, worker):
+        from .workers import lower_priority
+        lower_priority()
+        def check_cancel():
+            if self.stop.is_set() or worker['cancel'].is_set():
+                raise _AutosavePaused('Background autosave paused')
+        def report(message):
+            check_cancel()
+            with self.lock:worker['detail'] = str(message)
+            log.info('%s: %s', slug, message)
+        report.check_cancel = check_cancel
+        while not self.stop.is_set():
+            with self.lock:
+                if self.workers.get(slug) is not worker:
+                    return
+                paused = slug in self.paused
+                if not paused:
+                    worker['cancel'].clear()
+            if not paused and self.lane.acquire(timeout=.1):
+                try:
+                    with self.lock:
+                        check_cancel()
+                        worker['running'] = True
+                    self.run_once(force=False, rows=[worker['row']], logger=report)
+                except _AutosavePaused:
+                    pass
+                finally:
+                    with self.lock:
+                        worker['running'] = False
+                    self.lane.release()
             self.stop.wait(1)
 
-    def run_once(self, *, force=True) -> list[str]:
+    def run_once(self, *, force=True, rows=None, logger=None) -> list[str]:
         """Save dirty work each cycle; background cycles deeply inspect unchanged files every 15 seconds.
 
         Explicit callers retain forced checks, including external edits with unchanged directory timestamps.
         """
         saved = []
-        store = self.net.store
-        if hasattr(store, 'read_cache'):
-            projects = store.read_cache.get('autosave-projects', store.read_version('project_list'),
-                                            lambda: store.all("SELECT slug,root,config FROM projects"))
-        else:
-            projects = store.all("SELECT slug,root,config FROM projects")
+        projects = self._projects() if rows is None else rows
         for row in projects:
             if time.monotonic() < self.retry_after.get(row['slug'], 0):
                 continue
             try:
                 deep = force or time.monotonic() >= self.deep_check_after.get(row["slug"], 0)
-                if self.net.progress.sync(row["slug"], force=deep, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
+                if self.net.progress.sync(row["slug"], force=deep, retry=False, **({"logger": logger} if logger else {})):  # (a failed one waits: RETRY_FAILED_SECONDS)
                     saved.append(row["slug"])
                 if deep:
                     self.deep_check_after[row["slug"]] = time.monotonic() + 15
                 self.retry_after.pop(row['slug'], None)
+            except _AutosavePaused:
+                raise
             except Exception as error:  # keep other projects saving; do not flood logs every second
                 from .progress import _StillFailing
 

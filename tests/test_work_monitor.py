@@ -95,3 +95,18 @@ def test_startup_tasks_have_project_context_and_stop_control():
     m.stop('startup',key)
     assert m.net.startup.records[key].stop.is_set()
     assert not any(r['kind']=='startup' for r in m.snapshot()['items'])
+
+
+def test_autosave_has_project_controls_and_thread_attribution():
+    m, _ = monitor()
+    calls = []
+    m.net.autosave = NS(snapshot=lambda:[dict(key='game',state='paused',thread_id=123,detail='Checking files')],
+                         pause=lambda *args:calls.append(args))
+    m.thread_sampler.snapshot=lambda:[dict(name='autosave-game',native_id=123)]
+    row = next(r for r in m.snapshot()['items'] if r['kind']=='autosave')
+    assert row['project']=='game' and row['state']=='paused' and row['stoppable']
+    assert row['thread_ids']==[123]
+    m.stop('autosave','game')
+    m.resume('autosave','game')
+    assert calls == [('game',), ('game',False)]
+    with pytest.raises(NetworkError):m.resume('job','game')
