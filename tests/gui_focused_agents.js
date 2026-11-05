@@ -8,11 +8,11 @@ class Element {
 }
 const parts={},requests=[],errors=[];
 const panel={querySelector:s => parts[s] ||= new Element()};
-const context={S:{editDirty:false,st:{agents:[{id:'codex',name:'Codex',installed:true,default_model:'test-model',models:[{id:'test-model'}]}],settings:{endpoints:[]}}},
+const context={Date,setInterval:()=>1,clearInterval:()=>{},S:{editDirty:false,st:{agents:[{id:'codex',name:'Codex',installed:true,default_model:'test-model',models:[{id:'test-model'}]}],settings:{endpoints:[]}}},
   esc:s=>s,toast:message=>errors.push(message),dialog:()=>panel,document:{createElement:()=>new Element()},
   beginWork:()=>()=>{},showJobError:(_,message)=>errors.push(message),
   api:async(url,options)=>{requests.push({url,options});return url.endsWith('/start')?{job:'create'}:{};},
-  followJob:async()=>({started:['worker-1']})};
+  followJob:async(id,log,update)=>{update(['Reserving focused worker']);assert(parts['[data-focus-status]'].textContent.includes('Reserving focused worker'));return {started:['worker-1']};}};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/focused-agents.js'),'utf8'),context);
 (async()=>{

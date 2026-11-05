@@ -31,18 +31,27 @@ function openFocusedAgent(slug, name) {
     if (agent?.uses_endpoints && !endpoint.value) return toast('Save an API endpoint in Agents & models first.', 'err');
     get('[data-focus-details]').hidden = false;
     get('[data-focus-result]').hidden = true;
+    const began = Date.now();
+    let stage = 'Sending creation request…';
+    const paint = () => {
+      get('[data-focus-result]').hidden = false;
+      get('[data-focus-heading]').textContent = 'Creating focused agent';
+      status.textContent = `${Math.floor((Date.now()-began)/1000)}s elapsed · ${stage}`;
+    };
+    paint();
+    const timer = setInterval(paint,1000);
     const finish = beginWork(get('[data-focus-progress]'), 'Creating focused agent', [start,kind,endpoint,model,get('[data-focus-minutes]')]);
     try {
       const options = {focus_function:name, focus_minutes:minutes};
       if (model.value.trim()) options.model = model.value.trim();
       if (agent.uses_endpoints) options.endpoint = endpoint.value;
       const response = await api('/api/agents/start', {method:'POST',body:{slug,kind:agent.id,count:1,options,background:true}});
-      const result = response.job ? await followJob(response.job,get('[data-focus-work]')) : response;
+      const result = response.job ? await followJob(response.job,get('[data-focus-work]'),lines => { stage = lines.at(-1) || 'Waiting for creation to start…'; paint(); }) : response;
       const id = result.started?.[0];
       if (!id) throw new Error('No worker was created. Check the Agents list before retrying.');
       get('[data-focus-result]').hidden = false;
       get('[data-focus-heading]').textContent = 'Agent created';
-      status.textContent = `${minutes}-minute limit · Follow its live status and saved improvements in the Agents tab.`;
+      status.textContent = `${minutes}-minute limit · Saved files and the tool connection are checked before work. Follow its live status in the Agents tab.`;
       start.hidden = true;
       stop.hidden = false;
       stop.onclick = async () => {
@@ -51,7 +60,7 @@ function openFocusedAgent(slug, name) {
         catch (error) { showJobError(get('[data-focus-progress]'),error.message); }
         finally { done(); }
       };
-    } catch (error) { showJobError(get('[data-focus-progress]'),error.message); }
-    finally { finish(); if (start.hidden) [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled = true; }); }
+    } catch (error) { get('[data-focus-heading]').textContent = 'Creation stopped'; status.textContent = error.message; showJobError(get('[data-focus-progress]'),error.message); }
+    finally { clearInterval(timer); finish(); if (start.hidden) [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled = true; }); }
   };
 }

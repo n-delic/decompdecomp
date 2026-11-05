@@ -611,6 +611,8 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- Focused agents are recorded through metadata-only creation, skip whole-project draft/reuse preparation and ordering waits, and show live creation stages with elapsed time. Worker-side saved-file synchronization remains required before work.
+
 - Check again and helper startup reconsider obsolete agent tooling verdicts when
   the effective compiler supports a target-backed live return-address C repair,
   including fixes shipped under the same package version. Valid assembly, user
