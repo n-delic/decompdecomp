@@ -861,3 +861,19 @@ order and evaluation boundaries; never cache volatile/atomic reads or move calls
 Two independent sites may need this shape together even when either single
 change misses. The shared `loaded_byte_compound` repair tests a small guarded
 subset automatically; exact linked bytes remain the acceptance gate.
+
+### Review wrappers and representation copies before allocation searches
+
+A byte-exact `void wrapper(void) { helper(); }` with an unspecified `helper()`
+prototype can hide forwarded arguments or a return value. Inspect real callers
+and the downstream definition before trusting that signature. Explicit
+three-vector forwarding and pointer return preserved three measured 28-byte
+wrappers; correcting existing sources does not increase the match count.
+
+For genuine record padding, distinguish representation transport from typed
+scalar evaluation. With proven layout/alignment and nonoverlapping objects,
+three aligned four-byte `__builtin_memcpy` transfers reproduced an existing
+helper exactly; one twelve-byte copy did not. Use byte offsets within the
+containing object, not arithmetic through an invented integer array. This
+requires audited padding and caller preconditions; do not apply it to arbitrary
+uninitialized values. Rebuild the full image after joint edits.

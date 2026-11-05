@@ -263,6 +263,9 @@ class BriefMixin:
         warning=self.console(proj).boundary_reason(fn['target'] or b'') if fn['status']!='matched' else None
         review='\n\nBoundary review before tuning:\n'+warning if warning else ''
         if header_report:review += '\n\n'+header_report
+        from ..wrapper_contracts import brief as wrapper_hint
+        advice=wrapper_hint(self,proj,fn,fn['matched_source'] or fn['best_source'] or fn['seed'] or '')
+        if advice:review+='\n\n'+advice
         if self.cfg(proj).get('kind') == 'fork':
             return self.forks.brief(fn, agent, header) + review + self._lifetime_hints(fn) + search_brief(self,proj,fn)
         if self.is_rom(proj) and fn["status"] == "open" and not fn["best_source"]:
