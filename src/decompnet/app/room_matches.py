@@ -153,6 +153,22 @@ def settings(net,proj,profile):
     return {'toolchain':tid,'flags':flags}
 
 
+def project_profiles(net, proj, fn):
+    """Recover missing client settings from profiles actually assigned in this project."""
+    cfg = net.cfg(proj)
+    default = cfg.get('compiler') or {}
+    candidates = [compiler_for(cfg, fn['vram'], fn), default]
+    candidates += [{**default, **profile} for profile in cfg.get('compiler_ranges', [])]
+    candidates += [{**default, **profile} for profile in (cfg.get('function_compilers') or {}).values()]
+    profiles = []
+    for candidate in candidates:
+        profile = {k: candidate.get(k) for k in ('toolchain', 'flags')}
+        if profile in profiles or not toolchains.installed(profile['toolchain']):
+            continue
+        profiles.append(settings(net, proj, profile))
+    return profiles
+
+
 def verify(net,slug,agent,function,source,evidence=None):
     key,item=save(net,slug,'host',agent,function,source,evidence)
     result=retry(net,slug,key,recover_profiles=bool(evidence))
@@ -218,29 +234,34 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
                     if (not isinstance(header,str) or len(header.encode())>source_preparation.MAX_HEADER or
                         evidence.get('header_sha256',match_bundle.digest(header))!=match_bundle.digest(header)):
                         raise NetworkError('Invalid room header evidence.')
-                    profiles=[settings(net,proj,evidence.get('compiler'))]
+                    profiles=([settings(net,proj,evidence['compiler'])] if evidence.get('compiler')
+                              else project_profiles(net,proj,fn))
                     current={k:own[k] for k in ('toolchain','flags')}
-                    if current!=profiles[0] and toolchains.installed(current['toolchain']):
+                    if current not in profiles and toolchains.installed(current['toolchain']):
                         # The host's profile may reproduce the same bytes with the client's private declarations.
                         profiles.append(current)
                 else:
-                    if not recover_profiles:
-                        raise NetworkError('Older client supplied only C; compiler/header evidence is unavailable. Use Review pending matches → Retry to search installed host profiles, or update the client.')
-                    # Older clients sent only C. Explicit retries walk bounded installed host profiles.
-                    profiles=[{'toolchain':tc,'flags':list(flags)} for tc,flags in net._comparison_candidates(proj,all_installed=True)]
+                    profiles=project_profiles(net,proj,fn)
+                    if recover_profiles:
+                        # Explicit recovery may continue beyond the project's assigned profiles.
+                        for tc, flags in net._comparison_candidates(proj,all_installed=True):
+                            profile={'toolchain':tc,'flags':list(flags)}
+                            if profile not in profiles:profiles.append(profile)
+                project_count=len(project_profiles(net,proj,fn)) if not evidence or not evidence.get('compiler') else 0
+                budget=max(6,project_count)
                 identities={p['toolchain']:match_bundle.compiler_identity(p) for p in profiles}
-                scope=hashlib.sha256((candidate_scope.key(net,proj,fn)+json.dumps(identities,sort_keys=True)+build_info.commit()).encode()).hexdigest()
+                scope=hashlib.sha256((candidate_scope.key(net,proj,fn)+json.dumps(identities,sort_keys=True)+json.dumps(profiles,sort_keys=True)+build_info.commit()).encode()).hexdigest()
                 if item.get('scope')!=scope:item.update(scope=scope,tried=[])
                 tested=0
-                remaining=[p for p in profiles if json.dumps(p,sort_keys=True) not in item['tried']][:6]
+                remaining=[p for p in profiles if json.dumps(p,sort_keys=True) not in item['tried']][:budget]
                 for profile in profiles:
                     marker=json.dumps(profile,sort_keys=True)
                     if marker in item['tried']:continue
-                    if tested>=6:break
+                    if tested>=budget:break
                     tested+=1
                     report({'phase':'Rechecking source, header and linked bytes', 'profile_index':tested,
                             'profile_total':len(remaining), 'toolchain':profile['toolchain'], 'flags':profile['flags'],
-                            'profile_source':'Client settings + client header' if evidence and profile==profiles[0] else
+                            'profile_source':'Client settings + client header' if evidence and evidence.get('compiler') and profile==profiles[0] else
                                              'Host fallback + client header' if evidence else 'Host recovery profile (client settings unavailable)'})
                     try:
                         expected=source_preparation.inputs(net,net.project_row(slug),net._function(fn['name'],slug))

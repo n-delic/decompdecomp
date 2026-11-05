@@ -93,6 +93,7 @@ def test_legacy_candidates_walk_installed_profiles_with_a_budget(pair,monkeypatc
     agent,_=host.local_agent('room-client')
     monkeypatch.setattr(host,'attempt',lambda *args:{'matched':False,'score':100})
     monkeypatch.setattr(room_matches.build_info,'commit',lambda:'build-one')
+    monkeypatch.setattr(room_matches,'project_profiles',lambda *args:[])
     profiles=[('gcc-2.7.2-kmc',(f'-O{i}',)) for i in range(10)]
     monkeypatch.setattr(host,'_comparison_candidates',lambda *args,**kwargs:profiles)
     seen=[]
@@ -261,3 +262,43 @@ def test_worker_failed_baseline_travels_without_becoming_host_trial(pair):
         db.execute('UPDATE repair_examples SET evidence=? WHERE id=?',(json.dumps(saved),row['id']))
     room_matches.attach_baseline(host,fn,remote,DAMAGE,evidence)
     assert 'worker_baseline' not in host.repair_feedback.detail(slug,row['id'])['evidence']
+
+
+def test_missing_client_compiler_uses_project_profile_with_private_header(pair,monkeypatch):
+    host,slug,guest,gslug=pair
+    source=DAMAGE.replace('= 60;', '= ROOM_TIMER;')
+    evidence=room_matches.packet(guest,gslug,'func_80000808',source)
+    evidence.pop('compiler')
+    evidence['header']+='\n#define ROOM_TIMER 60\n'
+    evidence['header_sha256']=room_matches.match_bundle.digest(evidence['header'])
+    remote,_=host.local_agent('room-client')
+    result=room_matches.verify(host,slug,remote,'func_80000808',source,evidence)
+    assert result['matched'],result['reason']
+
+
+def test_project_profiles_include_default_ranges_and_function_overrides(monkeypatch):
+    from types import SimpleNamespace
+    default={'toolchain':'compiler','flags':['-O2']}
+    cfg={'compiler':default,'compiler_ranges':[{'start':0,'end':8,'flags':['-O0']}],
+         'function_compilers':{'16:32':{'vram':32,'toolchain':'compiler','flags':['-O1']}}}
+    net=SimpleNamespace(cfg=lambda proj:cfg)
+    monkeypatch.setattr(room_matches.toolchains,'installed',lambda tid:True)
+    monkeypatch.setattr(room_matches,'settings',lambda net,proj,profile:profile)
+    assert room_matches.project_profiles(net,{}, {'vram':64})==[
+        default,{'toolchain':'compiler','flags':['-O0']},{'toolchain':'compiler','flags':['-O1']}]
+
+
+def test_missing_compiler_tries_every_project_profile_automatically(pair,monkeypatch):
+    host,slug,_,_=pair
+    agent,_=host.local_agent('room-client')
+    profiles=[{'toolchain':'gcc-2.7.2-kmc','flags':[f'-O{i}']} for i in range(8)]
+    monkeypatch.setattr(room_matches,'project_profiles',lambda *args:profiles)
+    monkeypatch.setattr(host,'attempt',lambda *args:{'matched':False,'score':100})
+    seen=[]
+    def miss(*args):
+        from decompnet.network import NetworkError
+        seen.append(args[5])
+        raise NetworkError('Linked bytes differ')
+    monkeypatch.setattr(room_matches.prepared_evidence,'promote_measured',miss)
+    result=room_matches.verify(host,slug,agent,'func_80000808',DAMAGE)
+    assert result['pending'] and seen==profiles
