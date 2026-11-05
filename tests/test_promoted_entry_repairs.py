@@ -181,3 +181,9 @@ def test_narrowing_must_be_an_entire_expression_statement(statement):
 @pytest.mark.parametrize('directive', ['#import "hidden.h"', '#include_next "hidden.h"', '#line 1 "hidden.c"'])
 def test_unknown_directives_do_not_hide_type_contracts(directive):
     assert proposals(directive+'\nint sample(int x){x=(u8)x;return observer(x);}') == []
+
+
+@pytest.mark.parametrize('directive', ['%:define OBS(x) helper(&x)', '??=define OBS(x) helper(&x)', '%:include "hidden.h"'])
+def test_alternative_preprocessor_tokens_cannot_hide_escape(directive):
+    source = directive+'\nint helper(int *p);int sample(int x){x=(u8)x;return OBS(x);}'
+    assert proposals(source) == []
