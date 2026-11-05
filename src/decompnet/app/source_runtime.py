@@ -61,7 +61,6 @@ def idle_wait(net, state, seconds):
 
 
 ACTIVE = ('preparing', 'waiting', 'deferred', 'updating', 'restarting')
-DRAIN_SECONDS = 15
 RETRY_SECONDS = 60
 
 
@@ -179,20 +178,14 @@ class Runtime:
         return True
 
     def drain(self):
-        """Try a bounded checkpoint; never leave every worker held behind a long-running job."""
+        """Let new work start while busy; reserve the handoff only when idle."""
         while not self.cancel.is_set():
-            self.hold(True)
-            self.job.update(state='waiting', message='Update ready. Checking for a safe restart (up to 15 seconds); active work is not interrupted.')
-            until = time.monotonic() + DRAIN_SECONDS
-            while self.busy():
-                if self.cancel.wait(.2):
-                    return False
-                if time.monotonic() >= until:
-                    break
-            else:
-                return True
-            self.hold(False)
-            self.job.update(state='deferred', message='Update ready; active work is continuing. All agent holds released. Another restart check in 60 seconds.')
+            if not self.busy():
+                self.hold(True)
+                if not self.busy():
+                    return True
+                self.hold(False)
+            self.job.update(state='deferred', message='Update ready; active work is continuing. Another restart check in 60 seconds.')
             if self.cancel.wait(RETRY_SECONDS):
                 return False
         return False

@@ -180,7 +180,7 @@ def test_queue_requires_explicit_data_choice_and_keeps_work_running(tmp_path,mon
 def test_source_handoff_blocks_new_agents_before_model_detection():
     from decompnet.app.agents import Manager
     with pytest.raises(ValueError,match='source update'):
-        Manager.start(NS(source_update_pending=True),'not-a-model','game')
+        Manager._start(NS(source_update_pending=True),'not-a-model','game')
 
 
 def test_separate_data_launch_does_not_replace_current_app(tmp_path,monkeypatch):
@@ -258,26 +258,60 @@ def test_prepare_uses_separate_checkout_and_environment_without_holding_workers(
     assert 'import decompnet.app.cli' in calls[2][0]
 
 
-def test_long_running_job_releases_every_hold_and_retries(tmp_path, monkeypatch):
+def test_long_running_job_never_holds_new_work_and_retries(tmp_path, monkeypatch):
     app = make_app(tmp_path)
     r = runtime.Runtime(app)
     monkeypatch.setattr(r, 'busy', lambda: True)
-    monkeypatch.setattr(runtime, 'DRAIN_SECONDS', 0)
     waits = []
     class Cancel:
         def is_set(self): return False
         def wait(self, seconds):
             waits.append(seconds)
+            assert not app.manager.source_update_pending
+            assert not app.jobs.source_update_pending
+            assert not getattr(app.net, 'source_update_pending', False)
+            assert r.job['state'] == 'deferred'
             if seconds == runtime.RETRY_SECONDS:
-                assert not app.manager.source_update_pending
-                assert not app.jobs.source_update_pending
-                assert not app.net.source_update_pending
-                assert r.job['state'] == 'deferred'
                 return True
             return False
     r.cancel = Cancel()
     assert not r.drain()
-    assert waits == [.2, runtime.RETRY_SECONDS]
+    assert waits == [runtime.RETRY_SECONDS]
+
+
+def test_new_job_starts_normally_while_source_update_is_deferred(tmp_path):
+    from decompnet.app.support import Jobs
+
+    app = make_app(tmp_path)
+    app.jobs = Jobs()
+    app.manager.sessions['agent'] = NS(state='working', proc=None)
+    update = runtime.Runtime(app)
+    waiting = threading.Event()
+    release = threading.Event()
+
+    class Cancel:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            waiting.set()
+            return release.wait(2)
+
+    update.cancel = Cancel()
+    thread = threading.Thread(target=update.drain)
+    thread.start()
+    try:
+        assert waiting.wait(2)
+        assert update.job['state'] == 'deferred'
+        assert not getattr(app.jobs, 'source_update_pending', False)
+        finished = threading.Event()
+        jid = app.jobs.start('test', lambda log: finished.set())
+        assert finished.wait(2)
+        assert app.jobs.jobs[jid]['state'] == 'done'
+    finally:
+        release.set()
+        thread.join(2)
+    assert not thread.is_alive()
 
 
 def test_automatic_source_check_never_holds_work_and_skips_same_commit(tmp_path, monkeypatch):
@@ -316,8 +350,7 @@ def test_automatic_preference_is_explicit_and_persisted(tmp_path):
 def test_deferred_update_can_reach_next_checkpoint(tmp_path, monkeypatch):
     app = make_app(tmp_path)
     r = runtime.Runtime(app)
-    monkeypatch.setattr(runtime, 'DRAIN_SECONDS', 0)
-    busy = iter([True, False])
+    busy = iter([True, False, False])
     monkeypatch.setattr(r, 'busy', lambda: next(busy))
     class Cancel:
         def is_set(self): return False
