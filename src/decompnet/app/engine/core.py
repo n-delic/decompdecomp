@@ -145,6 +145,10 @@ class Core(Network):
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
         done = [r["detail"] for r in self.store.all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
                                                      "kind='analysis' ORDER BY id", row["id"], last)]
+        from .. import assembly_reconsideration
+        reconsidered = assembly_reconsideration.run(self, self.project_row(slug), log)
+        if reconsidered:
+            done.append(f'{reconsidered} obsolete tooling verdicts reconsidered with supported C')
         n = self.twins.set_aside_asm(self.project_row(slug)) + self.not_c_from_notes(slug)
         self._update_cfg(slug, lambda cfg: cfg.update(checked=__version__))
         if n:

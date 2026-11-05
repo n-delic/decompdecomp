@@ -686,3 +686,9 @@ the store; judge the bounded companion even then. This requires encoded target
 call/store evidence and a declared 32-bit scalar or pointer destination. Genuine
 entry snapshots without that evidence stay unchanged. Keep physical source lines
 when testing with `-g3`.
+
+Check again can retire legacy agent-only tooling verdicts about this hardware read
+when the active compiler supports the fixed intrinsic and the existing source has
+a target-backed shared repair. It preserves the old votes in audit metadata and
+runs a bounded ordinary autopilot judge. A nonmatch stays available for further C
+work; explicit user and valid assembly verdicts are preserved.
