@@ -892,3 +892,9 @@ arguments, its exact bytes do not prove that original signature. Unused formals 
 entirely from the callee's instructions. Inspect all callers and validate explicit unused
 parameters and caller declarations jointly; do not delete argument setup to fit the stub.
 Likewise reconcile resource pointer returns before treating integer-shaped drafts as sound.
+
+Compare explicit caller prototypes with selected callee definitions before narrow-argument
+searches. A draft's `void(u8,u16)` declaration can disagree with a matched `void(s32,s32)`
+definition; neither alone proves the original contract. Check actual argument setup, return
+uses and all callers, and validate compatible edits jointly. Do not infer original widths
+solely from a lower advisory score or an explicit-looking machine-generated declaration.

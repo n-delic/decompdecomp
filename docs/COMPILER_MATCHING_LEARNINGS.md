@@ -4533,3 +4533,26 @@ existing bounded matched-callee lookup and three-lead budget across ROM and proj
 Synthetic tests cover explicit/unspecified parameters, calls versus declarations, comments,
 macros, effectful bodies, no-argument calls and the shared budget. Private game controls are
 negative evidence only; initialization checks alone are not a semantic proof.
+
+## Compare explicit prototypes with selected definitions before width searches
+
+A remaining 323-instruction GCC2.7.2 KMC decoder declared a helper as `void(u8,u16)`;
+its selected matched definition was `void(s32,s32)`. Correcting that declaration in the
+nonvolatile research control retained score1200 rather than creating an exact match.
+Eleven new packed-field and loop-limit controls were nonexact; prior native negatives
+were not repeated. An explicit prototype is therefore evidence to audit, not proof that
+narrow arguments describe the original interface. Separately, a uniformly two-argument
+helper admitted a byte-exact unused second formal and five compatible caller declarations;
+all six source corrections together preserved the complete12,582,912-byte cartridge.
+
+Full briefs now compare simple explicit caller prototypes with referenced selected matched
+C definitions. Known scalar aliases normalize (`int`/`s32`, for example); unknown typedefs,
+qualifiers, variadics, arrays, function pointers, unspecified `()` declarations and ambiguous
+multiple declarations are excluded. The warning shares the existing single bounded lookup
+and three-lead budget. It changes no types, profiles, source, claims or verdict and runs no
+compiler. It is shared across ROM and project briefs; receipt-only claims remain cheap.
+Neither selected source establishes original types independently: inspect machine arguments,
+return uses, allocations and all callers, then judge compatible corrections jointly. Real
+private read-only input reproduces the width discrepancy; synthetic regression tests cover
+aliases, pointers, excluded signatures, shared budgets and previous stub warnings. No new
+function match is claimed for the decoder or for this advisory feature.
