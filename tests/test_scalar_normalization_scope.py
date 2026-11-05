@@ -80,3 +80,37 @@ def test_effective_header_qualifiers_and_macros_are_excluded(header):
 def test_boolean_python_constant_is_not_a_c_integer_literal():
     source = SOURCE.replace('offset < 0', 'offset < False')
     assert not scalar_normalization_scope.variants(source, 'normalize', '#define False 1')
+
+
+def test_generated_scope_preserves_defined_c90_boundary_results(tmp_path):
+    import shutil
+    import subprocess
+
+    cc = shutil.which('cc')
+    if not cc:
+        pytest.skip('host C compiler unavailable')
+    candidate = scalar_normalization_scope.variants(SOURCE, 'normalize')[0][1]
+    original = SOURCE.replace('normalize(', 'original(')
+    alternate = candidate[candidate.index('int normalize'):].replace('normalize(', 'alternate(')
+    program = original + '\n' + alternate + '''
+int main(void) {
+    int cases[][2] = {
+        {-2147483647, 1}, {-2147483647, 2147483647},
+        {-50, -20}, {-50, 100}, {-50, 2147483647},
+        {0, 2147483647}, {123, (-2147483647 - 1)},
+        {2147483647, (-2147483647 - 1)}, {-32768, -32768},
+        {-10, (-2147483647 - 1) + 11}
+    };
+    unsigned int i;
+    for (i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i)
+        if (original(cases[i][0], cases[i][1]) != alternate(cases[i][0], cases[i][1]))
+            return 1;
+    return 0;
+}
+'''
+    source = tmp_path / 'normalization.c'
+    source.write_text(program)
+    executable = tmp_path / 'normalization'
+    subprocess.run([cc, '-std=c90', '-O2', str(source), '-o', str(executable)],
+                   check=True, capture_output=True, timeout=20)
+    subprocess.run([str(executable)], check=True, capture_output=True, timeout=10)
