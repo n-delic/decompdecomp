@@ -4773,3 +4773,29 @@ excluded. The ordinary destination compiler/judge still decides acceptance.
 Do not infer that an arbitrary branch rewrite is equivalent or that missing
 callee arguments can be repaired by changing layout: concrete call contracts
 must be audited separately.
+
+## A late tail merge can leave an allocated constant behind
+
+A controlled KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+UI-task investigation localized a misleading dead constant. In a rejected draft,
+an artificial condition selects identical call/store arms. The comparison survives
+through `greg`, where its loop-hoisted constant occupies a saved register. `jump2`
+then merges the duplicate arms and removes the comparison, but retains the constant's
+initialization and register save/restore. Ordinary and `-da` canonical linked bytes
+agree. This explains that draft's residue; it does not prove the original game's
+source used the same artificial condition.
+
+The superficially close score 200 is not an admissible seed: it also accesses past
+a scalar member's subobject. A genuine enclosing-object byte view with current
+selected call contracts scores 950. A prospective signed-halfword interface gives
+750, but the callee and all selected direct callers need joint contract repair;
+a local exact callee control alone is insufficient. Four finite task-context helper
+controls score 1465, 1670, 775 and 1550, with no exact match. No automatic source
+repair or new game match is demonstrated here.
+
+Before trying bound literals or pressure locals to recover a dead initialization,
+compare the initial, allocation and late jump dumps. A constant with no final use
+can be a post-allocation control-flow artifact. Keep rejected source separate from
+admissible search seeds, and never insert identical arms, padding or dummy work to
+manufacture that artifact. The useful next evidence is a real task-specific effect
+or interface/lifecycle distinction, not another flat permutation of the fake branch.

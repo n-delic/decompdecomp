@@ -984,3 +984,13 @@ afterward. Both conditions and all stores remained intact. The bounded
 called helpers owned by the candidate. It also tries positive-body layout for
 simple value-return guards. Keep missing-argument/interface checks separate;
 an exact object does not prove a caller contract or whole-game C soundness.
+
+### Dead constants after allocation
+
+A KMC 2.7.2 O2/g3 control kept a loop-hoisted constant through `greg`; `jump2`
+subsequently merged identical call/store arms and removed its only comparison.
+The dead initializer and saved-register traffic remained. This was observed in a
+rejected artificial-branch draft, not proven original game source. Inspect the
+allocation and late jump dumps before treating a dead constant as a loop bound.
+Do not add duplicate arms, padding or dummy operations to reproduce it. Correct
+object views and actual callee contracts before trusting a lower matching score.
