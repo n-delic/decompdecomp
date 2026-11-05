@@ -85,3 +85,46 @@ def test_claim_hint_does_not_query_callees(monkeypatch):
               best_source=SOURCE, seed=None, unit='', size=28)
     text = claim_state.brief(net, fn, SimpleNamespace(id=2), 'CLAIMED')
     assert 'Preparation: deferred' in text and 'stub -> downstream' in text
+
+
+@pytest.mark.parametrize('definition', ['void empty(void) {}', 's32 empty(void) { return 0; }'])
+def test_extra_caller_arguments_to_plain_stub_need_joint_review(definition):
+    rows = [{'name': 'empty', 'matched_source': definition}]
+    net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows))
+    note = wrappers.brief(net, {'id': 1}, {'name': 'caller'},
+                          'void empty(int); void caller(int n) { empty(n); }')
+    assert 'Ignored-argument stub review' in note
+    assert 'callee definition and caller declarations jointly' in note
+    assert 'No signature was changed' in note
+    assert 'return 0' not in note
+
+
+@pytest.mark.parametrize('definition', [
+    'void empty() {}', 'void empty(int unused) {}',
+    'int empty(void) { return 1; }', 'void empty(void) { side_effect(); }',
+    '#define empty alias\nvoid empty(void) {}',
+    '/* void empty(void) {} */',
+])
+def test_only_explicit_simple_stubs_trigger_argument_review(definition):
+    assert not wrappers.empty_contract(definition, 'empty')
+
+
+@pytest.mark.parametrize('caller', [
+    'void caller(void) { empty(); }',
+    'void empty(int); void caller(void) {}',
+    'void caller(void) { /* empty(1); */ }',
+    '#define empty(n) other(n)\nvoid caller(void) { empty(1); }',
+])
+def test_no_argument_advice_for_declarations_comments_macros_or_zero_argument_calls(caller):
+    net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: [
+        {'name': 'empty', 'matched_source': 'void empty(void) {}'}]))
+    assert wrappers.brief(net, {'id': 1}, {'name': 'caller'}, caller) == ''
+
+
+def test_mixed_contract_hints_share_the_existing_budget():
+    rows = [{'name': 'empty'+str(i), 'matched_source': 'void empty'+str(i)+'(void) {}'} for i in range(5)]
+    net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows))
+    source = 'void caller(void) {' + ''.join('empty'+str(i)+'(1);' for i in range(5)) + '}'
+    note = wrappers.brief(net, {'id': 1}, {'name': 'caller'}, source)
+    assert all('empty'+str(i) in note for i in range(3))
+    assert 'empty3' not in note and 'empty4' not in note

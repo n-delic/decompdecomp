@@ -886,3 +886,9 @@ If the target has no known GP or no corresponding pool-address instruction,
 keep the attempt nonmatching. `-G0` is a compiler-profile hypothesis to test
 explicitly, not an automatic fix or permission to guess a literal address.
 A lower advisory score with an unresolved pool still cannot be accepted.
+
+When a matched empty or constant-zero helper is declared with `(void)` but callers pass
+arguments, its exact bytes do not prove that original signature. Unused formals can disappear
+entirely from the callee's instructions. Inspect all callers and validate explicit unused
+parameters and caller declarations jointly; do not delete argument setup to fit the stub.
+Likewise reconcile resource pointer returns before treating integer-shaped drafts as sound.
