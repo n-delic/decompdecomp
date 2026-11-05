@@ -329,6 +329,35 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
     return {row["name"] for row in rows}
 
 
+def affected_functions(old, new, changed, rows):
+    """Scope known per-function build inputs; unknown shared linking/layout changes require a full check."""
+    from ..project import compiler_for
+
+    if any(old.get(key) != new.get(key) for key in ('symbols', 'set_aside')):
+        return None
+    def layout(data):
+        return {f['name']: (f['vram'], f['size']) for f in data.get('layout', [])}
+    if layout(old) != layout(new):
+        return None
+    old_headers, new_headers = old.get('headers') or {}, new.get('headers') or {}
+    known_headers = {'include/'+file for mapping in (old_headers, new_headers) for file in mapping.values()}
+    if any(path.startswith('include/') and path not in known_headers for path in changed):
+        return None
+    if bool(old.get('compiler')) != bool(new.get('compiler')):
+        return None
+    affected = set()
+    for row in rows:
+        name, unit = row['name'], row['unit'] or ''
+        previous = old_headers.get(unit, old_headers.get(''))
+        current = new_headers.get(unit, new_headers.get(''))
+        compiler_changed = bool(old.get('compiler')) and compiler_for(old, row['vram'], row) != compiler_for(new, row['vram'], row)
+        if (compiler_changed or
+            previous != current or (current and 'include/'+current in changed) or
+            f'src/{name}.c' in changed or f'best/{name}.c' in changed):
+            affected.add(name)
+    return affected
+
+
 class Progress:
     def __init__(self, net):
         self.net = net
@@ -999,6 +1028,7 @@ class Progress:
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
             all_code = False
+            affected = None
             judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
             pending = {}
             if projected is not None:
@@ -1029,15 +1059,9 @@ class Progress:
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg)
-                all_code = any(name.startswith("include/") for name in changed)
-                if saves.MANIFEST in changed:
-                    old = json.loads(comparison_manifest)
-                    all_code |= any(old.get(key) != merged_manifest.get(key) for key in
-                                    ("compiler", "compiler_ranges", "symbols", "headers", "set_aside"))
-                    if old.get("layout") != merged_manifest.get("layout"):
-                        old_layout = {f["name"]: (f["vram"], f["size"]) for f in old.get("layout", [])}
-                        new_layout = {f["name"]: (f["vram"], f["size"]) for f in merged_manifest.get("layout", [])}
-                        all_code |= old_layout != new_layout
+                affected = affected_functions(json.loads(comparison_manifest), merged_manifest, changed,
+                                              net.store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid))
+                all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
                 if toolchain and not toolchains.known(toolchain):
                     # A folder from another tool can name a compiler this app doesn't have. The project's own
@@ -1055,12 +1079,12 @@ class Progress:
                 database_code = not code_files and net.store.one(
                     "SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL "
                     "LIMIT 1", pid) is not None
-                judging_change = all_code or any(name.startswith(("src/", "best/", "include/"))
+                judging_change = all_code or bool(affected) or any(name.startswith(("src/", "best/", "include/"))
                                                  for name in changed)
                 needs_judging = judging_change and (code_files or database_code)
                 if needs_judging:
-                    reason = ("Shared headers, compiler settings, symbols or function layout changed. Saved functions must be rebuilt to confirm their original bytes."
-                              if all_code else "Saved source files changed. Their functions are being rebuilt to confirm their original bytes.")
+                    reason = ("Shared linking inputs or function layout changed. Saved functions must be rebuilt to confirm their original bytes."
+                              if all_code else f"Build inputs changed for {len(affected or [])} functions. Only their saved sources are being rechecked; other matches are retained.")
                     self._activity(slug, reason=reason)
                 if toolchain and needs_judging:
                     if not toolchains.known(toolchain):
@@ -1089,6 +1113,10 @@ class Progress:
                 else:
                     applied_changed = {name for name in set(applied_files) | set(before.files)
                                        if _hash(applied_files.get(name)) != before.files.get(name)}
+            if affected is not None:
+                # Locally completed work merged into this pull also needs its saved-file normalization.
+                affected.update(path.split('/', 1)[1][:-2] for path in applied_changed
+                                if path.startswith(('src/', 'best/')) and path.endswith('.c'))
             layout_by_name = {f["name"]: f for f in applied_manifest.get("layout", [])}
             layout_by_vram: dict[int, list] = {}
             for entry in applied_manifest.get("layout", []):
@@ -1100,11 +1128,12 @@ class Progress:
                     rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
                     for row in rows:
+                        impacted = all_code or row["name"] in (affected or set())
                         changed_source = f"src/{row['name']}.c" in applied_changed
                         changed_best = f"best/{row['name']}.c" in applied_changed
                         keep_backup = False
                         keep_best = False
-                        if changed_source or all_code:
+                        if changed_source or impacted:
                             old = db.execute("SELECT status,matched_source,matched_agent_id,best_source,best_score,"
                                              "best_agent_id FROM functions WHERE id=?", (row["id"],)).fetchone()
                             if old["status"] == "matched" and old["matched_source"]:
@@ -1115,11 +1144,11 @@ class Progress:
                                 db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
                                            (old["matched_source"], max(1, row["n_insns"] or 1) * 100,
                                             old["matched_agent_id"], row["id"]))
-                            elif all_code and not changed_best and old["best_source"] is not None:
+                            elif impacted and not changed_best and old["best_source"] is not None:
                                 # Nothing about this function's own code changed: rejudging can only replace or lose
                                 # the attempt already recorded, so keep it.
                                 keep_best = True
-                        if all_code or changed_source or changed_best:
+                        if impacted or changed_source or changed_best:
                             entry = layout_by_name.get(row["name"])
                             if entry is None or entry["vram"] != row["vram"]:
                                 candidates = layout_by_vram.get(row["vram"], [])
@@ -1162,8 +1191,11 @@ class Progress:
             disk = _read(folder)
             manifest = _manifest(disk, cfg)
             saves._remember_revision(net, slug, manifest)
+            saved = manifest.get("functions") or {}
+            if affected is not None and needs_judging:
+                saved = {name: info for name, info in saved.items() if name in affected}
             self.results[slug] = saves._judge_saved(net, slug, folder, manifest, by_name,
-                                                    manifest.get("functions") or {}, report,
+                                                    saved, report,
                                                     files=disk, judge_code=needs_judging)
             self._activity(slug, phase="Saving verified progress", function=None)
             net.bump_generation(pid)

@@ -1825,3 +1825,5 @@ Room verification recovers generated entry names that changed between overlay im
 Saved-progress verification shows a project banner with the reason for rechecking, completed function counts, a measured progress bar and an estimated remaining time once enough functions have completed. Verification can be paused and resumed from the banner.
 
 Room verification batches saved-progress synchronization around the queue, so applying several matches does not repeatedly rejudge the project. Each submission is still independently byte checked, and its table row updates as it completes.
+
+Saved-progress rechecks select functions whose effective compiler profile, complete header context or source changed. Other matches remain confirmed. Shared symbol/layout changes and unrecognized header inputs still require a full recheck until their dependencies can be identified safely.

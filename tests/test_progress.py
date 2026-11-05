@@ -1418,3 +1418,51 @@ def test_progress_batch_defers_sync_across_threads_and_flushes_once(monkeypatch,
     else:run()
     assert flushes==['game','game']
     assert not worker._batching('game')
+
+
+def test_affected_progress_checks_follow_effective_profiles_and_private_headers():
+    from decompnet.app.progress import affected_functions
+    old={'compiler':{'toolchain':'gcc','flags':['-O2']},
+         'headers':{'':'common.h','private':'private.h'}}
+    rows=[{'name':'a','unit':'','vram':4,'rom_offset':4},
+          {'name':'b','unit':'private','vram':4,'rom_offset':16}]
+    new=json.loads(json.dumps(old))
+    new['function_compilers']={'16:4':{'vram':4,'toolchain':'gcc','flags':['-O0']}}
+    assert affected_functions(old,new,set(),rows)=={'b'}
+    assert affected_functions(old,old,{'include/private.h'},rows)=={'b'}
+    assert affected_functions(old,old,{'include/common.h'},rows)=={'a'}
+    assert affected_functions(old,old,{'src/a.c'},rows)=={'a'}
+    assert affected_functions(old,old,{'README.md'},rows)==set()
+    assert affected_functions(old,old,{'include/unknown.h'},rows) is None
+    new['symbols']=[{'name':'data','address':16}]
+    assert affected_functions(old,new,set(),rows) is None
+
+
+def test_default_compiler_change_does_not_recheck_overridden_functions():
+    from decompnet.app.progress import affected_functions
+    old={'compiler':{'toolchain':'gcc','flags':['-O2']},
+         'compiler_ranges':[{'start':16,'end':32,'toolchain':'gcc','flags':['-O1']}]}
+    new=json.loads(json.dumps(old));new['compiler']['flags']=['-O0']
+    rows=[{'name':'a','unit':'','vram':4,'rom_offset':4},
+          {'name':'b','unit':'','vram':16,'rom_offset':16}]
+    assert affected_functions(old,new,set(),rows)=={'a'}
+
+
+def test_private_header_pull_rechecks_only_its_function_and_keeps_other_match(project):
+    net,folder,judged=project
+    pid=net.project_row('game')['id']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET unit='private' WHERE name='g'")
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,2,'private header',0,'private')",(pid,))
+    net.progress.sync('game',force=True)
+    (folder/'src').mkdir(exist_ok=True)
+    for name in ('f','g'):(folder/f'src/{name}.c').write_text('good C')
+    net.progress.sync('game',force=True)
+    before=net._function('f','game')['matched_source']
+    judged.clear()
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    (folder/'include'/data['headers']['private']).write_text('changed private header')
+    net.progress.sync('game',force=True)
+    assert [name for name,_ in judged]==['g']
+    assert net._function('f','game')['matched_source']==before
+    assert net._function('f','game')['status']=='matched'
