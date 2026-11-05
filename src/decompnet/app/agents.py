@@ -1743,7 +1743,7 @@ class Manager:
         if s.stop.is_set() or s.rotated:
             return True
         everything = " ".join([*said, *errors])
-        if (k.focus_resume and proc.returncode and (s.options.get('resume_conversation') or s.options.get('focus_conversation'))
+        if (k.focus_resume and code and (s.options.get('resume_conversation') or s.options.get('focus_conversation'))
                 and re.search(r'(?:no (?:session|conversation|thread) found|(?:session|conversation|thread).{0,100}(?:not found|does not exist|could not be found))', everything, re.I)):
             s.options.pop('resume_conversation', None)
             s.options.pop('focus_conversation', None)

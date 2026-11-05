@@ -534,6 +534,17 @@
       </div>
     </details>
 
+    <details class="panel settings-disclosure" id="agentBlockerReviews">
+      <summary class="panel-head"><h2>Agent blocker review <span class="disclosure-context" id="agentBlockerContext">— Loading</span></h2><button class="disclosure-action" type="button" id="agentBlockerRefresh">↻ Refresh</button></summary>
+      <div class="pad blocker-review">
+        <p class="blocker-intro">Agents reported repeated blockers without a new compile. Read their notes, inspect the function, then mark the report reviewed.</p>
+        <div id="agentBlockerItems" class="blocker-review-items"></div>
+        <p class="small" id="agentBlockerStatus" role="status" hidden></p>
+        <details class="blocker-help"><summary>What does “Mark reviewed” do?</summary><p>It records that you reviewed these reports. It does not change the function’s matching status, prove it needs assembly, or resume paused work. To investigate, open the function and check its saved C, compiler settings and agent notes.</p></details>
+        <div id="agentBlockerWork"></div>
+      </div>
+    </details>
+
     <div class="cols">
       <section class="panel" id="compilerPanel" aria-labelledby="compilerH">
         <header class="panel-head"><h2 id="compilerH">Compiler</h2><span class="muted small" id="compilerState"></span></header>
@@ -553,7 +564,6 @@
           </div></details>
           <div id="compilerWaiting"></div>
           <details class="more"><summary>Automatic compiler changes</summary><div class="more-body"><label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label></div></details>
-          <details class="panel settings-disclosure" id="agentBlockerReviews"><summary class="panel-head"><h3>Agent blocker review <span class="disclosure-context" id="agentBlockerContext">— Loading</span></h3><button class="disclosure-action" type="button" id="agentBlockerRefresh">↻ Refresh</button></summary><div class="pad"><p class="small muted">Repeated unchanged blocker reports are suggestions for review. They do not prove a function is assembly or change its matching status. Acknowledging a report does not resume paused work.</p><div id="agentBlockerItems" class="profile-failure-cards"></div><div id="agentBlockerWork"></div></div></details>
           <details class="more" id="installedCompilerTest">
             <summary>Find better compiler settings</summary><div class="compiler-test-body">
             <div><p class="small muted">Test saved C locally, then review and apply the results. No AI tokens are used.</p></div>

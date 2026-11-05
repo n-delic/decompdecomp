@@ -6,8 +6,55 @@ vm.runInContext(source.slice(source.indexOf('function blockerReviewHTML'),source
 const current={function:'example',score:95,no_compile_releases:3,needs_review:true,changed:['header'],releases:[{agent:'agent-1',compiled:false,notes:'A reported blocker <unsafe>'}]};
 const html=ctx.blockerReviewHTML([current]);
 assert.match(html,/data-blocker-function="example"/);
-assert.match(html,/Acknowledge review/);assert.match(html,/header changed/);
-assert(!html.includes('<unsafe>'));assert.match(html,/3 blocker reports/);
+assert.match(html,/Mark reviewed/);assert.match(html,/Changed: header/);
+assert(!html.includes('<unsafe>'));assert.match(html,/<b>3<\/b> reports without a compile/);
 const historical=ctx.blockerReviewHTML([{...current,historical:true}]);
-assert.match(historical,/Historical evidence/);assert.match(historical,/not tied to the current build/);
-assert.match(ctx.blockerReviewHTML([]),/No repeated blocker/);
+assert.match(historical,/Older reports · recheck needed/);assert.match(historical,/not tied to the current build/);
+assert.match(ctx.blockerReviewHTML([]),/No blocker reports to review/);
+assert.match(html,/Open function/);
+assert.match(html,/Check|Inspect/);
+assert.doesNotMatch(historical,/Retry context:|Changed: header/);
+assert.doesNotMatch(ctx.blockerReviewHTML([{...current,needs_review:false}]),/data-ack-blocker/);
+const page=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
+assert(page.indexOf('data-pane="settings"') < page.indexOf('id="agentBlockerReviews"'));
+assert(page.indexOf('id="agentBlockerReviews"') < page.indexOf('id="compilerPanel"'),'the review card must be outside and before Compiler');
+assert.match(page,/<h2>Agent blocker review/);
+
+const elements=new Map(), pending=[], opened=[];
+const get=id=>{if(!elements.has(id))elements.set(id,{dataset:{},hidden:false,disabled:false,textContent:'',innerHTML:'',setAttribute(k,v){this[k]=v;},removeAttribute(k){delete this[k];}});return elements.get(id);};
+Object.assign(ctx,{$:get,S:{slug:'game',gen:1},openFn:name=>opened.push(name),
+  api:(url,options)=>new Promise(resolve=>pending.push({url,options,resolve})),
+  beginWork:(host,title,buttons)=>{buttons.forEach(b=>b.disabled=true);return()=>buttons.forEach(b=>b.disabled=false);},
+  showJobError:(host,error)=>host.error=error});
+vm.runInContext(source.slice(source.indexOf('async function loadBlockerReviews'),source.indexOf('function dataRegionHTML')),ctx);
+const tick=async()=>{for(let n=0;n<5;n++)await Promise.resolve();};
+(async()=>{
+  const first=ctx.loadBlockerReviews();
+  assert.equal(get('agentBlockerRefresh').disabled,true);
+  assert.match(get('agentBlockerRefresh').innerHTML,/spin-dot/);
+  pending.shift().resolve({items:[current]});await first;
+  assert.match(get('agentBlockerContext').textContent,/1 needs review/);
+  assert.equal(get('agentBlockerRefresh').disabled,false);
+  const earlier=ctx.loadBlockerReviews(),later=ctx.loadBlockerReviews();
+  pending.shift().resolve({items:[{...current,function:'old'}]});await earlier;
+  assert.doesNotMatch(get('agentBlockerItems').innerHTML,/>old</);
+  pending.shift().resolve({items:[]});await later;
+  assert.match(get('agentBlockerContext').textContent,/Nothing to review/);
+  const ack={dataset:{ackBlocker:'example'},disabled:false,setAttribute(k,v){this[k]=v;},removeAttribute(k){delete this[k];}};
+  const event={target:{closest:selector=>selector==='[data-ack-blocker]'?ack:null}};
+  const saving=get('agentBlockerItems').onclick(event);
+  assert.match(ack.innerHTML,/spin-dot.*Marking reviewed/);
+  assert.equal(ack.disabled,true);
+  await get('agentBlockerItems').onclick(event);assert.equal(pending.length,1,'ignore duplicate save');
+  const post=pending.shift();assert.equal(post.options.body.function,'example');post.resolve({reviewed:true});await tick();
+  pending.shift().resolve({items:[]});await saving;
+  assert.match(get('agentBlockerStatus').textContent,/Marked reviewed/);
+  assert.equal(ack.disabled,false);assert.equal(ack['aria-busy'],undefined);
+  get('agentBlockerItems').onclick({target:{closest:s=>s==='[data-blocker-function]'?{dataset:{blockerFunction:'example'}}:null}});
+  assert.deepEqual(opened,['example']);
+  const staleSave=get('agentBlockerItems').onclick(event);ctx.S.slug='other';ctx.S.gen=2;
+  pending.shift().resolve({reviewed:true});await staleSave;assert.equal(pending.length,0,'old save must not reload a different project');
+  const next=ctx.loadBlockerReviews();
+  assert.match(get('agentBlockerItems').innerHTML,/Loading reports/,'clear previous project reports immediately');
+  pending.shift().resolve({items:[]});await next;
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -564,27 +564,53 @@ function projectCompilerFacts(ov) {
 }
 
 function blockerReviewHTML(items) {
-  return items.length ? items.map(item=>`<article class="profile-failure-card"><div class="profile-failure-heading"><button type="button" class="link mono" data-blocker-function="${esc(item.function)}">${esc(item.function)}</button><span class="small muted">${item.historical ? 'Historical evidence' : item.needs_review ? 'Review requested' : 'Inputs changed'}</span></div><p class="small">${item.no_compile_releases} blocker ${item.no_compile_releases===1 ? 'report' : 'reports'} without compilation${item.score!=null ? ` · saved score ${esc(item.score)}` : ''}</p>${item.historical ? '<p class="small muted">Earlier notes are not tied to the current build. Recheck before drawing a conclusion.</p>' : ''}${item.changed.length ? `<p class="small muted">Retry context: ${esc(item.changed.join(', '))} changed.</p>` : ''}<details class="more"><summary>Agent evidence · ${item.releases.length} recent ${item.releases.length===1 ? 'release' : 'releases'}</summary>${item.releases.map(r=>`<p class="small"><b>${esc(r.agent)}</b> · ${r.compiled ? 'compiled' : 'no compilation'}<br>${esc(r.notes)}</p>`).join('')}</details>${item.needs_review ? `<button type="button" class="ghost small-btn" data-ack-blocker="${esc(item.function)}">Acknowledge review</button>` : ''}</article>`).join('') : '<p class="small muted">No repeated blocker reports currently need review.</p>';
+  if (!items.length) return '<div class="blocker-empty"><b>No blocker reports to review</b><p>Reports appear here when agents repeatedly report a blocker without compiling. You can keep working as usual.</p></div>';
+  return items.map(item=>{
+    const changed=item.changed || [], releases=item.releases || [];
+    const state=item.historical ? 'Older reports · recheck needed' : item.needs_review ? 'Needs your review' : 'Build inputs changed';
+    const guidance=item.historical ? 'Older notes are not tied to the current build. Open the function and recheck the concern against its current source and compiler.'
+      : changed.length ? 'The build inputs changed since these reports. Inspect the updated function before deciding whether the blocker still applies.'
+      : 'Check the saved C and compiler settings against the agent notes before deciding the next experiment.';
+    return `<article class="blocker-review-card"><header><h3 class="mono">${esc(item.function)}</h3><span class="blocker-state">${state}</span></header><div class="blocker-facts"><span><b>${item.no_compile_releases}</b> ${item.no_compile_releases===1 ? 'report' : 'reports'} without a compile</span>${item.score!=null ? `<span>Saved score <b>${esc(item.score)}</b></span>` : ''}</div><p class="blocker-guidance">${guidance}</p>${!item.historical && changed.length ? `<p class="small muted">Changed: ${esc(changed.join(', '))}.</p>` : ''}<details class="blocker-evidence"><summary>Read agent notes <span class="muted">(${releases.length})</span></summary><ol>${releases.map(r=>`<li><header><b>${esc(r.agent)}</b>${r.at ? `<time datetime="${esc(new Date(r.at*1000).toISOString())}">${esc(new Date(r.at*1000).toLocaleString())}</time>` : ''}</header><span class="small muted">${r.compiled ? 'Compiled during this turn' : 'No compile during this turn'}</span><p>${esc(r.notes)}</p></li>`).join('')}</ol></details><footer><button type="button" class="primary small-btn" aria-label="Open ${esc(item.function)}" data-blocker-function="${esc(item.function)}">Open function <span aria-hidden="true">↗</span></button>${item.needs_review ? `<button type="button" class="ghost small-btn" title="Record this review; matching status and paused work stay unchanged" aria-label="Mark ${esc(item.function)} reviewed" data-ack-blocker="${esc(item.function)}">Mark reviewed</button>` : ''}</footer></article>`;
+  }).join('');
 }
+let blockerReviewRequest=0;
 async function loadBlockerReviews() {
-  const slug=S.slug, gen=S.gen;
+  const slug=S.slug, gen=S.gen, request=++blockerReviewRequest;
+  if (!slug) return;
+  const items=$("agentBlockerItems");
+  if(items.dataset.slug!==slug){items.dataset.slug=slug;items.innerHTML='<p class="small muted">Loading reports…</p>';$("agentBlockerContext").textContent='— Loading';}
+  const refresh=$("agentBlockerRefresh");
+  refresh.disabled=true; refresh.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Refreshing…';
+  refresh.setAttribute("aria-busy","true");
   const work=$("agentBlockerWork"), finish=beginWork(work,'Loading blocker reports',[], '');
+  const status=$("agentBlockerStatus");status.textContent="";status.hidden=true;
   try{
     const result=await api(`/api/agent-reviews?slug=${encodeURIComponent(slug)}`);
-    if(S.slug!==slug || S.gen!==gen)return;
-    $("agentBlockerContext").textContent=`— ${result.items.filter(i=>i.needs_review).length} need review`;
+    if(S.slug!==slug || S.gen!==gen || request!==blockerReviewRequest)return;
+    const count=result.items.filter(i=>i.needs_review).length;
+    $("agentBlockerContext").textContent=count ? `— ${count} ${count===1 ? "needs" : "need"} review` : result.items.length ? '— Updated inputs to inspect' : '— Nothing to review';
     $("agentBlockerItems").innerHTML=blockerReviewHTML(result.items);
-  }catch(error){if(S.slug===slug)showJobError(work,error.message);}finally{finish();}
+  }catch(error){if(S.slug===slug && S.gen===gen && request===blockerReviewRequest){$("agentBlockerContext").textContent='— Could not load';showJobError(work,error.message);}}
+  finally{finish();if(request===blockerReviewRequest){refresh.disabled=false;refresh.textContent='↻ Refresh';refresh.removeAttribute("aria-busy");}}
 }
 $("agentBlockerRefresh").onclick=event=>{event.preventDefault();event.stopPropagation();loadBlockerReviews();};
 $("agentBlockerItems").onclick=async event=>{
   const link=event.target.closest('[data-blocker-function]');
   if(link){openFn(link.dataset.blockerFunction);return;}
   const ack=event.target.closest('[data-ack-blocker]');
-  if(!ack)return;
-  const work=$("agentBlockerWork"), finish=beginWork(work,'Acknowledging review',[ack],'');
-  try{await api('/api/agent-review',{method:'POST',body:{slug:S.slug,function:ack.dataset.ackBlocker}});await loadBlockerReviews();}
-  catch(error){showJobError(work,error.message);}finally{finish();}
+  if(!ack || ack.disabled)return;
+  const slug=S.slug, gen=S.gen, work=$("agentBlockerWork");
+  ack.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Marking reviewed…';
+  ack.setAttribute("aria-busy","true");
+  const finish=beginWork(work,'Saving review',[ack],'');
+  try{
+    await api('/api/agent-review',{method:'POST',body:{slug,function:ack.dataset.ackBlocker}});
+    if(S.slug!==slug || S.gen!==gen)return;
+    await loadBlockerReviews();
+    if(S.slug===slug && S.gen===gen){const status=$("agentBlockerStatus");status.textContent='Marked reviewed. Function status and paused work are unchanged.';status.hidden=false;}
+  }catch(error){if(S.slug===slug && S.gen===gen)showJobError(work,error.message);}
+  finally{finish();ack.textContent='Mark reviewed';ack.removeAttribute("aria-busy");}
 };
 
 function dataRegionHTML(items) {

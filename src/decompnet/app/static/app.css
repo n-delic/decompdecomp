@@ -1817,6 +1817,33 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .profile-failure-card button.link { overflow-wrap:anywhere; text-align:left; }
 .profile-failure-card [data-blocker-result]:empty { display:none; }
 
+/* Blocker reports are a separate review task, not a compiler setting. */
+.blocker-review { gap:18px; }
+.blocker-intro { margin:0; max-width:85ch; color:var(--muted); font-size:12px; line-height:1.7; }
+.blocker-review-items { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr)); gap:14px; align-items:start; }
+.blocker-review-card { border:1px solid var(--line-soft); border-radius:var(--r); background:var(--raise); padding:18px; min-width:0; }
+.blocker-review-card > header { display:flex; flex-wrap:wrap; align-items:start; justify-content:space-between; gap:8px 16px; }
+.blocker-review-card h3 { margin:0; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.blocker-state { font-size:10px; color:var(--muted); padding:3px 7px; border:1px solid var(--line-soft); border-radius:var(--r-sm); white-space:nowrap; }
+.blocker-facts { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:12px; font-size:11px; color:var(--muted); }
+.blocker-facts b { color:var(--ink); font-variant-numeric:tabular-nums; font-weight:600; }
+.blocker-guidance { margin:12px 0; color:var(--ink-2); font-size:12px; line-height:1.7; }
+.blocker-evidence { margin:14px 0; border-top:1px solid var(--line-soft); padding-top:12px; }
+.blocker-evidence > summary { cursor:pointer; font-size:12px; font-weight:600; }
+.blocker-evidence ol { list-style:none; margin:14px 0 0; padding:0; display:grid; gap:12px; }
+.blocker-evidence li { border-left:2px solid var(--line-soft); padding-left:12px; min-width:0; }
+.blocker-evidence li header { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; font-size:11px; margin-bottom:3px; }
+.blocker-evidence time { color:var(--muted); font-size:10px; }
+.blocker-evidence li p { font-size:12px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
+.blocker-review-card > footer { display:flex; flex-wrap:wrap; gap:8px; }
+.blocker-help { font-size:12px; color:var(--muted); }
+.blocker-help > summary { cursor:pointer; }
+.blocker-help p { max-width:95ch; line-height:1.7; }
+.blocker-empty { border:1px dashed var(--line-soft); border-radius:var(--r); padding:20px; font-size:13px; grid-column:1/-1; }
+.blocker-empty p { color:var(--muted); font-size:12px; margin:8px 0 0; line-height:1.7; }
+#agentBlockerStatus { margin:0; }
+@media(max-width:600px) { .blocker-review-card { padding:14px; } }
+
 .boundary-findings { max-height:320px; overflow:auto; padding:12px; display:grid; gap:8px; }
 .boundary-finding { display:grid; gap:4px; text-align:left; padding:10px 12px; border:1px solid var(--line); background:var(--paper); border-radius:var(--r); }
 .boundary-finding:hover { border-color:var(--muted); }
