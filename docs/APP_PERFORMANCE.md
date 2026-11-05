@@ -115,3 +115,15 @@ they are not CPU percentages. Do not add the inclusive total to its wait fields.
 The lock ordering and verification requirements are unchanged. These measurements
 help distinguish waiting behind another saved-progress check from work in the
 current check; they do not establish the owner or cause of every dispatch delay.
+
+
+### Unchanged progress checks
+
+Saved-progress synchronization keeps its per-project lock while checking dirty
+state, configuration and existing file signatures. If those checks establish an
+unchanged project, it returns without taking the shared verification slot. This
+also applies to forced checks that verify an unchanged full file signature.
+Actual imports, progress writes and verification still acquire that shared slot;
+project metadata, pause and cancellation state are rechecked after waiting.
+This removes an unrelated-project queue from no-op checks. It does not bypass
+same-project synchronization or guarantee that a real import/full recheck is fast.

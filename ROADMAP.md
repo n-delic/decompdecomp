@@ -104,6 +104,9 @@
 - Done: distinguish original ROM container provenance from judging settings in new repair captures
   and full offline replays, with complete snapshot/hash guards and unchanged raw historical evidence.
 
+- Done: unchanged saved-progress checks return under the project lock without waiting for
+  unrelated shared verification work. Real imports, writes and judging retain the shared slot.
+
 - Done: separate saved-progress project-lock and shared-verification wait timings in MCP
   transcripts, plus inclusive sync duration on return/failure, without changing synchronization.
 

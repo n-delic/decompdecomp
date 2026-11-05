@@ -1563,8 +1563,11 @@ def test_sync_reports_project_and_verification_waits_without_changing_lock_behav
                 raise RuntimeError('synthetic lock failure')
         def __exit__(self, *args):
             events.append('exit '+self.name)
-    checks = iter([False, True])
-    monkeypatch.setattr(worker, '_batching', lambda slug: next(checks))
+    monkeypatch.setattr(worker, '_batching', lambda slug: False)
+    monkeypatch.setattr(worker, '_state', lambda pid: None)
+    monkeypatch.setattr(worker, '_sync', lambda *args: False)
+    monkeypatch.setattr(worker, '_signature', lambda folder: ())
+    monkeypatch.setattr(worker, '_stamp', lambda folder: ())
     monkeypatch.setattr(worker, '_check_paused', lambda slug: None)
     monkeypatch.setattr(worker, '_project_lock', lambda slug: Lock('project', 5.))
     monkeypatch.setattr(worker, 'verification_slot', Lock('verification', 7.))
@@ -1583,3 +1586,69 @@ def test_sync_reports_project_and_verification_waits_without_changing_lock_behav
     else:
         assert events == ['enter project', 'enter verification', 'exit project']
     assert request_timing._current.get() is None
+
+
+@pytest.mark.parametrize('force', [False, True])
+def test_unchanged_project_check_does_not_wait_for_another_projects_verification(project, force):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    net, _, _ = project
+    worker = net.progress
+    blocked = False
+    # Another project's expensive verification owns the shared slot.
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(worker.sync, 'game', force=force)
+        try:
+            try:
+                result = future.result(timeout=2)
+            except TimeoutError:
+                blocked = True
+        finally:
+            worker.verification_slot.release()
+        if blocked:
+            future.result(timeout=5)
+    assert not blocked, 'An unchanged-project read waited behind unrelated verification'
+    assert result is False
+
+
+def test_real_progress_edit_still_waits_for_shared_verification(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    worker = net.progress
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good changed')
+    entered = threading.Event()
+    slot = worker.verification_slot
+    class Slot:
+        def __enter__(self):
+            entered.set()
+            slot.acquire()
+        def __exit__(self, *args):
+            slot.release()
+    monkeypatch.setattr(worker, 'verification_slot', Slot())
+    slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            assert entered.wait(2)
+            assert not future.done() and not judged
+        finally:
+            slot.release()
+        assert future.result(timeout=5)
+    assert judged == [('f', 'good changed')]
+    assert net._function('f', 'game')['status'] == 'matched'
+
+
+
+def test_database_changes_cannot_take_the_unchanged_fast_path(project, monkeypatch):
+    net, _, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good new source' WHERE name='f'")
+    class RequiredSlot:
+        def __enter__(self):
+            raise RuntimeError('verification slot required')
+        def __exit__(self, *args):
+            pass
+    monkeypatch.setattr(net.progress, 'verification_slot', RequiredSlot())
+    with pytest.raises(RuntimeError, match='verification slot required'):
+        net.progress.sync('game')
