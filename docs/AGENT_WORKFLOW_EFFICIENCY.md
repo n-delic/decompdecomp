@@ -259,3 +259,12 @@ the first call as well as retries. A delayed call with an old token still cannot
 release a newer claim; guidance neither acquires nor releases work. Synthetic
 regressions execute the suggested arguments across reclaim generations and verify
 that other workers cannot obtain a release token through this guidance.
+
+### Repair invalid batch anchors in one response
+
+Two recent independent patch batches failed on missing or ambiguous anchors without
+identifying the failing variant. Batch validation now reports every invalid variant
+by its one-based position, retains exact occurrence/line diagnostics and includes the
+current candidate revision. A rejected explicit batch runs no variants or baseline
+build and changes no candidate; valid alternatives are not silently compiled on their
+own. Fix each reported anchor against the same starting C and resubmit the batch.
