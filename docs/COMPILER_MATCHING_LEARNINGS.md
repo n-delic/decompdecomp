@@ -33,6 +33,11 @@ using it in the existing byte-pointer conversion/sink, retained evaluations and 
 initialization. A single capture change worsened score25 to40; two independent capture changes
 recovered exact0, all1,952 linked bytes. This is one game-function match, not one per successful pair.
 The generated pair is a controlled regression of that same source, not another new match.
+Both the preferred source and final generated source independently rebuilt the original
+12,582,912-byte cartridge. Two existing source contracts were also corrected and remain exact;
+all other 2,065 prior selected C objects and every prior compiler profile were preserved.
+The one changed assembly-run wrapper loses exactly the new C function's include. These are
+one new match and two contract corrections, not three new matches.
 
 The shared `pointer_capture_reuse` family requires an explicitly typed, constant in-bounds pointer
 array cell; identical source/reuse pointer types; unescaped existing locals; dead old storage on

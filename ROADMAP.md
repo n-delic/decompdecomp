@@ -2594,3 +2594,7 @@ need independent evidence before receiving this specific GNU C repair.
   pointer captures without moving evaluations, with bounded independent pairs before singles.
   Exact type/constant array bounds, CFG liveness and unique sink paths exclude unknown aliases,
   qualifiers, escapes, macro effects and incoming jumps; ordinary verification remains authoritative.
+
+- Done: importing unchanged note metadata during a source edit preserves the existing note
+  rows instead of deleting and re-attributing the complete history. Explicit manifest note
+  edits still replace history; source edits retain notes added concurrently after the render.
