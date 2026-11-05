@@ -303,3 +303,18 @@ def test_a_change_that_breaks_a_neighbour_still_says_how_close_the_function_came
     last = net.store.one("SELECT score, compiled FROM attempts WHERE function_id=? ORDER BY id DESC LIMIT 1", fn["id"])
     assert last["compiled"] and last["score"] and last["score"] > 0
     assert fn["best_source"] is None or "x * 5" not in fn["best_source"]
+
+
+def test_a_parked_draft_beside_the_builds_own_definition_leaves_the_draft_and_replaces_the_definition(fork):
+    """A draft in `#ifdef PARKED_DRAFTS` and the build's own definition in its `#else`: the parked one was taken out
+    and a new one put in, beside the visible one (redefinition of 'scale', every try a build error)."""
+    net, slug, agent = fork
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    # (the build's own one divides: another constant alone would read 100% by objdiff, already matched)
+    both = ("#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#else\n" + SCALE.replace("x * 1.1", "x / 1.1")
+            + "#endif\n")
+    path.write_text(path.read_text() + "\n" + both)
+    assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")
+    text = path.read_text()
+    assert ("#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#else\n" + SCALE + "#endif\n") in text, text
+    assert "x / 1.1" not in text

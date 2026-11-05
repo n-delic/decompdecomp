@@ -140,9 +140,11 @@ def _hash_mismatch(tail: str) -> str | None:
 
 MADE_FROM_MAX = 2000  # targets followed up from a build's failures (failed_units): a few levels in practice
 QUERY_BATCH = 50  # targets per `ninja -t query`
-# never_defined: macros compilers define themselves without a leading underscore (IDO's, on SGI and N64 code;
-# Windows projects' own WIN32), where the project's files may never mention them
-PREDEFINED = {"LANGUAGE_C", "LANGUAGE_ASSEMBLY", "MIPSEB", "MIPSEL", "R3000", "R4000", "WIN32", "WIN64"}
+# never_defined: macros compilers define themselves without a leading underscore (IDO's, on SGI and N64 code; the
+# pinned KMC GCC 2.7.2's MACH, EE-GCC 2.96's R5900, read off their `-dM -E`; Windows projects' own WIN32), where the
+# project's files may never mention them
+PREDEFINED = {"LANGUAGE_C", "LANGUAGE_ASSEMBLY", "MIPSEB", "MIPSEL", "R3000", "R4000", "R5900", "MACH", "WIN32",
+              "WIN64"}
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".cp", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}
 BUILD_SUFFIXES = {".py", ".ninja", ".mk", ".json", ".toml", ".yml", ".yaml", ".cmake", ".sh", ".bat", ".ps1", ".lcf", ".ld"}
 BUILD_FILES = {"Makefile", "makefile", "GNUmakefile", "CMakeLists.txt"}
@@ -154,6 +156,21 @@ def project_macro(name: str) -> bool:
     """Whether a macro may be the project's own rather than the compiler's: those start with "_", have lowercase
     letters (`mips`, `unix`) or are known ones (PREDEFINED)."""
     return not name.startswith("_") and name == name.upper() and name not in PREDEFINED
+
+
+def _ninja_where(args: list[str]) -> list[str]:
+    """Of a project's ninja arguments (objdiff.json `custom_args`), the ones that say which build it is: `-f FILE`
+    and `-C DIR`, apart or joined (`-fother.ninja`). Targets and the rest (`-j8`, `all_source`) aren't a query's."""
+    out, i = [], 0
+    while i < len(args):
+        a = str(args[i])
+        if a in ("-f", "-C") and i + 1 < len(args):
+            out += [a, str(args[i + 1])]
+            i += 1
+        elif a[:2] in ("-f", "-C") and len(a) > 2:
+            out.append(a)
+        i += 1
+    return out
 
 
 def _query_outputs(text: str) -> set[str]:
@@ -755,17 +772,20 @@ class ForkProject:
         return left
 
     def _made_from(self, targets: list[str]) -> set[str]:
-        """Everything the build makes from these targets, all the way up (ninja's `-t query`; other builds: nothing)."""
-        make = self.objdiff_config().get("custom_make") or "make"
+        """Everything the build makes from these targets, all the way up (ninja's `-t query`, on the build file and
+        folder the project's `custom_args` give ninja). A make-built project has no such query: nothing, so a step's
+        failure there counts against its own target alone, as before (ROADMAP.md)."""
+        cfg = self.objdiff_config()
+        make = cfg.get("custom_make") or "make"
         if not targets or not (make == "ninja" or Path(make).name.startswith("ninja")):
             return set()
-        tool = _tool(make) or make
+        tool = [_tool(make) or make, *_ninja_where(cfg.get("custom_args", []))]
         found: set[str] = set()
         todo = list(dict.fromkeys(targets))
         while todo and len(found) < MADE_FROM_MAX:
             batch, todo = todo[:QUERY_BATCH], todo[QUERY_BATCH:]
             try:
-                out = subprocess.run([tool, "-t", "query", *batch], cwd=self.root, capture_output=True, text=True,
+                out = subprocess.run([*tool, "-t", "query", *batch], cwd=self.root, capture_output=True, text=True,
                                      errors="replace", encoding="utf-8", timeout=60, creationflags=NO_WINDOW).stdout
             except (OSError, subprocess.TimeoutExpired):
                 break
