@@ -132,14 +132,17 @@ def test_export_takes_the_xdk_whose_compiler_is_the_games(tmp_path):
     assert str(tmp_path / "xdk5849" / "xbox") in export and "xdk4627" not in export
 
 
-@pytest.mark.parametrize("build,folder,rule", [("5849", "vc71", "ltcg_cc"), ("3911", "vc7", "ltcg_cc_all"),
-                                               ("", "vc71", "ltcg_cc")])
-def test_an_xdks_visual_cpp_71_shows_its_includes(tmp_path, build, folder, rule):
+@pytest.mark.parametrize("version,folder,rule", [("MSVC/xdk-5849", "vc71", "ltcg_cc"),
+                                                 ("MSVC/xdk-3911", "vc7", "ltcg_cc_all"),
+                                                 ("MSVC/xdk", "vc71", "ltcg_cc"),
+                                                 ("MSVC/own-13.10.3077", "bin", "ltcg_cc"),
+                                                 ("MSVC/own-13.00.9466", "bin", "ltcg_cc_all")])
+def test_an_xdks_visual_cpp_71_shows_its_includes(tmp_path, version, folder, rule):
     """The usual Xbox compiler, an XDK's 7.1 (MSVC/xdk-5849), was taken to have no /showIncludes, as its version
-    doesn't start with a digit: its harness objects were rebuilt on any header. An early XDK's 7.0 still hasn't it."""
+    doesn't start with a digit: its harness objects were rebuilt on any header; and so was a Visual C++ 7.1 of the
+    user's own (own-13.10.3077). An early XDK's 7.0, or the user's own, still hasn't it."""
     root = _project(tmp_path)
     _entry(root)
-    version = f"MSVC/xdk-{build}" if build else "MSVC/xdk"
     xbox = tmp_path / "xdk" / "xbox"
     cfg = root / "tools" / "configure.py"
     cfg.write_text(cfg.read_text().replace('MSVC_VERSION = "7.1"', f'MSVC_VERSION = "{version}"'))

@@ -370,7 +370,8 @@ def test_missing_checks_of_a_harness_unit_and_checks_naming_no_object_confirm_no
 def test_checks_of_another_object_confirm_nothing_and_a_plain_build_drops_them(tmp_path, monkeypatch):
     """dll2coff wrote the object, then its checks: a report in between read the new object's 100% by the old
     checks, and a unit that left harness mode kept its old checks. The checks now name their object and come first,
-    and a plain compile removes them."""
+    and a plain compile that succeeds removes them (one that fails leaves the old object, and its checks with it:
+    removed first, the unit's 99.99% read 100)."""
     monkeypatch.setattr(objdiff, "SIDECAR_WAIT", 0)
     obj = tmp_path / "build" / "u.obj"
     obj.parent.mkdir()
@@ -380,12 +381,32 @@ def test_checks_of_another_object_confirm_nothing_and_a_plain_build_drops_them(t
     assert "another build" in objdiff.mapping_conflicts(obj, "_a")[0].describe()
     obj.with_suffix(".ltcg.json").write_text(json.dumps({**checks, "object_sha1": hashlib.sha1(b"new object").hexdigest()}))
     assert objdiff.mapping_conflicts(obj, "_a") == []
-    # a plain compile of the unit (tools/compile.py) removes them before it compiles, whatever the compile does
+    # a plain compile of the unit (tools/compile.py): failed, the checks stay; done, they go
     compile_py = Path(dll2coff.__file__).with_name("compile.py")
-    subprocess.run([sys.executable, str(compile_py), "--compiler", str(tmp_path / "no-cl.exe"), "--include", ".",
-                    "--config", "c.json", "--output", str(obj), "--source", "u.cpp"], cwd=tmp_path,
-                   capture_output=True, timeout=60)
+
+    def compile_with(code: int) -> None:
+        subprocess.run([sys.executable, str(compile_py), "--compiler", sys.executable, "--include", ".", "--config",
+                        "c.json", "--output", str(obj), "--source", "u.cpp", "--", "-c", f"import sys; sys.exit({code})"],
+                       cwd=tmp_path, capture_output=True, timeout=60)
+
+    compile_with(1)
+    assert obj.with_suffix(".ltcg.json").exists() and objdiff.mapping_conflicts(obj, "_a") == []
+    compile_with(0)
     assert not obj.with_suffix(".ltcg.json").exists()
+
+
+def test_a_missing_checks_file_is_unconfirmed_at_once(tmp_path, monkeypatch):
+    """A harness unit's missing checks waited out every retry (nothing half-written to wait for): 10 such units took
+    10 s, a game of 1,400 units 23 minutes a report, and before the first harness build every unit is one."""
+    slept = []
+    monkeypatch.setattr(objdiff.time, "sleep", slept.append)
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build.ninja").write_text("".join(f"build build/u{i}.obj | build/u{i}.ltcg.json: ltcg_coff x\n"
+                                                  for i in range(10)))
+    for i in range(10):
+        (tmp_path / "build" / f"u{i}.obj").write_bytes(b"object")
+        assert "isn't confirmed" in objdiff.mapping_conflicts(tmp_path / "build" / f"u{i}.obj", "_a")[0].describe()
+    assert slept == []
 
 
 def test_dll2coff_writes_the_object_and_its_checks_whole(tmp_path, monkeypatch):
