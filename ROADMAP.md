@@ -2469,3 +2469,8 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 
 - Done: compact batch claim queues retain each queued function's release token,
   with cheap claim-metadata recovery guidance and unchanged stale-lease protection.
+
+- Done: the shared native randomizer wrapper excludes artificial self-assignment
+  insertion in traced and untraced jobs, preventing that family from introducing
+  unchecked signed/pointer increment-decrement cancellations or self-reads.
+  Historical candidates still require review; ordinary judging is unchanged.
