@@ -71,7 +71,9 @@ def stub_message(names):
 
 def brief(net, proj, fn, source):
     """One bounded matched-callee lookup, also usable for project-mode C functions."""
-    leads, stubs = [], []
+    from . import callee_contracts
+
+    leads, stubs, contracts = [], [], []
     if callee := forwarding(source, fn['name']):
         leads.append((fn['name'], callee))
     span = find(source, fn['name']) if source else None
@@ -86,6 +88,9 @@ def brief(net, proj, fn, source):
                   not re.search(rf'^\s*#\s*define\s+{re.escape(name)}\b', _blank(source), re.M) and
                   re.search(rf'\b{re.escape(name)}\s*\(\s*[^)\s]', body)):
                 stubs.append(name)
-            if len(leads) + len(stubs) >= LIMIT:
+            elif (re.search(rf'\b{re.escape(name)}\s*\(', body) and
+                  (discrepancy := callee_contracts.mismatch(source, selected, name))):
+                contracts.append(discrepancy)
+            if len(leads) + len(stubs) + len(contracts) >= LIMIT:
                 break
-    return '\n'.join(part for part in (message(leads), stub_message(stubs)) if part)
+    return '\n'.join(part for part in (message(leads), stub_message(stubs), callee_contracts.message(contracts)) if part)
