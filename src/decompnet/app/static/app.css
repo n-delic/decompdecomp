@@ -1701,9 +1701,6 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .deep-sweep-actions { flex:none; }
 .deep-queue-details { display:flex; flex-wrap:wrap; gap:8px 20px; }
 .deep-queue-details > [hidden] { display:none; }
-.deep-sweep-more { font-size:12px; color:var(--muted); }
-.deep-sweep-more > summary { cursor:pointer; }
-.deep-sweep-more > button { margin-top:10px; }
 #deepSweepRunChecked { margin:0; font-variant-numeric:tabular-nums; }
 #deepSweepRunChecked:empty, #deepSweepStatus:empty { display:none; }
 .deep-match-change, .deep-match-gain { white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -1752,7 +1749,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .deep-sweep-tools .deep-sweep-help { border:0; padding:0; flex:1; }
 .deep-sweep-tools .deep-sweep-help[open] { flex-basis:100%; order:1; }
 .deep-sweep-tools summary { font-size:11px; }
-.deep-sweep-tools .deep-sweep-more { margin-left:auto; }
+.deep-sweep-tools > #deepSweepReset { margin-left:auto; flex-shrink:0; }
 @media(max-width:700px) {
  .deep-dashboard { padding:16px; }
  .deep-dashboard .deep-queue-state { flex-direction:row; align-items:center; gap:16px; }

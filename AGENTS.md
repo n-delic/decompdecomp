@@ -208,6 +208,10 @@ linting). In short:
   keep missing values last, and preserve the choice across refreshes of the same view. Default to the most
   useful ordering (compiler comparisons: Used by, highest first). Keep action-only columns unsortable and
   preserve each row's identity when sorting so its actions still affect the correct item.
+- Keep standalone actions directly visible in the active card. Do not hide buttons such as Reset metrics
+  inside a generic “More actions” disclosure. Disclosures are for optional settings, explanations and
+  diagnostic details; use a labeled action button for a single secondary action. Use ⋮ menus only when
+  grouping several related secondary actions avoids a crowded row.
 - Avoid rows of secondary action buttons. Keep the main action visible and group related secondary actions
   in a vertical ⋮ overflow menu using the existing `agent-menu` / `agent-menu-items` pattern (also used by
   compiler profiles). Give the trigger a descriptive accessible label, show one action per line, retain
