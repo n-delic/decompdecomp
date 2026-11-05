@@ -22,6 +22,30 @@ Use these evidence levels:
 
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
+### Verified linked case: two dead typed-pointer captures recover allocation
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
+A 488-instruction routine differed only in five register operands: the record and derived group
+pointers used each other's registers in its first nested loop. Safe declarations/scopes, direct
+indexing and the existing bounded shortlist did not recover the target. At later independent
+capture sites, reusing the earlier, now-dead typed record pointer for a pointer-array load, then
+using it in the existing byte-pointer conversion/sink, retained evaluations and intervening zero
+initialization. A single capture change worsened score25 to40; two independent capture changes
+recovered exact0, all1,952 linked bytes. This is one game-function match, not one per successful pair.
+The generated pair is a controlled regression of that same source, not another new match.
+
+The shared `pointer_capture_reuse` family requires an explicitly typed, constant in-bounds pointer
+array cell; identical source/reuse pointer types; unescaped existing locals; dead old storage on
+all CFG paths; and one straight-line sink after at most two literal local initializations. It
+preserves both statement boundaries and casts the reused pointer back to the original byte-pointer
+expression type before the sink; otherwise pointer arithmetic could change stride. Qualified/unknown
+types, calls, memory writes, incoming jumps,
+unknown macros, duplicated macro arguments and hidden local captures give no proposal. Independent
+pairs are offered before singles because greedy score-only acceptance would miss this case.
+The family changes no shared header, compiler setting, target or verification rule. Existing
+whole-program object/domain assumptions still need an audit; liveness is not an aliasing proof.
+
+
 ### Verified linked case: unsigned byte increment before a call
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
