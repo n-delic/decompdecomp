@@ -4244,6 +4244,53 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   still need explicit source review and, when appropriate, corrective adoption
   even when the corrected source has a higher advisory score.
 
+## Targeted proposal scheduling and measured output feedback (2026-11-05)
+
+The previous native KMC GCC 2.7.2 controller recovery (`-G0 -mips3 -mgp32 -mfp32
+-O2 -g3`) motivated these shared search changes:
+
+- Existing compiler source mappings now rank complete copy, divisor/flag and boundary
+  edits near the actual mismatches. No instruction index is guessed to be a C line;
+  stale source hashes are ignored. Three focused slots retain one broad slot, and
+  compound lifetime/scope edits are never split into disconnected fragments.
+- `divisor_normalization_copy`/`divisor_value_scope` explicitly prefer
+  `dead_copy_source` and flag separation in the combination planner. Pair probes still
+  spend the ordinary budget; an inert or worse parent is not automatically adopted.
+- The default boundary API page remains twelve. Shared searches can enumerate the
+  bounded 512-boundary pool. Iterative search uses its persisted pages; deep/background
+  boundary slots have a persisted cursor advanced only by a scored trial. Cursor
+  identity includes build, source and pool; at most sixteen scopes per function remain.
+  This is bounded search, not a claim to exhaust every possible C program.
+- Four no-edit/identical-output trials can reduce a family's early priority; changed
+  regressions are reduced more gently after eight trials. Third-sibling exploration,
+  deferred slots and complementary probes remain. Missing fingerprints and cached
+  replays do not teach fresh output statistics. Equal scores are never output proof.
+- Compact advice reports improved and regressed target blocks/windows against an
+  explicit parent or a labeled preceding same-build trial. It is guidance for smaller
+  models, not a source map or match verdict. No model-token saving is claimed without
+  measuring model sessions.
+
+Public synthetic regressions exercise later boundary pages across new deep-search jobs,
+source/header/pool invalidation, cancelled/unknown trials, mapped-copy priority, pair
+selection, fingerprint categories and regional regressions. Private frozen compiler-output
+replays remain outside the repository and compare to a previously verified exact control;
+these do not count as new game matches. The original 330-point plateau remains a useful
+negative control rather than evidence that scheduling alone fixes structural errors.
+
+### Frozen replay result
+
+With the same private KMC profile/header/control and a sixteen-candidate allowance,
+shared family ranking plus source-mapped ordering/combination feedback recovered the
+30-point precursor in **6** candidate compiles versus **16** with the previous policy.
+The 10-point precursor recovered in **2** versus **3**. Both recovered the complete
+previously verified compiler-output control, including allocated sections. The
+330-point plateau stayed at 330 after sixteen trials under both policies; output
+fingerprints showed fifteen inert trials previously and sixteen under the new policy.
+Thus the measured benefit is quicker late recovery, not a new match or a demonstrated
+improvement on the structural plateau. These are offline policy replays, not a full
+running-app timing or model-token benchmark. Mapping came from each exact baseline
+object, with no diagnostic flag changes or guessed source locations.
+
 ## 2026-11-05: SN EE-GCC needs a real executable path without spaces
 
 - **Compilers/flags:** SN Systems EE-GCC 2.95.2 (273a) and 2.95.3 (136), `-O2 -G0`,

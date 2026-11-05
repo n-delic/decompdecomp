@@ -323,6 +323,25 @@ function renderSavedMatchRecovery(ov) {
 }
 
 function renderAutopilot(ov) {
+  const draftButton = $('regenerateMachineDrafts');
+  if (draftButton) draftButton.onclick = async () => {
+    const log = $('machineDraftLog'), stop = $('machineDraftStop');
+    let jobId = null;
+    if (stop) {
+      stop.hidden = false;
+      stop.onclick = async () => { if (jobId) await api('/api/job/cancel', {method:'POST',body:{id:jobId}}); };
+    }
+    log.hidden = false;
+    const finish = beginWork(log, 'Regenerating machine drafts', [draftButton], 'Draft refresh finished');
+    showJobError(log, '');
+    try {
+      const { job } = await api('/api/drafts', {method:'POST', body:{slug:S.slug}});
+      jobId = job;
+      await followJob(job, log);
+    } catch(error) { showJobError(log, error.message); }
+    finally { if (stop) stop.hidden = true; finish(); }
+  };
+
   renderSavedMatchRecovery(ov);
   const collapsed = renderAutopilot.collapsed ||= new Set();
   const toggle = $("crossGameToggle"), body = $("crossGameBody");

@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .. import __version__, agents, candidate_quality, consoles
 from ..network import Agent, NetworkError
 from ..release_receipts import operation as release_operation
-from . import agent_tokens, claim_state, compiler_experiments, local_experiments
+from . import agent_tokens, boundary_investigations, claim_state, compiler_experiments, local_experiments
 from .engine import RomNetwork
 
 
@@ -477,6 +477,8 @@ def _resolve_addresses(net, agent, slug, queries, context_function=""):
 
 
 HANDLERS: dict[str, Callable[..., str]] = {
+    "get_boundary_evidence": boundary_investigations.evidence,
+    "suggest_boundary": boundary_investigations.report,
     "get_claims": claim_state.get_claims,
     "resolve_addresses": _resolve_addresses,
     "report_data_region": _report_data_region,
@@ -546,11 +548,11 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-READ_ONLY = frozenset({"get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+READ_ONLY = frozenset({"get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
-ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -597,6 +599,8 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Every helper sees pulled changes before acting; only tools that write work need a second synchronization."""
+    if boundary_investigations.scope(net,agent):
+        return _dispatch(net,agent,slug,name,args)
     net.progress.sync(slug, force=True)
     result = _dispatch(net,agent,slug,name,args)
     if name not in READ_ONLY:
@@ -605,6 +609,7 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
 
 
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
+    boundary_investigations.guard(net,agent,slug,name,args)
     pending = getattr(net, '_pending_tool_handshakes', set())
     handshake = (agent.id, slug) in pending
     if handshake and name != 'project_info':
@@ -629,7 +634,7 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
         if name == 'try_compiler':
             from .session_followups import diagnostic_completed
             diagnostic_completed(net,agent,named.get('function',''),slug)
-        if name in {'report_boundary', 'report_data_region', 'report_candidate_issue'}:
+        if name in {'report_boundary', 'report_data_region', 'report_candidate_issue', 'suggest_boundary'}:
             from .session_followups import investigation_completed
             investigation_completed(net, agent, slug, name)
         result=after_tool(net,agent,slug,name,named,result)
@@ -888,6 +893,20 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """Split a function the disassembler merged with the next one (e.g. after a function that never
         returns). `at` is the address where the second function starts."""
         return await run(ctx, "split_function", function=function, at=at, new_name=new_name)
+
+    @tool
+    async def get_boundary_evidence(ctx: Context, function: str) -> str:
+        """Original mapped instructions, neighbours, direct edges and symbols for boundary review; no claim or compile."""
+        return await run(ctx, "get_boundary_evidence", function=function)
+
+    @tool
+    async def suggest_boundary(ctx: Context, function: str, action: str, supporting: str, counter: str,
+                               uncertainty: str, citations: str, end: str = "", confidence: str = "tentative") -> str:
+        """Save an advisory boundary recommendation with cited hex instructions; never apply a layout change.
+        action: delay_slot, join_previous, adjust, padding, data, keep, unclear. end: exclusive hex address for adjust.
+        confidence: strong, tentative, unclear. citations: comma-separated hex instruction addresses from evidence."""
+        return await run(ctx, "suggest_boundary", function=function, action=action, supporting=supporting,
+                         counter=counter, uncertainty=uncertainty, citations=citations, end=end, confidence=confidence)
 
     @tool
     async def report_boundary(ctx: Context, function: str, end: str, reason: str) -> str:

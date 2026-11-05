@@ -114,3 +114,21 @@ def order(families, rows):
     focused = focus(rows)
     local = repair_ranking.order(families,focused) if focused else whole
     return list(dict.fromkeys(x for pair in zip_longest(local,whole) for x in pair if x is not None))
+
+
+def progress(before, after, arch=None, *, reference='explicit parent'):
+    """At most three improved/regressed target blocks, never an inferred C line or verdict."""
+    left, right = snapshot(clean(before),arch), snapshot(clean(after),arch)
+    if not left or not right or left['target'] != right['target'] or left['scheme'] != right['scheme']:
+        return ''
+    changed = [(block,left['losses'].get(block,0)-right['losses'].get(block,0))
+               for block in left['losses'].keys() | right['losses'].keys()]
+    improved = sorted((item for item in changed if item[1]>0),key=lambda item:(-item[1],item[0]))[:3]
+    regressed = sorted((item for item in changed if item[1]<0),key=lambda item:(item[1],item[0]))[:3]
+    if not improved and not regressed:
+        return ''
+    label = 'blocks' if right['scheme']=='control-flow' else '16-instruction windows'
+    parts = []
+    for kind, items in [('improved',improved),('regressed',regressed)]:
+        if items:parts.append(kind+' '+', '.join(f'{block} ({abs(delta)} differences)' for block,delta in items))
+    return 'Target '+label+': '+'; '.join(parts)+f'. Advisory comparison with the {reference}; not C source regions.'

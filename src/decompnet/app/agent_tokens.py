@@ -477,6 +477,8 @@ def feedback(net, agent, slug, function, text, previous):
     measured_baseline=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
     note=baseline_note(fn,measured_baseline,net)
     if note:head+=note+'\n'
+    if (measured_baseline or {}).get('regional_progress'):
+        head += measured_baseline['regional_progress']+'\n'
     head += mismatch(diagnostic)+'\n'
     positions = [text.index(marker) for marker in ('\ncompiler output:', '\nwhen linking your code') if marker in text]
     warn = text[min(positions):] if positions else ''
@@ -598,6 +600,12 @@ def outcome(net, agent, fn, source, text):
 
     if not hasattr(net, '_agent_outcomes'):
         net._agent_outcomes = {}
+    prior = net._agent_outcomes.get((agent.id,fn['id']))
+    if (prior and prior.get('score') is not None and score is not None and value.get('input_scope')
+            and prior.get('input_scope') == value['input_scope']):
+        from .region_repairs import progress
+        proj = net.store.one('SELECT arch FROM projects WHERE id=?',fn['project_id'])
+        value['regional_progress'] = progress(prior.get('rows'),value.get('rows'),proj['arch'],reference='preceding scored trial')
     net._agent_outcomes[agent.id, fn['id']] = value
     return value
 

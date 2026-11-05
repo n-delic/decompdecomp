@@ -79,6 +79,10 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
                 net._agent_outcomes={}
             net._agent_outcomes[agent.id,fn['id']]=checked
         pools = available(net,agent,slug,fn,source,revision,requested,deadline=time.monotonic()+max(0,(deadline-time.monotonic())*0.35),desired=max_trials if families is not None else 0)
+        from .repair_localisation import order as local_order
+        evidence = checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id'])) or {}
+        for family,pool in pools.items():
+            pools[family] = [candidate for _,candidate in local_order(source,[(family,c) for c in pool],evidence.get('repair_locations'))]
         effect_scope=repair_ranking.effect_scope(net,fn,source)
         selected=[];seen=set()
         while len(selected)<max_trials and any(pools.values()):
@@ -211,7 +215,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
     if debug_boundary_repairs.FAMILY in pools:
         ctx = net._context(proj['id'],fn['unit'])
         boundary_header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
-        for family, candidate in _generated(debug_boundary_repairs.variants, source, fn['name'], flags, boundary_header):
+        for family, candidate in _generated(debug_boundary_repairs.variants, source, fn['name'], flags, boundary_header, limit=None):
             pools[family].append(candidate)
     if any(family in pools for family in copy_lifetime_repairs.FAMILIES):
         ctx = net._context(proj['id'],fn['unit'])

@@ -65,3 +65,22 @@ fresh build-scoped evidence and source-hash-matched locations; no map means no g
 Use these through local repairs before broad declaration or source-line sweeps.
 The initial held-out cases remain unresolved; a generated proposal is not a promise
 of improvement, and the ordinary exact judge remains mandatory.
+## Focus, combinations and output evidence
+
+When the ordinary compiler supplies source lines for a mismatch, local variants prefer
+nearby copy, divisor/flag and debug-boundary proposals while retaining broad probes.
+Locations are associations, not proof of causality. A normalized divisor followed by a
+register-only miss is a reason to try `dead_copy_source`; the planner also prioritizes
+that pair. Do not change headers or compiler flags to force it.
+
+Boundary search now exposes a bounded pool beyond the first twelve candidates. Deep
+and background runs resume their boundary cursor after a scored trial, and iterative
+search keeps its existing persistent proposal pages. An interrupted generation does
+not advance a cursor. A changed source, header, profile or proposal pool starts afresh.
+
+Equal scores do not imply identical assembly. Feedback distinguishes unchanged output,
+changed output without a score improvement, and changed output with improvement. Unknown
+fingerprints stay unknown. Repeatedly inert families receive fewer early slots; they
+remain available, with exploration and complementary-pair slots reserved. Region advice
+names improved/regressed target blocks, not inferred C blocks. Preserve useful regional
+progress and inspect regressions before requesting another full assembly dump.

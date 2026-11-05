@@ -77,8 +77,16 @@ def factors(net, proj, fn):
     prepare(net)
     key = scope(net,proj,fn)
     rows = net.store.all('SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?',fn['id'],key)
-    return {r['family']:0.25 for r in rows if r['attempted'] >= MIN_TRIALS and not r['improved']
-            and r['no_edit']+r['same_output']+r['worse'] >= r['attempted']*0.8}
+    result = {}
+    for row in rows:
+        if row['improved']:
+            continue
+        if row['attempted']>=4 and row['no_edit']+row['same_output']>=row['attempted']*.8:
+            result[row['family']] = .25
+        elif row['attempted']>=MIN_TRIALS and row['worse']>=row['attempted']*.8:
+            # Regressions can carry useful structural changes; reduce these more gently.
+            result[row['family']] = .65
+    return result
 
 
 def listing(net):

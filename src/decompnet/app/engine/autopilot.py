@@ -4,6 +4,7 @@ token; and what happens when a function matches (its twins are tried).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -199,15 +200,39 @@ class AutopilotMixin:
                 return "skip"
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
         try:
-            self._seed_for(fn, proj)  # the readable draft, for the agents that come after
+            seed = self._seed_for(fn, proj)  # keep one valid-syntax draft for the brief and the compiler
             ctx = self._context(proj["id"], fn["unit"])
-            _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
+            plan, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
             own = compiler_for(self.cfg(proj), fn["vram"], fn)
-            data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
+            data_asm = "\n".join(self._jtbl_asm(proj, fn))
             target_asm = self._asm_text(fn, proj)
-            draft = seeds.generate_from_asm(target_asm, fn["name"], toolchain, context, data_asm, valid=True)
+            from .. import draft_reports, initial_draft_repairs
+            input_key = draft_reports.key(plan, ctx['header'], data_asm, fn)
+            previous = draft_reports.read(self, fid)
+            external_inputs = own.get('cmd') or own.get('ro_paths') or any(flag.startswith(('-I','-include','-imacros')) for flag in own.get('flags',[]))
+            if not external_inputs and previous.get('key') == input_key and previous.get('complete'):
+                return 'skip'
+            data_key = hashlib.sha256((data_asm or '').encode()).hexdigest()
+            report = {'key': input_key, 'seed_key':plan, 'data_key':data_key, 'compiled': False, 'scored': False, 'matched': False, 'trials': 0, 'failures': []}
+            from .briefs import DRAFT_NOTE
+            prefix = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'
+            seed_row = self.store.one('SELECT seed_key FROM functions WHERE id=?',fid)
+            if (seed and seed.startswith(prefix) and seed_row and seed_row['seed_key'] == plan
+                    and previous.get('data_key',data_key) == data_key):
+                draft = seed[len(prefix):]
+            elif previous.get('seed_key') == plan and previous.get('failures'):
+                report['failures'] = previous['failures']
+                draft = None
+            else:
+                try:
+                    draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm, valid=True, strict=True, timeout=20)
+                except seeds.DraftError as error:
+                    draft_reports.failure(report, 'generation', 'raw_m2c', error)
+                    draft = None
             if not draft:
-                return "fail"
+                report['complete'] = True
+                draft_reports.save(self, fid, report)
+                return 'fail'
             # (its compiler named in it: the same draft is worth judging again with another compiler)
             note = f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
             candidates = [('raw_m2c', f"{note}{seeds.M2C_MACROS}\n{draft}\n")]
@@ -249,19 +274,33 @@ class AutopilotMixin:
                     if refined and refined != local:
                         yield 'local_context_refined', f"{note}{seeds.M2C_MACROS}\n{refined}\n"
 
+            def recovery_candidates():
+                if report['compiled']:
+                    return
+                for index, (family, source) in enumerate(initial_draft_repairs.recovery_drafts(
+                        draft, fn['name'], target_asm, proj['arch'], toolchain, context, data_asm, report)):
+                    if report['compiled'] or index >= 6:
+                        return
+                    yield family, f"{note}{seeds.M2C_MACROS}\n{source}\n"
+
             from ..compiler_shape_repairs import machine_draft_copies
             outcomes, seen = [], set()
-            for family, source in machine_draft_copies(chain(candidates, local_candidates()), fn['name'], ctx['header']):
+            for family, source in chain(machine_draft_copies(chain(candidates, local_candidates()), fn['name'], ctx['header']), recovery_candidates()):
                 if source in seen:
                     continue
                 seen.add(source)
-                if self.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND context_version=? "
-                                  "AND source=?", fid, agent.id, ctx["version"], source):
-                    outcomes.append("skip")
-                    continue
                 result = self._compile(proj, ctx["header"], source, fn)
+                report['trials'] += 1
+                if not result.ok:
+                    draft_reports.failure(report, 'compiler', family, result.log)
+                else:
+                    report['compiled'] = True
+                    report['family'] = family
+                    report['compiled_source'] = source
                 cand, verdict, _ = self._evaluate(fn, proj, result.obj) if result.ok else (None, None, None)
                 if cand is None:
+                    if result.ok:
+                        draft_reports.failure(report, 'link', family, 'Compiled C could not be evaluated against this target; review its symbols and data mapping.')
                     outcomes.append("fail")
                     continue
                 d = scoring.diff(self._target_obj(fn, proj), cand)
@@ -272,10 +311,15 @@ class AutopilotMixin:
                 with repair_trial({'kind': 'machine draft', 'family': family}):
                     self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
                                  effective_settings=getattr(result, 'effective_settings', None))
+                report['scored'] = True
+                report['matched'] = d.bytes_match
+                report.pop('compiled_source', None)  # scored source is already retained in attempts
                 outcomes.append("match" if d.bytes_match else "near" if d.percent >= 90 else "far")
                 if d.bytes_match:
                     break
-            return min(outcomes, key=("match", "near", "far", "skip", "fail").index)
+            report['complete'] = True
+            draft_reports.save(self, fid, report)
+            return min(outcomes or ['fail'], key=("match", "near", "far", "skip", "fail").index)
         finally:
             with self.store.tx() as db:
                 db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fid, agent.id))

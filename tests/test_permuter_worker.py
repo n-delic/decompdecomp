@@ -3,10 +3,19 @@
 import threading
 import time
 
+import pytest
+
 from decompnet.app import permuter_worker, workers
 from decompnet.app.engine import RomNetwork
 from decompnet.app.permuter_worker import PermuterWorker
 from tests.test_loading import tiny_game
+
+
+@pytest.fixture(autouse=True)
+def restore_parent_worker_configuration():
+    previous = workers.WORKERS
+    yield
+    workers.configure(previous)
 
 
 def wait_for(check, seconds=10):

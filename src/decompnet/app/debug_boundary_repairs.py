@@ -4,10 +4,14 @@ import re
 from .integer_repair_support import edit, view
 
 FAMILY = 'debug_statement_boundary'
+FAMILIES = (FAMILY,)
 LIMIT = 12
+MAX_BOUNDARIES = 512
 
 
-def variants(source, name, flags=(), header=''):
+def variants(source, name, flags=(), header='', *, offset=0, limit=LIMIT):
+    if offset < 0 or (limit is not None and limit < 1):
+        raise ValueError('Use a nonnegative offset and positive boundary page size.')
     if re.search(r'\b__LINE__\b|^\s*#\s*(?:line\b|\d)', header+'\n'+source,re.M):
         return []
     debug = [f for f in flags if re.fullmatch(r'-g(?:[0-3]|gdb[0-3]?)?', f)]
@@ -38,6 +42,8 @@ def variants(source, name, flags=(), header=''):
         prefix = part.clean[max(part.opening+1, pos-100):pos]
         arithmetic = bool(re.search(r'/|>>|<<', prefix))
         boundaries.append((not arithmetic, pos+1, stop, replacement))
-    for _, start, stop, replacement in sorted(boundaries)[:LIMIT]:
+    pool = sorted(boundaries)[:MAX_BOUNDARIES]
+    stop_at = len(pool) if limit is None else offset+limit
+    for _, start, stop, replacement in pool[offset:stop_at]:
         result.append((FAMILY, edit(source, [(start, stop, replacement)])))
     return result
