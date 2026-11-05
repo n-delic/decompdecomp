@@ -1,5 +1,6 @@
 """Explicitly select a reviewed correction even when an invalid historical candidate scored better."""
 import hashlib
+import json
 
 from . import candidate_quality
 from .network import NetworkError
@@ -41,7 +42,12 @@ def _adopt(net, slug, function, source_hash, attempt_id, agent):
             current = db.execute('SELECT * FROM functions WHERE id=?', (fn['id'],)).fetchone()
             config = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()['config']
             fresh_context = net._context(proj['id'], fn['unit'])
-            if config != proj['config'] or dict(context or {}) != dict(fresh_context or {}):
+            before, after = json.loads(proj['config']), json.loads(config)
+            # Autosave advances this manifest counter, including while the normal judge runs.
+            # It cannot affect compilation; every other config field and the context remain guarded.
+            before.pop('progress_revision', None)
+            after.pop('progress_revision', None)
+            if before != after or dict(context or {}) != dict(fresh_context or {}):
                 raise NetworkError('Build settings changed during review. Recheck the alternative before selecting it.')
             current_hash = hashlib.sha256((current['best_source'] or '').encode()).hexdigest()
             if current_hash not in (source_hash, digest):
