@@ -31,7 +31,7 @@ def run(net, slug, log):
     agent, _ = net.local_agent('autopilot')
     from .boundary_repairs import blocked
     held = blocked(net,proj)
-    rows = net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns,id",proj['id'])
+    rows = net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns,id",proj['id'])
     stop = getattr(log, 'cancel_event', threading.Event())
     result = {'completed':0, 'total':len(rows), 'compiled':0, 'matched':0, 'skipped':0, 'failed':0}
     def one(fid):
@@ -54,12 +54,17 @@ def run(net, slug, log):
         while not stop.is_set() and len(pending) < min(2,workers.WORKERS):
             row = next(todo,None)
             if row is None:break
-            pending[workers.pool().submit(one,row['id'])] = row['id']
+            pending[workers.pool().submit(one,row['id'])] = row
+    def progress():
+        if hasattr(log, 'progress'):
+            log.progress(dict(result, done=result['completed'], phase='Regenerating machine drafts',
+                              function=', '.join(row['name'] for row in pending.values()), confirmed=result['matched']))
     fill()
+    progress()
     while pending:
         done, _ = wait(pending,timeout=.2,return_when=FIRST_COMPLETED)
         for future in done:
-            fid = pending.pop(future)
+            fid = pending.pop(future)['id']
             try:
                 outcome, report = future.result()
                 result['compiled'] += bool(report.get('compiled'))
@@ -70,8 +75,8 @@ def run(net, slug, log):
                 result['failed'] += 1
                 log('Draft '+str(fid)+': '+str(error)[:500])
             result['completed'] += 1
-        if hasattr(log,'progress'):log.progress(dict(result,phase='Regenerating machine drafts'))
         fill()
+        progress()
     result['cancelled'] = stop.is_set()
     log(f"Draft refresh: {result['completed']} reviewed, {result['compiled']} compiling, {result['matched']} exact matches, {result['skipped']} skipped.")
     return result
