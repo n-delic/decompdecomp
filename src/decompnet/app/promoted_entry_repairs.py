@@ -18,7 +18,8 @@ def variants(source, name, header='', *, language=None, int_bits=None):
     if language != 'c' or int_bits != 32:
         return []
     # Translation-phase splicing can conceal directives and type-observing tokens.
-    if re.search(r'\\\r?\n|\?\?/', source+'\n'+header):
+    raw = source+'\n'+header
+    if re.search(r'\\(?:\r\n?|\n)', raw) or '??' in raw or '%:' in raw:
         return []
     if max(len(source), len(header)) > 64000:
         return []
