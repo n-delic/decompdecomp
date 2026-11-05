@@ -95,7 +95,9 @@ class Library:
             from .twins import Print
             p=Print('source-only:'+hashlib.sha256(source.encode()).hexdigest(),[],fn['size'] or 0)
         own_name = p.name or fn['name']
-        mapping = {own_name:'__library_function'} if re.fullmatch(r'[A-Za-z_]\w*', own_name) else {}
+        token='__library_function'
+        while token!=own_name and re.search(r'\b'+token+r'\b',source+'\n'+header):token+='_'
+        mapping = {own_name:token} if re.fullmatch(r'[A-Za-z_]\w*', own_name) else {}
         source = apply(source, mapping)
         p = asdict(p);p['name'] = mapping.get(own_name, own_name)
         for s in symbols:

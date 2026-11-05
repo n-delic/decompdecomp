@@ -161,3 +161,12 @@ def test_imported_match_is_retained_with_its_compiler_and_reusable_after_removal
     with net.store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE id=2")
     monkeypatch.setattr(net.twins,'_attempt_twin',lambda *args,**kwargs:('match',''))
     assert lib.reuse(net.twins,net.project_row('game2'))==1
+
+
+
+def test_normalized_source_name_does_not_collide_with_a_local(library):
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='int f1(void) {int __library_function=42;return __library_function;}' WHERE id=1")
+    item=lib.snapshot(net.project_row('game1'),1)
+    assert item['source']=='int __library_function_(void) {int __library_function=42;return __library_function;}'
