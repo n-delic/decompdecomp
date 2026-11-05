@@ -245,6 +245,20 @@ def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 30
                  **({} if outputs is None else {"inputs": inputs, "outputs": outputs}))
 
 
+@contextmanager
+def _workspace(prefix):
+    """Keep compiler scratch on an explicitly selected app data drive, not a full OS drive."""
+    parent = os.environ.get('DECOMP_COMPILER_TMPDIR')
+    if not parent and (home := os.environ.get('DECOMP_HOME')):
+        parent = str(Path(home).expanduser() / '.decomp' / 'compiler-tmp')
+    if parent:
+        parent = Path(parent).expanduser().resolve()
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Never silently fall back to another drive when the selected location is unavailable.
+    with tempfile.TemporaryDirectory(prefix=prefix, dir=parent or None) as temporary:
+        yield temporary
+
+
 def compile_source(cfg: CompilerConfig, context_header: str, source: str, trusted: bool = False) -> CompileResult:
     """Compile one function's C with the project's compiler in the sandbox, with the shared header as context.h.
     Agents' C (not `trusted`) is checked first. C++ is tried for what doesn't compile as C when the toolchain builds
@@ -255,7 +269,7 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         except SourceRejected as e:
             return CompileResult(False, None, f"rejected: {e}")
 
-    with tempfile.TemporaryDirectory(prefix="decompnet-") as tmp:
+    with _workspace("decompnet-") as tmp:
         work = Path(tmp)
         inc = work / "include"
         inc.mkdir()
@@ -341,7 +355,7 @@ def compile_assembly(cfg: CompilerConfig, prelude: str, source: str) -> CompileR
         if re.search(r'(?im)(?:^\s*#\s*include\b|\.(?:include|incbin)\b)',text):
             raise SourceRejected('Flatten includes from the selected source roots before assembly verification.')
     except SourceRejected as error:return CompileResult(False,None,'rejected: '+str(error))
-    with tempfile.TemporaryDirectory(prefix='decompnet-assembly-') as tmp:
+    with _workspace('decompnet-assembly-') as tmp:
         work=Path(tmp);root=_root(cfg,work)
         (work/'input.c').write_text(text,encoding='utf-8',newline='\n')
         def argv(src,obj,preprocess=False):

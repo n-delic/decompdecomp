@@ -1842,3 +1842,13 @@ and headers read during this app run. It never removes saved C attempts or chang
 database writes, requires free drive space of at least twice the database file size, and
 can be stopped; interrupted compaction rolls back. SQLite journal/readers can affect the
 amount reclaimed. Neither header cleanup nor compaction runs automatically.
+
+Compiler scratch files use `.decomp/compiler-tmp` on the configured `DECOMP_HOME` drive,
+so a full system temporary drive does not prevent an app stored on another drive from
+compiling. `DECOMP_COMPILER_TMPDIR` selects a different compiler scratch parent. Without
+either environment setting, standalone compilation keeps the OS temporary-directory
+default. C and assembly workspaces are unique per invocation and removed on normal exit
+or failure. An unavailable selected parent produces an error rather than silently using
+another drive. Disk-full, quota and open-file-limit failures are reported as host resource
+problems and do not consume a candidate repair attempt. This does not relocate SQLite
+sort files or imported projects' own build-system scratch files.

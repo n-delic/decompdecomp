@@ -2661,3 +2661,8 @@ need independent evidence before receiving this specific GNU C repair.
 - Done: Settings previews and removes only unreferenced C header versions, protecting
   current, attempt/repair, recovery and in-flight-read history; a separate cancellable
   manual SQLite compaction task reclaims physical space without changing exact judging.
+
+- Done: C/assembly compiler scratch follows explicit app data storage (`DECOMP_HOME`), with
+  `DECOMP_COMPILER_TMPDIR` override and standalone OS-temp fallback. Host disk/quota/file
+  exhaustion remains a retryable resource failure, with accurate progress diagnostics
+  instead of a misleading git/permissions message or failed candidate attempt.

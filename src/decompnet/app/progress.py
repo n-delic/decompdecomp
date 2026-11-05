@@ -838,7 +838,8 @@ class Progress:
             except _StillFailing:
                 raise  # (when it failed stays when it first did: a read every second mustn't put the next try off)
             except (OSError, UnicodeError, json.JSONDecodeError) as e:
-                message = "Could not read or write progress. Finish the git operation and check the folder's permissions."
+                from ..storage_errors import message as storage_error
+                message = storage_error(e) or "Could not read or write progress. Finish the git operation and check the folder's permissions."
                 self.errors[slug] = message
                 self._failed(slug)
                 raise NetworkError(message) from e

@@ -654,7 +654,14 @@ class Network:
                 flag.startswith(('-I','-include','-imacros','/I','/FI')) for flag in c.get('flags',[])):
             invocation.identity = (proj['id'], proj['root'], proj['config'],
                                    *(identity.get(k) for k in ('id','name','vram','meta','target','relocs')))
-        result = compile_source(invocation, header, source)
+        try:
+            result = compile_source(invocation, header, source)
+        except OSError as error:
+            from .storage_errors import message
+            if reason := message(error):
+                # Host resource failures are retryable; they are not failed candidate C.
+                raise NetworkError(reason) from error
+            raise
         result.effective_settings = {'compiler':cfg['compiler'], 'effective_command':list(invocation.cmd),
                                      'language':getattr(result,'language','unknown'), 'settings_source':'compile invocation snapshot'}
         return result

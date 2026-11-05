@@ -1,5 +1,6 @@
 """A collaborator's files take precedence over SQLite, without an import button or a second on-disk copy."""
 
+import errno
 import json
 import shutil
 import threading
@@ -1466,3 +1467,16 @@ def test_private_header_pull_rechecks_only_its_function_and_keeps_other_match(pr
     assert [name for name,_ in judged]==['g']
     assert net._function('f','game')['matched_source']==before
     assert net._function('f','game')['status']=='matched'
+
+
+@pytest.mark.parametrize('code,expected',[(errno.ENOSPC,'disk space'),(errno.EMFILE,'open-file limit')])
+def test_progress_resource_failure_reports_the_actual_host_problem(project,monkeypatch,code,expected):
+    net,folder,_=project
+    def unavailable(*args,**kwargs):raise OSError(code,'synthetic host resource failure','/volume/tmp/compiler-child')
+    monkeypatch.setattr(net,'attempt',unavailable)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src'/'f.c').write_text('good C',encoding='utf-8')
+    with pytest.raises(NetworkError,match=expected):net.progress.sync('game',force=True)
+    error=net.progress.errors['game']
+    assert expected in error
+    assert 'git operation' not in error and 'permissions' not in error
