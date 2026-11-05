@@ -18,9 +18,11 @@ def candidates(net, proj, fn):
     console=net.console(proj)
     if fn['target'] and (console.asm_reason(fn['target']) or console.boundary_reason(fn['target'])):return []
     profile=compiler_for(net.cfg(proj),fn['vram'],fn)
-    if not profile.get('toolchain'):return []
+    tid=profile.get('toolchain')
+    if not isinstance(tid,str) or not tid.strip():return []
     try:
-        tc=toolchains.get(profile['toolchain'])
+        if not toolchains.installed(tid):return []
+        tc=toolchains.get(tid)
     except toolchains.ToolchainError:
         return []
     if '__builtin_mips_live_return_address' not in toolchains.source_prelude(tc,'__builtin_mips_live_return_address()'):return []

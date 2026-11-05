@@ -17,6 +17,7 @@ def game(tmp_path,monkeypatch):
         db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,?,?,?,?)",(pid,1,'',0,''))
         fid=db.execute("INSERT INTO functions(project_id,name,status,unit,best_source,asm,meta) VALUES(?,?,?,?,?,?,?)",
                        (pid,'func_80001000','asm','','source','target',json.dumps({'not_c':{'agent':{'why':'__builtin_return_address unsupported'}},'asm_code':'old verdict'}))).lastrowid
+    monkeypatch.setattr(review.toolchains,'installed',lambda _:{'path':'fixture'})
     monkeypatch.setattr(review.toolchains,'get',lambda _:SimpleNamespace())
     monkeypatch.setattr(review.toolchains,'source_prelude',lambda *_:'__builtin_mips_live_return_address')
     monkeypatch.setattr(review.live_return_address_repairs,'variants',lambda *_:[('live_return_address','raw'),('live_return_address_initializers','bundle')])
@@ -103,4 +104,22 @@ def test_same_version_link_never_reconsiders(game,monkeypatch):
     net.links['game']=object()
     monkeypatch.setattr(review,'run',lambda *_:pytest.fail('host owns linked project review'))
     assert net.recheck('game',only_if_updated=True) is None
+    assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='asm'
+
+
+@pytest.mark.parametrize('profile',[{'cmd':['custom-cc']},{'toolchain':None},{'toolchain':''},{'toolchain':42},{'toolchain':'   '}])
+def test_custom_or_missing_toolchain_profile_untouched(game,monkeypatch,profile):
+    net,proj,fid=game
+    monkeypatch.setattr(review,'compiler_for',lambda *_:profile)
+    monkeypatch.setattr(review.toolchains,'installed',lambda *_:pytest.fail('invalid id must not inspect packs'))
+    assert review.run(net,proj)==0
+    assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='asm'
+
+
+def test_missing_pack_skips_without_loading_or_installing(game,monkeypatch):
+    net,proj,fid=game
+    monkeypatch.setattr(review.toolchains,'installed',lambda _:None)
+    monkeypatch.setattr(review.toolchains,'get',lambda *_:pytest.fail('missing pack must not load template'))
+    monkeypatch.setattr(net,'try_quietly',lambda *_:pytest.fail('missing pack must not compile'))
+    assert review.run(net,proj)==0
     assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='asm'
