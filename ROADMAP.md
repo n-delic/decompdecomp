@@ -2314,3 +2314,13 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 - Planned: return/delay-store evidence readers beyond MIPS and multi-exit return
   analysis; imported target-text/caller-graph adapters where unavailable. Shared pure
   expression repair already reaches supported 32-bit ROM and imported projects.
+
+### Conversion scheduling and missing hardware operations
+
+- Done: shared local conversion scheduling candidates (multiline debug conversion
+  tails, delayed narrow captures, known-zero-bit shift masks), explicit m2c BREAK 9
+  repair and missing-operation frontier guidance. They reach ROM and object-project
+  callers of the shared repair generator; debug-tail targeting currently requires
+  MIPS `mfc1` evidence and GNU debug flags. Other processors need tested hazard/line
+  diagnostics before that family can be enabled for them. Fixed debugger-break
+  compiler support remains limited to the registered KMC pack.

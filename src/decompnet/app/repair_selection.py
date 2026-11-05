@@ -11,6 +11,10 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'mips_debug_break': ('shared_shift_mask','delayed_narrow_capture','debug_conversion_tail'),
+    'shared_shift_mask': ('delayed_narrow_capture','debug_conversion_tail'),
+    'delayed_narrow_capture': ('debug_conversion_tail','shared_shift_mask'),
+    'debug_conversion_tail': ('delayed_narrow_capture','shared_shift_mask'),
     'plain_float_slots': ('return_contract','narrow_expression_inline'),
     'return_contract': ('plain_float_slots','narrow_expression_inline'),
     'narrow_expression_inline': ('return_contract','plain_float_slots'),

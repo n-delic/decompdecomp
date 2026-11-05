@@ -150,7 +150,8 @@ def test_start_stop_and_restart_require_manual_resume_and_prevent_parallel_sweep
         args[-1].check_cancel()
         return {'tested':0,'matched':False}
     monkeypatch.setattr(deep_permuter,'run',block)
-    first=obj.start('game',1,10)
+    first=obj.start('game',1,10,loop=True)
+    assert obj.config('game')['loop'] is True
     assert entered.wait(2)
     with pytest.raises(NetworkError,match='already running'):obj.start('game',1,10)
     obj.shutdown()
@@ -656,3 +657,74 @@ def test_search_starts_before_full_preparation_and_reports_checked_total(sweep, 
     assert seen[0]['checked'] < seen[0]['total'] == 34
     assert all('preparation' in update for update in log.updates)
     assert log.updates[-1]['preparation']['done']
+
+
+def test_loop_repeats_same_settings_and_stops_on_cancel(sweep, monkeypatch):
+    obj, net, calls, _ = sweep
+    original = deep_permuter.run
+    log = Log()
+    def search(*args):
+        if len(calls) == 5:
+            log.cancelled = True
+            log.check_cancel()
+        assert args[3:5] == (2, 17)
+        return original(*args)
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    with pytest.raises(RuntimeError, match='cancelled'):
+        obj.run('game', 2, 17, log, loop=True)
+    assert calls == ['f0', 'f1', 'f0', 'f1', 'f0']
+    assert obj.history('game', net._function('f0', 'game'))['completed']
+
+
+def test_waiting_turn_goes_behind_other_candidates(sweep, monkeypatch):
+    obj, net, calls, _ = sweep
+    original = deep_permuter.run
+    attempts = []
+    def search(*args):
+        name = args[2]
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise NetworkError('Another worker holds the claim.')
+        return original(*args)
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    obj.run('game', 1, 10, Log())
+    assert attempts == ['f0', 'f1', 'f0']
+
+
+def test_free_workers_refill_before_slow_turn_finishes(sweep, monkeypatch):
+    import threading
+    obj, net, calls, _ = sweep
+    # Changed inputs need a second turn. The slower function must not gate it.
+    slow_started, refilled = threading.Event(), threading.Event()
+    outer_log = Log()
+    counts = {}
+    def search(net, slug, name, minutes, variants, log):
+        counts[name] = counts.get(name, 0) + 1
+        if name == 'f0':
+            slow_started.set()
+            assert refilled.wait(3), 'free worker was left idle behind the slow function'
+        else:
+            assert slow_started.wait(3)
+            if counts[name] == 2:
+                refilled.set()
+                outer_log.cancelled = True
+        return {'tested': 1, 'matched': False, 'best_score': 50}
+    # A new cycle may begin only once all other turns are finished, so use an input change
+    # to make a completed function eligible again while the other worker stays occupied.
+    original_completed = obj.completed
+    def completed(slug, before, minutes, variants, result, scope):
+        original_completed(slug, before, minutes, variants, result, scope)
+        if before['name'] == 'f1' and counts['f1'] == 1:
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_source=best_source || ' ' WHERE name='f1'")
+    monkeypatch.setattr(obj, 'completed', completed)
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    with pytest.raises(RuntimeError, match='cancelled'):
+        obj.run('game', 1, 10, outer_log, threads=2)
+    assert refilled.is_set()
+
+
+def test_loop_flag_validation(sweep):
+    obj, *_ = sweep
+    with pytest.raises(NetworkError, match='true or false'):
+        obj.start('game', loop='yes')
