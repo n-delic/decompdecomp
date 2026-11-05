@@ -316,11 +316,16 @@ def claim_packet(net, agent, slug, text):
     # compact queue; get_function(section="brief") loads any queued task on demand.
     blocks = list(re.finditer(r'^## CLAIMED: (.+?)(?:  \([^\n]*\))?$',text,re.M))
     if len(blocks)>1:
-        queue = [m[1] for m in blocks[1:]]
+        queue = []
+        for index,block in enumerate(blocks[1:],1):
+            stop=blocks[index+1].start() if index+1<len(blocks) else len(text)
+            lease=re.search(r'^claim_token: ([0-9a-f]+)$',text[block.end():stop],re.M)
+            queue.append(block[1]+('; claim_token='+lease[1] if lease else '; get_claims() recovers its current claim_token'))
         text = re.sub(r'(?m)^Write all of them[^\n]*',
                       'Start with the detailed function below; load queued function briefs when ready. Batch judging is still available.',
                       text[:blocks[1].start()])+'\nQueued claims (leases retained; details on demand):\n'+'\n'.join(
-            '- '+name for name in queue)+'\nUse get_function(function, section="brief") when starting each queued function.\n'
+            '- '+name for name in queue)+'\nUse each function\'s own claim_token when releasing it; never reuse another function\'s token. '
+        text += 'Use get_function(function, section="brief") when starting each queued function.\n'
     from .claim_state import fast
     rendered = text if fast() else brief(net, text, slug, agent)
     if not re.search(r'^## CLAIMED', rendered, re.M):
@@ -344,6 +349,7 @@ def claim_packet(net, agent, slug, text):
         return ('You still hold the unchanged claim: ' + ', '.join(names) + '. No new functions were claimed.\n'
                 + '; '.join(dict.fromkeys(revisions))
                 + '\nUse the candidate already supplied, compile_patch or try_local_repairs. '
+                  'get_claims recovers current function-specific claim tokens without loading C; '
                   'get_candidate recovers C; get_function(section="brief") refreshes supporting details.')
     return rendered
 

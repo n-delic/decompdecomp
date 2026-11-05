@@ -305,3 +305,14 @@ ownership now accepts both function-kind spellings. Canonical owners are still
 required: an orphan function symbol creates no boundary, overlapping images stay
 ambiguous without context, and genuine data/unknown symbols retain their data
 classification. No name, claim or match is changed by resolving an address.
+
+### Keep release tokens in compact claim queues
+
+A batch receipt retains the first function's details and lists the rest as a compact
+queue. That compaction previously dropped the queued functions' distinct claim
+tokens. Recent transcripts show repeated empty, stale or placeholder-token releases
+and extra recovery calls. Queue entries now retain each token already present in the
+original receipt, without fetching source or performing more database reads. Each
+function must be released with its own token. Missing receipt tokens and unchanged
+claim replies point to `get_claims` for cheap metadata recovery. No token is guessed,
+and stale-generation release guards remain unchanged.

@@ -1,5 +1,6 @@
 """Transcript regressions use synthetic metadata, fake CLIs and the ordinary claim/record paths."""
 import io
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -221,10 +222,12 @@ def test_claim_tokens_distinguish_reclaims_even_when_the_clock_is_identical(tmp_
 
 def test_model_short_name_is_resolved_in_the_worker_record_without_running_discovery(tmp_path,monkeypatch):
     net,manager,s,agent=setup(tmp_path,monkeypatch)
-    calls=[]
+    calls=[];caller=threading.get_ident()
     def cached(path,run=True):
         assert run is False
-        calls.append(1)
+        # Other tests can leave a concurrent catalog refresh finishing here.
+        # Count this synchronous start request, while stubbing discovery for all callers.
+        if threading.get_ident()==caller:calls.append(1)
         return [{'id':'opencode/example-free','name':'example-free'}]
     monkeypatch.setattr(OPENCODE,'models',cached)
     monkeypatch.setattr(manager,'_prepare',lambda *a:None)

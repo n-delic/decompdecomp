@@ -2440,3 +2440,6 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 
 - Done: read-only address resolution recognizes both imported `func` and legacy
   `function` symbol kinds while preserving data conflicts and overlay ambiguity.
+
+- Done: compact batch claim queues retain each queued function's release token,
+  with cheap claim-metadata recovery guidance and unchanged stale-lease protection.
