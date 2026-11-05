@@ -490,7 +490,7 @@
         <div class="deep-queue-details small muted">
           <span class="deep-queue-completed" hidden><b id="deepSweepDone">0</b> completed turns</span><span><b id="deepSweepLeft">0</b> remaining</span>
           <span id="deepSweepPausedGroup" hidden><b id="deepSweepPaused">0</b> paused early</span>
-          <span id="deepSweepBlockedGroup" hidden><b id="deepSweepBlocked">0</b> need attention</span>
+          <button type="button" id="deepSweepBlockedGroup" class="ghost small-btn" aria-haspopup="dialog" hidden><b id="deepSweepBlocked">0</b> need attention <span aria-hidden="true">↗</span></button>
           <span id="deepSweepWaitingGroup" hidden><b id="deepSweepWaiting">0</b> waiting for saved C</span>
         </div>
         </div>
@@ -900,6 +900,7 @@
 <!-- the notification centre: what happened in every project, newest first -->
 <section class="notif-panel" id="notifPanel" role="dialog" aria-labelledby="notifTitle" hidden>
   <header class="notif-head"><h2 id="notifTitle">What happened</h2><span class="muted small">in all your projects</span><span class="grow"></span><button class="ghost small-btn" id="notifClear" type="button" hidden>Clear all</button><button class="ghost icon sm" id="notifClose" type="button" aria-label="Close notifications">✕</button></header>
+  <div id="notifLoading" hidden></div>
   <ol class="notif-list" id="notifList"></ol>
 </section>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>

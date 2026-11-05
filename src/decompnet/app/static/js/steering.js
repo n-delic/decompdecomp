@@ -1290,10 +1290,21 @@ $("sourcePrepExportRun").onclick = async () => {
 
 let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null;
 let deepMetricRows = [], deepMetricSlug = null;
+function deepAttentionReason(issue) {
+  const error=String(issue.error || "Search stopped");
+  if (/^no function ['"]/.test(error)) return "Function lookup failed during search";
+  return issue.function ? error.replace(/[A-Za-z_$][\w$]*/g, token=>token===issue.function ? "This function" : token) : error;
+}
+function deepAttentionAction(issue) {
+  return /^no function ['"]/.test(String(issue.error || ""))
+    ? "The search could not resolve a function name. It may have changed, or be missing on the room host. Open the current function and retry the search with fresh inputs. The suggested names are lookup hints, not required replacements."
+    : issue.action || "Open the function to inspect its saved C and compiler settings.";
+}
+
 function openDeepMetric(kind) {
   const slug = S.slug;
   if (!slug || $("deepSweepPanel").dataset.slug !== slug) return;
-  const titles = {matched:"Matched by deep permuter", improved:"Improved by deep permuter", active:"Searching now"};
+  const titles = {matched:"Matched by deep permuter", improved:"Improved by deep permuter", active:"Searching now", attention:"Functions needing attention"};
   if (!titles[kind]) return;
   dialog(titles[kind], "", "deep-metric:" + kind);
   deepMetricSlug = slug;
@@ -1304,23 +1315,23 @@ function renderDeepMetricDrawer() {
   if (!S.dialogKind?.startsWith("deep-metric:") || $("dialog").hidden) return;
   if (deepMetricSlug !== S.slug) { closeDialog(); return; }
   const kind = S.dialogKind.slice("deep-metric:".length), status = deepSweepSnapshot || {};
-  const active = kind === "active", body = $("dialogBody");
-  const source = active ? status.state === "running" ? status.progress?.workers : null : deepMetricRows;
+  const active = kind === "active", attention = kind === "attention", body = $("dialogBody");
+  const source = active ? status.state === "running" ? status.progress?.workers : null : attention ? status.attention : deepMetricRows;
   if (body._deepMetricHtml && body._deepMetricSource === source && body._deepMetricKind === kind) return;
   body._deepMetricSource = source; body._deepMetricKind = kind;
-  const rows = active ? source || [] : deepMetricRows.filter(row => kind === "matched" ? row.new_score === 0 : row.new_score < row.starting_score);
-  const intro = active ? "Live searches for this project. Select a function to inspect it."
+  const rows = active || attention ? source || [] : deepMetricRows.filter(row => kind === "matched" ? row.new_score === 0 : row.new_score < row.starting_score);
+  const intro = attention ? "Searches that stopped for the current inputs. Open a function to inspect it; the reason and next step are shown below." : active ? "Live searches for this project. Select a function to inspect it."
     : "Saved deep-permuter results since the last metrics reset, across runs. Improved includes functions that reached a match.";
   const html = `<p class="small muted">${intro}</p><p><b>${rows.length.toLocaleString()} function${rows.length === 1 ? "" : "s"}</b></p>` + (rows.length
     ? `<ul class="deep-metric-list">${rows.map((row, i) => {
       const percent = n => n == null ? "—" : `${Number(n).toFixed(1)}%`;
       const before = active ? percent(row.starting_percent) : row.starting_percent_text || "—";
       const after = active ? percent(row.best_percent) : row.new_percent_text || "—";
-      const info = active ? `${row.phase || "Searching"}${row.current_family ? " · " + row.current_family : ""} · ${(row.tested || 0).toLocaleString()} candidates tested`
+      const info = attention ? deepAttentionReason(row) : active ? `${row.phase || "Searching"}${row.current_family ? " · " + row.current_family : ""} · ${(row.tested || 0).toLocaleString()} candidates tested`
         : `Score ${row.starting_score} → ${row.new_score}${row.new_score === 0 ? " · Byte-for-byte match" : ""}`;
       const updated = !active && row.updated_at ? `<p class="small muted">Last improvement: <time datetime="${esc(new Date(row.updated_at * 1000).toISOString())}">${esc(new Date(row.updated_at * 1000).toLocaleString())}</time></p>` : "";
-      return `<li><header><button type="button" class="ghost small-btn mono" data-deep-metric-function="${i}">${esc(row.function)}</button><span class="deep-metric-match">${esc(before)} → <b>${esc(after)}</b></span></header><p class="muted">${esc(info)}</p>${updated}</li>`;
-    }).join("")}</ul>` : `<p class="deep-metric-empty">${active ? "No functions are being searched right now." : kind === "matched" ? "No matches from the deep permuter yet. Verified matches will appear here." : "No improvements from the deep permuter yet. Verified improvements will appear here."}</p>`);
+      return `<li><header><button type="button" class="ghost small-btn mono" data-deep-metric-function="${i}">${esc(row.function)}</button>${attention ? "" : `<span class="deep-metric-match">${esc(before)} → <b>${esc(after)}</b></span>`}</header><p><b>${esc(info)}</b></p>${attention ? `<p class="small muted">${esc(deepAttentionAction(row))}</p><details><summary>Technical details</summary><p class="small mono">${esc(row.error || "No additional details.")}</p></details>` : updated}</li>`;
+    }).join("")}</ul>` : `<p class="deep-metric-empty">${attention ? "No functions currently need attention." : active ? "No functions are being searched right now." : kind === "matched" ? "No matches from the deep permuter yet. Verified matches will appear here." : "No improvements from the deep permuter yet. Verified improvements will appear here."}</p>`);
   if (body._deepMetricHtml === html) return;
   const scrollTop = body.scrollTop;
   const focused = document.activeElement?.dataset?.deepMetricFunction;
@@ -1341,9 +1352,9 @@ function renderDeepSweepResults(status) {
   const issueGroups = new Map();
   attention.forEach((issue, index) => {
     // A function name embedded in an otherwise identical error should not repeat the guidance.
-    const reason = issue.function ? String(issue.error || "Search stopped").replace(/[A-Za-z_$][\w$]*/g, token => token === issue.function ? "This function" : token) : String(issue.error || "Search stopped");
+    const reason = deepAttentionReason(issue);
     const key = JSON.stringify([reason, issue.action || ""]);
-    if (!issueGroups.has(key)) issueGroups.set(key, {reason, action:issue.action, functions:[]});
+    if (!issueGroups.has(key)) issueGroups.set(key, {reason, action:deepAttentionAction(issue), functions:[]});
     issueGroups.get(key).functions.push({issue,index});
   });
   $("deepSweepAttentionList").innerHTML = [...issueGroups.values()].map((group, groupIndex) => `<section class="deep-issue-group" aria-labelledby="deepIssueReason${groupIndex}"><header><h4 id="deepIssueReason${groupIndex}">${esc(group.reason)}</h4><span class="deep-issue-count">${group.functions.length} function${group.functions.length === 1 ? "" : "s"}</span></header>${group.action ? `<p class="deep-issue-action">${esc(group.action)}</p>` : ""}<ul class="deep-issue-functions">${group.functions.map(({issue,index}) => `<li><button type="button" class="deep-issue-link mono" data-deep-attention="${index}" title="${esc(issue.error)}" aria-describedby="deepIssueReason${groupIndex}">${esc(issue.function)}<span aria-hidden="true">↗</span></button></li>`).join("")}</ul></section>`).join("");
@@ -1581,6 +1592,7 @@ async function followDeepSweep(slug, job) {
     }
   }
 }
+$("deepSweepBlockedGroup").onclick = () => openDeepMetric("attention");
 $("deepSweepMetricMatched").onclick = () => openDeepMetric("matched");
 $("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
 $("deepSweepMetricActive").onclick = () => openDeepMetric("active");

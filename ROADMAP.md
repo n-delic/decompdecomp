@@ -530,6 +530,8 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- The notification panel renders cached events immediately, shares an in-flight history request, offers loading/error retry feedback, and reads bounded indexed history using reserved UI capacity.
+
 - Project maps read compact per-function history dates independently of contributor rollups, reducing cold opening work while retaining identical recency semantics and revision invalidation.
 
 - Paused retries check filtered candidates incrementally, stop at the requested allowance, release shared locks between candidates, and report checked/ready counts in a background job.
