@@ -540,3 +540,20 @@ def test_local_match_library_lists_shared_games_and_empty_state():
         pytest.skip('node is required')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_match_library.js'))],check=True,
                    cwd=Path(__file__).parents[1],timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_maintenance_tools_use_shared_disclosure_cards():
+    html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
+    for panel_id, action_id in [('machineDraftPanel', 'regenerateMachineDrafts'),
+                                ('savedMatchRecoveryPanel', 'recoverSavedMatches')]:
+        start = html.index(f'<details class="panel settings-disclosure" id="{panel_id}">')
+        card = html[start:html.index('</details>', start)]
+        assert '<summary class="panel-head"><h2>' in card
+        assert 'disclosure-context' in card
+        assert 'class="pad maintenance-body"' in card
+        assert f'id="{action_id}"' in card
+        assert 'Local CPU · No AI tokens' in card
+        assert 'class="joblog" hidden' in card
+        assert ' open' not in card.split('>', 1)[0]
+    assert '<label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds"' in html
+    assert '<label class="field"><span>Compile limit</span><input id="savedMatchAttempts"' in html

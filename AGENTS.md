@@ -196,6 +196,27 @@ linting). In short:
   `site/public/index.html` (the console's card and picker entry, the install section) in the same pull request;
   reviewing a change checks it, like the ROADMAP table.
 
+## Shared UI and UX patterns
+
+- Reuse the app's existing components before adding markup or CSS. Project tools and settings use
+  `<details class="panel settings-disclosure">`, a `<summary class="panel-head"><h2>…</h2></summary>`
+  and a `<div class="pad">` body. Include the full shell: `settings-disclosure` alone does not provide
+  header spacing. Keep independent tools as sibling cards, collapsed by default; preserve open state
+  during refreshes. Use `disclosure-context` for a short purpose or count beside the title.
+- Start with one sentence explaining the outcome and when the tool is useful. Put limits beside their
+  labeled inputs, use a clear action verb on the primary button, and keep technical details in a secondary
+  disclosure. Avoid generic “Finished” messages, repeated descriptions and unexplained internal terms.
+- Use the shared dropdown styling for native single-choice `select` controls, shared field,
+  button, status and progress styles, and theme variables. Do not introduce native-looking one-off menus,
+  hard-coded theme colors or a separate card system. Check both themes and narrow layouts.
+- A click that starts work must show feedback immediately, disable duplicate starts, and offer Stop when
+  cancellation is supported. Reuse `beginWork`, `followJob`, `showJobError` and `.workbar`; clean up in
+  `finally`. Show real progress when totals exist, otherwise indeterminate progress. Keep errors actionable
+  and visible. Distinguish the current run from saved totals and never show stale data from another project.
+- Make summary metrics actionable when details exist: use the shared side drawer and retain function links.
+  Verify collapsed/expanded, working, empty, success and error states for the UI touched. Existing examples:
+  `machineDraftPanel`, `savedMatchRecoveryPanel` and project settings in `app/static/index.html`.
+
 ## Never
 
 - Commit, download or publish game data (ROMs, discs, executables, extracted code or assets). Generated projects
