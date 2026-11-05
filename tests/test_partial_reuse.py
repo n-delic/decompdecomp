@@ -177,3 +177,23 @@ def test_imported_donor_uses_saved_best_not_unverified_current_file(pair, monkey
     monkeypatch.setattr(pair, 'try_quietly', judge(pair, calls, 20))
     partial_reuse.run(pair.twins, proj, {mine[2].key:[2]}, mine)
     assert len(calls) == 1 and 'return x + 59;' in calls[0]
+
+
+def test_manual_partial_budget_can_exceed_the_automatic_trial_cap(pair, monkeypatch):
+    from decompnet.app.free_candidates import budget
+    from decompnet.app.twins import Print
+    prepare(pair)
+    with pair.store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,target,relocs,unit,vram,status,best_score) "
+                   "SELECT 3,project_id,'new_copy',size,n_insns,target,relocs,unit,vram,'open',100 FROM functions WHERE id=2")
+    monkeypatch.setattr(pair.twins, 'prints', lambda proj: {fid: Print('same', [], 32) for fid in
+                       ([1] if proj['id'] == 1 else [2, 3])})
+    monkeypatch.setattr(partial_reuse, 'MAX_TRIALS', 1)
+    calls = []
+    monkeypatch.setattr(pair, 'try_quietly', judge(pair, calls, 20))
+    job = Job()
+    budget(job, seconds=60, attempts=10)
+    job.partial_limit = 10
+    partial_reuse.run(pair.twins, pair.project_row('destination'), {'same':[2,3]},
+                      pair.twins.prints(pair.project_row('destination')), job)
+    assert len(calls) == 2 and job.reuse_attempts == 2

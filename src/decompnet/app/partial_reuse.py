@@ -28,7 +28,7 @@ def machine(net, proj):
 
 
 def run(twins, proj, wanted, mine, job=None):
-    """At most 64 better-donor trials per pass, also sharing the free-pass budget and stop control."""
+    """Automatic passes try at most 64 donors; manual passes use their chosen shared budget and stop control."""
     net = twins.net
     if proj['slug'] in net.links:
         return 0
@@ -53,7 +53,7 @@ def run(twins, proj, wanted, mine, job=None):
                 # A live donor may have changed since selection; target code, never candidate output, is fingerprinted.
                 for bid in wanted.get(pa.key, []):
                     from .free_candidates import exhausted
-                    if tried >= MAX_TRIALS or (job and (job.stop.is_set() or
+                    if tried >= getattr(job, 'partial_limit', MAX_TRIALS) or (job and (job.stop.is_set() or
                             (hasattr(job, 'reuse_limit') and exhausted(job)))):
                         return matched
                     b = net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", bid)
@@ -76,6 +76,8 @@ def run(twins, proj, wanted, mine, job=None):
                     note = f"/* Partial candidate from function #{a['id']} in project #{other['id']}; rechecked locally. */\n"
                     # Never label this donor matched or use it to infer a name. Ordinary attempt recording
                     # atomically retains only improvements; the target's own exact judge alone can mark a match.
+                    from .cross_game_progress import report
+                    report(job, 'Checking better unfinished C', game=other['name'], function=b['name'], donor=a['name'])
                     if net.fork_slug(proj['slug']):
                         result = net.forks.attempt(agent, proj['slug'], b['name'], note + source, keep=False)
                     else:
