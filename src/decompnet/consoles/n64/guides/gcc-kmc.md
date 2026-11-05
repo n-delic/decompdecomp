@@ -754,3 +754,13 @@ The original is restored before the next statement. Split negation, unscoped
 copies and simple if/else arms are not equivalent allocation evidence. Only the
 ordinary linked-byte judge can accept the candidate; advisory symbol/literal
 renderings can remain different after the linked bytes are exact.
+
+A consumed scalar can carry a later constant store inside a one-shot scope:
+`do { scratch=48; out->field=scratch; } while(0);`. In one measured initializer,
+plain lifetime splitting selected the right register but reordered the store;
+unscoped reuse retained the wrong register. The scoped reuse matched both. The
+bounded `constant_store_scope` repair requires a visible, same-type ordinary
+scratch whose old value is dead on every CFG path, and a replaced local dead after
+its store. It preserves one execution and rejects observable/escaped locals and
+macro aliases. Review operand/conversion errors separately before treating a small
+score as only allocation; the ordinary exact judge still decides.

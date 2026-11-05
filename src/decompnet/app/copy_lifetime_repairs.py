@@ -6,11 +6,11 @@ whose value is dead on every CFG edge can end that lifetime without modifying th
 import re
 from dataclasses import dataclass
 
-from . import local_flow, scalar_normalization_scope
+from . import constant_store_scope, local_flow, scalar_normalization_scope
 from .integer_repair_support import IDENT, INTEGER, edit, view
 from .pattern_repairs import close
 
-FAMILIES = (scalar_normalization_scope.FAMILY, 'dead_copy_source', 'divisor_flag_split', 'regional_load_reuse', 'divisor_value_scope', 'divisor_normalization_copy')
+FAMILIES = (constant_store_scope.FAMILY, scalar_normalization_scope.FAMILY, 'dead_copy_source', 'divisor_flag_split', 'regional_load_reuse', 'divisor_value_scope', 'divisor_normalization_copy')
 LIMIT = 16
 
 
@@ -85,7 +85,7 @@ def context(source, name):
 
 def variants(source, name, header=''):
     ctx = context(source, name)
-    scoped = scalar_normalization_scope.variants(source, name, header)
+    scoped = constant_store_scope.variants(source, name, header) + scalar_normalization_scope.variants(source, name, header)
     if not ctx:
         return scoped
     part, flow, declarations = ctx

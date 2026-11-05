@@ -4015,3 +4015,33 @@ not deleted; signed scalar declarations must be available and unescaped, and an
 unused compatible scratch must exist. Unrelated macro bodies remain untouched;
 tracked aliases and continued directives are rejected. No assembly, compiler
 profile, score normalization or acceptance rule is changed.
+
+## A consumed scalar plus a one-shot scope can separate constant-store allocation
+
+KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, can keep a loaded
+scalar and its later constant assignment in one register even when their values
+have disjoint lifetimes. Splitting the constant into an independent local gave
+the desired register in one 149-instruction initializer, but moved its store ahead
+of the preceding field store. Reusing an already consumed same-type local inside
+`do { scratch=48; out->field=scratch; } while(0);` retained the original schedule
+and separated the allocation. No arithmetic identity, volatile qualifier, assembly
+or changed compiler profile was needed. Unscoped reuse, plain constant stores,
+extra declarations and declaration order did not recover this combination.
+
+The starting captured draft also stored a narrowed unsigned byte as a full-width
+mask, producing 255 where the target stores -1. That semantic error was manually
+corrected before this experiment; the repair does not infer or fix mask behavior.
+After that correction, the ordinary advisory score was 10. Both generated scope
+candidates linked exactly with score zero at indices 0 and 15 of the actual
+44-candidate first page; the preceding implementation produced 42 candidates and
+none matched. These are replays of one captured function, not additional matches.
+
+The shared `constant_store_scope` family is bounded to four proposals. It requires
+an existing consumed local of the identical ordinary 32-bit type, visible in the
+replacement scope. CFG liveness must prove that its previous value is dead and
+that the replaced assignment's destination is dead after its field store. Escapes,
+qualified aliases, relevant macros, branch entries and out-of-scope locals are
+excluded. The literal assignment and store stay together and execute once. Synthetic
+C90 boundary-value tests verify store behavior; only ordinary exact judging accepts
+a candidate. An independent complete cartridge rebuild verifies the accepted
+scope source while preserving all 2,063 prior C objects and compiler profiles.

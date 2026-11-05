@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: bounded constant field-store lifetime reuse inside a one-shot scope,
+using an existing compatible consumed scalar and CFG liveness in shared source
+repairs. Scope, escape, qualifier, macro and branch-entry guards preserve behavior;
+manual semantic repairs remain separate and exact judging remains mandatory.
+
 Implemented: bounded reversal of chained assignments to distinct, identically typed
 ordinary struct fields in shared source repairs. Field layout, qualifier, macro,
 array and RHS effect guards preserve conversions and one RHS evaluation; source
