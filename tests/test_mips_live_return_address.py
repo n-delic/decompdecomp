@@ -102,3 +102,11 @@ def test_no_operands_and_portable_direct_compiler_export(tmp_path):
     result=run_in(cfg,tmp_path,argv,inputs=['export.c'],outputs=['export.o'])
     assert result.returncode==0,result.stderr
     assert extract_function((tmp_path/'export.o').read_bytes(),'f').code==extract_function(app.obj,'f').code
+
+
+def test_hint_explains_atomic_profile_check_without_changing_default_budget():
+    hint=live_return_address_repairs.hint(ASM, "mips")
+    assert "verified neighbouring compiler profile" in hint
+    assert "one profile keeps its default-only meaning" in hint
+    assert "exact source/profile verdict" in hint
+    assert not live_return_address_repairs.hint(ASM, "ppc")
