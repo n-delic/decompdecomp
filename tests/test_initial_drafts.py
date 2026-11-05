@@ -315,3 +315,28 @@ def test_explicit_regeneration_rechecks_identical_c_without_erasing_history(netw
     with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
     assert net._autopilot_one(agent,net.project_row(proj['slug']),fn['id']) in ('near','far')
     assert net.store.one('SELECT count(*) AS n FROM attempts WHERE function_id=?',fn['id'])['n']>count
+
+
+def test_regeneration_reports_function_before_work_finishes_and_final_counts(network, monkeypatch):  # noqa: F811
+    import threading
+
+    net, proj, fn = network
+    monkeypatch.setattr(net, 'can_draft', lambda proj: True)
+    published = threading.Event()
+    snapshots = []
+    def seed(*args):
+        assert published.wait(5), 'Progress must be published while the draft is still running'
+    monkeypatch.setattr(net, '_seed_for', seed)
+    monkeypatch.setattr(net, '_autopilot_one', lambda *args: 'near')
+    monkeypatch.setattr(draft_reports, 'read', lambda *args: {'compiled': True})
+    class Log:
+        def __call__(self, *args): pass
+        def progress(self, data):
+            snapshots.append(data)
+            published.set()
+    result = draft_regeneration.run(net, proj['slug'], Log())
+    assert snapshots[0]['done'] == 0 and snapshots[0]['total'] == 1
+    assert snapshots[0]['function'] == fn['name']
+    assert snapshots[-1]['done'] == snapshots[-1]['total'] == 1
+    assert snapshots[-1]['function'] == ''
+    assert snapshots[-1]['compiled'] == result['compiled'] == 1

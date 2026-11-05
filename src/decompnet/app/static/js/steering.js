@@ -326,10 +326,16 @@ function renderAutopilot(ov) {
   const draftButton = $('regenerateMachineDrafts');
   if (draftButton) draftButton.onclick = async () => {
     const log = $('machineDraftLog'), stop = $('machineDraftStop');
-    let jobId = null;
+    let jobId = null, summary = null;
+    log._showJobProgress = true;
     if (stop) {
-      stop.hidden = false;
-      stop.onclick = async () => { if (jobId) await api('/api/job/cancel', {method:'POST',body:{id:jobId}}); };
+      stop.hidden = false; stop.disabled = true;
+      stop.onclick = async () => {
+        if (!jobId) return;
+        stop.disabled = true;
+        try { await api('/api/job/cancel', {method:'POST',body:{id:jobId}}); }
+        catch (error) { stop.disabled = false; showJobError(log, error.message); }
+      };
     }
     log.hidden = false;
     const finish = beginWork(log, 'Regenerating machine drafts', [draftButton], 'Draft refresh finished');
@@ -337,9 +343,16 @@ function renderAutopilot(ov) {
     try {
       const { job } = await api('/api/drafts', {method:'POST', body:{slug:S.slug}});
       jobId = job;
-      await followJob(job, log);
+      if (stop) stop.disabled = false;
+      const result = await followJob(job, log, lines => { log.hidden = lines.length === 0; });
+      if (result) summary = `${result.completed} / ${result.total} functions reviewed · ${result.compiled} compiling · ${result.matched} matched · ${result.skipped} skipped · ${result.failed} failed`;
     } catch(error) { showJobError(log, error.message); }
-    finally { if (stop) stop.hidden = true; finish(); }
+    finally {
+      if (stop) stop.hidden = true;
+      finish();
+      if (summary && log._workStatus) log._workStatus.textContent = summary;
+      if (!log.textContent.trim()) log.hidden = true;
+    }
   };
 
   renderSavedMatchRecovery(ov);
