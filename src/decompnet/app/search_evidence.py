@@ -34,11 +34,17 @@ def brief(net, proj, fn):
         if hint := advice(current['rows']):lines.append(hint)
         clues = allocation_evidence.text(current['rows'],proj['arch'])
         if clues:lines.append(clues)
+        if allocation_evidence.diagnose(current['rows'],proj['arch'])['register_only']:
+            from .copy_lifetime_repairs import hint
+            if clue := hint(source,fn['name']):lines.append(clue)
         from . import allocation_search
         if clue := allocation_search.brief(net,proj,fn,source,current['rows']):lines.append(clue)
         if region := region_repairs.summary(current['rows'],proj['arch']):lines.append(region)
         plan=allocation_evidence.plan(current['rows'],proj['arch'])
-        next_family=(' Try '+plan['families'][0]+'.') if plan['families'] else ''
+        from .copy_lifetime_repairs import FAMILIES, variants
+        applicable = {family for family, _ in variants(source,fn['name'])}
+        families = [family for family in plan['families'] if family not in FAMILIES or family in applicable]
+        next_family=(' Try '+families[0]+'.') if families else ''
         lines.append(f"Remaining mismatch: {plan['category'] or 'mixed'}; {len(rows)} displayed differences.{next_family}")
         lines.extend(f"  {r[0]} {str(r[1])[:80]} => {str(r[2])[:80]}" for r in rows[:4])
         from .repair_sequences import starting

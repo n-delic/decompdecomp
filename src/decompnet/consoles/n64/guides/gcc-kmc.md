@@ -591,3 +591,22 @@ preserved at every use. `plain_float_slots` tests ordinary local array storage o
 with target call-delay-slot stack-store evidence; never strip MMIO or pointer volatility.
 These families compose under ordinary budgets. Every hypothesis still needs the normal
 exact judge; missing target evidence is no reason to guess a contract.
+
+### Ordered instructions agree but copied registers differ
+
+With GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a copied-from scalar can
+remain the allocator's preferred operand even after an explicit copy. Use the
+`dead_copy_source` local family when the original local is dead on every outgoing
+control-flow edge, unescaped and nonvolatile. A dead reset can disappear while
+changing copy propagation. Never clear a value still read on another branch or
+loop iteration. `divisor_normalization_copy`, `divisor_value_scope` and
+`divisor_flag_split` separate saved arithmetic values from scratch flags without
+inventing a different division or rounding rule.
+
+For hazard NOP/scheduling differences with debug flags, try
+`debug_statement_boundary`: physical line boundaries can change this legacy
+compiler/assembler output even when C tokens are unchanged. Keep successful line
+layout. This is measured behavior of a specific toolchain, not a rule for all GCC.
+Prefer these bounded local variants and source-mapped allocation diagnostics to
+repeated full assembly/context requests or random declaration shuffles. The normal
+judge remains the only match verdict.

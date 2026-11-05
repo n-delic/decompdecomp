@@ -61,6 +61,10 @@ def order(families, rows):
     else:
         preferred=()
     preferred=('plain_float_slots','return_contract','narrow_expression_inline')+preferred
+    if diagnose(rows)['register_only']:
+        preferred = ('dead_copy_source','divisor_normalization_copy', 'divisor_value_scope', 'divisor_flag_split', 'regional_load_reuse') + preferred
+    elif diagnose(rows)['scheduling'] or diagnose(rows)['delay_slot']:
+        preferred = ('debug_statement_boundary',) + preferred
     return sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
 
 
