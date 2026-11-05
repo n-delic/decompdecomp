@@ -190,8 +190,8 @@ class GuiMixin:
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
         from ..function_names import state as name_state
-        from ..history_summary import summary as history_summary
-        recency = history_summary(self.store, proj['id'])['recency']
+        from ..history_summary import recency as map_recency
+        recency = map_recency(self.store, proj['id'], function_ids)
         from ..view_snapshots import cross_project_ids
         cross_project = cross_project_ids(self, proj)
         from ..code_coverage import boundaries

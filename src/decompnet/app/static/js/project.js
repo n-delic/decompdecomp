@@ -33,7 +33,7 @@ async function openProject(slug, tab = "overview") {
     if (gen !== S.gen || $("projectLoading").hidden) return;
     const done = Object.values(steps).filter(Boolean).length;
     const pending = [!steps.settings && "reading app settings", !steps.summary && "reading project summary",
-      !steps.functions && (expectedFunctions ? `loading ${Number(expectedFunctions).toLocaleString()} functions and their history` : "loading function list"), steps.summary && steps.functions && !steps.view && "drawing project view"].filter(Boolean);
+      !steps.functions && (expectedFunctions ? `loading ${Number(expectedFunctions).toLocaleString()} functions and map details` : "loading function list"), steps.summary && steps.functions && !steps.view && "drawing project view"].filter(Boolean);
     $("projectLoadBar").setAttribute("aria-valuenow", String(done));
     $("projectLoadFill").style.width = `${done * 25}%`;
     const checking = verification ? ` Saved files: ${verification.phase || "verification"}${verification.total ? ` (${verification.done || 0} / ${verification.total} functions checked)` : ""}.` : "";

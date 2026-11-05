@@ -3,6 +3,7 @@
 A project revision detects appends, deletions, score corrections and function moves.
 The cache belongs to a Store, so separate homes cannot share project IDs or results.
 """
+import json
 import threading
 import weakref
 from collections import defaultdict
@@ -72,3 +73,25 @@ def summary(store, project):
         result = {'agents': dict(agents), 'recency': recency, 'best': best, 'valid_best': valid_best, 'last_id': last_id}
         cache[project] = (fingerprint, result)
         return result
+
+
+def recency(store, project, function_ids=None):
+    """Map dates need one aggregate row per function, not every contributor's attempt sets."""
+    row = store.one('SELECT revision,rewritten FROM history_revisions WHERE project_id=?', project)
+    version = tuple(row) if row else (0, 0)
+    selected = tuple(sorted(set(function_ids))) if function_ids is not None else None
+    subset = " AND f.id IN (SELECT value FROM json_each(?))" if selected is not None else ""
+    args = (project,json.dumps(selected)) if selected is not None else (project,)
+    def build():
+        rows = store.all('''WITH measured AS (
+            SELECT t.function_id,t.created_at,t.compiled,t.score,f.n_insns,
+                   MIN(CASE WHEN t.compiled AND t.score IS NOT NULL THEN t.score END)
+                   OVER (PARTITION BY t.function_id ORDER BY t.id
+                         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous_best
+            FROM functions f JOIN attempts t ON t.function_id=f.id WHERE f.project_id=?''' + subset + '''
+        ) SELECT function_id,MAX(created_at) AS last_checked,
+                 MAX(CASE WHEN compiled AND score>=0 AND score<COALESCE(previous_best,COALESCE(n_insns,0)*100)
+                          THEN created_at END) AS last_improved
+          FROM measured GROUP BY function_id''', *args)
+        return {r['function_id']: {'last_checked':r['last_checked'], 'last_improved':r['last_improved']} for r in rows}
+    return store.read_cache.get(('map-recency', project, selected), version, build)

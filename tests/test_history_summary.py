@@ -113,3 +113,55 @@ def test_append_updates_only_new_attempts_without_mutating_old_snapshot(tmp_path
     rebuilt = summary(store, 1)
     assert rebuilt['agents'][3]['improved'] == {1}
     assert not rebuilt['agents'][2]['improved']
+
+
+def test_map_recency_matches_full_history_without_building_contributors(tmp_path):
+    from decompnet.app.history_summary import recency
+    store = populated(tmp_path)
+    with store.tx() as db:
+        db.executemany('INSERT INTO attempts(function_id,agent_id,score,compiled,created_at) VALUES(1,1,?,?,?)',
+                       [(900,1,11),(None,0,12),(700,1,13),(-1,1,14),(0,1,15),(None,0,None)])
+    assert recency(store,1) == summary(store,1)['recency']
+    first=recency(store,1)
+    assert recency(store,1,[1]) == first
+    assert recency(store,1,[]) == {}
+    assert recency(store,1) is first
+    with store.tx() as db:
+        db.execute('DELETE FROM attempts WHERE score<0')
+    assert recency(store,1) == summary(store,1)['recency']
+    with store.tx() as db:
+        db.execute('UPDATE functions SET n_insns=1 WHERE id=1')
+    assert recency(store,1) == summary(store,1)['recency']
+    with store.tx() as db:
+        db.execute("UPDATE functions SET project_id=2,name='moved' WHERE id=1")
+    assert recency(store,1) == summary(store,1)['recency']
+    assert recency(store,2) == summary(store,2)['recency']
+
+
+def test_map_recency_never_publishes_rolled_back_dates(tmp_path):
+    from decompnet.app.history_summary import recency
+    store=populated(tmp_path)
+    first=recency(store,1)
+    try:
+        with store.tx() as db:
+            db.execute('UPDATE attempts SET created_at=100')
+            assert recency(store,1)[1]['last_checked']==100
+            raise RuntimeError('rollback')
+    except RuntimeError:
+        pass
+    assert recency(store,1)==first
+    with store.tx() as db:
+        db.execute('INSERT INTO attempts(function_id,agent_id,score,compiled,created_at) VALUES(1,1,100,1,200)')
+    assert recency(store,1)==summary(store,1)['recency']
+
+
+def test_function_map_does_not_build_contributor_history(tmp_path,monkeypatch):
+    from decompnet.app import history_summary
+    from decompnet.app.engine import RomNetwork
+    from tests.test_loading import tiny_game
+    net=RomNetwork(tmp_path/'map.db',tmp_path)
+    tiny_game(net)
+    def unexpected(*args):
+        raise AssertionError('Opening the map rebuilt contributor history')
+    monkeypatch.setattr(history_summary,'summary',unexpected)
+    assert net.function_map('game')
