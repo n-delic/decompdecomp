@@ -4106,3 +4106,24 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   an optional integer pointer cast, rejects macro captures and unbraced/labeled
   statements, and does not nest existing do scopes. It reaches both judging modes
   through the shared repair pipeline; ordinary exact verification still applies.
+
+### Native expansion must preserve the time an address was captured
+
+- A private KMC GCC 2.7.2 replay (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
+  exposed a source error, not a compiler scheduling rule: `perm_expand_expr`
+  replaced a captured row pointer at stores after its integer index had been
+  reassigned to a decoded value. The lower advisory score was rejected.
+- The native generator now filters eligible reads before invoking that method.
+  Operand writes (including updates in branches and the consuming statement),
+  changed control context, labels, escaped/qualified/static/global operands,
+  memory reads, calls and macro bindings prevent that expansion. Constant and
+  ordinary local-value captures remain eligible in supported straight-line cases.
+- Partial expansion retains the initializer needed by unexpanded reads. Fully
+  eligible expansion can still remove the capture. The pinned tool is unchanged;
+  a private function namespace substitutes its read finder for this method only.
+- In the private repro, four pre-mutation pointer reads remain eligible and seven
+  later reads are excluded. Homemade C90 execution checks cover partial expansion
+  and complete capture elimination. This guard only addresses operand stability,
+  not general type conversion, aliasing or equivalence of other random rewrites.
+  Ordinary exact judging and semantic review remain mandatory; no new game match
+  is claimed by this regression.

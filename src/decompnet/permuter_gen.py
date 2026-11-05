@@ -1,7 +1,7 @@
 """Variants of one function's C, made by decomp-permuter's randomizer (MIT, a pinned tool: toolchains.toml).
 
 A program of its own, not a module of decompdecomp: app/permute.py runs it with the Python of decomp-permuter's
-environment, `python -I permuter_gen.py <decomp-permuter's folder>`, and it imports nothing of decompdecomp. Our
+environment, `python -I permuter_gen.py <decomp-permuter's folder>`, and it imports only our dependency-free capture guard. Our
 own judge scores what it writes; this only makes candidates, so a variant that doesn't compile costs one compile.
 
 In, on stdin, one job per line, each a JSON object:
@@ -30,6 +30,7 @@ import json
 import random
 import re
 import sys
+from pathlib import Path
 
 KEEP = 0.6  # decomp-permuter's default chance of building on the last variant instead of starting again
 SOURCE_STARTS = "DECOMPDECOMP_SOURCE_STARTS"  # a typedef put between the header and the source, to find the seam
@@ -47,7 +48,9 @@ def plain_c(text: str, directives: bool = True) -> str:
 
 def main() -> int:
     sys.path.insert(0, sys.argv[1])  # decomp-permuter's folder: its `src` package and its own copy of pycparser
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from perm_pycparser import c_ast
+    from permuter_capture import protect_expand
     from src.ast_util import to_c
     from src.candidate import Candidate
     from src.helpers import get_default_randomization_weights
@@ -82,16 +85,25 @@ def main() -> int:
         seen = {own_part(first.ast)}  # the source as decomp-permuter prints it: not a variant
         cand = first
         lineage = []
-        def trace(candidate):
+        blocked = set(re.findall(r'\b[A-Za-z_]\w*\b', "\n".join(
+            line for line in (job["header"]+"\n"+source).splitlines() if line.lstrip().startswith("#"))))
+
+        def configure(candidate):
             def wrap(method):
                 def call(*args):
                     result = method(*args)
-                    lineage.append(method.__name__)
+                    if job.get("trace"):
+                        lineage.append(method.__name__)
                     return result
                 return call
-            candidate.randomizer.methods = [(wrap(method), weight) for method, weight in candidate.randomizer.methods]
-        if job.get('trace'):
-            trace(cand)
+            def guarded(method):
+                if method.__name__ == "perm_expand_expr":
+                    return protect_expand(method, blocked, lambda: [
+                        node for node in candidate.ast.ext if isinstance(node, c_ast.Typedef)])
+                return method
+            candidate.randomizer.methods = [(wrap(guarded(method)), weight)
+                                             for method, weight in candidate.randomizer.methods]
+        configure(cand)
         for _ in range(count * TRIES_PER_VARIANT):
             if len(seen) > count:
                 break
@@ -99,8 +111,7 @@ def main() -> int:
                 if cand is None or rng.random() >= KEEP:
                     cand = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
                     lineage = []
-                    if job.get('trace'):
-                        trace(cand)
+                    configure(cand)
                 cand.randomize_ast()
                 variant = own_part(cand.ast)
             except Exception:  # a rewrite that trips over this code: start again from the source
