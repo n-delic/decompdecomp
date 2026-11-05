@@ -3809,7 +3809,10 @@ relocation-display operands differed; the ordinary judge reported exact and the
 linked bytes equalled the original bytes. No judge rule was changed.
 
 The shared `constant_pointer_capture_timing` proposal reproduced the exact result
-at rank 6 of 34 from the original stored source, before ABI cleanup. All 33
+at rank 6 of 34 from the original stored source, before ABI cleanup. A copied
+project replay also placed the exact proposal sixth on the first eight-item
+`targeted_variants` page; this measures proposal generation and ordinary judging,
+not an automatic submission or promotion. All 33
 previous shared proposals failed to improve 190. Separately, the actual matched
 callee established a six-word aggregate beginning in the fourth argument; a
 source using that correct prototype also linked exactly after the same timing

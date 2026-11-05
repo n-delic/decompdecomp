@@ -83,3 +83,21 @@ def test_rejects_helper_shadowing_and_unproven_argument_values():
         assert not constant_pointer_repairs.variants(source,'update')
     direct=SOURCE.replace('State *p;\n    int zero = 0;\n    if (input) p = states; else p = states + zero;\n    return p;', 'return input;').replace('void *input','void *states').replace('return input;', 'return states;')
     assert not constant_pointer_repairs.variants(direct,'update')
+
+
+def test_rejects_shadowed_bindings_and_conditional_proofs():
+    helper=SOURCE[SOURCE.index('static inline'):SOURCE.index('void submit')]
+    for source in [
+        SOURCE.replace('submit(5,', '{ State *saved; submit(5,').replace('saved->count = 7;', 'saved->count = 7; }'),
+        SOURCE.replace('submit(5,', '{ int entry; submit(5,').replace('saved->count = 7;', 'saved->count = 7; }'),
+        SOURCE.replace('submit(5,', '{ State *other, *saved; submit(5,').replace('saved->count = 7;', 'saved->count = 7; }'),
+        SOURCE.replace(helper, '#if 0\n'+helper+'#else\n'+helper.replace('return p;', 'submit(1, 2); return p;')+'#endif\n'),
+        SOURCE.replace('extern State states[];', '#if FLAG\nextern State states[];\n#endif'),
+        SOURCE.replace('State *saved;', '#if FLAG\nState *saved;\n#endif'),
+    ]:
+        assert not constant_pointer_repairs.variants(source,'update')
+
+
+def test_unrelated_conditional_region_does_not_block_repair():
+    assert constant_pointer_repairs.variants('#if FLAG\nvoid unrelated(State *value);\n#endif\n'+SOURCE,'update')
+    assert constant_pointer_repairs.variants(SOURCE.replace('    submit(5,', '#if FLAG\n    unrelated();\n#endif\n    submit(5,'),'update')
