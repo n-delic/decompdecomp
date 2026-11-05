@@ -62,4 +62,43 @@ def proposals(source, tagged, evidence):
         if i<len(local):result.append(local[i])
         result.append(item)
     result.extend(local[len(tagged):])
-    return list(dict.fromkeys(result))
+    return order(source,list(dict.fromkeys(result)),evidence)
+
+
+TARGETED = {'dead_copy_source', 'divisor_normalization_copy', 'divisor_value_scope',
+            'divisor_flag_split', 'regional_load_reuse', 'debug_statement_boundary'}
+
+
+def changed_lines(source, candidate):
+    """Bound a complete proposal's changed span without splitting scope/lifetime edits."""
+    if source == candidate:
+        return set()
+    def common(limit, same):
+        low, high = 0, limit
+        while low < high:
+            middle = (low+high+1)//2
+            if same(middle):low=middle
+            else:high=middle-1
+        return low
+    size = min(len(source),len(candidate))
+    prefix = common(size,lambda n:source[:n]==candidate[:n])
+    suffix = common(size-prefix,lambda n:source[len(source)-n:]==candidate[len(candidate)-n:])
+    start = source.count('\n',0,prefix)+1
+    end = source.count('\n',0,len(source)-suffix)+1
+    return set(range(start,end+1))
+
+
+def order(source, tagged, evidence):
+    """Three mapped proposals then one broad probe; unmapped hypotheses always remain available."""
+    relevant = lines(source,evidence)
+    if not relevant:
+        return tagged
+    near, broad = [], []
+    for item in tagged:
+        changed = changed_lines(source,item[1]) if item[0] in TARGETED else set()
+        (near if changed and len(changed)<=8 and any(abs(a-b)<=1 for a in changed for b in relevant) else broad).append(item)
+    result = []
+    while near or broad:
+        result.extend(near[:3]); del near[:3]
+        if broad:result.append(broad.pop(0))
+    return result
