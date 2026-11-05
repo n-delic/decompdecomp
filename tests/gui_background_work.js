@@ -17,6 +17,9 @@ vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js'
  const stopButton={dataset:{stopBackground:'0'}};$('backgroundRows').querySelectorAll=()=>[stopButton];
  ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Lower CPU',kind:'job',key:'low',thread_ids:[10],stoppable:true},{title:'Higher CPU',kind:'job',key:'high',thread_ids:[11],stoppable:true}],thread_details:[{name:'low-thread',native_id:10,cpu_percent:1},{name:'high-thread',native_id:11,cpu_percent:20}]});
  let stopped;ctx.document.hidden=true;ctx.api=async(url,options)=>{stopped=options.body.key;};await stopButton.onclick();assert.equal(stopped,'high');
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'SDK naming',kind:'startup',key:'task-1',project:'game',state:'running',detail:'Checking 1 / 10',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/role="progressbar"/);
+ await stopButton.onclick();assert.equal(stopped,'task-1');
  ctx.document.hidden=true;await ctx.readBackgroundWork();assert.equal(reads,1);
  console.log('background visibility, request deduplication and escaping passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

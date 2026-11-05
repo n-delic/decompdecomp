@@ -81,3 +81,17 @@ def test_gui_job_records_its_actual_native_thread():
         assert m.jobs.jobs[jid]['thread_id']==seen[0]
     finally:
         release.set()
+
+
+def test_startup_tasks_have_project_context_and_stop_control():
+    import logging
+
+    from decompnet.app.startup import StartupQueue
+    m,_=monitor()
+    m.net.startup=StartupQueue(logging.getLogger('test'))
+    key=m.net.startup.add('SDK naming',lambda:None,project='game')
+    item=next(r for r in m.snapshot()['items'] if r['kind']=='startup')
+    assert item['project']=='game' and item['state']=='queued' and item['stoppable']
+    m.stop('startup',key)
+    assert m.net.startup.records[key].stop.is_set()
+    assert not any(r['kind']=='startup' for r in m.snapshot()['items'])

@@ -29,6 +29,10 @@ class Monitor:
         def add(kind, key, title, state, project='', detail='', stoppable=True):
             rows.append(dict(kind=kind, key=str(key), title=title, state=state, project=project,
                              detail=str(detail or ''), stoppable=stoppable, cpu_percent=None))
+        startup = getattr(self.net, 'startup', None)
+        startup_tasks = startup.snapshot() if startup is not None else []
+        for task in startup_tasks:
+            add('startup', task['key'], task['title'], task['state'], task['project'], task['detail'])
         with self.jobs._lock:
             for jid, job in list(self.jobs.jobs.items()):
                 if job['state'] != 'running':
@@ -72,7 +76,9 @@ class Monitor:
         for row in rows:
             kind, key = row['kind'], row['key']
             ids, names = [], []
-            if kind == 'job':
+            if kind == 'startup':
+                ids = [next((t['thread_id'] for t in startup_tasks if t['key'] == key), None)]
+            elif kind == 'job':
                 job = self.jobs.jobs.get(key, {})
                 ids = [job.get('thread_id')]
             elif kind == 'agent':
@@ -97,7 +103,11 @@ class Monitor:
                     cpu_note='App Python process only; 100% means one CPU core. Compiler subprocesses and the window are excluded. Jobs share threads and cannot be assigned accurate individual CPU percentages.')
 
     def stop(self, kind, key):
-        if kind == 'job':
+        if kind == 'startup':
+            startup = getattr(self.net, 'startup', None)
+            if startup is None or not startup.cancel(key):
+                raise NetworkError('This startup task has already finished. Refresh the list.')
+        elif kind == 'job':
             if not self.jobs.cancel(key):
                 raise NetworkError('This job has already finished. Refresh the list.')
         elif kind in ('drafter','permuter','twins'):

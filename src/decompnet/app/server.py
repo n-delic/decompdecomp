@@ -40,7 +40,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     manager = agents.Manager(net, home, mcp_url)
     jobs = Jobs(home / "logs" / "decomp.log")
     from .startup import StartupQueue
-    startup = StartupQueue(jobs.logger)
+    startup = net.startup = StartupQueue(jobs.logger)
     from .deep_sweep import Sweeps
     net.deep_sweeps = Sweeps(net, jobs)
     from .source_queue import Queue
@@ -125,23 +125,26 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     from .routes import pairing
     from .sdk_names import name_functions
-    def console_start(slug):
+    def console_start(slug, log):
+        log("Checking saved project and console compatibility")
         row = net.project_row(slug)
         cfg = json.loads(row['config'])
         if cfg.get('kind') == 'fork' and not cfg.get('platform'):
             row = net.forks.get(slug)[0]
         if net.is_rom(row):
             net.rangechecks.reopen(slug)
-        net.console(row).on_start(net, slug, log=jobs.logger.info)
+        log("Checking optional console upgrades")
+        net.console(row).on_start(net, slug, log=log)
+        log.check_cancel()
     startup_projects = list(net.store.all('SELECT slug FROM projects'))
     startup_projects.sort(key=lambda r: r['slug'] != settings.data.get('last_project'))
-    startup.add("Save existing matches to the local library", net.match_library.backfill)
+    startup.add("Archive verified matches", lambda log: net.match_library.backfill(log, only_changed=True), with_log=True)
     for row in startup_projects:
         slug = row['slug']
-        startup.add(f'Console startup {slug}', lambda slug=slug: console_start(slug))
+        startup.add('Console upgrades', lambda log, slug=slug: console_start(slug, log), project=slug, with_log=True)
     for row in startup_projects:
         slug = row['slug']
-        startup.add(f'SDK names {slug}', lambda slug=slug: name_functions(net, slug))
+        startup.add('SDK naming', lambda log, slug=slug: (log.check_cancel(), name_functions(net, slug)), project=slug, with_log=True)
     startup.start()
     saves.Autosave(net).start()  # follow work and contributions in each ROM project's authoritative progress folder
 

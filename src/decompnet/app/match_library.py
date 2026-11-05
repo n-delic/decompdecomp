@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS occurrences(
  print TEXT NOT NULL, symbols TEXT NOT NULL, seen REAL NOT NULL,
  UNIQUE(game_id,solution_id,name,print,symbols));
 CREATE INDEX IF NOT EXISTS occurrences_solution ON occurrences(solution_id);
+CREATE TABLE IF NOT EXISTS startup_scans(game_id TEXT PRIMARY KEY, stamp TEXT NOT NULL);
 '''
 
 
@@ -173,17 +174,32 @@ class Library:
         report(len(rows),'Game indexed')
         return len(rows)
 
-    def backfill(self, log=None):
+    def _startup_stamp(self, proj):
+        if self.net.cfg(proj).get('kind') != 'rom':return None
+        # Imported objects can change outside SQLite; keep their full file-based scan.
+        revisions = [self.net.store.read_version(kind, proj['id']) for kind in
+                     ('inputs','scope_context','scope_symbols','matched_evidence','fingerprints')]
+        from . import build_info
+        return encoded([1,build_info.commit(),str(self.net.store.path),proj['id'],proj['slug'],revisions,proj['config'],proj['root'],proj['name']])
+
+    def backfill(self, log=None, *, only_changed=False):
         failures=[]
         if log:log.progress({'phase':'Counting verified matches','done':0,'total':0})
         projects=[]
         for proj in self.net.store.all('SELECT * FROM projects ORDER BY id'):
             if log:log.check_cancel()
+            stamp = self._startup_stamp(proj) if only_changed else None
+            if stamp is not None:
+                with self.connect() as db:
+                    previous = db.execute('SELECT stamp FROM startup_scans WHERE game_id=?',(self.game_key(proj),)).fetchone()
+                if previous and previous['stamp'] == stamp:
+                    if log:log(f"{proj['name']}: verified-match archive is unchanged")
+                    continue
             rows=self.net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
-            projects.append((proj,rows))
-        total=sum(len(rows) for _,rows in projects)
+            projects.append((proj,rows,stamp))
+        total=sum(len(rows) for _,rows,_ in projects)
         completed=0
-        for index,(proj,rows) in enumerate(projects,1):
+        for index,(proj,rows,stamp) in enumerate(projects,1):
             from .maintenance import checkpoint
             checkpoint()
             if log:log.check_cancel()
@@ -192,7 +208,12 @@ class Library:
                 log.progress({**value,'game_done':value['done'],'game_total':game_total,
                               'game_index':game_index,'games_total':len(projects),
                               'done':offset+value['done'],'total':total})
-            try:self.archive_project(proj,log,rows=rows,progress=progress)
+            try:
+                self.archive_project(proj,log,rows=rows,progress=progress)
+                if log:log.check_cancel()
+                if stamp is not None and stamp == self._startup_stamp(self.net.project_row(proj['slug'])):
+                    with self.connect() as db:
+                        db.execute('INSERT OR REPLACE INTO startup_scans VALUES(?,?)',(self.game_key(proj),stamp))
             except (NetworkError,OSError,ValueError) as error:
                 failures.append(proj['name']+': '+str(error))
             completed+=len(rows)

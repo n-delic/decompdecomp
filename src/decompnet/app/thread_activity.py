@@ -50,7 +50,7 @@ def purpose(name):
         'sdk-names':('SDK indexing','Identifies project symbols using local SDK signatures.'),
         'focused-agent-deadline':('Agents','Enforces focused-agent time limits.'),
         'resume-work':('Startup','Restores background work after startup.'),
-        'startup-maintenance':('Startup maintenance','Staggers optional console initialization and SDK naming after the window opens.'),
+        'startup-maintenance':('Startup maintenance','Starts one named startup task at a time; task rows have their own stop controls.'),
         'consoles-start':('Startup','Initializes console support and tools.'),
         'updates':('Updates','Checks for source updates and coordinates reloads.'),
         'permuter-output':('Permuter','Reads output from a permutation subprocess.'),
@@ -58,6 +58,7 @@ def purpose(name):
     if name in exact:
         return exact[name]
     prefixes = [
+        ('startup-task-','Startup task','Runs one optional startup scan; stop it using its named task row.'),
         ('background-worker','Background pool','Shared machine-draft and permutation worker; may be idle.'),
         ('progress-compile','Saved progress','Compiles saved C to verify imported or synchronized matches.'),
         ('deep-pass','Deep permuter','Searches C rewrites for a function during a deep pass.'),

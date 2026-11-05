@@ -203,3 +203,27 @@ def test_backfill_reports_game_function_and_overall_progress(library):
     assert [p['done'] for p in writing]==[0,1]
     assert updates[-1]=={'phase':'Indexing complete','done':2,'total':2}
     assert [p['done'] for p in updates]==sorted(p['done'] for p in updates)
+
+
+def test_startup_archiving_skips_unchanged_roms_but_not_changed_inputs(library,monkeypatch):
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.kind','rom')")
+    calls=[]
+    archive=lib.archive_project
+    def track(proj,*args,**kwargs):
+        calls.append(proj['id']);return archive(proj,*args,**kwargs)
+    monkeypatch.setattr(lib,'archive_project',track)
+    lib.backfill(only_changed=True)
+    assert calls==[1,2]
+    calls.clear();lib.backfill(only_changed=True)
+    assert calls==[]
+    reopened=type(lib)(net)
+    monkeypatch.setattr(reopened,'archive_project',lambda *a,**kw:pytest.fail('Restart discarded persisted archive stamp'))
+    reopened.backfill(only_changed=True)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='int f1(void){return 43;}' WHERE id=1")
+    lib.backfill(only_changed=True)
+    assert calls==[1]
+    calls.clear();lib.backfill()
+    assert calls==[1,2], 'Explicit indexing must always rescan'
