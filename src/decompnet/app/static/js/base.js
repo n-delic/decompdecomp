@@ -156,7 +156,8 @@ function updateWorkProgress(log, progress) {
   const finished = counted ? Math.min(done, total) : 0;
   const percent = counted ? Math.floor(100 * finished / total) : 0;
   log._workStatus.textContent = phase + (counted ? ` · ${finished.toLocaleString()} / ${total.toLocaleString()} processed (${percent}%)` : "")
-    + (progress.function ? ` · ${progress.function}` : "")
+    + (progress.game ? ` · ${progress.game}` : "")
+    + (progress.function ? ` · ${progress.donor ? `${progress.donor} → ` : ""}${progress.function}` : "")
     + (progress.confirmed != null ? ` · ${progress.confirmed} matches confirmed` : "")
     + (progress.submitted != null ? ` · ${progress.submitted} better attempts submitted` : "");
   bar.setAttribute("aria-label", phase);

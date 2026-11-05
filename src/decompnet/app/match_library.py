@@ -235,6 +235,8 @@ class Library:
                 if job is not None:
                     job.cross_candidates+=1;job.cross_tried+=1
                     if bounded:job.reuse_attempts+=1
+                from .cross_game_progress import report
+                report(job, 'Compiling candidate', game=item['game'], function=b['name'], donor=item['name'])
                 outcome,why=twins._attempt_twin(agent,proj,{'name':item['name']},b,source,
                                               origin=' in '+item['game']+' (local match library)',theirs=fork)
                 if outcome=='miss':
