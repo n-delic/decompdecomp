@@ -657,3 +657,13 @@ profile. Neither source-only nor profile-only improvement would find this pair.
 Check that specific pair before a broad sweep. Match popularity can rank the
 correct local profile well below the default; multi-profile deep search visits
 only the explicitly selected number. Keep single-profile searches default-only.
+
+When the remaining miss is the register holding an early pointer, try sharing its
+storage with a later word scalar through `pointer_integer_phase_union`. A final
+call such as `code = inspect(pointer, pointer->kind)` reads the pointer before
+writing the scalar. An initialized union can preserve this allocation identity
+without reading a member as another type. Keep the initializer in its original
+position. Require a defined scalar phase, no subsequent pointer read on any CFG
+path or loop back edge, unescaped storage and explicit 32-bit pointer metadata.
+The normal linked byte/data judge must verify every proposal; later word compound
+updates keep their original type, while narrow compound updates stay excluded.

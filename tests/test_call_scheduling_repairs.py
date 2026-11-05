@@ -103,3 +103,67 @@ def test_initializer_rotation_never_reorders_volatile_private_assignments():
     source='void f(void) { f32 a; f32 b; a=first;\n b=2; use(a,b); }'
     rows=debug_initializer_repairs.variants(source,'f',FLAGS,'typedef volatile float f32;')
     assert not any('b=2; a=first;' in text for _,text in rows)
+
+
+def test_phase_union_initializes_pointer_then_overwrites_it_after_final_rhs_read():
+    source = ('void f(void) {\n Sound *sound = base;\n int code;\n'
+              ' code=inspect(sound, sound->kind);\n code &= 7;\n'
+              ' code=code+1; volume(code);\n}')
+    rows = phase_union_repairs.variants(source,'f','mips',FLAGS,HEADER)
+    assert len(rows)==1
+    text=rows[0][1]
+    assert 'union { Sound * pointer; int value; } __repair_phase_storage = { base };' in text
+    assert '__repair_phase_storage.value=inspect(__repair_phase_storage.pointer, __repair_phase_storage.pointer->kind);' in text
+    assert '__repair_phase_storage.value &= 7;' in text
+    assert '__repair_phase_storage.value=__repair_phase_storage.value+1;' in text
+    assert text.count('\n')==source.count('\n')
+    assert 'volume(__repair_phase_storage.value);' in text
+
+
+def test_phase_union_preserves_multiline_initializer_and_declaration_lines():
+    source = ('void f(void) { Sound *sound =\n base; int\n code;\n'
+              'code=inspect(sound);\n volume(code); }')
+    rows=phase_union_repairs.variants(source,'f','mips',FLAGS,HEADER)
+    assert len(rows)==1
+    assert rows[0][1].count('\n')==source.count('\n')
+    assert rows[0][1].splitlines()[-1]==' volume(__repair_phase_storage.value); }'
+
+
+def test_phase_union_rejects_pointer_storage_escapes_and_overlapping_phases():
+    source='void f(void) { Sound *sound=base; int code; code=inspect(sound); volume(code); }'
+    for replacement in [
+        'escape(&sound); code=inspect(sound);',
+        'code=inspect(sound); use(sound);',
+        'code=inspect(sound); if(input) use(sound);',
+        'do { code=inspect(sound); volume(code); } while(input);',
+        'code=inspect(sound)+code;',
+        'code=inspect(sound)+(code=1);',
+        'code=inspect(sound, sound=other);',
+        'code=(inspect(sound), code++);',
+        'if(input) code=inspect(sound);',
+        'code+=inspect(sound);',
+    ]:
+        candidate=source.replace('code=inspect(sound);',replacement)
+        assert not phase_union_repairs.variants(candidate,'f','mips',FLAGS,HEADER),replacement
+    assert not phase_union_repairs.variants(source.replace('sound=base','sound=sound'),'f','mips',FLAGS,HEADER)
+    assert not phase_union_repairs.variants(source,'f','mips',FLAGS,HEADER+'\n#define hidden sound')
+    assert not phase_union_repairs.variants(source,'f','mips',FLAGS,HEADER+'\ntypedef volatile int Sound;')
+
+
+def test_phase_union_keeps_narrow_compound_updates_guarded():
+    source='void f(void) { Sound *sound=base; u8 code; code=inspect(sound); code+=1; volume(code); }'
+    assert not phase_union_repairs.variants(source,'f','mips',FLAGS,HEADER)
+
+
+def test_phase_union_preserves_initializer_side_effects_and_final_call_arguments():
+    source=('void f(void) { Sound *sound = acquire(); int code; '
+            'prepare(sound); code=inspect(sound, next_argument()); volume(code); }')
+    rows=phase_union_repairs.variants(source,'f','mips',FLAGS,HEADER)
+    assert len(rows)==1
+    text=rows[0][1]
+    assert text.count('acquire()')==1
+    assert text.count('next_argument()')==1
+    assert text.index('acquire()')<text.index('prepare(')<text.index('inspect(')
+    assert 'inspect(__repair_phase_storage.pointer, next_argument())' in text
+    assert not phase_union_repairs.variants(source.replace('prepare(sound);','{ Sound *sound=other; prepare(sound); }'),'f','mips',FLAGS,HEADER)
+    assert not phase_union_repairs.variants(source.replace('prepare(sound);','escape(&sound); prepare(sound);'),'f','mips',FLAGS,HEADER)
