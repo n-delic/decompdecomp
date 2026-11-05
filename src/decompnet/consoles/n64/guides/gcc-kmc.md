@@ -702,3 +702,11 @@ until the ordinary linked judge verifies simplification. The shared
 `constant_pointer_capture_timing` repair proposes this bounded change; it does
 not infer or rewrite the callee ABI. Verify aggregate arguments against the
 actual callee, since old matched callers can carry misleading prototypes.
+
+Repeated aligned scalar loads through a local byte pointer can schedule differently
+when expressed through a candidate-local record view. With `-O2 -g3`, one private
+function's halfword load moved before a global pointer store and matched exactly.
+The shared inferred-record repair also recognizes implicit byte offsets for unique,
+unescaped initialized local byte pointers, retaining its two-field/three-access
+minimum. Explicit early scalar captures changed register allocation instead.
+Treat the inferred record as a local hypothesis and keep ordinary linked verification.

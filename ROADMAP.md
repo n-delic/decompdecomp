@@ -2385,3 +2385,8 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   and project repair consumers, and reproduced a private MIPS GCC linked match at
   rank 6 of 34. It leaves callee prototypes to verified source context.
 - Done: independent patch batches identify all invalid variant anchors and their current revision before any trial compiles, allowing one precise correction without partial edits.
+
+- Done: inferred candidate-local records recognize repeated aligned scalar accesses
+  through initialized local byte pointers, with no other pointer uses. Shared repair
+  paths retain the existing field/access bounds and ordinary judge; guards reject
+  mutation, escape, shadows, unknown uses, qualifiers and preprocessor directives.
