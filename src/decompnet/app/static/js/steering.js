@@ -353,23 +353,65 @@ function renderAutopilot(ov) {
     toggle.setAttribute('aria-expanded', String(!body.hidden));
   };
   $("crossGameWork").hidden = $("crossGameLog")._slug !== ov.slug;
-  const run = $("crossGameRun");
+  const run = $("crossGameRun"), minutes = $("crossGameMinutes"), attempts = $("crossGameAttempts");
+  const preset = $("crossGamePreset"), stop = $("crossGameStop");
+  stop.hidden = !run._working || $("crossGameLog")._slug !== ov.slug;
+  const budgetKey = `cross-game-budget:${ov.slug}`;
+  if (minutes._slug !== ov.slug) {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(budgetKey)); } catch (_) { /* Storage may be unavailable. */ }
+    minutes.value = saved?.minutes || 2; attempts.value = saved?.attempts || 128;
+    minutes._slug = ov.slug;
+    preset.value = saved ? 'custom' : 'quick';
+  }
+  const saveBudget = () => {
+    try { localStorage.setItem(budgetKey, JSON.stringify({minutes: Number(minutes.value), attempts: Number(attempts.value)})); }
+    catch (_) { /* The search still works when device storage is unavailable. */ }
+  };
+  minutes.onchange = attempts.onchange = () => { preset.value = 'custom'; saveBudget(); };
+  preset.onchange = () => {
+    const values = {quick: [2, 128], thorough: [60, 10000], overnight: [720, 100000]}[preset.value];
+    if (values) { [minutes.value, attempts.value] = values; saveBudget(); }
+  };
   const busy = ov.twins?.state === 'running' || ov.autopilot?.state === 'running';
   run.disabled = !!run._working || busy;
   run.textContent = busy || run._working ? 'Checking…' : 'Run now';
   run.onclick = async () => {
-    if (run._working) return;
+    if (run._working || !minutes.reportValidity() || !attempts.reportValidity()) return;
+    body.hidden = false; collapsed.delete(ov.slug);
+    toggle.setAttribute('aria-expanded', 'true');
+    saveBudget();
+    const seconds = Number(minutes.value) * 60, limit = Number(attempts.value);
     const slug = ov.slug, log = $("crossGameLog");
+    const status = $("crossGameBudgetStatus"), bar = $("crossGameBudgetBar");
+    status.textContent = `Preparing · 0 / ${limit.toLocaleString()} checks used · ${seconds.toLocaleString()} second limit`;
+    bar.setAttribute('aria-valuemax', String(limit)); bar.setAttribute('aria-valuenow', '0');
+    bar.firstElementChild.style.width = '0%';
+    log._showJobProgress = true;
     run._working = true; log._slug = slug; $("crossGameWork").hidden = false;
     showJobError(log, '');
-    const finish = beginWork(log, 'Checking other games', [run], 'Cross-game check finished.');
+    const finish = beginWork(log, 'Checking other games', [run, minutes, attempts, preset], 'Cross-game check finished.');
+    stop.hidden = false; stop.disabled = true;
     try {
-      const {job} = await api('/api/cross-game/run', {method:'POST', body:{slug}});
-      const result = await followJob(job, log);
+      const {job} = await api('/api/cross-game/run', {method:'POST', body:{slug, seconds, attempts: limit}});
+      stop.disabled = false;
+      stop.onclick = async () => {
+        stop.disabled = true;
+        try { await api('/api/job/cancel', {method:'POST', body:{id: job}}); }
+        catch (error) { stop.disabled = false; showJobError(log, error.message); }
+      };
+      const result = await followJob(job, log, (_lines, snapshot) => {
+        const p = snapshot.progress;
+        if (!p || S.slug !== slug) return;
+        const elapsed = snapshot.state === 'running' && snapshot.t ? Math.max(0, Date.now() / 1000 - snapshot.t) : p.seconds;
+        status.textContent = `${p.attempts.toLocaleString()} / ${p.attempt_limit.toLocaleString()} checks used · ${Math.round(elapsed).toLocaleString()} / ${p.second_limit.toLocaleString()} seconds · ${p.confirmed} verified matches`;
+        bar.setAttribute('aria-valuemax', String(p.attempt_limit)); bar.setAttribute('aria-valuenow', String(p.attempts));
+        bar.firstElementChild.style.width = `${Math.min(100, 100 * p.attempts / p.attempt_limit)}%`;
+      });
       if (S.slug === slug) { await poll(false); refreshMap(); }
       toast(`${result.matched} matches · ${result.improved} partial improvements from other games.`, 'match');
     } catch (error) { showJobError(log, error.message); }
-    finally { finish(); run._working = false; run.textContent = 'Run now'; }
+    finally { finish(); stop.hidden = true; run._working = false; run.textContent = 'Run now'; }
   };
   const cross = ov.cross_game || { counts: {}, recent: [] };
   const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
@@ -1121,8 +1163,9 @@ function renderCompilerWaiting(ov) {
   const sg = compilerSuggestions(ov);
   setHtml($("compilerWaiting"), sg.length ? `<div class="row" style="justify-content:space-between"><p class="col-title">Waiting for you · ${sg.length}</p><button type="button" class="primary small-btn" data-apply-all>Accept all ${sg.length} suggestions</button></div>${sg.map(suggestionHtml).join("")}` : "");
 }
+$("closeProjectBtn").onclick=()=>closeUnfinishedProject(S.slug,S.ov.title);
 $("deleteBtn").onclick = () => {
-  dialog("Remove project", `<p>Remove <b>${esc(S.ov.title)}</b> from decompdecomp? Matched functions and notes are deleted.</p>
+  dialog("Remove project", `<p>Remove <b>${esc(S.ov.title)}</b> from decompdecomp? Verified matches stay in your local match library. Project notes are removed.</p>
     <label class="check"><input type="checkbox" id="delFiles"><span>Also delete the project folder (your ROM copy and exported sources in it)</span></label>
     <div class="row"><button class="primary" id="delGo" type="button">Remove</button><button class="ghost" data-close type="button">Cancel</button></div>`);
   $("delGo").onclick = async () => {

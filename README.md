@@ -705,7 +705,9 @@ app and leaves this one running. Neither copies/migrates data nor alters the ins
 New managed agent sessions and jobs are held until existing work finishes. Continuous background
 passes may need to be stopped from their own panels. You can cancel while waiting. Once idle, the
 app fast-forwards main, runs locked dependency sync, checks imports, then restarts with the chosen
-home. Local changes, another branch, a different origin or failed preparation stop the handoff.
+home. If only the permuter worker's Python files changed, the source app fast-forwards the checkout
+and restarts that worker while the server and other jobs continue. Local changes, another branch, a
+different origin or failed preparation stop the handoff.
 The checkout and selected data remain separate from packaged code: to return to the packaged app,
 quit the source app before opening the installed app using the same data. External AI clients do
 not participate in this managed session drain; finish their work before switching runtimes.
@@ -716,7 +718,8 @@ function, disclosures and main scroll position are restored. Backend workers and
 rooms continue running. Edited text or an open dialog/agent launcher delays the
 page reload and shows a **Reload interface** button; save or copy edits before
 using it. Set `DECOMP_LIVE_RELOAD=0` before launching to disable this behavior.
-Packaged apps do not watch files. Python backend changes still require a restart.
+Packaged apps do not watch files. In a checkout, edits to the permuter worker's Python code restart
+only that worker; a turn in progress may be retried. Other Python backend changes require a restart.
 Existing running copies need one restart to pick up this file-watching feature.
 
 On a Mac desktop, `DECOMP_TEST_COCOA=1 uv run pytest -q tests/test_macos.py` also exercises a hidden
@@ -1752,3 +1755,31 @@ need their own verified intrinsic integration before this call can be used there
 Referenced fixed intrinsic templates travel with rebuildable ROM exports and verified
 repository sync headers, so standalone builds that invoke the compiler directly retain
 the same operation. Unrelated sources keep their existing prelude.
+
+Boundary review now explains the specific warning beside neighbouring original instructions and before/after
+extents. **Ask an agent to investigate** starts one advisory worker on the selected entry for up to ten minutes.
+It records supporting evidence, counter-evidence, uncertainty and instruction links, without claiming, compiling
+or editing functions. Review its proposal, preview the exact change, then run safety checks and save. Safety
+checks protect existing work; they do not prove function ownership. This guided repair flow covers mapped
+MIPS ROM projects; other processors and imported builds still need adapters.
+
+### Keep matches when closing projects
+
+Settings → **Local match library** lists saved functions and the games that share them, most widely
+shared first. Verified matches are saved automatically in `.decomp/match-library.sqlite3`, separately
+from the active project database. Existing matches are indexed in the background; **Index existing
+matches** runs that pass manually. Closing/removing a project saves its matches before deleting its
+app records, even if you also remove the project folder. Notes and unfinished attempts are not archived.
+
+A shared function has one fingerprint record and links to its games/original function names. Identical
+source and header blobs are stored once; distinct verified source/compiler variants remain available.
+Matches from closed projects participate in normal free cross-project searches. A destination still
+has to compile and pass its own exact byte or object comparison. No game bytes are stored in the library,
+and it is not uploaded. Copy this database with your app data when moving to another computer.
+
+The **Matches from other games** panel shows the current discovery stage, donor game and
+function being checked. Its time and candidate-check budgets are configurable, with quick,
+one-hour and overnight presets. Manual passes allow up to 24 hours and 1,000,000 checks,
+including unfinished donor C. Each project remembers the controls on this device. The
+budget bar shows checks used, not whole-library completion; a pass stops when either
+limit is reached or eligible candidates run out. **Stop** keeps verified results.

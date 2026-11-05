@@ -62,6 +62,18 @@ def register(app: App) -> None:
                     jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed)
         return handler
 
+    def g_boundary_evidence(slug, request, data):
+        from .. import boundary_evidence, boundary_investigations
+        packet=boundary_evidence.read(net,slug,request.query_params.get('function',''))
+        return {**packet,'suggestions':boundary_investigations.suggestions(net,slug,packet)}
+
+    def g_boundary_investigations(slug, request, data):
+        name=request.query_params.get('function','')
+        net._function(name,slug)
+        return {'sessions':[{'id':s.id,'state':s.state,'why':s.why,'error':s.error,'label':s.label}
+                            for s in manager.sessions.values() if s.slug==slug and s.options.get('task')=='boundary'
+                            and s.options.get('boundary_function')==name]}
+
     def p_boundary_repairs(slug, request, data):
         from .. import boundary_repairs as repairs
         if request.method == 'GET':return repairs.audit(net,slug)
@@ -575,7 +587,9 @@ def register(app: App) -> None:
         return net.overview(slug)
 
     def p_cross_run(slug, request, data):
+        from ..cross_game_progress import limits, report
         from ..twins import Job
+        seconds, attempts = limits(data)
         net.project_row(slug)
         if slug in net.links:
             raise ValueError('Run cross-game checks on the room host.')
@@ -587,18 +601,29 @@ def register(app: App) -> None:
             net.twins.jobs[slug] = check
         def work(log):
             from ..free_candidates import budget
-            budget(check, seconds=120, attempts=128)
+            budget(check, seconds=seconds, attempts=attempts)
+            check.stop = log.cancel_event
+            check.cross_report = log.progress
+            check.cross_started = time.monotonic()
+            check.cross_seconds = seconds
+            # Manual budgets also govern partial donors, rather than silently stopping them at 64 trials.
+            check.partial_limit = attempts
             try:
-                log('Checking identical functions and better partial candidates in other local games…')
+                report(check, 'Preparing local match library')
+                log(f'Budget: {seconds:,} seconds · {attempts:,} candidate checks. Stops at either limit or when candidates run out.')
                 before = net.twins.cross_game_results(slug)['counts'].get('improved', 0)
                 matched = net.twins.across_games(slug, check)
                 improved = net.twins.cross_game_results(slug)['counts'].get('improved', 0) - before
-                log(f'{matched} verified matches · {improved} partial improvements · {check.cross_tried} checks.')
+                from ..free_candidates import exhausted
+                reason = 'Budget reached' if exhausted(check) else 'All eligible candidates checked'
+                report(check, reason)
+                log(f'{reason}. {matched} verified matches · {improved} partial improvements · {check.cross_tried} checks.')
                 return {'matched': matched, 'improved': improved, 'tried': check.cross_tried}
             finally:
                 check.state = 'stopped' if check.stop.is_set() else 'done'
         try:
-            return {'job': jobs.start('cross-game', work)}
+            return {'job': jobs.start('cross-game', work,
+                                      cancel_message='Cross-game check stopped. Verified matches and improvements are saved.')}
         except Exception:
             check.state = 'done'
             raise
@@ -678,6 +703,8 @@ def register(app: App) -> None:
         return measurements(net)
 
     routes = {
+        "/api/boundary-evidence": (g_boundary_evidence, ["GET"]),
+        "/api/boundary-investigations": (g_boundary_investigations, ["GET"]),
         "/api/boundary-repairs": (p_boundary_repairs, ["GET", "POST"]),
         '/api/repair-generation-metrics': (g_generation_metrics, ['GET']),
         "/api/project": (p_overview, ["GET"]),

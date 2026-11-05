@@ -535,20 +535,33 @@ class Store:
         """Serialized transaction. Never compile while holding this. One inside another joins it: they commit (or
         roll back) together, which is how many small writes cost one commit's wait for the disk."""
         from .request_timing import timed_lock
+        callbacks = []
         with timed_lock(self.lock,'write_lock_wait'):
             if getattr(self._local, "in_tx", False):
                 yield self.conn
                 return
             self.conn.execute("BEGIN IMMEDIATE")
             self._local.in_tx = True
+            self._local.after_commit = []
             try:
                 yield self.conn
             except BaseException:
                 self.conn.execute("ROLLBACK")
+                self._local.after_commit = []
                 raise
             finally:
                 self._local.in_tx = False
             self.conn.execute("COMMIT")
+            callbacks, self._local.after_commit = self._local.after_commit, []
+        for callback in callbacks:
+            callback()
+
+    def after_commit(self, callback):
+        """Publish external derived evidence only after its enclosing write succeeds."""
+        if getattr(self._local, 'in_tx', False):
+            self._local.after_commit.append(callback)
+        else:
+            callback()
 
     def _reader(self) -> sqlite3.Connection | None:
         """This thread's own connection for reading, or None: inside tx() (a read there must see what the transaction

@@ -45,6 +45,9 @@ class FakeNet:
             db.execute("INSERT INTO functions(id, project_id, name, n_insns, best_score, best_source, vram) "
                        "VALUES(1, 1, 'f', 10, 40, ?, 2147483648)", (SOURCE,))
 
+    def attribution_agent(self, name):
+        return AGENT
+
     def cfg(self, proj):
         return json.loads(proj["config"])
 

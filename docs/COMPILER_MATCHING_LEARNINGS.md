@@ -22,6 +22,47 @@ Use these evidence levels:
 
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
+### Verified linked case: unsigned byte increment before a call
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
+A 212-instruction state-transition function had a valid independently reconstructed source at
+weighted score70, with three operand/order differences around a byte update and call setup.
+An older score60 source used an artificial constant function-address condition with identical
+arms; that source was rejected before attempting repair.
+
+A controlled type cleanup (real pointer-bearing records and callback slot types) retained 70.
+Changing a standalone assignment of `(signed char)(cached_signed_byte + 1)` into a discarded
+increment through `unsigned char *` recovered all 848 ordinary linked bytes. Prefix and postfix
+spellings both matched because the expression result is discarded. An explicit unsigned temporary
+also matched. Merely casting the destination to unsigned retained 70; incrementing the signed
+cached local then storing worsened 290. Index widening also worsened the match. This supports one
+source-shape repair, not a general scheduling rule. The byte conversions are equivalent on the
+known two's-complement target; do not replace a used assignment result or introduce signed-byte
+increment overflow. The cached value remains unchanged for later uses.
+
+Private immutable source/header/target/profile/symbol inputs and raw `LinkResult.linked_code`
+equality were retained for this case. The reusable generator recovered 70→0 from that baseline
+with two candidates and unchanged header, target and flags; this replay is a controlled regression,
+not another new match. Generated preferred-source SHA256:
+`7843f695fdf4bceea0d5877ee2cb4ccaf30e53ebe03640b69f3c55a467b9f731`.
+The independently reviewed source also passed a complete 12,582,912-byte cartridge rebuild,
+preserving all 2,065 previous object/profile pairs; normal app judging accepted the match.
+Evidence: [published matching source](https://github.com/RetroReversing/v-rally-decomp/commit/6d55866).
+The preferred generated physical source independently passed the same full-cartridge gate:
+12,582,912 identical bytes, with all 2,065 previous object/profile pairs unchanged. This is the
+same function and does not increase the match count again.
+
+The shared `unsigned_byte_increment` family accepts a unique dominating cached-byte load or a
+direct byte read. A bounded CFG checks every load-to-store path for intervening writes/calls;
+only explicit ordinary reads, scalar assignments to unescaped locals, and branches are allowed.
+The address must resolve to the same uniquely declared pointer root and constant byte offset.
+Unknown type aliases, qualifiers, pointer escapes, shadows, macros, preprocessing, cycles,
+side-effecting addresses, or used assignment values yield no proposal. At most two standalone
+unsigned increment spellings are generated. Existing draft, autopilot, agent and deep repair routes
+retain family provenance and ordinary compiler/link or object judging. Controlled host tests cover
+all 256 byte values, branch outcomes, retained cached values and side effects outside the interval;
+negative cases cover observable address-evaluation effects. No game data is included in tests.
+
 ### Verified case: register allocation after late cancellation
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
@@ -4202,3 +4243,70 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   candidates or prove other random rewrites equivalent. Existing bad candidates
   still need explicit source review and, when appropriate, corrective adoption
   even when the corrected source has a higher advisory score.
+
+## Targeted proposal scheduling and measured output feedback (2026-11-05)
+
+The previous native KMC GCC 2.7.2 controller recovery (`-G0 -mips3 -mgp32 -mfp32
+-O2 -g3`) motivated these shared search changes:
+
+- Existing compiler source mappings now rank complete copy, divisor/flag and boundary
+  edits near the actual mismatches. No instruction index is guessed to be a C line;
+  stale source hashes are ignored. Three focused slots retain one broad slot, and
+  compound lifetime/scope edits are never split into disconnected fragments.
+- `divisor_normalization_copy`/`divisor_value_scope` explicitly prefer
+  `dead_copy_source` and flag separation in the combination planner. Pair probes still
+  spend the ordinary budget; an inert or worse parent is not automatically adopted.
+- The default boundary API page remains twelve. Shared searches can enumerate the
+  bounded 512-boundary pool. Iterative search uses its persisted pages; deep/background
+  boundary slots have a persisted cursor advanced only by a scored trial. Cursor
+  identity includes build, source and pool; at most sixteen scopes per function remain.
+  This is bounded search, not a claim to exhaust every possible C program.
+- Four no-edit/identical-output trials can reduce a family's early priority; changed
+  regressions are reduced more gently after eight trials. Third-sibling exploration,
+  deferred slots and complementary probes remain. Missing fingerprints and cached
+  replays do not teach fresh output statistics. Equal scores are never output proof.
+- Compact advice reports improved and regressed target blocks/windows against an
+  explicit parent or a labeled preceding same-build trial. It is guidance for smaller
+  models, not a source map or match verdict. No model-token saving is claimed without
+  measuring model sessions.
+
+Public synthetic regressions exercise later boundary pages across new deep-search jobs,
+source/header/pool invalidation, cancelled/unknown trials, mapped-copy priority, pair
+selection, fingerprint categories and regional regressions. Private frozen compiler-output
+replays remain outside the repository and compare to a previously verified exact control;
+these do not count as new game matches. The original 330-point plateau remains a useful
+negative control rather than evidence that scheduling alone fixes structural errors.
+
+### Frozen replay result
+
+With the same private KMC profile/header/control and a sixteen-candidate allowance,
+shared family ranking plus source-mapped ordering/combination feedback recovered the
+30-point precursor in **6** candidate compiles versus **16** with the previous policy.
+The 10-point precursor recovered in **2** versus **3**. Both recovered the complete
+previously verified compiler-output control, including allocated sections. The
+330-point plateau stayed at 330 after sixteen trials under both policies; output
+fingerprints showed fifteen inert trials previously and sixteen under the new policy.
+Thus the measured benefit is quicker late recovery, not a new match or a demonstrated
+improvement on the structural plateau. These are offline policy replays, not a full
+running-app timing or model-token benchmark. Mapping came from each exact baseline
+object, with no diagnostic flag changes or guessed source locations.
+
+## 2026-11-05: SN EE-GCC needs a real executable path without spaces
+
+- **Compilers/flags:** SN Systems EE-GCC 2.95.2 (273a) and 2.95.3 (136), `-O2 -G0`,
+  little-endian R5900, original Windows executables through pinned macOS wibo.
+- **Controlled regression:** an unchanged `int probe(int a,int b){return a+b;}` is
+  compiled and linked against a homemade eight-byte return/add target by
+  `tests/test_ps2_compilers_macos.py::test_real_mac_ps2_engine_and_export_compile`.
+  Installed under macOS `Application Support`, both drivers fail preprocessing with
+  `Too many arguments`; a private materialized runtime copy without whitespace
+  restores successful compilation. The normal judge still rejects subtraction.
+- **Mechanism:** `-v` shows an injected, unquoted `-I Z:\...\Application Support\...`
+  derived from the canonical executable location. A space-free symlink and a relative
+  `-B` prefix still expose that real location; `-nostdinc` does not suppress this
+  driver-added include. Copy the installed pack, rather than changing source/flags
+  or weakening the judge. Original binaries and install manifests remain unchanged.
+- **Scope:** runtime-path compatibility, not a new retail-game match or an ABI/flag
+  recommendation. Shared runtime resolution covers live judging, profile comparison
+  and exported builds. Temporary copies are private to a process, reused by threads
+  and replaced after reinstall. Physical Intel Mac and Windows checks remain open.

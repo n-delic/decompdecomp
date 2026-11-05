@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from ..hostenv import NO_WINDOW, find_uv
+from ..network import NetworkError
 from . import edition, window
 
 
@@ -62,6 +63,18 @@ def idle_wait(net, state, seconds):
 ACTIVE = ('preparing', 'waiting', 'deferred', 'updating', 'restarting')
 DRAIN_SECONDS = 15
 RETRY_SECONDS = 60
+
+
+def worker_only_changes(paths):
+    """Only child-owned code can change under a live server; docs/tests are inert."""
+    worker = {"src/decompnet/app/permute.py", "src/decompnet/app/permuter_initialization.py",
+              "src/decompnet/app/permuter_local.py", "src/decompnet/app/permuter_macro_effects.py",
+              "src/decompnet/permuter_gen.py", "src/decompnet/permuter_capture.py"}
+    def child_owned(path):
+        return path in worker
+    return bool(paths) and any(child_owned(path) for path in paths) and all(
+        child_owned(path) or path in ("README.md", "ROADMAP.md") or
+        path.startswith(("docs/", "tests/")) for path in paths)
 
 
 class Runtime:
@@ -141,6 +154,30 @@ class Runtime:
             command(argv, cwd)
         return staged
 
+    def update_worker_source(self, folder, staged, git, repo):
+        """Fast-forward child-only code while the server keeps its loaded modules."""
+        worker = getattr(self.app.net, "permuter", None)
+        if folder.resolve() != edition.CHECKOUT_ROOT.resolve() or not hasattr(worker, "code_update"):
+            return False
+        validate(str(folder), repo)
+        desired = command([git, "rev-parse", "HEAD"], staged)
+        command([git, "fetch", "--quiet", "origin", "main"], folder)
+        current = command([git, "rev-parse", "HEAD"], folder)
+        if current == desired:
+            self.job.update(state="done", message="Checkout already current. The app continues running.")
+            return True
+        if command([git, "merge-base", current, desired], folder) != current:
+            return False
+        changed = command([git, "diff", "--name-only", current, desired], folder).splitlines()
+        if not worker_only_changes(changed):
+            return False
+        with worker.code_update():
+            validate(str(folder), repo)  # work written while preparing cannot be overwritten
+            command([git, "merge", "--ff-only", desired], folder)
+        self.app.build_id = desired[:12]
+        self.job.update(state="done", message="Permuter updated. Its worker restarted; the app and other jobs kept running.")
+        return True
+
     def drain(self):
         """Try a bounded checkpoint; never leave every worker held behind a long-running job."""
         while not self.cancel.is_set():
@@ -204,6 +241,7 @@ class Runtime:
             if self.cancel.is_set():
                 self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
                 return
+            source_folder = folder
             folder = self.prepare(folder, git, uv, repo)
             if self.cancel.is_set():
                 self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
@@ -219,6 +257,8 @@ class Runtime:
                                  cwd=folder,env=env,stdin=subprocess.DEVNULL,creationflags=NO_WINDOW)
                 self.job.update(state='done',message=f'Development app launched with separate data at {target}. This app keeps its current data and continues running.')
                 return
+            if self.update_worker_source(source_folder, folder, git, repo):
+                return
             if not self.drain():
                 self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
                 return
@@ -231,7 +271,7 @@ class Runtime:
                 env.pop(key,None)
             os.chdir(folder)
             os.execve(uv,[uv,'run','--project',str(folder),'--no-sync','python','-m','decompnet.app.cli','--port',str(self.app.port)],env)
-        except (OSError,ValueError,subprocess.SubprocessError) as error:
+        except (OSError,ValueError,NetworkError,subprocess.SubprocessError) as error:
             self.job.update(state='error',message=str(error) + (' Restart failed after shutdown; reopen decompdecomp from the checkout.' if self.job['state']=='restarting' else ' Current app has not been restarted.'))
         finally:
             self.hold(False)

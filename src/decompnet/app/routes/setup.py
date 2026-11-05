@@ -197,7 +197,7 @@ def register(app: App) -> None:
         requested_models = unique_models
         if given.get("multiple_models") and not requested_models:
             return fail(ValueError("choose at least one model"))
-        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task", "selection", "focus_function", "focus_minutes")}  # task: "readable" polishes
+        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task", "selection", "focus_function", "focus_minutes", "boundary_function")}  # task: "readable" polishes
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
         count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
         total = (len(requested_models) if requested_models else 1) * count
@@ -207,12 +207,14 @@ def register(app: App) -> None:
                 "pick fewer models or fewer of each"))
         if requested_models and options.get("model"):
             return fail(ValueError("choose specific models or one model, not both"))
+        if options.get('task') == 'boundary' and total != 1:
+            return fail(ValueError('Choose one agent and one model for a boundary investigation.'))
         if options.get('focus_function') and total!=1:
             return fail(ValueError('Choose one agent and one model for a focused run.'))
         picked: list[str] = []
         try:
             net.project_row(slug)
-            if options.get("task") != "readable":
+            if options.get("task") not in {"readable", "boundary"}:
                 net.warm_briefs_soon(slug)  # matching briefs and machine drafts are not polishing inputs
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]
@@ -423,7 +425,7 @@ def register(app: App) -> None:
             net.permuter.configure(settings.data)
         if "worker_threads" in data:  # nothing or 0: as many as the computer can spare (workers.py)
             settings.data["worker_threads"] = max(0, int(data["worker_threads"] or 0))
-            workers.configure(settings.data["worker_threads"])
+            workers.configure(net.permuter.parent_threads(settings.data["worker_threads"]))
         if "auto_update" in data:
             settings.data["auto_update"] = bool(data["auto_update"])
         if "check_updates" in data:

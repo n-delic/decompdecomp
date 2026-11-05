@@ -101,4 +101,4 @@ def investigation_completed(net, agent, slug, tool):
 def investigation_outcome(net, agent, began):
     row = net.store.one("SELECT detail FROM events WHERE agent_id=? AND kind='investigation' AND created_at>=? ORDER BY id DESC LIMIT 1", agent.id, began)
     return {'report_boundary':'Boundary review submitted', 'report_data_region':'Data investigation completed',
-            'report_candidate_issue':'Candidate concern submitted'}.get(row['detail']) if row else None
+            'report_candidate_issue':'Candidate concern submitted', 'suggest_boundary':'Boundary recommendation submitted'}.get(row['detail']) if row else None

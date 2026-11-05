@@ -1303,6 +1303,14 @@ details.more[open] > summary::before { content: "− "; }
 /* Cross-game transfers: a result, its provenance, and one clear score change per row. */
 #crossGamePanel .panel-head { flex-wrap: wrap; gap: 12px; }
 .transfer-filter { max-width: 100%; }
+.transfer-controls { padding: 16px; border-bottom: 1px solid var(--line); }
+.transfer-budgets { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.transfer-budgets label { display: grid; gap: 6px; font-size: 12px; }
+.transfer-budgets input { width: 150px; max-width: 100%; }
+.transfer-controls > p { margin: 12px 0 0; line-height: 1.6; }
+.transfer-controls [role="status"] { overflow-wrap: anywhere; }
+.transfer-controls .joblog { margin-bottom: 0; }
+#crossGameBudgetBar { margin: 8px 0 14px; }
 .transfer-summary { padding: 16px; border-bottom: 1px solid var(--line); }
 .transfer-totals { display: flex; flex-wrap: wrap; gap: 12px 28px; color: var(--muted); font-size: 12px; }
 .transfer-totals span { display: flex; align-items: baseline; gap: 7px; }
@@ -1854,3 +1862,18 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .boundary-assembly span { display:block; }
 .boundary-inside { color:var(--ink); background:color-mix(in srgb,var(--hl) 12%,transparent); }
 #fnBoundaryRepair { margin-bottom:16px; }
+
+/* Evidence stays above decisions; boundary lines remain linkable from agent citations. */
+.boundary-layout { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
+.boundary-layout > div { flex:1 1 180px; display:grid; gap:5px; border:1px solid var(--line); border-left:4px solid var(--muted); padding:10px; overflow-wrap:anywhere; }
+.boundary-decisions { border:0; padding:0; margin:20px 0; display:grid; gap:8px; }
+.boundary-decisions legend { font-weight:700; margin-bottom:10px; }
+.boundary-choice { display:flex; align-items:flex-start; gap:10px; border:1px solid var(--line); padding:12px; border-radius:var(--r); cursor:pointer; }
+.boundary-choice input { margin-top:4px; flex:none; }
+.boundary-choice > span { display:grid; gap:5px; }
+.boundary-choice:has(input:checked) { border-color:var(--ink); background:color-mix(in srgb,var(--hl) 12%,transparent); }
+.boundary-suggestion { margin:14px 0; padding:14px; border:1px solid var(--line); border-left:4px solid var(--ink); border-radius:var(--r); }
+.boundary-cited, .boundary-assembly span:target { outline:2px solid var(--ink); outline-offset:2px; }
+[data-boundary-agent] { padding:12px; margin:16px 0; }
+[data-boundary-agent] summary { cursor:pointer; font-weight:700; }
+[data-boundary-evidence] { scroll-margin-top:16px; }

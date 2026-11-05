@@ -244,6 +244,7 @@ async function renderWebGithubSettings(onSaved) {
 async function showSettingsPage() {
   show("settingsPage");
   const st = await loadState();
+  loadMatchLibrary().catch(error=>{$("matchLibraryCount").textContent=error.message;});
   const projects = await api('/api/projects');
   $("browserBridgeProject").innerHTML = projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join('');
   const browserAction = async action => {
@@ -741,3 +742,28 @@ async function sourceRuntimeDialog() {
     }
   } catch(error){get('[data-runtime-status]').textContent=error.message;}
 }
+
+
+async function loadMatchLibrary() {
+  const data=await api('/api/match-library?search='+encodeURIComponent($("matchLibrarySearch").value || ''));
+  const bytes=data.disk_bytes || 0, unit=bytes>=1048576 ? 'MiB' : bytes>=1024 ? 'KiB' : 'B';
+  const size=(bytes/(unit==='MiB' ? 1048576 : unit==='KiB' ? 1024 : 1)).toLocaleString(undefined,{maximumFractionDigits:1});
+  $("matchLibraryCount").textContent=`— ${data.functions.toLocaleString()} functions · ${data.games.toLocaleString()} games · ${data.solutions.toLocaleString()} variants · ${size} ${unit} on disk`;
+  $("matchLibraryItems").innerHTML=data.items.length ? `<div class="compiler-table"><table><thead><tr><th>Function</th><th>Games</th><th>Verified variants</th></tr></thead><tbody>${data.items.map(r=>`<tr><td class="mono">${esc(r.name)}<br><span class="small muted">${esc(r.arch)} · ${r.size} bytes</span></td><td><b>${r.games}</b><br><span class="small muted">${esc(r.game_names)}</span></td><td>${r.variants}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No saved matches found. Existing matches are indexed in the background, and new matches are saved automatically.</p>';
+}
+function showMatchLibraryProgress(log, progress) {
+  if (!progress) return;
+  updateWorkProgress(log,progress);
+  if (!log._workStatus) return;
+  const count=n=>Number(n || 0).toLocaleString();
+  log._workStatus.textContent=progress.game
+    ? `${progress.phase} — ${progress.game} · game ${count(progress.game_index || 1)} / ${count(progress.games_total || 1)} (${count(Math.max(0,(progress.games_total || 1)-(progress.game_index || 1)))} games left) · ${count(progress.done)} / ${count(progress.total)} matches processed · ${count(Math.max(0,progress.total-progress.done))} matches left${progress.function ? ` · ${progress.function}` : ''}`
+    : progress.phase;
+}
+$("matchLibraryRefresh").onclick=()=>loadMatchLibrary().catch(e=>toast(e.message,'err'));
+$("matchLibrarySearch").onkeydown=e=>{if(e.key==='Enter')$("matchLibraryRefresh").click();};
+$("matchLibraryIndex").onclick=async()=>{
+  const log=$("matchLibraryLog"),done=beginWork(log,'Indexing existing verified matches',[$("matchLibraryIndex")],'Match library updated');
+  try{const {job}=await api('/api/match-library',{method:'POST',body:{}});await followJob(job,log,(_lines,state)=>showMatchLibraryProgress(log,state.progress));await loadMatchLibrary();}
+  catch(error){showJobError(log,error.message);}finally{done();}
+};

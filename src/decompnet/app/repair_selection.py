@@ -11,6 +11,10 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'divisor_normalization_copy': ('dead_copy_source','divisor_flag_split'),
+    'divisor_value_scope': ('dead_copy_source','divisor_flag_split'),
+    'divisor_flag_split': ('dead_copy_source','divisor_normalization_copy'),
+    'dead_copy_source': ('divisor_normalization_copy','divisor_value_scope','debug_statement_boundary'),
     'known_zero_mask': ('post_call_narrow_capture','hazard_statement_lines'),
     'post_call_narrow_capture': ('hazard_statement_lines','known_zero_mask'),
     'hazard_statement_lines': ('post_call_narrow_capture','known_zero_mask'),

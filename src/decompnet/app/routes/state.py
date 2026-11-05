@@ -37,16 +37,25 @@ def system_name() -> str:
 
 
 def register(app: App) -> None:
-    net, mcp, home, mcp_url, build_id = app.net, app.mcp, app.home, app.mcp_url, app.build_id
+    net, mcp, home, mcp_url = app.net, app.mcp, app.home, app.mcp_url
     manager, jobs, settings, guard, call, body = app.manager, app.jobs, app.settings, app.guard, app.call, app.body
     fail = app.fail
+
+    @mcp.custom_route('/api/match-library', methods=['GET','POST'])
+    async def api_match_library(request):
+        if bad := guard(request, write=request.method=='POST'):
+            return bad
+        if request.method=='POST':
+            return JSONResponse({'job':jobs.start('Index verified match library', net.match_library.backfill)})
+        return JSONResponse(await call(net.match_library.summary, str(request.query_params.get('search',''))[:200]))
+
 
     def state() -> dict:
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
             t["name"] = consoles.compiler_name(t["id"]) if t["id"] in COMPILERS else t["name"]
-        return {"version": __version__, "fork": build_info.FORK, "build": build_id, "install": updates.installed(), "dev": edition.DEV,
+        return {"version": __version__, "fork": build_info.FORK, "build": app.build_id, "install": updates.installed(), "dev": edition.DEV,
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "linux_vm": ({'ready': linuxvm.status()[0], 'why': linuxvm.status()[1]} if linuxvm.wanted() else None),

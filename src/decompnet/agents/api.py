@@ -208,6 +208,8 @@ class Api(Agent):
                     if s.record:
                         s.record('tool_response', {'name': name, 'content': result, 'call_id': c['id']})
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                    if s.options.get('task') == 'boundary' and name == 'suggest_boundary' and not result.startswith('error:'):
+                        return True
                     finishing |= name in FINISHING
                 # Done with what it held (in a room the host holds the claim: nothing here says when): what led up
                 # to this turn folds into a line, and this turn stays whole (a fork's match shows the file's data to
@@ -469,6 +471,12 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
     it = lambda desc: {"type": "integer", "description": desc}
     bo = lambda desc: {"type": "boolean", "description": desc}
     defs = {
+        "get_boundary_evidence": ("Read original mapped boundary evidence, neighbours, direct edges, symbols and scan limits. No claim needed.", s(function=st("selected function", True))),
+        "suggest_boundary": ("Save an advisory recommendation; no layout change. End the investigation after reporting.",
+            s(function=st("selected function", True), action=st("delay_slot, join_previous, adjust, padding, data, keep, unclear", True),
+              supporting=st("Supporting evidence", True), counter=st("Counter-evidence or explicitly none observed", True),
+              uncertainty=st("Remaining uncertainty", True), citations=st("Comma-separated hex instruction addresses from evidence", True),
+              end=st("Exclusive hex end for adjust"), confidence=st("strong, tentative, unclear"))),
         "get_claims": ("Recover only your live claims and claim tokens; no build or mutation.", s()),
         "project_info": ("Game, compiler and progress; detail=true includes all facts and suggestions.", s(detail=bo("full details"))),
         "get_candidate": ("Read candidate C and its revision, without assembly or notes.", s(function=st("function", True), base={"type":"string","enum":["current","saved_best","last_compiling","reported_corrected"],"description":"Named recovery base, never a revision hash; selection does not judge source."})),

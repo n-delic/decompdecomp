@@ -244,7 +244,8 @@ class Permuter:
         return [r for r in candidates if r["id"] not in held]
 
     def _loop(self, slug: str, st: State) -> None:
-        agent, _ = self.net.local_agent("permuter")
+        # Concurrent background and explicit passes only need credit, not rotating bearer tokens.
+        agent = self.net.attribution_agent("permuter")
         idle = 0
         try:
             while not st.stop.is_set():
@@ -276,7 +277,7 @@ class Permuter:
         """Autopilot's Run again can try these without starting agents or random permutation."""
         st = State(stop=stop)
         if slug not in self.net.links:
-            agent, _ = self.net.local_agent("permuter")
+            agent = self.net.attribution_agent("permuter")
             from .source_preparation import run as prepare_sources
             prepare_sources(self, self.net.project_row(slug), st)
             self._repair_round(agent, self.net.project_row(slug), st)
@@ -348,7 +349,9 @@ class Permuter:
                 ranked = repair_ranking.private_abi_order(ranked,proj['arch'],fn['asm'] or '',policy_rows)
                 policy_key = adaptive_repairs.profile(self.net, proj, fn)
                 candidates.sort(key=lambda text: ranked.index(labels.get(text, 'draft_repair')) if labels.get(text, 'draft_repair') in ranked else len(ranked))
-                for candidate in candidates:
+                from . import proposal_progress
+                progressed, cursor = proposal_progress.order(self.net,proj,fn,fn['best_source'],[(labels.get(c,'draft_repair'),c) for c in candidates])
+                for _,candidate in progressed:
                     if st.stop.is_set() or attempts >= budget or time.monotonic() >= deadline:
                         break
                     digest = hashlib.sha256((context + candidate).encode()).hexdigest()
@@ -370,6 +373,7 @@ class Permuter:
                         adaptive_repairs.record(self.net, policy_key, permuter_focus.classify(policy_rows),
                                                 labels.get(candidate, 'draft_repair'), best, score,
                                                 (time.monotonic()-policy_started)*1000, origin="background deterministic")
+                    if cursor:cursor.measured(labels.get(candidate),candidate,score)
                     measured=getattr(self.net,'_agent_outcomes',{}).get((agent.id,fn['id']))
                     if measured and measured.get('source')==candidate:
                         repair_ranking.remember(self.net,effect_scope,labels.get(candidate,'draft_repair'),baseline,measured)

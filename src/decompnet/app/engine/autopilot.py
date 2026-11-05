@@ -132,6 +132,8 @@ class AutopilotMixin:
         from .. import repair_mappings
         repair_mappings.harvest(self.twins, proj, function_id)
         self.twins.index_function(proj, function_id)
+        if library := getattr(self, "match_library", None):
+            library.capture(proj, function_id)
         self.cascades.notify(proj, function_id)
         if agent is not None and agent.name == "autopilot" and self.twins._full_running(proj["slug"]):
             return

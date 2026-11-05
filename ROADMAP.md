@@ -77,7 +77,9 @@ resolution before worker creation, lease-bound release receipts for agent/room r
 selection/writer/score provenance in stale and continuation responses. ROM and imported-project metadata
 share the resolver; unavailable addresses remain unknown. See docs/AGENT_WORKFLOW_EFFICIENCY.md.
 
-Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md.
+Implemented: guided mapped MIPS boundary evidence, neighbouring instruction windows, explicit before/after extents and one-shot agent recommendations with cited supporting/counter-evidence and uncertainty. Advice never edits layouts, claims work or compiles, and stale inputs are labelled.
+
+Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Guided evidence/agent investigation and repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md.
 
 Implemented: overlay-scoped data-region review with reversible new-claim pauses, explicit investigation
 outcomes, independent-model verification requests, function-scoped prepared compiler evidence with a bounded
@@ -368,7 +370,11 @@ remain outstanding. Shared instruction diffs expose encoding-only disagreements
 hidden behind identical disassembly aliases without weakening the byte judge.
 
 PS2 Sony EE-GCC 2.9 (991111), 2.96 and 3.2 now use the same optional macOS
-Linux runner; SN Systems EE-GCC 2.95.2/2.95.3 use native Mac wibo. Original
+Linux runner; SN Systems EE-GCC 2.95.2/2.95.3 use native Mac wibo. Installed SN packs
+whose path contains spaces run from a private temporary copy; their old driver embeds
+an unquoted self-relative include path, so symlinks alone cannot fix it. User-provided
+kits remain in place and still need paths without whitespace for these old drivers;
+an adapter that preserves in-place kit access remains planned. Original
 compiler binaries and the linked byte judge are retained. Physical Intel Mac
 verification remains planned; Apple Silicon checks use isolated homemade programs.
 CodeWarrior PS2 2.3.3/3.0.1 also run through native Mac wibo after explicit
@@ -423,6 +429,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
 | Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
+| Guided boundary repair and advisory agent investigation (local mapped ROM) | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | — | — |
@@ -1407,6 +1414,8 @@ search remains ROM-only; tracking dependencies outside an imported checkout rema
 snapshots local source/header/build inputs (at most 10,000 files / 32 MiB).
 
 Cross-game transfer results use compact, responsive rows with separate provenance, result labels and score changes; recent partial improvements can be filtered independently.
+
+Cross-game checks show discovery progress and the current donor/target through the shared job bar, with a separate check-budget bar. Per-project device preferences, quick/hour/overnight presets and Stop support manual budgets up to 24 hours and 1,000,000 checks in ROM and imported modes, including unfinished C.
 
 Cross-game results can be collapsed per project without losing state on live refresh; Run now launches a dedicated, bounded cross-game check with progress and duplicate-run protection, in ROM and imported modes.
 
@@ -2482,7 +2491,24 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 - Done: compact batch claim queues retain each queued function's release token,
   with cheap claim-metadata recovery guidance and unchanged stale-lease protection.
 
+### Persistent local match library
+
+- Done: separate private SQLite library retains verified source, context and compiler variants,
+  normalized function fingerprints and per-game occurrences after projects are closed/removed.
+  Identical source/context blobs are shared. ROM and imported destinations retain their normal
+  byte/objdiff judge; reopening inputs never turns a fingerprint into automatic acceptance.
+- Imported candidates whose dependencies exist only in external project headers still need those
+  declarations in the destination build, as with the existing cross-project transfer adapter.
+
 - Done: the shared native randomizer wrapper excludes artificial self-assignment
   insertion in traced and untraced jobs, preventing that family from introducing
   unchecked signed/pointer increment-decrement cancellations or self-reads.
   Historical candidates still require review; ordinary judging is unchanged.
+
+
+- Done: shared draft, autopilot, agent and deep repair searches propose at most two
+  discarded unsigned-byte increment spellings from a direct byte read or one unique
+  dominating cached-byte load. A bounded CFG checks every path for intervening effects;
+  exact byte addresses and ordinary declarations are required. Unknown qualifiers,
+  aliases, macros, shadows, cycles and used assignment values skip the family.
+  Compiler and ordinary byte/object judging remain unchanged across supported processors.

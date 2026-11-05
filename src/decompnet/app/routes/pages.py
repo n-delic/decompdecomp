@@ -76,4 +76,4 @@ def register(app: App) -> None:
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "app": "decomp-wtf", "edition": edition.NAME, "version": __version__,
-                             "build": build_id, "mode":"serve" if app.headless else "desktop", "web_interface":app.web_login is not None})
+                             "build": app.build_id, "mode":"serve" if app.headless else "desktop", "web_interface":app.web_login is not None})
