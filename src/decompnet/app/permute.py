@@ -311,6 +311,26 @@ class Permuter:
             except (ForkError, NetworkError, OSError) as error:
                 log.info('permuter: %s: header unavailable: %s', fn['name'], error)
                 continue
+            # Autopilot's deterministic pass must reach joint hypotheses too, before
+            # source-only scores discard their corrected loop exit. No claim is held yet.
+            from . import guarded_loop_repairs, matching_preflight
+            if (not fork and hasattr(self.net,'_comparison_digest')
+                    and guarded_loop_repairs.probes(proj,fn,compiler_for(self.net.cfg(proj),fn['vram'],fn),header)):
+                try:
+                    paired=matching_preflight.run(self.net,proj,fn,log.info,
+                        lambda:not st.stop.is_set() and time.monotonic()<deadline,
+                        max_profiles=min(4,budget-attempts))
+                except NetworkError as error:
+                    log.info('permuter: joint profile check deferred: %s',error)
+                    continue
+                attempts+=paired['tested'];st.add(variants=paired['tested'],repairs=paired['tested'])
+                proj=self.net.project_row(proj['slug'])
+                fn=self.net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+                if fn['status']=='matched':
+                    st.add(improved=int(bool(paired.get('applied'))),matched=int(bool(paired.get('applied'))))
+                    continue
+                if paired.get('link') or attempts>=budget or st.stop.is_set() or time.monotonic()>=deadline:
+                    continue
             labels = {}
             candidates = draft_repairs.variants(fn['best_source'], fn['name'], proj['arch'], fn['asm'] or '', flags=compiler_for(self.net.cfg(proj),fn['vram'], fn).get('flags',[]) if not fork else [], labels=labels,header=header,limit=None,tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,fn['best_source']))
             from . import normalization_repairs, repair_ranking

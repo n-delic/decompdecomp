@@ -69,7 +69,7 @@ def probes(proj, fn, own, header=''):
     if not count or not 0<(fn['best_score'] or 0)<=count*10:return []
     bodies=sources(fn['best_source'],fn['name'],header)
     if not bodies:return []
-    flags=list(own['flags'])
+    flags=own['flags'].split() if isinstance(own['flags'],str) else list(own['flags'])
     disabled=[f for f in flags if f not in ('-fthread-jumps','-fno-thread-jumps')]+['-fno-thread-jumps']
     return list(dict.fromkeys((tuple(f),s) for f,s in
                 [(disabled,s) for s in bodies]+[(flags,bodies[0])]))[:3]
