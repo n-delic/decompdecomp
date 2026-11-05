@@ -30,13 +30,19 @@ def meaningful(name):
             and not re.match(r'(?:FUN_|sub_|nullsub_|thunk_|loc_)[0-9A-Fa-f]+$',name))
 
 
-def targets(net,proj):
-    rows=[r for r in net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
-          if meaningful(r['name'])]
+def targets(net,proj,only=None):
+    # Keep target/source/assembly blobs out of candidate discovery. Load only the bounded
+    # meaningful-name window after cursor rotation and any caller restriction.
+    rows=[r for r in net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
+          if meaningful(r['name']) and (only is None or r['id'] in only)]
     key='named-donor-cursor:'+str(proj['id'])
     cursor=net.store.one('SELECT value FROM settings WHERE key=?',key)
     after=int(cursor['value']) if cursor else -1
-    return [r for r in rows if r['id']>after]+[r for r in rows if r['id']<=after]
+    selected=([r for r in rows if r['id']>after]+[r for r in rows if r['id']<=after])[:MAX_FUNCTIONS]
+    if not selected:return []
+    full={r['id']:r for r in net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' "
+          "AND id IN (SELECT value FROM json_each(?))",proj['id'],json.dumps([r['id'] for r in selected]))}
+    return [full[r['id']] for r in selected if r['id'] in full]
 
 
 def raw(net,other,a,proj,b):
@@ -116,7 +122,7 @@ def run(twins,slug,job=None,*,only=None):
     worker=Permuter(net)
     agent,_=net.local_agent('autopilot-named-donors')
     matched=0
-    eligible=[b for b in targets(net,proj) if only is None or b['id'] in only]
+    eligible=targets(net,proj,only)
     for b in eligible[:MAX_FUNCTIONS]:
         if exhausted():break
         if only is not None and b['id'] not in only:continue

@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: bounded named-donor materialization; indexed/revision-cached latest headers;
+  bounded room match/attempt deltas with a race-safe cursor; layout-versioned audit caching.
+
 - Done: removing an agent clears its app transcripts and API conversation while
   retaining saved work and usage totals; late callbacks cannot recreate cleared logs.
 

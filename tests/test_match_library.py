@@ -399,3 +399,35 @@ def test_imported_archive_shares_project_and_file_compiler_reads_per_batch(libra
     lib.archive_project(net.project_row('game1'))
     assert projects==['game1'] and len(compilers)==1
     assert lib.summary()['occurrences']==2
+
+
+def test_archive_looks_up_used_symbols_without_scanning_table(library,monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.rom.symbols import Symbol
+    net,lib=library
+    class Names(dict):
+        def values(self):raise AssertionError('Archive must not scan every symbol for each function')
+    names=Names({f'unused{i}':Symbol(f'unused{i}',i,4,'data') for i in range(1000)})
+    names['used']=Symbol('used',4096,4,'data')
+    monkeypatch.setattr(net,'symbols',lambda *_:SimpleNamespace(by_name=names))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='int f1(void) {return used;}' WHERE id=1")
+    item=lib.snapshot(net.project_row('game1'),1)
+    assert [r['name'] for r in json.loads(item['symbols'])]==['used']
+
+
+def test_archive_batch_hashes_repeated_text_once_and_refreshes_project(library,monkeypatch):
+    from decompnet.app import match_library
+    net,lib=library
+    item=lib.snapshot(net.project_row('game1'),1)
+    digest=match_library.hashlib.sha256;calls=[]
+    def hash_text(value):
+        calls.append(value)
+        return digest(value)
+    with monkeypatch.context() as patch:
+        patch.setattr(match_library.hashlib,'sha256',hash_text)
+        lib.write([item,item])
+    assert len(calls)==len({item[k] for k in ('source','header','print','symbols')})
+    with net.store.tx() as db:db.execute("UPDATE projects SET name='Changed title' WHERE id=1")
+    assert lib.snapshot(net.project_row('game1'),1)['game_name']=='Changed title'

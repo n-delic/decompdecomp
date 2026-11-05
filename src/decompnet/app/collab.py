@@ -316,22 +316,35 @@ class Room:
         names = {ev["detail"] for ev in events if ev["kind"] in ("match",)}
         first = e == 0
         if first or fresh or names:
+            narrowed = not (first or fresh)
+            condition = " AND f.name IN (SELECT value FROM json_each(?))" if narrowed else ""
             rows = net.store.all("SELECT f.name, f.vram, f.rom_offset, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
-                                 "ON a.id=f.matched_agent_id WHERE f.project_id=? AND f.status='matched'", pid)
-            out["matched"] = [dict(r) for r in rows if first or fresh or r["name"] in names]
+                                 "ON a.id=f.matched_agent_id WHERE f.project_id=? AND f.status='matched'" + condition,
+                                 pid, *([json.dumps(sorted(names))] if narrowed else []))
+            out["matched"] = [dict(r) for r in rows]
         if first or fresh or names or kinds & {'compiler','context'}:
             cfg=net.cfg(net.project_row(self.slug))
             out['compiler_settings']={k:cfg.get(k,[] if k=='compiler_ranges' else {}) for k in ('compiler','compiler_ranges','function_compilers')}
             units=net._unit_contexts(pid)
+            narrowed = bool(names) and not (first or fresh or kinds & {'compiler','context'})
+            condition = " AND name IN (SELECT value FROM json_each(?))" if narrowed else ""
+            context_rows = net.store.all('SELECT vram,rom_offset,name,unit FROM functions WHERE project_id=?' + condition,
+                                         pid, *([json.dumps(sorted(names))] if narrowed else []))
             out['function_contexts']=[{'vram':r['vram'],'rom_offset':r['rom_offset'],'name':r['name'],'header':net._context(pid,r['unit'])['header']}
-                                      for r in net.store.all('SELECT vram,rom_offset,name,unit FROM functions WHERE project_id=?',pid)
-                                      if r['unit'] and r['unit'] in units]
-        best = net.store.all("SELECT f.name, f.vram, f.rom_offset, f.best_score, f.best_source, MAX(t.id) AS last FROM attempts t "
-                             "JOIN functions f ON f.id=t.function_id WHERE f.project_id=? AND t.id>? AND f.status='open' "
-                             "AND f.best_source IS NOT NULL GROUP BY f.id", pid, a)
+                                      for r in context_rows if r['unit'] and r['unit'] in units]
+        # Capture the upper bound before reading updates: a concurrent insert must be
+        # delivered next poll, never hidden by advancing the cursor after the query.
+        upper = max(a, net.store.one("SELECT MAX(id) AS m FROM attempts")["m"] or 0)
+        fields = "f.name,f.vram,f.rom_offset,f.best_score,f.best_source"
+        if a == 0:
+            best = net.store.all(f"SELECT {fields} FROM functions f WHERE f.project_id=? "
+                                 "AND f.status='open' AND f.best_source IS NOT NULL",pid)
+        else:
+            best = net.store.all(f"SELECT {fields} FROM functions f WHERE f.id IN "
+                                 "(SELECT function_id FROM attempts WHERE id>? AND id<=?) "
+                                 "AND f.project_id=? AND f.status='open' AND f.best_source IS NOT NULL",a,upper,pid)
         out["best"] = [{"name": r["name"], "vram": r["vram"], "rom_offset":r['rom_offset'], "score": r["best_score"], "source": r["best_source"]} for r in best]
-        last = net.store.one("SELECT MAX(t.id) AS m FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?", pid)
-        out["a"] = max(a, last["m"] or 0)
+        out["a"] = upper
         if first or kinds & {"rename", "split"}:
             out["symbols"] = [dict(r) for r in net.store.all(
                 "SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid) if not AUTO_NAME.match(r["name"])]

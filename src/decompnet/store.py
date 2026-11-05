@@ -498,6 +498,11 @@ class Store:
         self._track_reads('functions', 'naming', 'name,meta,project_id')
         from .map_changes import install as install_map_changes
         install_map_changes(self.conn)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_context_latest ON context_versions(project_id,unit,version DESC)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_named_scan ON functions(project_id,status,id,name)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_room_credit ON functions(project_id,matched_agent_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_origin_owner ON agents(origin,owner)")
+        self._track_reads('functions', 'audit_layout', 'name,vram,rom_offset,size,project_id')
         self._slow_queries = {}
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()

@@ -539,9 +539,15 @@ class Network:
         """Latest header for a translation unit, falling back to the project-wide one. Real codebases have
         one header set per source file; small projects just have the project-wide header ('' unit)."""
         unit = unit or ""
-        return self.store.one(
-            "SELECT * FROM context_versions WHERE project_id=? AND unit IN (?, '') "
-            "ORDER BY unit=? DESC, version DESC LIMIT 1", project_id, unit, unit)
+        def latest():
+            row = self.store.one("SELECT * FROM context_versions WHERE project_id=? AND unit=? "
+                                 "ORDER BY version DESC LIMIT 1", project_id, unit)
+            if row is None and unit:
+                row = self.store.one("SELECT * FROM context_versions WHERE project_id=? AND unit='' "
+                                     "ORDER BY version DESC LIMIT 1", project_id)
+            return row
+        return self.store.read_cache.get(('latest-context',project_id,unit),
+                                         self.store.read_version('scope_context',project_id),latest)
 
     def _unit_contexts(self, project_id: int) -> set[str]:
         return {r["unit"] for r in self.store.all(
