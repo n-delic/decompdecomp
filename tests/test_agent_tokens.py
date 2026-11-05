@@ -129,6 +129,7 @@ def test_cached_compile_error_stays_actionable(tmp_path):
 def test_compact_project_facts_never_trim_user_instructions(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(tools, '_project_info', lambda *args: 'facts '*1000)
+    monkeypatch.setattr(tools, '_compact_project_info', lambda *args: 'Compact saved metadata.')
     wish = 'Mandatory user instructions ' * 200
     net=SimpleNamespace(instructions=lambda slug:wish, overview=lambda slug:{}, fork_slug=lambda slug:None,
                         knowledge=SimpleNamespace(for_prompt=lambda slug:''))

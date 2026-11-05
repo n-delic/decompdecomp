@@ -374,7 +374,7 @@ def move_on_brief(fn, after=None) -> str:
     basis = "your worker setting" if custom else "this function’s size"
     return (f"move on after {after} compiles in a row without a better score ({basis}; "
             f"each compile_and_diff result shows the count). Recovery above the inherited best does not reset it. "
-            'To leave earlier with a reason, use release_function(move_on=true, notes="what you tried and why").')
+            'To leave earlier with a reason, use release_function(move_on=true, claim_token="the current claim_token", notes="what you tried and why").')
 
 
 def normalized_source(source: str) -> str:
@@ -1610,9 +1610,11 @@ class Network:
         since, after = st["no_better"], st["after"]
         if since < after:
             return f"\n\nMove-on count: {stall_line(since, after)}."
-        return (f"\n\n⏭ Move on: {stall_line(since, after)}. release_function with notes (what you tried, what's "
-                "left) goes through now; then claim the next one: functions that match mostly do in the first few "
-                "tries, and this one keeps your best attempt for whoever comes next.")
+        from .release_receipts import instruction
+        action=instruction(self,function_id,agent_id)
+        return (f"\n\n⏭ Move on: {stall_line(since, after)}. {action}. "
+                "Use this claim_token on the first release and on retries. Then claim the next function; "
+                "your best attempt stays saved for whoever comes next.")
 
     def claim_progress(self, agent: Agent, fn) -> dict | None:
         """This agent's claim on `fn` as release_function judges it: stall_status, the same count compile_and_diff

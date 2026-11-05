@@ -518,7 +518,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"), start=it("zero-based row"), limit=it("up to 200 rows"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
                              "on (before that it answers once with what to try; call again to release anyway).",
-                             s(claim_token=st("Current claim token from get_candidate; identifies the lease for safe retries"), function=st("function", True), notes=st("what you tried, what is left", True),
+                             s(claim_token=st("Always pass the current claim token from the claim, continuation state or get_candidate on the first release and retries; stale tokens cannot release a newer claim"), function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
                                move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
                                next_experiment={"type":"object","description":"Optional untested exact patch. Anchor/revision are validated; retrieve with get_function(section=experiment).", "properties":{key:{"type":"string"} for key in ('revision','old','new','title')}, "required":["revision","old","new"],"additionalProperties":False},

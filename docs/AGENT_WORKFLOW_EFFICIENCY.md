@@ -248,3 +248,14 @@ The complete legacy/model/worker key set and resulting work revision are unchang
 5,000-unrelated-setting regression executes about 4,500 SQLite VM instructions instead of 7.4 million. This
 follows slow-read logs attributing 12–79 seconds to the previous variable GLOB/OR join under live contention;
 synthetic wall times are not a live performance guarantee. No schema migration or extra index is required.
+
+### Include the lease token when handing work off
+
+Recent transcripts showed five first release calls rejected after the same worker
+reclaimed a function: agents supplied notes but omitted the claim token already
+present in their continuation state. Move-on feedback now provides a release call
+with the current function and lease token. Tool instructions ask for that token on
+the first call as well as retries. A delayed call with an old token still cannot
+release a newer claim; guidance neither acquires nor releases work. Synthetic
+regressions execute the suggested arguments across reclaim generations and verify
+that other workers cannot obtain a release token through this guidance.

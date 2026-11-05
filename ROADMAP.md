@@ -2366,3 +2366,5 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   through learned ordering and the final deep queue, ahead of generic rewrites.
   Alternate-profile exact matches update best score/percentage and improvement
   counts and discard the stale previous-profile diff.
+
+- Done: move-on guidance includes the current release claim token, avoiding rejected first handoffs after a same-worker reclaim while preserving stale-lease guards.

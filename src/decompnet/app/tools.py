@@ -400,7 +400,8 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
             if limit:
                 result += limit
             elif not remaining:
-                result += '\nNext: release_function with notes, then claim another function.'
+                from ..release_receipts import instruction
+                result += '\nNext: '+instruction(net,fn['id'],agent.id)+'. Then claim another function.'
         elif open_function:
             result += f"\nCandidate revision {revision}. Claim ended; claim another eligible function. Do not release this function again."
         else:
@@ -852,7 +853,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         Args:
             function: the function you hold
             notes: what you tried, what is left
-            claim_token: token from the current claim/get_candidate. Use it for retries or when releasing a newly reacquired function with the same notes; a stale token cannot release a new claim.
+            claim_token: always pass the token from the current claim, continuation state or get_candidate, including the first release and retries. A stale token cannot release a new claim.
             next_experiment: optional untested exact patch with revision, old, new and title. Validated against your current candidate; rejected if stale or ambiguous. The next agent can retrieve it with get_function(section="experiment") and test through compile_patch.
             needs: optional: a direct callee recorded in the original assembly that blocks this function. Paused
                 candidates cannot be selected this way. Explain indirect/inline/header concerns in notes instead.
