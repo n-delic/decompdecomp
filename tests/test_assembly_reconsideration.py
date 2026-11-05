@@ -73,3 +73,34 @@ def test_no_target_backed_proposal_stays_assembly(game,monkeypatch):
     monkeypatch.setattr(review.live_return_address_repairs,'variants',lambda *_:[])
     assert review.run(net,proj)==0
     assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='asm'
+
+
+def test_same_version_start_reconsiders_only_capability_and_is_idempotent(game,monkeypatch):
+    from decompnet import __version__
+    net,proj,fid=game
+    net._update_cfg('game',lambda cfg:cfg.update(checked=__version__))
+    monkeypatch.setattr(type(net.console(proj)),'on_start',lambda *_a,**_k:pytest.fail('must not replay console startup'))
+    monkeypatch.setattr(net.rangechecks,'reopen',lambda *_:pytest.fail('must not replay range checks'))
+    calls=[]
+    def judge(agent,project,fn,source):
+        calls.append(source)
+        if source=='bundle':
+            with net.store.tx() as db:db.execute("UPDATE functions SET status='matched',best_score=0 WHERE id=?",(fid,))
+            return {'matched':True}
+        return {'matched':False}
+    monkeypatch.setattr(net,'try_quietly',judge)
+    assert net.recheck('game',only_if_updated=True)=='1 obsolete tooling verdicts reconsidered with supported C'
+    assert calls==['raw','bundle']
+    assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='matched'
+    assert net.recheck('game',only_if_updated=True) is None
+    assert calls==['raw','bundle']
+
+
+def test_same_version_link_never_reconsiders(game,monkeypatch):
+    from decompnet import __version__
+    net,proj,fid=game
+    net._update_cfg('game',lambda cfg:cfg.update(checked=__version__))
+    net.links['game']=object()
+    monkeypatch.setattr(review,'run',lambda *_:pytest.fail('host owns linked project review'))
+    assert net.recheck('game',only_if_updated=True) is None
+    assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='asm'
