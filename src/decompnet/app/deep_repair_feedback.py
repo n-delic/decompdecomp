@@ -18,7 +18,7 @@ class Feedback:
         changed=output is not None and before.get('output') is not None and output!=before['output']
         productive=changed and isinstance(score,(int,float)) and score<before.get('score',score)
         if not reused:
-            repair_effects.observe(self.state,node,output if score is not None else None)
+            repair_effects.observe(self.state,node,output if score is not None else None,score=score,parent_score=before.get('score'))
             counts=self.state['counts'];kind='scored' if score is not None else 'compile_failed'
             counts[kind]=counts.get(kind,0)+1
         if score is not None:
@@ -30,7 +30,7 @@ class Feedback:
     def order(self, queue, labels, source, parents):
         self.state['pending']=[dict(source=c,parent_source=parents.get(c,(source,))[0],
             parent_output=self.proofs.get(parents.get(c,(source,))[0],{}).get('output'),
-            path=[labels.get(c,'local_repair')]) for c in queue]
+            path=self.proofs.get(parents.get(c,(source,))[0],{}).get('path',[])+[labels.get(c,'local_repair')]) for c in queue]
         repair_effects.rotate(self.state)
         queue[:]=[n['source'] for n in self.state['pending']]
 
@@ -43,3 +43,6 @@ class Feedback:
         selected=repair_sequence_lane.select(self.state,self.proofs[source],[(labels[c],c) for c in choices])
         self.loan_sources.update(c for _,c in selected)
         return [c for _,c in selected]
+
+    def summary(self):
+        return repair_effects.summary(self.state)
