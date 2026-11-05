@@ -27,15 +27,21 @@ def machine(net, proj):
     return proj['arch'], bool(proj['big_endian'])
 
 
-def run(twins, proj, wanted, mine, job=None):
+def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None):
     """Automatic passes try at most 64 donors; manual passes use their chosen shared budget and stop control."""
     net = twins.net
     if proj['slug'] in net.links:
         return 0
     agent, _ = net.local_agent('autopilot')
     target_machine = machine(net, proj)
-    matched = tried = 0
-    for other in net.store.all('SELECT * FROM projects WHERE id!=? ORDER BY id', proj['id']):
+    matched = 0
+    budget_state = {'tried':0} if budget_state is None else budget_state
+    projects = net.store.all('SELECT * FROM projects WHERE id!=? ORDER BY id', proj['id']) if projects is None else projects
+    for other in projects:
+        from .free_candidates import exhausted
+        if budget_state['tried'] >= getattr(job,'partial_limit',MAX_TRIALS) or (job and (job.stop.is_set() or
+                (hasattr(job,'reuse_limit') and exhausted(job)))):
+            return matched
         if other['slug'] in net.links:
             continue
         try:
@@ -45,7 +51,8 @@ def run(twins, proj, wanted, mine, job=None):
                                    'AND best_source IS NOT NULL AND best_score IS NOT NULL ORDER BY best_score,id', other['id'])
             if not donors:
                 continue
-            prints = twins.prints(other)
+            prints = (twins._fork_prints(other,function_ids=[row['id'] for row in donors],job=job)
+                      if net.fork_slug(other['slug']) else twins.prints(other))
             for a in donors:
                 pa = prints.get(a['id'])
                 if not pa or pa.asm or pa.size < ACROSS_MIN_BYTES:
@@ -53,7 +60,7 @@ def run(twins, proj, wanted, mine, job=None):
                 # A live donor may have changed since selection; target code, never candidate output, is fingerprinted.
                 for bid in wanted.get(pa.key, []):
                     from .free_candidates import exhausted
-                    if tried >= getattr(job, 'partial_limit', MAX_TRIALS) or (job and (job.stop.is_set() or
+                    if budget_state['tried'] >= getattr(job, 'partial_limit', MAX_TRIALS) or (job and (job.stop.is_set() or
                             (hasattr(job, 'reuse_limit') and exhausted(job)))):
                         return matched
                     b = net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", bid)
@@ -72,7 +79,7 @@ def run(twins, proj, wanted, mine, job=None):
                         job.cross_tried += 1
                         if hasattr(job, 'reuse_limit'):
                             job.reuse_attempts += 1
-                    tried += 1
+                    budget_state['tried'] += 1
                     note = f"/* Partial candidate from function #{a['id']} in project #{other['id']}; rechecked locally. */\n"
                     # Never label this donor matched or use it to infer a name. Ordinary attempt recording
                     # atomically retains only improvements; the target's own exact judge alone can mark a match.

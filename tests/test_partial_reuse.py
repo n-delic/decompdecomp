@@ -173,6 +173,7 @@ def test_imported_donor_uses_saved_best_not_unverified_current_file(pair, monkey
     monkeypatch.setattr(pair, 'fork_slug', lambda slug: slug if slug == 'source' else None)
     monkeypatch.setattr(pair.forks, 'get', lambda slug: (None, SimpleNamespace(root=tmp_path), {'platform':'n64'}))
     monkeypatch.setattr(pair.twins, 'prints', lambda p: donor_prints if p['id'] == 1 else mine)
+    monkeypatch.setattr(pair.twins, '_fork_prints', lambda p,**kwargs: donor_prints)
     calls = []
     monkeypatch.setattr(pair, 'try_quietly', judge(pair, calls, 20))
     partial_reuse.run(pair.twins, proj, {mine[2].key:[2]}, mine)

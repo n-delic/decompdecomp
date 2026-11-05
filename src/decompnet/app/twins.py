@@ -346,7 +346,7 @@ class Twins:
             out[row["id"]] = rom_print(row, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label)
         return out
 
-    def _fork_prints(self, proj) -> dict[int, Print]:
+    def _fork_prints(self, proj, *, matched_only=False, function_ids=None, job=None) -> dict[int, Print]:
         from ..forks.project import STATE, ForkError, ForkProject
 
         fp = ForkProject(Path(proj["root"]))
@@ -357,13 +357,22 @@ class Twins:
             cache = {}
         if cache.get("_v") != _CACHE_VERSION:
             cache = {"_v": _CACHE_VERSION}
-        rows = self.net.store.all("SELECT id, name, unit, meta FROM functions WHERE project_id=?", proj["id"])
+        rows = self.net.store.all("SELECT id, name, unit, meta FROM functions WHERE project_id=?"
+                                  + (" AND status='matched'" if matched_only else "")
+                                  + (" AND id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""),
+                                  proj["id"], *([json.dumps(function_ids)] if function_ids is not None else []))
         by_unit: dict[str, list] = defaultdict(list)
         for r in rows:
             by_unit[r["unit"]].append(r)
         out: dict[int, Print] = {}
         changed = False
-        for uname, urows in by_unit.items():
+        for index, (uname, urows) in enumerate(by_unit.items()):
+            from .cross_game_progress import report
+            from .free_candidates import exhausted
+            if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):
+                break
+            report(job, 'Reading imported target objects', game=proj['name'], function=uname,
+                   done=index, total=len(by_unit))
             from .maintenance import checkpoint
             checkpoint()
             try:
@@ -688,9 +697,8 @@ class Twins:
         from .cross_game_progress import report
         report(job, 'Reading the local verified-match library')
         archived = self.net.match_library.reuse(self, proj, job) if hasattr(self.net, "match_library") else 0
-        shared_reuse.discover(self, proj, job=job)
         if fork:
-            matched = archived + shared_reuse.transfer(self, proj, job)
+            matched = archived
             mine = self.prints(proj)
             wanted = defaultdict(list)
             for row in self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
@@ -698,12 +706,19 @@ class Twins:
                 if target and not target.asm and target.size >= ACROSS_MIN_BYTES:
                     wanted[target.key].append(row["id"])
             from .partial_reuse import run as reuse_partial
-            return matched + reuse_partial(self, proj, wanted, mine, job)
+            partial_state = {'tried':0}
+            for other in shared_reuse.compatible(self.net, proj):
+                from .free_candidates import exhausted
+                if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):
+                    return matched
+                snapshot = shared_reuse.discover(self, proj, job=job, donors=[other], matched_only=True)
+                matched += shared_reuse.transfer(self, proj, job, snapshot=snapshot, donors=[other])
+                matched += reuse_partial(self, proj, wanted, mine, job, projects=[other], budget_state=partial_state)
+            return matched
         if not (fork or self.net.is_rom(proj)) or slug in self.net.links:
             return 0
         from .free_candidates import exhausted
         bounded = job is not None and hasattr(job, 'reuse_limit')
-        cfg = self.net.cfg(proj)
         mine = self.prints(proj)
         wanted: dict[str, list[int]] = defaultdict(list)
         for r in self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
@@ -712,30 +727,35 @@ class Twins:
                 wanted[p.key].append(r["id"])
         if not wanted:
             return archived
-        others = [p for p in self.net.store.all(
-            "SELECT * FROM projects WHERE id != ? AND arch=? AND big_endian=?",
-            proj["id"], proj["arch"], proj["big_endian"]) if self.net.is_rom(p)] if not fork else []
         from .cross_game_progress import report
-        for index, other in enumerate(others):
-            if bounded and exhausted(job):
-                return archived
-            report(job, 'Indexing verified C', game=other['name'], done=index, total=len(others))
-            self.index_project(other)
         matched = archived
+        from .partial_reuse import run as reuse_partial
+        partial_state = {'tried':0}
         agent, _ = self.net.local_agent("autopilot")
-        if not fork:
-            # Imported projects do not necessarily fill the database's architecture columns.
-            for other in self.net.store.all("SELECT * FROM projects WHERE id != ?", proj["id"]):
-                from .maintenance import checkpoint
-                checkpoint()
-                if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):
-                    return matched
-                if self.net.fork_slug(other["slug"]) and other["slug"] not in self.net.links:
-                    try:
-                        matched += self._fork_to_rom(agent, proj, other, wanted, mine, job)
-                    except Exception:
-                        log.exception("twins: ROM %s from imported %s", slug, other["slug"])
-        by_id = {p["id"]: p for p in others}
+        for other in shared_reuse.compatible(self.net, proj):
+            if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):
+                return matched
+            report(job, 'Searching donor project', game=other['name'])
+            try:
+                if self.net.is_rom(other):
+                    if self.net.store.one("SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL LIMIT 1",other['id']):
+                        self.index_project(other)
+                        matched += self._rom_to_rom(agent, proj, other, wanted, mine, job)
+                else:
+                    matched += self._fork_to_rom(agent, proj, other, wanted, mine, job)
+                matched += reuse_partial(self, proj, wanted, mine, job, projects=[other], budget_state=partial_state)
+                # Publish leads for this donor after trying it, without crawling the next project first.
+                shared_reuse.discover(self, proj, job=job, donors=[other], matched_only=True)
+            except (NetworkError, OSError, ValueError):
+                log.exception("twins: donor %s for %s", other['slug'], slug)
+        return matched
+
+    def _rom_to_rom(self, agent, proj, other, wanted, mine, job):
+        from .cross_game_progress import report
+        from .free_candidates import exhausted
+        bounded = job is not None and hasattr(job, 'reuse_limit')
+        cfg = self.net.cfg(proj)
+        matched = 0
         sources = []
         keys = list(wanted)
         for at in range(0, len(keys), SQL_CHUNK):
@@ -743,20 +763,19 @@ class Twins:
             sources += self.net.store.all(
                 "SELECT i.*, f.name, f.vram, f.matched_source FROM cross_game_index i "
                 "JOIN functions f ON f.id=i.function_id AND f.status='matched' "
-                "WHERE i.project_id != ? AND i.fingerprint IN (" + ",".join("?" for _ in part) + ")",
-                proj["id"], *part)
+                "WHERE i.project_id = ? AND i.fingerprint IN (" + ",".join("?" for _ in part) + ")",
+                other["id"], *part)
+        if not sources:
+            return 0
         sources.sort(key=lambda a: a["compiler"] != self._compiler_key(cfg["compiler"]))
-        source_prints = {p["id"]: self.prints(p) for p in others}
-        source_symbols = {p["id"]: self.net.symbols(p["id"]) for p in others}
+        source_prints = self.prints(other)
+        source_symbols = self.net.symbols(other["id"])
         target_symbols = self.net.symbols(proj["id"])
-        headers = {p["id"]: self.net._context(p["id"])["header"] for p in others}
+        header = self.net._context(other["id"])["header"]
         for a in sources:
             if job is not None and job.stop.is_set():
                 break
-            other = by_id.get(a["project_id"])
-            if other is None:
-                continue
-            pa = source_prints[other["id"]].get(a["function_id"])
+            pa = source_prints.get(a["function_id"])
             if pa is None:
                 continue
             for b_id in wanted.get(a["fingerprint"], []):
@@ -767,12 +786,12 @@ class Twins:
                     continue
                 if job is not None:
                     job.cross_candidates += 1
-                names = rom_renames(source_symbols[other["id"]], a["matched_source"] or "", pa, mine[b_id],
+                names = rom_renames(source_symbols, a["matched_source"] or "", pa, mine[b_id],
                                     a["name"], b["name"], target_symbols)
                 if names is None or not a["matched_source"]:
                     continue
                 header_b = self.net._context(proj["id"], b["unit"])["header"]
-                source = _declared(headers[other["id"]], header_b, names, a["name"]) + apply(a["matched_source"], names)
+                source = _declared(header, header_b, names, a["name"]) + apply(a["matched_source"], names)
                 if self._missed(b_id, source):
                     continue
                 if job is not None:
@@ -796,8 +815,7 @@ class Twins:
                     if job is not None:
                         job.cross_matched += 1
                     log.info("twins: %s matched from %s in %s", b["name"], a["name"], other["slug"])
-        from .partial_reuse import run as reuse_partial
-        return matched + reuse_partial(self, proj, wanted, mine, job)
+        return matched
 
     @staticmethod
     def _compiler_key(compiler: dict) -> str:
@@ -1082,7 +1100,7 @@ class Twins:
         bounded = job is not None and hasattr(job, "reuse_limit")
         from .cross_game_progress import report
         report(job, 'Reading imported target objects', game=other['name'])
-        theirs = self.prints(other)
+        theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
         for a in self.net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", other["id"]):
             pa = theirs.get(a["id"])

@@ -105,7 +105,7 @@ def test_imported_c_is_rejudged_in_rom_and_misses_are_remembered(built, tmp_path
     a = net._function(b["name"], "imported-library")
     monkeypatch.setattr(net.forks, "get", lambda _: (donor, object(), {"platform": "n64"}))
     monkeypatch.setattr(net.forks, "is_asm", lambda *_: False)
-    monkeypatch.setattr(net.twins, "prints", lambda _: {
+    monkeypatch.setattr(net.twins, "_fork_prints", lambda _, **kwargs: {
         a["id"]: Print(fingerprint.key, fingerprint.refs, fingerprint.size, name="library_clamp")})
     # Even a donor marked matched cannot bypass the destination's actual compiler and judge.
     monkeypatch.setattr(net.forks, "_current_source", lambda *_: "int library_clamp(int x) { return 123; }")

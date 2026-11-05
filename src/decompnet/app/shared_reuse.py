@@ -34,13 +34,13 @@ def compatible(net, proj):
             continue
 
 
-def discover(twins, proj, *, job=None, force=False):
+def discover(twins, proj, *, job=None, force=False, donors=None, matched_only=False):
     """Cache bounded, read-only discovery; overview polling only reads the completed snapshot."""
     cache = getattr(twins, '_shared_discovery', None)
     if cache is None:
         cache = twins._shared_discovery = {}
     hit = cache.get(proj['id'])
-    if not force and hit and time.monotonic() - hit['at'] < TTL:
+    if donors is None and not force and hit and hit.get('complete',True) and time.monotonic() - hit['at'] < TTL:
         return hit
     from .cross_game_progress import report
     net = twins.net
@@ -52,16 +52,21 @@ def discover(twins, proj, *, job=None, force=False):
         if fid in rows and target.size >= ACROSS_MIN_BYTES and not target.asm:
             wanted[target.key].append(fid)
     found = defaultdict(list)
-    others = list(compatible(net, proj))
+    others = list(compatible(net, proj)) if donors is None else donors
     for index, other in enumerate(others):
         if job is not None and (job.stop.is_set() or (hasattr(job, 'reuse_deadline') and time.monotonic() >= job.reuse_deadline)):
             break
         report(job, 'Finding shared machine code', game=other['name'], done=index, total=len(others))
+        donor_rows = net.store.all('SELECT id,name,status FROM functions WHERE project_id=?'
+                                  + (" AND status='matched'" if matched_only else ''), other['id'])
+        if not donor_rows:
+            continue
         try:
-            prints = twins.prints(other)
+            prints = (twins._fork_prints(other, matched_only=True, job=job)
+                      if matched_only and net.cfg(other).get("kind")=="fork" else twins.prints(other))
         except (NetworkError, OSError, ValueError):
             continue
-        for donor in net.store.all('SELECT id,name,status FROM functions WHERE project_id=?', other['id']):
+        for donor in donor_rows:
             p = prints.get(donor['id'])
             if not p or p.asm or p.key not in wanted:
                 continue
@@ -86,7 +91,19 @@ def discover(twins, proj, *, job=None, force=False):
     blocked = sum(rows[fid]['status'] == 'nosource' and any(h['verified'] for h in items) for fid, items in found.items())
     result = {'at': time.monotonic(), 'hints': dict(found), 'detected': len(found), 'ready': ready, 'blocked': blocked,
               'checked_at': time.time()}
-    cache[proj['id']] = result
+    if donors is not None:
+        donor_slugs = {p['slug'] for p in donors}
+        merged = {fid:[h for h in items if h.get('source_slug') not in donor_slugs]
+                  for fid,items in (hit or {}).get('hints',{}).items()}
+        for fid,items in found.items():
+            existing = merged.setdefault(fid,[])
+            existing.extend(h for h in items if h not in existing)
+        merged = {fid:items for fid,items in merged.items() if items and fid in rows}
+        cache[proj['id']] = {**result,'hints':merged,'detected':len(merged),'complete':False,
+                            'ready':sum(rows[fid]['status']=='open' and any(h['verified'] for h in items) for fid,items in merged.items()),
+                            'blocked':sum(rows[fid]['status']=='nosource' and any(h['verified'] for h in items) for fid,items in merged.items())}
+    else:
+        cache[proj['id']] = {**result,'complete':True}
     return result
 
 
@@ -113,13 +130,13 @@ def hints(twins, proj, function, limit=5):
     return sorted(items, key=lambda h: not h['verified'])[:limit]
 
 
-def transfer(twins, proj, job):
+def transfer(twins, proj, job, *, snapshot=None, donors=None):
     """ROM or imported donors into imported C, through its unchanged objdiff judge."""
     from .free_candidates import exhausted
     from .twins import WHY_CHARS, _declared, _file_compiler, apply
     net = twins.net
     bounded = job is not None and hasattr(job, 'reuse_limit')
-    snapshot = discover(twins, proj, job=job)
+    snapshot = snapshot if snapshot is not None else discover(twins, proj, job=job)
     if snapshot['blocked']:
         # Existing scaffold probes object rules and retains the original linked assembly baseline.
         # Unsupported native builds remain visible as blocked, rather than changing their Makefiles.
@@ -135,12 +152,13 @@ def transfer(twins, proj, job):
                 snapshot['block_reason'] = 'No supported C object rule for these assembly-only units; the project needs a build adapter.'
             if made:
                 net.forks.sync(proj['slug'])
-                snapshot = discover(twins, proj, job=job, force=True)
+                snapshot = discover(twins, proj, job=job, force=True, donors=donors, matched_only=donors is not None)
         except (NetworkError, OSError, ValueError) as error:
             snapshot['block_reason'] = str(error)[:WHY_CHARS]
     agent, _ = net.local_agent('autopilot')
     mine = twins.prints(proj)
     matched = 0
+    donor_cache = {}
     for fid, candidates in snapshot['hints'].items():
         b = net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", fid)
         if b is None or net.store.one('SELECT 1 FROM claims WHERE function_id=?', fid):
@@ -160,7 +178,10 @@ def transfer(twins, proj, job):
                 if _file_compiler(net.console(other), source_project, a) != \
                         _file_compiler(net.console(proj), target_project, b):
                     continue
-            pa = twins.prints(other).get(a['id'])
+            if other['id'] not in donor_cache:
+                donor_cache[other['id']] = (twins._fork_prints(other, matched_only=True, job=job)
+                    if donors is not None and net.cfg(other).get('kind')=='fork' else twins.prints(other))
+            pa = donor_cache[other['id']].get(a['id'])
             pb = mine.get(fid)
             if not pa or not pb or pa.key != pb.key:
                 continue

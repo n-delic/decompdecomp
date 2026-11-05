@@ -1,5 +1,8 @@
 # Roadmap
 
+- Done: cross-game exact reuse loads and tries one donor project before visiting the next, including
+  imported destinations. Imported donor scans fingerprint only matched-function units, report object
+  progress and check cancellation/time budgets between objects; incremental discovery preserves prior leads.
 - Done: ROM room deep searches continue from cached local inputs during host outages.
   Exact bundles and input-bound better attempts are queued durably and retried after reconnection;
   the host still verifies its own matches. Transport failures are retryable, not source-review failures.
