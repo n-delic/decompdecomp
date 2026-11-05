@@ -1378,3 +1378,55 @@ def test_polishing_does_not_wait_for_matching_jobs(tmp_path, quiet, monkeypatch)
     monkeypatch.setattr(focused_agents, 'ready', ready)
     with pytest.raises(Ready):
         manager._run_work(manager.sessions[sid])
+
+
+def test_restart_retains_conversation_and_claim_handoff(tmp_path, quiet):
+    from decompnet.app import session_recovery
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    sid, = manager.start('codex', 'game', 1, {})
+    session = manager.sessions[sid]
+    conversation = '12345678-1234-1234-1234-123456789abc'
+    assert session_recovery.conversation(session, conversation)
+    assert not session_recovery.conversation(session, 'invalid cli output')
+    worker, _ = net.local_agent(session.agent_name)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO claims VALUES((SELECT id FROM functions WHERE name='f0'),?,?,?)", (worker.id,0,1e12))
+    manager._save(session)
+    restored = agents.Manager(net, tmp_path, URL).sessions[sid]
+    assert restored.options['resume_conversation'] == conversation
+    assert restored.options['resume_functions'] == ['f0']
+    assert 'reacquire' in session_recovery.handoff(restored)
+    assert not net.store.one('SELECT 1 FROM claims')
+    session_recovery.completed(restored, net)
+    assert 'resume_conversation' not in restored.options and 'resume_functions' not in restored.options
+
+
+def test_api_conversation_checkpoint_is_scoped_and_cleared_after_completion(tmp_path):
+    from decompnet.app import session_recovery
+    net = _game(tmp_path)
+    session = agents.Session('1','api','test','game','api-1',{})
+    messages = [{'role':'system','content':'rules'}, {'role':'user','content':'work'},
+                {'role':'assistant','content':'next experiment'}]
+    session_recovery.api_messages(net, session, ['local','model'], messages)
+    assert session_recovery.api_messages(net, session, ['local','model']) == messages
+    assert session_recovery.api_messages(net, session, ['other','model']) is None
+    session_recovery.completed(session, net)
+    assert session_recovery.api_messages(net, session, ['local','model']) is None
+
+
+def test_ordinary_codex_command_persists_and_resumes_exact_conversation(tmp_path, quiet, monkeypatch):
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    monkeypatch.setattr(agents, '_which', lambda command:command)
+    monkeypatch.setattr(manager, 'prompt', lambda session:'work instructions')
+    session = agents.Session('1','codex','test','game','codex-1',{})
+    work = tmp_path/'worker'
+    work.mkdir()
+    initial, _, _ = manager._command(session,'secret',work)
+    assert '--ephemeral' not in initial
+    sid = '12345678-1234-1234-1234-123456789abc'
+    session.options.update(resume_conversation=sid, resume_functions=['f0'])
+    resumed, _, prompt = manager._command(session,'new-secret',work)
+    assert resumed[-3:] == ['resume',sid,'-']
+    assert 'f0' in prompt and 'reacquire' in prompt and 'Resume this conversation' in prompt

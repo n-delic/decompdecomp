@@ -101,12 +101,19 @@ class Api(Agent):
             return True
         messages = [{"role": "system", "content": manager.app_instructions(s)},
                     {"role": "user", "content": manager.prompt(s)}]
+        from ..app.session_recovery import api_messages, handoff
+        identity = [s.slug, s.agent_name, base, model]
+        saved = api_messages(net, s, identity)
+        if saved:
+            saved[0] = messages[0]  # Current rules and tools apply after restart.
+            messages = saved + [{'role':'user','content':'Resume after interruption. Check current project state and reclaim eligible work. ' + handoff(s)}]
+            s.push('info','Restored saved API conversation and function handoff.')
         if s.record:
             s.record('prompt', messages)
             s.record('instructions', messages[0]['content'])
             s.record('tool_definitions', schema)
         count = int(s.options.get("per_session", PER_SESSION))
-        used_tool, start, done = False, len(messages), 0
+        used_tool, start, done = bool(saved), 2, 0
         with httpx.Client(timeout=httpx.Timeout(API_TIMEOUT, connect=API_CONNECT_TIMEOUT)) as client:
             window = context_window(client, base, s.options)
             s.push("info", f"session {s.runs}: {model} via {base} ({window // 1000}K tokens of context)")
@@ -115,6 +122,7 @@ class Api(Agent):
             steps = itertools.count() if focused else range(int(s.options.get("max_steps", API_STEPS)))
             idle_replies = 0
             for _step in steps:
+                api_messages(net, s, identity, messages)
                 if focused:
                     from ..app.focused_agents import completion
                     if completion(manager, s):

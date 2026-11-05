@@ -573,7 +573,7 @@ class Manager:
                            "json_extract(h.options, '$.task') END FROM helpers h "
                            "WHERE h.id=helper_sessions.helper_id AND h.project=helper_sessions.project "
                            "AND h.name=helper_sessions.agent), '')")
-        # A process cannot resume a CLI conversation after the app has exited.
+        # End process accounting; supported CLIs can still resume their saved conversation.
         with net.store.tx() as db:
             db.execute("UPDATE helper_sessions SET ended_at=?, outcome='interrupted' WHERE ended_at IS NULL",
                        (time.time(),))
@@ -599,6 +599,8 @@ class Manager:
             if s.kind not in {a.id for a in agents.AGENTS}:
                 continue
             if s.state in LIVE:
+                from .session_recovery import checkpoint
+                checkpoint(self.net, s)
                 if r["pid"] and r["pid_start"] is not None and _proc_start(r["pid"]) == r["pid_start"]:
                     crashed.add(r["pid"])
                 s.state, s.stopped_by, s.until = "stopped", BY_QUIT, None
@@ -614,9 +616,10 @@ class Manager:
         pid = s.proc.pid if s.proc is not None and s.proc.poll() is None else None
         with self.net.store.tx() as db:
             db.execute("UPDATE helpers SET label=?, state=?, why=?, todo=?, until=?, stopped_by=?, last_message=?, "
-                       "started_at=?, restarts=?, sessions=?, usd=?, tokens=?, pid=?, pid_start=? WHERE id=?",
+                       "started_at=?, restarts=?, sessions=?, usd=?, tokens=?, pid=?, pid_start=?, options=? WHERE id=?",
                        (s.label, s.state, s.why, s.todo, s.until, s.stopped_by, s.last_message, s.started_at,
-                        s.restarts, s.runs, s.usd, s.tokens, pid, s.pid_start if pid else None, s.id))
+                        s.restarts, s.runs, s.usd, s.tokens, pid, s.pid_start if pid else None,
+                        json.dumps({k:v for k,v in s.options.items() if k != "api_key"}), s.id))
 
     def _record(self, slug: str, kind: str, name: str, label: str, options: dict) -> Session:
         """The helper `name` on this project: its record from before (it carries on its numbers), or a new one."""
@@ -884,6 +887,10 @@ class Manager:
             if s.state in LIVE:
                 s.stopped_by = by
                 s.push('termination', 'App requested termination: '+{BY_YOU: 'user stopped this helper', BY_QUIT: 'app shutdown/restart'}.get(by, str(by)))
+            if by == BY_QUIT and s.state in LIVE:
+                from .session_recovery import checkpoint
+                checkpoint(self.net, s)
+                self._save(s)
             s.stop.set()
             proc = s.proc
             if proc is not None and proc.poll() is None:
@@ -906,6 +913,7 @@ class Manager:
         self.stop(sid)
         with self.net.store.tx() as db:
             db.execute("DELETE FROM helpers WHERE id=?", (sid,))
+            db.execute("DELETE FROM settings WHERE key=?", ("helper-conversation:" + sid,))
         self.sessions.pop(sid, None)
 
     def remove_paused(self, slug: str) -> int:
@@ -1292,6 +1300,10 @@ class Manager:
                 s.error = f"{type(e).__name__}: {e}"
                 s.push("error", s.error)
                 ok = False
+            if ok and not s.stop.is_set() and not s.limited and not s.throttled and not s.auth_failed:
+                from .session_recovery import completed
+                completed(s, self.net)
+                self._save(s)
             connection_failures = 0
             compiled = self._progress(agent.id) - before
             investigation = session_followups.investigation_outcome(self.net, agent, began) if compiled == 0 else None
@@ -1562,14 +1574,18 @@ class Manager:
             prompt = focus_prompt(s) + '\nContinue from your existing context; retrieve current saved C if needed.'
         else:
             prompt = self.prompt(s)
+        from .session_recovery import handoff
+        prompt += handoff(s)
+        if s.options.get('resume_conversation') and k.focus_resume:
+            prompt += '\nResume this conversation after interruption. Continue from saved context, checking current state first.\n'
         if s.tool_handshake_required:
             prompt += '\nFirst call project_info(detail=false) to confirm tools in this CLI session, before claiming or editing. If unavailable, end immediately and report the connection failure. The app will retry once.'
         try:
             prompt_file = k.prompt_file(workdir, prompt)
         except ValueError as e:
             raise Fatal(str(e)) from e
-        cmd, more = (k.focused_session_command(exe, workdir, self.mcp_url, token, s.model, s.options.get('focus_conversation'))
-                     if s.options.get('focus_id') else k.session_command(exe, workdir, self.mcp_url, token, s.model))
+        cmd, more = (k.focused_session_command(exe, workdir, self.mcp_url, token, s.model, s.options.get('focus_conversation') if s.options.get('focus_id') else s.options.get('resume_conversation'))
+                     if k.focus_resume or s.options.get('focus_id') else k.session_command(exe, workdir, self.mcp_url, token, s.model))
         cmd = k.launch_command(agents.cli_argv(cmd))
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
@@ -1695,11 +1711,8 @@ class Manager:
         for line in proc.stdout:
             for kind, text in k.parse_line(line, state):
                 if kind == "conversation":
-                    if s.options.get('focus_id'):
-                        import uuid
-                        try: conversation = str(uuid.UUID(text))
-                        except (ValueError, TypeError, AttributeError): continue
-                        s.options['focus_conversation'] = conversation
+                    from .session_recovery import conversation
+                    if k.focus_resume and conversation(s, text):
                         self._save(s)
                     continue
                 if kind == "usage":
@@ -1730,6 +1743,14 @@ class Manager:
         if s.stop.is_set() or s.rotated:
             return True
         everything = " ".join([*said, *errors])
+        if (k.focus_resume and proc.returncode and (s.options.get('resume_conversation') or s.options.get('focus_conversation'))
+                and re.search(r'(?:no (?:session|conversation|thread) found|(?:session|conversation|thread).{0,100}(?:not found|does not exist|could not be found))', everything, re.I)):
+            s.options.pop('resume_conversation', None)
+            s.options.pop('focus_conversation', None)
+            self._save(s)
+            s.push('info','Saved CLI conversation is unavailable. Continuing with saved function handoff and current project state.')
+            return False
+
         if refused:
             raise Fatal(refused + " Review the agent settings and resolve this error before restarting.")  # every retry would meet it the same way
         if LIMIT.search(everything):

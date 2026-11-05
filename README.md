@@ -1715,4 +1715,13 @@ Transactions bypass these caches, and external imported-project dependencies kee
 The bounded shared cache retains recently used entries and never evicts an active build. None of these caches
 accepts a match: the normal compiler and byte judge remain authoritative.
 
+### Resuming interrupted agents
+
+After an app restart, interrupted Claude Code and Codex CLI agents resume their saved conversation ID from
+their existing worker folder. API agents restore their latest complete conversation exchange, scoped to the
+same endpoint and model. Current rules and tools still apply. The worker receives its saved function handoff
+and must reacquire eligible work through ordinary claims; another worker's claim is never taken. Other CLI
+agents receive the function handoff and existing saved project notes in a new conversation. Completed ordinary
+sessions still rotate normally. Missing native CLI transcripts fall back to the saved handoff. This applies to
+conversations recorded after updating; previously discarded context cannot be reconstructed.
 Suspicious MIPS function extents can be audited in Settings → Code coverage → **Review & repair boundaries**. Preview original assembly, repair delay slots/joins/end addresses, classify padding/data, or explicitly keep intentional entries. Automatic work waits for review; decisions retain source/history and have guarded undo. See [coverage review](docs/CODE_COVERAGE_REVIEW.md).
