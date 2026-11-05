@@ -14,7 +14,8 @@ MATCHING = REQUIRED | {'get_claims','get_candidate','compile_patch','compile_var
     'read_file','search_code','edit_file','file_status','standins_for'}
 PRESETS = {'full': ('All tools', None), 'matching': ('Matching essentials', MATCHING),
            'investigation': ('Compiler and data investigation', MATCHING | {'read_data','resolve_addresses','get_class','guess_struct',
-               'compiler_map','try_compiler','search_flags','compiler_experiments','get_compiler_trial','suggest','report_boundary','report_data_region'}),
+               'compiler_map','try_compiler','search_flags','compiler_experiments','get_compiler_trial','suggest','report_boundary','report_data_region',
+               'get_boundary_evidence','suggest_boundary'}),
            'polishing': ('Polishing and names', REQUIRED | {'claim_readable','make_readable','tidy_done','rename_symbol',
                'get_claims','guide','get_context','edit_context','read_file','edit_file','file_status','search_code','add_note','find_similar'})}
 
@@ -78,8 +79,11 @@ def disabled(net):
 
 
 def visible(net, slug, names, agent=None):
+    from . import boundary_investigations
     ensure(net)
     blocked = disabled(net)
+    if agent and boundary_investigations.scope(net,agent):
+        return [name for name in names if name in boundary_investigations.TOOLS and name not in blocked]
     if agent:
         blocked.update(net.selection(slug, agent.name).get('disabled_tools', []))
     return [name for name in names if name in REQUIRED or name not in blocked]

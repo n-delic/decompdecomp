@@ -14,7 +14,11 @@ def remember(net, agent, proj, fn, source, score):
     key = (fn['id'],experiment_evidence.build_scope(net,proj,current))
     pool = cache.setdefault(key,{})
     rows = permuter_focus.normalized(repair_ranking.evidence(net,fn['id'],agent.id))
-    pool[hashlib.sha256(source.encode()).hexdigest()] = {'score':score,'rows':rows,'kind':permuter_focus.classify(rows),'allocation':allocation_evidence.diagnose(rows,proj['arch'])}
+    from ..repair_feedback import current_trial
+    parent_hash = (current_trial() or {}).get('base_source_sha256')
+    parent = pool.get(parent_hash)
+    regional = region_repairs.progress(parent['rows'],rows,proj['arch']) if parent else ''
+    pool[hashlib.sha256(source.encode()).hexdigest()] = {'score':score,'rows':rows,'kind':permuter_focus.classify(rows),'allocation':allocation_evidence.diagnose(rows,proj['arch']),'regional_progress':regional}
     while len(pool)>8:
         del pool[next(iter(pool))]
     while len(cache)>LIMIT:
@@ -40,6 +44,7 @@ def brief(net, proj, fn):
         from . import allocation_search
         if clue := allocation_search.brief(net,proj,fn,source,current['rows']):lines.append(clue)
         if region := region_repairs.summary(current['rows'],proj['arch']):lines.append(region)
+        if current.get('regional_progress'):lines.append(current['regional_progress'])
         plan=allocation_evidence.plan(current['rows'],proj['arch'])
         from .copy_lifetime_repairs import FAMILIES, variants
         applicable = {family for family, _ in variants(source,fn['name'])}

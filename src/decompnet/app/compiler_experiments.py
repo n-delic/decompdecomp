@@ -76,7 +76,7 @@ def run(net,agent,slug,function,revision,trials):
             if cached:
                 result=cached['result'];tag='cached diagnostic'
             else:
-                result=net.try_compiler(agent,slug,function,t['compiler'],t.get('flags',''),text,keep_match=False)
+                result=net.try_compiler(agent,slug,function,t['compiler'],t.get('flags',''),text,keep_match=False,**({'structured':True} if not fork else {}))
                 from .session_followups import diagnostic_completed
                 diagnostic_completed(net,agent,fn['name'],slug)
                 ledger[key]={'agent':agent.id,'slug':slug,'function':fn['name'],'source':text,'compiler':t['compiler'],
@@ -88,9 +88,18 @@ def run(net,agent,slug,function,revision,trials):
                 while len(ledger)>64:
                     del ledger[next(iter(ledger))]
                 tag='diagnostic'
-            score=re.search(r'\bscore\s+(\d+)',result)
-            exact='MATCHES the game byte for byte' in result or 'MATCH!' in result
-            status='EXACT (diagnostic only)' if exact else 'score '+score[1] if score else result.splitlines()[0][:180]
+            # ROM trials carry the linked judge's boolean; never infer exactness from score zero.
+            # Imported builds still expose their legacy textual diagnostic.
+            if isinstance(result,dict):
+                exact=result.get('exact') is True
+                score=result.get('score')
+                message=result.get('text','No diagnostic returned.')
+            else:
+                message=result
+                parsed=re.search(r'\bscore\s+(\d+)',message)
+                score=int(parsed[1]) if parsed else None
+                exact='MATCHES the game byte for byte' in message or 'MATCH!' in message
+            status='EXACT (diagnostic only)' if exact else 'score '+str(score) if score is not None else message.splitlines()[0][:180]
             out.append(f'{i}: {status}; {tag}; trial_id={key}; compiler={t["compiler"]}; flags={t.get("flags","") or "platform defaults"}')
             if exact:
                 if not fork:

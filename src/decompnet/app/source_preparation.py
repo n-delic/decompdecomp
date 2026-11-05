@@ -379,7 +379,9 @@ def inputs(net, proj, fn):
     cfg = json.loads(proj['config'])
     from ..project import compiler_for
     own = compiler_for(cfg, fn['vram'], fn) if 'compiler' in cfg else None
-    for key in ('compiler_ranges', 'function_compilers', 'boundaries', 'suggestions', 'knowledge_auto'):
+    # Range-check/survey progress is workflow evidence, not a compilation input.
+    # Keep the selected function profile and every unknown build setting frozen.
+    for key in ('compiler_ranges', 'function_compilers', 'boundaries', 'suggestions', 'knowledge_auto', 'range_checks', 'compiler_survey'):
         cfg.pop(key, None)
     cfg['compiler'] = own
     return (json.dumps(cfg, sort_keys=True), fn['unit'], fn['target'], fn['relocs'], fn['vram'], fn['best_source'], ctx['version'], symbols,

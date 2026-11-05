@@ -799,3 +799,26 @@ intervening call, write, pointer mutation or volatile access; never introduce si
 overflow or change a used expression result. The shared `unsigned_byte_increment` repair proves
 its supported narrow CFG/read shape and otherwise skips. The normal judge remains authoritative;
 one case does not justify a broad increment rewrite.
+
+### Bounds-loop branch destinations
+
+A low-score goto can skip the outer bounds test. Check the backedge destination
+and its comparison in the delay slot before retaining that C. For a pure named
+comparison, an explicit outer return guard paired with function-only
+`-fno-thread-jumps` recovered one exact KMC 2.7.2/O2 case; either source or profile
+alone missed. Shared normal/deep permuter preflight tries a tiny supported paired
+set even when the source alone scores worse. Preserve source layout. A `beq` versus
+`beql` mismatch changes delay-slot execution, so only linked bytes establish a
+match. See `docs/COMPILER_MATCHING_LEARNINGS.md` for controlled scores and failed
+experiments; this is not a recommendation to change the project's global flags.
+
+### Isolated spill slots and register chains
+
+Equal frames with one differing spill store/load pair need a local storage/lifetime
+hypothesis before global frame padding. `mapped_spill_storage` uses the actual object's
+C-line association to select the assignment's local; `mapped_register_lifetime` uses
+a small consistent register chain to try same-type conversion lifetime changes.
+A source association is not a register prescription. Stale/missing line information
+provides no proposal. Preserve compiler flags and exact checking; the first held-out
+sweep did not improve the two motivating residuals, so do not repeat exhausted shapes
+without a new source/context/evidence hypothesis.

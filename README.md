@@ -56,6 +56,17 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+Open **Regenerate machine drafts** under a project's overview, then choose **Regenerate drafts** to refresh
+starting C and test it with the project's compiler. Matches, best attempts and shared headers are preserved.
+Claimed functions and unresolved boundaries are skipped; Stop keeps completed work. **Starting C diagnostics**
+in a function shows separate generation, compiler and linking failures. Unchanged failed inputs are cached;
+explicit regeneration opens a new pass. No AI calls are made.
+
+Initial MIPS drafts can try private callback-table declarations, missing forwarded arguments, and overlapping
+stack views in one original-sized frame. Known-size original tables, constants and strings use the selected
+overlay's reader. Malformed irregular switches get one bounded alternative. These are hypotheses: compilation
+is a useful starting point, and only the ordinary exact judge can accept a match.
+
 ROM drafts preserve overlay branch labels and follow renamed entry symbols. Existing imports can recover missing
 labels only at recorded instruction addresses, including supplied jump-table cases. Cached failed drafts are
 regenerated after the fix; newly recovered local drafts go through the ordinary compiler and exact judge.
@@ -1744,6 +1755,13 @@ need their own verified intrinsic integration before this call can be used there
 Referenced fixed intrinsic templates travel with rebuildable ROM exports and verified
 repository sync headers, so standalone builds that invoke the compiler directly retain
 the same operation. Unrelated sources keep their existing prelude.
+
+Boundary review now explains the specific warning beside neighbouring original instructions and before/after
+extents. **Ask an agent to investigate** starts one advisory worker on the selected entry for up to ten minutes.
+It records supporting evidence, counter-evidence, uncertainty and instruction links, without claiming, compiling
+or editing functions. Review its proposal, preview the exact change, then run safety checks and save. Safety
+checks protect existing work; they do not prove function ownership. This guided repair flow covers mapped
+MIPS ROM projects; other processors and imported builds still need adapters.
 
 ### Keep matches when closing projects
 

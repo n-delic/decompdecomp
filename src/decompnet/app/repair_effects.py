@@ -18,10 +18,18 @@ def output_scope(node):
     return hashlib.sha256(repr((node['parent_output'],node['path'][-1])).encode()).hexdigest()
 
 
-def observe(state, node, output):
+def observe(state, node, output, *, score=None, parent_score=None):
     scope = key(node)
-    if scope is None or output is None or node.get('parent_output') is None:
+    if scope is None:
         return
+    totals = state.setdefault('output_feedback', {})
+    if output is None or node.get('parent_output') is None:
+        totals['unknown'] = totals.get('unknown',0)+1
+        return
+    same = output == node['parent_output']
+    kind = ('identical' if same else 'changed_improved' if score is not None and parent_score is not None and score<parent_score
+            else 'changed_unimproved' if score is not None and parent_score is not None else 'changed_unknown_score')
+    totals[kind] = totals.get(kind,0)+1
     stalls=state.setdefault('output_stalls',{})
     parent=hashlib.sha256(repr(node['parent_output']).encode()).hexdigest()
     stalls[parent]=stalls.get(parent,0)+1 if output==node['parent_output'] else 0
@@ -63,6 +71,13 @@ def rotate(state):
     # Preserve the third direct sibling and one ordinary slot in four.
     if ordinary and history.get(key(ordinary[0]),0)!=2 and slot%4!=3:
         ordinary=[n for n in ordinary if redirect(n)]+[n for n in ordinary if not redirect(n)]
+    from .repair_selection import COMPLEMENTS
+    def complementary(node):
+        path = node.get('path', [])
+        return len(path)>1 and path[-1] in COMPLEMENTS.get(path[-2], ())
+    # Reserve one slot in four for a useful pair, without deleting inert parents.
+    if slot%4 == 2:
+        ordinary = [n for n in ordinary if complementary(n)]+[n for n in ordinary if not complementary(n)]
     if not deferred:
         state['pending']=ordinary
         return
@@ -71,3 +86,9 @@ def rotate(state):
     first = deferred if slot % DEFER_INTERVAL == DEFER_INTERVAL-1 else ordinary
     other = ordinary if first is deferred else deferred
     state['pending'] = first[:1]+other+first[1:] if first is deferred else ordinary+deferred
+
+
+def summary(state):
+    """Scores never stand in for output fingerprints; report unknown evidence separately."""
+    counts = state.get('output_feedback', {})
+    return {key:counts.get(key,0) for key in ('identical','changed_improved','changed_unimproved','changed_unknown_score','unknown')}

@@ -32,6 +32,7 @@ def quick(function):
 
 def brief(net, fn, agent, header):
     from .agent_tokens import candidate
+    from .draft_reports import read, summary
     proj=net.store.one('SELECT slug,name FROM projects WHERE id=?',fn['project_id'])
     available=fn['best_source'] or fn['matched_source'] or fn['seed'] or net.store.one('SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? LIMIT 1',fn['id'],agent.id)
     source,revision=candidate(net,agent,proj['slug'],fn['name']) if available else ('','unavailable until source is loaded')
@@ -41,6 +42,8 @@ def brief(net, fn, agent, header):
            'Preparation: deferred. No diagnostic build or new draft was run while reserving this claim.',
            'Saved scores are historical. get_candidate verifies the baseline; get_assembly reads target instructions; '
            'get_function(section="brief") loads full supporting evidence. compile_patch/compile_and_diff use the ordinary judge.']
+    diagnostic = summary(read(net,fn['id']))
+    if diagnostic:lines.append(diagnostic)
     if source:
         lines += ['Candidate C (complete):','```c',source,'```']
     else:

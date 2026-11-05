@@ -29,6 +29,7 @@ from . import workers
 
 log = logging.getLogger("decompdecomp")
 POLL_SECONDS = 30  # how often a drafter looks whether what drafts are made from changed
+DRAFT_BATCH = 2  # initial compiles share SQLite/progress writes; do not flood the global worker pool
 SYNC_WAIT = 5  # how often it looks whether the room it joined has caught up
 
 
@@ -90,7 +91,9 @@ class Drafter:
                     st.total, st.made = len(todo), 0
                     if todo:
                         agent, _ = self.net.local_agent("autopilot")
-                        wait([workers.pool().submit(self._one, agent, proj, fid, st) for fid in todo])
+                        for start in range(0,len(todo),DRAFT_BATCH):
+                            if st.stop.is_set():break
+                            wait([workers.pool().submit(self._one, agent, proj, fid, st) for fid in todo[start:start+DRAFT_BATCH]])
                     mark = now  # (what changed while the pass ran is seen at the next look)
                 idle_wait(self.net, st, POLL_SECONDS)
         except Exception:  # background work: it never stands in the way, and says why it stopped
@@ -110,16 +113,16 @@ class Drafter:
             fork = self.net.fork_slug(proj["slug"])  # a game started from scratch in project mode (PC)
             if fork:
                 self.net.forks.background_draft(proj, fn)
-                recovered = False
+                recovered = not fn["best_source"]
             else:
-                seed = self.net._seed_for(fn, proj)
-                recovered = fn['seed'] == '' and bool(seed)
+                self.net._seed_for(fn, proj)
+                recovered = not fn['best_source']
             st.made += 1
             if proj["slug"] not in self.net.links and (recovered or self.net.store.one(
                     "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?", fid, agent.id)):
                 # autopilot tried this function's draft before: the new one goes through the judge too (in a room,
                 # the host's copy does that, and its matches come back here)
-                # A recovered failed seed has no attempt: m2c stopped before compilation.
+                # A fresh or recovered seed has no attempt until its first compilation.
                 outcome = (self.net.forks.autopilot_one if fork else self.net._autopilot_one)(agent, proj, fid)
                 st.retried += outcome in ("match", "near", "far")
                 st.matched += outcome == "match"

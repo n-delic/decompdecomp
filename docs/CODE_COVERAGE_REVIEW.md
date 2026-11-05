@@ -157,3 +157,46 @@ agent work while retaining the warning and decision evidence.
 **Repair history → Verify & undo** restores the prior rows and symbol size. Undo
 refuses active claims, new candidate attempts, changed inputs or newly matched
 entries, so it cannot silently replace later work. No original ROM bytes are edited.
+
+
+## Guided boundary decisions and agent advice
+
+Open **Review & repair boundaries**, then select an entry. The review loads original-image
+instructions around its start and end, adjacent entries, direct calls/branches and mapped
+symbols before asking for a decision. Large functions use separate instruction windows so
+the disputed end is visible. Missing sections are labelled. All end addresses are exclusive.
+
+Choose a delay-slot extension, a join supported by control flow, an intentional separate
+entry, padding or data. Manual end-address editing is under **Advanced boundary edit**.
+Nothing is preselected: adjacency alone does not establish shared ownership, and a single
+nop is insufficient proof of padding. Preview shows which name remains, archived entries,
+and any retained shortened tail. Resized functions require a fresh ordinary match.
+
+**Ask an agent to investigate** uses a configured provider/model and normal session
+accounting. It has a persisted ten-minute deadline, includes provider waits, and stops
+when a structured recommendation is submitted. Its tools can read original boundary
+evidence and save advice; they cannot claim, compile or edit a function. A busy function
+can be investigated without stealing its claim. Existing claim guards still apply when
+the user previews or applies a repair. Closing the review leaves the investigation in
+the Agents tab; **Refresh recommendations** retrieves saved advice when returning.
+
+A recommendation includes its action and optional exclusive end, evidence strength
+(not a probability), supporting and counter-evidence, remaining uncertainty, provider/model
+attribution and links to supplied instruction addresses. **No clear recommendation** is
+valid. Reports are tied to the original image and project revision; changed inputs mark
+old advice stale. **Review this proposal** selects a choice and copies its explanation,
+but does not preview or save the change automatically.
+
+The direct-edge scan reads up to 65,536 mapped original instructions in the same segment,
+prioritising the selected entry and nearby entries, and retains at most 80 relevant edges.
+Indirect references, raw gaps and other segments/overlays remain unresolved. Symbols can
+be generated rather than debug evidence. These limits are shown to both user and agent;
+absent callers, agreement between models or successful safety checks cannot prove ownership.
+
+**Run safety checks & save decision** retains the original mapping, overlap, active-claim,
+revision/image and existing-match checks, evidence requirement, history and guarded undo.
+These checks protect existing work; they do not prove the new boundary is correct.
+
+Guided repair and advisory investigation currently use mapped MIPS ROM extents (N64,
+PS1, PS2 scalar MIPS and PSP). Other processors and imported builds need evidence/layout
+adapters before this workflow can safely reach them; they remain planned in ROADMAP.md.

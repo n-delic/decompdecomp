@@ -17,7 +17,7 @@ def test_revision_profile_pairs_are_diagnostic_cached_and_scoped(tmp_path,monkey
         db.execute('UPDATE functions SET best_source=?',('int f(){return 1;}',))
     net.claim_row(a,'game','f');_,rev=agent_tokens.candidate(net,a,'game','f');calls=[]
     monkeypatch.setattr(net,'_toolchain_named',lambda cfg,c:c)
-    def check(agent,slug,function,compiler,flags,source,keep_match=True):
+    def check(agent,slug,function,compiler,flags,source,keep_match=True,structured=False):
         calls.append((compiler,flags,source,keep_match));return 'profile: score 20, not a match'
     monkeypatch.setattr(net,'try_compiler',check)
     trials=[{'compiler':'fake','flags':'-O2','old':'return 1','new':'return 2'}, {'compiler':'fake','flags':'-O1'}]
@@ -77,3 +77,41 @@ def test_exact_diagnostic_points_to_explicit_function_only_promotion(tmp_path,mo
     assert 'suggest(function="f"' in result and 'No ranges argument is needed' in result
     assert net._function('f','game')['status']=='open'
     assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==0
+
+
+@pytest.mark.parametrize('exact',[True,False])
+def test_structured_verdict_stops_only_on_linked_exact_not_score_zero(tmp_path,monkeypatch,exact):
+    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('a')
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?',(json.dumps({'kind':'rom'}),))
+        db.execute("UPDATE functions SET best_source='int f(){return 1;}'")
+    net.claim_row(agent,'game','f');_,revision=agent_tokens.candidate(net,agent,'game','f')
+    monkeypatch.setattr(net,'_toolchain_named',lambda cfg,c:c)
+    calls=[]
+    def trial(*a,**kwargs):
+        assert kwargs['structured'] is True
+        calls.append(True)
+        return {'exact':exact,'score':0,'text':'Formatting may change; no text verdict parsing.'}
+    monkeypatch.setattr(net,'try_compiler',trial)
+    output=compiler_experiments.run(net,agent,'game','f',revision,
+                                   [{'compiler':'fake','flags':'-O2'},{'compiler':'fake','flags':'-O1'}])
+    assert len(calls)==(1 if exact else 2)
+    assert ('EXACT (diagnostic only)' in output)==exact
+    row=net.store.one('SELECT record FROM compiler_trial_evidence LIMIT 1')
+    assert json.loads(row['record'])['result']['exact'] is exact
+    assert net._function('f','game')['status']=='open'
+
+
+@pytest.mark.parametrize('exact',[True,False])
+def test_rom_compiler_api_structured_result_uses_judge_verdict(exact):
+    from types import SimpleNamespace
+
+    from decompnet.app.engine.compilers import CompilerMixin
+    fn={'name':'f','vram':4096,'best_source':'int f(){return 1;}'}
+    cfg={'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
+    diff=SimpleNamespace(score=0,percent=100,render=lambda **k:'identical displayed instructions')
+    net=SimpleNamespace(fork_slug=lambda s:None,_project=lambda s:{'slug':s},cfg=lambda p:cfg,
+                        _function=lambda *a:fn,_judge_with=lambda *a:(exact,diff,''),
+                        rangechecks=SimpleNamespace(tried=lambda *a:None))
+    result=CompilerMixin.try_compiler(net,None,'game','f','current',source=fn['best_source'],structured=True)
+    assert result['exact'] is exact and result['score']==(0 if exact else 1)
