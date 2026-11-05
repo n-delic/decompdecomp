@@ -20,7 +20,9 @@ from ..hostenv import NO_WINDOW, console_python, stop_process_tree
 from . import Picked, RomError
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
-_LABEL = re.compile(r"^\s*(?:jlabel\s+)?(\.?L[0-9A-F]{8}):?\s*$")
+_LOCAL_NAME = r"\.?L([0-9A-F]{8})(?:_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3}))?"
+_LOCAL_REF = re.compile(r"(?<![\w.$])" + _LOCAL_NAME + r"(?![\w.$])")
+_LABEL = re.compile(r"^\s*(?:jlabel\s+)?(" + _LOCAL_NAME + r"):?\s*$")
 _DATA = re.compile(r"^\s*/\* ([0-9A-F]+ )?([0-9A-F]{8})(?: [0-9A-F]+)? \*/\s+\.(\w+)\s*(.*?)\s*$")
 _DLABEL = re.compile(r"^\s*dlabel\s+(\S+)")
 _GLABEL = re.compile(r"^\s*glabel\s+(\S+)")
@@ -446,7 +448,7 @@ def parse_function(path: Path, segment: str, big_endian: bool = True) -> RomFunc
             continue
         m = _LABEL.match(raw)
         if m:
-            labels.add(int(m.group(1).lstrip(".L"), 16))
+            labels.add(int(m.group(2), 16))
     if name is None or not lines:
         return None
     _trim_padding(lines)
@@ -457,11 +459,48 @@ def function_asm(fn: RomFunction) -> str:
     """A function's stored assembly, as the project keeps and shows it (spimdisasm's lines with their words)."""
     out = [f"glabel {fn.name}"]
     for ln in fn.lines:
-        if ln.vram in fn.labels and ln.vram != fn.vram:
+        if ln.vram in fn.labels:
             out.append(f".L{ln.vram:08X}:")
-        out.append(f"/* {ln.rom:X} {ln.vram:08X} {ln.word:08X} */  {ln.mnemonic:<10} {ln.operands}".rstrip())
+        # Overlay labels carry a suffix in splat's input. Keep their references consistent
+        # with the address labels we emit, including jump-table case entries.
+        operands = _LOCAL_REF.sub(lambda m: f".L{m[1]}" if int(m[1], 16) in fn.labels else m[0], ln.operands)
+        out.append(f"/* {ln.rom:X} {ln.vram:08X} {ln.word:08X} */  {ln.mnemonic:<10} {operands}".rstrip())
     out.append(f"endlabel {fn.name}")
     return "\n".join(out)
+
+
+def draft_asm(text: str, name: str, vram: int | None = None, data_asm: str = '') -> str:
+    """Recover labels lost by older imports without changing an instruction or extending a target.
+
+    Only recorded instruction addresses can define missing local labels. An outgoing
+    branch remains unresolved: inventing its code would hide a boundary problem.
+    The row owns this assembly, so its entry name also follows subsequent renames.
+    """
+    lines = text.splitlines()
+    instructions = [(i, _INSN.match(line)) for i, line in enumerate(lines)]
+    instructions = [(i, m) for i, m in instructions if m]
+    if not instructions or (vram is not None and int(instructions[0][1][2], 16) != vram):
+        return text
+    if vram is None:
+        entries = [m[1] for line in lines if (m := _GLABEL.match(line))]
+        if entries != [name]:
+            return text  # a project-mode file can contain several functions; do not rename its first one
+    entry = next((m for line in lines[:instructions[0][0]] if (m := _GLABEL.match(line))), None)
+    if entry and entry[1] != name:
+        text = re.sub(r"(?<![\w.])" + re.escape(entry[1]) + r"(?!\w)", lambda _: name, text)
+        lines = text.splitlines()
+    defined = {m[1] for line in lines if (m := _LABEL.match(line))}
+    # Case targets can occur only in the supplied jump table, not in an instruction.
+    missing = {m[0]: int(m[1], 16) for m in _LOCAL_REF.finditer(text + '\n' + data_asm) if m[0] not in defined}
+    by_address: dict[int, list[str]] = {}
+    for label, address in missing.items():
+        by_address.setdefault(address, []).append(label)
+    out = []
+    for line in lines:
+        if m := _INSN.match(line):
+            out.extend(f"{label}:" for label in sorted(by_address.pop(int(m[2], 16), [])))
+        out.append(line)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
 def function_from_text(name: str, text: str, segment: str) -> RomFunction:
@@ -475,7 +514,7 @@ def function_from_text(name: str, text: str, segment: str) -> RomFunction:
             continue
         m = _LABEL.match(raw)
         if m:
-            labels.add(int(m.group(1).lstrip(".L"), 16))
+            labels.add(int(m.group(2), 16))
     return RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, Path(), labels)
 
 
