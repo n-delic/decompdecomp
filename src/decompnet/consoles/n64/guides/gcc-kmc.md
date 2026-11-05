@@ -641,3 +641,11 @@ Try `live_return_address` when a draft's uninitialized placeholder corresponds t
 a raw target-proven absolute `$ra` store. Do not run broad flag sweeps for a missing
 hardware operation, guess a caller constant, or reinterpret stack frame saves as
 this pattern. All resulting candidates still require ordinary exact verification.
+
+For a live-register store followed by a persistent register-allocation mismatch,
+try `live_return_address_initializers`: preserve one-shot scopes, inline an
+unchanged typed integer literal, or stage adjacent literal declarations while
+keeping initializer evaluation order. A hardware-only intermediate can score
+worse, so test the bounded combined proposal directly. Unrelated volatile locals
+are retained; volatile placeholders are not inferred. Verify the function's own
+compiler profile rather than copying a neighbour's flags.

@@ -3613,3 +3613,27 @@ at that address, and a single-use uninitialized scalar/pointer placeholder. Gaps
 unknown address bases, escaped/initialized placeholders and other processors are
 not inferred. The normal compiler/link/data judge remains authoritative. Other
 compiler packs and real-name symbol adapters need separate tested support.
+
+### Atomic live-register and initializer allocation repairs
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -ffast-math
+-fno-schedule-insns`. A second dispatcher started at score 5. A hardware read
+without its original one-shot scope scored 185; retaining the scope scored 65.
+Staging adjacent literal declarations while retaining initializer evaluation order
+then reached score 0 with the ordinary linked-byte judge. Inlining an unchanged
+literal is another bounded allocation candidate; keep its declared scalar type.
+These are atomic proposals: retaining only improving intermediate scores would
+miss the combined repair. Do not remove lexical wrappers just because they look
+redundant, or assume the neighbouring function's compiler flags apply.
+
+An unrelated volatile local must not exclude the entire function. Reject qualified
+or escaped placeholders individually, and require raw target evidence for the
+hardware store. Scalar globals need an explicit matching 32-bit cast. The new
+bundle retains the four-candidate cap and the ordinary exact-byte gate.
+
+Evidence: controlled replay of saved private inputs, not a new native automation
+match. An independently running helper matched the live function by inlining the
+literal and preserving the live-register store. Its actual source and four other
+pending source units passed standalone checks and a complete 12,582,912-byte image
+comparison. Existing compiled objects were checked unchanged before reuse. No game
+source or extracted assembly is included in these generic regression tests.
