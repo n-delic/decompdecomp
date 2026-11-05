@@ -419,6 +419,7 @@ class Search(Permuter):
             parents = {}
             while queue:
                 feedback.order(queue,labels,source,parents)
+                queue=repair_ranking.guarded_first(queue,labels)
                 candidate=queue.pop(0)
                 if phase_deadline is not None and time.monotonic() >= phase_deadline:
                     self.local_status = {'reason': 'phase_budget', **counters}
@@ -574,6 +575,14 @@ class Search(Permuter):
                     continue  # A room host owns profile changes; no local profile promotion can bypass it.
                 measured = deep_profiles.probe(self, agent, proj, fn, source, profile)
             if measured == 0:
+                if self.best != 0:
+                    self.improvements += int(self.best is not None)
+                    self.best = 0
+                    self.winner_source = source
+                    # The old diff/output belongs to another profile, even though the pair is exact.
+                    self.winner_diff = self.winner_output = self.winner_scope = None
+                    self.last_outcome, self.last_score = 'matched', 0
+                    self.report()
                 return 0
         return score
 

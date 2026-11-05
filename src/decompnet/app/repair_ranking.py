@@ -1,5 +1,14 @@
 """Rank applicable hypotheses by observed mismatches without excluding other families."""
 
+GUARDED = ('mips_debug_break','live_return_address','live_return_address_initializers')
+
+
+def guarded_first(candidates, labels=None):
+    """Finite target-backed proposals precede generic learned or localisation hypotheses."""
+    family=lambda c:labels.get(c,'') if labels is not None else c
+    return sorted(candidates,key=lambda c:GUARDED.index(family(c)) if family(c) in GUARDED else len(GUARDED))
+
+
 def order(families, rows):
     from .allocation_evidence import diagnose
     from .permuter_focus import classify, normalized
@@ -60,11 +69,14 @@ def order(families, rows):
         preferred = ('known_address_alias', 'target_call_argument', 'target_local_bundle', 'local_widening', 'integer_address_order', 'signedness', 'narrowing', 'constant_local')
     else:
         preferred=()
-    preferred=('mips_debug_break','live_return_address','live_return_address_initializers',)+(('debug_conversion_tail',) if focus=='control' else ())+(('delayed_narrow_capture','shared_shift_mask') if focus in {'register','call'} or diagnose(rows)['scheduling'] else ())+('plain_float_slots','return_contract','narrow_expression_inline')+preferred
+    preferred=(('debug_conversion_tail',) if focus=='control' else ())+(('delayed_narrow_capture','shared_shift_mask') if focus in {'register','call'} or diagnose(rows)['scheduling'] else ())+('plain_float_slots','return_contract','narrow_expression_inline')+preferred
     if diagnose(rows)['register_only']:
         preferred = ('dead_copy_source','divisor_normalization_copy', 'divisor_value_scope', 'divisor_flag_split', 'regional_load_reuse') + preferred
     elif diagnose(rows)['scheduling'] or diagnose(rows)['delay_slot']:
         preferred = ('debug_statement_boundary',) + preferred
+    # These families only exist after a narrow target/source guard. Generic delay-slot
+    # or register-shape heuristics must not spend the whole budget before that operation.
+    preferred=GUARDED+preferred
     return sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
 
 
