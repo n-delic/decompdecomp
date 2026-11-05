@@ -230,11 +230,21 @@ class Flow:
         return node is not None and variable not in node.live
 
 
-def analyze(source, name, *, declarations=None):
-    """Return conservative liveness, or no advice for extensions and escaped control flow."""
+def analyze(source, name, *, declarations=None, allow_unrelated_volatile=False):
+    """Return conservative liveness, or no advice for extensions and escaped control flow.
+
+    A caller may explicitly analyze only provided ordinary locals while retaining
+    unrelated volatile operations in the CFG. This opt-in proves scalar dominance;
+    it does not authorize moving volatile accesses or calls.
+    """
     part = view(source, name)
-    if not part or re.search(r'\b(?:volatile|asm|__asm__|setjmp|_setjmp|sigsetjmp|longjmp)\b', part.clean):
+    if not part or re.search(r'\b(?:asm|__asm__|setjmp|_setjmp|sigsetjmp|longjmp)\b', part.clean):
         return None
+    if re.search(r'\bvolatile\b',part.clean):
+        ordinary = {(d.start(),d.end(),d['name'],d['type']) for d in locals_for(part)}
+        if not allow_unrelated_volatile or not declarations or any(
+                (d.start(),d.end(),d['name'],d['type']) not in ordinary for d in declarations):
+            return None
     try:
         return Flow(part, declarations)
     except (ValueError, RecursionError):

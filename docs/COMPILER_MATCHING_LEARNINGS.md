@@ -3917,3 +3917,37 @@ The observed KMC GCC 2.7.2 compiler accepted the duplicated specifier with a war
 this was not an exact-match breakthrough or a compiler failure. The fix preserves
 existing specifier order and line breaks, and adds internal linkage only where absent.
 Synthetic regressions cover comments, strings, indentation and multiline specifiers.
+
+### Measured match and controlled replay: integer index to array pointer phase
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+32-bit big-endian MIPS. A private 257-instruction function first improved manually
+from advisory score 130 to 70 by expressing a genuine parallel-copy rotation with
+separate C90 statements and a one-shot copy scope. This manual preparation is not
+an automatically recovered result.
+
+Sharing an ended integer index with a later local-array call address through a
+union changed the saved-register allocation and reduced the persisted 70 draft to
+two differing register operands (score 10). Capturing an unescaped ordinary local
+immediately before the preceding call, rather than after it, recovered the final
+temporary register and delay-slot copy. Every active union member is assigned
+before reading it; no stored integer is reinterpreted as a pointer. Calls, array
+stores, volatile accesses, target bytes and compiler flags retain their meaning.
+The ordinary linked verdict and independent complete cartridge comparison passed.
+
+The shared bounded `integer_array_pointer_phase` adapter reproduces 70 to zero
+in controlled replay: three direct family proposals, or rank 12 in the interleaved
+40-candidate first page. This replay is the same measured match, not another game
+match. Explicit 32-bit metadata, unique unqualified arrays, scalar dominance and
+escape checks constrain generation. Copy capture rejects argument-side writes,
+address escapes, destination reads, macro expansion and control statements.
+Unrelated volatile operations remain in the CFG and source; the default liveness
+analysis still declines volatile functions unless a caller supplies ordinary locals
+and explicitly requests that limited analysis.
+
+Negative evidence: plain copy rotations, added byte-offset phases, register/type
+qualifiers and source-line pairings did not resolve the frozen case. An explicit
+byte offset changed allocation and scheduling substantially. Inspect `.greg`/`.lreg`
+phase reuse before expanding such searches. With `-g3`, statement boundaries and
+the position of a pure capture relative to the preceding call can matter; retain
+line boundaries and verify each candidate with the ordinary judge.

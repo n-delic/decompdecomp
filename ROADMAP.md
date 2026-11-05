@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: bounded integer-index to local-array pointer phase proposals in shared source
+repairs, with explicit 32-bit metadata, unique array/scalar lifetime guards, and pure local
+copy capture before a call. Macro expansions and argument-side writes remain opaque;
+unrelated volatile accesses retain their source order and default CFG policy.
+
 Implemented: bounded, sequenced byte-loop guard storage proposals in shared source repairs,
 with MIPS target-evidenced stale counter-copy hypotheses and conservative local-use checks.
 Guard storage proposals work in ROM and imported-source searches; counter-copy evidence adapters
