@@ -3828,3 +3828,32 @@ already verified on nearby functions (plain `-O2`, and `-O2 -ffast-math
 controlled synthetic guard tests, not a claim of broad profile superiority or an
 autopilot replay. The repair is shared across architectures and modes, but the
 new exact compiler observation is MIPS GCC evidence only.
+
+### Aggregate views can preserve scalar load scheduling through local byte pointers
+
+A private 154-instruction MIPS function compiled with `gcc-2.7.2-kmc -G0
+-mips3 -mgp32 -mfp32 -O2 -g3` had one unsigned halfword load scheduled after
+a global pointer store; the target loaded it before the store. The ordinary
+linked judge scored the two reordered instructions at 60. Replacing repeated
+constant-offset scalar dereferences through a local byte pointer with fields
+of a candidate-local record produced exact linked bytes (score 0). Both a typed
+local pointer and casts to the same record at the accesses worked. This is a
+source-shape scheduling observation; no compiler RTL evidence establishes the
+precise alias/dependency mechanism.
+
+The existing inferred-record proposal now recognizes implicit byte offsets when
+an initialized local byte pointer has no uses except the recognized accesses.
+The existing requirements of two distinct aligned, nonoverlapping scalar fields
+and at least three accesses still apply. A private shared-proposal replay found
+the exact variant fifth among 40 proposals and fifth on the copied project
+first eight-item targeted-repair page. The preferred source also passed the
+complete cartridge rebuild, retaining all prior verified objects. Synthetic tests cover escaping,
+reassignment, shadows, unknown uses, qualifiers and preprocessor directives;
+those tests are controlled guards, not additional game matches.
+
+Negative evidence: explicitly capturing the halfword earlier in an integer
+local repaired the ordering but changed register allocation (score 160); using
+a narrow local added truncation. Joining source lines, inserting blank lines,
+moving the global store, and lexical statement wrappers did not produce an
+exact match. Keep the normal compiler and linked/object judge as the acceptance
+path; inferred records are local hypotheses, not proven shared object layouts.
