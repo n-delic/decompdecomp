@@ -65,7 +65,7 @@ def proposals(source, tagged, evidence):
     return order(source,list(dict.fromkeys(result)),evidence)
 
 
-TARGETED = {'dead_copy_source', 'divisor_normalization_copy', 'divisor_value_scope',
+TARGETED = {'scan_load_capture', 'scan_load_reuse', 'dead_copy_source', 'divisor_normalization_copy', 'divisor_value_scope',
             'divisor_flag_split', 'regional_load_reuse', 'debug_statement_boundary'}
 
 

@@ -67,7 +67,8 @@ def offer(state, node, report, arch, header=''):
     parents=state.setdefault('paired_parents',{})
     if key not in parents and len(parents)>=4:return
     pool=parents.setdefault(key,dict(candidates=[],trials=0))
-    if pool['trials']>=PER_PARENT:return
+    inert=sum(p.get('trials',0) for p in state.get('inert_pair_parents',{}).values() if p.get('base_key')==key)
+    if pool['trials']+inert>=PER_PARENT:return
     for prior in pool['candidates']:
         if prior['family']==path[-1]:continue
         source=combine(base,prior['source'],node['source'],header)
@@ -77,7 +78,7 @@ def offer(state, node, report, arch, header=''):
             path=[prior['family'],path[-1],'paired_local'],parent_source=base,
             baseline_rows=node.get('baseline_rows'),region_baseline=node.get('region_baseline')))
         pool['trials']+=1;state['paired_trials']=state.get('paired_trials',0)+1
-        if pool['trials']>=PER_PARENT or state['paired_trials']>=MAX_TRIALS:break
+        if pool['trials']+inert>=PER_PARENT or state['paired_trials']>=MAX_TRIALS:break
     if len(pool['candidates'])<6 and not any(p['source']==node['source'] for p in pool['candidates']):
         pool['candidates'].append(dict(family=path[-1],source=node['source']))
 

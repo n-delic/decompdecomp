@@ -121,7 +121,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             repair_effects.observe(state, node, output_key(report),score=report.get('score'),parent_score=node.get('parent_score'))
         counts = state.setdefault('counts', {})
         if node.get('sequence_loan'):counts['sequence_evaluations']=counts.get('sequence_evaluations',0)+1
-        if (node.get('path') or [''])[-1]=='paired_local':
+        if (node.get('path') or [''])[-1] in {'paired_local','paired_inert'}:
             counts['paired_evaluations']=counts.get('paired_evaluations',0)+1
         outcome = 'matched' if report.get('matched') else 'compile_failed' if report.get('score') is None else 'scored'
         counts[outcome] = counts.get(outcome, 0) + 1
@@ -140,6 +140,16 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 expand_wave(state, variants, arch)
             continue
         paired_local_repairs.offer(state,node,report,arch,header)
+        if not report.get('cached'):
+            from .inert_pair_search import offer
+            for pair in offer(state,node.get('parent_source',''),node['source'],(node.get('path') or [''])[-1],
+                              report.get('score'),node.get('parent_score'),node.get('parent_output'),output_key(report),
+                              header=header,path=(node.get('path') or [])[:-1]):
+                state['pending'].insert(min(3,len(state['pending'])),dict(pair,depth=node['depth']+1,
+                    ceiling=node['ceiling'],parent_source=node.get('parent_source'),parent_output=node.get('parent_output'),
+                    parent_score=node.get('parent_score'),baseline_rows=node.get('baseline_rows'),
+                    region_baseline=node.get('region_baseline')))
+
         score = report.get('score')
         repaired = search_frontier.mismatch_positions(node.get('baseline_rows')) - search_frontier.mismatch_positions(report.get('rows'))
         pattern = bool(repaired) and isinstance(score,(int,float)) and score<=node['ceiling']*2

@@ -469,6 +469,13 @@ class Search(Permuter):
                         measured_output,exact=score==0)
                     source_locations[candidate]=getattr(self,'_trial_locations',None)
 
+                if not getattr(self,'_trial_reused',False):
+                    for pair in feedback.pairs(parent_source,candidate,labels.get(candidate,'local_repair'),score,measured_output,header,parent_path):
+                        child = pair['source']
+                        if child in self.local_seen or child in queue:continue
+                        labels[child] = 'paired_inert'
+                        parents[child] = (parent_source,parent_rows,pair['path'][:-1])
+                        queue.insert(min(3,len(queue)),child)
                 if cursor and parent_source == source:cursor.measured(labels.get(candidate),candidate,score)
                 counters['output_feedback'] = feedback.summary()
                 self.local_status.update(counters)

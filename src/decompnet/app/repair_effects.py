@@ -26,6 +26,8 @@ def observe(state, node, output, *, score=None, parent_score=None):
     if output is None or node.get('parent_output') is None:
         totals['unknown'] = totals.get('unknown',0)+1
         return
+    from . import repair_diversity
+    repair_diversity.observe(state,node,output)
     same = output == node['parent_output']
     kind = ('identical' if same else 'changed_improved' if score is not None and parent_score is not None and score<parent_score
             else 'changed_unimproved' if score is not None and parent_score is not None else 'changed_unknown_score')
@@ -78,6 +80,9 @@ def rotate(state):
     # Reserve one slot in four for a useful pair, without deleting inert parents.
     if slot%4 == 2:
         ordinary = [n for n in ordinary if complementary(n)]+[n for n in ordinary if not complementary(n)]
+    from .repair_diversity import order
+    if not ordinary or history.get(key(ordinary[0]),0) not in {1,2}:
+        ordinary = order(state,ordinary,slot)
     if not deferred:
         state['pending']=ordinary
         return

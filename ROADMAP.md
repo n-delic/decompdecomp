@@ -2545,3 +2545,23 @@ need independent evidence before receiving this specific GNU C repair.
   call-line bridges. It preserves types/evaluation order, rejects opaque preprocessing
   and qualifiers, rotates bridges across accessor sites, and relies on ordinary exact
   judging; host semantic and pinned period-compiler regressions cover the supported C.
+
+### Completed: measured-output repair diversity
+
+- Bounded local and deep search now pivot toward storage/lifetime/control-flow families
+  after six inert outputs across at least three families. Measured distinct outputs
+  influence ordering; every fourth selection reserves exploration for an untried
+  family. Initial sibling probes and existing deferred exploration remain available.
+- Up to four shared-budget combinations (two per parent) can test individually inert,
+  disjoint small edits. Unknown/cached outputs do not provide interaction evidence;
+  literals, preprocessing protections and ordinary exact judges remain unchanged.
+- A repeated plain local integer-array scan can stage its value in a fresh scalar or
+  a CFG-dead existing temporary. Short-circuit guards stay ahead of the load; volatile,
+  pointer, side-effecting and unsupported branch shapes are not rewritten.
+- Validation uses private frozen failed/successful compiler-output controls and held-out
+  cases, without adopting game matches or claiming measured AI-token savings.
+- Measured result: at the same 24-candidate limit, a private controller checkpoint
+  improved from score 330 to 225 (previous policy stayed at 330), without becoming
+  exact. Five frozen held-out failures recovered 3/5 successful controls with either
+  policy, using 51 candidate compiles per policy. This is evidence for the supported
+  staging repair, not a demonstrated general match-rate or token-cost improvement.

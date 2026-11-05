@@ -46,3 +46,9 @@ class Feedback:
 
     def summary(self):
         return repair_effects.summary(self.state)
+
+    def pairs(self, parent, source, family, score, output, header='', path=()):
+        from .inert_pair_search import offer
+        before = self.proofs.get(parent,{})
+        if before.get('granularity','function')!='function':return []
+        return offer(self.state,parent,source,family,score,before.get('score'),before.get('output'),output,header=header,path=path)
