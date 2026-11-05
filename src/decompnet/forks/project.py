@@ -113,22 +113,60 @@ UNIT_SECONDS = 600  # a unit's build, at most (a run of several builds them side
 OUTPUT_SECONDS = 30  # after a step ends, how long its output may go on
 
 
+def _descendants(pid: int) -> list[int]:
+    """Every process started under `pid`, by `ps` (Linux and macOS alike)."""
+    try:
+        listed = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    children: dict[int, list[int]] = {}
+    for line in listed.splitlines():
+        p = line.split()
+        if len(p) == 2 and p[0].isdigit() and p[1].isdigit():
+            children.setdefault(int(p[1]), []).append(int(p[0]))
+    found, todo = [], [pid]
+    while todo:
+        for c in children.get(todo.pop(), []):
+            if c not in found:
+                found.append(c)
+                todo.append(c)
+    return found
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def _stop_tree(proc: subprocess.Popen) -> None:
-    """Stop a build step and every process it started: on Windows the tree; elsewhere its process group, asked
-    first (ninja puts each command in a group of its own, and stops them when it's asked to stop), then killed."""
+    """Stop a build step and every process it started: on Windows the tree; elsewhere every process under it, each
+    asked first, then killed. Not just its process group: ninja puts each command in a group of its own, so a
+    compiler that ignored being asked outlived the step. The tree is read before anything stops, since a command
+    whose ninja is gone has another parent and can't be found from the step any more."""
     if os.name == "nt":
         stop_process_tree(proc)
         return
-    for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
-        try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            return
-        try:
-            proc.wait(timeout=wait)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+    tree = _descendants(proc.pid)
+
+    def signal_all(sig: int) -> None:
+        for stop in (lambda: os.killpg(proc.pid, sig), *(lambda p=p: os.kill(p, sig) for p in tree)):
+            try:
+                stop()
+            except OSError:
+                pass
+
+    signal_all(signal.SIGTERM)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and (proc.poll() is None or any(_alive(p) for p in tree)):
+        time.sleep(0.1)
+    signal_all(signal.SIGKILL)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def _tool_dirs() -> list[Path]:
