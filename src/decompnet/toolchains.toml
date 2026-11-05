@@ -15,6 +15,7 @@
 # 2017, which wibo can't run) goes through wine there instead, which the user installs (wine.py).
 
 [runtime-i386]
+linux_vm = true
 name = "32-bit x86 C runtime (glibc 2.44)"
 kind = "runtime"
 license = "LGPL-2.1-or-later"
@@ -234,6 +235,7 @@ subdir = "maspsx-e85ecb373828aabea96d7e6400974d4f91ce8c74"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-2.96"]
+linux_vm = true
 cplusplus = true
 name = "EE-GCC 2.96"
 platform = "PS2"
@@ -253,6 +255,7 @@ sha256 = "0590d2ca9da8f5903889d66761220d14b47a8d14ba987ca53db84a1650a1fd0a"
 platforms = ["linux-x86_64"]
 
 ["ee-gcc-2.9-991111"]
+linux_vm = true
 cplusplus = true
 name = "EE-GCC 2.9 (991111)"
 platform = "PS2"
@@ -282,7 +285,7 @@ flags = ["-O2", "-G0"]
 [["ee-gcc-2.95.2".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/ee-gcc2.95.2-273a.tar.gz"
 sha256 = "ee9d9a7fccb59aebfa78a5587f6f8059660b91f705acddbc292ad2243c8e562e"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-2.95.3"]
 cplusplus = true
@@ -298,9 +301,10 @@ flags = ["-O2", "-G0"]
 [["ee-gcc-2.95.3".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/ee-gcc2.95.3-136.tar.gz"
 sha256 = "3b6ae6897229ad005aaf1b0afaa1f3cb46e74b4c21a42e01130c07c0c598067f"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-3.2"]
+linux_vm = true
 cplusplus = true
 name = "EE-GCC 3.2 (040921)"
 platform = "PS2"
@@ -330,7 +334,7 @@ flags = ["-O2"]
 [["mwcps2-2.3.3".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/mwcps2-2.3.3-000906.tar.gz"
 sha256 = "c2a4e463f8f7b324350d6bfb26d6daed83f4d5cb46df8b20dcfec8617b22ad5d"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["mwcps2-3.0.1"]
 cplusplus = true
@@ -346,7 +350,7 @@ flags = ["-O2"]
 [["mwcps2-3.0.1".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/mwcps2-3.0.1b145-050209.tar.gz"
 sha256 = "d021f7d02ab63da770c13dc246637276141321ca08221ee2333a7acadf82482b"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 # PlayStation Portable. Every CodeWarrior build below writes the same note into what it compiles ("MW MIPS C Compiler
 # (3.0.0)"): only its code tells them apart. They build at -O3: a PSP game with debug symbols matches there, and -O2
@@ -779,6 +783,7 @@ url = "https://github.com/decompals/wibo/releases/download/1.2.0/wibo-macos"
 sha256 = "2b3000ef6a7a490c24ccd71967735ae0005e218922e51806cca1b8d77fd3cf7c"
 binary = "wibo"
 platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
 
 [gc-wii-binutils]
 name = "GNU binutils for GameCube and Wii"

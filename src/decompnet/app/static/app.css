@@ -800,12 +800,10 @@ body { font-family: var(--sans); font-size: 15px; }
 .new-menu button:focus-visible { outline: 2px solid var(--hl-ink); outline-offset: -2px; }
 .new-menu button:hover span, .new-menu button:focus-visible span { color: var(--hl-ink); }
 
-/* home: someone who has projects comes back to continue one; the pitch and the ways in follow */
-#home.returning { display: flex; flex-direction: column; }
-#home.returning #recent { order: -1; margin-bottom: 36px; }
+/* Keep the game picker above existing projects so a new project's details are visible. */
+#home.returning #recent { border-top: var(--rule); padding-top: 28px; margin-top: 36px; }
 #home.returning #recent .section-title { margin-top: 6px; font: 800 clamp(26px, 2.6vw, 34px)/1 var(--sans); font-stretch: 125%; letter-spacing: -.03em; color: var(--ink); }
 #home.returning .starts { display: none; }
-#home.returning .hero { border-top: var(--rule); padding-top: 28px; }
 
 /* overview: the map is the picture of the game, so it comes first; the numbers follow as a ruled row */
 .ptab[data-pane="overview"] .map-panel { margin-top: 0; }
