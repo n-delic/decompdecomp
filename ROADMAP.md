@@ -1399,6 +1399,8 @@ snapshots local source/header/build inputs (at most 10,000 files / 32 MiB).
 
 Cross-game transfer results use compact, responsive rows with separate provenance, result labels and score changes; recent partial improvements can be filtered independently.
 
+Cross-game checks show discovery progress and the current donor/target through the shared job bar, with a separate check-budget bar. Per-project device preferences, quick/hour/overnight presets and Stop support manual budgets up to 24 hours and 1,000,000 checks in ROM and imported modes, including unfinished C.
+
 Cross-game results can be collapsed per project without losing state on live refresh; Run now launches a dedicated, bounded cross-game check with progress and duplicate-run protection, in ROM and imported modes.
 
 Deep-permuter trial measurements now retain scoring outcomes and elapsed judge time by rewrite family and phase.
@@ -2486,3 +2488,11 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   insertion in traced and untraced jobs, preventing that family from introducing
   unchecked signed/pointer increment-decrement cancellations or self-reads.
   Historical candidates still require review; ordinary judging is unchanged.
+
+
+- Done: shared draft, autopilot, agent and deep repair searches propose at most two
+  discarded unsigned-byte increment spellings from a direct byte read or one unique
+  dominating cached-byte load. A bounded CFG checks every path for intervening effects;
+  exact byte addresses and ordinary declarations are required. Unknown qualifiers,
+  aliases, macros, shadows, cycles and used assignment values skip the family.
+  Compiler and ordinary byte/object judging remain unchanged across supported processors.

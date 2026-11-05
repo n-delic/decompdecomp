@@ -1755,3 +1755,10 @@ source and header blobs are stored once; distinct verified source/compiler varia
 Matches from closed projects participate in normal free cross-project searches. A destination still
 has to compile and pass its own exact byte or object comparison. No game bytes are stored in the library,
 and it is not uploaded. Copy this database with your app data when moving to another computer.
+
+The **Matches from other games** panel shows the current discovery stage, donor game and
+function being checked. Its time and candidate-check budgets are configurable, with quick,
+one-hour and overnight presets. Manual passes allow up to 24 hours and 1,000,000 checks,
+including unfinished donor C. Each project remembers the controls on this device. The
+budget bar shows checks used, not whole-library completion; a pass stops when either
+limit is reached or eligible candidates run out. **Stop** keeps verified results.

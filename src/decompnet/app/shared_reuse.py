@@ -42,7 +42,9 @@ def discover(twins, proj, *, job=None, force=False):
     hit = cache.get(proj['id'])
     if not force and hit and time.monotonic() - hit['at'] < TTL:
         return hit
+    from .cross_game_progress import report
     net = twins.net
+    report(job, 'Fingerprinting this game', game=proj['name'])
     mine = twins.prints(proj)
     rows = {r['id']: r for r in net.store.all('SELECT id,name,status FROM functions WHERE project_id=?', proj['id'])}
     wanted = defaultdict(list)
@@ -50,9 +52,11 @@ def discover(twins, proj, *, job=None, force=False):
         if fid in rows and target.size >= ACROSS_MIN_BYTES and not target.asm:
             wanted[target.key].append(fid)
     found = defaultdict(list)
-    for other in compatible(net, proj):
+    others = list(compatible(net, proj))
+    for index, other in enumerate(others):
         if job is not None and (job.stop.is_set() or (hasattr(job, 'reuse_deadline') and time.monotonic() >= job.reuse_deadline)):
             break
+        report(job, 'Finding shared machine code', game=other['name'], done=index, total=len(others))
         try:
             prints = twins.prints(other)
         except (NetworkError, OSError, ValueError):
@@ -68,6 +72,7 @@ def discover(twins, proj, *, job=None, force=False):
                                    'kind': 'verified C in another game' if donor['status'] == 'matched' else 'shared target code; unverified C',
                                    'function_id': donor['id'], 'source_slug': other['slug'],
                                    'verified': donor['status'] == 'matched'})
+    report(job, 'Checking local SDK signatures')
     arch, big = machine(net, proj)
     from .sdk_library import allowed
     for sdk in net.store.all('SELECT corpus,name,fingerprint,size FROM sdk_signatures WHERE arch=? AND big_endian=?', arch, big):
@@ -177,6 +182,8 @@ def transfer(twins, proj, job):
                     job.cross_tried += 1
                     if bounded:
                         job.reuse_attempts += 1
+                from .cross_game_progress import report
+                report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
                 outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", theirs=True)
             except (NetworkError, OSError, ValueError):
                 continue
