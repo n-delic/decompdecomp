@@ -187,3 +187,19 @@ def test_summary_includes_database_and_sqlite_sidecars(library):
         expected=sum(p.stat().st_size for p in lib.path.parent.glob(lib.path.name+'*'))
         assert data['disk_bytes']==expected and expected>0
     assert lib.summary()['disk_bytes']==lib.path.stat().st_size
+
+
+def test_backfill_reports_game_function_and_overall_progress(library):
+    _,lib=library
+    updates=[]
+    def log(line):pass
+    log.check_cancel=lambda:None
+    log.progress=updates.append
+    lib.backfill(log)
+    reading=[p for p in updates if p['phase']=='Reading verified matches' and p.get('function')]
+    assert [(p['game'],p['game_index'],p['games_total'],p['done'],p['total'],p['function']) for p in reading]==[
+        ('First game',1,2,0,2,'f1'),('Second game',2,2,1,2,'f2')]
+    writing=[p for p in updates if p['phase']=='Writing matches to library']
+    assert [p['done'] for p in writing]==[0,1]
+    assert updates[-1]=={'phase':'Indexing complete','done':2,'total':2}
+    assert [p['done'] for p in updates]==sorted(p['done'] for p in updates)
