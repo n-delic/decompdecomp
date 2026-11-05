@@ -94,7 +94,7 @@ def test_verified_agent_baseline_retains_compiler_mapping_for_local_repairs(tmp_
     monkeypatch.setattr(net,'_evaluate',lambda *args:(object(),False,[]))
     monkeypatch.setattr(net,'_target_obj',lambda *args:object())
     monkeypatch.setattr(scoring,'diff',lambda *args:SimpleNamespace(score=2,rows=STACK))
-    monkeypatch.setattr(source_lines,'mismatches',lambda *args,**kwargs:dict(available=True,lines=[dict(line=6,instructions=[])]))
+    monkeypatch.setattr(source_lines,'mismatches',lambda *args,**kwargs:dict(available=True,lines=[dict(line=6,instructions=[])],unmapped=0))
     measured=agent_evidence.shared_baseline(net,agent,'game',fn,SOURCE)
     assert measured and measured['verified']
     assert repair_localisation.lines(SOURCE,measured['repair_locations'])=={6}

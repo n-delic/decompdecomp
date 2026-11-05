@@ -170,3 +170,20 @@ def test_normalized_source_name_does_not_collide_with_a_local(library):
         db.execute("UPDATE functions SET matched_source='int f1(void) {int __library_function=42;return __library_function;}' WHERE id=1")
     item=lib.snapshot(net.project_row('game1'),1)
     assert item['source']=='int __library_function_(void) {int __library_function=42;return __library_function;}'
+
+
+
+def test_backfill_reads_verified_state_without_syncing_project_files(library,monkeypatch):
+    net,lib=library
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:pytest.fail('read-only archive must not reconcile project files'))
+    assert lib.backfill()['functions']==1
+
+
+def test_summary_includes_database_and_sqlite_sidecars(library):
+    _,lib=library
+    # Keep a connection open so SQLite does not remove the live sidecars.
+    with lib.connect():
+        data=lib.summary()
+        expected=sum(p.stat().st_size for p in lib.path.parent.glob(lib.path.name+'*'))
+        assert data['disk_bytes']==expected and expected>0
+    assert lib.summary()['disk_bytes']==lib.path.stat().st_size

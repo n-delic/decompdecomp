@@ -22,6 +22,47 @@ Use these evidence levels:
 
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
+### Verified linked case: unsigned byte increment before a call
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
+A 212-instruction state-transition function had a valid independently reconstructed source at
+weighted score70, with three operand/order differences around a byte update and call setup.
+An older score60 source used an artificial constant function-address condition with identical
+arms; that source was rejected before attempting repair.
+
+A controlled type cleanup (real pointer-bearing records and callback slot types) retained 70.
+Changing a standalone assignment of `(signed char)(cached_signed_byte + 1)` into a discarded
+increment through `unsigned char *` recovered all 848 ordinary linked bytes. Prefix and postfix
+spellings both matched because the expression result is discarded. An explicit unsigned temporary
+also matched. Merely casting the destination to unsigned retained 70; incrementing the signed
+cached local then storing worsened 290. Index widening also worsened the match. This supports one
+source-shape repair, not a general scheduling rule. The byte conversions are equivalent on the
+known two's-complement target; do not replace a used assignment result or introduce signed-byte
+increment overflow. The cached value remains unchanged for later uses.
+
+Private immutable source/header/target/profile/symbol inputs and raw `LinkResult.linked_code`
+equality were retained for this case. The reusable generator recovered 70→0 from that baseline
+with two candidates and unchanged header, target and flags; this replay is a controlled regression,
+not another new match. Generated preferred-source SHA256:
+`7843f695fdf4bceea0d5877ee2cb4ccaf30e53ebe03640b69f3c55a467b9f731`.
+The independently reviewed source also passed a complete 12,582,912-byte cartridge rebuild,
+preserving all 2,065 previous object/profile pairs; normal app judging accepted the match.
+Evidence: [published matching source](https://github.com/RetroReversing/v-rally-decomp/commit/6d55866).
+The preferred generated physical source independently passed the same full-cartridge gate:
+12,582,912 identical bytes, with all 2,065 previous object/profile pairs unchanged. This is the
+same function and does not increase the match count again.
+
+The shared `unsigned_byte_increment` family accepts a unique dominating cached-byte load or a
+direct byte read. A bounded CFG checks every load-to-store path for intervening writes/calls;
+only explicit ordinary reads, scalar assignments to unescaped locals, and branches are allowed.
+The address must resolve to the same uniquely declared pointer root and constant byte offset.
+Unknown type aliases, qualifiers, pointer escapes, shadows, macros, preprocessing, cycles,
+side-effecting addresses, or used assignment values yield no proposal. At most two standalone
+unsigned increment spellings are generated. Existing draft, autopilot, agent and deep repair routes
+retain family provenance and ordinary compiler/link or object judging. Controlled host tests cover
+all 256 byte values, branch outcomes, retained cached values and side effects outside the interval;
+negative cases cover observable address-evaluation effects. No game data is included in tests.
+
 ### Verified case: register allocation after late cancellation
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.

@@ -61,6 +61,12 @@ class Library:
         return hashlib.sha256(encoded((identity,cfg.get('platform') or proj['arch'],proj['name'])).encode()).hexdigest()
 
     def snapshot(self, proj, fid):
+        # Snapshot already verified database state. Calling project helpers here must not
+        # re-read/reconcile an entire project's progress files for every matched function.
+        with self.net.progress.view():
+            return self._snapshot(proj, fid)
+
+    def _snapshot(self, proj, fid):
         from ..project import compiler_for
         from .shared_reuse import machine
         net = self.net
@@ -177,7 +183,13 @@ class Library:
                     JOIN occurrences o2 ON o2.solution_id=s2.id JOIN games g2 ON g2.id=o2.game_id
                     WHERE o2.name LIKE ? OR g2.name LIKE ?)) GROUP BY f.id
                 ORDER BY games DESC,f.id LIMIT 100''',(search,'%'+search+'%','%'+search+'%')).fetchall()
-            return {**counts,'items':[dict(r) for r in rows]}
+        # Include SQLite's live journal and shared-memory files; they can disappear
+        # between samples when another connection checkpoints or closes.
+        disk_bytes=0
+        for suffix in ('','-wal','-shm'):
+            try:disk_bytes+=Path(str(self.path)+suffix).stat().st_size
+            except FileNotFoundError:pass
+        return {**counts,'disk_bytes':disk_bytes,'items':[dict(r) for r in rows]}
 
     def candidates(self, processor, big, fingerprint, size, exclude=()):
         with self.connect() as db:

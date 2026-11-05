@@ -2487,6 +2487,14 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   unchecked signed/pointer increment-decrement cancellations or self-reads.
   Historical candidates still require review; ordinary judging is unchanged.
 
+
+- Done: shared draft, autopilot, agent and deep repair searches propose at most two
+  discarded unsigned-byte increment spellings from a direct byte read or one unique
+  dominating cached-byte load. A bounded CFG checks every path for intervening effects;
+  exact byte addresses and ordinary declarations are required. Unknown qualifiers,
+  aliases, macros, shadows, cycles and used assignment values skip the family.
+  Compiler and ordinary byte/object judging remain unchanged across supported processors.
+
 ### Compiler-mapped local storage follow-ups
 
 - Done: bounded same-frame spill-pair and single-register-chain hypotheses, bound to

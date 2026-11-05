@@ -788,6 +788,18 @@ an apparently unchanged value. A lower score does not make them valid. The nativ
 wrapper excludes its self-assignment insertion family; review old saved drafts
 separately, and use corrective candidate adoption when a cleaner draft scores worse.
 
+
+### Discarded byte increments
+
+A cached signed-byte `value+1` store before a call can lower differently from a standalone
+unsigned-byte increment. In one controlled KMC2.7.2/O2/g3 case, both discarded prefix/postfix
+unsigned spellings recovered exact linked bytes from score70; a destination cast alone did not.
+Keep the cached signed value unchanged if it is used later. Require the same byte address and no
+intervening call, write, pointer mutation or volatile access; never introduce signed-byte increment
+overflow or change a used expression result. The shared `unsigned_byte_increment` repair proves
+its supported narrow CFG/read shape and otherwise skips. The normal judge remains authoritative;
+one case does not justify a broad increment rewrite.
+
 ### Isolated spill slots and register chains
 
 Equal frames with one differing spill store/load pair need a local storage/lifetime
