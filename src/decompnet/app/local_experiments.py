@@ -74,6 +74,10 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
             return _compile(net,agent,slug,function,source)
         if time.monotonic()>=deadline:
             return 'Local repair time budget reached during baseline checking; no variants submitted.'
+        if checked and checked.get('score') is not None:
+            if not hasattr(net, '_agent_outcomes'):
+                net._agent_outcomes={}
+            net._agent_outcomes[agent.id,fn['id']]=checked
         pools = available(net,agent,slug,fn,source,revision,requested,deadline=time.monotonic()+max(0,(deadline-time.monotonic())*0.35),desired=max_trials if families is not None else 0)
         effect_scope=repair_ranking.effect_scope(net,fn,source)
         selected=[];seen=set()
@@ -91,10 +95,6 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         baseline=checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if baseline and baseline.get('source')!=source:
             baseline=None
-        if checked and checked.get('score') is not None:
-            if not hasattr(net, '_agent_outcomes'):
-                net._agent_outcomes={}
-            net._agent_outcomes[agent.id,fn['id']]=checked
         recipe_profile=repair_sequences.profile(net,net._project(slug),fn)
         policy_profile=adaptive_repairs.profile(net,net._project(slug),fn)
         from .permuter_focus import classify
@@ -244,7 +244,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
     if any(family in pools for family in ('mapped_spill_storage','mapped_register_lifetime')):
         from . import targeted_storage_repairs
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
-        if measured and measured.get('source')==source:
+        if measured and measured.get('source')==source and measured.get('input_scope')==agent_evidence.build_key(net,fn)[0]:
             ctx=net._context(proj['id'],fn['unit'])
             header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
             for family,text in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],measured.get('rows') or [],measured.get('repair_locations')):

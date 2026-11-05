@@ -114,3 +114,33 @@ def test_hidden_multiline_macro_reference_blocks_storage_rewrites():
 def test_malformed_rows_do_not_change_trial_order():
     families=['source_lines','other']
     assert trial_evidence.order(families,[('i',None,'nop')])==families
+
+
+def test_fresh_mapping_is_available_during_the_first_agent_proposal_pass(tmp_path,monkeypatch):
+    from decompnet.app import agent_evidence, agent_tokens, local_experiments
+    from tests.test_claims import _game
+    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('worker');net.claim_row(agent,'game','f');fn=net._function('f','game')
+    net._record(fn,agent,2,SOURCE,1)
+    _,revision=agent_tokens.candidate(net,agent,'game','f')
+    measured=dict(score=2,source=SOURCE,rows=STACK,repair_locations=locations(SOURCE))
+    monkeypatch.setattr(agent_evidence,'preflight',lambda *args:measured)
+    observed=[]
+    def available(*args,**kwargs):
+        observed.append(net._agent_outcomes[agent.id,fn['id']]['repair_locations'])
+        return {repairs.FAMILIES[0]:[]}
+    monkeypatch.setattr(local_experiments,'available',available)
+    result=local_experiments.run(net,agent,'game','f',revision,[repairs.FAMILIES[0]],max_trials=1)
+    assert 'No untried' in result
+    assert observed==[locations(SOURCE)]
+
+
+def test_stale_build_context_does_not_reuse_mapped_agent_repairs(tmp_path,monkeypatch):
+    from decompnet.app import local_experiments
+    from tests.test_claims import _game
+    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('worker');fn=net._function('f','game')
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=?', ('{"compiler":{}}',))
+    net._agent_outcomes={(agent.id,fn['id']):dict(source=SOURCE,rows=STACK,repair_locations=locations(SOURCE),input_scope='old-build')}
+    seen=[]
+    monkeypatch.setattr(repairs,'variants',lambda *args:seen.append(1) or [])
+    pools=local_experiments._available(net,agent,'game',fn,SOURCE,'revision',[repairs.FAMILIES[0]])
+    assert not seen and not pools[repairs.FAMILIES[0]]
