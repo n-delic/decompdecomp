@@ -563,3 +563,9 @@ def test_database_cleanup_preview_save_progress_stop_and_error_controls():
     if NODE is None:pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_database_cleanup.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_header_storage_controls_preview_cleanup_compaction_and_stop():
+    if NODE is None:pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_header_storage.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

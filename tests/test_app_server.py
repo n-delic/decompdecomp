@@ -2479,3 +2479,26 @@ def test_database_cleanup_routes_validate_preview_and_schedule_guarded_jobs(app)
     response=client.post('/api/database-cleanup',json={'action':'start','removed':True},headers=headers)
     assert response.status_code==200 and response.json()['job']
     database_cleanup.save(net,{'removed':True,'before':'','automatic':False})
+
+
+def test_header_storage_routes_guard_preview_and_maintenance_actions(app,monkeypatch):
+    from decompnet.app import header_cleanup
+    client,net,*_=app
+    headers={'X-Decomp':'1'}
+    assert client.get('/api/header-storage',headers={'User-Agent':'outside'}).status_code==401
+    assert client.post('/api/header-storage',json={'action':'headers'}).status_code==403
+    data=client.get('/api/header-storage').json()
+    assert 'stored_bytes' in data and 'logical_bytes' in data
+    preview=client.post('/api/header-storage',json={'action':'preview'},headers=headers)
+    assert preview.status_code==200 and 'unused_versions' in preview.json()
+    calls=[]
+    original=header_cleanup.start
+    def start(net,jobs,action):
+        if action not in ('headers','compact'):return original(net,jobs,action)
+        calls.append(action)
+        return 'synthetic-job'
+    monkeypatch.setattr(header_cleanup,'start',start)
+    for action in ('headers','compact'):
+        assert client.post('/api/header-storage',json={'action':action},headers=headers).json()=={'job':'synthetic-job'}
+    assert calls==['headers','compact']
+    assert client.post('/api/header-storage',json={'action':'unknown'},headers=headers).status_code==400

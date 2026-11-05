@@ -70,6 +70,22 @@ def register(app: App) -> None:
             return JSONResponse({'job':database_cleanup.start(net,jobs,value)})
         except (ValueError,NetworkError) as error:return fail(error)
 
+    @mcp.custom_route('/api/header-storage', methods=['GET','POST'])
+    async def api_header_storage(request):
+        from .. import header_cleanup
+        if bad := guard(request,write=request.method=='POST'):
+            return bad
+        try:
+            if request.method=='GET':
+                from ...header_storage import stats
+                return JSONResponse(await call(stats,net.store))
+            data=await body(request)
+            if data.get('action')=='preview':
+                result,_=await call(header_cleanup.summary,net)
+                return JSONResponse(result)
+            return JSONResponse({'job':header_cleanup.start(net,jobs,data.get('action'))})
+        except (ValueError,NetworkError) as error:return fail(error)
+
     def state() -> dict:
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:

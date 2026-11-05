@@ -1827,3 +1827,18 @@ Saved-progress verification shows a project banner with the reason for recheckin
 Room verification batches saved-progress synchronization around the queue, so applying several matches does not repeatedly rejudge the project. Each submission is still independently byte checked, and its table row updates as it completes.
 
 Saved-progress rechecks select functions whose effective compiler profile, complete header context or source changed. Other matches remain confirmed. Shared symbol/layout changes and unrecognized header inputs still require a full recheck until their dependencies can be identified safely.
+
+### C header history storage
+
+C header versions retain their original text, unit, author and version IDs, while identical
+content is shared by SHA-256 and compressed with zlib. Existing databases migrate atomically
+on opening with the updated app; older app versions cannot read this storage format.
+The app caches recently decoded content and leaves metadata-only queries compressed.
+
+Settings → **Saved C header history** shows logical header text versus shared compressed
+content. Manual cleanup keeps current versions, attempt/repair references, recovery history
+and headers read during this app run. It never removes saved C attempts or changes matching.
+**Compact database file** reclaims reusable SQLite pages separately. It temporarily holds
+database writes, requires free drive space of at least twice the database file size, and
+can be stopped; interrupted compaction rolls back. SQLite journal/readers can affect the
+amount reclaimed. Neither header cleanup nor compaction runs automatically.

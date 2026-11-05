@@ -312,10 +312,11 @@ class _ThreadReader:
     SQLite connections contain cycles; dropping the last thread-local reference
     alone can leave their WAL/database descriptors open until cyclic GC runs.
     """
-    def __init__(self,path):
+    def __init__(self,path,header_codec):
         self.conn=sqlite3.connect(path,isolation_level=None,check_same_thread=False)
         try:
             self.conn.row_factory=sqlite3.Row
+            header_codec.register(self.conn)
             self.conn.execute("PRAGMA query_only=1").close()
         except BaseException:
             self.conn.close()
@@ -333,6 +334,9 @@ class Store:
         self.path = str(path)
         self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
+        from .header_storage import Codec
+        self.header_codec = Codec()
+        self.header_codec.register(self.conn)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT_BYTES}")
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -343,7 +347,9 @@ class Store:
             if column not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
                 added.add(column)
-        self.conn.executescript(DIRTY_TRIGGERS)
+        from .header_storage import install as install_headers
+        install_headers(self.conn)
+        self.conn.executescript(DIRTY_TRIGGERS.replace("ON context_versions", "ON context_history").replace("project_id,header,unit", "project_id,header_hash,unit"))
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is
             self.conn.execute(f"UPDATE functions SET {MARKS.replace('NEW.', '')} WHERE meta IS NOT NULL")
@@ -492,13 +498,14 @@ class Store:
                               "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
         self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_baseline ON attempts(function_id,score,id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_context ON attempts(context_version,function_id)")
         from .history_changes import install as install_history_changes
         install_history_changes(self.conn)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_history ON functions(project_id,id,n_insns)")
         self._track_reads('functions', 'naming', 'name,meta,project_id')
         from .map_changes import install as install_map_changes
         install_map_changes(self.conn)
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_context_latest ON context_versions(project_id,unit,version DESC)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_context_latest ON context_history(project_id,unit,version DESC)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_named_scan ON functions(project_id,status,id,name)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_room_credit ON functions(project_id,matched_agent_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_origin_owner ON agents(origin,owner)")
@@ -509,6 +516,8 @@ class Store:
 
     def _track_reads(self, table, kind, columns=None, condition=None):
         """Internal schema names only. Revisions commit/roll back with their source changes."""
+        if table == "context_versions":
+            table = "context_history"
         for event in ('INSERT', 'DELETE', 'UPDATE'):
             clause = f'UPDATE OF {columns}' if event == 'UPDATE' and columns else event
             if event == 'UPDATE' and columns and condition is None:
@@ -575,7 +584,7 @@ class Store:
             return None
         reader = getattr(self._local, "reader", None)
         if reader is None:
-            reader = _ThreadReader(self.path)
+            reader = _ThreadReader(self.path,self.header_codec)
             self._local.reader = reader
         return reader.conn
 

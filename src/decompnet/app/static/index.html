@@ -798,6 +798,17 @@
       <details class="more"><summary>What gets removed?</summary><p class="small muted">The selected rules are combined: removed agents, plus completed sessions older than the date. Enable automatic cleanup and save your rules to enforce the cutoff in the background. Stopping a run keeps completed deletions; disable automatic cleanup to prevent future runs. Clearing transcripts is permanent; export any history you need first. Space becomes reusable inside SQLite, so the database file may stay the same size. Saved source and exact matches are kept.</p></details>
     </div>
   </details>
+  <details class="panel settings-disclosure" id="headerStoragePanel">
+    <summary class="panel-head"><h2>Saved C header history <span class="disclosure-context" id="headerStorageContext">— Compressed, shared content</span></h2></summary>
+    <div class="pad">
+      <p>Keep exact C headers for old attempts while storing identical content once. Compression is automatic; cleanup removes only unused history.</p>
+      <div class="background-metrics"><div><span class="small muted">Header text across versions</span><strong id="headerStorageLogical">—</strong></div><div><span class="small muted">Shared compressed content</span><strong id="headerStorageStored">—</strong></div></div>
+      <p class="small muted" id="headerStorageEstimate" role="status">Preview to check which old versions are safe to remove.</p>
+      <div class="row"><button id="headerStorageStart" class="primary" type="button">Clean unused headers</button><details class="agent-menu"><summary aria-label="More header maintenance actions">⋮</summary><div class="agent-menu-items"><button id="headerStoragePreview" class="ghost" type="button">Preview header cleanup</button><button id="headerStorageCompact" class="ghost" type="button">Compact database file…</button></div></details><button id="headerStorageStop" class="ghost" type="button" hidden>Stop maintenance</button></div>
+      <div id="headerStorageLog"></div>
+      <details class="more"><summary>What is kept, and how is disk space reclaimed?</summary><p class="small muted">Current headers and versions referenced by attempts, repair evidence or recovery history are kept. Headers read during this app run are also kept for in-flight work. Cleanup is permanent and makes space reusable inside SQLite. Compaction is a separate manual step that shrinks the database file: writes wait while it runs, and the drive needs free space of at least twice the database size. Stop rolls back an interrupted compaction. These are C declarations, not AI conversations.</p></details>
+    </div>
+  </details>
   <details class="panel settings-disclosure" id="matchLibraryPanel"><summary class="panel-head"><h2>Local match library <span class="disclosure-context" id="matchLibraryCount">— Loading</span></h2></summary><div class="pad"><p class="small muted">Verified matches are retained in a separate database when projects are closed or removed. Shared functions are stored once, with links to their games and distinct verified source/compiler variants. New games must still pass their own byte or object verification.</p><div class="row"><label class="field grow"><span>Find a function or game</span><input id="matchLibrarySearch" type="search" placeholder="Function name or game"></label><button class="ghost small-btn" id="matchLibraryRefresh">Search</button><button class="ghost small-btn" id="matchLibraryIndex">Index existing matches</button></div><p class="small muted">Database size includes SQLite journal files. Showing up to 100 functions, most widely shared first. This library stays on this computer; no game data is uploaded.</p><div id="matchLibraryLog"></div><div id="matchLibraryItems"></div></div></details>
   <div class="cols">
     <section class="panel"><header class="panel-head"><h2>Pair a browser worker</h2></header><div class="pad">
@@ -1008,6 +1019,7 @@
 <script src="/assets/js/background-work.js"></script>
 <script src="/assets/js/pages.js"></script>
 <script src="/assets/js/database-cleanup.js"></script>
+<script src="/assets/js/header-storage.js"></script>
 <script src="/assets/js/pwa.js"></script>
 </body>
 </html>

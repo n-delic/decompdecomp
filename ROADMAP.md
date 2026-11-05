@@ -2641,3 +2641,10 @@ need independent evidence before receiving this specific GNU C repair.
   baseline or attribution remains separate; every judging attempt is still retained.
 - Planned: imported-project repair capture deduplication needs complete per-file build input
   snapshots; keep their captures separate while compiler/header evidence is incomplete.
+
+- Done: exact C header history shares SHA-256-addressed zlib content across versions and
+  projects, with atomic legacy migration and bounded decoded-content caching. All console
+  and project-mode callers retain the historical SQL read/write interface.
+- Done: Settings previews and removes only unreferenced C header versions, protecting
+  current, attempt/repair, recovery and in-flight-read history; a separate cancellable
+  manual SQLite compaction task reclaims physical space without changing exact judging.

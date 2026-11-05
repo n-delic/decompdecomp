@@ -244,6 +244,7 @@ async function renderWebGithubSettings(onSaved) {
 async function showSettingsPage() {
   show("settingsPage");
   const st = await loadState();
+  loadHeaderStorage().catch(error=>{$('headerStorageEstimate').textContent=error.message;});
   loadDatabaseCleanup().catch(error=>{$('databaseCleanupEstimate').textContent=error.message;});
   loadMatchLibrary().catch(error=>{$("matchLibraryCount").textContent=error.message;});
   const projects = await api('/api/projects');
