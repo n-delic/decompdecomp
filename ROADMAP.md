@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: bounded independent integer/function-address setup permutations before visible
+  loops and labels reach shared local, autopilot, deep/iterative, donor and replay paths.
+  Dependencies, memory expressions, hidden types/preprocessing and volatile setup fail
+  closed; no calls or control edges move and the destination exact judge is retained.
+
 - Done: bounded terminal branch layouts reach shared local repairs, autopilot,
   deep/iterative search and repair replay. Candidate-owned directly called inline
   void helpers can be rewritten without editing shared headers. Unknown preprocessing,

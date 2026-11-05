@@ -4799,3 +4799,30 @@ can be a post-allocation control-flow artifact. Keep rejected source separate fr
 admissible search seeds, and never insert identical arms, padding or dummy work to
 manufacture that artifact. The useful next evidence is a real task-specific effect
 or interface/lifecycle distinction, not another flat permutation of the fake branch.
+
+## Independent setup order can alter preheader allocation
+
+A KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` control uses a real
+backward edge to retain an integer row calculation rather than strength-reducing
+it. Its three setup assignments compute a real resource identifier, a callback
+address and a mode value. Moving the resource calculation after the other two
+pure local assignments changes the register lifetimes: ordinary linked score
+795 becomes 580, with the unwanted mask removed and target-sized code. The
+shared `pure_preheader_order` generator independently reproduces five permutations
+at 655, 595, 580, 665 and 790. No calls, memory operations or control edges move.
+
+This is an improvement of a directed control, not a new match or a better saved
+best: the earlier different-shape draft remains 565. Ordinary/diagnostic linked
+parity is verified. One new single-seed native lane from the 580 control ended
+normally at 969 actual generated attempts, 707 compiled/scored, with only a 565
+tie and no exact result. No quota-filling restart or selected-best portfolio was
+used. Explicit downstream callback-dispatch type and raw-storage assumptions
+remain unresolved; address casts do not prove invocation compatibility.
+
+The bounded repair permutes two or three independent integer/function-address
+setup assignments immediately before a visible loop or label. It requires visible
+ordinary local types, rejects dependencies, calls, memory expressions, volatile
+or hidden declaration qualifiers, referenced macros, includes and unsupported
+syntax, and introduces no dummy computation. It reaches shared local repairs,
+autopilot, deep/iterative search, donor retries and replay through the normal
+candidate generator. Destination compilation and exact verification remain required.
