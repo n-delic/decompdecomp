@@ -27,7 +27,8 @@ def report(job, phase, *, game="", function="", donor="", done=None, total=None)
                 "done": done, "total": total, "attempts": getattr(job, 'cross_tried', 0),
                 "attempt_limit": getattr(job, 'reuse_limit', 0),
                 "seconds": round(time.monotonic() - getattr(job, 'cross_started', time.monotonic()), 1),
-                "second_limit": getattr(job, 'cross_seconds', 0), "confirmed": getattr(job, 'cross_matched', 0)}
+                "second_limit": getattr(job, 'cross_seconds', 0), "confirmed": getattr(job, 'cross_matched', 0),
+                "indexed_candidates":getattr(job,'cross_indexed',0),"cached_skips":getattr(job,'cross_cached',0)}
     job.progress = snapshot
     if callback := getattr(job, 'cross_report', None):
         callback(snapshot)

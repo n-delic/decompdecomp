@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: cross-game searches shortlist indexed fingerprints from open and closed games before
+  live donor indexing, prioritize widely shared code and compatible compiler profiles, and try
+  verified donors before unfinished candidates. Indexed transfers appear in saved results,
+  with current-stage counts and visible rejection reasons; every transfer still uses the destination judge.
+
 - Done: header cleanup waits cancellably for SQLite write-lock acquisition, with visible
   retry status and no transaction-body replay. Failed UI jobs expose a bounded recent
   application-log tail and their error details directly in an opened, copyable log panel.
