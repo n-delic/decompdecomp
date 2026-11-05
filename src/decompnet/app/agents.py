@@ -589,6 +589,8 @@ class Manager:
         if agent.id != kind:
             kind = agent.id
             options.pop("model", None)  # a Gemini CLI model name may mean nothing to Antigravity: use its default
+        if self._down:
+            raise ValueError("decompdecomp is quitting")
         ids = []
         self._prepare(slug)
         with self._lock:
@@ -619,6 +621,8 @@ class Manager:
     def restart(self, sid: str) -> None:
         """Start a stopped or paused helper again, by hand."""
         with self._lock:
+            if self._down:
+                raise ValueError("decompdecomp is quitting")
             s = self.sessions.get(sid)
             if s is None:
                 raise ValueError("no such helper")

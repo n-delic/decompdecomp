@@ -79,6 +79,15 @@ def test_shutdown_prevents_background_startup_from_launching_helpers(tmp_path, m
     assert manager.resume() == []
 
 
+def test_start_after_shutdown_does_not_prepare_a_project(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    manager._down = True
+    monkeypatch.setattr(manager, "_prepare", lambda slug: pytest.fail("project was prepared during shutdown"))
+    with pytest.raises(ValueError, match="is quitting"):
+        manager.start("api", "game")
+
+
 def test_resume_does_project_sync_outside_manager_lock_and_launches_under_it(tmp_path, monkeypatch):
     net = RomNetwork(tmp_path / "decomp.db", tmp_path)
     manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
