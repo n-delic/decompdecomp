@@ -11,7 +11,7 @@ def _view(net, proj, kind, build):
     if getattr(net.store._local, 'in_tx', False):
         return build()
     audit = net.store.one('SELECT value FROM settings WHERE key=?', code_audit_reviews.key(proj['id']))
-    version = (net.store.read_version('targets'), net.store.read_version('compiler_rows', proj['id']),
+    version = (net.store.read_version('targets'), net.store.read_version('naming'), net.store.read_version('compiler_rows', proj['id']),
                proj['config'], audit['value'] if audit else None)
     return net.store.read_cache.get((kind, proj['id']), version, build)
 
@@ -28,11 +28,14 @@ def _boundaries(net,proj):
     erased, but neither can that decision hide an incomplete extent in progress.
     """
     if not net.is_rom(proj):return []
+    import json
+
+    from .boundary_repairs import reason
     console=net.console(proj);out=[]
-    for row in net.store.all(f"SELECT name,vram,size,target,status FROM functions WHERE project_id=? AND {IN_BUILD} AND status!='matched'",proj['id']):
-        if reason:=console.boundary_reason(row['target'] or b''):
+    for row in net.store.all(f"SELECT name,vram,size,target,status,meta FROM functions WHERE project_id=? AND {IN_BUILD} AND status!='matched'",proj['id']):
+        if warning:=reason(console,row):
             out.append({'function':row['name'],'vram':row['vram'],'size':row['size'],'stored_status':row['status'],
-                        'analysis_state':'boundary_review','reason':reason})
+                        'analysis_state':'boundary_review','reason':warning,'override':bool(json.loads(row['meta'] or '{}').get('boundary_override'))})
     return out
 
 
@@ -43,7 +46,9 @@ def snapshot(net, proj):
 def _snapshot(net,proj):
     """Cheap current boundary checks plus the last scoped CPU gap audit, never an implicit completion."""
     if not net.is_rom(proj):return None
-    findings=boundaries(net,proj)
+    all_findings=boundaries(net,proj)
+    findings=[r for r in all_findings if not r.get('override')]
+    classified=net.store.one("SELECT COUNT(*) n,COALESCE(SUM(size),0) bytes FROM functions WHERE project_id=? AND json_extract(meta,'$.boundary_classification') IS NOT NULL",proj['id'])
     counts=net.store.one(f"SELECT COUNT(*) total,SUM(status='open') open,SUM(size) bytes FROM functions WHERE project_id=? AND {IN_BUILD}",proj['id'])
     supported=proj['arch']=='mips'
     state=code_audit_reviews.load(net,proj['id']) if supported else {'report':None}
@@ -58,6 +63,7 @@ def _snapshot(net,proj):
             'needs_review' if findings or unresolved or limits else 'no_pending_findings')
     return {'scope':'detected code only','whole_game_complete':False,'supported':supported,
             'detected_bytes':counts['bytes'] or 0,'incomplete_entries':findings,
+            'reviewed_entries':sum(bool(r.get('override')) for r in all_findings),'classified_noncode':dict(classified),
             'incomplete_assembly':sum(r['stored_status']=='asm' for r in findings),
             'audit_state':status,'audit_stale':state.get('stale',False),
             'audit_revision':code_audit_reviews.revision(net,proj['id']) if supported else None,

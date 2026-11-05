@@ -125,3 +125,35 @@ remain possible false positives. Keep reporting bounds and unresolved regions.
 The low-level audit accepts disjoint `review_ranges` to examine every raw block
 individually when a global candidate cap fills. Such results are explicitly
 partial; a partial scan cannot replace the saved whole-project completion audit.
+
+## Repairing detected extents
+
+Settings → Code coverage → **Review & repair boundaries**, or the same action in
+an incomplete function's inspector, audits the frozen targets without changing them.
+Incomplete MIPS control flow and singleton nops wait outside automatic agent, draft,
+autopilot and permutation queues. A small returning function with its delay slot is
+not suspicious just because it is small. Existing claims are not cancelled.
+
+Select an entry and preview one decision: include a missing delay slot, join a
+preceding piece, adjust the exclusive end address, classify padding/data, or keep an
+intentional separate entry. Suggestions are leads; they are not automatic proof.
+The preview shows original surrounding assembly, old/new sizes and every retained
+entry affected. Record the evidence before **Verify & save decision**.
+
+Repairs currently require one unambiguous mapped MIPS ROM segment (N64, PS1, scalar
+PS2 and PSP). Imported object projects and other processors need repair adapters;
+there is no generic byte-size heuristic for them. Leave a shared room before changing
+layout. Release affected claims first. Matched entries cannot be resized or absorbed,
+and all existing matches must pass the normal judge before a decision is committed.
+A changed image, mapping, header, source or preview is rejected.
+
+Absorbed pieces remain archived with their original IDs, sources, attempts and notes.
+Resized entries retain C history but lose stale scores and need a fresh byte match.
+Shortening an entry retains a separately reviewable tail. Padding/data are excluded
+from detected-code totals and reported separately; classification is never a match
+or a whole-image completion claim. **Keep as separate entry** explicitly permits
+agent work while retaining the warning and decision evidence.
+
+**Repair history → Verify & undo** restores the prior rows and symbol size. Undo
+refuses active claims, new candidate attempts, changed inputs or newly matched
+entries, so it cannot silently replace later work. No original ROM bytes are edited.

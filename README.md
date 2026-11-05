@@ -1714,3 +1714,5 @@ Worker candidate scopes reuse revision-tracked headers, symbol indexes and hashe
 Transactions bypass these caches, and external imported-project dependencies keep their fresh file checks.
 The bounded shared cache retains recently used entries and never evicts an active build. None of these caches
 accepts a match: the normal compiler and byte judge remain authoritative.
+
+Suspicious MIPS function extents can be audited in Settings → Code coverage → **Review & repair boundaries**. Preview original assembly, repair delay slots/joins/end addresses, classify padding/data, or explicitly keep intentional entries. Automatic work waits for review; decisions retain source/history and have guarded undo. See [coverage review](docs/CODE_COVERAGE_REVIEW.md).

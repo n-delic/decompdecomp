@@ -364,6 +364,9 @@ class Sweeps:
             # Shuffle lightweight identities first. Never fingerprint the entire project before
             # dispatching work; keep at most two turns per worker queued ahead of execution.
             identities = [dict(r) for r in self.net.store.all(f"SELECT id,name,size FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])]
+            from .boundary_repairs import blocked as boundary_blocked
+            held=boundary_blocked(self.net,proj)
+            identities=[r for r in identities if r["id"] not in held]
             random.shuffle(identities)
             total = len(identities)
             scanned = submitted = 0

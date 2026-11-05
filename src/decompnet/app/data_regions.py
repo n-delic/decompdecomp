@@ -24,7 +24,8 @@ def records(net, pid):
 
 
 def blocked(net, proj):
-    result = []
+    from .boundary_repairs import blocked as boundary_blocked
+    result = list(boundary_blocked(net,proj))
     for _, region in records(net, proj['id']):
         if region['status'] != 'paused':
             continue

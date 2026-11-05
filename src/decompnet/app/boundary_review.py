@@ -1,4 +1,4 @@
-"""Keep incomplete targets visible and available; never infer an assembly verdict from their end."""
+"""Keep incomplete targets visible for explicit review; never infer an assembly verdict from their end."""
 import json
 
 LEGACY = 'ends without a return or a jump, so it runs on into the next function: an entry point inside hand-written code (compiled functions end with jr ra)'
@@ -18,5 +18,5 @@ def refresh(net,proj,console):
     if changes:
         with net.store.tx() as db:
             db.executemany('UPDATE functions SET status=?,meta=? WHERE id=?',changes)
-            net._event(db,proj['id'],None,'analysis',f'Boundary review updated {len(changes)} targets; {reopened} retired automatic assembly decisions reopened. These functions remain available.')
+            net._event(db,proj['id'],None,'analysis',f'Boundary review updated {len(changes)} targets; {reopened} retired automatic assembly decisions reopened. Unresolved boundaries require review before automatic agent work.')
     return len(changes)

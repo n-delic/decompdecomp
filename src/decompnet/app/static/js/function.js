@@ -279,7 +279,7 @@ function fnBadge(d = S.fnDetail) {
   const working = S.claims.find((c) => c.name === d.name);
   const st = $("fnStatus");
   st.className = "badge " + (d.status === "matched" ? "matched" : d.not_c ? "not-c" : working ? "working" : "");
-  st.textContent = d.boundary_review ? "incomplete · boundary review" : d.status === "matched" ? "matched" : d.status === "asm" ? (d.assembly_verification?.verified ? "verified source assembly" : "set aside · assessment") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
+  st.textContent = d.boundary_override ? "reviewed · intentional entry" : d.boundary_review ? "incomplete · boundary review" : d.status === "matched" ? "matched" : d.status === "asm" ? (d.assembly_verification?.verified ? "verified source assembly" : "set aside · assessment") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
 }
 
 function showFnTab(tab) {
@@ -409,6 +409,7 @@ async function refreshFn(first) {
       } catch (e) { toast(esc(e.message), "err"); }
     };
     $("fnBoundaryReview").hidden = !d.boundary_review;
+    $("fnBoundaryRepair").hidden = !d.boundary_review;
     $("fnBoundaryReview").textContent = d.boundary_review ? `Boundary review: ${d.boundary_review}` : "";
     $("fnAside").hidden = !d.set_aside;
     if (d.assembly_verification) {

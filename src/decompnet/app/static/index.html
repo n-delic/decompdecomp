@@ -402,6 +402,7 @@
         <div id="codeCoverageSummary" aria-live="polite"></div>
         <div class="coverage-actions">
           <button class="primary small-btn" type="button" id="coverageAuditBtn">Scan for missing code</button>
+          <button class="ghost small-btn" type="button" id="boundaryReviewBtn">Review &amp; repair boundaries</button>
           <button class="ghost small-btn" type="button" id="coverageReviewBtn" hidden>Review candidates</button>
           <span class="small muted">CPU only · no AI tokens · does not change code</span>
         </div>
@@ -778,7 +779,7 @@
     <div id="functionLoading" class="navigation-loading" role="status" hidden><p id="functionLoadingText">Loading function…</p><div class="workbar" role="progressbar" aria-label="Loading function"><i></i></div><button id="functionRetry" class="ghost" type="button" hidden>Retry</button></div>
     <div class="drawer-body">
       <div id="functionDetailsLoading" role="status" hidden><p id="functionDetailsStatus" class="small muted">Loading history, calls and verification… Saved code is ready to view.</p><div class="workbar" aria-label="Loading function details"><i></i></div><button id="functionDetailsRetry" class="ghost small-btn" type="button" hidden>Retry details</button></div>
-      <p class="set-aside" id="fnBoundaryReview" hidden></p>
+      <p class="set-aside" id="fnBoundaryReview" hidden></p><button type="button" class="ghost small-btn" id="fnBoundaryRepair" hidden>Review &amp; repair boundary</button>
       <p class="set-aside" id="fnAside" hidden><span id="fnAsideWhy"></span> <button class="link-btn" id="fnReopen" type="button">Give it back to the agents</button></p>
       <details id="fnCompilerTest" class="collapsible-box" hidden>
         <summary>Compiler settings</summary><div class="collapsible-box-body"><div id="fnCurrentCompiler" class="small"></div><div id="fnCompilerMatches"></div>
@@ -928,6 +929,7 @@
 <script src="/assets/js/compiler-progress.js"></script>
 <script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/code-audit.js"></script>
+<script src="/assets/js/boundary-repairs.js"></script>
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/background-work.js"></script>
 <script src="/assets/js/pages.js"></script>

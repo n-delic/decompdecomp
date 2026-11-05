@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const source=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/boundary-repairs.js'),'utf8');
+const ctx={esc:x=>String(x).replaceAll('<','&lt;').replaceAll('>','&gt;'),hex8:x=>'0x'+x.toString(16)};
+vm.createContext(ctx);vm.runInContext(source.slice(0,source.indexOf('async function openBoundaryReview')),ctx);
+const html=ctx.boundaryRepairPreviewHTML({old_size:4,new_size:8,affected:[{name:'<unsafe>'}],warning:'Original history retained',assembly:[{address:0x80001000,instruction:'jr $ra',inside:true},{address:0x80001004,instruction:'<unsafe>',inside:false}]});
+assert(html.includes('Current bytes')&&html.includes('Proposed bytes'));
+assert(html.includes('class="boundary-inside"'));
+assert(!html.includes('<unsafe>')&&html.includes('&lt;unsafe&gt;'));
+const index=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
+assert(index.includes('id="boundaryReviewBtn"')&&index.includes('id="fnBoundaryRepair"'));

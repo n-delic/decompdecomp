@@ -519,3 +519,10 @@ def test_repository_folder_restores_checkout_without_overwriting_edits_or_other_
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_repository_folder.js"))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_boundary_review_preview_shows_original_extent_and_escapes_evidence():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_boundary_repairs.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

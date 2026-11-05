@@ -145,6 +145,8 @@ class AutopilotMixin:
             return AutopilotMixin._try_quietly(self, agent, proj, fn, source, **({'before_record': before_record} if before_record is not None else {}))
 
     def _try_quietly(self, agent, proj, fn, source: str, before_record=None) -> dict:
+        from ..boundary_repairs import blocked
+        if fn["id"] in blocked(self,proj):raise NetworkError("Review this function boundary before starting a local search.")
         fn = self.store.one("SELECT * FROM functions WHERE id=?", fn["id"])
         if fn is None or fn["status"] != "open":
             raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")

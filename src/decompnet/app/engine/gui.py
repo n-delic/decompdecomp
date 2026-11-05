@@ -28,6 +28,8 @@ EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.s
               f"WHERE e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
 
 
+from ..boundary_repairs import reason as boundary_reason
+
 
 class GuiMixin:
     def export_rom(self, slug: str, log=print) -> dict:
@@ -193,7 +195,7 @@ class GuiMixin:
         from ..view_snapshots import cross_project_ids
         cross_project = cross_project_ids(self, proj)
         from ..code_coverage import boundaries
-        incomplete = {r["function"]: r["reason"] for r in boundaries(self, proj)}
+        incomplete = {r["function"]: r["reason"] for r in boundaries(self, proj) if not r.get("override")}
         sdk = self.sdk_functions(proj)
         return [{"id": r["id"], "cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
@@ -339,7 +341,8 @@ class GuiMixin:
             "assembly_verification":assembly_detail(proj,fn),
             **name_state(fn), "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
             "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
-            "boundary_review": self.console(proj).boundary_reason(fn["target"] or b"") if fn["status"]!="matched" else None,
+            "boundary_review": boundary_reason(self.console(proj),fn),
+            "boundary_override": bool(json.loads(fn["meta"] or "{}").get("boundary_override")),
             "deep_pass": deep_pass, "verification": bundle_status(self,fn), "baseline_status": baseline_status(self,proj,fn),
             "compiler_test": self.compiler_test_result(proj, fn),
             "compiler_profile": compiler_for(self.cfg(proj), fn["vram"], fn),

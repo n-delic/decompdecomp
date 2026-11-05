@@ -232,11 +232,14 @@ class Permuter:
                                   "AND best_source IS NOT NULL AND best_score>0 AND best_score<=n_insns*100*? "
                                   "AND n_insns<=?", proj['id'], NEAR, self.max_insns)
         permuter_inputs.refresh(self.net, proj, rows)
-        return self.net.store.all(
+        from .boundary_repairs import blocked
+        held=blocked(self.net,proj)
+        candidates=self.net.store.all(
             "SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
             "AND best_score > 0 AND best_score <= n_insns * 100 * ? AND n_insns <= ? AND permuted < ? "
-            "AND id NOT IN (SELECT function_id FROM claims) ORDER BY CAST(best_score AS REAL) / (n_insns * 100) LIMIT ?",
-            proj["id"], NEAR, self.max_insns, self.max_turns, limit)
+            "AND id NOT IN (SELECT function_id FROM claims) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY CAST(best_score AS REAL) / (n_insns * 100) LIMIT ?",
+            proj["id"], NEAR, self.max_insns, self.max_turns, json.dumps(list(held)), limit)
+        return [r for r in candidates if r["id"] not in held]
 
     def _loop(self, slug: str, st: State) -> None:
         agent, _ = self.net.local_agent("permuter")

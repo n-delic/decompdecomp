@@ -459,7 +459,7 @@ def boundary_reason(code: bytes, big_endian: bool = True, **_facts) -> str | Non
     if incomplete:
         return ('Target falls through its extent or lacks a transfer delay slot. It may be truncated or a separate entry into a larger function. '
                 'Inspect adjacent original bytes and segment boundaries before spending candidate compiles; reimport or join proven pieces. '
-                'This is not proof of handwritten assembly. This warning does not pause the function or change its status.')
+                'This is not proof of handwritten assembly. Review this extent before automatic candidate searches; an explicit boundary decision can keep an intentional entry point.')
     return None
 
 

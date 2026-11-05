@@ -304,6 +304,9 @@ class ImportMixin:
                         # Classify before the target reaches the claim queue; keep its bytes and symbols.
                         meta_data["asm_code"] = why
                         status = "asm"
+                    from ..boundary_repairs import reason as boundary_reason
+                    warning = boundary_reason(console, {'target': target.code, 'status': status})
+                    if warning:meta_data['boundary_review'] = warning
                     meta = json.dumps(meta_data) if meta_data else None
                     n_insns = console.function_insns(fn)
                     if old is None:

@@ -1,5 +1,7 @@
 # Roadmap
 
+Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md.
+
 Implemented: overlay-scoped data-region review with reversible new-claim pauses, explicit investigation
 outcomes, independent-model verification requests, function-scoped prepared compiler evidence with a bounded
 fresh byte recheck, and actual CLI tool handshakes before function handoff. See docs/AGENT_WORKFLOW_EFFICIENCY.md.

@@ -47,6 +47,8 @@ def validate(net, slug, name, minutes, max_variants):
         raise NetworkError('Choose a variant limit from 1 to 1,000,000.')
     proj = net.project_row(slug)
     fn = net._function(name, slug)
+    from .boundary_repairs import blocked
+    if fn['id'] in blocked(net,proj):raise NetworkError('Review this function boundary before starting a deep pass.')
     if fn['status'] != 'open' or not fn['best_source'] or fn['best_score'] is None:
         raise NetworkError('Choose an unmatched function with saved, scored C first.')
     if slug in net.links and net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):

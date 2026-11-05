@@ -62,6 +62,14 @@ def register(app: App) -> None:
                     jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed)
         return handler
 
+    def p_boundary_repairs(slug, request, data):
+        from .. import boundary_repairs as repairs
+        if request.method == 'GET':return repairs.audit(net,slug)
+        action=data.get('action')
+        if action=='preview':return repairs.public(repairs.preview(net,slug,data.get('function'),data.get('repair'),data.get('end')))
+        if action=='undo':return {'job':jobs.start('Undo boundary decision',lambda log:repairs.undo(net,slug,data.get('key'),log))}
+        return {'job':jobs.start('Verify boundary repair',lambda log:repairs.apply(net,slug,data.get('function'),data.get('repair'),data.get('revision'),data.get('image'),data.get('end'),data.get('note',''),log))}
+
     def p_symbol_names(slug, request, data):
         from .. import symbol_names
         rows = data.get('names')
@@ -634,6 +642,7 @@ def register(app: App) -> None:
         return measurements(net)
 
     routes = {
+        "/api/boundary-repairs": (p_boundary_repairs, ["GET", "POST"]),
         '/api/repair-generation-metrics': (g_generation_metrics, ['GET']),
         "/api/project": (p_overview, ["GET"]),
         "/api/split-rom": (p_split_rom, ["POST"]),

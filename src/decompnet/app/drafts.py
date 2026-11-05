@@ -105,6 +105,8 @@ class Drafter:
             fn = self.net.store.one("SELECT * FROM functions WHERE id=?", fid)
             if fn is None or fn["status"] != "open":
                 return
+            from .boundary_repairs import blocked
+            if fid in blocked(self.net,proj):return
             fork = self.net.fork_slug(proj["slug"])  # a game started from scratch in project mode (PC)
             if fork:
                 self.net.forks.background_draft(proj, fn)
