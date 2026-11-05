@@ -627,3 +627,17 @@ If m2c emits `M2C_BREAK(9)` and the target has BREAK 9, use the fixed
 `noreturn` and an unknown trap builtin are not substitutes. Find missing non-NOP
 operations before interpreting downstream branch displacements or extra padding
 as progress. Other compiler packs need their own tested intrinsic registration.
+
+### Current live return address versus the entry caller
+
+When target code stores `$ra` to a global after an optional callback, distinguish
+that hardware snapshot from `__builtin_return_address(0)`: the latter returns the
+function-entry caller even after another call changes the live register. The fixed
+no-argument `__builtin_mips_live_return_address()` in this compiler pack captures
+the current register with an ordered compiler-visible read. It is not portable C
+or a request to synthesize instructions; submitted assembly remains prohibited.
+
+Try `live_return_address` when a draft's uninitialized placeholder corresponds to
+a raw target-proven absolute `$ra` store. Do not run broad flag sweeps for a missing
+hardware operation, guess a caller constant, or reinterpret stack frame saves as
+this pattern. All resulting candidates still require ordinary exact verification.

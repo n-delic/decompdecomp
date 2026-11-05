@@ -3581,3 +3581,35 @@ This follow-up reruns isolated candidate generation and linked-byte checks again
 those saved inputs; it does not claim another full-image rebuild or fresh match.
 Broader compiler sweeps, unknown `__builtin_trap` calls, artificial padding and
 one-line conversion temporaries had failed to resolve the final mismatch.
+
+### Verified linked-byte case: current live return address after a callback
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian
+MIPS. A dispatcher draft differed only in the register used by one absolute global
+store (score 5). The target stored `$ra` after an optional indirect call; the draft
+stored an uninitialized local. Replacing that placeholder with the fixed
+`__builtin_mips_live_return_address()` produced score **0 / exact linked bytes**
+in private normal-judge replay. The generated `live_return_address` family also
+reproduced the exact result. This is one case, not a general claim that uninitialized
+locals hold return addresses. Complete image publication is verified separately.
+
+The semantic distinction matters: on the callback path the live register holds the
+callback's return location, while without that callback it still holds the entry
+caller return location. `__builtin_return_address(0)` instead reads the function-entry
+caller and generated a stack reload, so it was both behaviourally and mechanically
+wrong for this target. A recorded 199-profile sweep had not fixed the source mismatch.
+
+The trusted template binds a local output to fixed register `$31` and performs an
+empty volatile extended-asm output with a memory clobber. This emits no supplied
+instruction stream and captures the hardware value at the source operation rather
+than relying on an otherwise uninitialized register variable. Generic real-compiler
+tests check reads before/after an indirect call and preservation of an earlier
+snapshot across a call. A snapshot already saved in C must retain its old value;
+a subsequent invocation must observe the newly live link register.
+
+Automatic replacement requires raw annotated target words proving an absolute word
+store from `$ra` (not a frame save), an explicitly declared automatic-address global
+at that address, and a single-use uninitialized scalar/pointer placeholder. Gaps,
+unknown address bases, escaped/initialized placeholders and other processors are
+not inferred. The normal compiler/link/data judge remains authoritative. Other
+compiler packs and real-name symbol adapters need separate tested support.
