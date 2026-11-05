@@ -62,6 +62,18 @@ def register(app: App) -> None:
                     jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed)
         return handler
 
+    def g_boundary_evidence(slug, request, data):
+        from .. import boundary_evidence, boundary_investigations
+        packet=boundary_evidence.read(net,slug,request.query_params.get('function',''))
+        return {**packet,'suggestions':boundary_investigations.suggestions(net,slug,packet)}
+
+    def g_boundary_investigations(slug, request, data):
+        name=request.query_params.get('function','')
+        net._function(name,slug)
+        return {'sessions':[{'id':s.id,'state':s.state,'why':s.why,'error':s.error,'label':s.label}
+                            for s in manager.sessions.values() if s.slug==slug and s.options.get('task')=='boundary'
+                            and s.options.get('boundary_function')==name]}
+
     def p_boundary_repairs(slug, request, data):
         from .. import boundary_repairs as repairs
         if request.method == 'GET':return repairs.audit(net,slug)
@@ -668,6 +680,8 @@ def register(app: App) -> None:
         return measurements(net)
 
     routes = {
+        "/api/boundary-evidence": (g_boundary_evidence, ["GET"]),
+        "/api/boundary-investigations": (g_boundary_investigations, ["GET"]),
         "/api/boundary-repairs": (p_boundary_repairs, ["GET", "POST"]),
         '/api/repair-generation-metrics': (g_generation_metrics, ['GET']),
         "/api/project": (p_overview, ["GET"]),
