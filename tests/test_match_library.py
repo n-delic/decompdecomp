@@ -170,3 +170,10 @@ def test_normalized_source_name_does_not_collide_with_a_local(library):
         db.execute("UPDATE functions SET matched_source='int f1(void) {int __library_function=42;return __library_function;}' WHERE id=1")
     item=lib.snapshot(net.project_row('game1'),1)
     assert item['source']=='int __library_function_(void) {int __library_function=42;return __library_function;}'
+
+
+
+def test_backfill_reads_verified_state_without_syncing_project_files(library,monkeypatch):
+    net,lib=library
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:pytest.fail('read-only archive must not reconcile project files'))
+    assert lib.backfill()['functions']==1
