@@ -11,6 +11,9 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'known_zero_mask': ('post_call_narrow_capture','hazard_statement_lines'),
+    'post_call_narrow_capture': ('hazard_statement_lines','known_zero_mask'),
+    'hazard_statement_lines': ('post_call_narrow_capture','known_zero_mask'),
     'plain_float_slots': ('return_contract','narrow_expression_inline'),
     'return_contract': ('plain_float_slots','narrow_expression_inline'),
     'narrow_expression_inline': ('return_contract','plain_float_slots'),

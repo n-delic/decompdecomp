@@ -15,9 +15,9 @@ def scheduling(rows):
             ==Counter(normalize(b) for _,b in different if b))
 
 
-def statement_lines(source, name, header, rows):
+def statement_lines(source, name, header, rows, *, measured=False):
     """Join/split adjacent simple assignments, preserving tokens, comments and execution order."""
-    if not scheduling(rows):return []
+    if not measured and not scheduling(rows):return []
     result=[];splits=[]
     for text,is_header in ((source,False),(header,True)):
         clean=_blank(text)

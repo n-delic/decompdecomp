@@ -60,7 +60,7 @@ def order(families, rows):
         preferred = ('known_address_alias', 'target_call_argument', 'target_local_bundle', 'local_widening', 'integer_address_order', 'signedness', 'narrowing', 'constant_local')
     else:
         preferred=()
-    preferred=('plain_float_slots','return_contract','narrow_expression_inline')+preferred
+    preferred=('hazard_statement_lines','known_zero_mask','post_call_narrow_capture','plain_float_slots','return_contract','narrow_expression_inline')+preferred
     return sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
 
 

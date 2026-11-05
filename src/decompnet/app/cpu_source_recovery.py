@@ -25,6 +25,8 @@ def proposals(net, proj, fn, source, header, measurement):
     result+=pointer_lifetimes(source,fn['name'],header,proof,rows)
     import re
     result+=commented_conditions(source,header,re.findall(r'\bD_[0-9A-Fa-f]{8}\b',fn['asm'] or ''))
+    from . import hazard_line_repairs
+    result += [(family,s,header) for family,s in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows)]
     result+=statement_lines(source,fn['name'],header,rows)
     if arch.source_extra_narrowing:result+=narrowing_casts(source,header,arch.source_extra_narrowing(rows))
     result+=cpu_source_repairs.variants(source,header,proj['arch'],measurement.get('rows',[]),measurement.get('lines',{}))
