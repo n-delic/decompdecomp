@@ -850,3 +850,14 @@ parameter forwarded only to another unused parameter is not evidence of a real a
 the actual formal type (`void *` and a byte pointer are not compatible function parameter
 types), with an explicit conversion where needed. Reverify any corrected existing caller or
 callee and the entire image; a corrected declaration is not an additional function match.
+
+### Byte compound-update lifetime
+
+For register-only misses in an ordinary unsigned-byte array update, try loading
+one same-type byte local, compound-updating that local, then storing it back:
+`value=bytes[i]; value += value >> 1; bytes[i]=value;`. A direct binary-expression
+assignment can allocate differently. Keep the original conversion, load/store
+order and evaluation boundaries; never cache volatile/atomic reads or move calls.
+Two independent sites may need this shape together even when either single
+change misses. The shared `loaded_byte_compound` repair tests a small guarded
+subset automatically; exact linked bytes remain the acceptance gate.
