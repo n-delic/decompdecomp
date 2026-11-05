@@ -194,6 +194,7 @@ function agentMetrics(s, stats) {
   const seconds = last ? Math.max(0, Date.now() / 1000 - last) : null;
   const ago = seconds == null ? "None yet" : seconds < 60 ? `${Math.floor(seconds)}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
   return `<div class="agent-results-summary">${s.task === 'readable' ? `<span><strong>${stats?.polished || 0}</strong> polished</span>` : metric('matched',stats?.matched || 0)}${metric('improved',stats?.improved || 0)}${metric('worked',stats?.worked || 0)}</div>
+    ${s.task === "boundary" ? `<p class="small"><b>Boundary investigation:</b> ${esc(s.boundary_function || "selected function")} · advice only · no compilation or layout edits</p>` : ""}
     ${s.focus_function ? `<p class="small"><b>Focused:</b> ${esc(s.focus_function)} · deadline ${s.focus_until ? esc(new Date(s.focus_until*1000).toLocaleTimeString()) : "starting"}</p>` : ""}
     <div class="agent-timing"><span>${runtime} <span class="muted">since latest start</span></span><span><span class="muted">Last improvement</span> ${ago === 'None yet' ? ago : ago + ' ago'}</span></div>`;
 }

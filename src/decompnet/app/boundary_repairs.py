@@ -78,10 +78,8 @@ def audit(net, slug):
     for finding in boundaries(net,proj):
         fn=by_name[finding['function']];target=fn['target'] or b''
         last=int.from_bytes(target[-4:],'big' if proj['big_endian'] else 'little') if len(target)>=4 else 0
-        previous=[r for r in rows if r['id']!=fn['id'] and r['rom_offset'] is not None and fn['rom_offset'] is not None
-                  and r['rom_offset']+r['size']==fn['rom_offset'] and r['vram']+r['size']==fn['vram'] and r['unit']==fn['unit']
-                  and not json.loads(r['meta'] or '{}').get('gone')]
-        suggested='padding' if target==bytes(4) else 'delay_slot' if target and rabbitizer.Instruction(last).hasDelaySlot() else 'join_previous' if len(previous)==1 else 'adjust'
+        # These are possible repairs, not evidence that adjacent entries belong together.
+        suggested='delay_slot' if target and rabbitizer.Instruction(last).hasDelaySlot() else ''
         findings.append({**finding,'suggested_action':suggested})
     history=[]
     for r in net.store.all('SELECT key,value FROM settings WHERE key LIKE ?',PREFIX+str(proj['id'])+':%'):
@@ -90,7 +88,7 @@ def audit(net, slug):
     return {'findings':findings,'history':sorted(history,key=lambda r:r['time'],reverse=True)[:30]}
 
 
-def preview(net, slug, name, action, end=None):
+def preview(net, slug, name, action, end=None, *, investigation=False):
     proj=_supported(net,slug);fn=dict(net._function(name,slug));rows=_rows(net,proj)
     if fn['status']=='matched':raise NetworkError('A matched function cannot be reclassified or resized.')
     meta=json.loads(fn['meta'] or '{}')
@@ -118,7 +116,7 @@ def preview(net, slug, name, action, end=None):
         raise NetworkError('Choose a boundary repair action.')
     if newend%4 or not address<newend<=address+65536:raise NetworkError('Choose an aligned extent of at most 64 KiB.')
     finish=start+newend-address
-    if start<owner.rom_start or finish>owner.rom_end:raise NetworkError('The proposed extent crosses the original segment mapping.')
+    if start<owner.rom_start or finish>owner.rom_end or finish>len(image):raise NetworkError('The proposed extent crosses the original segment mapping.')
     resizing=action in ('join_previous','delay_slot','adjust')
     if resizing:
         # An entirely absorbed piece stays archived under its own ID, with all history.
@@ -139,20 +137,17 @@ def preview(net, slug, name, action, end=None):
     if any(image[p['rom_offset']:p['rom_offset']+p['size']]!=p['target'] for p in pieces):
         raise NetworkError('A proposed piece differs from the original image. Review/reimport before joining.')
     ids=[p['id'] for p in pieces]
-    if any(net.store.one('SELECT 1 FROM claims WHERE function_id=?',fid) for fid in ids):
+    if not investigation and any(net.store.one('SELECT 1 FROM claims WHERE function_id=?',fid) for fid in ids):
         raise NetworkError('Release the affected claims before changing boundaries.')
     raw=image[start:finish]
-    lines=[]
-    low=max(owner.rom_start,start-16);high=min(owner.rom_end,max(finish,start+fn['size'])+16)
-    if high-low>512:high=low+512
-    for offset in range(low,high,4):
-        word=int.from_bytes(image[offset:offset+4],'big' if proj['big_endian'] else 'little')
-        at=address+offset-start
-        lines.append({'address':at,'instruction':rabbitizer.Instruction(word,at).disassemble(),'inside':start<=offset<finish})
+    from .. import arch
+    from .boundary_evidence import assembly
+    lines=assembly(arch.get(proj['arch']).boundary_instruction,image,owner,address,newend,
+                   [address,fn['vram']+fn['size'],newend,*[p['vram'] for p in pieces]],proj['big_endian'])
     return {'function':name,'owner':fn['name'],'action':action,'end':newend,'start':address,
-            'old_size':fn['size'],'new_size':len(raw),'affected':[{'id':p['id'],'name':p['name'],'size':p['size']} for p in pieces],
+            'old_size':fn['size'],'old_end':fn['vram']+fn['size'],'new_size':len(raw),'affected':[{'id':p['id'],'name':p['name'],'size':p['size'],'start':p['vram'],'end':p['vram']+p['size']} for p in pieces],
             'revision':_revision(net,proj,ids),'image':_digest(image),'assembly':lines,
-            'warning':'Existing matches will be reverified. Sources, attempts and notes are retained. Resized functions need a fresh match.',
+            'warning':'Safety checks reverify existing matches and guard mappings, overlaps and changed inputs. They do not prove the proposed boundary. Sources, attempts and notes are retained. Resized functions need a fresh match.',
             'pieces':pieces,'raw':raw,'unit':fn['unit'],'rom':start}
 
 

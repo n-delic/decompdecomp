@@ -1741,3 +1741,10 @@ need their own verified intrinsic integration before this call can be used there
 Referenced fixed intrinsic templates travel with rebuildable ROM exports and verified
 repository sync headers, so standalone builds that invoke the compiler directly retain
 the same operation. Unrelated sources keep their existing prelude.
+
+Boundary review now explains the specific warning beside neighbouring original instructions and before/after
+extents. **Ask an agent to investigate** starts one advisory worker on the selected entry for up to ten minutes.
+It records supporting evidence, counter-evidence, uncertainty and instruction links, without claiming, compiling
+or editing functions. Review its proposal, preview the exact change, then run safety checks and save. Safety
+checks protect existing work; they do not prove function ownership. This guided repair flow covers mapped
+MIPS ROM projects; other processors and imported builds still need adapters.

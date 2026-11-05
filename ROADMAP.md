@@ -70,7 +70,9 @@ resolution before worker creation, lease-bound release receipts for agent/room r
 selection/writer/score provenance in stale and continuation responses. ROM and imported-project metadata
 share the resolver; unavailable addresses remain unknown. See docs/AGENT_WORKFLOW_EFFICIENCY.md.
 
-Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md.
+Implemented: guided mapped MIPS boundary evidence, neighbouring instruction windows, explicit before/after extents and one-shot agent recommendations with cited supporting/counter-evidence and uncertainty. Advice never edits layouts, claims work or compiles, and stale inputs are labelled.
+
+Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Guided evidence/agent investigation and repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md.
 
 Implemented: overlay-scoped data-region review with reversible new-claim pauses, explicit investigation
 outcomes, independent-model verification requests, function-scoped prepared compiler evidence with a bounded
@@ -414,6 +416,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
 | Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
+| Guided boundary repair and advisory agent investigation (local mapped ROM) | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | — | — |

@@ -470,3 +470,16 @@ def gcc_register_aliases(number):
     if not 0 <= number < len(names):
         return ()
     return (names[number], str(number)) + (('s8',) if number == 30 else ())
+
+
+def boundary_instruction(word, address):
+    """Facts used in boundary review; a direct edge is evidence, never an ownership verdict."""
+    import rabbitizer
+
+    ins = rabbitizer.Instruction(word, address)
+    target = (ins.getBranchVramGeneric() if ins.isBranch() else
+              ins.getInstrIndexAsVram() if ins.isJumpWithAddress() else None)
+    return {'address': address, 'instruction': ins.disassemble(), 'delay_slot': ins.hasDelaySlot(),
+            'return': ins.isReturn(), 'call': ins.doesLink(), 'target': target,
+            'terminal': ins.isReturn() or (not ins.doesLink() and
+                        (ins.isUnconditionalBranch() or ins.isJump()))}
