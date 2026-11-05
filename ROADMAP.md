@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: native expression expansion checks captured operand stability before
+rewriting or deleting an initializer. ROM, imported-project and deep native jobs
+share the generator guard. Unsupported control/memory/qualifier cases are skipped;
+this does not prove equivalence of arbitrary native rewrites.
+
 Implemented: the shared native permuter batch wrapper rejects a possible read before
 initialization of an introduced ordinary scalar temporary using bounded CFG must
 analysis. ROM, imported-project and deep native batches share the guard. Existing,

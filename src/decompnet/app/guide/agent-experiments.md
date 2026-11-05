@@ -38,3 +38,9 @@ permutations. Caller-backed m2c context is a private draft hypothesis, not a sha
 header change. Preserve narrowing on each repeated expression; volatile local storage
 changes require target evidence and never extend to MMIO. After repeated identical
 output, use a different evidence-backed family rather than resending unchanged trials.
+
+
+A lower native-permuter score is not proof of sound C. In particular, check that
+expanding a captured address does not recompute it after an index changes. The
+generator guards supported local captures, but other transformations and type
+conversions still need review before using a variant as a new search baseline.
