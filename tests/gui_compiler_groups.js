@@ -41,3 +41,44 @@ assert.doesNotMatch(elements.get('compilerParts').innerHTML, /Test this profile 
 ctx.S.ov.kind=undefined;ctx.renderCompilerParts({parts});
 assert.match(elements.get('compilerParts').innerHTML, /Replace default with this profile/);
 assert.match(elements.get('compilerParts').innerHTML, /Test all non-matches/);
+const menuHtml = elements.get('compilerParts').innerHTML;
+assert.match(menuHtml, /class="agent-menu compiler-profile-menu"/);
+assert.match(menuHtml, /<summary aria-label="Actions for [^"]+ profile"[^>]*>⋮<\/summary>/);
+const menu = menuHtml.match(/<div class="agent-menu-items">(.*?)<\/div>/s)[1];
+assert.equal((menu.match(/<button /g) || []).length, 4);
+assert.doesNotMatch(menu, /class="ghost/);
+
+// Selecting each option closes the menu and restores focus before opening its workflow.
+const clickStart = steering.indexOf('$("compilerParts").onclick = async (e) => {');
+const clickEnd = steering.indexOf('  const b = e.target.closest("button[data-unrange]");', clickStart);
+vm.runInContext(steering.slice(clickStart, clickEnd) + '};', ctx);
+const routed = [];
+ctx.testProfileAsDefault = async (button, action) => routed.push(action);
+ctx.compareProfileWithDefault = async () => routed.push('compare');
+(async () => {
+  for (const action of ['compare', 'test', 'replace', 'nonmatches']) {
+    let focused = false;
+    const disclosure = {open:true, querySelector:()=>({focus(){focused=true;}})};
+    const button = {dataset:{profileAction:action === 'test' ? undefined : action}, closest:()=>disclosure};
+    const target = {closest:selector => selector === '.compiler-profile-menu button' ? button
+      : selector === 'button[data-profile-test-default]' && action !== 'compare' ? button
+      : selector === 'button[data-profile-default]' && action === 'compare' ? button : null};
+    await elements.get('compilerParts').onclick({target});
+    assert.equal(disclosure.open, false);
+    assert.equal(focused, true);
+    assert.equal(routed.at(-1), action);
+  }
+})().catch(error => {console.error(error);process.exitCode=1;});
+// Compiler menus reuse the existing outside-click and Escape dismissal behavior.
+const listeners = {};
+let focusRestored = false;
+const sharedMenu = {open:true,dataset:{},contains:()=>false,querySelector:()=>({focus(){focusRestored=true;}})};
+ctx.document = {addEventListener:(name,fn)=>listeners[name]=fn,querySelectorAll:()=>sharedMenu.open ? [sharedMenu] : []};
+const agentSource = fs.readFileSync('src/decompnet/app/static/js/agents.js','utf8');
+vm.runInContext('const agentMenusOpen = new Set();' + agentSource.slice(agentSource.indexOf("document.addEventListener('click', event => {"),agentSource.indexOf('$("agentSort").onchange')), ctx);
+listeners.click({target:{}});
+assert.equal(sharedMenu.open,false);
+sharedMenu.open=true;
+listeners.keydown({key:'Escape'});
+assert.equal(sharedMenu.open,false);
+assert.equal(focusRestored,true);
