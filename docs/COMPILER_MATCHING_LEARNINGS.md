@@ -3907,3 +3907,13 @@ first and removing an unused eight-byte array fixed body spill offsets but shran
 by eight bytes. Padding scopes, register qualifiers, aligned unused locals, pointer copies,
 wide pointer carriers and caller-save/peephole/strength-reduction switches did not recover an
 exact linked match. Preserve those failures separately from the diagnostic correction.
+
+
+### Controlled regression: inline helper storage order
+
+Native rewrite printers may emit `inline static` instead of `static inline`.
+Helper normalization must recognize both orders without inserting a second `static`.
+The observed KMC GCC 2.7.2 compiler accepted the duplicated specifier with a warning;
+this was not an exact-match breakthrough or a compiler failure. The fix preserves
+existing specifier order and line breaks, and adds internal linkage only where absent.
+Synthetic regressions cover comments, strings, indentation and multiline specifiers.

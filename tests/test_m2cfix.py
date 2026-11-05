@@ -130,3 +130,20 @@ def test_overlay_aliases_use_explicit_target_not_address_guess():
     assert 'func_80100000_overlay_027();' in changed
     assert '/* func_80100000_ovl_12 */' in changed
     assert overlay_call_aliases(source,'jal func_80100000_overlay_027\njal func_80100000_overlay_028')==source
+
+
+def test_inline_helpers_preserve_existing_storage_order_and_line_breaks():
+    for prefix in ("static inline", "inline static", "inline /* type */ static",
+                   "inline /* storage */ static", "inline\nstatic"):
+        source = prefix + " int helper(void) { return 1; }\n"
+        assert m2cfix.static_helpers(source) == source
+
+
+def test_inline_helpers_ignore_comments_strings_and_body_storage():
+    source = ('/*\ninline int fake(void);\n*/\n'
+              'const char *text = "inline int fake(void);";\n'
+              '#define HELPER inline int fake(void)\n'
+              '\tinline /* static ( */ int helper(void) { static int x; return x; }\n')
+    expected = source.replace('\tinline', '\tstatic inline')
+    assert m2cfix.static_helpers(source) == expected
+    assert m2cfix.static_helpers(expected) == expected
