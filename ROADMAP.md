@@ -2412,3 +2412,5 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   Older target metadata receives the same completion in the display object, preserving
   stored bytes, relocation records and ordinary linked verification. This shared MIPS
   path reaches ROM consoles; object-project judging already reads object relocations.
+
+- Done: local repair discovery reuses its revision fingerprint across one proposal pass while retaining fresh tried-target lookups and recomputing scope on the next pass.
