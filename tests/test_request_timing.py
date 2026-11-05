@@ -1,7 +1,9 @@
 """Request timings are opt-in, isolated and omit bindings/source."""
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
 from starlette.responses import JSONResponse
 
 from decompnet import request_timing
@@ -42,3 +44,22 @@ def test_timings_expose_connection_lock_execute_and_fetch(tmp_path, monkeypatch)
     assert all(name + ';dur=' in header for name in ('sql_connection', 'sql_lock_wait', 'sql_execute', 'sql_fetch'))
     phases = store._local.read_phases
     assert all(phases[name] >= 0 for name in ('connection', 'execute', 'fetch'))
+
+
+@pytest.mark.parametrize('phase', ['connection', 'execute'])
+def test_failed_database_reads_retain_phase_time(tmp_path, monkeypatch, phase):
+    store = Store(tmp_path / 'failed-read.db')
+    def fail(*args):
+        raise sqlite3.OperationalError('database is locked')
+    class LockedConnection:
+        execute = staticmethod(fail)
+    monkeypatch.setattr(store, '_reader', fail if phase == 'connection' else lambda: LockedConnection())
+    ticks = iter([1., 3.] if phase == 'connection' else [1., 2., 3., 7.])
+    monkeypatch.setattr('decompnet.store.time.perf_counter', lambda: next(ticks))
+    with request_timing.capture() as metrics:
+        with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+            store.one('SELECT ?', 'private binding')
+    assert metrics['queries'] == 1
+    assert metrics['sql_' + phase] == (2. if phase == 'connection' else 4.)
+    assert request_timing._current.get() is None
+    store.conn.close()

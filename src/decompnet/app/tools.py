@@ -709,6 +709,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                      'write_lock_wait_ms':round(metrics.get('write_lock_wait',0)*1000,2),
                      'candidate_lock_wait_ms':round(metrics.get('candidate_lock_wait',0)*1000,2),
                      'before_dispatch_ms':round((dispatch-started)*1000,2)}
+            timings.update({phase+'_ms':round(metrics.get(phase,0.)*1000,2)
+                            for phase in ('sql_connection','sql_lock_wait','sql_execute','sql_fetch')})
             if observe:
                 payload={'name':name,'call_id':call_id,'timings':timings}
                 payload['error' if error else 'content']=str(error) if error else result

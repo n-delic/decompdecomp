@@ -613,13 +613,18 @@ class Store:
 
     def _read_rows(self, sql: str, args: tuple, single: bool):
         started = time.perf_counter()
-        conn = self._reader()
         phases = self._local.read_phases
-        phases['connection'] = time.perf_counter() - started
+        try:
+            conn = self._reader()
+        finally:
+            phases['connection'] = time.perf_counter() - started
         def query(connection):
             executing = time.perf_counter()
-            cur = connection.execute(sql, args)
-            phases['execute'] = time.perf_counter() - executing
+            try:
+                cur = connection.execute(sql, args)
+            finally:
+                # Failed reads can spend the entire SQLite busy timeout here.
+                phases['execute'] = time.perf_counter() - executing
             fetching = time.perf_counter()
             try:
                 return cur.fetchone() if single else cur.fetchall()

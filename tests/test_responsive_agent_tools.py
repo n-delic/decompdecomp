@@ -215,3 +215,34 @@ def test_failed_diagnostic_learns_only_explicit_requested_rejected_option(tmp_pa
         assert not ok and diff is None
     assert len(calls)==1 and 'No compiler run' in log
     assert not compiler_flags.known(net,'gcc-old',['-another'])
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_mcp_transcripts_include_accumulated_sql_phases_on_success_and_error(tmp_path, monkeypatch, fails):
+    from decompnet.request_timing import sql_read
+    net, agent, fn = game(tmp_path)
+    monkeypatch.setattr(Context, 'headers', property(lambda self: {}))
+    def dispatch(*args, **kwargs):
+        # Fixed values avoid timing-sensitive assertions and verify units and accumulation.
+        sql_read(.1, {'connection': .01, 'lock_wait': .02, 'execute': .03, 'fetch': .04})
+        sql_read(.2, {'connection': .02, 'lock_wait': .04, 'execute': .06, 'fetch': .08})
+        if fails:
+            raise NetworkError('Synthetic database failure')
+        return 'Synthetic success'
+    monkeypatch.setattr(tools, '_dispatch', dispatch)
+    records = []
+    server = tools.build_mcp(net, lambda ctx: (agent, 'game'), lambda *args: records.append(args[-1]))
+    async def run():
+        return await server.call_tool('project_info', {'detail': False})
+    if fails:
+        from mcp.server.mcpserver.exceptions import ToolError
+        with pytest.raises(ToolError, match='Synthetic database failure'):
+            anyio.run(run)
+    else:
+        anyio.run(run)
+    record = records[-1]
+    assert ('error' in record) == fails
+    assert record['timings']['sql_reads'] == 2
+    for key, expected in [('connection', 30.), ('lock_wait', 60.), ('execute', 90.), ('fetch', 120.)]:
+        assert record['timings']['sql_' + key + '_ms'] == expected
+    assert all(isinstance(v, (float, int)) for v in record['timings'].values())

@@ -90,3 +90,15 @@ comparison. On the development Mac, 20,000 attempts produced 20,000 points / 786
 with the full-history path versus 485 points / 24,248 bytes with sampling. Median query,
 Python conversion and JSON encoding time over 12 warm runs was 12.03 ms versus 10.44 ms.
 This is a component benchmark: it does not measure browser rendering or claim faster judging.
+
+
+### SQL phases in agent tool transcripts
+
+MCP tool response timings include `sql_connection_ms`, `sql_lock_wait_ms`,
+`sql_execute_ms` and `sql_fetch_ms`, summed across the call's database reads.
+Connection and execute durations are retained when a read raises an error,
+including a SQLite busy timeout. `sql_lock_wait_ms` measures the fallback read
+connection's Python lock; SQLite's own busy wait is included in execute/fetch,
+not that lock field. These numeric fields contain no SQL text or bindings.
+They supplement `sql_read_ms`, `sql_reads`, writer-lock and candidate-lock timings;
+they do not account for every part of dispatch or identify a blocking writer.

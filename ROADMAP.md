@@ -78,6 +78,9 @@
 - Done: allow flag context in reusable knowledge proposals while retaining explicit
   compiler-selection routing, function-note scoping and model/user review.
 
+- Done: MCP SQL connection, fallback-lock, execute and fetch timings on successful and failed
+  tool calls; failed database-open/execute phases retain elapsed time without logging SQL or bindings.
+
 - Done: numeric MCP transaction-writer and candidate lock acquisition timings,
   with synthetic rollback, release and claim-check regressions. This diagnoses
   contention without changing concurrency or exact matching.
