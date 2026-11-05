@@ -574,11 +574,13 @@ def register(app: App) -> None:
         include_all = data.get('include_all',False)
         if not isinstance(include_all,bool):
             raise ValueError('Include all unmatched functions must be true or false.')
+        threads = data.get('threads',0)
+        draft_regeneration.thread_count(threads)
         draft_regeneration.validate(net,slug)
         previous = draft_jobs.get(slug)
         if previous and jobs.jobs.get(previous,{}).get('state') == 'running':
             return {'job':previous}
-        draft_jobs[slug] = jobs.start('Regenerate machine drafts',lambda log:draft_regeneration.run(net,slug,log,include_all=include_all),
+        draft_jobs[slug] = jobs.start('Regenerate machine drafts',lambda log:draft_regeneration.run(net,slug,log,include_all=include_all,threads=threads),
                                      cancel_message='Draft refresh stopped. Completed drafts and verified attempts are saved.')
         return {'job':draft_jobs[slug]}
 

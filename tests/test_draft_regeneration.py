@@ -17,8 +17,8 @@ def test_refresh_scope_uses_saved_compilation_evidence(network, monkeypatch, bas
     net, proj, fn = network
     monkeypatch.setattr(net, 'can_draft', lambda proj: True)
     calls = []
-    monkeypatch.setattr(net, '_seed_for', lambda *args: calls.append('generated'))
-    monkeypatch.setattr(net, '_autopilot_one', lambda *args: 'near')
+    monkeypatch.setattr(draft_regeneration, 'generate', lambda *args: calls.append('generated') or 'fresh draft')
+    monkeypatch.setattr(draft_regeneration, 'trial', lambda *args: ('near', {}))
     with net.store.tx() as db:
         if baseline == 'scored':
             db.execute("UPDATE functions SET best_source='saved C',best_score=12 WHERE id=?", (fn['id'],))
@@ -54,8 +54,8 @@ def _room_trial(network_fixture, monkeypatch, *, fork=False, outcome='match', co
         events.append((route, data))
     net.links[proj['slug']] = SimpleNamespace(claims=[],claim=claim,attempt=send,call=call)
     monkeypatch.setattr(net, 'fork_slug', lambda slug: slug if fork else None)
-    monkeypatch.setattr(net, '_seed_for', lambda *args: events.append(('generate',)))
-    def judge(agent, project, fid):
+    monkeypatch.setattr(draft_regeneration, 'generate', lambda *args: events.append(('generate',)) or 'fresh draft')
+    def judge(_net, agent, project, fid, source, is_fork):
         events.append(('judge', agent.name))
         if judge_error:raise NetworkError('Compiler test failed unexpectedly.')
         with net.store.tx() as db:
@@ -66,12 +66,8 @@ def _room_trial(network_fixture, monkeypatch, *, fork=False, outcome='match', co
             # The project's ordinary attempt path already sends its candidate to the room host.
             report['host_confirmed'] = confirm
         draft_reports.save(net, fid, report)
-        return outcome
-    if fork:
-        monkeypatch.setattr(net.forks, 'background_draft', lambda *args: events.append(('generate',)))
-        monkeypatch.setattr(net.forks, 'autopilot_one', judge)
-    else:
-        monkeypatch.setattr(net, '_autopilot_one', judge)
+        return outcome, report
+    monkeypatch.setattr(draft_regeneration, 'trial', judge)
     result = draft_regeneration.run(net, proj['slug'], lambda *args: None)
     return result, events, draft_reports.read(net, fn['id'])
 
@@ -171,3 +167,72 @@ def test_project_attempt_exposes_host_confirmation_separately_from_local_match(n
     result = net.forks._attempt_and_share(agent,proj['slug'],fn['name'],'candidate C')
     assert result['matched'] is True
     assert result['host_confirmed'] == (verdict is True)
+
+
+@pytest.mark.parametrize('value',[True,-1,65,'8',None])
+def test_draft_thread_count_rejects_invalid_limits(value):
+    with pytest.raises(ValueError):draft_regeneration.thread_count(value)
+
+
+def test_regeneration_has_independent_parallel_workers(network,monkeypatch):  # noqa: F811
+    import threading
+
+    from decompnet.app import workers
+    net,proj,fn=network
+    with net.store.tx() as db:
+        for i in range(3):
+            db.execute('INSERT INTO functions(project_id,name,vram,n_insns) VALUES(?,?,?,?)',
+                       (proj['id'],'parallel_'+str(i),fn['vram']+32*(i+1),6))
+    monkeypatch.setattr(net,'can_draft',lambda proj:True)
+    monkeypatch.setattr(workers,'WORKERS',1)
+    monkeypatch.setattr(workers,'pool',lambda:pytest.fail('Explicit regeneration must not use the shared pool'))
+    monkeypatch.setattr(net,'_autopilot_one',lambda *a:pytest.fail('No autopilot variant search'))
+    barrier=threading.Barrier(4)
+    generated=[]
+    def generate(*args):
+        from decompnet import compiler
+        assert not getattr(compiler._SCHEDULING, "background", False)
+        generated.append(threading.current_thread().name)
+        barrier.wait(timeout=3)
+        return 'raw draft'
+    monkeypatch.setattr(draft_regeneration,'generate',generate)
+    monkeypatch.setattr(draft_regeneration,'trial',lambda *args:('near',{'compiled':True,'trials':1}))
+    result=draft_regeneration.run(net,proj['slug'],lambda *a:None,threads=4)
+    assert result['completed']==result['compiled']==4
+    assert len(set(generated))==4 and all(name.startswith('draft-refresh') for name in generated)
+
+
+def test_failed_raw_draft_gets_exactly_one_compile_without_variant_search(network,monkeypatch):  # noqa: F811
+    net,proj,fn=network
+    agent,_=net.local_agent('raw-draft-test')
+    compiled=[]
+    monkeypatch.setattr(net,'_compile',lambda *args:compiled.append(args[2]) or SimpleNamespace(ok=False,log='raw draft failed'))
+    monkeypatch.setattr(net,'_autopilot_one',lambda *a:pytest.fail('No variant search'))
+    outcome,report=draft_regeneration.trial(net,agent,proj,fn['id'],'raw source',False)
+    assert compiled==['raw source'] and outcome=='fail'
+    assert report['trials']==1 and not report['compiled']
+    assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
+
+
+def test_regeneration_bypasses_cached_seed_and_generates_once(network,monkeypatch):  # noqa: F811
+    net,proj,fn=network
+    generated=[]
+    monkeypatch.setattr(seeds,'generate_from_asm',lambda *a,**kw:generated.append(kw) or 'int fresh(void){return 1;}')
+    monkeypatch.setattr(net,'_seed_for',lambda *a:pytest.fail('Regeneration must not reuse cached generation'))
+    text=draft_regeneration.generate(net,proj,fn,False)
+    assert len(generated)==1 and 'int fresh' in text
+    assert net._function(fn['name'],proj['slug'])['seed']==text
+
+
+def test_imported_regeneration_submits_only_the_raw_draft_once(network,monkeypatch):  # noqa: F811
+    net,proj,fn=network
+    agent,_=net.local_agent('raw-fork-draft')
+    calls=[]
+    def attempt(*args,**kwargs):
+        calls.append((args,kwargs))
+        return {'score':12,'matched':False}
+    monkeypatch.setattr(net.forks,'attempt',attempt)
+    monkeypatch.setattr(net.forks,'autopilot_one',lambda *a:pytest.fail('No imported variant search'))
+    outcome,report=draft_regeneration.trial(net,agent,proj,fn['id'],'raw imported C',True)
+    assert len(calls)==1 and calls[0][0][-1]=='raw imported C' and calls[0][1]=={'keep':False}
+    assert outcome=='near' and report['trials']==1 and report['compiled']

@@ -1,6 +1,6 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('path');
 const nodes=new Map(),posts=[];
-const get=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,disabled:false,checked:false,textContent:'',firstElementChild:{style:{}},setAttribute(){},classList:{toggle(){},add(){},remove(){}}});return nodes.get(id);};
+const get=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,disabled:false,checked:false,value:'0',textContent:'',firstElementChild:{style:{}},setAttribute(){},classList:{toggle(){},add(){},remove(){}}});return nodes.get(id);};
 let finished=0,release,errors=[];
 const ctx={renderSavedMatchRecovery:()=>{},plural:()=>'',esc:s=>s,$:get,S:{slug:'overlay-demo'},cFunctions:()=>10,
  beginWork:(log,label,buttons)=>{log._workStatus={textContent:''};assert.match(label,/Regenerating/);buttons.forEach(b=>b.disabled=true);return ()=>{finished++;buttons.forEach(b=>b.disabled=false);};},
@@ -11,8 +11,9 @@ const code=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/s
 vm.runInContext(code.slice(code.indexOf('function renderAutopilot('),code.indexOf('async function renderSdkSelection(')),ctx);
 (async()=>{
  ctx.renderAutopilot({kind:'rom',matched:0});
+ get('machineDraftThreads').value='6';
  const pending=get('regenerateMachineDrafts').onclick();await new Promise(setImmediate);
- assert.equal(posts[0][0],'/api/drafts');assert.equal(posts[0][1].body.slug,'overlay-demo');assert.equal(posts[0][1].body.include_all,false);
+ assert.equal(posts[0][0],'/api/drafts');assert.equal(posts[0][1].body.slug,'overlay-demo');assert.equal(posts[0][1].body.include_all,false);assert.equal(posts[0][1].body.threads,6);
  assert.equal(get('regenerateMachineDrafts').disabled,true);assert.equal(get('machineDraftStop').hidden,false);
  await get('machineDraftStop').onclick();assert.equal(posts[1][0],'/api/job/cancel');assert.equal(posts[1][1].body.id,'draft-job');
  release({completed:2,total:2,compiled:1,matched:0,skipped:1,failed:0});await pending;

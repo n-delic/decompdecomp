@@ -4,6 +4,9 @@
   corresponding instruction/address witnesses and original data checks. The current
   ROM judge explains missing `$gp` or unsupported literal linking and keeps rejecting it.
 
+- Done: explicit machine-draft regeneration generates fresh C and makes one local compile/judge
+  attempt per function, without autopilot repair variants. A dedicated pool supports 1–64 user-selected
+  threads (automatic up to eight), independently of shared background workers; room confirmation remains.
 - Done: room clients reopen their saved project immediately while reconnecting, with a nonblocking
   update notice. Applied-snapshot availability survives restarts independently of live sync/presence;
   first joins and host approval/refusal retain their existing gates.

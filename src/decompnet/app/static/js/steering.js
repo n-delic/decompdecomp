@@ -342,10 +342,10 @@ function renderAutopilot(ov) {
       };
     }
     log.hidden = false;
-    const finish = beginWork(log, 'Regenerating machine drafts', [draftButton, $('machineDraftIncludeAll')], 'Draft refresh finished');
+    const finish = beginWork(log, 'Regenerating machine drafts', [draftButton, $('machineDraftIncludeAll'), $('machineDraftThreads')], 'Draft refresh finished');
     showJobError(log, '');
     try {
-      const { job } = await api('/api/drafts', {method:'POST', body:{slug:S.slug, include_all:$('machineDraftIncludeAll').checked}});
+      const { job } = await api('/api/drafts', {method:'POST', body:{slug:S.slug, include_all:$('machineDraftIncludeAll').checked, threads:Number($('machineDraftThreads').value)}});
       jobId = job;
       if (stop) stop.disabled = false;
       const result = await followJob(job, log, lines => { log.hidden = lines.length === 0; });
