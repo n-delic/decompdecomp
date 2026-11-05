@@ -615,7 +615,7 @@ def test_background_compile_discards_results_if_progress_changes(worker, project
     def compile_with_pull(*_args):
         manifest(folder, instructions="changed during compile")
         net.progress.sync("game", force=True)
-        return SimpleNamespace(ok=True, obj=object(), log="")
+        return SimpleNamespace(ok=True, obj=b"stub compiled bytes", log="")
 
     monkeypatch.setattr(net, "_compile", compile_with_pull)
     monkeypatch.setattr(net, "_evaluate", lambda *_: (object(), None, []))
