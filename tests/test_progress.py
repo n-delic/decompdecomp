@@ -1389,3 +1389,32 @@ def test_verification_banner_exposes_reason_counters_and_progress():
     assert 'id="progressSyncBar" role="progressbar"' in html
     assert 'remaining_seconds' in js and 'Estimating time remaining' in js
     assert 'sync.done / sync.total' in js
+
+
+@pytest.mark.parametrize('fail',[False,True])
+def test_progress_batch_defers_sync_across_threads_and_flushes_once(monkeypatch,fail):
+    worker=Progress(SimpleNamespace(store=SimpleNamespace(_local=threading.local())))
+    original=worker.sync
+    flushes=[]
+    def sync(slug,**kwargs):
+        if worker._batching(slug):
+            return original(slug,**kwargs)
+        flushes.append(slug)
+        return False
+    monkeypatch.setattr(worker,'sync',sync)
+    def run():
+        with worker.batch('game'):
+            for _ in range(5):assert worker.sync('game',force=True) is False
+            worker_thread=threading.Thread(target=lambda:worker.sync('game',force=True))
+            worker_thread.start();worker_thread.join(2)
+            assert not worker_thread.is_alive()
+            with worker.batch('game'):
+                assert worker.sync('game') is False
+            assert flushes==['game']
+            assert not worker._batching('other')
+            if fail:raise NetworkError('candidate failed')
+    if fail:
+        with pytest.raises(NetworkError,match='candidate failed'):run()
+    else:run()
+    assert flushes==['game','game']
+    assert not worker._batching('game')

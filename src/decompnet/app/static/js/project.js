@@ -658,18 +658,29 @@ function renderNext(ov) {
 async function openRoomMatchReview() {
   const slug=S.slug;
   const box=dialog('Room match verification','<p class="muted">Loading pending submissions…</p>');
-  let retryResults=[];
+  let retryResults=[], reviewRows=[];
   const renderResults=()=>{
-    const target=box.querySelector('[data-room-retry-results]');
-    target.hidden=!retryResults.length;
-    target.innerHTML=`<h3>Results this retry · ${retryResults.filter(r=>r.matched).length} applied · ${retryResults.filter(r=>!r.matched).length} still pending</h3>`+retryResults.map(r=>`<article class="note"><b class="${r.matched ? 'ok' : 'muted'}">${r.matched ? 'Applied — host verified' : 'Not applied — still pending'}</b><p class="mono small">${esc(r.function)}</p><p class="small">${esc(r.reason)}</p>${r.compiler ? `<p class="mono small muted">${esc(r.compiler.toolchain)} ${esc(r.compiler.flags.join(' '))}</p>` : ''}</article>`).join('');
+    for (const row of box.querySelectorAll('[data-room-match-row]')) {
+      const result=retryResults.find(r=>r.key ? r.key===row.dataset.roomMatchRow : r.function===row.dataset.function);
+      if (!result) continue;
+      const status=row.querySelector('[data-room-match-status]');
+      status.replaceChildren();
+      const label=document.createElement('b');
+      label.className=result.matched ? 'ok' : 'muted';
+      label.textContent=result.matched ? 'Applied — host verified' : 'Not applied — still pending';
+      const reason=document.createElement('p');reason.className='small';reason.textContent=result.reason;
+      status.append(label,reason);
+      if(result.compiler){const compiler=document.createElement('p');compiler.className='mono small muted';compiler.textContent=`${result.compiler.toolchain} ${result.compiler.flags.join(' ')}`;status.append(compiler);}
+      const button=row.querySelector('[data-retry-match]');
+      button.hidden=!!result.matched;
+    }
   };
   const load=async () => {
     const data=await api('/api/collab/matches?slug='+encodeURIComponent(slug));
+    reviewRows=[...data.rows,...reviewRows.filter(r=>!data.rows.some(n=>n.key===r.key) && retryResults.some(result=>result.key===r.key && result.matched))];
     box.innerHTML=`<p class="muted small">Client matches count on the host only after its own byte verification. Compiler profiles and private headers travel with new submissions. Older submissions can be recovered using bounded searches of installed host compilers.</p>
       <section data-room-retry-progress class="default-profile-test" role="status" hidden><b data-room-retry-title>Preparing verification…</b><p class="mono small" data-room-retry-function></p><p class="small muted" data-room-retry-detail></p><progress class="deep-sweep-bar" data-room-retry-bar aria-label="Room submissions verified"></progress></section>
-      <section data-room-retry-results hidden aria-live="polite"></section>
-      ${data.rows.length ? `<div class="row"><button class="primary" type="button" data-retry-all-matches>Retry all · ${data.rows.length}</button></div><div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Why pending</th><th></th></tr></thead><tbody>${data.rows.map(r=>`<tr><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td>${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}
+      ${reviewRows.length ? `<div class="row"><button class="primary" type="button" data-retry-all-matches>Retry all · ${data.rows.length}</button></div><div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Status</th><th></th></tr></thead><tbody>${reviewRows.map(r=>`<tr data-room-match-row="${esc(r.key)}" data-function="${esc(r.function)}"><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td data-room-match-status aria-live="polite">${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}
       <div class="row"><button class="ghost" data-refresh-matches>Refresh</button>${!data.guest ? '<button class="ghost" data-recover-matches>Recover older submissions</button>' : ''}</div><pre class="joblog" id="roomMatchLog" hidden></pre>`;
     renderResults();
     let retrying=false;

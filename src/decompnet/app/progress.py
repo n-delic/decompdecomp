@@ -337,6 +337,7 @@ class Progress:
         self.activity_lock = threading.Lock()
         self.activity: dict[str, dict] = {}
         self.paused: set[str] = set()
+        self.batches: dict[str, int] = {}
         self.verification_slot = threading.Semaphore(1)
         self.disk: dict[str, dict[str, str]] = {}
         self.projected: dict[str, dict[str, str]] = {}
@@ -612,6 +613,30 @@ class Progress:
                 self.local.busy = False
 
     @contextmanager
+    def batch(self, slug: str, logger=None):
+        """Read external contributions once, then synchronize a group of exact publications once.
+        Other threads defer this project's autosave without blocking its UI or skipping byte judgments."""
+        with self._project_lock(slug):
+            self.sync(slug, force=True, logger=logger)
+            with self.activity_lock:
+                self.batches[slug] = self.batches.get(slug, 0) + 1
+            try:
+                yield
+            finally:
+                with self.activity_lock:
+                    depth = self.batches[slug] - 1
+                    if depth:
+                        self.batches[slug] = depth
+                    else:
+                        self.batches.pop(slug)
+                if not depth:
+                    self.sync(slug, force=True, logger=logger)
+
+    def _batching(self, slug: str) -> bool:
+        with self.activity_lock:
+            return bool(self.batches.get(slug))
+
+    @contextmanager
     def judging(self, slug: str):
         """Compiles may run together, but a result from before a pull must never replace its contribution."""
         if self.applying:
@@ -709,11 +734,13 @@ class Progress:
         in-place edit an editor made (which leaves a directory's mtime alone) is never missed by judging, a tool call,
         the routes or a periodic deep autosave check. Nothing is rendered or written unless the folder or a column the render reads
         changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed."""
-        if self.applying or getattr(self.net.store._local, "in_tx", False):
+        if self._batching(slug) or self.applying or getattr(self.net.store._local, "in_tx", False):
             return False
         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
         self._check_paused(slug)
         with self._project_lock(slug), self.verification_slot:
+            if self._batching(slug):
+                return False
             if logger is not None:getattr(logger, "check_cancel", lambda: None)()
             self._check_paused(slug)
             self._activity(slug, phase="Reading saved files", done=0, total=None, function=None)

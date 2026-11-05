@@ -1815,3 +1815,5 @@ Room matches send the compiler and flags recorded with each verified function. W
 Room verification recovers generated entry names that changed between overlay imports. Historical bodies queued against another overlay at the same RAM address are checked against the named entry; only an exact rebuild can count, and the original submission identity is retained.
 
 Saved-progress verification shows a project banner with the reason for rechecking, completed function counts, a measured progress bar and an estimated remaining time once enough functions have completed. Verification can be paused and resumed from the banner.
+
+Room verification batches saved-progress synchronization around the queue, so applying several matches does not repeatedly rejudge the project. Each submission is still independently byte checked, and its table row updates as it completes.

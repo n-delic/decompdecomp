@@ -144,7 +144,7 @@ def register(app: App) -> None:
             key=str(data.get('key') or '')
             if key and not key.startswith(room_matches.PREFIX+str(net.project_row(slug)['id'])+':'):
                 raise NetworkError('Choose a submission in this project.')
-            def work(log):
+            def verify_pending(log):
                 log.progress({'finished':0,'total':0,'phase':'Loading pending room submissions'})
                 if data.get('recover') and slug not in net.links:
                     log.progress({'finished':0,'total':0,'phase':'Recovering older submissions'})
@@ -168,20 +168,26 @@ def register(app: App) -> None:
                             def report(value, index=index, row=row):
                                 log.progress({'finished':index,'total':len(rows),'function':row['function'],'results':list(results),**value})
                             result=room_matches.retry(net,slug,row['key'],progress=report)
-                        results.append({'function':row['function'],'matched':bool(result.get('matched')),
+                        results.append({'key':row['key'],'function':row['function'],'matched':bool(result.get('matched')),
                                         'reason':result.get('reason') or ('Host verified exact bytes' if result.get('matched') else 'Still pending'),
                                         'compiler':result.get('compiler')})
                         matched+=bool(result.get('matched'))
                         log(result.get('reason') or ('Host confirmed match' if result.get('matched') else 'Still pending'))
                     except (NetworkError,ValueError) as error:
                         failed+=1
-                        results.append({'function':row['function'],'matched':False,'reason':str(error)})
+                        results.append({'key':row['key'],'function':row['function'],'matched':False,'reason':str(error)})
                         if data.get('all') is not True:
                             log.progress({'finished':index+1,'total':len(rows),'phase':'Verification needs attention','results':list(results)})
                             raise
                         log(f"Could not verify {row['function']}: {error}")
                     if hasattr(log,'progress'):log.progress({'finished':index+1,'total':len(rows),'phase':'Host verification','results':list(results)})
                 return {'matched':matched,'failed':failed,'total':len(rows),'results':results}
+            def work(log):
+                with net.progress.batch(slug, logger=log):
+                    result = verify_pending(log)
+                    log.progress({'finished':len(result['results']),'total':result['total'],
+                                  'phase':'Saving verified room matches', 'results':result['results']})
+                return result
             return JSONResponse({'job':jobs.start('room match verification',work)})
         except (NetworkError,ValueError) as error:return fail(error)
 
