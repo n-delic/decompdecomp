@@ -55,6 +55,36 @@ def manifest(folder, **changes):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def test_metadata_pull_rejudges_locally_completed_sources_merged_into_it(project):
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good local',best_source='good local',"
+                   "best_score=0,matched_at=? WHERE name='f'", (time.time(),))
+    # This collaborator changed only instructions, while a local match has not yet
+    # been published. Its newly merged C must participate in the judge decision.
+    manifest(folder, instructions='new collaborator instructions')
+    assert net.progress.sync('game', force=True)
+    assert net._function('f', 'game')['status'] == 'matched'
+    assert net._function('f', 'game')['matched_source'] == 'good local\n'
+    assert ('f', 'good local\n') in judged
+    assert net.instructions('game') == 'new collaborator instructions'
+    assert (folder/'src/f.c').read_text() == 'good local\n'
+    assert not net.progress.sync('game', force=True)
+
+
+@pytest.mark.parametrize('source,expected', [('good local', 'matched'), ('different local', 'open')])
+def test_metadata_pull_judges_unpublished_local_best_even_without_disk_code(project, source, expected):
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=?,best_score=10 WHERE name='f'", (source,))
+    manifest(folder, instructions='new instructions')
+    assert net.progress.sync('game', force=True)
+    assert ('f', source+'\n') in judged
+    assert net._function('f', 'game')['status'] == expected
+    assert net._function('f', 'game')['best_source'] == source+'\n'
+    assert not net.progress.sync('game', force=True)
+
+
 def test_a_new_source_is_discovered_without_editing_the_function_index(project):
     net, folder, judged = project
     (folder / "src").mkdir()

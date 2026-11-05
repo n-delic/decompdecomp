@@ -1062,6 +1062,18 @@ class Progress:
                 merged_manifest = _manifest(candidate, cfg)
                 function_rows = net.store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
                 affected = affected_functions(json.loads(comparison_manifest), merged_manifest, changed, function_rows)
+                if before is None:
+                    applied_changed = {name for name in set(candidate) | set(comparison)
+                                       if candidate.get(name) != comparison.get(name)}
+                else:
+                    applied_changed = {name for name in set(candidate) | set(before.files)
+                                       if _hash(candidate.get(name)) != before.files.get(name)}
+                if affected is not None:
+                    # Include locally completed C before deciding whether to judge. Adding it
+                    # after that decision could reopen a match on a metadata-only pull without
+                    # checking its merged source, leaving the intact saved C marked open.
+                    affected.update(path.split('/', 1)[1][:-2] for path in applied_changed
+                                    if path.startswith(('src/', 'best/')) and path.endswith('.c'))
                 all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
                 if toolchain and not toolchains.known(toolchain):
@@ -1076,7 +1088,7 @@ class Progress:
                         merged_manifest["revision"] = saves._next_revision(net, proj, folder)
                         pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
                         toolchain = local_toolchain
-                code_files = any(name.startswith(("src/", "best/")) for name in disk)
+                code_files = any(name.startswith(("src/", "best/")) for name in candidate)
                 database_code = not code_files and net.store.one(
                     "SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL "
                     "LIMIT 1", pid) is not None
@@ -1109,16 +1121,6 @@ class Progress:
                     pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
                 applied_files = candidate
                 applied_manifest = merged_manifest
-                if before is None:
-                    applied_changed = {name for name in set(applied_files) | set(comparison)
-                                       if applied_files.get(name) != comparison.get(name)}
-                else:
-                    applied_changed = {name for name in set(applied_files) | set(before.files)
-                                       if _hash(applied_files.get(name)) != before.files.get(name)}
-            if affected is not None:
-                # Locally completed work merged into this pull also needs its saved-file normalization.
-                affected.update(path.split('/', 1)[1][:-2] for path in applied_changed
-                                if path.startswith(('src/', 'best/')) and path.endswith('.c'))
             layout_by_name = {f["name"]: f for f in applied_manifest.get("layout", [])}
             layout_by_vram: dict[int, list] = {}
             for entry in applied_manifest.get("layout", []):
