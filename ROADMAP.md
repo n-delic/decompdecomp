@@ -1,5 +1,7 @@
 # Roadmap
 
+- Done: pending room submissions use indexed project-key bounds and SQL status filtering;
+  the review drawer fetches metadata without loading completed evidence or private source/header bodies.
 - Done: remaining room controls, repair selection, imported-project preflights, agent settings/tool
   metadata, upload disk I/O, static assets and status/log reads run outside the HTTP event loop.
   Read-only snapshots bypass saved-progress synchronization; mutations keep verification gates.

@@ -657,7 +657,8 @@ function renderNext(ov) {
 /* ------------------------------------------------------------------ team (rooms), in the header's panel */
 async function openRoomMatchReview() {
   const slug=S.slug;
-  const box=dialog('Room match verification','<p class="muted">Loading pending submissions…</p>');
+  const box=dialog('Room match verification','<pre class="joblog" hidden></pre>');
+  const loaded=beginWork(box.firstElementChild,'Loading pending submissions',[],'');
   let retryResults=[], reviewRows=[];
   const renderResults=()=>{
     for (const row of box.querySelectorAll('[data-room-match-row]')) {
@@ -713,7 +714,7 @@ async function openRoomMatchReview() {
     box.querySelector('[data-refresh-matches]').onclick=()=>load().catch(e=>toast(e.message));
     if(box.querySelector('[data-recover-matches]'))box.querySelector('[data-recover-matches]').onclick=(event)=>run({recover:true},event.currentTarget);
   };
-  try{await load();}catch(error){box.textContent=error.message;}
+  try{await load();}catch(error){box.textContent=error.message;}finally{loaded();}
 }
 function wireRoomMatchReview(box) {
   const button=box.querySelector('[data-room-matches]');

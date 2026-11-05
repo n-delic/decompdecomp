@@ -122,18 +122,31 @@ def update(net,key,item):
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(item)))
 
 
+def _pending_filter(net, slug, direction=None):
+    prefix = PREFIX + str(net.project_row(slug)['id']) + ':'
+    # LIKE's default case-insensitive comparison cannot use the binary key index.
+    # Room keys end in an ASCII hash; the next delimiter bounds exactly this project.
+    where = "key >= ? AND key < ? AND json_extract(value,'$.status')='pending'"
+    args = [prefix, prefix[:-1] + ';']
+    if direction is not None:
+        where += " AND json_extract(value,'$.direction')=?"
+        args.append(direction)
+    return where, args
+
+
 def pending(net,slug, direction=None):
-    pid=net.project_row(slug)['id']
-    out=[]
-    for row in net.store.all('SELECT key,value FROM settings WHERE key LIKE ?',PREFIX+str(pid)+':%'):
-        item=json.loads(row['value'])
-        if item['status']=='pending' and (direction is None or item['direction']==direction):
-            out.append(dict(item,key=row['key']))
-    return sorted(out,key=lambda r:r['created_at'])
+    where, args = _pending_filter(net, slug, direction)
+    return [dict(json.loads(row['value']), key=row['key']) for row in net.store.all(
+        "SELECT key,value FROM settings WHERE " + where + " ORDER BY json_extract(value,'$.created_at')", *args)]
 
 
 def public(net,slug):
-    return [{k:r.get(k) for k in ('key','function','agent','direction','reason','updated_at')} for r in pending(net,slug)]
+    # The drawer needs metadata only, never candidate C, headers, or compiler evidence.
+    where, args = _pending_filter(net, slug)
+    fields = ('function','agent','direction','reason','updated_at')
+    columns = ','.join("json_extract(value,'$." + field + "') AS " + field for field in fields)
+    return [dict(row) for row in net.store.all("SELECT key," + columns + " FROM settings WHERE " + where
+                                              + " ORDER BY json_extract(value,'$.created_at')", *args)]
 
 
 def settings(net,proj,profile):
