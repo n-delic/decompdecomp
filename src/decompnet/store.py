@@ -545,28 +545,48 @@ class Store:
         return row['revision'] if row else 0
 
     @contextmanager
-    def tx(self):
-        """Serialized transaction. Never compile while holding this. One inside another joins it: they commit (or
-        roll back) together, which is how many small writes cost one commit's wait for the disk."""
+    def tx(self, *, wait=None):
+        """Serialized transaction; optional cancellable waiting retries only lock acquisition.
+
+        Never replay a transaction body. Nested transactions still join the enclosing one.
+        """
         from .request_timing import timed_lock
         callbacks = []
-        with timed_lock(self.lock,'write_lock_wait'):
-            if getattr(self._local, "in_tx", False):
-                yield self.conn
-                return
-            self.conn.execute("BEGIN IMMEDIATE")
-            self._local.in_tx = True
-            self._local.after_commit = []
-            try:
-                yield self.conn
-            except BaseException:
-                self.conn.execute("ROLLBACK")
-                self._local.after_commit = []
-                raise
-            finally:
-                self._local.in_tx = False
-            self.conn.execute("COMMIT")
-            callbacks, self._local.after_commit = self._local.after_commit, []
+        while True:
+            busy=False
+            with timed_lock(self.lock,'write_lock_wait'):
+                if getattr(self._local, "in_tx", False):
+                    yield self.conn
+                    return
+                timeout=None
+                if wait is not None:
+                    cursor=self.conn.execute('PRAGMA busy_timeout')
+                    timeout=cursor.fetchone()[0];cursor.close()
+                    self.conn.execute('PRAGMA busy_timeout=100').close()
+                try:
+                    self.conn.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as error:
+                    if wait is None or (getattr(error,'sqlite_errorcode',0) & 255) not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+                    busy=True
+                finally:
+                    if timeout is not None:self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
+                if not busy:
+                    self._local.in_tx = True
+                    self._local.after_commit = []
+                    try:
+                        yield self.conn
+                    except BaseException:
+                        self.conn.execute("ROLLBACK")
+                        self._local.after_commit = []
+                        raise
+                    finally:
+                        self._local.in_tx = False
+                    self.conn.execute("COMMIT")
+                    callbacks, self._local.after_commit = self._local.after_commit, []
+            if not busy:break
+            # No transaction or process-local writer lock is held while reporting/cancelling.
+            wait()
+            time.sleep(.05)
         for callback in callbacks:
             callback()
 

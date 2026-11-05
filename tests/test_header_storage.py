@@ -193,3 +193,39 @@ def test_distinct_maintenance_actions_do_not_reuse_the_wrong_job():
     assert header_cleanup.start(None,jobs,'headers')=='existing'
     with pytest.raises(ValueError,match='Another database maintenance task'):
         header_cleanup.start(None,jobs,'compact')
+
+
+@pytest.mark.parametrize('cancel',[False,True])
+def test_cleanup_waits_for_other_sqlite_writer_and_can_cancel(tmp_path,cancel):
+    net=fixture(tmp_path);log=Log();waiting=threading.Event();finished=threading.Event();errors=[]
+    count=net.store.one('SELECT COUNT(*) n FROM context_history')['n']
+    writer=sqlite3.connect(net.store.path,isolation_level=None)
+    writer.execute('BEGIN IMMEDIATE')
+    original=log.progress
+    def progress(value):
+        original(value)
+        if value['phase'].startswith('Waiting for database writer'):waiting.set()
+    log.progress=progress
+    def work():
+        try:header_cleanup.prune(net,log)
+        except Exception as error:errors.append(error)
+        finally:finished.set()
+    worker=threading.Thread(target=work)
+    try:
+        worker.start()
+        assert waiting.wait(3),'Cleanup did not report SQLite lock contention'
+        assert not finished.is_set()
+        if cancel:log.cancel_event.set()
+        else:writer.execute('COMMIT')
+        assert finished.wait(3),'Cleanup did not resume or cancel promptly'
+    finally:
+        if writer.in_transaction:writer.execute('ROLLBACK')
+        writer.close();worker.join(3)
+    assert net.store.conn.execute('PRAGMA busy_timeout').fetchone()[0]==5000
+    if cancel:
+        assert len(errors)==1 and str(errors[0])=='cancelled'
+        assert net.store.one('SELECT COUNT(*) n FROM context_history')['n']==count
+    else:
+        assert not errors
+        assert net.store.one('SELECT COUNT(*) n FROM context_history')['n']<count
+    assert net.store.one('PRAGMA foreign_key_check') is None

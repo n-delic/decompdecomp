@@ -59,12 +59,22 @@ def summary(net):
 def prune(net, log):
     from . import maintenance
     store = net.store
+    waiting_logged=False
+    def waiting():
+        nonlocal waiting_logged
+        log.check_cancel()
+        if not waiting_logged:
+            log('Another database writer is busy; waiting and retrying header cleanup. Stop cleanup cancels this wait.')
+            waiting_logged=True
+        log.progress({'phase':'Waiting for database writer · cleanup will retry automatically'})
+    log('Checking saved header references before cleanup…')
+    log.progress({'phase':'Checking saved header references'})
     evidence_revision = store.read_version("repair_profiles")
     _, candidates = summary(net)
     done = 0
     for start in range(0, len(candidates), BATCH):
         log.check_cancel()
-        with store.tx() as db, store.header_codec.lock:
+        with store.tx(wait=waiting) as db, store.header_codec.lock:
             if store.read_version("repair_profiles") != evidence_revision:
                 raise ValueError("Repair evidence changed during cleanup. Preview and run header cleanup again.")
             # New compilation reads pin their header. New attempts also protect externally
@@ -84,7 +94,7 @@ def prune(net, log):
     contents = 0
     while True:
         log.check_cancel()
-        with store.tx() as db:
+        with store.tx(wait=waiting) as db:
             removed = db.execute('DELETE FROM header_blobs WHERE hash IN (SELECT hash FROM header_blobs '
                 'WHERE NOT EXISTS(SELECT 1 FROM context_history WHERE header_hash=hash) LIMIT ?)', (BATCH,)).rowcount
         contents += removed
