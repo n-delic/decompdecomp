@@ -67,6 +67,21 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepStart").textContent, "Continue search");
   assert.equal(element("deepSweepStop").hidden, true);
   assert.equal(element("deepSweepBlocked").textContent, "2");
+  const lookupIssue={function:'missing',error:"no function 'missing' in 'game-a'. Did you mean: other?",action:'Inspect saved C'};
+  ctx.renderDeepQueueState({state:'idle',attention:[lookupIssue],queue_blocked:1});
+  element('deepSweepPanel').dataset.slug=ctx.S.slug;
+  element('deepSweepBlockedGroup').onclick();
+  assert.equal(element('dialogTitle').textContent,'Functions needing attention');
+  assert.match(element('dialogBody').innerHTML,/Function lookup failed during search/);
+  assert.match(element('dialogBody').innerHTML,/lookup hints/);
+  assert.match(element('dialogBody').innerHTML,/no function 'missing'/);
+  assert.doesNotMatch(element('dialogBody').innerHTML,/no function 'This function'/);
+  element('dialogBody').querySelectorAll('[data-deep-metric-function]')[0].onclick();
+  assert.equal(opened.at(-1),'missing');
+  ctx.renderDeepSweepResults({has_activity:true,attention:[lookupIssue]});
+  assert.match(element('deepSweepAttentionList').innerHTML,/Function lookup failed during search/);
+  assert.doesNotMatch(element('deepSweepAttentionList').innerHTML,/>no function 'This function'/);
+
   assert.equal(element("deepSweepStart").hidden, false);
   ctx.renderDeepQueueState({state:"running",progress:{preparation:{checked:250,total:2000,eligible:125,done:false}}});
   assert.match(element("deepSweepQueueTitle").textContent,/checking candidates/);
