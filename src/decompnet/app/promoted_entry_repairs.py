@@ -28,8 +28,8 @@ def variants(source, name, header='', *, language=None, int_bits=None):
     if re.search(r'\b(?:volatile|asm|__asm|__asm__|sizeof|typeof|__typeof__|_Generic|setjmp|_setjmp|sigsetjmp|longjmp|__builtin_frame_address|__builtin_return_address)\b', part.clean):
         return []
     context = _blank(source+'\n'+header)
-    if re.search(r'^\s*#\s*(?:include|if|ifdef|ifndef|elif|else|endif|undef|pragma)\b', context, re.M):
-        return []  # An unresolved include can hide type-sensitive macros or declarations.
+    if any(directive != 'define' for directive in re.findall(r'^\s*#\s*(\w+)', context, re.M)):
+        return []  # Includes (also GNU #import) and conditional types need preprocessing evidence.
     if re.search(r'\b(?:__alignof__|__alignof|_Alignof|alignof|__typeof|__typeof_unqual__|__auto_type|auto|decltype|typeid|class|template|namespace|operator|_Pragma)\b|\b__builtin_\w+', context):
         return []
     macros = set(re.findall(r'^\s*#\s*define\s+('+IDENT+r')\b', context, re.M))
