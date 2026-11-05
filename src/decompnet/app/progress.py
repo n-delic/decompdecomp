@@ -7,7 +7,7 @@ and the manifest, while a claim, an event or an attempt that didn't improve the 
 validated before its files or database state are changed.
 
 Change detection guarantee: a non-forced check compares the manifest's and the three folders' stats and may skip an
-in-place file edit until the one-second autosave; a forced check (judging, tools, routes, saves, the autosave) compares
+in-place file edit until the next periodic deep autosave check (at most 15 seconds); a forced check (judging, tools, routes, explicit saves, periodic deep autosave) compares
 every file's name, size and mtime, so an editor's in-place write (which leaves its directory's mtime alone) is seen
 before code is judged or a write is acknowledged. Read-only UI views use the current database and show when
 verification is running. A file hash in the baseline is always compared for every file a
@@ -698,7 +698,7 @@ class Progress:
 
         A no-op non-forced check stats the manifest and the three folders; a forced check stats every file too, so an
         in-place edit an editor made (which leaves a directory's mtime alone) is never missed by judging, a tool call,
-        the routes or the autosave. Nothing is rendered or written unless the folder or a column the render reads
+        the routes or a periodic deep autosave check. Nothing is rendered or written unless the folder or a column the render reads
         changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed."""
         if self.applying or getattr(self.net.store._local, "in_tx", False):
             return False

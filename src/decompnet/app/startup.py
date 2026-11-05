@@ -3,6 +3,8 @@ import queue
 import threading
 import time
 
+from . import maintenance
+
 
 class StartupQueue:
     def __init__(self, logger, clock=time.monotonic, delay=7, spacing=2, quiet=.4, max_defer=3):
@@ -15,6 +17,7 @@ class StartupQueue:
 
     def touch(self):
         self.last_ui = self.clock()
+        maintenance.touch()
 
     def add(self, label, fn):
         self.tasks.put((label, fn))
@@ -29,6 +32,8 @@ class StartupQueue:
         return False
 
     def run(self):
+        from .workers import lower_priority
+        lower_priority()
         earliest = self.clock() + self.delay
         while not self.stop.is_set():
             try:
@@ -38,7 +43,10 @@ class StartupQueue:
             if not self.ready(earliest):
                 return
             try:
-                fn()
+                with maintenance.slot(self.stop) as ready:
+                    if not ready:return
+                    maintenance.checkpoint()
+                    fn()
             except Exception:
                 self.logger.exception('Startup task failed: %s', label)
             earliest = self.clock() + self.spacing

@@ -338,8 +338,12 @@ class Twins:
     def _build_rom_prints(self, proj) -> dict[int, Print]:
         cfg = self.net.cfg(proj)
         syms = self.net.symbols(proj["id"])
-        return {r["id"]: rom_print(r, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label) for r in self.net.store.all(
-            "SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'", proj["id"])}
+        from .maintenance import checkpoint
+        out = {}
+        for row in self.net.store.all("SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'", proj["id"]):
+            checkpoint()
+            out[row["id"]] = rom_print(row, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label)
+        return out
 
     def _fork_prints(self, proj) -> dict[int, Print]:
         from ..forks.project import STATE, ForkError, ForkProject
@@ -359,6 +363,8 @@ class Twins:
         out: dict[int, Print] = {}
         changed = False
         for uname, urows in by_unit.items():
+            from .maintenance import checkpoint
+            checkpoint()
             try:
                 unit = fp.unit(uname)
             except (ForkError, ValueError):
@@ -402,6 +408,8 @@ class Twins:
             "SELECT id, status FROM functions WHERE project_id=?", proj["id"])}
         groups: dict[str, list[int]] = defaultdict(list)
         for fid, p in prints.items():
+            from .maintenance import checkpoint
+            checkpoint()
             if p.size >= min_size:  # (a lone `blr` is everyone's twin, and its own easy match anyway)
                 groups[p.key].append(fid)
         out = []
@@ -439,6 +447,8 @@ class Twins:
             "SELECT id, status FROM functions WHERE project_id=?", proj["id"])}
         groups: dict[str, list[int]] = defaultdict(list)
         for fid, p in prints.items():
+            from .maintenance import checkpoint
+            checkpoint()
             if p.size >= 8:
                 groups[p.key].append(fid)
         updates = []
@@ -506,21 +516,29 @@ class Twins:
 
     def refresh(self, slug: str) -> Job | None:
         """Bring a project's twins up to date in the background (see full_pass). Runs when agents start."""
-        if (job := self.jobs.get(slug)) is not None and job.state == "running":
-            return job
-        if slug in self.net.links:  # a room member: the host's copy does this, and its matches come back here
-            return None
-        job = Job()
         with self._lock:
-            self.jobs[slug] = job  # now: agents starting meanwhile wait for its claim order (job.ordered)
+            if (job := self.jobs.get(slug)) is not None and job.state == "running":
+                return job
+            if slug in self.net.links:
+                return None
+            job = Job()
+            self.jobs[slug] = job  # Reserve once, before queuing background work.
 
         def work() -> None:
+            from . import maintenance, workers
+            workers.lower_priority()
             try:
-                self.net.recheck(slug, log=log.info, only_if_updated=True)  # once after each update: what it knows
-                self.full_pass(slug, job)
+                with maintenance.slot(job.stop) as ready:
+                    if not ready:
+                        job.state = "done"
+                        job.ordered.set()
+                        return
+                    self.net.recheck(slug, log=log.info, only_if_updated=True)  # once after each update: what it knows
+                    self.full_pass(slug, job)
             except Exception as e:
                 log.info("twins: %s: %s", slug, e)
                 job.state = "done"
+                job.ordered.set()
         threading.Thread(target=work, daemon=True, name=f"twins-{slug}").start()
         return job
 
@@ -539,6 +557,17 @@ class Twins:
             while job.state == "running":
                 time.sleep(1)
             return job
+        # Deduplicate before taking the global lane: waiting for an existing queued
+        # pass while holding that lane would prevent its owner from ever starting.
+        from . import maintenance
+        with maintenance.slot(job.stop) as ready:
+            if not ready:
+                job.state = "done"
+                job.ordered.set()
+                return job
+            return self._execute_full_pass(slug, job)
+
+    def _execute_full_pass(self, slug, job):
         try:
             proj = self.net.project_row(slug)
             job.asm += self.set_aside_asm(proj)
@@ -685,6 +714,8 @@ class Twins:
         if not fork:
             # Imported projects do not necessarily fill the database's architecture columns.
             for other in self.net.store.all("SELECT * FROM projects WHERE id != ?", proj["id"]):
+                from .maintenance import checkpoint
+                checkpoint()
                 if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):
                     return matched
                 if self.net.fork_slug(other["slug"]) and other["slug"] not in self.net.links:
@@ -949,6 +980,8 @@ class Twins:
         wanted = {p.key for p in mine.values() if p.size >= ACROSS_MIN_BYTES and not p.asm}
         donors = defaultdict(dict)
         for other in self.net.store.all("SELECT * FROM projects WHERE id != ?", proj["id"]):
+            from .maintenance import checkpoint
+            checkpoint()
             if job is not None and job.stop.is_set():
                 return 0
             if donor_slug is not None and other["slug"] != donor_slug:
@@ -1170,6 +1203,8 @@ class Twins:
         (a twin that matches can be the matched member of another group's pair next time)."""
         from concurrent.futures import ThreadPoolExecutor
 
+        from . import workers as background_workers
+        workers = max(1, min(workers, background_workers.WORKERS))
         proj = self.net.project_row(slug)
         job = job or Job()
         if only is None:  # (a pass after a match runs beside the full one: the overview shows the full one)
@@ -1181,6 +1216,8 @@ class Twins:
         seen: set[tuple[int, int]] = set()
         try:
             for _ in range(6):
+                from .maintenance import checkpoint
+                checkpoint()
                 tried = {q[1] for q in seen}
                 pairs = [p for p in self.pairs(proj, only) if p not in seen and p[1] not in tried]
                 if not pairs or job.stop.is_set():
@@ -1237,6 +1274,8 @@ class Twins:
             self._busy.add(proj["id"])
 
         def work() -> None:
+            from .workers import lower_priority
+            lower_priority()
             try:
                 while True:
                     time.sleep(2)
@@ -1248,10 +1287,13 @@ class Twins:
                     if self.net.fork_slug(proj["slug"]):
                         self.forget(proj)  # matched code may have changed the objects' builds; targets stay
                     try:
-                        if self.pairs(proj, batch):
-                            self.run(proj["slug"], only=batch)
-                            # twins that didn't match by themselves: back in line (unless a full pass is still on)
-                            self.update_boosts(proj, pending=self._full_running(proj["slug"]))
+                        from . import maintenance
+                        with maintenance.slot():
+                            maintenance.checkpoint()
+                            if self.pairs(proj, batch):
+                                self.run(proj["slug"], only=batch)
+                                # Leave the full pass's ordering in place while it is still running.
+                                self.update_boosts(proj, pending=self._full_running(proj["slug"]))
                     except Exception as e:
                         log.info("twins after a match: %s", e)
             finally:

@@ -1225,3 +1225,25 @@ def test_verification_counters_reach_import_job_logger(project):
     assert measured
     assert measured[0]['done'] == 0
     assert measured[-1]['done'] == measured[-1]['total'] == 1
+
+
+def test_periodic_autosave_keeps_dirty_saves_prompt_and_finds_in_place_edits(project,monkeypatch):
+    net,folder,judged=project
+    clock=[100.0]
+    monkeypatch.setattr(saves.time,'monotonic',lambda:clock[0])
+    auto=saves.Autosave(net)
+    auto.run_once(force=False)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='draft',best_score=10 WHERE name='f'")
+    clock[0]+=1
+    assert auto.run_once(force=False)==['game']
+    path=folder/'best/f.c'
+    assert path.read_text()=='draft\n'
+    # An editor can change a file without updating the containing folder's stat.
+    directory_stamp=path.parent.stat()
+    path.write_text('changed draft\n')
+    import os
+    os.utime(path.parent,ns=(directory_stamp.st_atime_ns,directory_stamp.st_mtime_ns))
+    clock[0]+=15
+    auto.run_once(force=False)
+    assert net._function('f','game')['best_source']=='changed draft\n'

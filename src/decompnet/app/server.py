@@ -240,7 +240,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         if getattr(jobs, 'source_update_preparing', False) and request.url.path not in (
                 '/api/update/runtime', '/api/close', '/api/log'):
             return JSONResponse({'error':'Preparing the source runtime. Wait for restart; no new operations can start.'}, status_code=503)
-        if request.url.path in ('/api/project', '/api/function', '/api/map', '/api/compilermap'):
+        if request.url.path in ('/api/project', '/api/function', '/api/function-preview', '/api/map', '/api/compilermap') or (
+                request.url.path == '/api/events' and request.query_params.get('recent')):
             startup.touch()
         return None
 

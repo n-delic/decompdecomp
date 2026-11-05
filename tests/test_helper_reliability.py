@@ -203,7 +203,8 @@ def test_connection_retries_do_not_exhaust_paid_failure_budget(tmp_path,monkeypa
     manager._run(s)
     assert len(calls)==8 and s.state!='paused'
     waits=[t for t in s.stop.waits if t]
-    assert [round(t) for t in waits]==[5,10,20,40,60,60,60] and max(waits)<=60
+    offset=int(s.id)%31
+    assert [round(t) for t in waits]==[n+offset for n in [5,10,20,40,80,160,300]] and max(waits)<=330
     rows=net.store.all('SELECT id,outcome,compiles,tool_calls FROM helper_sessions WHERE helper_id=? ORDER BY id',s.id)
     assert [r['outcome'] for r in rows[:7]]==['connection_retry']*7
     assert all(r['compiles']==r['tool_calls']==0 for r in rows[:7])
