@@ -1428,6 +1428,7 @@ def test_cross_game_run_is_dedicated_and_rejects_duplicate_passes(app, monkeypat
     monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts':{'improved':2}})
     def across(slug, job):
         assert slug == 'cross-demo' and job.reuse_limit == 128
+        assert job.cross_seconds == 1200
         entered.set()
         assert release.wait(5)
         job.cross_tried = 3

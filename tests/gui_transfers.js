@@ -60,11 +60,26 @@ get('crossGamePreset').value = 'overnight'; get('crossGamePreset').onchange();
 assert.equal(Number(get('crossGameMinutes').value), 720);
 assert.equal(Number(get('crossGameAttempts').value), 100000);
 ctx.renderAutopilot({slug:'other',kind:'rom',matched:0});
-assert.equal(Number(get('crossGameMinutes').value),2);
+assert.equal(Number(get('crossGameMinutes').value),20);
 ctx.renderAutopilot({slug:'target-game',kind:'rom',matched:0});
 assert.equal(Number(get('crossGameMinutes').value),720);
 get('crossGameMinutes').value=1440; get('crossGameMinutes').onchange();
 assert.equal(get('crossGamePreset').value,'custom');
+
+// Old defaults adopt the longer run; explicit modern Quick and custom budgets survive.
+storage.set('cross-game-budget:legacy',JSON.stringify({minutes:2,attempts:128}));
+ctx.renderAutopilot({slug:'legacy',kind:'rom',matched:0});
+assert.equal(Number(get('crossGameMinutes').value),20);
+assert.equal(get('crossGamePreset').value,'standard');
+get('crossGamePreset').value='quick';get('crossGamePreset').onchange();
+ctx.renderAutopilot({slug:'different',kind:'rom',matched:0});
+ctx.renderAutopilot({slug:'legacy',kind:'rom',matched:0});
+assert.equal(Number(get('crossGameMinutes').value),2,'explicit Quick stays at two minutes');
+storage.set('cross-game-budget:custom',JSON.stringify({minutes:7,attempts:777}));
+ctx.renderAutopilot({slug:'custom',kind:'rom',matched:0});
+assert.equal(Number(get('crossGameMinutes').value),7);
+assert.equal(Number(get('crossGameAttempts').value),777);
+ctx.renderAutopilot({slug:'target-game',kind:'rom',matched:0});
 
 async function checks() {
   let started=0,finished=0,posted;
@@ -89,6 +104,12 @@ async function checks() {
   resolveStart({job:'check'});
   for(let i=0;i<10;i++) await Promise.resolve();
   assert.equal(get('crossGameStop').disabled,false);
+  assert.equal(get('crossGameRun').textContent,'Searching…');
+  updates([], {progress:{phase:'Finding shared machine code',game:'Demo',done:9,total:65,attempts:0,attempt_limit:100000,seconds:30,second_limit:86400,confirmed:0}});
+  assert.match(get('crossGamePhaseStatus').textContent,/9 \/ 65 \(13%\).*Demo/);
+  assert.equal(get('crossGamePhaseBar').value,9);
+  assert.equal(get('crossGamePhaseBar').max,65);
+  assert.equal(get('crossGameBudgetBar').hidden,true);
   updates([], {progress:{attempts:20,attempt_limit:100000,seconds:30,second_limit:86400,confirmed:2}});
   assert.match(get('crossGameBudgetStatus').textContent,/20 \/ 100,000 checks used/);
   assert.equal(get('crossGameBudgetBar')['aria-valuenow'],'20');
@@ -98,6 +119,8 @@ async function checks() {
   assert.equal(finished,1); assert.equal(get('crossGameRun')._working,false);
   assert.equal(get('crossGameMinutes').disabled,false); assert.equal(get('crossGameStop').hidden,true);
   assert.equal(ctx.error,'Stopped; matches saved.');
+  assert.equal(get('crossGameState').textContent,'Search stopped');
+  assert.equal(get('crossGamePhaseBar').hidden,true);
   ctx.api=async()=>{throw new Error('Could not start');};
   await get('crossGameRun').onclick();
   assert.equal(started,2);assert.equal(finished,2);assert.equal(ctx.error,'Could not start');
@@ -105,6 +128,8 @@ async function checks() {
   ctx.followJob=async()=>({matched:1,improved:2});
   await get('crossGameRun').onclick();
   assert.equal(started,3);assert.equal(finished,3);
+  assert.equal(get('crossGameState').textContent,'Search complete');
+  assert.match(get('crossGamePhaseStatus').textContent,/1 verified match · 2 partial improvements saved/);
   console.log('Cross-game budgets, progress, cancellation and cleanup passed');
 }
 checks().catch(error=>{console.error(error);process.exitCode=1;});
