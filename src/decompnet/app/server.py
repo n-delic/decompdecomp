@@ -132,6 +132,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         net.console(row).on_start(net, slug, log=jobs.logger.info)
     startup_projects = list(net.store.all('SELECT slug FROM projects'))
     startup_projects.sort(key=lambda r: r['slug'] != settings.data.get('last_project'))
+    startup.add("Save existing matches to the local library", net.match_library.backfill)
     for row in startup_projects:
         slug = row['slug']
         startup.add(f'Console startup {slug}', lambda slug=slug: console_start(slug))

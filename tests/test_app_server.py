@@ -2312,3 +2312,14 @@ def test_batch_compiler_suggestions_reuse_background_job(app, monkeypatch):
         assert calls==['batch-suggestions']
     finally:
         release.set()
+
+
+def test_match_library_api_is_guarded_and_does_not_expose_source(app):
+    client, net, *_ = app
+    assert client.get('/api/match-library',headers={'User-Agent':'outside'}).status_code==401
+    assert client.post('/api/match-library',json={}).status_code==403
+    data=client.get('/api/match-library').json()
+    assert data['functions']>=0 and isinstance(data['items'],list)
+    assert all('source' not in item and 'header' not in item for item in data['items'])
+    response=client.post('/api/match-library',json={},headers={'X-Decomp':'1'})
+    assert response.status_code==200 and response.json()['job']
