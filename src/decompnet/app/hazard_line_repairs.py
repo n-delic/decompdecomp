@@ -21,7 +21,7 @@ def variants(source,name,header='',arch=None,rows=()):
     # This changes lifetime/line markers, never the evaluation count or order of the RHS.
     macros=set(re.findall(r'^\s*#\s*define\s+('+IDENT+')',source+'\n'+header,re.M))
     token='__repair_hazard_value'
-    while re.search(r'\b'+token+r'\b',source+'\n'+header):token+='_' 
+    while re.search(r'\b'+token+r'\b',source+'\n'+header):token+='_'
     staged=[]
     for d in locals_for(part):
         if re.search(r'(?<!&)&(?!&)\s*\(*\s*'+re.escape(d["name"])+r'\b',part.body):continue
