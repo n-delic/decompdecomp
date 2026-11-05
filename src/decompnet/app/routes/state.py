@@ -273,6 +273,10 @@ def register(app: App) -> None:
         """A game the user owns: the demo, an upload streamed to disk (discs are gigabytes), or a local path."""
         if (bad := guard(request, write=True)):
             return bad
+        try:
+            jobs.check_start()
+        except ValueError as e:
+            return fail(e, 503)
         q = request.query_params
         toolchain = q.get("toolchain") or None
         scope = q.get("scope") or None  # what the project covers, where its console sets library code aside
@@ -336,7 +340,13 @@ def register(app: App) -> None:
             settings.save()
             autopilot(slug)
             return {"slug": slug}
-        return JSONResponse({"job": jobs.start("import", work)})
+        try:
+            return JSONResponse({"job": jobs.start("import", work)})
+        except ValueError as e:
+            # A source update can queue while a disc is uploading, before it becomes a job.
+            if uploaded:
+                shutil.rmtree(game.parent, ignore_errors=True)
+            return fail(e, 503)
 
     COLUMN_KEYS = ("vram", "cc", "ccx")
     GZIP_FROM_BYTES = 4096  # smaller answers aren't worth compressing
