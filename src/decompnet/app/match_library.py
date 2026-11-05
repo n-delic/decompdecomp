@@ -61,6 +61,12 @@ class Library:
         return hashlib.sha256(encoded((identity,cfg.get('platform') or proj['arch'],proj['name'])).encode()).hexdigest()
 
     def snapshot(self, proj, fid):
+        # Snapshot already verified database state. Calling project helpers here must not
+        # re-read/reconcile an entire project's progress files for every matched function.
+        with self.net.progress.view():
+            return self._snapshot(proj, fid)
+
+    def _snapshot(self, proj, fid):
         from ..project import compiler_for
         from .shared_reuse import machine
         net = self.net
