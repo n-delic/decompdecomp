@@ -1,5 +1,6 @@
 """Rank applicable hypotheses by observed mismatches without excluding other families."""
 
+STRUCTURAL = ('integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
 GUARDED = ('matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers')
 
 
@@ -78,7 +79,7 @@ def order(families, rows):
 
     # These families only exist after a narrow target/source guard. Generic delay-slot
     # or register-shape heuristics must not spend the whole budget before that operation.
-    preferred=GUARDED+('mapped_spill_storage','mapped_register_lifetime')+preferred
+    preferred=GUARDED+('m2c_refinement',)+STRUCTURAL+('mapped_spill_storage','mapped_register_lifetime')+preferred
     ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
     from .trial_evidence import order as evidence_order
     return evidence_order(ranked,rows)

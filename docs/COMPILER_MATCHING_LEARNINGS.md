@@ -4640,3 +4640,44 @@ read-only brief check found additional bounded leads in three remaining routines
 this is diagnostic coverage, not a new match or proof of the original C types.
 Synthetic cases cover mixed known/unresolved types, aliases, unknown-only silence,
 possible void typedef arity, excluded complex syntax and shared brief behavior.
+
+## Scoped narrow stores and zero-subtraction normalization
+
+**Compiler/profile:** pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+Private failed/successful captures were compiled with the same captured header and
+profile; no game source or captured header is included here.
+
+- Two failed temporary proposals inserted a narrow scalar declaration after existing
+  statements, including an unbraced `if` arm immediately before `else`. The old
+  compiler rejected these with parse errors. Emit a single compound statement with
+  its declaration first: `{ unsigned char temp = value; *destination = temp; }`.
+  This retains the arm and evaluation order. Synthetic C89 compile/run tests cover
+  both branches; the normal exact judge still decides scheduling usefulness.
+- Three failed call proposals dropped a required argument because an unrelated macro
+  made the generic arity preflight opaque. The argument-removal generator can check
+  its one direct call against unambiguous, known fixed-arity prototypes while masking
+  unrelated definitions. Conditional/included declarations, macro-dependent calls or
+  parameter types, shadows, varargs and unfamiliar typedefs stay with the compiler.
+- A normalization repair accepted `value < 0 ? -value - bias : value` but missed the
+  same signed-local shape spelled `value < 0 ? 0 - value - bias : value`. Recognizing
+  the explicit zero subtraction lets the existing guarded unused-local scope repair
+  generate the missing candidate. One investigated frozen control went from score
+  20 to 0 with identical normalized function fingerprint and allocated output.
+  This is a controlled output recovery, not a new linked/objdiff game match or a
+  measurement of model-token savings. Synthetic C89 tests compare finite inputs.
+
+All six unresolved captures received bounded 24-trial token-edit ablation. Large
+rewrites did not converge to small isolated recipes within that budget. Other
+retained changes combined prototype/type/volatile corrections, record and store
+ordering, or a target-backed counter correction with guard storage. Do not infer
+that any retained edit is individually necessary, remove volatile qualifiers, or
+swap potentially aliasing stores merely because the captured full rewrite matches.
+Those combinations need separate evidence before becoming automatic recipes.
+
+**Investigated-cohort result:** against the current-main baseline, eight frozen
+captures with a 24-candidate maximum per case recovered 2/8 controls before and 3/8
+after. Candidate compiles were 160 versus 132; compile failures were five versus
+zero. The inferred-record control was recovered in one trial rather than seven,
+and the supported normalization case in two rather than exhausting 24. This cohort
+was used to investigate and develop the fixes; it is not independent held-out
+validation. No linked ROM verdict or live match was created by these replays.

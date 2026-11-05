@@ -66,3 +66,33 @@ def invalid_call(source, name, header=''):
         if actual != expected:
             return f'{call[1]} expects {expected} arguments; generated call has {actual}.'
     return ''
+
+
+def drop_argument_allowed(source, callee, args, header=''):
+    """Reject only a proven fixed-arity violation, allowing unrelated object macros.
+
+    The generic preflight intentionally treats preprocessing as opaque. This narrower
+    generator check reads one direct call/prototype only; macros touching either, included
+    or conditional declarations, shadows and unfamiliar parameter types remain unknown.
+    """
+    text=clean(header+'\n'+source)
+    directives=list(re.finditer(r'(?m)^[ \t]*#[^\n]*',text))
+    macros=set()
+    for directive in directives:
+        match=re.match(r'\s*#\s*define\s+('+_IDENT+r')\b',directive[0])
+        if not match or directive[0].rstrip().endswith('\\'):return True
+        macros.add(match[1])
+    for directive in reversed(directives):
+        text=text[:directive.start()]+' '*(directive.end()-directive.start())+text[directive.end():]
+    if re.search(r'::|\b(?:class|template|namespace)\b',text):return True
+    prototypes=[m for m in _PROTO.finditer(text) if m[1]==callee]
+    if not prototypes or re.search(r'\b'+re.escape(callee)+r'\b(?!\s*\()',clean(source)):return True
+    counts=set()
+    for proto in prototypes:
+        params=proto[2].strip()
+        words=set(re.findall(_IDENT,proto[0]+' '+args))
+        if macros & words or not params or '...' in params or any(c in params for c in '=[]'):return True
+        if params!='void' and any(not re.match(rf'^{_TYPE}\b',p.strip()) for p in params.split(',')):return True
+        counts.add(0 if params=='void' else arguments(params))
+    if len(counts)!=1:return True
+    return arguments(args)-1==next(iter(counts))

@@ -54,14 +54,19 @@ def variants(source, name, header=''):
             condition, negative, positive = [ast.parse(t.strip(), mode='eval').body for t in pieces]
         except (SyntaxError, ValueError):
             continue
+        negated=negative.left if isinstance(negative,ast.BinOp) else None
+        unary=(isinstance(negated,ast.UnaryOp) and isinstance(negated.op,ast.USub)
+               and isinstance(negated.operand,ast.Name) and negated.operand.id==origin)
+        zero_sub=(isinstance(negated,ast.BinOp) and isinstance(negated.op,ast.Sub)
+                  and isinstance(negated.left,ast.Constant) and type(negated.left.value) is int and negated.left.value==0
+                  and isinstance(negated.right,ast.Name) and negated.right.id==origin)
         if not (isinstance(condition, ast.Compare) and isinstance(condition.left, ast.Name)
                 and condition.left.id == origin and len(condition.ops) == 1
                 and isinstance(condition.ops[0], ast.Lt) and len(condition.comparators) == 1
                 and isinstance(condition.comparators[0], ast.Constant)
                 and type(condition.comparators[0].value) is int and condition.comparators[0].value == 0
                 and isinstance(negative, ast.BinOp) and isinstance(negative.op, ast.Sub)
-                and isinstance(negative.left, ast.UnaryOp) and isinstance(negative.left.op, ast.USub)
-                and isinstance(negative.left.operand, ast.Name) and negative.left.operand.id == origin
+                and (unary or zero_sub)
                 and isinstance(negative.right, ast.Name)
                 and isinstance(positive, ast.Name) and positive.id == origin):
             continue

@@ -476,3 +476,13 @@ best scores. Candidate compiles were 164 before and 160 after; regressed trials 
 78 versus 53, with compile failures increasing from two to five. One recovery took
 nine trials instead of six, while another took seven instead of fourteen. Keep these
 mixed outcomes visible; fewer bad proposals alone is not a new exact match.
+
+A subsequent investigation of that same eight-case cohort fixed required-argument
+drops hidden by unrelated macros and invalid C89 narrow-store temporary placement.
+It also recognized a missing zero-subtraction spelling for an existing scoped
+normalization repair and moved applicable structural families earlier. Recoveries
+increased from two to three controls, candidate compiles fell from 160 to 132 and
+compile failures from five to zero. These are development/regression cases, not a
+fresh held-out evaluation. The six unresolved captures received bounded edit
+ablation; coupled prototype, qualifier and store-order changes remain evidence for
+further investigation rather than automatically learned rules.

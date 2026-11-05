@@ -92,3 +92,10 @@ handwritten assembly. Inspect adjacent original bytes and known mappings, then u
 copied reimport or proven piece join. Do not spend the candidate budget on an incomplete
 extent or vote it assembly just because no return was imported. Gap audit results are
 review leads, including when direct control flow closes; they never establish a match.
+
+Old GCC narrow-store experiments need a declaration at the beginning of a compound
+statement: use `{ u8 tmp = value; *destination = tmp; }` so an unbraced `if/else`
+remains valid C89. For signed scalar normalization, the local repair recognizes
+both `-value - bias` and `0 - value - bias` under its existing unused-local guards.
+A successful frozen-output replay still needs the ordinary exact game judge before
+it counts as a match.

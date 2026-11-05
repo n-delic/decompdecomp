@@ -393,7 +393,9 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
         if close is None or not commas:
             continue
         tail = body[commas[-1] + 1:close].strip()
-        if re.fullmatch(rf'(?:0[xX][0-9a-fA-F]+[uUlL]*|[0-9]+[uUlL]*|{_IDENT})', tail):
+        from .repair_preflight import drop_argument_allowed
+        if (re.fullmatch(rf'(?:0[xX][0-9a-fA-F]+[uUlL]*|[0-9]+[uUlL]*|{_IDENT})', tail)
+                and drop_argument_allowed(source,m[1],body[m.end():close],header)):
             add(offset + commas[-1], offset + close, '')
         if len(proposals) >= LIMIT:
             break
@@ -418,8 +420,9 @@ def _finish(source,name,proposals,labels,allocation_candidates,limit):
         groups.setdefault(labels[text],[]).append(text)
     # Missing argument positions and unknown-object types need refinement before speculative
     # call scopes; adding a scope family must not displace this existing short preflight lane.
-    if 'm2c_refinement' in groups:
-        groups = {'m2c_refinement':groups['m2c_refinement'],**groups}
+    from .repair_ranking import GUARDED, STRUCTURAL
+    first=('m2c_refinement',)+GUARDED+STRUCTURAL
+    groups={**{family:groups[family] for family in first if family in groups},**groups}
     ordered = []
     while any(groups.values()):
         for items in groups.values():

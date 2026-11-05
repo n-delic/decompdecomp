@@ -142,7 +142,7 @@ def variants(source, name, debug_lines=False):
         if variable in clean:
             continue
         lhs = source[opening+m.start('lhs'):opening+m.end('lhs')]
-        add('typed_temporary',[(m.start(),m.end(),f"{m['t']} {variable} = {rhs}; {lhs} = {variable};")])
+        add('typed_temporary',[(m.start(),m.end(),f"{{ {m['t']} {variable} = {rhs}; {lhs} = {variable}; }}")])
 
     # Hoist a dereferenced argument immediately ahead of a preceding simple store. Never cross
     # another call or control-flow statement, and retain the typed load exactly as submitted.

@@ -2698,3 +2698,21 @@ need independent evidence before receiving this specific GNU C repair.
   `DECOMP_COMPILER_TMPDIR` override and standalone OS-temp fallback. Host disk/quota/file
   exhaustion remains a retryable resource failure, with accurate progress diagnostics
   instead of a misleading git/permissions message or failed candidate attempt.
+
+### Completed: investigated repair-generator failures and structural priorities
+
+- Argument-removal generation checks one direct fixed-arity contract despite
+  unrelated macros; ambiguous preprocessing, prototypes and types remain opaque.
+  Narrow-store temporaries use a compound C89 statement and preserve `if/else` arms.
+- Applicable array/pointer phase, inferred-record and scalar-normalization families
+  receive earlier initial ranking and round-robin draft slots. Compiler refinement,
+  guarded probes, measured deferral and ordinary exploration remain available.
+- Six unresolved private captures received bounded edit ablation. The supported
+  zero-subtraction spelling now reaches the existing normalization scope repair;
+  coupled qualifier/prototype/store-order changes remain investigation evidence.
+- Investigated-cohort replay (eight frozen captures, at most 24 candidate trials each):
+  control recoveries increased from 2/8 to 3/8, candidate compiles fell from 160 to
+  132 and compile failures fell from five to zero. The record-layout recovery took
+  one trial instead of seven; the new normalization recovery took two. These cases
+  informed the changes, so this is a regression result, not held-out generalization
+  or a measurement of AI-token savings. No live game progress was adopted.
