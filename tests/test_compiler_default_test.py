@@ -249,3 +249,48 @@ def test_bulk_safe_range_repairs_continue_after_a_skipped_function(net, monkeypa
     assert applied==[('f3', {'preserve_other_profiles':True})]
     assert result['matches']==['f3'] and result['failures'][0]['function']=='f0'
     assert progress[-1]['checked']==2
+
+
+@pytest.mark.parametrize('safe_ranges', [False, True])
+def test_bulk_apply_scopes_same_address_overlays_by_rom_location(net, monkeypatch, safe_ranges):
+    from decompnet.project import compiler_for, function_compiler_key
+    address=net._function('f3','game')['vram']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET rom_offset=100 WHERE name='f3'")
+        db.execute("INSERT INTO functions(project_id,name,vram,size,rom_offset,status,matched_source) VALUES(1,'other_overlay',?,16,500,'matched','saved overlay C')",(address,))
+    before=net.cfg(net._project('game'))
+    selected={'toolchain':'ido-5.3','flags':['-O3']}
+    monkeypatch.setattr(net,'_comparison_source',lambda fn:'saved candidate')
+    seen=[]
+    def judge(proj, fn, *args):
+        seen.append(fn['name'])
+        return True,NS(score=0),''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    # Real compiler application must preserve the other overlay rather than ask it to adopt O3.
+    def regression(proj, agent, only, **kwargs):
+        return [(fn['name'],'different bytes') for fn in only if fn['name']=='other_overlay']
+    monkeypatch.setattr(net,'regression_test',regression)
+    def save(agent, proj, fn, source):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=?",(source,fn['id']))
+    monkeypatch.setattr(net,'try_quietly',save)
+    result=trial.apply_matches(net,'game',selected,['f3'],safe_ranges=safe_ranges)
+    assert result['passed']==1 and result['failed']==0
+    after=net.cfg(net._project('game'))
+    own=net._function('f3','game');other=net._function('other_overlay','game')
+    assert compiler_for(after,address,own)['flags']==['-O3']
+    assert compiler_for(after,address,other)==compiler_for(before,address,other)
+    assert after['compiler_ranges']==before['compiler_ranges']
+    assert list(after['function_compilers'])==[function_compiler_key(own)]
+    assert other['status']=='matched' and other['matched_source']=='saved overlay C'
+    assert own['status']=='matched' and seen and set(seen)=={'f3'}
+
+
+def test_bulk_apply_rejects_duplicate_overlay_identity(net, monkeypatch):
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET rom_offset=100 WHERE name='f3'")
+        db.execute("INSERT INTO functions(project_id,name,vram,size,rom_offset,status) VALUES(1,'duplicate',?,16,100,'open')",(net._function('f3','game')['vram'],))
+    monkeypatch.setattr(net,'_judge_with',lambda *args:pytest.fail('ambiguous entries cannot be applied'))
+    result=trial.apply_matches(net,'game',PROFILE,['f3'])
+    assert result['failed']==1
+    assert result['failures'][0]['category']=='overlay'
