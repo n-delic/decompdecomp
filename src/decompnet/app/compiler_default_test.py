@@ -129,8 +129,12 @@ def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False):
                 raise NetworkError('No longer unmatched; skipped.')
             if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
                 raise NetworkError('An agent is working on this function; retry after it releases the claim.')
-            if net.store.one('SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND vram=?', proj['id'], fn['vram'])['n'] != 1:
-                raise NetworkError('Shares an overlay address; needs an individual compiler review.')
+            siblings = net.store.all('SELECT id,rom_offset FROM functions WHERE project_id=? AND vram=?', proj['id'], fn['vram'])
+            if len(siblings) != 1 and (fn['rom_offset'] is None or any(
+                    row['id'] != fn['id'] and row['rom_offset'] == fn['rom_offset'] for row in siblings)):
+                raise NetworkError('Shares an overlay address without a unique ROM location; identify its original overlay before applying.')
+            # A known ROM location selects this entry alone through apply_function_compiler's
+            # function_compilers override. Never change an address range for shared overlays.
             source = net._comparison_source(fn)
             if not source:
                 raise NetworkError('No saved C is available.')
