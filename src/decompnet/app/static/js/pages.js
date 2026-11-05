@@ -746,7 +746,9 @@ async function sourceRuntimeDialog() {
 
 async function loadMatchLibrary() {
   const data=await api('/api/match-library?search='+encodeURIComponent($("matchLibrarySearch").value || ''));
-  $("matchLibraryCount").textContent=`— ${data.functions.toLocaleString()} functions · ${data.games.toLocaleString()} games · ${data.solutions.toLocaleString()} variants`;
+  const bytes=data.disk_bytes || 0, unit=bytes>=1048576 ? 'MiB' : bytes>=1024 ? 'KiB' : 'B';
+  const size=(bytes/(unit==='MiB' ? 1048576 : unit==='KiB' ? 1024 : 1)).toLocaleString(undefined,{maximumFractionDigits:1});
+  $("matchLibraryCount").textContent=`— ${data.functions.toLocaleString()} functions · ${data.games.toLocaleString()} games · ${data.solutions.toLocaleString()} variants · ${size} ${unit} on disk`;
   $("matchLibraryItems").innerHTML=data.items.length ? `<div class="compiler-table"><table><thead><tr><th>Function</th><th>Games</th><th>Verified variants</th></tr></thead><tbody>${data.items.map(r=>`<tr><td class="mono">${esc(r.name)}<br><span class="small muted">${esc(r.arch)} · ${r.size} bytes</span></td><td><b>${r.games}</b><br><span class="small muted">${esc(r.game_names)}</span></td><td>${r.variants}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No saved matches found. Existing matches are indexed in the background, and new matches are saved automatically.</p>';
 }
 $("matchLibraryRefresh").onclick=()=>loadMatchLibrary().catch(e=>toast(e.message,'err'));
