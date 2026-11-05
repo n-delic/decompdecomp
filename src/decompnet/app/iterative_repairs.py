@@ -288,7 +288,9 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     from . import hazard_line_repairs
     hazards=hazard_line_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [])
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
-    operand_focused = hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    from . import targeted_storage_repairs
+    storage=targeted_storage_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
+    operand_focused = storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
     labels.update({text: family for family, text in operand_focused})
     for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):

@@ -787,3 +787,14 @@ They can overflow signed values or leave valid pointer bounds before returning t
 an apparently unchanged value. A lower score does not make them valid. The native
 wrapper excludes its self-assignment insertion family; review old saved drafts
 separately, and use corrective candidate adoption when a cleaner draft scores worse.
+
+### Isolated spill slots and register chains
+
+Equal frames with one differing spill store/load pair need a local storage/lifetime
+hypothesis before global frame padding. `mapped_spill_storage` uses the actual object's
+C-line association to select the assignment's local; `mapped_register_lifetime` uses
+a small consistent register chain to try same-type conversion lifetime changes.
+A source association is not a register prescription. Stale/missing line information
+provides no proposal. Preserve compiler flags and exact checking; the first held-out
+sweep did not improve the two motivating residuals, so do not repeat exhausted shapes
+without a new source/context/evidence hypothesis.

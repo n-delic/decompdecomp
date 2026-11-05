@@ -2486,3 +2486,14 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   insertion in traced and untraced jobs, preventing that family from introducing
   unchecked signed/pointer increment-decrement cancellations or self-reads.
   Historical candidates still require review; ordinary judging is unchanged.
+
+### Compiler-mapped local storage follow-ups
+
+- Done: bounded same-frame spill-pair and single-register-chain hypotheses, bound to
+  current compiler C-line mappings; shared local experiments, CPU follow-ups, iterative
+  autopilot and deep refinement retain the normal exact judges. Broad line-family
+  exploration is interleaved when current rows lack scheduling/control evidence.
+- Planned: residual readers beyond MIPS and source-map adapters for unsupported
+  imported/debug-object formats. Missing or stale maps cannot supply targeted edits.
+- Measured limit: the 22-case copied held-out sweep produced no new matches or score
+  improvements. Sixteen fewer broad line trials did not reduce total trial count.
