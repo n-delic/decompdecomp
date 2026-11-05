@@ -4556,3 +4556,25 @@ return uses, allocations and all callers, then judge compatible corrections join
 private read-only input reproduces the width discrepancy; synthetic regression tests cover
 aliases, pointers, excluded signatures, shared budgets and previous stub warnings. No new
 function match is claimed for the decoder or for this advisory feature.
+
+## Body narrowing does not establish a narrow incoming formal
+
+A GCC 2.7.2 KMC wrapper narrowed its y coordinate through real signed-halfword
+operations in the function body. Giving its four upstream callers full prototypes
+with an incoming `s16` y added caller-side truncations: those controls scored
+1000, 830, 440 and 290. Keeping the incoming formal `s32`, retaining the existing
+body narrowing, and correcting all four caller prototypes made the wrapper and
+all four callers byte-exact. Do not infer a narrow formal solely from `sll`/`sra`
+in the callee, or restore an unspecified prototype to conceal the discrepancy.
+
+The five width-case profiles were GCC 2.7.2 KMC,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+An expanded 24-source caller/interface correction set passed individual linked
+byte comparisons and an independent complete 12,582,912-byte cartridge build;
+all 2,069 compiler profiles and 2,045 other selected C objects stayed unchanged.
+This is preservation of existing matches, not 24 new matches or proof that every
+indirect call in the game is sound. Separately audited legacy callback-dispatch
+and allocator defects remain outside this correction. Before accepting a width
+repair, audit every upstream declaration and actual argument, then validate the
+changed caller/callee set jointly. The brief's prototype warning is a lead for
+that audit, not permission to change signatures automatically.

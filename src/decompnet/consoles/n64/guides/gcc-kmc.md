@@ -898,3 +898,14 @@ searches. A draft's `void(u8,u16)` declaration can disagree with a matched `void
 definition; neither alone proves the original contract. Check actual argument setup, return
 uses and all callers, and validate compatible edits jointly. Do not infer original widths
 solely from a lower advisory score or an explicit-looking machine-generated declaration.
+
+### Distinguish incoming width from body narrowing
+
+A callee's signed-halfword shift pair can narrow a full-width incoming parameter
+inside its body. A new `s16` prototype may add unwanted truncation at every caller.
+In a controlled KMC case, four fully prototyped narrow-formal caller controls
+scored 1000/830/440/290; an `s32` incoming formal with the real body narrowing
+made all four callers and the callee exact. Audit all declarations and argument
+conversions together; do not fall back to unspecified `()` to hide a conflict.
+The joint correction preserved the full cartridge, but did not resolve unrelated
+legacy indirect-call defects. See `docs/COMPILER_MATCHING_LEARNINGS.md` for scope.
