@@ -145,3 +145,45 @@ claims and conversations are retained; the resumed conversation confirms access 
 Room clients send region evidence to their host, whose project controls claims; a client cannot impose a
 local pause on the host's queue. The startup availability check also excludes other agents' live claims,
 so an entirely busy queue retains the existing wait-without-model-request behavior.
+
+## Address ownership, model IDs and release receipts
+
+`resolve_addresses(queries=[...], context_function="...")` resolves up to 20 symbols or hexadecimal
+addresses in one read-only call. Results distinguish registered function entries, interiors with offsets,
+registered data, ambiguous overlays and unknown addresses. A unique held original image supplies default
+context; an explicit function or `function+offset` keeps its own image. Existing imported-project symbol,
+unit and C++ name lookup remains available. Missing address metadata stays unknown; registered extents
+are analysis evidence, not a proof that bytes are executable code.
+
+`get_function` and `get_assembly` also accept an unambiguous address or generated data-style alias and
+identify the canonical function used for the read. Registered data is not silently converted into code.
+Mutation tools retain ordinary canonical-name resolution and lease checks; this does not rename symbols,
+change boundaries or weaken matching. Both ROM and imported projects use the shared metadata catalog.
+
+The launcher validates the connector's model ID before preparing a project or creating helpers. Opencode
+requires a full provider/model ID. A short model name can resolve only to one exact leaf in already cached
+discovery; ambiguity or missing discovery asks the user to select/refresh full IDs. Explicit qualified custom
+IDs remain supported. An explicit ProviderModelNotFoundError is a configuration failure, including when it
+appears only on stderr: it pauses automatic retries instead of spending the tool-handshake retry. Discovery
+is not a paid inference, and launch validation does not run another discovery command.
+
+Completed agent releases save bounded receipts (two replies per agent/function/operation, at most 4096
+characters each). Repeated releases reuse the recorded result, without adding notes, abandon counts,
+assembly votes or dependency pivots. Push-back guidance is not a completed release. A claim_token in briefs,
+get_candidate and continuation responses identifies the lease using its timestamp and recorded claim event,
+so consecutive claims remain distinct even when the clock is identical. An old token cannot act on a new
+claim. After reclaiming a previously released function, an unversioned tool request either replays its old
+result while preserving the new claim, or asks for the current token. Machine releases remain explicit
+current-claim operations. Room clients retain and forward the host's lease token, and host transport releases
+use the same retry guard. Older room clients without tokens may need an update when releasing a reclaimed
+function. An abbreviated historical reply explicitly asks the agent to retrieve current state before acting.
+
+## Candidate-change explanations
+
+Stale-revision errors, get_candidate and compilation continuation responses identify recorded source
+provenance: agent, attempt ID, compilation route and measured score reduction when available. Batch selection
+and recovery-base selection are described separately from the author of the compiled source. Trial family and
+variant are shown only from matching recorded provenance; inherited/mismatched source evidence is not
+attributed as a new rewrite. Unrecorded file/draft changes explicitly have no inferred writer. Historical scores
+remain historical and every new match still goes through the ordinary judge. These views do not compile,
+select another source, or change a claim.

@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: typed batch symbol/address ownership and unambiguous read aliases, cached full model-ID
+resolution before worker creation, lease-bound release receipts for agent/room retries, and candidate
+selection/writer/score provenance in stale and continuation responses. ROM and imported-project metadata
+share the resolver; unavailable addresses remain unknown. See docs/AGENT_WORKFLOW_EFFICIENCY.md.
+
 Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md.
 
 Implemented: overlay-scoped data-region review with reversible new-claim pauses, explicit investigation

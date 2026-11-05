@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ... import consoles, scoring
 from ...network import MACHINE_AGENTS, Agent, Network, NetworkError, stall_line
+from ...release_receipts import operation as release_operation
 from ...rom import match
 from ...rom.symbols import SymbolTable
 from ..function_names import canonical_source
@@ -254,20 +255,22 @@ class JudgeMixin:
             return
         self._record(fn, agent, score, source, self._context(fn["project_id"], fn["unit"])["version"], via="room")
 
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False) -> str:
+    @release_operation("release")
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "") -> str:
         if (fork := self.fork_slug(project)):
-            return self.forks.release(agent, fork, function, notes, not_c)
+            return self.forks.release(agent, fork, function, notes, not_c, claim_token=claim_token)
         link = self._link(project)
         if link is not None:
             link.call("/collab/release", agent, function=self._function(function, project)["name"], notes=notes,
                       not_c=not_c)
-        said = super().release(agent, function, notes, project, not_c)
+        said = super().release(agent, function, notes, project, not_c, claim_token=claim_token)
         fn = self._function(function, project)
         self.rangechecks.gave_up(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn)
         return said
 
+    @release_operation("function", protect_new=True)
     def release_function(self, agent: Agent, function: str, notes: str, project: str | None = None,
-                         needs: str = "", not_c: bool = False, move_on: bool = False) -> str:
+                         needs: str = "", not_c: bool = False, move_on: bool = False, claim_token: str = "") -> str:
         """release_function as agents call it (the app's own releases and a room host's go straight to release).
         On a demo fork and a large x86 game, agents released functions seconds after claiming them, untried,
         for reasons a compile would have shown were none (12,565 releases, median 5 s after the claim): so a release
@@ -293,7 +296,7 @@ class JudgeMixin:
         if not move_on and not not_c and need is None and progress is not None and \
                 (push := self._push_back(agent, fn, progress, project)):
             return push
-        said = self.release(agent, function, notes, project, not_c)
+        said = self.release(agent, function, notes, project, not_c, claim_token=claim_token)
         if not not_c and need is None and progress is not None and progress['compiles']:
             from .. import release_repairs
             slug = self.store.one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']

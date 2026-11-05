@@ -125,7 +125,7 @@ def test_cli_limit_publishes_account_cooldown_before_session_exit(tmp_path,monke
     monkeypatch.setattr(agents,'_proc_start',lambda pid:None)
     proc=SimpleNamespace(pid=123456789,stdin=io.StringIO(),stdout=io.StringIO(json.dumps(
         {'type':'result','is_error':True,'result':"You've hit your 5-hour limit. Try again in 1 hour."})+'\n'),
-        stderr=io.StringIO(),wait=lambda:1)
+        stderr=io.StringIO(),wait=lambda:1,returncode=1)
     monkeypatch.setattr(agents.subprocess,'Popen',lambda *args,**kwargs:proc)
     assert manager._run_cli(s,net.local_agent(s.agent_name)[1],tmp_path) is False
     peer=manager._record('game','claude','peer','peer',{'model':'other'})

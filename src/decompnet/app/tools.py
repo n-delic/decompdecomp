@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .. import __version__, agents, candidate_quality, consoles
 from ..network import Agent, NetworkError
+from ..release_receipts import operation as release_operation
 from . import agent_tokens, compiler_experiments, local_experiments
 from .engine import RomNetwork
 
@@ -305,10 +306,11 @@ def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
 
 
 # name -> handler(net, agent, slug, **args); every handler returns text for the model
-def _release_with_experiment(net, agent, slug, function, notes, needs, not_c, move_on, next_experiment):
+@release_operation("tool", protect_new=True)
+def _release_with_experiment(net, agent, slug, function, notes, needs, not_c, move_on, next_experiment, claim_token=""):
     from . import agent_review
     saved = agent_review.save_experiment(net,agent,slug,function,next_experiment) if next_experiment is not None else ''
-    return agent_tokens.brief(net,net.release_function(agent,function,notes,slug,needs or '',bool(not_c),bool(move_on)),slug,agent) + ('\n'+saved if saved else '')
+    return agent_tokens.brief(net,net.release_function(agent,function,notes,slug,needs or '',bool(not_c),bool(move_on),claim_token=claim_token),slug,agent) + ('\n'+saved if saved else '')
 
 
 def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1) -> str:
@@ -444,7 +446,15 @@ def _report_data_region(net, agent, slug, function, start, end, reason):
     return report(net, agent, slug, function, start, end, reason)
 
 
+def _resolve_addresses(net, agent, slug, queries, context_function=""):
+    import json
+
+    from .address_lookup import resolve
+    return json.dumps(resolve(net,agent,slug,queries,context_function),ensure_ascii=False)
+
+
 HANDLERS: dict[str, Callable[..., str]] = {
+    "resolve_addresses": _resolve_addresses,
     "report_data_region": _report_data_region,
     "project_info": lambda net, agent, slug, detail=False: project_info(net, slug, detail),
     "get_candidate": agent_tokens.get_candidate,
@@ -467,8 +477,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "last_diff": agent_tokens.diff_page,
     "report_candidate_issue": lambda net, agent, slug, function, revision, issue, reason, alternative_revision="":
         candidate_quality.report(net,agent,slug,function,revision,issue,reason,alternative_revision),
-    "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False, move_on=False, next_experiment=None:
-        _release_with_experiment(net,agent,slug,function,notes,needs,not_c,move_on,next_experiment),
+    "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False, move_on=False, next_experiment=None, claim_token="":
+        _release_with_experiment(net,agent,slug,function,notes,needs,not_c,move_on,next_experiment,claim_token),
     "get_context": _get_context,
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
@@ -512,7 +522,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+READ_ONLY = frozenset({"resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
@@ -541,14 +551,23 @@ def project_tools(net: RomNetwork, slug: str | None, agent=None, include_disable
     return names if include_disabled else visible(net, slug, names, agent)
 
 
-def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
+def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dict:
     """Function names as agents write them (a plain symbol that repeats across files, symbol@unit, Class::method)
     turned into the stored name, preferring the function the agent holds."""
     function = args.get("function")
     if isinstance(function, str) and not function.strip():
         args = {**args, "function": ""}  # a blank name is no name: add_note says so, the other tools get none
     elif function and "," not in function:  # (several are resolved one by one, see _compile)
-        args = {**args, "function": net.resolve_function(agent, slug, function)}
+        try:
+            resolved = net.resolve_function(agent, slug, function)
+        except NetworkError:
+            address_like = re.fullmatch(r'(?:0[xX][0-9a-fA-F]+|(?:D_|func_)[0-9a-fA-F]{8,16})(?:\+(?:0x[0-9a-fA-F]+|[0-9]+))?',str(function))
+            symbol = net.store.one('SELECT 1 FROM symbols s JOIN projects p ON p.id=s.project_id WHERE p.slug=? AND s.name=?',slug,function)
+            if tool not in {"get_function", "get_assembly"} or not (address_like or symbol):
+                raise
+            from .address_lookup import read_function
+            resolved = read_function(net,agent,slug,function)
+        args = {**args, "function": resolved}
     return args
 
 
@@ -569,7 +588,7 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     from .tool_policy import record
     record(net, agent, slug, name, count=count_usage)
     if not count_usage:
-        return HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
+        return HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args, name))
     from . import session_budget
     from .agent_local_pass import after_tool
     budget=session_budget.current(net,agent,slug)
@@ -577,8 +596,10 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
         budget.begin()
     result=''
     try:
-        named=_named(net,agent,slug,args)
+        named=_named(net,agent,slug,args,name)
         result=HANDLERS[name](net,agent,slug,**named)
+        if name in {'get_function','get_assembly'} and args.get('function') != named.get('function'):
+            result = f"Resolved read {str(args.get('function'))[:200]!r} to {named['function']}. This does not rename or create a function.\n"+result
         if handshake and name == 'project_info':
             pending.discard((agent.id, slug))
         if name == 'try_compiler':
@@ -779,7 +800,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                          reason=reason, alternative_revision=alternative_revision)
 
     @tool
-    async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False, move_on: bool = False, next_experiment: dict | None = None) -> str:
+    async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False, move_on: bool = False, next_experiment: dict | None = None, claim_token: str = "") -> str:
         """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
         the move-on rule), it answers once with what to try instead; call it again to release anyway.
@@ -787,6 +808,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         Args:
             function: the function you hold
             notes: what you tried, what is left
+            claim_token: token from the current claim/get_candidate. Use it for retries or when releasing a newly reacquired function with the same notes; a stale token cannot release a new claim.
             next_experiment: optional untested exact patch with revision, old, new and title. Validated against your current candidate; rejected if stale or ambiguous. The next agent can retrieve it with get_function(section="experiment") and test through compile_patch.
             needs: optional: a direct callee recorded in the original assembly that blocks this function. Paused
                 candidates cannot be selected this way. Explain indirect/inline/header concerns in notes instead.
@@ -794,7 +816,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             not_c: true only with evidence no C makes its code at all (hand-written assembly), saying why in notes. Unsupported compiler extensions, asm-register/tool restrictions, return-address builtins or unsuitable build flags are not proof; describe those as blockers and release normally:
                 once agents of two models agree, it's set aside and no one is handed it again.
         """
-        return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on, next_experiment=next_experiment)
+        return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on, next_experiment=next_experiment, claim_token=claim_token)
 
     @tool
     async def get_context(ctx: Context, function: str = "") -> str:
@@ -837,6 +859,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         byte evidence. One review covers the region. No match/status changes; the user can pause its new claims
         in Settings. Do not misuse report_boundary to leave one word of a table pretending to be code."""
         return await run(ctx, "report_data_region", function=function, start=start, end=end, reason=reason)
+
+    @tool
+    async def resolve_addresses(ctx: Context, queries: list[str], context_function: str = "") -> str:
+        """Resolve 1–20 symbols/hex addresses in one read-only call: function entry, interior, data, unknown or
+        ambiguous. Reports canonical names, owning function offsets, units and original image positions.
+        Supply context_function for overlays sharing RAM addresses; otherwise a unique held image supplies context.
+        Registered data is never silently treated as code. No rename, boundary, claim or matching-status changes."""
+        return await run(ctx, "resolve_addresses", queries=queries, context_function=context_function)
 
     @tool
     async def read_data(ctx: Context, what: str, length: int = 64) -> str:

@@ -24,9 +24,13 @@ def candidate(net, agent, slug, function):
         source = net.forks._current_source(fp, fn) or ''
     stamp = (row['id'] if row else None, claim['claimed_at'] if claim else None, target_scope(net,fn,''))
     selected = getattr(net,'_agent_selected',{}).get((agent.id,fn['id']))
-    if selected and selected['stamp'] == stamp and fn['status']=='open':
+    selected_valid = selected and selected['stamp'] == stamp and fn['status']=='open'
+    if selected_valid:
         source = selected['source']
     revision = hashlib.sha256(source.encode()).hexdigest()[:20]
+    from .candidate_changes import remember
+    remember(net,agent,fn,source,attempt=row['id'] if row and not selected_valid else None,
+             selection=selected.get('cause','') if selected_valid else '')
     snapshots = getattr(net,'_agent_snapshots',None)
     if snapshots is None:
         snapshots = net._agent_snapshots = {}
@@ -73,7 +77,7 @@ def get_candidate(net, agent, slug, function, base='current'):
         stamp = (latest['id'] if latest and latest['created_at'] >= claim['claimed_at'] else None,
                  claim['claimed_at'],target_scope(net,fn,''))
         if not hasattr(net,'_agent_selected'):net._agent_selected = {}
-        net._agent_selected[agent.id,fn['id']] = {'stamp':stamp,'source':selected}
+        net._agent_selected[agent.id,fn['id']] = {'stamp':stamp,'source':selected,'cause':'You selected '+base+' for continuation; no compile occurred'}
         while len(net._agent_selected)>64:
             del net._agent_selected[next(iter(net._agent_selected))]
         note = f'Selected {base} for continuation; historical score is not reverified. No compile, file write or match was performed.\n'
@@ -86,10 +90,15 @@ def get_candidate(net, agent, slug, function, base='current'):
     line_note = measured.get('line_note', '') if measured and measured.get('source') == source else ''
     mapping = (line_note or '\nC-line mapping unavailable for this candidate/build; no line locations inferred.') if base == 'current' else '\nC-line mapping will refresh after this candidate is compiled; no historical line locations inferred.'
     baseline = agent_evidence.baseline_note(fn, measured, net) or 'Baseline: historical/unverified for these inputs; no current score inferred.'
-    return note + baseline + '\n' + f'Candidate revision {revision}\n```c\n{source}\n```\n{remaining}' + mapping
+    from ..release_receipts import current as claim_token
+    lease = claim_token(net,fn,agent)
+    from .candidate_changes import describe
+    return note + describe(net,agent,fn,source)+'\n'+baseline + '\n' + f'claim_token: {lease or "not held"}\nCandidate revision {revision}\n```c\n{source}\n```\n{remaining}' + mapping
 
 
 def stale(net, agent, fn, submitted, source, actual, anchor=""):
+    from .candidate_changes import describe
+    origin = describe(net,agent,fn,source)
     old = getattr(net,'_agent_snapshots',{}).get((agent.id,fn['id']),{}).get(submitted)
     change = ''
     if old is not None:
@@ -115,13 +124,13 @@ def stale(net, agent, fn, submitted, source, actual, anchor=""):
     seen=getattr(net,'_stale_notices',set())
     if key in seen:
         return NetworkError(f'Candidate changed. Current candidate revision {actual}; same stale revision was already rejected. '
-                            'Use the earlier current-change preview or get_candidate if needed. No compile run.')
+                            'Use the earlier current-change preview or get_candidate if needed. No compile run.\n'+origin)
     if len(seen)>=64:
         seen.clear()
     seen.add(key);net._stale_notices=seen
     return NetworkError(f'Candidate changed. Current candidate revision {actual}. No compile run. '
                         'Same-function edits are serialized; wait for each response before sending the next edit. '
-                        'Apply your next patch to the current revision; get_candidate only if these changes are insufficient.'+change)
+                        'Apply your next patch to the current revision; get_candidate only if these changes are insufficient.\n'+origin+change)
 
 
 def next_action(net, agent, fn, source, revision):
@@ -264,7 +273,7 @@ def brief(net, text, slug=None, agent=None):
                                      claim['claimed_at'] if claim else None, target_scope(net,fn,''))
                             if not hasattr(net, '_agent_selected'):
                                 net._agent_selected = {}
-                            net._agent_selected[agent.id,fn['id']] = {'stamp':stamp, 'source':prepared}
+                            net._agent_selected[agent.id,fn['id']] = {'stamp':stamp, 'source':prepared, 'cause':'The app selected a prepared recovery candidate for your continuation'}
                             while len(net._agent_selected) > 64:
                                 del net._agent_selected[next(iter(net._agent_selected))]
                             source, revision = candidate(net, agent, slug, fn['name'])
@@ -883,7 +892,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                      claim['claimed_at'] if claim else None,target_scope(net,fn,''))
             if not hasattr(net,'_agent_selected'):
                 net._agent_selected = {}
-            net._agent_selected[agent.id,fn['id']] = {'stamp':stamp,'source':selected}
+            net._agent_selected[agent.id,fn['id']] = {'stamp':stamp,'source':selected,'cause':('Your '+family+' batch retained its starting candidate' if selected_index==0 else f'Your {family} batch selected variant {selected_index}')}
             while len(net._agent_selected)>64:
                 del net._agent_selected[next(iter(net._agent_selected))]
             if not hasattr(net,'_agent_outcomes'):

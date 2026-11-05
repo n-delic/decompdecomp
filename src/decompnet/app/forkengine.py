@@ -53,6 +53,7 @@ from ..network import (
     move_on_brief,
     set_aside,
 )
+from ..release_receipts import operation as release_operation
 from ..rom import RomError
 from ..scoring import percent_text
 from ..textedit import replace_once
@@ -2491,6 +2492,10 @@ class ForkEngine:
         meta = self._meta(fn)
         unit = fp.unit(fn["unit"])
         lines = [f"## {header}: {fn['name']}  ({proj['name']})", f"unit {unit.name}, {fn['size']} bytes"]
+        if agent:
+            from ..release_receipts import current
+            if lease := current(self.net,fn,agent):
+                lines.append('claim_token: '+lease)
         from .. import candidate_quality
         if fn["status"] != "matched":
             lines.append(move_on_brief(fn, self.net.agent_stall_budget(fn, agent)))
@@ -3644,7 +3649,8 @@ class ForkEngine:
             pass
         return f"With yours, {len(said)} agents of {len(models)} models agree: {done}. The game still builds byte for byte."
 
-    def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False) -> str:
+    @release_operation("release")
+    def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False, claim_token: str = "") -> str:
         fn = self._fn(slug, function)
         if (link := self.net.links.get(slug)) is not None:
             link.call("/collab/release", agent, function=fn["name"], notes=notes, not_c=not_c)
@@ -3656,7 +3662,7 @@ class ForkEngine:
                 self.attempt(agent, slug, function, fn["best_source"])
             except NetworkError:
                 pass
-        return Network.release(self.net, agent, function, notes, slug, not_c)
+        return Network.release(self.net, agent, function, notes, slug, not_c, claim_token=claim_token)
 
     def release_exempt(self, slug: str, fn) -> str | None:
         """Why compiling can't help with this function (release_function lets such a release through at once), or

@@ -134,6 +134,10 @@ class Agent:
 
     supports_login = False
 
+    def resolve_model(self, model: str, known: list[dict]) -> str:
+        """Preserve CLI model IDs; connectors may resolve a unique short name from already cached discovery."""
+        return model
+
     def validate_model(self, model: str) -> str | None:
         return None
 

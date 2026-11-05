@@ -17,7 +17,7 @@ from tests.test_prepared_evidence import prepared_net
 def region_game(tmp_path):
     net, agent, fn = game(tmp_path)
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET vram=4096,rom_offset=100,size=8,unit='overlay-a',target=?", (b'abcdefgh',))
+        db.execute("UPDATE functions SET vram=4096,rom_offset=100,size=8,unit='overlay-a',target=?", (bytes.fromhex('03e0000800000000'),))
         for name, unit, vram, offset, status in [('next','overlay-a',4104,108,'open'),
                     ('twin','overlay-b',4096,500,'open'),('matched','overlay-a',4112,116,'matched')]:
             db.execute('INSERT INTO functions(project_id,name,unit,vram,rom_offset,size,status,n_insns) VALUES(1,?,?,?,?,8,?,2)',
@@ -37,7 +37,7 @@ def test_data_region_deduplicates_and_pauses_only_new_claims_in_its_original_ima
     data_regions.decide(net,'game',key,'pause')
     assert net.claim_row(agent,'game','f')['name']=='f'  # held work may finish
     other,_=net.local_agent('other')
-    with pytest.raises(NetworkError,match='paused for data-region'):
+    with pytest.raises(NetworkError,match='data-region review'):
         net.claim_row(other,'game','next')
     assert net.claim_row(other,'game')['name']=='twin'
     assert net._function('matched','game')['status']=='matched'
@@ -51,7 +51,7 @@ def test_changed_region_bytes_lift_pause_and_require_new_evidence(tmp_path):
     data_regions.report(net,agent,'game','f','0x1000','0x1010','Pointer table')
     key=data_regions.listing(net,'game')['items'][0]['id']
     data_regions.decide(net,'game',key,'pause')
-    with net.store.tx() as db:db.execute("UPDATE functions SET target=? WHERE name='next'",(b'newbytes',))
+    with net.store.tx() as db:db.execute("UPDATE functions SET target=? WHERE name='next'",(bytes.fromhex('03e0000824020001'),))
     assert data_regions.blocked(net,net.project_row('game'))==[]
     assert data_regions.listing(net,'game')['items'][0]['stale']
     with pytest.raises(NetworkError,match='changed'):
@@ -142,7 +142,7 @@ def test_cli_missing_handshake_retries_once_then_pauses_without_claiming(tmp_pat
     monkeypatch.setattr(manager,'_save',lambda *a:None)
     def process(*a,**kw):
         return SimpleNamespace(pid=123456789,stdin=io.StringIO(),stdout=io.StringIO(json.dumps(
-            {'type':'result','result':'The tools are unavailable.'})+'\n'),stderr=io.StringIO(),wait=lambda:0)
+            {'type':'result','result':'The tools are unavailable.'})+'\n'),stderr=io.StringIO(),wait=lambda:0,returncode=0)
     monkeypatch.setattr(agents.subprocess,'Popen',process)
     token=net.local_agent(s.agent_name)[1]
     with pytest.raises(agents.ToolConnectionUnavailable,match='Reconnecting once'):manager._run_cli(s,token,tmp_path)

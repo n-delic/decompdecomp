@@ -517,7 +517,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"), start=it("zero-based row"), limit=it("up to 200 rows"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
                              "on (before that it answers once with what to try; call again to release anyway).",
-                             s(function=st("function", True), notes=st("what you tried, what is left", True),
+                             s(claim_token=st("Current claim token from get_candidate; identifies the lease for safe retries"), function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
                                move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
                                next_experiment={"type":"object","description":"Optional untested exact patch. Anchor/revision are validated; retrieve with get_function(section=experiment).", "properties":{key:{"type":"string"} for key in ('revision','old','new','title')}, "required":["revision","old","new"],"additionalProperties":False},
@@ -539,6 +539,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "report_data_region": ("Report an entire suspected data region for user review, not a matching verdict. Claim a representative function; its unit and original image scope the overlay. The user may pause new claims. Use this when the whole entry is data, rather than report_boundary.",
                                s(function=st("claimed representative function", True), start=st("hex address", True),
                                  end=st("exclusive hex end address", True), reason=st("byte evidence for review", True))),
+        "resolve_addresses": ("Read-only batch lookup of symbols and hex addresses: function entry, function interior, data, ambiguous or unknown. Returns canonical owner names and offsets. Supply context_function for overlays; never guesses a new entry or changes names/status.",
+                              s(queries={"type":"array","items":{"type":"string","minLength":1,"maxLength":200},"minItems":1,"maxItems":20,"req":True}, context_function=st("canonical function in the intended original image"))),
         "read_data": ("Hex dump of the original's data at an address or symbol.", s(what=st("address or symbol", True),
                                                                                     length=it("bytes, up to 512"))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "

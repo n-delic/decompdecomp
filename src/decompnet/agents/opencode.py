@@ -45,8 +45,30 @@ class Opencode(Agent):
 
     def read_models(self, lines: list[str]) -> list[dict]:
         """`opencode models`: "<provider>/<model>" per model."""
-        rows = [r for r in lines if re.fullmatch(r"[\w.-]+/[\w.:/-]+", r)]
+        rows = [r for r in lines if not self.validate_model(r) and r]
         return [{"id": r, "name": r.split("/", 1)[1], "note": r.split("/", 1)[0]} for r in rows]
+
+    def resolve_model(self, model: str, known: list[dict]) -> str:
+        model = model.strip()
+        base, separator, effort = model.partition('#')
+        if base and '/' not in base:
+            matches = sorted({r['id'] for r in known if r.get('id','').split('/',1)[-1] == base})
+            if len(matches) == 1:
+                return matches[0]+(separator+effort if separator else '')
+            choices = ' Choose one of: '+', '.join(matches[:8])+'.' if matches else ' Refresh models and select its full ID, for example provider/model.'
+            raise ValueError('The opencode model needs a provider/model ID; this short name is ambiguous or was not discovered.'+choices)
+        return model
+
+    def validate_model(self, model: str) -> str | None:
+        if not model:
+            return None
+        base, separator, effort = model.partition('#')
+        if any(segment in {'.','..'} for segment in base.split('/')) or not re.fullmatch(r'[\w.-]+/[\w.:@+%~-]+(?:/[\w.:@+%~-]+)*',base) or (separator and not re.fullmatch(r'[\w.-]+',effort)):
+            return 'The opencode model needs a provider/model ID with nonempty segments. Refresh models or enter the full ID.'
+        return None
+
+    def fatal(self, error: str) -> bool:
+        return bool(re.search(r'ProviderModelNotFoundError|\bModel not found\b|opencode model needs a provider/model ID',error,re.I))
 
     def config_model(self) -> str | None:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")

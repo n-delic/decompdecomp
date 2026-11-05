@@ -448,7 +448,9 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         if "selection" in d:
             net.set_selection(room.slug, agent.name, d["selection"])
         fn = net.claim_row(agent, room.slug, d.get("function") or None, str(d.get("strategy") or "easiest"))
-        return {"function": fn["name"] if fn else None, "vram": fn["vram"] if fn else None}
+        from ..release_receipts import current
+        return {"function": fn["name"] if fn else None, "vram": fn["vram"] if fn else None,
+                "claim_token":current(net,fn,agent) if fn else ''}
 
     def attempt(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -467,8 +469,9 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
 
     def release(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
-        return {"text": net.release(agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
-                                     bool(d.get("not_c")))}
+        from ..release_receipts import transport_release
+        return {"text": transport_release(net, agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
+                                     bool(d.get("not_c")), claim_token=str(d.get("claim_token") or ""))}
 
     def context(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -750,8 +753,12 @@ class Link:
     # -- actions, called by RomNetwork for a linked project
 
     def claim(self, agent: Agent, function: str | None, strategy: str) -> str | None:
-        return self._req("POST", "/collab/claim", {"agent": agent.name, "function": function, "strategy": strategy,
-                                                    "selection": self.net.selection(self.slug, agent.name)})["function"]
+        result = self._req("POST", "/collab/claim", {"agent": agent.name, "function": function, "strategy": strategy,
+                                                    "selection": self.net.selection(self.slug, agent.name)})
+        if result.get('function') and result.get('claim_token'):
+            leases=self.__dict__.setdefault('_release_claim_tokens',{})
+            leases[agent.id,result['function']]=result['claim_token']
+        return result['function']
 
     def attempt(self, agent: Agent, function: str, source: str) -> dict:
         if not self.fork:
@@ -760,6 +767,9 @@ class Link:
         return self._req("POST", "/collab/attempt", {"agent": agent.name, "function": function, "source": source})
 
     def call(self, route: str, agent: Agent, /, **data) -> str:
+        if route == '/collab/release':
+            lease=getattr(self,'_release_claim_tokens',{}).get((agent.id,data.get('function')))
+            if lease:data['claim_token']=lease
         return self._req("POST", route, {"agent": agent.name, **data}).get("text", "")
 
     # -- mirroring the host's work into the local project

@@ -61,13 +61,17 @@ def continuation(net,agent,slug,function,*,applied=None,base=None):
     source,revision=candidate(net,agent,slug,function)
     held=bool(net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id))
     text=f'Continuation state: function={fn["name"]}; revision={revision}; status={fn["status"]}; claim={"held" if held else "not held"}'
+    if held:
+        from ..release_receipts import current as claim_token
+        text += '; claim_token='+claim_token(net,fn,agent)
     if base is not None:
         text+=f'; base_revision={base}'
     if applied is not None:
         text+='; applied_patch_ids='+(','.join(map(str,applied)) or 'none (baseline retained)')
     if not held:
         return text+'. Do not patch without a claim. Save findings with add_note(function=...), then claim another eligible function.'
-    return text+'. Patch this revision only.'+(' Batch patches are independent, not cumulative.' if applied is not None else '')
+    from .candidate_changes import describe
+    return text+'. Patch this revision only.\n'+describe(net,agent,fn,source)+(' Batch patches are independent, not cumulative.' if applied is not None else '')
 
 
 def frontload(net, agent, slug, function, text):

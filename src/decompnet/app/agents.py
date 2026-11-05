@@ -666,6 +666,12 @@ class Manager:
         if agent.id != kind:
             kind = agent.id
             options.pop("model", None)  # a Gemini CLI model name may mean nothing to Antigravity: use its default
+        configured = str(options.get('model') or agent.config_model() or '')
+        resolved = agent.resolve_model(configured, agent.models(_which(agent.command), run=False) if agent.command else [])
+        if why := agent.validate_model(resolved):
+            raise ValueError(why)
+        if options.get('model') or resolved != configured:
+            options['model'] = resolved
         if self._down:
             raise ValueError("decompdecomp is quitting")
         ids = []
@@ -1752,6 +1758,7 @@ class Manager:
             s.push('info','Saved CLI conversation is unavailable. Continuing with saved function handoff and current project state.')
             return False
 
+        refused = refused or next((text for text in errors if k.fatal(text)), "")
         if refused:
             raise Fatal(refused + " Review the agent settings and resolve this error before restarting.")  # every retry would meet it the same way
         if LIMIT.search(everything):

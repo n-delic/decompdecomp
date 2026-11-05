@@ -282,8 +282,12 @@ def register(app: App) -> None:
 
     def p_claim_handover(slug, request, data):
         agent, _ = net.local_agent('you')
-        # release checks ownership transactionally: this cannot take another agent's claim.
-        net.release(agent, str(data.get('name') or ''), '', slug)
+        from ...release_receipts import current
+        fn=net._function(str(data.get('name') or ''),slug)
+        lease=current(net,fn,agent)
+        if not lease:
+            raise NetworkError(f"You don't hold a claim on {fn['name']}.")
+        net.release(agent, fn['name'], '', slug, claim_token=lease)
         return {'ok': True}
 
     def p_recheck(slug, request, data):

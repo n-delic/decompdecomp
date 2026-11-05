@@ -25,6 +25,7 @@ from . import agent_notes, agents, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
+from .release_receipts import operation as release_operation
 from .store import Store
 
 CLAIM_TTL = 30 * 60
@@ -1161,7 +1162,8 @@ class Network:
         weak = any(s < WEAK_SHARE * best for s in share.values())
         return "strong" if share[mine] == best and weak else None
 
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False) -> str:
+    @release_operation("release")
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "") -> str:
         """An agent gives a function back: its claim ends, its notes stay for the next agent, and the function
         counts one more give-up (the claim order puts those later). `not_c`: the agent found no C makes its code
         (NOT_C_AGENTS)."""
@@ -1352,6 +1354,8 @@ class Network:
         if own.get('toolchain'):
             lines.append(f"compiler ID: {own['toolchain']}; compiler_experiments compiler=\"current\" retains it")
         if claim:
+            from .release_receipts import token
+            lines.append("claim_token: "+token(self,fn,claim))
             who = "you" if agent and claim["agent_id"] == agent.id else self._agent_name(claim["agent_id"])
             lines.append(f"claimed by {who}, lease expires in {int(claim['expires_at'] - time.time()) // 60} min "
                          f"(each compile_and_diff renews it)")
