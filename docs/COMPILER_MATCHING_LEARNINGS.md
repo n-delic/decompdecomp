@@ -3769,3 +3769,24 @@ linked replay evidence, separate from the synthetic regression tests. Reuse only
 with encoded call-before-raw-store evidence, no intervening RA restoration, and an
 explicit 32-bit scalar/pointer global; entry snapshots and other store registers
 are not evidence. The judge remains unchanged.
+
+### Supported hardware C can invalidate old tooling verdicts
+
+A private MIPS ROM helper with a callback, a volatile stack dispatch index, and a
+live return-address global store matched using the existing shared
+`live_return_address_initializers` proposal at rank 2. KMC GCC 2.7.2 retained
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: saved entry-caller builtin scored 145,
+fixed live-return intrinsic alone 270, and its atomic one-shot statement boundary
+scored 0 with exact ordinary linked bytes. This independently confirms the repair
+on another helper; no new source hypothesis or compiler change was needed.
+
+The remaining app gap was eligibility: old agent assembly votes about unsupported
+return-address extensions survived after new votes of that kind were rejected.
+Check again now retires only all-invalid agent tooling verdicts with a supported
+live-return intrinsic and a target-backed shared proposal. Explicit user/library,
+shape/twin, verified assembly, mixed valid votes, and claimed functions stay put.
+The retired votes remain in an audit snapshot. The ordinary autopilot judge tries
+at most four proposals and alone records matches; nonmatches remain available for
+further work. A private copied-project replay matched the second proposal without
+an agent, using unchanged source context and compiler settings. Unit tests exercise
+eligibility and routing; they are controlled regressions, not additional matches.

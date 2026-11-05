@@ -546,6 +546,12 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- Check again and helper startup reconsider obsolete agent tooling verdicts when
+  the effective compiler supports a target-backed live return-address C repair,
+  including fixes shipped under the same package version. Valid assembly, user
+  choices, and claims remain protected; bounded ordinary judging verifies matches.
+
+
 - The notification panel renders cached events immediately, shares an in-flight history request, offers loading/error retry feedback, and reads bounded indexed history using reserved UI capacity.
 
 - Project maps read compact per-function history dates independently of contributor rollups, reducing cold opening work while retaining identical recency semantics and revision invalidation.

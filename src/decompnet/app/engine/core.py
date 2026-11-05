@@ -136,8 +136,14 @@ class Core(Network):
         from ... import __version__
 
         row = self.project_row(slug)
-        if slug in self.links or (only_if_updated and self.cfg(row).get("checked") == __version__):
+        if slug in self.links:
             return None
+        from .. import assembly_reconsideration
+        if only_if_updated and self.cfg(row).get("checked") == __version__:
+            # Capability fixes can ship without a package-version change. Only this
+            # narrow, self-retiring review runs again; console/range work stays gated.
+            reconsidered = assembly_reconsideration.run(self, row, log)
+            return f'{reconsidered} obsolete tooling verdicts reconsidered with supported C' if reconsidered else None
         if self.is_rom(row):
             self.rangechecks.reopen(slug)
         last = self.store.one("SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE project_id=?", row["id"])["id"]
@@ -145,6 +151,9 @@ class Core(Network):
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
         done = [r["detail"] for r in self.store.all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
                                                      "kind='analysis' ORDER BY id", row["id"], last)]
+        reconsidered = assembly_reconsideration.run(self, self.project_row(slug), log)
+        if reconsidered:
+            done.append(f'{reconsidered} obsolete tooling verdicts reconsidered with supported C')
         n = self.twins.set_aside_asm(self.project_row(slug)) + self.not_c_from_notes(slug)
         self._update_cfg(slug, lambda cfg: cfg.update(checked=__version__))
         if n:
