@@ -131,3 +131,48 @@ def test_comments_within_a_load_keep_one_evaluation():
     source = SOURCE.replace('values[j] >> 1','values /* ordinary */ [j] >> 1')
     text = generated(source)[0][1]
     assert '__repair_loaded_byte += __repair_loaded_byte >> 1;' in text
+
+
+@pytest.mark.parametrize('directive', ['#define values other', '#define j next()', '#undef values'])
+def test_function_body_preprocessor_directives_are_rejected(directive):
+    source = SOURCE.replace(' u32 j;', ' u32 j;\n'+directive)
+    assert not generated(source)
+
+
+@pytest.mark.parametrize('declaration', [
+    'u8 (*values)[5];', 'u8 (values)[5];', 'Fn (*values);',
+    'Fn (values);', 'Fn*values;', 'Fn * const values;', 'Fn other, *values;',
+])
+def test_complex_or_unknown_root_shadows_are_rejected(declaration):
+    source = SOURCE.replace(' u32 j;', ' u32 j; {'+declaration+'} ')
+    assert not generated(source)
+
+
+@pytest.mark.parametrize('declaration', ['V j;', 'V(j);', 'V *j;', 'V other,j;', 'V (*j);'])
+def test_typedef_qualified_index_shadows_are_rejected(declaration):
+    header = HEADER+' typedef volatile unsigned int V;'
+    source = SOURCE.replace(' for(j=0;j<4;j++) {', ' for(j=0;j<4;j++) { {'+declaration)
+    source = source.replace('\n }','\n }}')
+    assert not generated(source,header)
+
+
+def test_unknown_qualified_factor_index_is_not_staged():
+    source = SOURCE.replace(' u32 j;', ' u32 j; u32 factor; { V factor; }')
+    source = source.replace('values[4]', 'values[factor]')
+    header = HEADER+' typedef volatile unsigned int V;'
+    assert all('+= (__repair_loaded_byte *' not in text for _,text in generated(source,header))
+
+
+def test_parenthesized_parameter_array_root_is_rejected():
+    source = SOURCE.replace('test(void)', 'test(u8 (*values)[5])')
+    assert not generated(source)
+
+
+def test_volatile_parameter_cannot_borrow_an_unrelated_nested_counter_type():
+    source = SOURCE.replace('test(void)', 'test(V j)').replace(' u32 j;', ' { u32 j; }')
+    assert not generated(source,HEADER+' typedef volatile unsigned int V;')
+
+
+def test_volatile_global_cannot_borrow_an_unrelated_nested_counter_type():
+    source = SOURCE.replace(' u32 j;', ' { u32 j; }')
+    assert not generated(source,HEADER+' extern volatile unsigned int j;')

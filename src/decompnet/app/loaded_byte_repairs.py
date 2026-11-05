@@ -17,9 +17,22 @@ BYTE = r'(?:u8|unsigned\s+char)'
 CELL = rf'{IDENT}\s*\[\s*(?:{IDENT}|[0-9]+)\s*\]'
 
 
+def declarators(text, name):
+    """Notice unknown/qualified type spellings as well as supported declarations."""
+    return list(re.finditer(rf'\b{IDENT}(?:\s+\**\s*|\s*\*+\s*)'
+                            rf'(?P<name>{re.escape(name)})\s*(?=[;=,)\[])', text))
+
+
+def complex_declarator(text, name):
+    # Reject parentheses and later comma declarators conservatively, including
+    # pointers to arrays and typedef-qualified shadows that the scalar view omits.
+    return re.search(rf'\(\s*\**\s*(?:(?:const|volatile|restrict)\s+)*{re.escape(name)}\s*\)\s*(?=[;=(,\[])|'
+                     rf',\s*\**\s*{re.escape(name)}\s*(?=[;=)\[])', text)
+
+
 def variants(source, name, header='', arch=None):
     part = view(source, name)
-    if not part or re.search(r'\b(?:volatile|_Atomic|asm|__asm__|typeof|__typeof__)\b', part.body):
+    if not part or '#' in part.body or re.search(r'\b(?:volatile|_Atomic|asm|__asm__|typeof|__typeof__)\b', part.body):
         return []
     context = _blank(source[:part.opening] + '\n' + header)
     macros = set(re.findall(r'^\s*#\s*define\s+('+IDENT+')', context, re.M))
@@ -30,11 +43,22 @@ def variants(source, name, header='', arch=None):
         root = d[2]
         if integer_abi.scalar(d[1], context, arch) != (8, False):
             continue
-        declarations = re.findall(rf'\b(?:{IDENT}\s+)+\**\s*{re.escape(root)}\s*(?=\[|[;=,)])', context)
-        if len(declarations) != 1 or re.search(rf'\b{IDENT}\s+\**\s*{re.escape(root)}\s*(?=\[|[;=,)])', part.body):
+        declarations = declarators(context, root)
+        if (len(declarations) != 1 or declarators(part.body, root)
+                or complex_declarator(context+'\n'+part.body, root)):
             continue
         arrays[root] = d[1]
-    indices = {d['name'] for d in locals_for(part) if integer_abi.scalar(d['type'], context, arch)}
+    indices = set()
+    for d in locals_for(part):
+        index = d['name']
+        declarations = declarators(part.clean[part.opening+1:part.end], index)
+        if (integer_abi.scalar(d['type'], context, arch) and len(declarations) == 1
+                and declarations[0].start('name')+part.opening+1 == d.start('name')
+                and not declarators(context, index)
+                and not complex_declarator(context+'\n'+part.body, index)
+                and part.clean[part.opening+1:d.start()].count('{')
+                    == part.clean[part.opening+1:d.start()].count('}')):
+            indices.add(index)
     token = '__repair_loaded_byte'
     while re.search(r'\b'+token+r'\b', source+'\n'+header):
         token += '_'
