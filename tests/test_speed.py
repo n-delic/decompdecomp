@@ -348,6 +348,41 @@ def test_permuter_repairs_local_ordering_before_random_search(game, name, writte
     assert time.monotonic() - started < permute.SECONDS
 
 
+def test_permuter_child_judges_a_demo_near_miss_without_restarting_the_engine(game):
+    """The child shares exact-match results with the live engine through its ordinary database."""
+    import time
+
+    from decompnet.app.permuter_worker import PermuterWorker
+
+    net, slug, _ = game
+    name = "checksum_save"
+    agent, _ = net.local_agent("agent")
+    source = csource.get((GAME / "game.c").read_text(), name)
+    if net._function(name, slug)["status"] != "matched":
+        assert net.attempt(agent, name, source, slug)["matched"]
+    (saves.default_folder(net, slug) / "src" / f"{name}.c").unlink()
+    net.progress.sync(slug, force=True)
+    fn = net._function(name, slug)
+    variant = source.replace("(sum << 5) + sum", "sum + (sum << 5)")
+    score = net.try_quietly(agent, net.project_row(slug), {**fn, "status": "open"}, variant)["score"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open', matched_source=NULL, best_score=?, best_source=?, permuted=0 "
+                   "WHERE id=?", (score, variant, fn["id"]))
+    original_permuter = net.permuter
+    worker = net.permuter = PermuterWorker(net)
+    try:
+        worker.configure({"worker_threads": 1})
+        worker.start(slug)
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline and net._function(name, slug)["status"] != "matched":
+            time.sleep(.1)
+        assert net._function(name, slug)["status"] == "matched"
+        assert net.project_row(slug)["slug"] == slug
+    finally:
+        worker.close()
+        net.permuter = original_permuter
+
+
 def test_local_source_preparation_uses_real_rom_judge_and_private_context(game, tmp_path):
     """The opt-in seed path must earn an exact linked verdict, not just a successful compiler invocation."""
     import sqlite3

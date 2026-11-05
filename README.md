@@ -694,7 +694,9 @@ app and leaves this one running. Neither copies/migrates data nor alters the ins
 New managed agent sessions and jobs are held until existing work finishes. Continuous background
 passes may need to be stopped from their own panels. You can cancel while waiting. Once idle, the
 app fast-forwards main, runs locked dependency sync, checks imports, then restarts with the chosen
-home. Local changes, another branch, a different origin or failed preparation stop the handoff.
+home. If only the permuter worker's Python files changed, the source app fast-forwards the checkout
+and restarts that worker while the server and other jobs continue. Local changes, another branch, a
+different origin or failed preparation stop the handoff.
 The checkout and selected data remain separate from packaged code: to return to the packaged app,
 quit the source app before opening the installed app using the same data. External AI clients do
 not participate in this managed session drain; finish their work before switching runtimes.
@@ -705,7 +707,8 @@ function, disclosures and main scroll position are restored. Backend workers and
 rooms continue running. Edited text or an open dialog/agent launcher delays the
 page reload and shows a **Reload interface** button; save or copy edits before
 using it. Set `DECOMP_LIVE_RELOAD=0` before launching to disable this behavior.
-Packaged apps do not watch files. Python backend changes still require a restart.
+Packaged apps do not watch files. In a checkout, edits to the permuter worker's Python code restart
+only that worker; a turn in progress may be retried. Other Python backend changes require a restart.
 Existing running copies need one restart to pick up this file-watching feature.
 
 On a Mac desktop, `DECOMP_TEST_COCOA=1 uv run pytest -q tests/test_macos.py` also exercises a hidden
