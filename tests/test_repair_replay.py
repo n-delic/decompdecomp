@@ -155,3 +155,28 @@ def test_judge_revision_only_change_can_be_recompiled_without_trusting_old_score
     assert example==original and 'no linked/objdiff match adoption' in report['verdict']
     example['evidence']['before']['settings']['compiler']={'toolchain':'different'}
     assert 'skipped' in replay.replay(example,measure=lambda s:1/0)
+
+
+def test_original_container_order_does_not_block_frozen_source_replay(monkeypatch):
+    from tests.test_repair_comparison import snapshot
+    example = case()
+    settings = snapshot()
+    settings['context_sha256'] = replay.digest('')
+    example['evidence']['before']['settings'] = settings
+    example['evidence']['after']['settings'] = deepcopy(settings)
+    example['evidence']['after']['settings']['rom']['byte_order'] = 'z64'
+    example['evidence']['after']['settings']['platform'] = 'n64'
+    example['evidence']['before']['settings']['platform'] = 'n64'
+    example['evidence']['comparable_settings'] = False  # Historical flags stay frozen.
+    frozen = deepcopy(example)
+    monkeypatch.setattr(replay.draft_repairs, 'variants', lambda *args, **kw: [])
+    seen = []
+    def measure(source):
+        seen.append(source)
+        return {'object':obj(1 if 'return 1' in source else 2)}
+    result = replay.replay(example, measure=measure)
+    assert 'skipped' not in result and len(seen) == 2
+    assert 'container' in result['comparison_note']
+    assert example == frozen
+    example['evidence']['after']['settings']['big_endian'] = False
+    assert 'skipped' in replay.replay(example, measure=lambda source: (_ for _ in ()).throw(AssertionError()))

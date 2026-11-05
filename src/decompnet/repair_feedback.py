@@ -15,6 +15,7 @@ from contextlib import contextmanager
 
 from .network import NetworkError
 from .project import compiler_for
+from .repair_comparison import differences as settings_differences
 
 CATEGORIES = ('unclassified', 'types', 'casts', 'constants', 'addresses', 'signatures', 'layout',
               'temporaries', 'expression_order', 'control_flow', 'compiler_settings', 'other')
@@ -140,7 +141,7 @@ class RepairFeedback:
         comparable = db.execute('SELECT a.*,s.settings AS recorded_settings FROM attempts a JOIN repair_attempt_settings s ON s.attempt_id=a.id '
                                 'WHERE a.function_id=? AND a.compiled=1 AND a.score>0 AND (? IS NULL OR a.id<?) ORDER BY a.score,a.id DESC LIMIT 100',
                                 (fn['id'],attempt_id,attempt_id)).fetchall()
-        comparable = next((r for r in comparable if json.loads(r['recorded_settings'])==current),None)
+        comparable = next((r for r in comparable if not settings_differences(json.loads(r['recorded_settings']),current)),None)
         if comparable:
             before = comparable
             old_settings = {'settings':comparable['recorded_settings']}

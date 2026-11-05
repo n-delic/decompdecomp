@@ -531,3 +531,30 @@ def test_identical_imported_rechecks_remain_separate_without_build_snapshots(set
         db.execute("UPDATE functions SET status='open' WHERE id=?", (fid,))
     net._record(fn(net, fid), winner, 0, source, 1, matched=True)
     assert net.store.one('SELECT COUNT(*) n FROM repair_examples')['n'] == 2
+
+
+def test_recording_selects_same_image_failure_across_container_metadata(setup):
+    from tests.test_repair_comparison import snapshot
+    net, winner, _, pid, fid = setup
+    effective = snapshot()
+    def configure(settings):
+        with net.store.tx() as db:
+            cfg = json.loads(db.execute('SELECT config FROM projects WHERE id=?', (pid,)).fetchone()['config'])
+            cfg['compiler'] = settings['compiler']
+            db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg),pid))
+    configure(effective)
+    net._record(fn(net,fid), winner, 20, 'same judging inputs', 1, effective_settings=effective)
+    altered = json.loads(json.dumps(effective))
+    altered['compiler']['flags'] = ['-O1']
+    configure(altered)
+    net._record(fn(net,fid), winner, 1, 'different compiler inputs', 1, effective_settings=altered)
+    effective['rom']['byte_order'] = 'z64'
+    configure(effective)
+    net._record(fn(net,fid), winner, 0, 'matched', 1, matched=True, effective_settings=effective)
+    case_id = net.repair_feedback.listing('demo', comparable=True)['examples'][0]['id']
+    evidence = net.repair_feedback.detail('demo', case_id)['evidence']
+    assert evidence['comparable_settings']
+    assert evidence['before']['source'] == 'same judging inputs'
+    assert evidence['before']['settings']['rom']['byte_order'] == 'v64'
+    assert evidence['after']['settings']['rom']['byte_order'] == 'z64'
+    assert evidence['previous']['source'] == 'different compiler inputs'

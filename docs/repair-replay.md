@@ -486,3 +486,20 @@ compile failures from five to zero. These are development/regression cases, not 
 fresh held-out evaluation. The six unresolved captures received bounded edit
 ablation; coupled prototype, qualifier and store-order changes remain evidence for
 further investigation rather than automatically learned rules.
+
+
+### Original image container versus judging inputs
+
+Repair capture and offline replay share one settings comparison. For complete ROM
+compiler-invocation snapshots with the same normalized image SHA-1, the original
+container `byte_order` is provenance, rather than a compiler change. Machine
+`big_endian`, compiler/flags/command, language, context/unit, scoring revision and
+all other settings are still compared. Missing hashes, incomplete snapshots and
+imported-project builds retain strict comparison.
+
+New captures can select a failed attempt across this container-only difference,
+without altering either captured snapshot. Direct replay of an older full export
+can also recognize this case and reports a comparison note. Historical stored
+review flags and categories are not bulk rewritten: older examples may still be
+excluded by their saved “source changes only” filter flag. Replay still validates
+source/header hashes and recompiles controls; it never adopts a new game match.

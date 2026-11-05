@@ -101,6 +101,9 @@
   with preserved explicit casts, unchanged shared headers and ordinary exact judging. Complex interfaces
   and argument-count changes remain review items.
 
+- Done: distinguish original ROM container provenance from judging settings in new repair captures
+  and full offline replays, with complete snapshot/hash guards and unchanged raw historical evidence.
+
 - Done: separate saved-progress project-lock and shared-verification wait timings in MCP
   transcripts, plus inclusive sync duration on return/failure, without changing synchronization.
 
