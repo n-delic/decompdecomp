@@ -3015,7 +3015,7 @@ ABI analysis and automatic source/profile selection remain planned.
 - Done: provider-limit waits recheck wall-clock reset deadlines at most every 30 seconds, including after system sleep and clock changes. Expired waits transition to availability checks; agent cards label overdue checks and show the date for later-day resets. Retry provider now tests one waiting worker; successful retries release the observed account cooldown without deleting newer limits.
 
 - Done: an opt-in checkbox makes one local Git commit per future ROM match using the
-  matching agent's post-match function notes, waiting until they arrive. The autosave
+  matching agent's post-match function notes, or `Match <function>` when absent. The autosave
   worker drains a durable queue with frozen match evidence; commits include only that function, its required
   context/evidence and previous best-draft deletion. Failed Git operations remain
   pending with visible diagnostics and function links; commits never push automatically.
@@ -3033,4 +3033,4 @@ ABI analysis and automatic source/profile selection remain planned.
 - Done: automatic per-function commits leave unrelated modified, deleted and untracked
   checkout files untouched and uncommitted. Whole-progress manual checkpoints keep
   their existing unrelated-edit gate; staged changes still pause automatic commits.
-  Matches waiting for notes do not consume the ready-commit batch limit.
+  Matches without notes use the short fallback rather than waiting.

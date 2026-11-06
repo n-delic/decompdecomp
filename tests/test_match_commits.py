@@ -73,20 +73,20 @@ def test_one_commit_per_function_uses_notes_and_removes_only_its_draft(automatic
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
 
 
-def test_waits_for_notes_then_commits_and_does_not_repeat_rematches(automatic):
+def test_missing_notes_use_fallback_without_repeating_after_late_notes(automatic):
     net, root, _, agent = automatic
     enable(automatic)
     before = git(root, 'rev-parse', 'HEAD')
     match(automatic)
     match_commits.process(net, 'game')
-    assert git(root, 'rev-parse', 'HEAD') == before
-    assert match_commits.status(net, net.project_row('game'))['pending'] == 1
-    net.release_function(agent, 'f', 'Matching agent handoff notes', 'game')
-    match_commits.process(net, 'game')
     committed = git(root, 'rev-parse', 'HEAD')
+    assert committed != before
+    assert git(root, 'log', '-1', '--format=%s') == 'Match f'
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    net.release_function(agent, 'f', 'Matching agent handoff notes', 'game')
     match(automatic, note='Polishing the same match does not add another match commit')
     match_commits.process(net, 'game')
-    assert committed != before and git(root, 'rev-parse', 'HEAD') == committed
+    assert git(root, 'rev-parse', 'HEAD') == committed
 
 
 def test_disable_cancels_pending_and_branch_or_index_changes_pause_commits(automatic):
@@ -130,20 +130,18 @@ def test_retries_after_commit_recording_failure_without_a_duplicate(automatic, m
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
 
 
-def test_other_agent_notes_are_not_used_and_unrelated_edits_are_not_committed(automatic):
-    net, root, _, agent = automatic
+def test_other_agents_notes_are_ignored_and_unrelated_edits_stay_uncommitted(automatic):
+    net, root, _, _ = automatic
     enable(automatic)
     match(automatic)
     other, _ = net.local_agent('different helper')
     net.add_note(other, 'game', 'Another agent’s older notes', 'f')
-    before = git(root, 'rev-parse', 'HEAD')
-    match_commits.process(net, 'game')
-    assert git(root, 'rev-parse', 'HEAD') == before
     (root/'private.rom').write_bytes(b'homemade private input')
-    net.add_note(agent, 'game', 'Winning agent’s notes', 'f')
+    before = git(root, 'rev-parse', 'HEAD')
     match_commits.process(net, 'game')
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
     assert git(root, 'rev-parse', 'HEAD') != before
+    assert git(root, 'log', '-1', '--format=%s') == 'Match f'
     assert 'private.rom' not in git(root, 'ls-files')
 
 
@@ -218,17 +216,13 @@ def test_later_edits_do_not_replace_the_queued_verified_source(automatic):
     assert 'src/f.c' in git(root, 'diff', '--name-only')
 
 
-def test_pre_match_notes_wait_for_a_fresh_matching_summary(automatic):
+def test_pre_match_notes_are_ignored_in_favor_of_fallback(automatic):
     net, root, _, agent = automatic
     enable(automatic)
     net.add_note(agent, 'game', 'Older unsuccessful experiment', 'f')
     match(automatic)
-    before = git(root, 'rev-parse', 'HEAD')
     match_commits.process(net, 'game')
-    assert git(root, 'rev-parse', 'HEAD') == before
-    net.release_function(agent, 'f', 'The final change that matched', 'game')
-    match_commits.process(net, 'game')
-    assert git(root, 'log', '-1', '--format=%s') == 'The final change that matched'
+    assert git(root, 'log', '-1', '--format=%s') == 'Match f'
 
 
 def test_notes_written_by_the_match_callback_are_available(automatic, monkeypatch):
@@ -283,17 +277,13 @@ def test_auto_commit_leaves_unrelated_tracked_edits_and_deleted_drafts_uncommitt
     assert {'src/f.c', 'best/f.c'} <= set(git(root, 'show', '--format=', '--name-only', 'HEAD').splitlines())
 
 
-def test_waiting_for_notes_does_not_starve_a_later_ready_match(automatic):
-    net, root, _, _ = automatic
+def test_blank_notes_use_fallback_and_remove_draft(automatic):
+    net, root, _, agent = automatic
     enable(automatic)
-    match(automatic, note='Ready match notes')
-    job = net.store.one('SELECT * FROM auto_match_commits')
-    other, _ = net.local_agent('waiting helper')
+    match(automatic, note='Temporary note')
     with net.store.tx() as db:
-        for index in range(25):
-            db.execute('INSERT INTO auto_match_commits(id,project_id,function_id,attempt_id,agent_id,created_at,notes_after,snapshot) VALUES(?,?,?,?,?,0,0,?)',
-                       ('waiting-'+str(index), job['project_id'], job['function_id'], -index-1, other.id, job['snapshot']))
+        db.execute("UPDATE notes SET text=' \n\t ' WHERE agent_id=?", (agent.id,))
     match_commits.process(net, 'game')
-    assert net.store.one('SELECT state FROM auto_match_commits WHERE id=?', job['id'])['state'] == 'done'
-    assert match_commits.status(net, net.project_row('game'))['pending'] == 25
-    assert git(root, 'log', '-1', '--format=%s') == 'Ready match notes'
+    assert git(root, 'log', '-1', '--format=%s') == 'Match f'
+    assert not (root/'best/f.c').exists()
+    assert 'best/f.c' in git(root, 'show', '--format=', '--name-only', 'HEAD')

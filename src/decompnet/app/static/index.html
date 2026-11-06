@@ -690,7 +690,7 @@
               <p class="small muted" id="repositorySyncHint">App-saved progress can be committed. Other checkout edits must be committed or moved first.</p>
               <div class="repository-auto-commit">
                 <label class="check"><input type="checkbox" id="repositoryAutoCommit" aria-describedby="repositoryAutoCommitAbout repositoryAutoCommitState"><span>Automatically commit new matches</span></label>
-                <p class="small muted" id="repositoryAutoCommitAbout">Create one local commit per new match using the matching agent’s function notes. Waits for post-match notes; removes that function’s previous best draft in the same commit. Nothing is pushed.</p>
+                <p class="small muted" id="repositoryAutoCommitAbout">Create one local commit per new match using the matching agent’s function notes. Uses “Match &lt;function&gt;” when notes are absent; removes that function’s previous best draft in the same commit. Nothing is pushed.</p>
                 <p class="small muted" id="repositoryAutoCommitState" role="status"></p>
                 <button class="ghost small-btn" type="button" id="repositoryAutoCommitDetails" hidden>Pending commits</button>
                 <pre class="joblog" id="repositoryAutoCommitLog" hidden></pre>

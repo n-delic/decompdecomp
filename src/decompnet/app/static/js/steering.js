@@ -135,13 +135,13 @@ function renderRepositoryAutoCommit(state = {}) {
   $("repositoryAutoCommitDetails").textContent = `Pending commits (${state.pending || 0})`;
   const status = $("repositoryAutoCommitState");
   status.textContent = state.error || (state.enabled
-    ? `${state.pending || 0} pending · ${state.last_commit ? "Last commit: " + state.last_commit.slice(0, 8) : "Waiting for new matches and agent notes."}`
+    ? `${state.pending || 0} pending · ${state.last_commit ? "Last commit: " + state.last_commit.slice(0, 8) : "Waiting for new matches."}`
     : "Off. Existing matches will not be committed automatically.");
   status.classList.toggle("err", !!state.error);
 }
 $("repositoryAutoCommitDetails").onclick = () => {
   const state = repositoryAutoCommitState;
-  dialog("Pending match commits", `<p>Each match waits for the matching agent’s notes and a safe Git checkpoint.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}<br><span class="small muted">${esc(item.error || "Waiting for agent notes or the next autosave check.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
+  dialog("Pending match commits", `<p>Each match uses its agent’s notes, or a short “Match &lt;function&gt;” message when notes are absent.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}<br><span class="small muted">${esc(item.error || "Waiting for the next autosave check.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
 };
 $("repositoryAutoCommit").onchange = async () => {
   const field = $("repositoryAutoCommit"), slug = S.slug, enabled = field.checked;

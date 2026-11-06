@@ -1,4 +1,4 @@
-"""Opt-in, local per-match Git commits, drained by the existing autosave worker after notes arrive."""
+"""Opt-in, local per-match Git commits, drained by the existing autosave worker with notes or a short fallback."""
 from __future__ import annotations
 
 import hashlib
@@ -158,11 +158,7 @@ def process(net, slug, output=log.info):
     if not repository_sync._LOCK.acquire(blocking=False):
         return
     try:
-        # Waiting-for-notes jobs must not starve ready matches beyond the batch limit.
-        for job in net.store.all("SELECT q.* FROM auto_match_commits q WHERE q.project_id=? AND q.state='pending' AND q.retry_at<=? "
-                                 "AND COALESCE(TRIM((SELECT n.text FROM notes n WHERE n.function_id=q.function_id "
-                                 "AND n.agent_id=q.agent_id AND n.created_at>=q.notes_after ORDER BY n.id DESC LIMIT 1)), '')<>'' "
-                                 "ORDER BY q.created_at LIMIT 20", proj['id'], time.time()):
+        for job in net.store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY created_at LIMIT 20", proj['id'], time.time()):
             check = getattr(output, 'check_cancel', None)
             if check:check()
             proj = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
@@ -174,8 +170,8 @@ def process(net, slug, output=log.info):
             try:
                 note = net.store.one('SELECT text FROM notes WHERE function_id=? AND agent_id=? AND created_at>=? ORDER BY id DESC LIMIT 1',
                                      job['function_id'], job['agent_id'], job['notes_after'])
-                if note is None or not note['text'].strip():
-                    continue
+                name = json.loads(job['snapshot'])['name']
+                message = note['text'].strip() if note is not None and note['text'].strip() else 'Match ' + name
                 root = repository_sync.checkout(cfg['auto_commit_folder'], clean=False)
                 if not repository_sync.progress_checkout(net, slug, root):
                     raise NetworkError('The linked progress checkout changed. Disable and re-enable automatic commits for the new folder.')
@@ -195,7 +191,7 @@ def process(net, slug, output=log.info):
                     if fresh is None or not net.cfg(fresh).get('auto_commit_matches'):
                         return
                     commit = repository_progress.commit_snapshot(root, files, paths, output, expected_head=head,
-                             expected_branch=branch, message=note['text'].strip()+'\n\n'+marker, allow_empty=True)
+                             expected_branch=branch, message=message+'\n\n'+marker, allow_empty=True)
                 with net.store.tx() as db:
                     db.execute("UPDATE auto_match_commits SET state='done',commit_sha=?,error=NULL WHERE id=?", (commit, job['id']))
             except (NetworkError, OSError, ValueError, KeyError) as error:
