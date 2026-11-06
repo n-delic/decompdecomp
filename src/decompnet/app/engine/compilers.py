@@ -13,6 +13,7 @@ import time
 from contextlib import nullcontext
 
 from ... import arch, compiler, compilermap, consoles, toolchains
+from ...compile_sessions import batched
 from ...network import Agent, NetworkError
 from ...project import compiler_for
 from .common import parse_ranges
@@ -295,6 +296,7 @@ class CompilerMixin:
         finally:
             lock.release()
 
+    @batched
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
                          auto_apply: bool = False, used_profiles_only: bool = False) -> dict:

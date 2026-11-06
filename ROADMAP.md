@@ -3064,3 +3064,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Done: optional automatic pushes default to ten unpushed commits, with a configurable threshold of 1–10,000. A separate background worker checks local refs and only contacts origin at the threshold. It pins the selected checkout, branch and origin, uses ordinary non-force push checks, retains failed commits locally and retries failures once a minute. ROM progress and PROJECT source checkouts share the behavior; it is independent of automatic match commits.
 
 - Compiler comparison discovery reads only source and fingerprint inputs; assembly and seeds load only for selected compilations. Auto-apply has an explicit progress stage instead of appearing to discover remaining functions.
+
+- Compile throughput: scoped per-worker header/workspace and successful-object reuse, prepared target/disassembly state, lean permutation scoring with full winner diagnostics, numeric phase timings and an installed-toolchain concurrency benchmark. See docs/compile-performance.md.

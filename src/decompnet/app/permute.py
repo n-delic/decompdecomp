@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import consoles, m2cfix, permuter_claims, scoring, seeds, toolchains
+from ..compile_sessions import batched
 from ..forks.project import ForkError
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
@@ -284,6 +285,7 @@ class Permuter:
             self._repair_round(agent, self.net.project_row(slug), st)
         return st
 
+    @batched
     def _repair_round(self, agent, proj, st: State, *, function_id=None, budget=32, seconds=20) -> None:
         """At most 32 compiles / 20 seconds before normal random turns; rotate even over ineligible drafts.
 
@@ -441,6 +443,7 @@ class Permuter:
         return run(self.net, proj, fn, log.info,
                    lambda: not st.stop.is_set() and time.monotonic() < deadline)
 
+    @batched
     def _permute(self, agent, proj, fn, st: State) -> None:
         seconds = self.seconds
         preflight_deadline = time.monotonic() + seconds
@@ -766,7 +769,10 @@ class Permuter:
             if 'Compiler or build process exceeded' in getattr(result, 'log', ''):
                 log.warning('%s: %s', fn['name'], result.log.strip())
             return None
-        cand, verdict, _ = self.net._evaluate(fn, proj, result.obj)
+        from .. import compile_timing
+        from .engine.judging import search_evaluation
+        with search_evaluation():
+            cand, verdict, _ = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
             return None
         self._trial_outcome = 'scored'
@@ -776,12 +782,17 @@ class Permuter:
         from ..source_lines import mismatches
         from .repair_localisation import bind
         # Use this actual compiled object; never recompile with different debug flags.
-        raw_rows=scoring.diff(self.net._target_obj(fn,proj),cand).rows
-        self._trial_locations=bind(source,mismatches(result.obj,fn['name'],raw_rows,source,
-            filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
-        d = scoring.diff(self.net._target_obj(fn, proj), cand)
+        with compile_timing.phase('score'):
+            d = scoring.diff(self.net._target_obj(fn, proj), cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+        if d.score < best or d.bytes_match or source == fn['best_source']:
+            # Winners and baselines feed subsequent local repairs and saved evidence.
+            # Ordinary misses skip export/address reports; search feedback remains available.
+            self.net._evaluate(fn, proj, result.obj)
+        with compile_timing.phase('search_diagnostics'):
+            self._trial_locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
+                filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
         rows = self.net._search_rows(fn,proj,result.obj,d.rows) if hasattr(self.net,'_search_rows') else d.rows
         self.net.keep_diff(agent.id, fn['id'], rows)
         if not hasattr(self.net, '_agent_outcomes'):
