@@ -8,7 +8,7 @@ const env={compilerDisplayedGroups:[{compiler:'Example compiler',parts:[{toolcha
  dialog:(_title,content)=>{html=content;return {querySelector:node,addEventListener(){}};},
  beginWork:work=>{work._workBar={};work._workStatus={};return()=>finished++;},profileFailureGroups:()=>'',
  api:async(_url,options)=>{posts.push(options.body);return new Promise(r=>release=r);},
- followJob:async(_job,_log,update)=>{update([],{progress:{phase:'Testing non-matches',total:10,checked:4,passed:2,failed:2,function:'example_function',matches:[],failures:[]}});assert.equal(node('[data-default-count]').textContent,'4 / 10 · 40%');assert.equal(node('[data-default-work]')._workBar.hidden,true);assert.equal(node('[data-default-bar]').hidden,false);assert.match(node('[data-default-function]').textContent,/Last checked: example_function/);return {total:10,checked:10,passed:2,failed:8,matches:[],failures:[]};},
+ followJob:async(_job,_log,update)=>{update([],{progress:{phase:'Reading project metadata',checked:0,passed:0,failed:0}});assert.equal(node('[data-default-left]').textContent,'—');update([],{progress:{phase:'Testing non-matches',total:10,checked:4,passed:2,failed:2,function:'example_function',matches:[],failures:[]}});assert.equal(node('[data-default-count]').textContent,'4 / 10 · 40%');assert.equal(node('[data-default-work]')._workBar.hidden,true);assert.equal(node('[data-default-bar]').hidden,false);assert.match(node('[data-default-function]').textContent,/Last checked: example_function/);return {total:10,checked:10,passed:2,failed:8,matches:[],failures:[]};},
  showJobError:(work,message)=>{work._errorBox.hidden=false;work._errorBox.textContent=message;}};
 vm.createContext(env);vm.runInContext(code,env);
 (async()=>{

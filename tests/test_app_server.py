@@ -2723,6 +2723,26 @@ def test_push_route_requires_write_header_and_does_not_sync_progress(app, monkey
     assert calls == [('game','/repo')]
 
 
+def test_reopening_nonmatch_trial_reuses_job_for_same_project_and_profile(app,monkeypatch):
+    from decompnet.app import compiler_default_test
+    client,net,*_=app
+    release=threading.Event();entered=threading.Event()
+    def trial(*args,**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return {'checked':0}
+    monkeypatch.setattr(compiler_default_test,'run',trial)
+    body={'slug':'nonmatch-discovery','action':'nonmatches','profile':{'toolchain':'example','flags':['-O2']}}
+    try:
+        first=client.post('/api/compiler/test-default',json=body,headers={'X-Decomp':'1'}).json()
+        assert entered.wait(3)
+        second=client.post('/api/compiler/test-default',json=body,headers={'X-Decomp':'1'}).json()
+        assert first['job']==second['job']
+        other=client.post('/api/compiler/test-default',json={**body,'profile':{'toolchain':'example','flags':['-O1']}},headers={'X-Decomp':'1'}).json()
+        assert other['job']!=first['job']
+    finally:release.set()
+
+
 def test_repository_setup_requires_write_guard_and_runs_as_job(app, monkeypatch):
     from decompnet.app import repository_setup
     client, net, _ = app
