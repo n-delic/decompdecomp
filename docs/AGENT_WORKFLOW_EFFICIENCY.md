@@ -430,3 +430,15 @@ not scan an entire game's registry or mutate a signature. Unknown typedef callba
 types, indirect calls, conditional preprocessing and macro registries remain
 manual-review cases. An exact selected definition is evidence, not proof of the
 original interface or every object's runtime lifetime.
+
+## Dated usage-limit resets
+
+Helpers recognize explicit English month/day reset messages in addition to relative,
+ISO and time-only forms. A stated timezone is evaluated at the reset date, including
+daylight-saving transitions. Missing years can cross New Year when the result is
+within the existing eight-day sanity bound. Invalid, past, ambiguous or distant
+resets remain unknown and use the existing conservative fallback waiting.
+
+This changes scheduling only. It does not bypass quotas, switch providers, resume
+paused agents or issue a model request while waiting. Existing live fallback timers
+are not rewritten by this change.

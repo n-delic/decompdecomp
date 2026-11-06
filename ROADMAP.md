@@ -5,6 +5,10 @@
   settings/matches in one guarded transaction. Unrelated agent progress no longer invalidates
   every passing candidate; changed and ambiguous overlay entries are skipped. Exact matches release claims and redirect displaced workers.
 
+- Done: dated usage-limit messages such as `resets Nov 9 at 5pm (Europe/London)`
+  use the stated date and timezone, including near-year rollover. Invalid or distant
+  dates retain conservative fallback waiting; no provider request bypasses a limit.
+
 - Done: SQLite writer acquisition releases the process-local mutex between short busy
   waits, retaining the configured timeout and never replaying transaction bodies.
   Other processes can still cause timeouts; this removes a local queue amplification.

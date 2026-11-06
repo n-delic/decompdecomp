@@ -219,6 +219,12 @@ _DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)\s*([dhms])", re.I)
 _SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 _RESET_AT = re.compile(r"(?:resets?|try again|available again)(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\b\.?"
                        r"(?:\s*\(([A-Za-z_]+(?:/[A-Za-z_+-]+)+|UTC)\))?", re.I)
+_RESET_DATE = re.compile(
+    r"(?:resets?|try again|available again)(?:\s+at)?\s+"
+    r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+    r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})"
+    r"(?:,?\s+(\d{4}))?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\b\.?"
+    r"(?:\s*\(([^()\r\n]*)\))?", re.I)
 _RESET_ISO = re.compile(r"(?:reset|again|until|after)\D{0,40}?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?"
                         r"(?:Z|[+-]\d{2}:?\d{2})?)", re.I)
 HOURS_HALF_DAY = 12
@@ -230,6 +236,31 @@ def no_credit(said: str) -> str | None:
         return None
     return (f"the model's provider says the account is out of credit (“{m.group(0)}”): top it up or select another available model, then "
             "start the agents again")
+
+
+def _dated_reset(match, now):
+    """English month/day reset messages, with no locale-dependent month parsing."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    month = 'jan feb mar apr may jun jul aug sep oct nov dec'.split().index(match[1][:3].lower()) + 1
+    hour, minute, half, zone = int(match[4]), int(match[5] or 0), match[6], match[7]
+    if not match[5] and not half:
+        return None  # A date followed by a bare number is not an unambiguous clock.
+    if half:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % HOURS_HALF_DAY + (HOURS_HALF_DAY if half.lower() == 'p' else 0)
+    try:
+        tz = timezone.utc if zone and zone.upper() == 'UTC' else ZoneInfo(zone) if zone is not None else None
+        year = int(match[3]) if match[3] else datetime.fromtimestamp(now, tz).year
+        when = datetime(year, month, int(match[2]), hour, minute, tzinfo=tz)
+        when = when if tz else when.astimezone()
+        if not match[3] and when.timestamp() < now - LIMIT_RESET_MARGIN:
+            when = datetime(year+1, month, int(match[2]), hour, minute, tzinfo=tz)
+            when = when if tz else when.astimezone()
+        return when.timestamp()
+    except (ValueError, ZoneInfoNotFoundError):
+        return None
 
 
 def limit_reset(said: str, now: float | None = None) -> float | None:
@@ -247,6 +278,8 @@ def limit_reset(said: str, now: float | None = None) -> float | None:
             at = (when if when.tzinfo else when.astimezone()).timestamp()
         except ValueError:
             at = None
+    elif (m := _RESET_DATE.search(said)):
+        at = _dated_reset(m, now)
     elif (m := _RESET_AT.search(said)) and (m.group(2) or m.group(3)):  # "resets 3" alone could be anything
         hour, minute, half, zone = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower(), m.group(4)
         if half:
