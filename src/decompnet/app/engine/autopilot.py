@@ -20,14 +20,17 @@ from ..draft_context import candidate_context
 
 
 class AutopilotMixin:
-    def start_autopilot(self, slug: str, workers: int = 3) -> dict:
+    def start_autopilot(self, slug: str, workers: int = 3, *, foreground=False) -> dict:
         """Try every open function's machine draft (m2c, compilable form) through the judge, smallest first, in the
-        background. Whatever already matches is saved before any agent spends a token on it; drafts that compile
+        background unless explicitly requested with foreground=True. Matches are saved before agents spend tokens; drafts that compile
         become the function's best attempt, so agents start from them. Agents and autopilot never collide: a
         function is held only while its draft compiles, and claimed ones are skipped."""
         self.cascades.resume(slug)
         state = self.autopilots.get(slug)
         if state and state["state"] == "running":
+            if foreground:
+                state.setdefault('_foreground',threading.Event()).set()
+                self.twins.promote(slug)
             return state
         fork = self.fork_slug(slug)
         # #118: a project from another tool may name a compiler decompdecomp doesn't have. Say which and where to pick
@@ -57,6 +60,8 @@ class AutopilotMixin:
             ids, try_one, no_drafts = [], None, str(e)
         state = {"state": "running", "total": len(ids), "tried": 0, "matched": 0, "near": 0, "twins": 0,
                  "phase": "twins", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event()}
+        state['_foreground']=threading.Event()
+        if foreground:state['_foreground'].set()
         self.autopilots[slug] = state
         threading.Thread(target=self._autopilot_run, args=(slug, ids, state, workers, try_one),
                          daemon=True, name=f"autopilot-{slug}").start()
@@ -71,19 +76,26 @@ class AutopilotMixin:
     def autopilot_status(self, slug: str) -> dict | None:
         state = self.autopilots.get(slug)
         if state:
-            return {k: v for k, v in state.items() if k != "stop"}
+            return {k: v for k, v in state.items() if k not in {"stop","_foreground"}}
         last = self.cfg(self._project(slug)).get("autopilot")  # the last run, from before the app restarted
         return {"state": "done", **last} if last else None
 
     def _autopilot_run(self, slug: str, ids: list[int], state: dict, workers: int, try_one=None) -> None:
+        from .. import maintenance
+        with maintenance.foreground(state.setdefault('_foreground',threading.Event())):
+            self._autopilot_work(slug,ids,state,workers,try_one)
+
+    def _autopilot_work(self, slug, ids, state, workers, try_one):
         from concurrent.futures import ThreadPoolExecutor
+
+        from .. import maintenance
 
         agent, _ = self.local_agent("autopilot")
         proj = self._project(slug)
         try_one = try_one or self._autopilot_one
         try:  # identical code first: free, and it takes those functions off the drafts' list
             if slug not in self.links:  # (a room member's matches come from the host)
-                job = self.twins.full_pass(slug)
+                job = self.twins.full_pass(slug,foreground_event=state['_foreground'])
                 state["twins"] = job.matched
                 state["matched"] += job.matched
         except Exception as e:
@@ -96,7 +108,8 @@ class AutopilotMixin:
             if state["stop"].is_set():
                 return
             try:
-                outcome = try_one(agent, proj, fid)
+                with maintenance.foreground(state['_foreground']):
+                    outcome = try_one(agent, proj, fid)
             except Exception:  # one odd function must not stop the rest
                 outcome = "fail"
             state["tried"] += 1
