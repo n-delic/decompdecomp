@@ -149,7 +149,7 @@ class Sweeps:
     def config(self, slug):
         proj = self.net.project_row(slug)
         row = self.net.store.one('SELECT value FROM settings WHERE key=?', f'deep-sweep:{proj["id"]}')
-        return {'threads': 0, 'compiler_profiles': 1, 'loop': False} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': 10000})
+        return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': 10000})
 
     def save(self, slug, cfg):
         proj = self.net.project_row(slug)
@@ -302,11 +302,13 @@ class Sweeps:
                                    'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 
-    def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0, compiler_profiles=1, loop=False):
+    def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1):
         from . import deep_profiles
         if not isinstance(loop, bool):
             raise NetworkError('Loop indefinitely must be true or false.')
         deep_profiles.validate(compiler_profiles)
+        from .deep_parallel import validate_threads
+        validate_threads(threads_per_function)
         if compiler_profiles > 1 and self.net.fork_slug(slug):
             raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
         if (isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 120 or
@@ -325,7 +327,7 @@ class Sweeps:
                     db.execute("DELETE FROM deep_permutation_passes WHERE function_id IN "
                                "(SELECT id FROM functions WHERE project_id=? AND status='open')",
                                (self.net.project_row(slug)['id'],))
-            self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop})
+            self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop})
             job = self.jobs.start('deep-permutation-pass', lambda log: self.run(slug, minutes, max_variants, log, threads, loop),
                                   cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}
@@ -533,7 +535,11 @@ class Sweeps:
         function_log.progress = progress
         try:
             count = self.config(slug).get('compiler_profiles', 1)
-            if count == 1:
+            per_function = self.config(slug).get('threads_per_function', 1)
+            if per_function > 1:
+                result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log,
+                                           compiler_profiles=count, threads_per_function=per_function)
+            elif count == 1:
                 result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log)
             else:
                 result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log, compiler_profiles=count)

@@ -1388,13 +1388,13 @@ def test_deep_permuter_route_starts_a_cancellable_job_for_one_function(app, monk
     client, _, _ = app
     checked = []
     monkeypatch.setattr(deep_permuter, 'validate', lambda *args: checked.append(args[1:]))
-    def run(net, slug, name, minutes, variants, log, compiler_profiles=1):
-        assert compiler_profiles == 2
+    def run(net, slug, name, minutes, variants, log, compiler_profiles=1, threads_per_function=1):
+        assert compiler_profiles == 2 and threads_per_function == 3
         log('Testing only '+name)
         log.progress({'tested':1, 'skipped':0, 'phase':'local repairs'})
         return {'function':name, 'matched':False, 'tested':1}
     monkeypatch.setattr(deep_permuter, 'run', run)
-    payload = {'slug':'selected-game','function':'selected_function','minutes':10,'max_variants':99,'compiler_profiles':2}
+    payload = {'slug':'selected-game','function':'selected_function','minutes':10,'max_variants':99,'compiler_profiles':2,'threads_per_function':3}
     response = client.post('/api/permuter/function', json=payload, headers={'X-Decomp':'1'})
     assert response.status_code == 200
     job_id = response.json()['job']
@@ -1417,7 +1417,7 @@ def test_function_deep_job_can_be_reattached_and_duplicate_start_is_reused(app, 
     monkeypatch.setattr(deep_permuter, 'validate', lambda *args: None)
     monkeypatch.setattr(net, 'function_detail', lambda slug, name, **kwargs: {'name': name})
 
-    def run(net, slug, name, minutes, variants, log, compiler_profiles=1):
+    def run(net, slug, name, minutes, variants, log, compiler_profiles=1, threads_per_function=1):
         assert compiler_profiles == 1
         calls.append(name)
         log('Search still running')
@@ -1454,7 +1454,9 @@ def test_deep_sweep_routes_validate_start_stop_and_status(app, monkeypatch):
     monkeypatch.setattr(net.deep_sweeps, 'reset_metrics', lambda slug: {'reset':slug})
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'reset-metrics'}, headers={'X-Decomp':'1'}).json() == {'reset':'example'}
     response = client.post('/api/permuter/pass', json={'slug':'example','minutes':7,'max_variants':99,'repeat':True}, headers={'X-Decomp':'1'})
-    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False)]
+    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False,1)]
+    client.post('/api/permuter/pass', json={'slug':'example','threads':2,'threads_per_function':4}, headers={'X-Decomp':'1'})
+    assert calls[-1] == ('example',5,10000,False,2,1,False,4)
     assert not client.post('/api/permuter/pass', json={'slug':'example','action':'stop'}, headers={'X-Decomp':'1'}).json()['enabled']
     assert client.post('/api/permuter/pass', json={'slug':'example','repeat':'yes'}, headers={'X-Decomp':'1'}).status_code == 400
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'unknown'}, headers={'X-Decomp':'1'}).status_code == 400

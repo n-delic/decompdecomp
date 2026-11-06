@@ -465,7 +465,7 @@ class Permuter:
         st.holding(fn["name"], True)
         fork = self.net.fork_slug(proj["slug"])
         from . import random_safety
-        rng = random.Random(f"{fn['id']}-{fn['permuted']}")
+        rng = random.Random(f"{fn['id']}-{fn['permuted']}"+getattr(self, "random_salt", ""))
         gen = None
         header = ''
         try:

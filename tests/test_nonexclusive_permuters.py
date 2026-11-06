@@ -16,7 +16,8 @@ from tests.test_room_match_profiles import pair  # noqa: F401
 
 
 @pytest.mark.parametrize('name,owner,expected', [('permuter',None,True), ('permuter-123',None,True),
-    ('client.permuter-123','client',True), ('permuter-helper',None,False),
+    ('client.permuter-123','client',True), ('permuter-123-lane-0',None,True),
+    ('client.permuter-123-lane-2','client',True), ('permuter-123-lane-x',None,False), ('permuter-helper',None,False),
     ('other.permuter-1','client',False), ('client.claude-1','client',False), ('autopilot',None,False)])
 def test_only_internal_worker_labels_are_nonexclusive(name, owner, expected):
     assert permuter_claims.nonexclusive(SimpleNamespace(name=name,owner=owner)) is expected

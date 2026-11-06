@@ -200,6 +200,9 @@ class Search(Permuter):
         self.measurement_counts.clear()
 
     def _compiler_preflight(self, proj, fn, state, deadline):
+        lane = getattr(self, 'parallel_lane', None)
+        if lane is not None and (lane.index or lane.preflight_done):
+            return {'tested': 0}
         if self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
             self.log('Searching with the current compiler settings while an agent owns the function; flag changes are deferred.')
             return {'tested': 0}
@@ -395,6 +398,9 @@ class Search(Permuter):
                 feedback.order(queue,labels,source,parents)
                 queue=repair_ranking.guarded_first(queue,labels)
                 candidate=queue.pop(0)
+                lane = getattr(self, "parallel_lane", None)
+                if lane is not None and int(hashlib.sha256(candidate.encode()).hexdigest(), 16) % lane.count != lane.index:
+                    continue
                 if phase_deadline is not None and time.monotonic() >= phase_deadline:
                     self.local_status = {'reason': 'phase_budget', **counters}
                     self.log('Local phase budget reached; reserving the remaining search for random rewrites.')
@@ -654,22 +660,27 @@ class Search(Permuter):
         return score
 
 
-def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
+def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1):
+    from .deep_parallel import validate_threads
+    validate_threads(threads_per_function)
     # One explicit deep search per function, including credential issuance. Agents may keep working.
     fn = net._function(name, slug)
     lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())
     if not lock.acquire(blocking=False):
         raise NetworkError('A deep search is already running for this function.')
     try:
+        if threads_per_function > 1:
+            from .deep_parallel import run as parallel
+            return parallel(net, slug, name, minutes, max_variants, log, compiler_profiles, threads_per_function)
         return _run(net, slug, name, minutes, max_variants, log, compiler_profiles)
     finally:
         lock.release()
 
 
-def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
+def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
     proj, fn = validate(net, slug, name, minutes, max_variants)
-    sweeps = getattr(net, 'deep_sweeps', None)
+    sweeps = getattr(net, 'deep_sweeps', None) if lane is None else None
     if sweeps:
         from ..candidate_scope import key
         build_scope = key(net, proj, fn)
@@ -678,6 +689,10 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
     if compiler_profiles > 1 and net.fork_slug(slug):
         raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
     search = Search(net, minutes, max_variants, log, fn)
+    if lane is not None:
+        search.deadline = lane.deadline
+        search.random_salt = f"-lane-{lane.index}"
+        search.parallel_lane = lane
     if not net.fork_slug(slug) and (slug not in net.links or compiler_profiles>1):
         search.compiler_profiles = deep_profiles.selected(net, proj, compiler_profiles)
         for profile in search.compiler_profiles:
@@ -689,7 +704,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
     state = State()
     # Issuing local credentials rotates the token. Concurrent searches must not
     # invalidate each other or the background permuter, even outside rooms.
-    agent, _ = net.local_agent(f'permuter-{fn["id"]}')
+    agent, _ = net.local_agent(f'permuter-{fn["id"]}'+(f'-lane-{lane.index}' if lane is not None else ''))
     reason = 'Current candidate families finished'
     if slug in net.links:
         log('Room search: permutation does not reserve functions; exact matches require host confirmation. '
@@ -706,7 +721,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
     try:
         # Explicitly configured local source carries real records/macros and original line breaks.
         # Try it before mutating an accumulated machine draft; never fetch a reference automatically.
-        if hasattr(net, '_comparison_digest') and not net.store.one(
+        if (lane is None or lane.index == 0) and hasattr(net, '_comparison_digest') and not net.store.one(
                 'SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
             search.check()
             from . import source_preparation
@@ -717,6 +732,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
             proj, fn = net.project_row(slug), net._function(name, slug)
             search.best = fn['best_score']
         search._compiler_preflight(proj, fn, state, search.deadline)
+        if lane is not None:
+            lane.prepared()
         proj, fn = net.project_row(slug), net._function(name, slug)
         if fn['status'] == 'matched':
             reason = 'Matched'
@@ -791,7 +808,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
                 # Notes are advisory; a disconnected host must not mask the search verdict/error.
                 pass
     search.report()
-    if reason=='Matched' and hasattr(net,'_candidate_checks') and slug not in net.links:
+    if lane is None and reason=='Matched' and hasattr(net,'_candidate_checks') and slug not in net.links:
         from .export_source_recovery import run as repair_export
         export_report=repair_export(net,net.project_row(slug),{name},state,log,
                                     budget=min(4,max(0,max_variants-search.tested)),deadline=search.deadline)

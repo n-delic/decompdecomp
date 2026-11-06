@@ -250,7 +250,7 @@ async function openFn(name) {
     $("fnDeepNow").textContent = "";
     $("fnDeepWork").replaceChildren();
     $("fnDeepRun").disabled = false; $("fnDeepStop").hidden = true;
-    $("fnDeepMinutes").disabled = false; $("fnDeepVariants").disabled = false; $("fnDeepProfiles").disabled = false;
+    $("fnDeepMinutes").disabled = false; $("fnDeepVariants").disabled = false; $("fnDeepProfiles").disabled = false; $("fnDeepThreads").disabled = false;
     for (const id of ["fnCompilerSummary", "fnCompilerLog", "fnDeepLog"]) {
       const log = $(id); if (log._workStatus) { log._workStatus.remove(); log._workStatus = null; }
     }
@@ -961,7 +961,7 @@ async function followFunctionDeep(job = null) {
   const target = deepPermuterTarget = {};
   const active = () => deepPermuterTarget === target && S.gen === gen && S.fnNav === nav && S.slug === slug && S.fn === name && !$("drawer").hidden;
   const log = $("fnDeepLog"), status = $("fnDeepStatus"), stop = $("fnDeepStop");
-  const controls = [$("fnDeepRun"), $("fnDeepMinutes"), $("fnDeepVariants"), $("fnDeepProfiles")];
+  const controls = [$("fnDeepRun"), $("fnDeepMinutes"), $("fnDeepVariants"), $("fnDeepProfiles"), $("fnDeepThreads")];
   const minutes = Number($("fnDeepMinutes").value), maxVariants = Number($("fnDeepVariants").value);
   const renderProgress = deepProgressView();
   renderProgress();
@@ -975,7 +975,7 @@ async function followFunctionDeep(job = null) {
   $("fnDeepWork").append(log._workStatus);
   $("fnDeepWork").append(bar);
   try {
-    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants, compiler_profiles:Number($("fnDeepProfiles").value) } }));
+    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants, compiler_profiles:Number($("fnDeepProfiles").value), threads_per_function:Number($("fnDeepThreads").value) } }));
     if (active()) { deepPermuterJob = job; stop.disabled = false; }
     const result = await followJob(job, null, (lines, state) => {
       if (!active()) return;

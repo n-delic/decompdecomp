@@ -312,3 +312,32 @@ def test_an_exact_scratch_recheck_keeps_credit_without_a_regression(built, tmp_p
     assert fn['status']=='matched' and fn['matched_agent_id']==owner.id
     assert match_bundle.status(net,fn)['regression'] is None
     assert not net.store.one("SELECT 1 FROM events WHERE kind='regression'")
+
+
+def test_parallel_deep_search_uses_real_judge_and_saves_exact_match(built, tmp_path, monkeypatch):  # noqa: F811
+    import threading
+
+    from decompnet.app import deep_permuter
+
+    from .test_deep_permuter import Log
+    net = RomNetwork(tmp_path/'deep-parallel.db', tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda _: None)
+    owner, _ = net.local_agent('owner')
+    net.split_function(owner, slug, 'func_800007C4', '0x800007D0')
+    name = 'func_800007D0'
+    wrong = 's32 func_800007D0(s32 v,s32 lo,s32 hi){return 7;}'
+    net.claim(owner, slug, name)
+    net.attempt(owner, name, wrong, slug)
+    # Independent candidate paths, the real linked-byte judge and existing claim
+    # handoff. The barrier fails if the second path is merely queued serially.
+    barrier = threading.Barrier(2)
+    def local(self, agent, proj, fn, best, fork, **kwargs):
+        barrier.wait(timeout=10)
+        source = CLAMP if self.parallel_lane.index == 0 else wrong.replace('7', '8')
+        score = self._score(agent, proj, fn, source, best, fork)
+        return score, source
+    monkeypatch.setattr(deep_permuter.Search, 'local_repairs', local)
+    result = deep_permuter.run(net, slug, name, 1, 20, Log(), threads_per_function=2)
+    assert result['matched'] and result['tested'] <= 20
+    assert net._function(name, slug)['matched_source'] == CLAMP
+    assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', owner.id) is None
