@@ -2673,3 +2673,28 @@ def test_provider_retry_route_is_guarded_and_does_not_spawn_or_stop_workers(tmp_
     assert s.provider_retry_requested and not s.stop.is_set() and s.thread is None
     s.provider_waiting=False
     assert client.post(path,json={'id':s.id},headers={'X-Decomp':'1'}).status_code==400
+
+@pytest.mark.parametrize('path', ['/api/try', '/api/note', '/api/release'])
+def test_foreground_routes_do_not_wait_for_saved_recheck_publication(app, tmp_path, monkeypatch, path):
+    from .test_loading import tiny_game
+
+    client, net, _ = app
+    slug = 'foreground-' + path.rsplit('/', 1)[-1]
+    tiny_game(net, slug)
+    folder = tmp_path/'saved'
+    folder.mkdir()
+    from decompnet.app.progress import _Recheck
+    active = _Recheck(folder, net.progress._signature(folder), ready=True)
+    net.progress.rechecking[slug] = active
+    def attempt(*args):
+        assert net.progress.local.foreground
+        return {'score': 0, 'matched': True, 'text': 'controlled exact verdict'}
+    monkeypatch.setattr(net, 'attempt', attempt)
+    name = net.store.one('SELECT name FROM functions WHERE project_id=(SELECT id FROM projects WHERE slug=?)', slug)['name']
+    try:
+        response = client.post(path, headers={'X-Decomp':'1'}, json={'slug':slug, 'name':name,
+                               'function':name, 'source':'candidate', 'text':'post-match notes'})
+        assert response.status_code == 200, response.text
+        assert net.progress.rechecking[slug] is active
+    finally:
+        net.progress.rechecking.pop(slug, None)

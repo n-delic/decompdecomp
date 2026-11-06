@@ -3021,3 +3021,11 @@ ABI analysis and automatic source/profile selection remain planned.
   pending with visible diagnostics and function links; commits never push automatically.
   PROJECT mode needs a per-unit commit adapter because multiple functions can share
   one build-owned source file. Synthetic ROM/Git/UI tests cover N64, PS1, PS2 and PSP.
+
+- Done: foreground ROM judge requests can finish during saved-progress rechecks once
+  the new layout and build inputs have been applied. Saved compiles wait outside the
+  publication lock; each verdict retains newer foreground matches. Further imports
+  and repository snapshots wait for the recheck, and external file edits invalidate
+  foreground attempts. Notes/releases from the GUI use the same foreground lane.
+  Controlled concurrency regressions cover N64, PS1, PS2 and PSP; PROJECT builds keep
+  their existing objdiff path and do not use the ROM saved-source recheck.

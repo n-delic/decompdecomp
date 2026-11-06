@@ -36,6 +36,13 @@ best_diff = _call(connection, '/api/diff?' + query + '&which=best')
 Use the home selected when launching the app if it is not `~/Decomp`. Do not print the connection object.
 Respect claims: a busy function belongs to its current worker until released.
 
+During a saved-progress recheck, foreground judge requests can use the already-imported
+layout, context and compiler inputs without waiting for every saved function to compile.
+Saved verdicts do not overwrite a newer foreground match. Further file imports and Git
+snapshots wait for the recheck to finish. If files change externally during this phase,
+the request asks you to wait for synchronization and read the function again; retry
+against those updated inputs. GUI function notes and releases remain available too.
+
 `which=best` matters: the latest experiment can be worse than the saved best. A score-zero scratch attempt
 on an already-matched function is not a new recovery. Compare the function's status before and after, and
 verify that accepted sources and headers reach the saved project. Never change the target or comparison gate.
