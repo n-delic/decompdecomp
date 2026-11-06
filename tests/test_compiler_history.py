@@ -170,14 +170,16 @@ def test_comparison_queue_counts_exclude_completed_and_respect_run_limit(compari
 
     first = net.survey_compilers('demo', all_installed=True, untested_only=True, limit=1, log=Log())
     assert first['total'] == 1 and first['remaining'] == 0 and first['deferred'] == 1
-    assert snapshots[0]['phase'] == 'eligibility' and snapshots[0]['checked'] == 0
-    compiling = [s for s in snapshots if s.get('phase') != 'eligibility']
+    assert snapshots[0]['phase']=='preparation'
+    scans=[s for s in snapshots if s.get('phase')=='eligibility']
+    assert scans[0]['checked']==0
+    compiling = [s for s in snapshots if s.get('phase') not in ('eligibility','preparation')]
     assert compiling[0]['completed'] == 0 and compiling[0]['remaining'] == 1
     assert snapshots[-1]['completed'] == 1 and snapshots[-1]['remaining'] == 0
     snapshots.clear()
     second = net.survey_compilers('demo', all_installed=True, untested_only=True, log=Log())
     assert second['total'] == 1 and second['skipped'] == 1 and second['deferred'] == 0
-    assert next(s for s in snapshots if s.get('phase') != 'eligibility')['total'] == 1
+    assert next(s for s in snapshots if s.get('phase') not in ('eligibility','preparation'))['total'] == 1
 
 
 def test_auto_apply_uses_best_completed_profile_and_records_outcomes(comparison, monkeypatch):
@@ -315,3 +317,58 @@ def test_eligibility_batches_shared_reads_and_reports_scan(comparison):
     scans = [s for s in snapshots if s.get('phase') == 'eligibility']
     assert scans[0]['checked'] == 0 and scans[-1]['checked'] == scans[-1]['scan_total'] == 2
     assert scans[-1]['eligible'] == 2
+
+
+def test_bulk_comparison_does_not_sync_saved_files_or_build_a_map(comparison,monkeypatch):
+    net,*_=comparison
+    monkeypatch.setattr(net.progress,'sync',lambda *args:(_ for _ in ()).throw(AssertionError('implicit saved-file sync')))
+    monkeypatch.setattr(net,'compiler_map',lambda *args:(_ for _ in ()).throw(AssertionError('unneeded compiler map')))
+    assert net.run_compiler_comparison('demo')['tried']==2
+
+
+def test_first_compile_precedes_later_eligibility_batches(comparison,monkeypatch):
+    net,profiles,_,_=comparison
+    pid=net.store.one("SELECT id FROM projects WHERE slug='demo'")['id']
+    with net.store.tx() as db:
+        for n in range(60):
+            db.execute('INSERT INTO functions(project_id,name,vram,n_insns,status,best_score,best_source) VALUES(?,?,?,?,?,?,?)',
+                       (pid,f'extra{n}',0x80003000+n*16,4,'open',200,f'int extra{n}(void){{return 1;}}'))
+    checked=[];timings=[]
+    digest=net._comparison_digest
+    def tracked(*args,**kwargs):
+        checked.append(args[1]['id'])
+        return digest(*args,**kwargs)
+    def judge(*args):
+        if not timings:timings.append(len(checked))
+        return False,SimpleNamespace(percent=80.0,score=80),''
+    monkeypatch.setattr(net,'_comparison_digest',tracked)
+    monkeypatch.setattr(net,'_judge_with',judge)
+    result=net.run_compiler_comparison('demo')
+    assert timings[0]<=25 and len(checked)==62
+    assert result['tried']==62 and result['total']==62
+
+
+def test_used_profiles_preserve_overlay_assignments_and_probe_each_tool_once(comparison,monkeypatch):
+    from decompnet.project import function_compiler_key
+    net,*_=comparison
+    cfg=json.loads(net.store.one("SELECT config FROM projects WHERE slug='demo'")['config'])
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET vram=2147487744,rom_offset=id*100 WHERE project_id=1")
+        rows=[dict(r) for r in db.execute('SELECT name,vram,rom_offset FROM functions WHERE project_id=1')]
+        cfg['function_compilers']={function_compiler_key(r):dict(function=r['name'],vram=r['vram'],toolchain='gcc-2.7.2-kmc',flags=[f'-O{n%3}']) for n,r in enumerate(rows)}
+        db.execute('UPDATE projects SET config=? WHERE id=1',(json.dumps(cfg),))
+    probes=[]
+    monkeypatch.setattr(toolchains,'runtime_error',lambda tid:probes.append(tid))
+    proj=net.store.one("SELECT * FROM projects WHERE slug='demo'")
+    usage=net.compiler_profile_usage(proj)
+    assert sum(p['functions'] for p in usage)==4
+    assert {tuple(p['flags']) for p in usage}=={('-O0',),('-O1',),('-O2',)}
+    assert len(net._used_comparison_candidates(proj))==3
+    assert probes==['gcc-2.7.2-kmc']
+
+
+def test_compiler_panel_refresh_does_not_reconcile_saved_files(comparison,monkeypatch):
+    net,*_=comparison
+    monkeypatch.setattr(net.progress,'sync',lambda *args:(_ for _ in ()).throw(AssertionError('implicit saved-file sync')))
+    monkeypatch.setattr(net,'compiler_map',lambda *args:None)
+    assert net.compiler_answer('demo',display_only=True)['compiler']

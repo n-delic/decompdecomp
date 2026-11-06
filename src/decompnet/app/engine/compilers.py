@@ -10,6 +10,7 @@ import logging
 import re
 import threading
 import time
+from contextlib import nullcontext
 
 from ... import arch, compiler, compilermap, consoles, toolchains
 from ...network import Agent, NetworkError
@@ -73,7 +74,8 @@ class CompilerMixin:
 
     def _rebuild_cmap(self, slug: str, building: threading.Lock) -> None:
         try:
-            self._build_cmap(self._project(slug))  # its settings now, not those of the request that asked
+            with self.progress.view() if hasattr(self,'progress') else nullcontext():
+                self._build_cmap(self._project(slug))  # its settings now, not those of the request that asked
         except Exception:  # noqa: BLE001  the last map keeps answering
             logging.getLogger("decompdecomp").exception("the compiler map failed")
         finally:
@@ -171,6 +173,11 @@ class CompilerMixin:
 
     def _comparison_candidates(self, proj, all_installed=True):
         cfg = self.cfg(proj)
+        usable={}
+        def ready(tid):
+            if tid not in usable:
+                usable[tid]=bool(toolchains.installed(tid) and toolchains.get(tid).supported and not toolchains.runtime_error(tid))
+            return usable[tid]
         candidates = sorted({(cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))}
                             | {(r["toolchain"], tuple(r["flags"])) for r in cfg.get("compiler_ranges", [])}
                             | {(r['toolchain'],tuple(r['flags'])) for r in cfg.get('function_compilers',{}).values()})
@@ -178,10 +185,8 @@ class CompilerMixin:
             # Only this console's installed, usable compilers: never download tools or call an AI provider.
             candidates = sorted({(c.id, tuple(consoles.default_flags(cfg, c.id)))
                                  for c in consoles.of(cfg).compilers
-                                 if c.automatic and toolchains.installed(c.id) and toolchains.get(c.id).supported
-                                 and not toolchains.runtime_error(c.id)} | set(candidates))
-            candidates = [(tc, flags) for tc, flags in candidates if toolchains.installed(tc)
-                          and toolchains.get(tc).supported and not toolchains.runtime_error(tc)]
+                                 if c.automatic and ready(c.id)} | set(candidates))
+            candidates = [(tc, flags) for tc, flags in candidates if ready(tc)]
         # Debug line labels can change old GCC assemblers' delay-slot scheduling even at the same -O level.
         candidates = sorted({(tc, tuple(variant)) for tc, flags in candidates
                              for variant in self.debug_flag_variants(tc, list(flags))})
@@ -197,8 +202,9 @@ class CompilerMixin:
         cfg = self.cfg(proj)
         used = {(p['toolchain'], tuple(p['flags'])) for p in self.compiler_profile_usage(proj)}
         default = (cfg['compiler']['toolchain'], tuple(cfg['compiler']['flags']))
-        return sorted((p for p in used if toolchains.installed(p[0]) and toolchains.get(p[0]).supported
-                       and not toolchains.runtime_error(p[0])), key=lambda p: (p != default, p))
+        usable={tid:bool(toolchains.installed(tid) and toolchains.get(tid).supported
+                         and not toolchains.runtime_error(tid)) for tid in sorted({p[0] for p in used})}
+        return sorted((p for p in used if usable[p[0]]),key=lambda p:(p!=default,p))
 
     def _comparison_inputs(self, proj, candidates):
         """Read and encode project-wide inputs once per eligibility pass."""
@@ -244,8 +250,15 @@ class CompilerMixin:
         """Current assignments, not historical alternatives that happened to compile."""
         cfg = self.cfg(proj)
         profiles = {}
-        for fn in self.store.all("SELECT vram,status FROM functions WHERE project_id=?", proj["id"]):
-            profile = compiler_for(cfg, fn["vram"], fn)
+        fallback={}
+        for own in (cfg.get('function_compilers') or {}).values():
+            fallback.setdefault((own.get('function'),own.get('vram')),own)
+        for fn in self.store.all("SELECT name,unit,vram,rom_offset,status FROM functions WHERE project_id=?", proj["id"]):
+            row=dict(fn)
+            if row.get('rom_offset') is None:
+                own=fallback.get((row.get('name'),row['vram']))
+                profile=({**cfg['compiler'],'toolchain':own['toolchain'],'flags':own['flags']} if own else compiler_for(cfg,row['vram']))
+            else:profile=compiler_for(cfg,row['vram'],row)
             key = (profile["toolchain"], tuple(profile["flags"]))
             if key not in profiles:
                 profiles[key] = {"toolchain": key[0], "flags": list(key[1]), "functions": 0, "matched": 0}
@@ -285,6 +298,15 @@ class CompilerMixin:
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
                          auto_apply: bool = False, used_profiles_only: bool = False) -> dict:
+        # Saved-file watching owns synchronization. A comparison uses current DB inputs and
+        # rejudges before applying; loading a project here must not restore/reverify its files.
+        with self.progress.view() if hasattr(self,'progress') else nullcontext():
+            return self._survey_compilers(slug,log,limit,state,all_installed,function,untested_only,
+                                          flags_only,auto_apply,used_profiles_only)
+
+    def _survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None,
+                         all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
+                         auto_apply: bool = False, used_profiles_only: bool = False) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
         compiler the project uses: C that matches the game with another compiler (and not with today's) confirms that
         compiler for its function. Contradicted functions first, then the closest attempts; C already tried is
@@ -293,30 +315,52 @@ class CompilerMixin:
             raise NetworkError("Auto-apply requires an installed-compiler comparison and a boolean option.")
         if not isinstance(function, str):
             raise NetworkError("Choose a function by name.")
+        started=time.monotonic()
+        check_cancel=getattr(log,'check_cancel',lambda:None)
+        report=getattr(log,'progress',lambda value:None)
+        def preparing_phase(label):
+            check_cancel()
+            report({'phase':'preparation','stage':label,'elapsed':time.monotonic()-started})
+        def phase_done(label,began):
+            log(f'Compiler preparation · {label}: {time.monotonic()-began:.3f}s')
+        preparing_phase('Reading project settings')
+        began=time.monotonic()
         self._rom_only(slug, "the compiler survey")
         proj = self._project(slug)
-        if self.compiler_map(proj) is None:
+        phase_done('Project settings',began)
+        if not self.is_rom(proj) or arch.COMPILER_MAP not in self.console(proj).features:
             raise NetworkError("the compiler map reads MIPS code (PlayStation 2, PlayStation, N64) for now")
-        cmap = self.compiler_map(proj)
+        # A bulk comparison can judge pairs without building a compiler map first.
+        cached=self._cmaps.get(proj['id'])
+        cmap=cached[1] if all_installed and cached else (None if all_installed else self.compiler_map(proj))
         cfg = self.cfg(proj)
         if function and not all_installed:
             raise NetworkError("Single-function comparison needs installed-compiler mode.")
+        preparing_phase('Checking installed compiler profiles')
+        began=time.monotonic()
         candidates = self._used_comparison_candidates(proj) if used_profiles_only else self._comparison_candidates(proj, all_installed)
+        phase_done('Compiler profiles',began)
         if all_installed and not candidates:
             raise NetworkError("Install at least one usable compiler in Compilers & tools before testing.")
         if all_installed and not function:
             log(f"Testing {len(candidates)} compiler/flag combinations per function on up to {limit} existing unmatched C attempts. This uses the same flag search as a single-function comparison and may take longer.")
         old = cfg.get("compiler_survey") or {}
         tried, confirmed = ({}, {}) if all_installed else (dict(old.get("tried", {})), dict(old.get("confirmed", {})))
-        rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND status NOT IN ('matched', 'asm') AND n_insns>=?",
-                              proj["id"], 0 if all_installed else self.SURVEY_MIN_INSNS)
+        preparing_phase('Loading function queue')
+        began=time.monotonic()
         if function:
-            fn = self._function(function, slug)
+            fn=self._function(function,slug)
             if not self._comparison_source(fn):
                 raise NetworkError("This function has no C attempt yet. Create a draft or attempt first.")
-            rows = [fn]  # Explicit checks include short functions; matches alone do not identify their compiler.
+            rows=[fn]
             log(f"{function}: testing all {len(candidates)} supported compiler/flag combinations (not an exhaustive search of every possible flag).")
-        rows.sort(key=lambda f: (f["vram"] not in cmap.contradicted, f["best_score"] if f["best_score"] is not None else 1 << 30))
+        else:
+            fields='id,vram,best_score' if all_installed else '*'
+            rows=self.store.all(f"SELECT {fields} FROM functions WHERE project_id=? AND status NOT IN ('matched', 'asm') AND n_insns>=?",
+                                proj['id'],0 if all_installed else self.SURVEY_MIN_INSNS)
+        contradicted=cmap.contradicted if cmap else set()
+        rows.sort(key=lambda f:(f['vram'] not in contradicted,f['best_score'] if f['best_score'] is not None else 1<<30))
+        phase_done('Function queue',began)
         state = state if state is not None else {}
         comparison = None
         check_cancel = getattr(log, "check_cancel", lambda: None)
@@ -328,48 +372,64 @@ class CompilerMixin:
             log("Only exact compiler profiles currently assigned to project functions; no generated flag variations.")
         if flags_only:
             log("Flag variations only: each function uses its currently selected compiler; other compilers are skipped.")
-        # Plan the bounded queue before compiling so the GUI can show an honest remaining count.
-        planned_digests = {}
+        # Discover eligibility in small batches and yield each batch immediately.
+        # Large sources/assembly are fetched only for that batch, not the project.
+        planned_digests={}
+        total=min(limit,len(rows));deferred=max(0,len(rows)-total)
         if all_installed:
-            pending = []
-            report = getattr(log, 'progress', lambda value: None)
-            scanned = 0
-            def preparing():
-                report({'phase': 'eligibility', 'checked': scanned, 'scan_total': len(rows),
-                        'eligible': len(pending), 'skipped': skipped})
-            preparing()
-            check_cancel()
-            shared = self._comparison_inputs(proj, available_candidates)
-            previous_tests = {r['function_id']: r['input_digest'] for r in self.store.all(
+            metadata=rows
+            preparing_phase('Reading shared headers and symbols')
+            began=time.monotonic()
+            shared=self._comparison_inputs(proj,available_candidates)
+            previous_tests={r['function_id']:r['input_digest'] for r in self.store.all(
                 "SELECT t.function_id,t.input_digest FROM compiler_tests t JOIN functions f ON f.id=t.function_id "
-                "WHERE f.project_id=?", proj['id'])} if untested_only else {}
-            for scanned, fn in enumerate(rows):
-                check_cancel()
-                if scanned and scanned % 25 == 0:
+                "WHERE f.project_id=?",proj['id'])} if untested_only else {}
+            phase_done('Shared inputs and history',began)
+            total=None;deferred=0
+            def eligible_rows():
+                nonlocal total,deferred,skipped
+                scanned=eligible=0
+                def preparing():
+                    report({'phase':'eligibility','checked':scanned,'scan_total':len(metadata),
+                            'eligible':eligible,'skipped':skipped,'completed':n})
+                preparing()
+                for offset in range(0,len(metadata),25):
+                    check_cancel()
+                    batch=metadata[offset:offset+25]
+                    if function:
+                        full=batch
+                    else:
+                        loaded={r['id']:r for r in self.store.all(
+                            'SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
+                            proj['id'],json.dumps([r['id'] for r in batch]))}
+                        full=[loaded[r['id']] for r in batch if r['id'] in loaded]
+                    pending=[]
+                    for fn in full:
+                        check_cancel()
+                        scanned+=1
+                        if not function and fn['status'] in ('matched','asm'):continue
+                        source=self._comparison_source(fn)
+                        if not source:continue
+                        own=compiler_for(cfg,fn['vram'],fn)
+                        options=([p for p in available_candidates if p[0]==own['toolchain']] if flags_only else available_candidates)
+                        if not options:
+                            skipped+=1;continue
+                        digest=self._comparison_digest(proj,fn,source,options,shared)
+                        if untested_only and previous_tests.get(fn['id'])==digest:
+                            skipped+=1;continue
+                        planned_digests[fn['id']]=digest
+                        pending.append(fn);eligible+=1
+                    scanned=min(offset+len(batch),len(metadata))
+                    if scanned==len(metadata):
+                        total=min(limit,eligible);deferred=max(0,eligible-total)
                     preparing()
-                source = self._comparison_source(fn)
-                if not source:
-                    continue
-                own = compiler_for(cfg, fn["vram"], fn)
-                options = ([p for p in available_candidates if p[0] == own["toolchain"]]
-                           if flags_only else available_candidates)
-                if not options:
-                    skipped += 1
-                    continue
-                digest = self._comparison_digest(proj, fn, source, options, shared)
-                if untested_only and previous_tests.get(fn['id']) == digest:
-                    skipped += 1
-                    continue
-                planned_digests[fn["id"]] = digest
-                pending.append(fn)
-            scanned = len(rows)
-            preparing()
-            rows = pending
-        total = min(limit, len(rows))
-        deferred = max(0, len(rows) - total)
+                    yield from pending
+                total=min(limit,eligible);deferred=max(0,eligible-total)
+            rows=eligible_rows()
         for fn in rows:
             check_cancel()
             if n >= limit:
+                if all_installed:continue  # Count deferred work after the first results.
                 break
             source = self._comparison_source(fn)
             if not source:
@@ -397,10 +457,11 @@ class CompilerMixin:
                 report = getattr(log, 'progress', lambda value: None)
                 progress = {"function": fn["name"], "tested": 0, "combinations": len(candidates),
                             "before": baseline, "best": best, "profile": best_profile, "exact_matches_current": 0,
-                            "total": total, "remaining": total - (n - 1), "deferred": deferred,
+                            "total": total, "remaining": total - (n - 1) if total is not None else None, "deferred": deferred,
                             "completed": n - 1, "improved": len(improvements), "exact": found,
                             "skipped": skipped, "results": list(results), "auto_apply": auto_apply, "applied_count": applied_count}
                 report(progress)
+                if n==1:log(f'Compiler preparation · first compile ready: {time.monotonic()-started:.3f}s')
                 for index, (tc, flags) in enumerate(candidates, 1):
                     check_cancel()
                     ok, diff, _ = self._judge_with(proj, fn, tc, list(flags), source)
@@ -478,7 +539,7 @@ class CompilerMixin:
                     log(f"{fn['name']}: no exact matches among the tested combinations.")
                 report({"function": fn["name"], "tested": len(candidates), "combinations": len(candidates), "exact_matches_current": len(matches),
                         "before": baseline, "best": best, "profile": best_profile,
-                        "total": total, "remaining": total - n, "deferred": deferred,
+                        "total": total, "remaining": total - n if total is not None else None, "deferred": deferred,
                         "completed": n, "improved": len(improvements), "exact": found, "skipped": skipped,
                         "results": list(results), "auto_apply": auto_apply, "applied": applied, "applied_count": applied_count})
                 state.update(tried=n, confirmed=found)
@@ -656,6 +717,10 @@ class CompilerMixin:
         return self.auto_compiler if own is None else bool(own)
 
     def compiler_answer(self, slug: str, check_now: bool = False, *, display_only=False) -> dict:
+        with self.progress.view() if hasattr(self,'progress') else nullcontext():
+            return self._compiler_answer(slug,check_now,display_only=display_only)
+
+    def _compiler_answer(self, slug: str, check_now: bool = False, *, display_only=False) -> dict:
         """Which compiler built the game, as one answer for the GUI: the project's compiler, the parts built with
         another one (each with what checking it said), and the stretches whose code looks like another compiler's
         that nothing applies yet. The app does the checking itself: the judge's survey runs in the background when

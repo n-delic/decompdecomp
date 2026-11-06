@@ -8,7 +8,7 @@ const fields = new Map();
 const counts = ["completed", "improved", "exact"].map((filter) => ({dataset: {resultsFilter: filter}, attrs: {}, setAttribute(key, value) { this.attrs[key] = value; }}));
 let shown, scrolled = 0, focused = 0;
 const list = { scrollIntoView() { scrolled++; }, focus() { focused++; } };
-const box = { hidden: true, dataset: {slug: "demo"}, querySelectorAll() { return counts; }, querySelector(key) { if (!fields.has(key)) fields.set(key, {}); return fields.get(key); } };
+const box = { hidden: true, dataset: {slug: "demo"}, querySelectorAll() { return counts; }, querySelector(key) { if (!fields.has(key)) fields.set(key, {removeAttribute(name){delete this[name];}}); return fields.get(key); } };
 const ctx = { $: (id) => id === "compilerImprovements" ? list : box, S: {slug: "demo"},
   renderCompilerImprovements(slug, rows, filter) { shown = {slug, rows, filter}; } };
 vm.createContext(ctx);
@@ -287,3 +287,10 @@ assert(!failureContext.profileFailureGroups([{function:'<unsafe>',reason:'<unsaf
 
 assert.doesNotMatch(read('steering'), /Busy functions are skipped\./);
 assert.match(read('steering'), /Verified matches release active claims/);
+
+ctx.renderCompilerProgress({phase:'preparation',stage:'Checking installed compiler profiles',elapsed:2});
+assert.equal(fields.get('[data-current]').textContent,'Checking installed compiler profiles');
+assert.equal(fields.get('[data-queue-bar]').value,undefined);
+ctx.renderCompilerProgress({function:'f',tested:1,combinations:2,completed:1,total:null,best:80,before:70});
+assert.equal(fields.get('[data-queue]').textContent,'1 functions done · discovering remaining functions…');
+assert.equal(fields.get('[data-queue-bar]').value,undefined);
