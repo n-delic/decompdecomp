@@ -1074,3 +1074,12 @@ it once at their common successor. A measured unmatched case improved2238 to2043
 with `-O2 -g3`; this is not a universal GCC rule or an exact-match result. Remove
 both old copies. Do not retain overwritten assignments to steer scheduling. The
 `common_scalar_tail` local repair offers bounded plain-local hypotheses.
+
+
+For actual unsigned-byte packed fields, an explicit byte conversion after the
+right shift can express the decoded representation before widening into existing
+integer carriers. A copied unmatched case improved1848 to1733 this way; it was
+not an exact match. The local `decoded_byte_normalization` family offers bounded
+hypotheses after a visible byte load. Do not add arbitrary masks to unknown
+values. A range-preserving width conversion can be meaningful reconstructed C
+without proving the unique original type; no dummy work or extra reads is needed.

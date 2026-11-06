@@ -2840,3 +2840,9 @@ need independent evidence before receiving this specific GNU C repair.
   two flat braced branches, including placement after one independent literal
   assignment. Both original copies are removed; unsafe flow/storage shapes are
   left unchanged. A private copied unmatched witness improved2238 to2043, not exact.
+
+- Shared ROM/PROJECT local and deep repairs can normalize an actual packed-byte
+  decode before widening into existing scalar carriers. The bounded family needs a
+  known32-bit C profile (C++ reference calls need a different proof) and uses
+  a visible byte load, rejects unsafe/unknown bindings and introduces no storage,
+  reads or assignments. A private unmatched witness improved1848 to1733, not exact.

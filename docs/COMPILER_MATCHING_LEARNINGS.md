@@ -4940,3 +4940,31 @@ at the successor or after one independent local literal assignment. Both origina
 copies are removed: retaining a dead copy to manipulate scheduling is inadmissible.
 Shared draft generation exposes this to ROM and PROJECT local/deep repair paths;
 the normal compiler/judge remains required for every candidate.
+
+
+### Observation: byte-normalized packed-field decoding
+
+KMC GCC2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian MIPS.
+A copied unmatched source loads an unsigned byte, shifts its high nibble, then
+assigns it through existing integer carriers. Explicit byte conversion at that
+decoding point reproduces a target mask and improves1848 to1733. The actual
+load bounds the shift result to0..15; reads, assignments, consumers, evaluation
+order, storage and control are unchanged. This is coherent reconstructed C,
+not proof of a unique original source type or an exact match. Whole-function
+byte declarations and separate byte locals were negative controls; those
+alternatives do not invalidate the local conversion model.
+
+The `decoded_byte_normalization` generator independently reproduces1733 from
+the frozen1848 witness. It requires a known32-bit C profile and a visible unsigned-byte load into a plain
+unescaped integer local, a constant right shift1..7 and existing chained scalar
+assignments in the same block. Unknown/qualified aliases, macros, escaped or
+ambiguous bindings, intervening writes/control and nested captures are excluded.
+It introduces no dummy assignments, storage or reads. Ordinary/-da parity of
+the reviewed candidate is980 linked bytes, SHA256
+`dd2cc3353257d93b212c98bbc1b96b78358044ee9ecf5667511b81a779e3e9b8`.
+Private evidence: func8006C024/byte-phase-review and parent-generated-byte-replay.
+
+A separate focused1733 native lane received256 candidates, linked179, and found
+no improvement/exact. Restoring one original conversion statement boundary
+recovers1733 from printer1833 for both the baseline and one genuine staging
+candidate. This is one measured layout effect, not a blanket printer limitation.
