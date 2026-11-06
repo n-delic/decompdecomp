@@ -2415,6 +2415,9 @@ class ForkEngine:
             elif seed:
                 lines += ["", "### Machine draft: a starting point, often wrong in types and details", "```c",
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
+        from ..matching_search import history
+
+        lines += history(self.net.store, fn, budget=cfg.get("matching_stall_budget", 24))
         lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         lines += self._debug_brief(fp, cfg, fn)
         lines += self._ltcg_brief(fp, meta, fn, unit)

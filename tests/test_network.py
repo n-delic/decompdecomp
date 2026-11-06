@@ -61,6 +61,25 @@ def test_wrong_attempt_gets_scored_diff(net, agents):
     assert net.store.one("SELECT best_score FROM functions WHERE name='clamp_s32'")["best_score"] > 0
 
 
+def test_attempt_records_the_compiler_used_and_brief_detects_changed_settings(net, agents):
+    import json
+
+    from decompnet.matching_search import compiler_stamp
+    from decompnet.project import compiler_for
+
+    alice, _ = agents
+    net.compile_and_diff(alice, 'clamp_s32', WRONG_CLAMP)
+    fn = net.store.one("SELECT * FROM functions WHERE name='clamp_s32'")
+    proj = net.store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+    cfg = json.loads(proj['config'])
+    attempt = net.store.one('SELECT compiler FROM attempts WHERE function_id=? ORDER BY id DESC LIMIT 1', fn['id'])
+    assert attempt['compiler'] == compiler_stamp(compiler_for(cfg, fn['vram']))
+    cfg['compiler']['flags'] = ['-O0']
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), proj['id']))
+    assert 'Compiler mismatch' in net.get_function('clamp_s32')
+
+
 def test_compile_error_and_rejection_are_reported(net, agents):
     alice, _ = agents
     assert "COMPILE ERROR" in net.compile_and_diff(alice, "abs_s32", "s32 abs_s32(s32 v) { return v +; }")

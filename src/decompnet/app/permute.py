@@ -21,6 +21,7 @@ to four), each at a lower CPU priority that the compilers it runs inherit: the a
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import queue
@@ -32,7 +33,7 @@ from concurrent.futures import wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, scoring, seeds, toolchains
+from .. import __version__, consoles, field_probes, matching_search, scoring, seeds, toolchains
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
@@ -51,6 +52,9 @@ GENERATOR_SECONDS = 30  # a batch that takes longer is stuck: its randomizer ret
 READ_BYTES = 1 << 16
 MAX_SEED = 2**31  # seeds of the generator's runs: the same function and turn write the same variants
 REWRITE_MISSES = 200  # simple rewrites in a row that change nothing: none applies to the C
+PROBE_VERSION = 1  # bump when the deterministic field search changes; old negative results are no longer evidence
+PROBE_INSNS = 80  # bounded layout probes can rescue small initializers outside the usual 6% cutoff
+MAX_CONTEXTS = 4
 MAX_INSNS = 400  # bigger near misses are left to agents: one variant takes too long to judge
 IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
 IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
@@ -199,9 +203,11 @@ class Permuter:
     def candidates(self, proj, limit: int = CANDIDATES) -> list:
         return self.net.store.all(
             "SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
-            "AND best_score > 0 AND best_score <= n_insns * 100 * ? AND n_insns <= ? AND permuted < ? "
+            "AND best_score > 0 AND (best_score <= n_insns * 100 * ? OR "
+            "(n_insns <= ? AND best_score <= n_insns * 20 AND attempts >= ?)) AND n_insns <= ? AND permuted < ? "
             "AND id NOT IN (SELECT function_id FROM claims) ORDER BY CAST(best_score AS REAL) / (n_insns * 100) LIMIT ?",
-            proj["id"], NEAR, MAX_INSNS, MAX_TURNS, limit)
+            proj["id"], NEAR, PROBE_INSNS, max(8, min(int(self.net.cfg(proj).get("matching_stall_budget", 24)), 256)),
+            MAX_INSNS, MAX_TURNS, limit)
 
     def _loop(self, slug: str, st: State) -> None:
         agent, _ = self.net.local_agent("permuter")
@@ -266,16 +272,22 @@ class Permuter:
                     gen = Generator()
                 except OSError as e:  # its environment is broken: the simple rewrites still work
                     log.info("permuter: decomp-permuter didn't start: %s", e)
-            start_src = best_src = cur_src = fn["best_source"]
+            best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
             deadline = time.monotonic() + SECONDS
-            batches = misses = 0
+            prepared = self._prepare(agent, proj, fn, st, fork, deadline)
+            if prepared is None:
+                return
+            contexts, best, best_src, order_best = prepared
+            cur, cur_src = best, best_src
+            batches = misses = empty = 0
+            seen = set()
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
                 if gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
                     # turn: from the best alone, rewrites piled on rewrites and got stuck on one of nine near misses of
                     # the demo ROM (at 45); taking turns, every one matched within 12 s
-                    base = best_src if batches % 2 else start_src
+                    base = best_src if batches % 2 else contexts[(batches // 2) % len(contexts)]
                     batches += 1
                     batch = gen.batch({"header": header, "source": base, "function": fn["name"], "family": family,
                                        "seed": rng.randrange(MAX_SEED), "count": BATCH})
@@ -283,10 +295,13 @@ class Permuter:
                         gen.close()
                         gen = None
                         continue
-                    if not batch:  # nothing new left to write from this C
-                        break
+                    empty = empty + 1 if not batch else 0
+                    if empty >= 2 * len(contexts):
+                        break  # every retained context is exhausted, not just the scalar best
                 else:  # one simple rewrite, mostly of the last C kept
-                    batch = [mutate(cur_src if rng.random() < 0.85 else best_src, rng)]
+                    base = contexts[(batches // 4) % len(contexts)] if batches % 4 == 0 else cur_src
+                    batches += 1
+                    batch = [mutate(base, rng)]
                     # none of them applies to this C (lerp's `a + (b - a) * t`): a minute of trying burnt a core
                     misses = 0 if batch[0] else misses + 1
                     if misses >= REWRITE_MISSES:
@@ -294,10 +309,18 @@ class Permuter:
                 for cand in batch:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set():
                         break
-                    st.add(variants=1)
-                    score = self._score(agent, proj, fn, cand, best, fork)
-                    if score is None:
+                    if cand in seen:
                         continue
+                    seen.add(cand)
+                    st.add(variants=1)
+                    measured = self._measure(agent, proj, fn, cand, best, fork)
+                    if measured is None:
+                        continue
+                    score, order = measured
+                    if order is not None and (order_best is None or order < order_best):
+                        order_best = order
+                        if cand not in contexts:
+                            contexts = [contexts[0], *contexts[1:MAX_CONTEXTS - 1], cand]
                     if score < best:
                         best, best_src = score, cand
                         st.add(improved=1)
@@ -313,22 +336,106 @@ class Permuter:
             st.holding(fn["name"], False)
             self._let_go(agent, fn)
 
+    def _prepare(self, agent, proj, fn, st, fork, deadline):
+        """Reproduce the historical best before spending a turn, then try bounded layout hypotheses.
+
+        PROJECT builds keep their build system and objdiff; the ROM-only field probes need known 32-bit layouts
+        and standalone declarations. A mismatching baseline stops this turn, rather than optimizing a stale score.
+        """
+        source, best = fn["best_source"], fn["best_score"]
+        if fork:
+            return [source], best, source, None
+        baseline = self._measure(agent, proj, fn, source, best, fork)
+        if baseline and baseline[0] == 0:
+            st.add(matched=1, improved=1)
+            return None
+        ctx = self.net._context(proj["id"], fn["unit"])
+        cfg = self.net.cfg(proj)
+        own = compiler_for(cfg, fn["vram"])
+        # Symbol addresses, helper targets, header, target and compiler changes invalidate both failures and hits.
+        symbols = [tuple(r) for r in self.net.store.all(
+            "SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name,address", proj["id"])]
+        functions = [tuple(r) for r in self.net.store.all(
+            "SELECT name,vram,size FROM functions WHERE project_id=? ORDER BY id", proj["id"])]
+        key = hashlib.sha256(json.dumps([PROBE_VERSION, __version__, proj["arch"], proj["big_endian"], cfg.get("platform"),
+                                        source, ctx["header"], own, cfg.get("gp"), fn["relocs"],
+                                        symbols, functions, bytes(fn["target"] or b"").hex()], sort_keys=True).encode()).hexdigest()
+        if baseline is None or baseline[0] != best:
+            message = (f"Saved best score {best} does not reproduce under the active compiler "
+                       f"(now {baseline[0] if baseline else 'compile/link failure'}). "
+                       "Random permutations paused; check compiler provenance and header changes first.")
+            self._save_probe(fn, key, {"diagnostic": message, "contexts": [], "complete": False})
+            log.info("permuter: %s: %s", fn['name'], message)
+            return None
+        cached = self.net.store.one("SELECT result FROM matching_probes WHERE function_id=? AND cache_key=?",
+                                    fn["id"], key)
+        if cached and json.loads(cached['result']).get('complete'):
+            kept = json.loads(cached['result']).get('contexts', [])
+            return [source, *kept][:MAX_CONTEXTS], best, source, baseline[1]
+        variants = (field_probes.candidates(source, fn['name'], ctx['header'])
+                    if proj['arch'] in ('mips', 'arm', 'ppc', 'x86') and fn['n_insns'] <= PROBE_INSNS else [])
+        ranked, complete = [], True
+        best_source = source
+        for variant in variants:
+            if st.stop.is_set() or time.monotonic() >= deadline:
+                complete = False
+                break
+            st.add(variants=1)
+            measured = self._measure(agent, proj, fn, variant, best, fork)
+            if measured is None:
+                complete = False  # compile failures may be transient; never persist them as negative evidence
+                continue
+            score, order = measured
+            ranked.append((order, score, variant))
+            if score < best:
+                best, best_source = score, variant
+                st.add(improved=1)
+            if score == 0:
+                st.add(matched=1)
+                return None
+        kept = [entry[2] for entry in sorted(ranked)[:MAX_CONTEXTS - 1]]
+        if complete:
+            self._save_probe(fn, key, {"diagnostic": f"Tested {len(variants)} field layouts under the active compiler; "
+                                      "none matched exactly.", "contexts": kept, "complete": True})
+        distances = [v for v in [baseline[1], *[entry[0] for entry in ranked]] if v is not None]
+        order = min(distances) if distances else None
+        return [source, *kept], best, best_source, order
+
+    def _save_probe(self, fn, key, result):
+        with self.net.store.tx() as db:
+            db.execute("INSERT OR REPLACE INTO matching_probes VALUES(?,?,?,?)",
+                       (fn['id'], key, json.dumps(result), time.time()))
+            db.execute("DELETE FROM matching_probes WHERE function_id=? AND cache_key NOT IN "
+                       "(SELECT cache_key FROM matching_probes WHERE function_id=? ORDER BY created_at DESC LIMIT 8)",
+                       (fn['id'], fn['id']))
+
     def _score(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
-        """A variant's score; recorded (as the function's best attempt, or its match) only when it beats `best`."""
+        measured = self._measure(agent, proj, fn, source, best, fork)
+        return measured[0] if measured is not None else None
+
+    def _measure(self, agent, proj, fn, source: str, best: int, fork: str | None):
+        """Normal judge score plus a search-only ordering metric; only the normal judge may record a match."""
         with self.net.progress.judging(proj["slug"]):
             if fork:
                 res = self.net.forks.attempt(agent, fork, fn["name"], source, keep=False, quiet=best)
-                return res.get("score")
+                return (res['score'], None) if res.get('score') is not None else None
             ctx = self.net._context(proj["id"], fn["unit"])
             result = self.net._compile(proj, ctx["header"], source, fn)
             if not result.ok:
                 return None
-            cand, verdict, _ = self.net._evaluate(fn, proj, result.obj)
-            if cand is None:
+            cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
+            if cand is None or problems:
                 return None
-            d = scoring.diff(self.net._target_obj(fn, proj), cand)
+            target = self.net._target_obj(fn, proj)
+            d = scoring.diff(target, cand)
             if verdict is not None:
                 d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
             if d.score < best:
-                self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter")
-            return 0 if d.bytes_match else max(1, d.score)
+                cfg = self.net.cfg(proj)
+                provenance = compiler_for(cfg, fn["vram"]) if cfg.get("compiler") else None
+                self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter",
+                                 compiler=provenance)
+            order = None if fn["n_insns"] > PROBE_INSNS else matching_search.instruction_distance(
+                [i.text for i in scoring.disassemble(target)],
+                [i.text for i in scoring.disassemble(cand, target.cpu)])
+            return (0 if d.bytes_match else max(1, d.score)), order

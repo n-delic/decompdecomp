@@ -61,9 +61,13 @@ class ScriptedPermuter(Permuter):
         super().__init__(net)
         self.scores, self.judged = scores, []
 
-    def _score(self, agent, proj, fn, source, best, fork):
+    def _prepare(self, agent, proj, fn, st, fork, deadline):
+        return [fn["best_source"]], fn["best_score"], fn["best_source"], None
+
+    def _measure(self, agent, proj, fn, source, best, fork):
         self.judged.append(source)
-        return self.scores.get(source, 1000)
+        score = self.scores.get(source, 1000)
+        return (score, None) if score is not None else None
 
 
 AGENT = Agent(1, "permuter", None)
@@ -102,6 +106,17 @@ def test_variants_come_in_batches_from_the_first_and_the_best_c_in_turn(monkeypa
     assert p.judged == ["broken", "far", "closer", "far too", "same"]
     assert (st.variants, st.improved, st.matched, st.tried, st.current) == (5, 2, 1, 1, "")
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
+
+
+def test_exhausted_scalar_best_does_not_discard_an_alternate_context(monkeypatch):
+    net = FakeNet()
+    p = ScriptedPermuter(net, {'same': 0})
+    p._prepare = lambda *args: ([SOURCE, 'alternate'], 40, SOURCE, None)
+    jobs = batches(monkeypatch, [], [], ['same'])
+    st = State()
+    p._permute(AGENT, net.project_row('game'), net.function(), st)
+    assert [j['source'] for j in jobs] == [SOURCE, SOURCE, 'alternate']
+    assert st.matched == 1
 
 
 def test_the_generator_gets_the_header_as_c(monkeypatch):
