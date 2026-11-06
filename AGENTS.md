@@ -198,6 +198,8 @@ linting). In short:
 
 ## Shared UI and UX patterns
 
+- User-started project tasks should process all eligible work in one run, with visible Stop and durable progress. Do not impose a fixed per-run function batch that requires repeated clicks. Internal database paging and bounded per-function searches remain appropriate.
+
 - Reuse the app's existing components before adding markup or CSS. Project tools and settings use
   `<details class="panel settings-disclosure">`, a `<summary class="panel-head"><h2>…</h2></summary>`
   and a `<div class="pad">` body. Include the full shell: `settings-disclosure` alone does not provide

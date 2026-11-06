@@ -154,7 +154,7 @@ class CompilerMixin:
                        "checked against every matched function before they apply.")
         return "\n".join(lines)
 
-    def start_survey(self, slug: str, limit: int = 400) -> dict:
+    def start_survey(self, slug: str, limit: int | None = None) -> dict:
         """The survey in the background (one per project)."""
         state = self.surveys.get(slug)
         if state and state["state"] == "running":
@@ -297,7 +297,7 @@ class CompilerMixin:
             lock.release()
 
     @batched
-    def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None,
+    def survey_compilers(self, slug: str, log=lambda line: None, limit: int | None = None, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
                          auto_apply: bool = False, used_profiles_only: bool = False) -> dict:
         # Saved-file watching owns synchronization. A comparison uses current DB inputs and
@@ -306,7 +306,7 @@ class CompilerMixin:
             return self._survey_compilers(slug,log,limit,state,all_installed,function,untested_only,
                                           flags_only,auto_apply,used_profiles_only)
 
-    def _survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None,
+    def _survey_compilers(self, slug: str, log=lambda line: None, limit: int | None = None, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
                          auto_apply: bool = False, used_profiles_only: bool = False) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
@@ -345,7 +345,8 @@ class CompilerMixin:
         if all_installed and not candidates:
             raise NetworkError("Install at least one usable compiler in Compilers & tools before testing.")
         if all_installed and not function:
-            log(f"Testing {len(candidates)} compiler/flag combinations per function on up to {limit} existing unmatched C attempts. This uses the same flag search as a single-function comparison and may take longer.")
+            scope = "all eligible" if limit is None else f"up to {limit}"
+            log(f"Testing {len(candidates)} compiler/flag combinations per function on {scope} existing unmatched C attempts. This uses the same flag search as a single-function comparison and may take longer.")
         old = cfg.get("compiler_survey") or {}
         tried, confirmed = ({}, {}) if all_installed else (dict(old.get("tried", {})), dict(old.get("confirmed", {})))
         preparing_phase('Loading function queue')
@@ -377,7 +378,7 @@ class CompilerMixin:
         # Discover eligibility in small batches and yield each batch immediately.
         # Large sources/assembly are fetched only for that batch, not the project.
         planned_digests={}
-        total=min(limit,len(rows));deferred=max(0,len(rows)-total)
+        total=len(rows) if limit is None else min(limit,len(rows));deferred=max(0,len(rows)-total)
         if all_installed:
             metadata=rows
             preparing_phase('Reading shared headers and symbols')
@@ -424,14 +425,14 @@ class CompilerMixin:
                         pending.append(fn);eligible+=1
                     scanned=min(offset+len(batch),len(metadata))
                     if scanned==len(metadata):
-                        total=min(limit,eligible);deferred=max(0,eligible-total)
+                        total=eligible if limit is None else min(limit,eligible);deferred=max(0,eligible-total)
                     preparing()
                     yield from pending
-                total=min(limit,eligible);deferred=max(0,eligible-total)
+                total=eligible if limit is None else min(limit,eligible);deferred=max(0,eligible-total)
             rows=eligible_rows()
         for fn in rows:
             check_cancel()
-            if n >= limit:
+            if limit is not None and n >= limit:
                 if all_installed:continue  # Count deferred work after the first results.
                 break
             discovered = fn

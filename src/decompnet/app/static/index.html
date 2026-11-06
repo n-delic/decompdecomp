@@ -627,7 +627,7 @@
             <div id="installedCompilerWork"></div>
             <section class="compiler-progress" id="compilerProgress" aria-label="Compiler comparison progress" hidden></section>
             <div id="compilerImprovements" tabindex="-1" aria-label="Compiler comparison function results"></div>
-            <details class="more"><summary>What gets tested?</summary><div class="more-body small muted">Up to 400 unmatched functions per run. Unless retesting is enabled, unchanged completed comparisons are skipped. Tests optimization, small-data and debug variants, using no AI tokens or downloads. This is a bounded search, not every possible flag combination.</div></details>
+            <details class="more"><summary>What gets tested?</summary><div class="more-body small muted">All eligible unmatched functions in one run. Stop at any time; finished comparisons are saved so the next run resumes remaining work. Unless retesting is enabled, unchanged completed comparisons are skipped. Tests optimization, small-data and debug variants, using no AI tokens or downloads. This is a bounded search, not every possible flag combination.</div></details>
             <details class="more" id="compilerLogDetails" hidden><summary>Detailed output</summary><div class="more-body">
               <label class="check"><input type="checkbox" id="compilerFollowLog"><span>Follow latest output</span></label>
               <pre class="joblog" id="installedCompilerLog" aria-label="Compiler comparison results" aria-live="off"></pre>

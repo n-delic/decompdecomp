@@ -1,5 +1,7 @@
 # Roadmap
 
+- Done: compiler surveys and installed/used-profile comparisons process all eligible functions in one stoppable run; finished comparisons remain saved for resuming after Stop.
+
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored
   before adding new source boundaries; explicit data, indirect guesses and ambiguous
