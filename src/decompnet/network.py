@@ -661,7 +661,7 @@ class Network:
         head = (f"🔁 REPEAT: this source is the same (indentation aside) as {who} compile #{hit['n']} of {fn['name']} "
                 f"({_ago(hit['at'])}), and nothing it depends on changed since, so it wasn't built again and doesn't "
                 "count toward the move-on number. That compile's result:\n")
-        return {"text": head + hit["text"] + self.stall_note(fn["id"], agent.id), "score": hit["score"],
+        return {"text": head + hit["text"] + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": hit["score"],
                 "matched": False, "repeat": True}
 
     def remember_compile(self, key: str, agent: Agent, fn, text: str, score: int | None) -> None:
@@ -1093,8 +1093,10 @@ class Network:
         region_blocked = data_blocked(self,proj) if proj is not None else []
         blocked = list(set(blocked) | set(region_blocked))
         retry_grants = claim_stalls.grants(self,proj,agent) if proj is not None else []
+        scope = proj["id"] if proj is not None else self._function(function, None)["project_id"]
+        store = self.project_store(scope)
         now = time.time()
-        with self.store.tx() as db:
+        with store.tx() as db:
             self.ensure_agent_active(agent)
             region_blocked = data_blocked(self,proj) if proj is not None else []
             blocked = list(set(blocked) | set(region_blocked))
@@ -1275,7 +1277,7 @@ class Network:
                 raise NetworkError(f"you don't hold a claim on {fn['name']}")
             from .app import agent_review
             review_facts = (agent_review.facts(self,store.one('SELECT * FROM projects WHERE id=?',fn['project_id']),fn)
-                            if agent_review.CONCERN.search(notes) or agent_review.load(self,agent_review.PREFIX+str(fn['id'])) else None)
+                            if agent_review.CONCERN.search(notes) or agent_review.load(self,agent_review.PREFIX+str(fn['id']),project_id=fn['project_id']) else None)
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
             if notes.strip() and notes.strip() != "Deep permutation turn ended; improvements shared.":
@@ -1630,7 +1632,7 @@ class Network:
         if not scratch:
             self.remember_compile(key, agent, fn, text, d.score)
             text += self.same_score_note(fn["id"], agent.id, d.score, source)
-        return {"text": text + self.stall_note(fn["id"], agent.id), "score": d.score, "matched": False, "checks": checks}
+        return {"text": text + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": d.score, "matched": False, "checks": checks}
 
     @staticmethod
     def _what_changed(d: scoring.DiffResult, last: int | None, best: int | None = None) -> str:
@@ -1675,46 +1677,47 @@ class Network:
                 + scoring.render_rows(rows, context, max_rows=len(rows) * (2 * context + 2) + 10, run=len(rows) + 1,
                                       legend=legend, more_hint=False))
 
-    def stall_status(self, function_id: int, agent_id: int) -> dict:
+    def stall_status(self, function_id: int, agent_id: int, *, project_id: int | None = None) -> dict:
         """Where an agent stands against a function's move-on number: one count for compile_and_diff's results,
         the brief and release_function. The compiles of its current claim (with no claim, its last
         STALL_LOOKBACK). Compile results once counted the agent's last compiles across claims while release_function
         counted the claim's and said "no better in 8 compiles in a row" whatever the count was: in one project a
         release was refused with the last 4 of 7 no better, then let through after exactly one more compile, so
         agents spent a compile to get past the check (446 push-backs, 36 of them improved after it)."""
-        row = self.store.one("SELECT n_insns, project_id FROM functions WHERE id=?", function_id)
+        store = self.project_store(project_id) if project_id is not None else self.store
+        row = store.one("SELECT n_insns, project_id FROM functions WHERE id=?", function_id)
         custom = self.agent_stall_budget(row, agent_id=agent_id) if row else None
         after = custom if custom is not None else stall_budget((row["n_insns"] if row else 0) or 0)
-        claim = self.store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", function_id, agent_id)
+        claim = store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", function_id, agent_id)
         baseline = None
         if claim is not None:
             start = claim["claimed_at"] or 0
-            rows = self.store.all("SELECT score,score_before FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+            rows = store.all("SELECT score,score_before FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
                                   "ORDER BY id", function_id, agent_id, start)
             scores = [r["score"] for r in rows]
             baseline = rows[0]["score_before"] if rows else None
         else:
             start = None
-            rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC "
+            rows = store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC "
                                   f"LIMIT {max(STALL_LOOKBACK, after + 1)}", function_id, agent_id)
             scores = [r["score"] for r in reversed(rows)]
         return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores, baseline), "after": after, "inherited_best": baseline,
                 "best": min((s for s in scores if s is not None), default=None)}
 
-    def stall_note(self, function_id: int, agent_id: int) -> str:
+    def stall_note(self, function_id: int, agent_id: int, *, project_id: int | None = None) -> str:
         """Every compile result's last line: where the agent stands against the function's move-on number and, once
         it's reached, the nudge to release: functions that match mostly do in the first few tries, and the agent's
         time is better spent on the next one. Big functions get longer (a quarter of Mario Party 6's agent matches
         over 64 instructions took more than 4 compiles, and those functions hold most of the code left):
         STALL_BUDGET. release_function lets a release through exactly when this says to move on."""
-        st = self.stall_status(function_id, agent_id)
+        st = self.stall_status(function_id, agent_id, project_id=project_id)
         if not st["compiles"]:
             return ""
         since, after = st["no_better"], st["after"]
         if since < after:
             return f"\n\nMove-on count: {stall_line(since, after)}."
         from .release_receipts import instruction
-        action=instruction(self,function_id,agent_id)
+        action=instruction(self,function_id,agent_id,project_id=project_id)
         return (f"\n\n⏭ Move on: {stall_line(since, after)}. {action}. "
                 "Use this claim_token on the first release and on retries. Then claim the next function; "
                 "your best attempt stays saved for whoever comes next.")
@@ -1722,7 +1725,7 @@ class Network:
     def claim_progress(self, agent: Agent, fn) -> dict | None:
         """This agent's claim on `fn` as release_function judges it: stall_status, the same count compile_and_diff
         shows. None: no claim."""
-        st = self.stall_status(fn["id"], agent.id)
+        st = self.stall_status(fn["id"], agent.id, project_id=fn["project_id"])
         return None if st["claimed_at"] is None else st
 
     # ---------------------------------------------------------- prerequisites

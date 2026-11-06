@@ -33,7 +33,7 @@ def test_release_guidance_handles_reclaim_and_cannot_release_a_later_lease(tmp_p
 
 def test_move_on_note_contains_executable_current_release_instruction(tmp_path,monkeypatch):
     net,agent,fn=game(tmp_path);net.claim_row(agent,'game','f')
-    monkeypatch.setattr(net,'stall_status',lambda *a:dict(compiles=4,no_better=3,after=3))
+    monkeypatch.setattr(net,'stall_status',lambda *a,**kw:dict(compiles=4,no_better=3,after=3))
     action=instruction(net,fn['id'],agent.id)
     note=net.stall_note(fn['id'],agent.id)
     assert action in note

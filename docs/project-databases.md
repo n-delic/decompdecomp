@@ -24,6 +24,22 @@ files. They exercise concurrent project writes, headers, notes, selection,
 attempt commit/rollback and external-match notifications. The test resolver is
 not a supported runtime configuration: many services still need conversion.
 
+Project-scoped access also covers the claim transaction, function-specific release
+receipts and replay protection, recorded-model pause/retry state, model filters,
+candidate history and variant bookkeeping, candidate scope fingerprints and their
+revision caches, data-region records, and candidate quality/review settings.
+Global quality-report listing discovers catalog slugs and queries one project at
+a time, rather than joining all projects' function/settings tables in one file.
+Quick-claim request serialization uses its own small in-memory mutex and does not
+acquire a database mutex to create a request lock.
+
+Scoped callers now supply `project_id` to stall counts, release guidance, draft
+report reads and agent-review settings. Their old ID/key-only forms remain for
+unconverted callers and still use the legacy Store. Those compatibility paths,
+global claim discovery, and supporting candidate diagnostic services must be
+converted before activating project files. No new manifest or runtime switch
+enables them early. The shared repair evidence and reuse databases are unchanged.
+
 ## Ownership for the completed split
 
 | Storage | Contents |

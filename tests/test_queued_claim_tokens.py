@@ -47,6 +47,7 @@ def test_queued_token_changes_after_reclaim_and_old_token_cannot_release_new_lea
 def test_missing_queued_receipt_token_requests_cheap_recovery_instead_of_guessing(monkeypatch):
     from types import SimpleNamespace
     net=SimpleNamespace(store=SimpleNamespace(all=lambda *a:[(1,1),(2,1)]))
+    net.project_store=lambda _:net.store
     monkeypatch.setattr(agent_tokens,'brief',lambda net,text,*a:text)
     text='## CLAIMED: game/first\nclaim_token: aaaa\n## CLAIMED: game/second\nlarge source'
     result=agent_tokens.claim_packet(net,SimpleNamespace(id=1),'game',text)

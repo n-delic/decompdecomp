@@ -27,6 +27,7 @@ def test_trial_retrieval_drops_large_config_but_keeps_internal_reproduction():
 def test_batch_claim_keeps_queue_but_hydrates_only_first(monkeypatch):
     packet='Header\n## CLAIMED: g/first\nFIRST SOURCE\n## CLAIMED: g/second\n'+'LARGE SOURCE'*1000
     net=SimpleNamespace(store=SimpleNamespace(all=lambda *args:[(1,100),(2,100)]))
+    net.project_store=lambda _:net.store
     monkeypatch.setattr(agent_tokens,'brief',lambda net,text,*args:text)
     result=agent_tokens.claim_packet(net,SimpleNamespace(id=3),'g',packet)
     assert 'FIRST SOURCE' in result and 'g/second' in result

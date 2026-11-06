@@ -9,15 +9,17 @@ PREFIX='candidate-quality:'
 
 
 def records(net,fn):
-    row=net.store.one('SELECT value FROM settings WHERE key=?',PREFIX+str(fn['id']))
+    store = net.project_store(fn['project_id'])
+    row=store.one('SELECT value FROM settings WHERE key=?',PREFIX+str(fn['id']))
     return json.loads(row['value']) if row else []
 
 
 def capture(net,fn,agent,notes,progress):
     if not CONCERN.search(notes) or fn['status']=='matched':
         return
-    current=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
-    alternatives=net.store.all('SELECT id,source,score FROM attempts WHERE function_id=? AND agent_id=? '
+    store = net.project_store(fn['project_id'])
+    current=store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+    alternatives=store.all('SELECT id,source,score FROM attempts WHERE function_id=? AND agent_id=? '
                                'AND created_at>=? AND compiled=1 AND score>0 AND (source_hash IS NOT NULL OR source IS NOT NULL) '
                                'ORDER BY score,id DESC LIMIT 30',fn['id'],agent.id,
                                progress['claimed_at'] if progress else time.time())
@@ -33,7 +35,7 @@ def capture(net,fn,agent,notes,progress):
     reference=re.search(r'(?:start from|corrected (?:revision|version)|use revision)[^\n]{0,50}?\b([a-f0-9]{20}|[a-f0-9]{64})\b',notes,re.I)
     if reference:
         revision=reference[1].lower()
-        recent=net.store.all('SELECT id,source FROM attempts WHERE function_id=? AND compiled=1 AND score IS NOT NULL '
+        recent=store.all('SELECT id,source FROM attempts WHERE function_id=? AND compiled=1 AND score IS NOT NULL '
                              'AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 200',fn['id'])
         linked=next((r for r in recent if hashlib.sha256(r['source'].encode()).hexdigest().startswith(revision)
                      and r['source']!=current['best_source']),None)
@@ -50,7 +52,7 @@ def capture(net,fn,agent,notes,progress):
             report['alternatives']=list(dict.fromkeys(report['alternatives']+previous['alternatives']))[:3]
     saved=[r for r in saved if r['source_hash']!=report['source_hash']]
     saved.append(report)
-    with net.store.tx() as db:
+    with store.tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(PREFIX+str(fn['id']),json.dumps(saved[-4:])))
 
 
@@ -74,6 +76,7 @@ def source_hint(net, fn, source):
 
 
 def brief(net,fn):
+    store = net.project_store(fn['project_id'])
     if fn['status']=='matched':
         return []
     from .app.source_match_context import aggregate_hints
@@ -98,7 +101,7 @@ def brief(net,fn):
                 'Compiled alternatives and evidence: get_function(section="quality"). Rejudge before using; '
                 'a lower score alone does not establish valid C.']
     # Older notes remain discoverable; do not falsely anchor them to today's source.
-    notes=net.store.all('SELECT text FROM notes WHERE function_id=? ORDER BY id DESC LIMIT 20',fn['id'])
+    notes=store.all('SELECT text FROM notes WHERE function_id=? ORDER BY id DESC LIMIT 20',fn['id'])
     if any(CONCERN.search(r['text'] or '') for r in notes):
         return prefix + ['### Candidate quality (historical, unanchored report)',
                 'An earlier agent reported a candidate-quality concern. Check get_function(section="quality"); '
@@ -107,6 +110,7 @@ def brief(net,fn):
 
 
 def view(net,fn):
+    store = net.project_store(fn['project_id'])
     out=['Agent concerns are hypotheses, not semantic proofs. Alternatives retain their recorded scores; '
          'compile and judge them again in the current context. Best C and exact-match status are unchanged.']
     for report in records(net,fn)[-4:]:
@@ -114,18 +118,18 @@ def view(net,fn):
         if report.get('structured'):
             out += ['Reported issue: '+report['issue']+'; source revision '+report['source_hash'][:20]+'.']
         for ident in report['alternatives']:
-            row=net.store.one('SELECT source,score FROM attempts WHERE id=? AND function_id=?',ident,fn['id'])
+            row=store.one('SELECT source,score FROM attempts WHERE id=? AND function_id=?',ident,fn['id'])
             if row:
                 out += [f'Compiled alternative attempt {ident}, historical score {row["score"]} (quality unverified):',
                         '```c\n'+row['source'][:6000]+'\n```']
             if sum(map(len,out))>18000:
                 return '\n\n'.join(out)+'\nFurther alternatives omitted.'
     if len(out)==1:
-        notes=[r for r in net.store.all('SELECT * FROM notes WHERE function_id=? ORDER BY id DESC LIMIT 20',fn['id'])
+        notes=[r for r in store.all('SELECT * FROM notes WHERE function_id=? ORDER BY id DESC LIMIT 20',fn['id'])
                if CONCERN.search(r['text'] or '')][:2]
         for note in notes:
             out += ['Historical unanchored report: '+note['text'][:600]]
-            rows=net.store.all('SELECT id,source,score FROM attempts WHERE function_id=? AND agent_id=? '
+            rows=store.all('SELECT id,source,score FROM attempts WHERE function_id=? AND agent_id=? '
                                'AND created_at<=? AND compiled=1 AND score>0 AND source!=? ORDER BY id DESC LIMIT 3',
                                fn['id'],note['agent_id'],note['created_at'],fn['best_source'] or '')
             for row in rows:
@@ -156,7 +160,10 @@ def blocked(net, proj):
 
 
 def listing(net, slug=''):
-    rows = net.store.all("SELECT f.*,p.slug FROM functions f JOIN projects p ON p.id=f.project_id "
+    if not slug:
+        return [report for project in net.store.all('SELECT slug FROM projects ORDER BY id')
+                for report in listing(net, project['slug'])]
+    rows = net.project_store(slug).all("SELECT f.*,p.slug FROM functions f JOIN projects p ON p.id=f.project_id "
                          "JOIN settings s ON s.key=? || f.id WHERE (?='' OR p.slug=?) AND f.status='open'",
                          PREFIX, slug, slug)
     return [{'function': fn['name'], 'slug': fn['slug'], **report}
@@ -164,6 +171,7 @@ def listing(net, slug=''):
 
 
 def review(net, slug, function, source_hash):
+    store = net.project_store(slug)
     from .network import NetworkError
     fn = net._function(function, slug)
     if not any(r['source_hash'] == source_hash for r in pending(net, fn)):
@@ -172,7 +180,7 @@ def review(net, slug, function, source_hash):
     for report in saved:
         if report['source_hash'] == source_hash:
             report['review'] = 'resume'
-    with net.store.tx() as db:
+    with store.tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (PREFIX+str(fn['id']), json.dumps(saved)))
     from . import claim_stalls
     claim_stalls.resume(net,fn)
@@ -184,16 +192,17 @@ ISSUES = ('uninitialized', 'loop_mutation', 'wrong_store', 'wrong_value', 'other
 
 def report(net, agent, slug, function, revision, issue, reason, alternative_revision=''):
     """Record explicit source-scoped evidence, never an assertion that the judge was wrong."""
+    store = net.project_store(slug)
     from .network import NetworkError
     fn = net._function(function,slug)
-    if fn['status'] != 'open' or not net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id):
+    if fn['status'] != 'open' or not store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id):
         raise NetworkError('Report a quality concern for an unmatched function you currently hold.')
     if issue not in ISSUES or not isinstance(reason,str) or not 10 <= len(reason.strip()) <= 600:
         raise NetworkError('Choose a supported issue and explain the concern in 10–600 characters.')
     for value in (revision, alternative_revision):
         if value and not re.fullmatch(r'(?:[0-9a-f]{20}|[0-9a-f]{64})',value):
             raise NetworkError('Use a 20-character candidate revision or full source hash.')
-    rows = net.store.all('SELECT id,source,compiled,score FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1000',fn['id'])
+    rows = store.all('SELECT id,source,compiled,score FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1000',fn['id'])
     def find(value, *, compiled=False):
         return next((r for r in rows if hashlib.sha256(r['source'].encode()).hexdigest().startswith(value)
                      and (not compiled or r['compiled'] and r['score'] is not None)),None)
@@ -212,17 +221,18 @@ def report(net, agent, slug, function, revision, issue, reason, alternative_revi
             'review':previous.get('review','pending'),'structured':True,
             'corrected_attempt': alternative['id'] if alternative else previous.get('corrected_attempt')}
     saved = [r for r in saved if r['source_hash']!=digest]+[item]
-    with net.store.tx() as db:
+    with store.tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(PREFIX+str(fn['id']),json.dumps(saved[-4:])))
     return 'Candidate issue recorded as a hypothesis, tied to revision '+digest[:20]+'. Best C, score and exact-match status unchanged. Release with notes when finished; agents and automatic repairs can continue while this concern is reviewed.'
 
 
 def corrected_alternative(net, fn):
     """An explicitly linked compiled alternative, never an automatic semantic verdict."""
+    store = net.project_store(fn['project_id'])
     for item in reversed(records(net, fn)):
         if not item.get('structured') or not item.get('corrected_attempt'):
             continue
-        row = net.store.one('SELECT source,score FROM attempts WHERE id=? AND function_id=? AND compiled=1 AND score IS NOT NULL',
+        row = store.one('SELECT source,score FROM attempts WHERE id=? AND function_id=? AND compiled=1 AND score IS NOT NULL',
                             item['corrected_attempt'], fn['id'])
         if row and row['source']:
             return row

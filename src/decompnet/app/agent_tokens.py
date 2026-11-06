@@ -15,8 +15,9 @@ from . import agent_targets, expression_repairs, pattern_repairs
 
 def candidate(net, agent, slug, function):
     fn = net._function(function, slug)
-    row = net.store.one('SELECT id,source,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
-    claim = net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
+    store = net.project_store(fn["project_id"])
+    row = store.one('SELECT id,source,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
+    claim = store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
     row = row if row and claim and row['created_at'] >= claim['claimed_at'] else None
     source = row['source'] if row else fn['matched_source'] or fn['best_source'] or fn['seed'] or ''
     if not source and net.fork_slug(slug):
@@ -59,10 +60,11 @@ def get_candidate(net, agent, slug, function, base='current'):
     note = ''
     if base != 'current':
         fn = net._function(function,slug)
-        claim = net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+        store = net.project_store(fn['project_id'])
+        claim = store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
         if not claim or fn['status'] != 'open':
             raise NetworkError('Hold an open function before selecting a recovery candidate.')
-        latest = net.store.one('SELECT id,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
+        latest = store.one('SELECT id,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
         if base == 'saved_best':
             selected = fn['best_source']
         elif base == 'reported_corrected':
@@ -70,7 +72,7 @@ def get_candidate(net, agent, slug, function, base='current'):
             row = corrected_alternative(net, fn)
             selected = row['source'] if row else None
         else:
-            row = net.store.one('SELECT source FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
+            row = store.one('SELECT source FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
             selected = row['source'] if row else None
         if not selected:
             raise NetworkError('No source is available for that recovery base; current candidate retained.')
@@ -137,10 +139,11 @@ def stale(net, agent, fn, submitted, source, actual, anchor=""):
 
 
 def next_action(net, agent, fn, source, revision):
-    held = net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+    store = net.project_store(fn['project_id'])
+    held = store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
     if not held:
         return 'Next: this claim ended; claim another eligible function. Do not submit more edits or release it again.'
-    state = net.stall_status(fn['id'],agent.id)
+    state = net.stall_status(fn['id'],agent.id,project_id=fn['project_id'])
     if state['compiles'] and state['no_better'] >= state['after']:
         return 'Next: move-on budget exhausted. Release with concise findings, then claim another function; no further tuning is recommended.'
     for family in ('signedness','declaration_order'):
@@ -148,7 +151,7 @@ def next_action(net, agent, fn, source, revision):
         if any(available_target(net,fn,source,revision,family,t['old']) for t in targets):
             return f'Next valid local experiment: compile_family(function="{fn["name"]}", revision="{revision}", family="{family}", target="next").'
     for family,proposal in pattern_repairs.variants(source,fn['name']):
-        used = net.store.one('SELECT 1 FROM agent_variant_runs WHERE function_id=? AND revision=? AND family=?',fn['id'],revision,family)
+        used = store.one('SELECT 1 FROM agent_variant_runs WHERE function_id=? AND revision=? AND family=?',fn['id'],revision,family)
         if not used and not target_tried(net,fn,revision,'local:'+family,proposal) and not compiled_before(net,fn,proposal):
             return f'Next applicable repair: compile_family(function="{fn["name"]}", revision="{revision}", family="{family}").'
     return 'Next: inspect the first differing region with last_diff; fix structure, calls or types rather than repeating ineffective edits.'
@@ -169,7 +172,8 @@ def patch(net, agent, slug, function, revision, old, new, repair_note='', repair
 
 
 def remember(net, agent, fn, before):
-    latest = net.store.one('SELECT id,source,score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
+    store = net.project_store(fn['project_id'])
+    latest = store.one('SELECT id,source,score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
     if not latest or before and before['id'] == latest['id']:
         return
     note = 'compile error' if latest['score'] is None else 'score '+str(latest['score'])
@@ -177,12 +181,13 @@ def remember(net, agent, fn, before):
         changes = [s for s in difflib.ndiff((before['source'] or '').splitlines(), (latest['source'] or '').splitlines()) if s.startswith(('- ', '+ '))]
         if changes:
             note += '; '+ ' / '.join(line.strip()[:100] for line in changes[:2])
-    with net.store.tx() as db:
+    with store.tx() as db:
         db.execute('INSERT OR REPLACE INTO attempt_hints VALUES(?,?,?)', (latest['id'], fn['id'], note[:260]))
 
 
 def history(net, fn):
-    rows = net.store.all('SELECT a.agent_id,a.score,a.source,h.summary FROM attempts a LEFT JOIN attempt_hints h ON h.attempt_id=a.id WHERE a.function_id=? ORDER BY a.id DESC LIMIT 100', fn['id'])
+    store = net.project_store(fn['project_id'])
+    rows = store.all('SELECT a.agent_id,a.score,a.source,h.summary FROM attempts a LEFT JOIN attempt_hints h ON h.attempt_id=a.id WHERE a.function_id=? ORDER BY a.id DESC LIMIT 100', fn['id'])
     if not rows:
         return ''
     scores = [r['score'] for r in rows if r['score'] is not None]
@@ -195,7 +200,7 @@ def history(net, fn):
             seen.add(key)
         if len(fingerprints) == 4:
             break
-    auto = net.store.one('SELECT COUNT(*) AS n FROM reuse_trials WHERE function_id=?', fn['id'])
+    auto = store.one('SELECT COUNT(*) AS n FROM reuse_trials WHERE function_id=?', fn['id'])
     return (f"\nAutomatic reuse/repair trials recorded: {auto['n']}.\nRecent history: {len(rows)} attempts, {len({r['agent_id'] for r in rows})} agents; "
             f"best historical score {min(scores) if scores else 'none'}. Latest distinct sources: "
             + '; '.join(fingerprints) + '. Scores may use older headers/settings. Read existing notes before repeating approaches.\n')
@@ -264,14 +269,14 @@ def brief(net, text, slug=None, agent=None):
                 if source and source.strip() in text:
                     from . import declaration_recovery
                     # Only inherited candidates, once per claim/build scope; ordinary edits keep their normal judge.
-                    if time.monotonic() < preflight_deadline and fn['best_source'] and not net.store.one(
+                    if time.monotonic() < preflight_deadline and fn['best_source'] and not net.project_store(fn['project_id']).one(
                             'SELECT 1 FROM attempts a JOIN claims c ON c.function_id=a.function_id '
                             'WHERE a.function_id=? AND a.agent_id=? AND a.created_at>=c.claimed_at', fn['id'], agent.id):
                         prepared, report = declaration_recovery.preflight(net, agent, slug, fn, source)
                         if prepared != source:
                             text = text.replace(source, prepared, 1)
-                            latest = net.store.one('SELECT id,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
-                            claim = net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
+                            latest = net.project_store(fn['project_id']).one('SELECT id,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
+                            claim = net.project_store(fn['project_id']).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
                             stamp = (latest['id'] if latest and claim and latest['created_at'] >= claim['claimed_at'] else None,
                                      claim['claimed_at'] if claim else None, target_scope(net,fn,''))
                             if not hasattr(net, '_agent_selected'):
@@ -305,7 +310,7 @@ def brief(net, text, slug=None, agent=None):
                     from . import agent_review
                     proj=net.project_row(slug)
                     review=agent_review.brief(net,proj,fn)
-                    pending=agent_review.load(net,agent_review.EXPERIMENT+str(fn['id']))
+                    pending=agent_review.load(net,agent_review.EXPERIMENT+str(fn['id']),project_id=fn['project_id'])
                     next_step='\nStructured next experiment available: get_function(section="experiment"). It is untested and must pass current revision/anchor checks.' if pending else ''
                     text = experiments+'\n'+review+next_step+'\n'+text
         except NetworkError:
@@ -333,6 +338,14 @@ def claim_packet(net, agent, slug, text):
     rendered = text if fast() else brief(net, text, slug, agent)
     if not re.search(r'^## CLAIMED', rendered, re.M):
         return rendered
+    if slug:
+        store = net.project_store(slug)
+    else:
+        if not blocks:
+            return rendered
+        fn = net._function(blocks[0][1], None)
+        store = net.project_store(fn['project_id'])
+        slug = store.one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']
     normalized = re.sub(r'lease expires in [^\n]*', 'lease renewed', rendered)
     stamp = hashlib.sha256(normalized.encode()).hexdigest()
     sent = getattr(net, '_claim_packets', {})
@@ -340,7 +353,7 @@ def claim_packet(net, agent, slug, text):
     key = (agent.id, slug)
     previous = sent.get(key)
     # A new lease is a new task even if the same source is selected later.
-    leases = tuple(tuple(r) for r in net.store.all(
+    leases = tuple(tuple(r) for r in store.all(
         'SELECT c.function_id,c.claimed_at FROM claims c JOIN functions f ON f.id=c.function_id '
         'WHERE c.agent_id=? AND f.project_id=(SELECT id FROM projects WHERE slug=?) ORDER BY c.function_id', agent.id, slug))
     sent[key] = (stamp, leases)
@@ -502,7 +515,7 @@ def feedback(net, agent, slug, function, text, previous):
                        'region, try a local permutation search, or test independent alternatives with compile_variants; '
                        'avoid repeating edits the compiler optimizes away.')
             current_source, revision = candidate(net,agent,slug,function)
-            history = net.store.all('SELECT h.summary FROM attempt_hints h JOIN attempts a ON a.id=h.attempt_id '
+            history = net.project_store(fn['project_id']).all('SELECT h.summary FROM attempt_hints h JOIN attempts a ON a.id=h.attempt_id '
                                     'WHERE h.function_id=? AND a.agent_id=? ORDER BY h.attempt_id DESC LIMIT 3',fn['id'],agent.id)
             detail += '\nRecent change history: ' + '; '.join(r['summary'][:180] for r in history if r['summary'])
             detail += '\n'+next_action(net,agent,fn,current_source,revision)
@@ -543,7 +556,7 @@ def _function_view(net, agent, slug, function, section='all'):
     if section == 'brief':
         text=brief(net,net.get_function(function,slug,agent),slug,agent)
         fn=net._function(function,slug)
-        if net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id):
+        if net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id):
             source,revision=candidate(net,agent,slug,function)
             if source and source.strip() not in text:
                 text+='\nCurrent continuation:\n'+get_candidate(net,agent,slug,function)
@@ -597,7 +610,7 @@ def outcome(net, agent, fn, source, text):
     warnings = text[min(offsets):] if offsets else ''
     value = {'source': source, 'score': score, 'rows': list(kept[0]) if kept else None, 'legend': kept[1] if kept else scoring.LEGEND, 'warnings': warnings}
     from .agent_evidence import build_key
-    current=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+    current=net.project_store(fn['project_id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
     if current is not None:
         value['input_scope']=build_key(net,current)[0]
 
@@ -607,14 +620,14 @@ def outcome(net, agent, fn, source, text):
     if (prior and prior.get('score') is not None and score is not None and value.get('input_scope')
             and prior.get('input_scope') == value['input_scope']):
         from .region_repairs import progress
-        proj = net.store.one('SELECT arch FROM projects WHERE id=?',fn['project_id'])
+        proj = net.project_store(fn['project_id']).one('SELECT arch FROM projects WHERE id=?',fn['project_id'])
         value['regional_progress'] = progress(prior.get('rows'),value.get('rows'),proj['arch'],reference='preceding scored trial')
     net._agent_outcomes[agent.id, fn['id']] = value
     return value
 
 
 def tried_summary(net, fn, compact=False):
-    rows = net.store.all('SELECT family,SUM(trials) AS trials,MIN(best_score) AS best FROM '
+    rows = net.project_store(fn['project_id']).all('SELECT family,SUM(trials) AS trials,MIN(best_score) AS best FROM '
                          '(SELECT * FROM agent_variant_runs WHERE function_id=? ORDER BY id DESC LIMIT 20) '
                          'GROUP BY family ORDER BY trials DESC LIMIT 4', fn['id'])
     if not rows:
@@ -674,10 +687,11 @@ def family_targets(net, agent, slug, function, family='declaration_order', expre
 def target_scope(net, fn, revision):
     from .. import candidate_scope, claim_stalls
     from ..candidate_work import current, remember
-    def load():return net.store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
-    if current() is not None and hasattr(net.store, 'read_version'):
-        version = net.store.read_version('inputs', fn['project_id'])
-        proj = remember(('scope-project', id(net), fn['project_id'], version), load)
+    store = net.project_store(fn['project_id'])
+    def load():return store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+    if current() is not None and hasattr(store, 'read_version'):
+        version = store.read_version('inputs', fn['project_id'])
+        proj = remember(('scope-project', id(net), id(store), fn['project_id'], version), load)
     else:proj = load()
     rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
     return hashlib.sha256(repr((revision,candidate_scope.key(net,proj,fn),rules)).encode()).hexdigest()
@@ -685,13 +699,13 @@ def target_scope(net, fn, revision):
 
 def target_tried(net, fn, revision, family, old, scope=None):
     scope=scope if scope is not None else target_scope(net,fn,revision)
-    return net.store.one('SELECT 1 FROM agent_family_targets WHERE function_id=? AND scope=? AND family=? AND target_hash=?',
+    return net.project_store(fn['project_id']).one('SELECT 1 FROM agent_family_targets WHERE function_id=? AND scope=? AND family=? AND target_hash=?',
                          fn['id'],scope,family,hashlib.sha256(old.encode()).hexdigest()) is not None
 
 
 def compiled_before(net,fn,source,scope=None):
     scope=scope if scope is not None else target_scope(net,fn,'')
-    return net.store.one("SELECT 1 FROM agent_family_targets WHERE function_id=? AND scope=? AND family IN ('compiled-miss','compiled-error') AND target_hash=?",
+    return net.project_store(fn['project_id']).one("SELECT 1 FROM agent_family_targets WHERE function_id=? AND scope=? AND family IN ('compiled-miss','compiled-error') AND target_hash=?",
                          fn['id'],scope,hashlib.sha256(source.encode()).hexdigest()) is not None
 
 
@@ -770,7 +784,7 @@ def local_family(net, agent, slug, function, revision, family, old='', declarati
         observations=getattr(net,'_local_trial_observations',{}).get((agent.id,fn['id']),[])
         if submitted and int(submitted[1])==len(patches) and len(observations)==len(patches) and all(
                 item and item.get('score') is not None for item in observations):
-            with net.store.tx() as db:
+            with net.project_store(fn['project_id']).tx() as db:
                 db.execute('INSERT OR IGNORE INTO agent_family_targets VALUES(?,?,?,?)',
                            (fn['id'],scope,family,hashlib.sha256(old.encode()).hexdigest()))
         return (f'Selected declaration {declaration}.\n' if declaration else '') + result
@@ -822,7 +836,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
         if baseline and baseline['source'] != source:
             baseline = None
         if baseline is None:
-            prior = net.store.one('SELECT score FROM attempts WHERE function_id=? AND source=? ORDER BY id DESC LIMIT 1', fn['id'],source)
+            prior = net.project_store(fn['project_id']).one('SELECT score FROM attempts WHERE function_id=? AND source=? ORDER BY id DESC LIMIT 1', fn['id'],source)
             if prior and prior['score'] is not None:
                 baseline = {'score':prior['score'], 'rows':None}
         if baseline and baseline.get('rows') is None:
@@ -862,7 +876,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             score = measured['score'] if measured else None
             compile_error = score is None and '❌ COMPILE ERROR' in result
             if family != 'explicit patches' and ((score is not None and score > 0) or compile_error):
-                with net.store.tx() as db:
+                with net.project_store(fn['project_id']).tx() as db:
                     db.execute('INSERT OR IGNORE INTO agent_family_targets VALUES(?,?,?,?)',
                                (fn['id'],durable_scope,'compiled-error' if compile_error else 'compiled-miss',hashlib.sha256(src.encode()).hexdigest()))
             rows = measured['rows'] if measured else None
@@ -913,17 +927,17 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                 results.append('Baseline: scored instruction evidence available. Diff grouping is diagnostic only.')
             else:
                 results.append('Baseline: historical score; not reverified. Diff grouping is diagnostic only.')
-        with net.store.tx() as db:
+        with net.project_store(fn['project_id']).tx() as db:
             db.execute('INSERT INTO agent_variant_runs(function_id,family,revision,trials,best_score,created_at) VALUES(?,?,?,?,?,?)',
                        (fn['id'],family,revision,last or 0,min(scores) if scores else None,time.time()))
         selected_index = None
         if (last is not None and choices and net._function(function,slug)['status']=='open'
-                and net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)):
+                and net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)):
             # Stable min keeps the baseline on ties. This selects an agent continuation, never a new
             # judge verdict, attempt, file write or match. The next compile still uses the normal judge.
             _,selected,measurement,selected_index = min(choices,key=lambda choice:choice[0])
-            latest = net.store.one('SELECT id,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
-            claim = net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+            latest = net.project_store(fn['project_id']).one('SELECT id,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
+            claim = net.project_store(fn['project_id']).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
             stamp = (latest['id'] if latest and claim and latest['created_at']>=claim['claimed_at'] else None,
                      claim['claimed_at'] if claim else None,target_scope(net,fn,''))
             if not hasattr(net,'_agent_selected'):

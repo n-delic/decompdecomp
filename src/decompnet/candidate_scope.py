@@ -44,6 +44,7 @@ def dependencies(root, source):
 
 def callees(net, proj, fn, source, max_source_chars=None):
     """Only referenced matched helpers can supply new signature/write-footprint evidence."""
+    store = net.project_store(proj['id'])
     from .forks.csource import _blank
     names=sorted(set(re.findall(r'\b([A-Za-z_]\w*)\s*\(',_blank(source))) -
                  {fn['name'],'if','for','while','switch','sizeof'})[:16]
@@ -51,27 +52,39 @@ def callees(net, proj, fn, source, max_source_chars=None):
         return []
     bound = ' AND length(matched_source)<=?' if max_source_chars is not None else ''
     args = (proj['id'],json.dumps(names)) + ((max_source_chars,) if max_source_chars is not None else ())
-    return net.store.all("SELECT name,matched_source FROM functions WHERE project_id=? AND status='matched' "
+    return store.all("SELECT name,matched_source FROM functions WHERE project_id=? AND status='matched' "
                          'AND name IN (SELECT value FROM json_each(?))'+bound+' ORDER BY name',*args)
 
 
 def batch_context(net, proj):
     """Shared read-only inputs for one bounded scheduling decision, never a judge verdict."""
-    return {'contexts':{}, 'versions':{kind:net.store.read_version(kind,proj['id'])
+    store = net.project_store(proj['id'])
+    return {'project_id':proj['id'], 'store_id':id(store),
+            'contexts':{}, 'versions':{kind:store.read_version(kind,proj['id'])
             for kind in ('scope_context','scope_symbols','matched_evidence')},
             'fork':bool(getattr(net,'fork_slug',lambda _:None)(proj['slug']))}
 
 
+def _check_batch(shared, proj, store):
+    if shared is not None and ('project_id' in shared or 'store_id' in shared):
+        if shared.get('project_id') != proj['id'] or shared.get('store_id') != id(store):
+            from .network import NetworkError
+            raise NetworkError('Scheduling inputs belong to another project or database. Rebuild this scheduling batch.')
+
+
 def _version(net, proj, kind, shared):
+    store = net.project_store(proj['id'])
     if shared is not None and kind in shared.get('versions',{}):
         return shared['versions'][kind]
-    return net.store.read_version(kind,proj['id'])
+    return store.read_version(kind,proj['id'])
 
 
 def context(net, proj, unit, shared=None):
+    store = net.project_store(proj['id'])
+    _check_batch(shared, proj, store)
     def load():
-        if hasattr(net.store, 'read_cache'):
-            return net.store.read_cache.get(('candidate-header', proj['id'], unit),
+        if hasattr(store, 'read_cache'):
+            return store.read_cache.get(('candidate-header', proj['id'], unit),
                 (_version(net,proj,'scope_context',shared), getattr(net._context, '__func__', net._context)),
                 lambda: net._context(proj['id'], unit))
         return net._context(proj['id'], unit)
@@ -83,6 +96,8 @@ def context(net, proj, unit, shared=None):
 
 
 def state(net,proj,fn,shared=None):
+    store = net.project_store(proj['id'])
+    _check_batch(shared, proj, store)
     cfg=json.loads(proj['config'])
     build={key:cfg.get(key) for key in ('kind','platform','big_endian','gp')}
     build['compiler']=compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else None
@@ -94,7 +109,7 @@ def state(net,proj,fn,shared=None):
     if fn['vram'] is not None:
         addresses.add(fn['vram'])
     def build_index():
-        rows = [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+        rows = [tuple(r) for r in store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
         by_name, by_address = {}, {}
         for index, row in enumerate(rows):
             by_name.setdefault(row[0], []).append(index)
@@ -102,8 +117,8 @@ def state(net,proj,fn,shared=None):
         return {'symbols': rows, 'by_name': by_name, 'by_address': by_address}
     lookup = shared.get('symbol_lookup') if shared is not None and 'versions' in shared else None
     if lookup is None:
-        lookup = (net.store.read_cache.get(('candidate-symbols', proj['id']), _version(net,proj,'scope_symbols',shared), build_index)
-                  if hasattr(net.store, 'read_cache') else build_index())
+        lookup = (store.read_cache.get(('candidate-symbols', proj['id']), _version(net,proj,'scope_symbols',shared), build_index)
+                  if hasattr(store, 'read_cache') else build_index())
         if shared is not None and 'versions' in shared:
             shared['symbol_lookup']=lookup
     selected = {i for name in names for i in lookup['by_name'].get(name, ())}
@@ -114,8 +129,8 @@ def state(net,proj,fn,shared=None):
     def callee_hashes():
         return [(r['name'],hashlib.sha256((r['matched_source'] or '').encode()).hexdigest())
                 for r in callees(net,proj,fn,source)]
-    if hasattr(net.store, 'read_cache'):
-        evidence = net.store.read_cache.get(('candidate-callees', proj['id'], fn['name'], hashlib.sha256(source.encode()).hexdigest()),
+    if hasattr(store, 'read_cache'):
+        evidence = store.read_cache.get(('candidate-callees', proj['id'], fn['name'], hashlib.sha256(source.encode()).hexdigest()),
             _version(net,proj,'matched_evidence',shared), callee_hashes)
     else:
         evidence = callee_hashes()
@@ -136,11 +151,12 @@ def state(net,proj,fn,shared=None):
 
 
 def key(net,proj,fn,shared=None):
+    store = net.project_store(proj['id'])
     def build():return hashlib.sha256(repr(state(net,proj,fn,shared)).encode()).hexdigest()
     # Imported build files can change without a database revision: always inspect those files.
     if current() is None:return build()
     if shared is not None or getattr(net, 'fork_slug', lambda _: None)(proj['slug']):return build()
-    if not hasattr(net.store, 'read_version'):return build()
-    token = (id(net), net.store.read_version('inputs', proj['id']),
+    if not hasattr(store, 'read_version'):return build()
+    token = (id(net), id(store), store.read_version('inputs', proj['id']),
              hashlib.sha256(repr((dict(proj), dict(fn))).encode()).digest())
     return remember(('candidate-scope', token), build)

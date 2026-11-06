@@ -10,6 +10,10 @@
   file. Remaining service conversion, cross-project reads and automatic recoverable
   migration are tracked in [Project database isolation](docs/project-databases.md).
   The existing shared repair corpus and match library keep their locations.
+  Claim transactions, release replay receipts, candidate history/scopes and
+  pause/retry/model settings now select their project store too. Quality-report
+  listing queries projects individually; quick-claim setup no longer takes a
+  database mutex. Automatic migration remains planned, not enabled.
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

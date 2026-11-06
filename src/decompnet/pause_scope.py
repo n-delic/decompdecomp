@@ -4,10 +4,11 @@ import hashlib
 
 def recorded_model(net, proj, agent):
     if agent is None:return ''
+    store = net.project_store(proj['id'])
     name=agent.name if hasattr(agent,'name') else agent['name']
-    tables={r['name'] for r in net.store.all("SELECT name FROM sqlite_master WHERE type='table'")}
-    active=net.store.one('SELECT model FROM helper_sessions WHERE project=? AND agent=? AND ended_at IS NULL ORDER BY id DESC LIMIT 1',proj['slug'],name) if 'helper_sessions' in tables else None
-    helper=net.store.one('SELECT model FROM helpers WHERE project=? AND name=?',proj['slug'],name) if 'helpers' in tables else None
+    tables={r['name'] for r in store.all("SELECT name FROM sqlite_master WHERE type='table'")}
+    active=store.one('SELECT model FROM helper_sessions WHERE project=? AND agent=? AND ended_at IS NULL ORDER BY id DESC LIMIT 1',proj['slug'],name) if 'helper_sessions' in tables else None
+    helper=store.one('SELECT model FROM helpers WHERE project=? AND name=?',proj['slug'],name) if 'helpers' in tables else None
     model=((active['model'] if active else '') or (helper['model'] if helper else '') or '').strip()
     if model.lower() in {'auto','default','automatic'}:model=''
     return model
@@ -23,10 +24,11 @@ def identity(net, proj, agent):
 
 def cooldown_start(net, proj, agent):
     """An explicit model switch must not inherit the previous model's release cooldown."""
+    store = net.project_store(proj['id'])
     model=recorded_model(net,proj,agent)
     if not model:return 0
-    tables={r['name'] for r in net.store.all("SELECT name FROM sqlite_master WHERE type='table'")}
+    tables={r['name'] for r in store.all("SELECT name FROM sqlite_master WHERE type='table'")}
     if 'helper_sessions' not in tables:return 0
     name=agent.name if hasattr(agent,'name') else agent['name']
-    row=net.store.one("SELECT MAX(COALESCE(ended_at,started_at,0)) boundary FROM helper_sessions WHERE project=? AND agent=? AND model!=? AND model!=''",proj['slug'],name,model)
+    row=store.one("SELECT MAX(COALESCE(ended_at,started_at,0)) boundary FROM helper_sessions WHERE project=? AND agent=? AND model!=? AND model!=''",proj['slug'],name,model)
     return row['boundary'] or 0
