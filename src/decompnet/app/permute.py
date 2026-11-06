@@ -265,6 +265,13 @@ class Permuter:
             db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
         return True
 
+    def _renew(self, agent, fn) -> bool:
+        """The turn's hold counted from now; False when it's no longer this turn's."""
+        now = time.time()
+        with self.net.store.tx() as db:
+            return db.execute("UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=? AND expires_at>?",
+                              (now + SECONDS + HOLD_SPARE_SECONDS, fn["id"], agent.id, now)).rowcount > 0
+
     def _let_go(self, agent, fn) -> None:
         with self.net.store.tx() as db:
             db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
@@ -281,6 +288,10 @@ class Permuter:
         try:
             if fork:  # its unit is held for the turn and built once at its end, not after every variant (trial_run)
                 held.enter_context(self.net.forks.trial_run(proj, fn["unit"]))
+                # (waiting for another turn on the unit can take most of the hold: it's counted from here, and a hold
+                # that ran out meanwhile, the function an agent's now, ends the turn)
+                if not self._renew(agent, fn):
+                    return
             if available():
                 # (a C function's as m2c reads it: what's only for C++ made pycparser refuse a PC game's whole
                 # header; a C++ function's with its C++ branch, where its classes are)
@@ -347,11 +358,13 @@ class Permuter:
             if refused is not None and not taken:  # every variant refused: it's the C the turn started from
                 raise refused
         finally:
-            if gen is not None:
-                gen.close()
-            held.close()  # (the unit built again as its file is)
-            st.holding(fn["name"], False)
-            self._let_go(agent, fn)
+            try:
+                if gen is not None:
+                    gen.close()
+                held.close()  # (the unit built again as its file is)
+            finally:  # (that build can fail: the function is let go all the same)
+                st.holding(fn["name"], False)
+                self._let_go(agent, fn)
 
     def _score(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         """A variant's score; recorded (as the function's best attempt, or its match) only when it beats `best`."""
