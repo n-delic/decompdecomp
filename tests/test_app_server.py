@@ -2798,3 +2798,48 @@ def test_tools_catalog_exposes_wibo_on_mac(app, monkeypatch):
     row = next(t for t in rows if t['id'] == 'wibo')
     assert row['supported'] and row['kind'] == 'tool'
     assert 'Windows' in row['use'] and 'macOS' in row['use']
+
+
+def test_push_is_queued_behind_sync_deduplicated_and_discoverable(app, monkeypatch):
+    from decompnet.app import repository_push, repository_push_queue, repository_sync
+    client, net, _ = app
+    syncing, release, queued = threading.Event(), threading.Event(), threading.Event()
+    monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
+    def sync(net, slug, folder, log):
+        with repository_sync._LOCK:
+            syncing.set()
+            assert release.wait(10)
+        return {'synced':True}
+    pushed = []
+    def push(net, slug, folder, log):
+        def output(line):
+            log(line)
+            queued.set()
+        output.progress = log.progress
+        with repository_push_queue.turn(output, log.check_cancel):
+            pushed.append(slug)
+        return {'pushed':True}
+    monkeypatch.setattr(repository_sync, 'run', sync)
+    monkeypatch.setattr(repository_push, 'run', push)
+    monkeypatch.setattr(repository_push, 'status', lambda *a: (_ for _ in ()).throw(AssertionError('Do not delay queued-job discovery with Git status')))
+    headers = {'X-Decomp':'1'}
+    payload = {'slug':'game','folder':'/repo'}
+    try:
+        sync_response = client.post('/api/repository-sync', json=payload, headers=headers)
+        assert sync_response.status_code == 200 and syncing.wait(5)
+        response = client.post('/api/repository-push', json=payload, headers=headers)
+        assert response.status_code == 200 and queued.wait(5)
+        job = response.json()['job']
+        assert client.post('/api/repository-push', json=payload, headers=headers).json()['job'] == job
+        active = client.get('/api/repository-push?slug=game&folder=/repo').json()
+        assert active['job'] == job and active['slug'] == 'game' and active['folder'] == '/repo'
+        snapshot = client.get('/api/job?id='+job).json()
+        assert snapshot['state'] == 'running' and snapshot['progress']['queued']
+        client.post('/api/job/cancel', json={'id':job}, headers=headers)
+        for _ in range(100):
+            snapshot = client.get('/api/job?id='+job).json()
+            if snapshot['state'] != 'running':break
+            time.sleep(.01)
+        assert snapshot['state'] == 'cancelled' and not pushed
+    finally:
+        release.set()

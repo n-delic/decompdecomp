@@ -132,3 +132,110 @@ def test_branch_change_during_fetch_aborts_without_pushing(progress, monkeypatch
     with pytest.raises(NetworkError, match='changed while checking'):
         repository_push.run(net, 'game', str(root), lambda line: None)
     assert git(remote, 'rev-parse', 'HEAD') == before
+
+
+class QueueLog:
+    def __init__(self):
+        import threading
+        self.queued = threading.Event()
+        self.cancel = threading.Event()
+        self.updates = []
+    def __call__(self, line):
+        self.check_cancel()
+    def check_cancel(self):
+        if self.cancel.is_set():raise RuntimeError('Push cancelled')
+    def progress(self, value):
+        self.updates.append(value)
+        if value.get('queued'):self.queued.set()
+
+
+def test_push_waits_for_repository_operation_then_pushes_current_commits(progress):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_sync
+    net, root, remote = progress
+    commit(root)
+    log = QueueLog()
+    with ThreadPoolExecutor(1) as pool:
+        repository_sync._LOCK.acquire()
+        try:
+            future = pool.submit(repository_push.run, net, 'game', str(root), log)
+            assert log.queued.wait(5) and not future.done()
+            # A preceding checkpoint can add commits while the push waits.
+            latest = commit(root, 'queued.txt', 'checkpoint completed before push')
+        finally:
+            repository_sync._LOCK.release()
+        result = future.result(timeout=10)
+    assert result['commit'] == latest == git(remote, 'rev-parse', 'HEAD')
+    assert any(u.get('queued') for u in log.updates)
+    assert log.updates[-1]['queued'] is False
+
+
+def test_cancelled_queued_push_does_not_touch_origin_or_release_other_operation(progress):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_push_queue, repository_sync
+    net, root, remote = progress
+    original = git(remote, 'rev-parse', 'HEAD')
+    commit(root)
+    log = QueueLog()
+    with ThreadPoolExecutor(1) as pool:
+        repository_sync._LOCK.acquire()
+        try:
+            future = pool.submit(repository_push.run, net, 'game', str(root), log)
+            assert log.queued.wait(5)
+            log.cancel.set()
+            with pytest.raises(RuntimeError, match='Push cancelled'):future.result(timeout=5)
+            assert repository_sync._LOCK.locked()
+            assert not repository_push_queue._WAITERS
+        finally:
+            repository_sync._LOCK.release()
+    assert git(remote, 'rev-parse', 'HEAD') == original
+    assert repository_push.run(net, 'game', str(root), lambda _:None)['pushed']
+
+
+@pytest.mark.parametrize('change', ['branch', 'origin'])
+def test_destination_changes_while_queued_are_not_pushed(progress, change):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_sync
+    net, root, remote = progress
+    original = git(remote, 'rev-parse', 'HEAD')
+    commit(root)
+    log = QueueLog()
+    with ThreadPoolExecutor(1) as pool:
+        repository_sync._LOCK.acquire()
+        try:
+            future = pool.submit(repository_push.run, net, 'game', str(root), log)
+            assert log.queued.wait(5)
+            if change == 'branch':git(root, 'checkout', '-qb', 'work/different')
+            else:git(root, 'remote', 'set-url', 'origin', str(remote.parent/'different.git'))
+        finally:
+            repository_sync._LOCK.release()
+        with pytest.raises(NetworkError, match='changed while this push was queued'):future.result(timeout=5)
+    assert git(remote, 'rev-parse', 'HEAD') == original
+
+
+def test_push_queue_preserves_order_and_recovers_after_failure():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_push_queue, repository_sync
+    logs = [QueueLog(), QueueLog(), QueueLog()]
+    order = []
+    def work(index):
+        with repository_push_queue.turn(logs[index], logs[index].check_cancel):
+            order.append(index)
+            if index == 0:raise ValueError('earlier push failed')
+    with ThreadPoolExecutor(3) as pool:
+        repository_sync._LOCK.acquire()
+        try:
+            futures = []
+            for index, log in enumerate(logs):
+                futures.append(pool.submit(work, index))
+                assert log.queued.wait(5)
+        finally:
+            repository_sync._LOCK.release()
+        with pytest.raises(ValueError, match='earlier push failed'):futures[0].result(timeout=5)
+        for future in futures[1:]:future.result(timeout=5)
+    assert order == [0,1,2] and not repository_push_queue._WAITERS
+    assert not repository_sync._LOCK.locked()
