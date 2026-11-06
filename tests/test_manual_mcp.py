@@ -88,3 +88,8 @@ def test_server_resolves_manual_credentials_and_rejects_revoked_tokens(tmp_path,
     assert client.post('/api/manual-mcp', json={'action': 'revoke', 'id': agent.id}).status_code == 200
     with pytest.raises(NetworkError, match='invalid API token'):
         resolve[0](context)
+    another = client.post('/api/manual-mcp', json={'action': 'create', 'slug': 'game'}).json()
+    assert client.post('/api/delete', json={'slug': 'game'}).status_code == 200
+    assert not client.get('/api/manual-mcp').json()['connections']
+    with pytest.raises(NetworkError, match='invalid API token'):
+        net.authenticate(another['token'])

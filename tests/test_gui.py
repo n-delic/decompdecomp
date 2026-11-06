@@ -300,3 +300,10 @@ def test_agent_tool_controls_save_and_revert_failed_changes():
         pytest.skip('needs node')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_tool_settings.js'))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_manual_mcp_connections_handle_failed_project_loads():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_manual_mcp.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

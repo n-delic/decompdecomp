@@ -364,6 +364,7 @@ setInterval(() => checkUpdate(false, true), 10 * 60 * 1000);
 let manualMcpRead = 0, manualMcpProjectsRead = 0;
 async function loadManualMcp() {
   const select = $("mcpProject"), previous = select.value;
+  $("mcpRefresh").onclick = loadManualMcp;
   $("mcpCreate").disabled = true;
   select.innerHTML = '<option value="">Loading projects…</option>';
   select.disabled = true;
@@ -385,7 +386,6 @@ async function loadManualMcp() {
   select.value = projects.some(p => p.slug === previous) ? previous : projects[0]?.slug || '';
   $("mcpCreate").disabled = !select.value;
   select.onchange = () => { $("mcpCreate").disabled = !select.value; $("mcpConfig").replaceChildren(); refreshManualMcp(); };
-  $("mcpRefresh").onclick = loadManualMcp;
   $("mcpCreate").onclick = async () => {
     const slug = select.value, button = $("mcpCreate"), log = $("mcpLog");
     if (!slug || select.disabled) return;

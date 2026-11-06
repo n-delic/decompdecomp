@@ -120,10 +120,11 @@ def register(app: App) -> None:
         manager.forget_project(slug)  # (it stopped every project's helpers)
         proj = net.project_row(slug)
         net.knowledge.forget(slug)
-        net.remove_project(slug)
         from .. import manual_mcp
-        settings.data['manual_mcp'] = [c for c in manual_mcp.connections(settings) if c['slug'] != slug]
-        settings.save()
+        for connection in list(manual_mcp.connections(settings)):
+            if connection['slug'] == slug:
+                manual_mcp.revoke(net, settings, connection['id'])
+        net.remove_project(slug)
         if data.get("files"):
             shutil.rmtree(proj["root"], ignore_errors=True)
         if settings.data.get("last_project") == slug:
