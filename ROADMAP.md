@@ -2789,3 +2789,9 @@ need independent evidence before receiving this specific GNU C repair.
   guards. A real copied N64 draft improves 322 to 172, not exact. External PROJECT
   compiler commands without proven C32/macro scope remain excluded, as with
   promoted-entry and pure-preheader repairs; invocation evidence is planned work.
+
+- Done: automatic SDK naming can use unique full-size assembly identities through
+  the normal guarded rename paths. Assembly classification and C queue exclusions
+  are preserved; ambiguous, small, disabled-library and colliding names stay out.
+  A read-only real indexed project finds four exact identities among34 assembly
+  routines (three still generated names). This is naming evidence, not matching C.

@@ -396,3 +396,14 @@ interfaces, conflicting/shared declarations, escaped function names and argument
 count differences remain review items. All positions in a proposed interface
 must be supported; this pass does not partially guess a complex signature.
 Matched C supplies a candidate contract, not proof of the original interface.
+
+### Recognize exact SDK assembly names without assigning C work
+
+Naming and compilability are separate decisions. The automatic naming pass may
+use a unique full-size relocation-normalized SDK identity even for a hand-written
+assembly routine. It still uses the normal guarded rename path, preserves the
+assembly status and reason, and never counts a C match. Ordinary SDK identity
+lookups for C work retain their assembly exclusion; the naming cache is separate.
+A read-only real indexed project recovers four libultra identities among34 assembly
+routines, including three generated names. This avoids treating known interrupt/
+TLB helpers as unknown game functions while preserving the queue safeguards.

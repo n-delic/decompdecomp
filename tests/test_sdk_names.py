@@ -55,7 +55,7 @@ def test_selected_sdk_names_use_normal_rom_or_imported_validation(sdk_case, monk
     assert calls == [('func_80001000', 'sdkHelper')]
 
 
-@pytest.mark.parametrize('reason', ['named','claimed','disabled','builtin','collision','ambiguous','duplicate','asm','size','generated'])
+@pytest.mark.parametrize('reason', ['named','claimed','disabled','builtin','collision','ambiguous','duplicate','size','generated'])
 def test_names_are_not_guessed_or_overwritten(sdk_case, monkeypatch, reason):
     net, pid, fid = sdk_case
     agent = net.local_agent('worker')[0] if reason == 'claimed' else None
@@ -71,8 +71,8 @@ def test_names_are_not_guessed_or_overwritten(sdk_case, monkeypatch, reason):
             db.execute('INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES(?,?,?,?,?,?)',
                        ('Other SDK','mips',1,'differentMeaning','exact',40))
         if reason == 'size':db.execute('UPDATE sdk_signatures SET size=44')
-    if reason in ('duplicate','asm'):
-        prints = {fid: SimpleNamespace(key='exact',size=40,asm=reason=='asm')}
+    if reason == 'duplicate':
+        prints = {fid: SimpleNamespace(key='exact',size=40,asm=False)}
         if reason == 'duplicate':prints[fid+1] = SimpleNamespace(key='exact',size=40,asm=False)
         monkeypatch.setattr(net.twins, 'prints', lambda _: prints)
     monkeypatch.setattr(net, 'rename_symbols', lambda *args: pytest.fail('unsafe rename'))
@@ -97,3 +97,33 @@ def test_rejected_unchanged_sdk_names_wait_but_changed_inputs_retry(sdk_case, mo
         db.execute("UPDATE sdk_signatures SET corpus='updated library'")
     name_functions(net, 'demo')
     assert len(calls) == 3
+
+
+@pytest.mark.parametrize('fork', [False, True])
+def test_exact_sdk_assembly_can_be_named_without_becoming_c_work(sdk_case, monkeypatch, fork):
+    from decompnet.app.sdk_identity import identify
+    net, pid, fid = sdk_case
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?",
+                   (json.dumps({'asm_code':'privileged instructions'}),fid))
+    monkeypatch.setattr(net.twins, 'prints', lambda _: {fid:SimpleNamespace(key='exact',size=40,asm='privileged instructions')})
+    monkeypatch.setattr(net, 'fork_slug', lambda _: 'demo' if fork else None)
+    project = net.project_row('demo')
+    assert identify(net,project,{}) == {}
+    assert identify(net,project,{},include_asm=True)[fid]['names'] == ['sdkHelper']
+    calls = []
+    def rename(agent,slug,old,new,message):
+        calls.append((old,new))
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET name=? WHERE id=?',(new,fid))
+        return '✅ Renamed'
+    monkeypatch.setattr(net, 'rename_symbol', rename)
+    monkeypatch.setattr(net, 'rename_symbols', lambda agent,slug,pairs,message: rename(agent,slug,*pairs[0],message))
+    assert name_functions(net,'demo') == 1
+    row = net.store.one('SELECT *FROM functions WHERE id=?',fid)
+    assert row['status'] == 'asm'
+    assert json.loads(row['meta'])['asm_code'] == 'privileged instructions'
+    assert json.loads(row['meta'])['naming']['method'] == 'sdk_signature'
+    assert calls == [('func_80001000','sdkHelper')]
+    # Named metadata and the optional naming cache never make it a C candidate.
+    assert identify(net,net.project_row('demo'),{}) == {}

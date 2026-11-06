@@ -43,7 +43,7 @@ def _name_functions(net, slug, job=None):
     fork = net.fork_slug(slug)
     if not fork and not net.is_rom(proj):
         return 0
-    hints = identify(net, proj, {})
+    hints = identify(net, proj, {}, include_asm=True)
     if not hints:
         return 0
     prints = net.twins.prints(proj)
