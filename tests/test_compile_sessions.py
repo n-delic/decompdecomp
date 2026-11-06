@@ -183,7 +183,8 @@ def test_directory_symlinks_use_ordinary_staging_and_missing_roots_still_fail(bu
 
 @pytest.mark.parametrize('header', ['#include "/external/header.h"', '#include <external.h>',
                                    '#define H "external.h"\n#include H', '%:include "/external/header.h"',
-                                   '#include_next "types.h"', '#import "/external/header.h"'])
+                                   '#include_next "types.h"', '#import "/external/header.h"',
+                                   '#/**/include "/external/header.h"', '#/**/include MISSING_HEADER'])
 def test_uncaptured_includes_cannot_reuse_objects(builds, header):
     cfg, calls, _ = builds
     with compile_sessions.session():

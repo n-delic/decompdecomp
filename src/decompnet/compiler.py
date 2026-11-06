@@ -281,6 +281,9 @@ def _stable_inputs(inputs, staged_names=()):
                                         b'__FILE__', b'__BASE_FILE__', b'__has_include', b'##', b'%:%:', b'??')):
             return False
         text = text.replace(b'%:', b'#')
+        text = _COMMENTS_AND_STRINGS.sub(
+            lambda match: ' ' if match.group().startswith('/') else match.group(),
+            text.decode('utf-8', errors='replace')).encode()
         for directive in re.finditer(rb'(?m)^\s*#\s*(include(?:_next)?|import)\b([^\n]*)', text):
             include = re.match(rb'\s*"([^"\n]+)"', directive[2])
             if directive[1] == b'include_next' or include is None or include[1] not in staged_names:
