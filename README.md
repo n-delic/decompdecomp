@@ -1870,3 +1870,12 @@ target, header and compiler inputs. Only a saved exact match releases the old cl
 The displaced CLI conversation restarts with another eligible function; API helpers discard
 obsolete tool calls at the next response or tool boundary. Workers that already moved to
 another function keep running. Failed checks keep their claims and saved work.
+
+### Codex tool startup
+
+App-managed Codex sessions require decompdecomp's MCP server to connect before the model
+starts. Codex waits up to 30 seconds for startup, including focused/resumed sessions.
+If the required connection fails, the helper displays the underlying startup diagnostic
+and retries with connection backoff before starting a model turn. Session tokens are
+redacted from diagnostics. The separate authenticated app preflight and actual CLI
+`project_info` handshake remain in place.

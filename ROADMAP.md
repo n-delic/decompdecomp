@@ -2893,3 +2893,7 @@ need independent evidence before receiving this specific GNU C repair.
   ROM and imported projects share the supported 32-bit C proof; unknown ABIs and
   ambiguous source remain untouched. A copied prototype-correction replay recovered
   exact bytes, without counting an additional game match.
+
+- Done: Codex CLI sessions explicitly enable and require the app MCP transport with a
+  bounded startup timeout, including focused resumes. Required-transport startup failures
+  show redacted CLI diagnostics and use connection backoff before a model turn starts.

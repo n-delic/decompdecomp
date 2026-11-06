@@ -29,6 +29,7 @@ from . import (
 )
 
 TOKEN_ENV = "DECOMP_TOKEN"  # the session's token reaches Codex through its environment, never its command line
+STARTUP_TIMEOUT = 30  # Wait for authenticated tool discovery before any model turn.
 TOOL_TIMEOUT = 180  # seconds a tool call may take (a fork's build)
 COMMAND_SHOWN = 80  # characters of a shell command the feed shows
 
@@ -183,9 +184,10 @@ class Codex(Agent):
         # user's config), as --strict-mcp-config does for Claude Code
         cmd = [exe, "exec", "--json", "--skip-git-repo-check", "--ephemeral", "-C", str(workdir), "-s", "read-only"]
         for name in (codex_config().get("mcp_servers") or {}):
-            if re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            if name != "decomp_agent" and re.fullmatch(r"[A-Za-z0-9_-]+", name):
                 cmd += ["-c", f"mcp_servers.{name}.enabled=false"]
         cmd += ["-c", f'mcp_servers.decomp_agent={{url="{mcp_url}", bearer_token_env_var="{TOKEN_ENV}", '
+                      f'enabled=true, required=true, startup_timeout_sec={STARTUP_TIMEOUT}, '
                       f'default_tools_approval_mode="approve", tool_timeout_sec={TOOL_TIMEOUT}}}',
                 "-c", 'approval_policy="never"',
                 "-c", 'web_search="disabled"']  # the read-only sandbox keeps its shell offline; this, its own search
@@ -205,6 +207,11 @@ class Codex(Agent):
         if conversation:
             cmd[-1:] = ['resume', conversation, '-']
         return cmd, env
+
+    def startup_failure(self, text: str) -> str | None:
+        if re.search(r'(?:required MCP servers?.*(?:failed|not ready|did not start)|MCP startup failed)',text,re.I):
+            return 'Codex could not initialize its required app tools: '+text.strip()[-1200:]
+        return None
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
