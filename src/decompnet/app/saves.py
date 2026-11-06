@@ -1239,6 +1239,9 @@ class Autosave:
                 if json.loads(row['config']).get('auto_commit_matches'):
                     from . import match_commits
                     match_commits.process(self.net, row['slug'], logger or log.info)
+                if json.loads(row['config']).get('score_commits', {}).get('enabled'):
+                    from . import score_commits
+                    score_commits.process(self.net, row['slug'], logger or log.info)
             except _AutosavePaused:
                 raise
             except Exception as error:  # keep other projects saving; do not flood logs every second

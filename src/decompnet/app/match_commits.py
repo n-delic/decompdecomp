@@ -33,6 +33,29 @@ def status(net, proj):
             'last_commit': last['commit_sha'] if last else ''}
 
 
+def checkout_settings(net, slug, folder):
+    """Shared preflight for opt-in local progress commits."""
+    proj = net.project_row(slug)
+    if not net.is_rom(proj):
+        raise NetworkError('Automatic per-function commits need a linked portable progress checkout. Imported-build commit support is planned.')
+    root = repository_sync.checkout(folder, clean=False)
+    if not repository_sync.progress_checkout(net, slug, root):
+        raise NetworkError('Choose this project’s linked progress checkout before enabling automatic commits.')
+    branch = repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD',
+                                 error='Switch to a named Git branch before enabling automatic commits.')
+    for identity in ('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT'):
+        repository_git.git(root, 'var', identity, error='Set Git user.name and user.email in this checkout before enabling automatic commits.')
+    if repository_git.git(root, 'diff', '--cached', '--name-only'):
+        raise NetworkError('Review or commit staged changes before enabling automatic commits.')
+    folder = saves.default_folder(net, slug).resolve()
+    relative = folder.relative_to(root) / saves.MANIFEST
+    base = json.loads(repository_git.git(root, 'show', 'HEAD:' + relative.as_posix()))
+    current = json.loads((folder/saves.MANIFEST).read_text(encoding='utf-8'))
+    if layout_shape(base) != layout_shape(current):
+        raise NetworkError('Commit current progress once to save its function layout, then enable automatic progress commits.')
+    return root, branch
+
+
 def configure(net, slug, enabled, folder=''):
     """Checking the box authorizes future local commits only; disabling cancels uncommitted work."""
     if not isinstance(enabled, bool):
@@ -40,23 +63,7 @@ def configure(net, slug, enabled, folder=''):
     proj = net.project_row(slug)
     values = {'auto_commit_matches': enabled}
     if enabled:
-        if not net.is_rom(proj):
-            raise NetworkError('Automatic per-function commits need a linked portable progress checkout. Imported-build commit support is planned.')
-        root = repository_sync.checkout(folder, clean=False)
-        if not repository_sync.progress_checkout(net, slug, root):
-            raise NetworkError('Choose this project’s linked progress checkout before enabling automatic commits.')
-        branch = repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD',
-                                     error='Switch to a named Git branch before enabling automatic commits.')
-        for identity in ('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT'):
-            repository_git.git(root, 'var', identity, error='Set Git user.name and user.email in this checkout before enabling automatic commits.')
-        if repository_git.git(root, 'diff', '--cached', '--name-only'):
-            raise NetworkError('Review or commit staged changes before enabling automatic commits.')
-        folder = saves.default_folder(net, slug).resolve()
-        relative = folder.relative_to(root) / saves.MANIFEST
-        base = json.loads(repository_git.git(root, 'show', 'HEAD:' + relative.as_posix()))
-        current = json.loads((folder/saves.MANIFEST).read_text(encoding='utf-8'))
-        if layout_shape(base) != layout_shape(current):
-            raise NetworkError('Commit current progress once to save its function layout, then enable automatic match commits.')
+        root, branch = checkout_settings(net, slug, folder)
         values.update(auto_commit_folder=str(root), auto_commit_branch=branch)
     net._update_cfg(slug, lambda cfg: cfg.update(values))
     if not enabled:
