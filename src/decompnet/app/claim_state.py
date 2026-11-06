@@ -3,6 +3,7 @@ import functools
 import json
 import threading
 import time
+from contextlib import nullcontext
 from contextvars import ContextVar
 
 from ..release_receipts import current
@@ -21,7 +22,8 @@ def quick(function):
             locks=net.__dict__.setdefault('_claim_request_locks',{})
             lock=locks.setdefault((agent.id,slug),threading.RLock())
         # Concurrent retries share the ordinary held claims; no parallel hydration/builds.
-        with lock:
+        progress = getattr(net, "progress", None)
+        with lock, progress.view() if progress is not None else nullcontext():
             token=_fast.set(True)
             try:
                 return function(net,agent,slug,*args,**kwargs)

@@ -48,6 +48,10 @@ const hhmm = (t) => clock(t).slice(0, 5);
 const sentence = (text) => (text ? text[0].toUpperCase() + text.slice(1) : "");
 
 function helperState(s, claim) {
+  if (["starting", "working"].includes(s.state) && s.startup_stage) {
+    const seconds = Math.max(0, Math.floor(Date.now()/1000 - (s.startup_stage_at || Date.now()/1000)));
+    return `Starting: ${esc(s.startup_stage)} · ${seconds}s in this stage`;
+  }
   if (s.state === "working") {
     if (!claim) return "Working: picking its next function";
     const pct = claim.n_insns > 0 ? pctOf(claim.best_score, claim.n_insns) : null;
@@ -267,6 +271,7 @@ function renderSessions(sessions, refreshCosts = true) {
           ${live ? '' : `<button data-remove="${id}" type="button">Remove agent</button>`}</div></details></div>
       ${agentMetrics(s, b)}
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
+      ${["starting", "working"].includes(s.state) && s.startup_stage ? `<progress class="workbar" aria-label="Agent startup"></progress>` : ""}
       ${todo ? `<span class="todo-line">${esc(todo)}</span>${s.can_login && !live && /login|sign.?in/i.test(s.todo || "") ? `<button class="ghost" type="button" data-login="${id}">Sign in to ${esc(s.kind_name)}</button>` : ""}` : ''}
       ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : s.task !== "readable" && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
       ${agentUsage(s)}

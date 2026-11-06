@@ -1,5 +1,7 @@
 # Roadmap
 
+- Done: helper startup and claim receipts read current database state without inline saved-file restoration. Startup reuses one eligibility scan, waits when all selected work is claimed, and shows elapsed preparation stages. Heavy drafts/diagnostics stay behind the ordinary claimed-function reads.
+
 - Done: compiler surveys and installed/used-profile comparisons process all eligible functions in one stoppable run; finished comparisons remain saved for resuming after Stop.
 
 - In progress: independent operational databases per project. Core function/header,

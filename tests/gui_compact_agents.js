@@ -79,3 +79,5 @@ c.renderSessions([agent]);html=elements.get('sessions').html;
 assert(html.includes('Retry provider now'));assert(!html.includes('class="ghost" data-retry-paused'));
 agent.provider_retry_requested=true;c.renderSessions([agent]);html=elements.get('sessions').html;
 assert(html.includes('Provider retry requested…'));assert(/data-retry-provider="test"[^>]*disabled/.test(html));
+
+assert.match(c.helperState({state:'working',startup_stage:'Checking local tools',startup_stage_at:Date.now()/1000-10}), /Starting: Checking local tools · 10s/);
