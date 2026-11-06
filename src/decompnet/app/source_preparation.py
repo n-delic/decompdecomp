@@ -394,7 +394,8 @@ def promote_context(net, db, fn, expected, header, agent):
     """Called inside _record's transaction, after an ordinary successful compile/link, before writing the attempt."""
     proj = db.execute('SELECT * FROM projects WHERE id=?', (fn['project_id'],)).fetchone()
     claim = db.execute('SELECT agent_id,expires_at FROM claims WHERE function_id=?', (fn['id'],)).fetchone()
-    if not claim or claim['agent_id'] != agent.id or claim['expires_at'] <= time.time():
+    from ..permuter_claims import nonexclusive
+    if not nonexclusive(agent) and (not claim or claim['agent_id'] != agent.id or claim['expires_at'] <= time.time()):
         raise NetworkError('The function claim changed during preparation. Run the pass again.')
     if fn['status'] != 'open' or inputs(net, proj, fn) != expected:
         raise NetworkError('The function, header or build inputs changed during preparation. Run the pass again.')
@@ -412,7 +413,9 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
     if fork:
         # The existing build must supply its own compatible types. Never edit its build setup or headers.
         started=time.monotonic()
-        score=net.forks.attempt(agent, fork, fn['name'], source, keep=False, quiet=fn['best_score']).get('score')
+        from ..permuter_claims import nonexclusive
+        score=net.forks.attempt(agent, fork, fn['name'], source, keep=False, quiet=fn['best_score'],
+                               **({'background':True} if nonexclusive(agent) else {})).get('score')
         if hasattr(net,'store'):
             from .source_lead_analysis import record
             record(net,proj,fn,source,net.forks.permuter_header(fork,fn['name']),score,[],lead,(time.monotonic()-started)*1000)
@@ -500,8 +503,12 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
         fork = net.fork_slug(proj['slug'])
         deadline = time.monotonic() + seconds
         if cfg.get('assembly_mappings') and not fork:
+            from ..permuter_claims import nonexclusive
             from .source_assembly import run as assemble
-            assembly=assemble(net,proj,cfg,log_line,lambda:st.stop.is_set() or time.monotonic()>=deadline,budget,only,agent)
+            # Assembly classification is a separate verification operation, not a C
+            # permutation. Retain its exclusive checks and its existing attribution.
+            assembly_agent=net.local_agent('autopilot')[0] if nonexclusive(agent) else agent
+            assembly=assemble(net,proj,cfg,log_line,lambda:st.stop.is_set() or time.monotonic()>=deadline,budget,only,assembly_agent)
             report['assembly_verified']=assembly['verified']+assembly['cached'];report['tested']+=assembly['tested'];report['errors']+=assembly['errors']
             st.add(variants=assembly['tested'])
         for mapping in mapped:

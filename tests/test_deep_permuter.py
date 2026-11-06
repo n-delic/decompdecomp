@@ -111,8 +111,7 @@ def test_local_claims_allow_search_but_matched_and_unscored_functions_are_reject
         db.execute('INSERT INTO claims VALUES(1,1,0,9999999999)')
     assert deep_permuter.validate(net, 'game', 'f', 1, 10)[1]['name'] == 'f'
     net.links = {'game': object()}
-    with pytest.raises(NetworkError, match='working'):
-        deep_permuter.validate(net, 'game', 'f', 1, 10)
+    assert deep_permuter.validate(net, 'game', 'f', 1, 10)[1]['name'] == 'f'
 
 
 def test_time_limit_ends_before_a_compile_and_keeps_the_lease_free(monkeypatch):
@@ -453,8 +452,7 @@ def test_source_recipe_lineage_and_old_diff_are_reset_when_a_profile_changes(mon
     assert not net.store.one('SELECT 1 FROM repair_sequences')
 
 
-def test_room_claims_renew_release_and_pending_local_match(monkeypatch):
-    import time
+def test_room_permutation_never_claims_or_renews_and_submits_candidates(monkeypatch):
     from types import SimpleNamespace
 
     net = setup(monkeypatch)
@@ -470,10 +468,11 @@ def test_room_claims_renew_release_and_pending_local_match(monkeypatch):
     monkeypatch.setattr(net, 'links', {'game': Link()})
     search = deep_permuter.Search(net, 1, 10, Log(), net.function())
     assert search._hold(AGENT, net.function())
-    link, agent, name, _ = search.room_holds[1]
-    search.room_holds[1] = (link, agent, name, time.monotonic()-31)
+    assert not search.room_holds
     search.check()
-    assert len([c for c in calls if c[0] == 'claim']) == 2
+    assert not calls
+    assert not net.store.one('SELECT 1 FROM claims')
+    link=net.links['game']
     from decompnet.app import deep_room
     monkeypatch.setattr(deep_room,'best',lambda *args:calls.append(('/collab/best',{})))
     monkeypatch.setattr(deep_room,'submit',lambda *args:{'matched':False,'pending':True})
@@ -494,8 +493,9 @@ def test_imported_room_search_uses_host_build_and_syncs_improvements(monkeypatch
     net = setup(monkeypatch, imported=True)
     calls = []
     class Link:
-        def attempt(self, agent, name, source):
-            calls.append(('judge', name, source))
+        def call(self, route, agent, **data):
+            assert route == '/collab/attempt' and data['nonexclusive']
+            calls.append(('judge', data['function'], data['source']))
             return {'score': 20, 'matched': False}
         def sync(self):
             calls.append(('sync',))

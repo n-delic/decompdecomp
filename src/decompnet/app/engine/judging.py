@@ -249,12 +249,12 @@ class JudgeMixin:
         except NetworkError:
             pass
 
-    def apply_reported_best(self, slug: str, name: str, score: int, source: str, agent: Agent) -> None:
+    def apply_reported_best(self, slug: str, name: str, score: int, source: str, agent: Agent, *, before_record=None) -> None:
         """Host side: a room member's better attempt, as they report it (their own compile scored it)."""
         fn = self._function(name, slug)
         if fn["status"] != "open" or score <= 0 or (fn["best_score"] is not None and score >= fn["best_score"]):
             return
-        self._record(fn, agent, score, source, self._context(fn["project_id"], fn["unit"])["version"], via="room")
+        self._record(fn, agent, score, source, self._context(fn["project_id"], fn["unit"])["version"], via="room", before_record=before_record)
 
     @release_operation("release")
     def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "") -> str:

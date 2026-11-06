@@ -756,7 +756,7 @@ def test_members_stay_in_the_room_when_their_app_restarts(built, tmp_path):  # n
     assert [m["name"] for m in room._members_now()] == ["sam"]
 
 
-def test_deep_room_search_claims_and_host_confirms_demo_match(built, tmp_path):  # noqa: F811
+def test_deep_room_search_is_nonexclusive_and_host_confirms_demo_match(built, tmp_path):  # noqa: F811
     from decompnet.app.deep_permuter import Search
     from tests.test_deep_permuter import Log
 
@@ -785,7 +785,7 @@ def test_deep_room_search_claims_and_host_confirms_demo_match(built, tmp_path): 
     runner, _ = guest.local_agent(f'permuter-{fn["id"]}')
     search = Search(guest, 1, 10, Log(), fn)
     assert search._hold(runner, fn)
-    assert any(c['agent'].startswith('deep-client.permuter-') for c in host.live(slug)['claims'])
+    assert not any(c['agent'].startswith('deep-client.permuter-') for c in host.live(slug)['claims'])
     try:
         score = search._score(runner, guest.project_row(gslug), fn, DAMAGE, fn['best_score'], None)
         assert score == 0

@@ -63,6 +63,17 @@ def register(app: App) -> None:
 
 
 
+    @mcp.custom_route('/api/settings-jobs', methods=['GET'])
+    async def api_settings_jobs(request):
+        if bad := guard(request):return bad
+        # Discover work before loading statistics: a busy/compacting database must
+        # not hide a job which the user can still inspect or stop.
+        return JSONResponse({
+            'storage':jobs.active(('Compress candidate history','Clean old unsuccessful source')),
+            'headers':jobs.active(('C header cleanup','Database compaction')),
+            'cleanup':jobs.active(('Database transcript cleanup',)),
+        })
+
     @mcp.custom_route('/api/database-cleanup', methods=['GET','POST'])
     async def api_database_cleanup(request):
         from .. import database_cleanup

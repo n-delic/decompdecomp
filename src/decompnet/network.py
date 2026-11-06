@@ -405,6 +405,8 @@ def _ago(ts: float | None) -> str:
 class Network:
     def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL):
         self.store = Store(db_path)
+        from .permuter_claims import clear
+        with self.store.tx() as db:clear(db)
         self.claim_ttl = claim_ttl
         self._compile_ahead_local = threading.local()
         self._attempt_locks: dict[tuple[int, int], threading.RLock] = {}
@@ -587,6 +589,8 @@ class Network:
         )
 
     def _expire_claims(self, db) -> None:
+        from .permuter_claims import clear
+        clear(db)
         now = time.time()
         own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
         for row in db.execute("SELECT c.function_id, c.agent_id, f.project_id, f.name FROM claims c "

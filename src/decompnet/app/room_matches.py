@@ -261,6 +261,8 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
     agent=Agent(agent_row['id'],agent_row['name'],agent_row['owner'],bool(agent_row['trusted']))
     result={'matched':False,'score':None,'pending':True,'submission':key}
     verification_claim=False
+    from ..permuter_claims import nonexclusive
+    side_search=nonexclusive(agent)
     try:
         if fn['status']=='matched':
             result.update(matched=True,pending=False)
@@ -271,16 +273,16 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
             with net.store.tx() as db:
                 net._expire_claims(db)
                 claim=db.execute('SELECT agent_id FROM claims WHERE function_id=?',(fn['id'],)).fetchone()
-                if claim and claim['agent_id']!=agent.id:
+                if claim and claim['agent_id']!=agent.id and not side_search:
                     raise NetworkError('This function is claimed by another worker; retry when released.')
-                if not claim:
+                if not claim and not side_search:
                     now=time.time()
                     db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],agent.id,now,now+net.claim_ttl))
                     verification_claim=True
             own=compiler_for(net.cfg(proj),fn['vram'], fn)
             # Portable submissions carry the exact compiler/header bundle. Verify it first;
             # an ordinary host attempt can use different declarations and obscure that evidence.
-            if not item.get('evidence') and toolchains.installed(own['toolchain']):
+            if not side_search and not item.get('evidence') and toolchains.installed(own['toolchain']):
                 report({'phase':'Compiling and comparing with host settings', 'toolchain':own['toolchain'], 'flags':own['flags']})
                 res=net.attempt(agent,fn['name'],item['source'],slug)
             else:

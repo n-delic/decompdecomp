@@ -38,6 +38,7 @@ class FakeNet:
 
     def __init__(self):
         self.store = Store(IN_MEMORY)
+        self._generation = {}
         with self.store.tx() as db:
             db.execute("INSERT INTO projects(id, slug, name, arch, root, config) VALUES(1, 'game', 'Game', 'mips', '.', ?)",
                        (json.dumps({"compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": "-O2"}}),))
@@ -358,8 +359,8 @@ def test_configured_size_and_turn_limits_admit_large_exhausted_near_misses():
     p.configure({'permuter_max_insns': 1000, 'permuter_max_turns': 5, 'permuter_seconds': 180})
     assert [r['name'] for r in p.candidates(proj)] == ['f']
     assert p._hold(AGENT, net.function())
-    claim = net.store.one('SELECT * FROM claims')
-    assert claim['expires_at'] - claim['claimed_at'] == 180 + permute.HOLD_SPARE_SECONDS
+    assert not net.store.one('SELECT * FROM claims')
+    assert net.function()['permuted'] == 5
     p._let_go(AGENT, net.function())
     assert p.candidates(proj) == []
     p.configure({})

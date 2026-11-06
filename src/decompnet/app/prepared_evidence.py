@@ -47,8 +47,10 @@ def publish_profile(net, db, fn, expected, settings, agent):
     proj=db.execute('SELECT * FROM projects WHERE id=?',(fn['project_id'],)).fetchone()
     claim=db.execute('SELECT agent_id,expires_at FROM claims WHERE function_id=?',(fn['id'],)).fetchone()
     import time
-    if (fn['status']!='open' or prep.inputs(net,proj,fn)!=expected or not claim
-            or claim['agent_id']!=agent.id or claim['expires_at']<=time.time()):
+
+    from ..permuter_claims import nonexclusive
+    if (fn['status']!='open' or prep.inputs(net,proj,fn)!=expected or
+            (not nonexclusive(agent) and (not claim or claim['agent_id']!=agent.id or claim['expires_at']<=time.time()))):
         raise NetworkError('The prepared bundle changed or its claim expired. Run preparation again.')
     if not fn['size'] or fn['size']<=0:
         raise NetworkError('The function needs a valid extent before applying a compiler bundle.')
@@ -214,14 +216,15 @@ def retry_inputs(expected, current):
 
 
 def promote_measured(net, proj, fn, source, header, settings, agent, expected):
-    """At most two full checks; never bypass a lost claim or a changed source/header/target."""
+    """At most two full checks; exclusive callers keep their lease, side searches freeze all inputs."""
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Automatic prepared bundles require a local ROM project.')
     for attempt in range(2):
         fresh = net.project_row(proj['slug'])
         current = net._function(fn['name'], proj['slug'])
         claim = net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', current['id'])
-        if not agent or not claim or claim['agent_id'] != agent.id or claim['expires_at'] <= time.time():
+        from ..permuter_claims import nonexclusive
+        if not agent or (not nonexclusive(agent) and (not claim or claim['agent_id'] != agent.id or claim['expires_at'] <= time.time())):
             raise NetworkError('The prepared bundle claim expired or changed. Claim the function and submit a fresh proposal.')
         actual = prep.inputs(net, fresh, current)
         if actual != expected and retry_inputs(expected, actual):
@@ -234,7 +237,7 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
             changed = changed_inputs(expected, state)
             if attempt == 0 and latest['status'] == 'open' and retry_inputs(expected, state):
                 claim = net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', latest['id'])
-                if claim and claim['agent_id'] == agent.id and claim['expires_at'] > time.time():
+                if nonexclusive(agent) or (claim and claim['agent_id'] == agent.id and claim['expires_at'] > time.time()):
                     expected = state
                     continue
             if changed:
@@ -243,7 +246,7 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
 
 
 def _promote_measured(net, proj, fn, source, header, settings, agent, expected):
-    """Caller holds the claim. Recompile under frozen inputs; only an explicit ROM byte/data verdict wins."""
+    """Recompile under frozen inputs; only an explicit ROM byte/data verdict wins."""
     from .compiler_context import acceptable, single_source
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Automatic prepared bundles require a local ROM project.')

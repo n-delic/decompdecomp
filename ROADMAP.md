@@ -1,5 +1,11 @@
 # Roadmap
 
+- Done: C permutation workers no longer reserve functions locally or in rooms. Score
+  improvements preserve other agents' claims; freshly verified exact matches finish the
+  function normally. ROM submissions retain frozen-input/byte checks; imported builds
+  use existing background source-restoration locks. Hosts accept legacy permutation
+  claim/release requests without leases, and startup clears only legacy permutation claims.
+
 - Done: saved-match recovery eligibility scans use the current database without
   triggering implicit progress-folder exports on every project/fork lookup. Explicit
   synchronization and frozen-input checks remain at each bounded recovery group.
@@ -2984,3 +2990,6 @@ ABI analysis and automatic source/profile selection remain planned.
 - Done: full repair evidence resides in a separate compressed, checksummed SQLite archive,
   with frozen historical inputs, resumable/stoppable legacy migration, compatible review/replay,
   database export including annotations, and multi-file compaction. Main keeps its small index.
+
+
+- Done: Settings discovers active storage compression, compaction, header cleanup and transcript jobs from the server when reopened; restores progress and Stop controls without starting duplicate work.

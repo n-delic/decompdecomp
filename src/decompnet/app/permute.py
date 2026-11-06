@@ -3,9 +3,9 @@
 A function at 95% usually differs in register allocation or instruction order, which comes down to how the C
 is written, not what it does: the order of statements and declarations, a temporary, a cast, `x += 1` for
 `x++`, an if turned around. Agents doing it by hand spend turns (and tokens) on it, and stall. Here it runs on its
-own, on spare CPU, on the near misses agents left (or autopilot's drafts reached): a worker holds a function for a
-turn of a minute, so an agent that wants it gets it next, records every improvement as the function's best attempt
-(agents start from it), and a match as a match. What matches is still judged byte for byte, like everything else.
+own, on spare CPU, on the near misses agents left (or autopilot's drafts reached). Permutation workers never
+reserve functions: agents can claim them while side searches continue. Each freshly judged improvement can become
+the function's best attempt, and each exact result a match. Concurrently changed build inputs reject stale results. What matches is still judged byte for byte, like everything else.
 
 Variants come from decomp-permuter (MIT, a pinned tool: Compilers & tools, or `decomp setup`): permuter_gen.py, run
 in the tool's own environment, rewrites the function's C on its parse tree, BATCH variants at a time, with the
@@ -34,7 +34,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, m2cfix, scoring, seeds, toolchains
+from .. import consoles, m2cfix, permuter_claims, scoring, seeds, toolchains
 from ..forks.project import ForkError
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
@@ -191,6 +191,7 @@ class State:
 class Permuter:
     def __init__(self, net):
         self.net = net
+        self.parallel_claims = True
         self.jobs: dict[str, State] = {}
         self.max_insns, self.seconds, self.max_turns = MAX_INSNS, SECONDS, MAX_TURNS
 
@@ -258,7 +259,7 @@ class Permuter:
                 except NetworkError:
                     return  # the project is gone
                 from .source_preparation import run as prepare_sources
-                prepare_sources(self, proj, st)
+                prepare_sources(self, proj, st, agent=agent)
                 proj = self.net.project_row(slug)
                 self._repair_round(agent, proj, st)
                 todo = self.candidates(proj)
@@ -279,7 +280,7 @@ class Permuter:
         if slug not in self.net.links:
             agent = self.net.attribution_agent("permuter")
             from .source_preparation import run as prepare_sources
-            prepare_sources(self, self.net.project_row(slug), st)
+            prepare_sources(self, self.net.project_row(slug), st, agent=agent)
             self._repair_round(agent, self.net.project_row(slug), st)
         return st
 
@@ -425,7 +426,7 @@ class Permuter:
             log.info("permuter: %s: %s", fn["name"], e, exc_info=True)
 
     def _hold(self, agent, fn, *, count_turn=True, seconds=None) -> bool:
-        return local_claims.hold(self.net, agent, fn, self.seconds if seconds is None else seconds,
+        return permuter_claims.hold(self.net, agent, fn, self.seconds if seconds is None else seconds,
                                  count_turn=count_turn)
 
     def _let_go(self, agent, fn) -> None:

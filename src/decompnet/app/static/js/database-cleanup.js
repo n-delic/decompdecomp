@@ -14,6 +14,7 @@ function renderDatabaseCleanup(data) {
 async function loadDatabaseCleanup() {
   if(databaseCleanupJob)return;
   const data=await api('/api/database-cleanup');
+  if(databaseCleanupJob)return;
   $("databaseCleanupRemoved").checked=data.options.removed;
   // Round legacy fixed dates up so conversion does not widen the deletion scope.
   const days=data.options.days ?? (data.options.before ? Math.max(1,Math.ceil((Date.now()-Date.parse(data.options.before+'T00:00:00Z'))/86400000)) : null);
@@ -29,22 +30,29 @@ $("databaseCleanupPreview").onclick=async()=>{
   try{renderDatabaseCleanup(await api('/api/database-cleanup',{method:'POST',body:{action:'preview',...databaseCleanupOptions()}}));}
   catch(error){showJobError(log,error.message);}finally{done();}
 };
-$("databaseCleanupStart").onclick=async()=>{
+async function runDatabaseCleanup(existing=null) {
   if(databaseCleanupJob)return;
+  databaseCleanupJob='starting';
   const log=$("databaseCleanupLog"),stop=$("databaseCleanupStop");showJobError(log,'');
   const controls=['databaseCleanupStart','databaseCleanupPreview','databaseCleanupRemoved','databaseCleanupAge','databaseCleanupUnit','databaseCleanupAutomatic','databaseCleanupSave'].map($);
   const done=beginWork(log,'Clearing old agent transcripts',controls,'Transcript cleanup complete');
   try{
-    const {job}=await api('/api/database-cleanup',{method:'POST',body:{action:'start',...databaseCleanupOptions()}});
+    const job=existing?.id || (await api('/api/database-cleanup',{method:'POST',body:{action:'start',...databaseCleanupOptions()}})).job;
     databaseCleanupJob=job;stop.hidden=false;
+    $('databaseCleanupPanel').open=true;
+    $('databaseCleanupContext').textContent='— Transcript cleanup running';
+    if(existing?.progress)updateWorkProgress(log,existing.progress);
     const result=await followJob(job,log,(_lines,state)=>{
       updateWorkProgress(log,state.progress);
       if(state.progress && log._workStatus)log._workStatus.textContent+=` · ${Number(state.progress.deleted_messages || 0).toLocaleString()} records removed`;
     });
     if(result)$("databaseCleanupEstimate").textContent=`Removed ${Number(result.messages || 0).toLocaleString()} transcript records from ${Number(result.sessions || 0).toLocaleString()} sessions.`;
   }catch(error){showJobError(log,error.message);}
-  finally{databaseCleanupJob=null;stop.hidden=true;stop.disabled=false;done();}
-};
+  finally{databaseCleanupJob=null;stop.hidden=true;stop.disabled=false;done();
+    $('databaseCleanupContext').textContent='— Agent transcript history';
+  }
+}
+$("databaseCleanupStart").onclick=()=>runDatabaseCleanup();
 $("databaseCleanupStop").onclick=async()=>{
   if(!databaseCleanupJob)return;
   $("databaseCleanupStop").disabled=true;
@@ -67,6 +75,7 @@ let databaseStorageJob=null;
 async function loadDatabaseStorage() {
   if(databaseStorageJob)return;
   const data=await api('/api/database-storage');
+  if(databaseStorageJob)return;
   const size=n=>`${(Number(n)/1048576).toLocaleString(undefined,{maximumFractionDigits:1})} MiB`;
   $('databaseStorageSize').textContent=`— ${size(data.stored_bytes)} shared content`;
   $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of shared text stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database. Repair evidence: ${size(data.repair_archive_bytes)} in its separate database.`;
@@ -77,16 +86,24 @@ async function loadDatabaseStorage() {
   $('databaseStorageDays').value=data.retention.days;
   $('databaseStorageAutomatic').checked=data.retention.automatic;
 }
-async function runDatabaseStorage(action) {
+async function runDatabaseStorage(action,existing=null) {
   if(databaseStorageJob)return;
+  databaseStorageJob='starting';
   const log=$('databaseStorageLog'),stop=$('databaseStorageStop');
   const controls=['Pack','Compact','Save','Prune','Days','Automatic'].map(x=>$('databaseStorage'+x));
   const done=beginWork(log,action==='pack'?'Compressing saved history':action==='save'?'Saving retention rules':'Cleaning old unsuccessful source',controls,'Storage maintenance complete');
   try {
-    const result=await api('/api/database-storage',{method:'POST',body:{action,days:Number($('databaseStorageDays').value),automatic:$('databaseStorageAutomatic').checked}});
-    if(result.job){databaseStorageJob=result.job;stop.hidden=false;await followJob(result.job,log,(_lines,state)=>updateWorkProgress(log,state.progress));}
+    const result=existing ? {job:existing.id} : await api('/api/database-storage',{method:'POST',body:{action,days:Number($('databaseStorageDays').value),automatic:$('databaseStorageAutomatic').checked}});
+    if(result.job){databaseStorageJob=result.job;stop.hidden=false;
+      $('databaseStoragePanel').open=true;
+      $('databaseStorageSize').textContent=action==='pack'?'— Compression running':'— Source cleanup running';
+      if(existing?.progress)updateWorkProgress(log,existing.progress);
+      await followJob(result.job,log,(_lines,state)=>updateWorkProgress(log,state.progress));}
   }catch(error){showJobError(log,error.message);}
-  finally{databaseStorageJob=null;stop.hidden=true;stop.disabled=false;done();}
+  finally{databaseStorageJob=null;stop.hidden=true;stop.disabled=false;done();
+    $('databaseStorageCompact').disabled=typeof headerStorageJob!=='undefined' && Boolean(headerStorageJob);
+    $('databaseStorageSize').textContent='— Shared compressed content';
+  }
   try{await loadDatabaseStorage();}catch(error){showJobError(log,error.message);}
 }
 for(const action of ['pack','save','prune'])$('databaseStorage'+action[0].toUpperCase()+action.slice(1)).onclick=()=>runDatabaseStorage(action);
@@ -123,3 +140,14 @@ $('repairEvidenceExport').onclick=async()=>{
   }catch(error){showJobError(log,error.message);}
   finally{done();}
 };
+
+
+/* Navigation and new windows reconnect to the server's job, without starting work again.
+   The run functions reserve their attachment before awaiting, so repeated visits cannot
+   create duplicate followers or let a late discovery response replace a local start. */
+async function restoreSettingsJobs() {
+  const jobs=await api('/api/settings-jobs');
+  if(jobs.storage)void runDatabaseStorage(jobs.storage.kind==='Compress candidate history'?'pack':'prune',jobs.storage);
+  if(jobs.headers)void runHeaderStorage(jobs.headers.kind==='Database compaction'?'compact':'headers',jobs.headers);
+  if(jobs.cleanup)void runDatabaseCleanup(jobs.cleanup);
+}

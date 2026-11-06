@@ -243,6 +243,7 @@ async function renderWebGithubSettings(onSaved) {
 /* ------------------------------------------------------------------ settings page */
 async function showSettingsPage() {
   show("settingsPage");
+  restoreSettingsJobs().catch(error=>showJobError($("databaseStorageLog"),`Unable to restore running tasks: ${error.message}`));
   const st = await loadState();
   loadDatabaseStorage().catch(error=>{$('databaseStorageEstimate').textContent=error.message;});
   loadHeaderStorage().catch(error=>{$('headerStorageEstimate').textContent=error.message;});
