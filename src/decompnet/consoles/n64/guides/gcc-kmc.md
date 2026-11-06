@@ -807,6 +807,10 @@ A packet-decoder candidate improved 1200 to 1195 this way but read an uninitiali
 mask on the other path; compiler warning preflight missed it. The native wrapper
 now rejects supported initialization regressions in existing locals as well as
 new temporaries. Unknown flow still needs manual review; lower scores are not proof.
+An assignment inside a store address, such as `*((temp=base)+offset)=value`,
+initializes the pointer only on paths that execute that store. A later read after
+a skipped branch or zero-trip loop is still unsafe, even if Clang warns about nothing.
+The wrapper checks this bounded plain-copy form; complex embedded expressions stay opaque.
 
 
 ### Discarded byte increments
