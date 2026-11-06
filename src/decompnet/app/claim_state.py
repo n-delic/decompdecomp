@@ -42,6 +42,8 @@ def brief(net, fn, agent, header):
            'Preparation: deferred. No diagnostic build or new draft was run while reserving this claim.',
            'Saved scores are historical. get_candidate verifies the baseline; get_assembly reads target instructions; '
            'get_function(section="brief") loads full supporting evidence. compile_patch/compile_and_diff use the ordinary judge.']
+    from ..candidate_quality import source_hint as quality_hint
+    if note := quality_hint(net, fn, source):lines.append(note)
     diagnostic = summary(read(net,fn['id']))
     if diagnostic:lines.append(diagnostic)
     from .wrapper_contracts import source_hint
