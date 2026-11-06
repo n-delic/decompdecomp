@@ -10,7 +10,7 @@ import uuid
 
 from ..network import NetworkError
 from ..project import function_compiler_key
-from . import repository_git, repository_progress, repository_sync, saves
+from . import match_commit_notes, repository_git, repository_progress, repository_sync, saves
 
 log = logging.getLogger('decompdecomp')
 
@@ -28,7 +28,7 @@ def status(net, proj):
     pending = net.store.one("SELECT COUNT(*) n FROM auto_match_commits WHERE project_id=? AND state='pending'", proj['id'])['n']
     error = net.store.one("SELECT error FROM auto_match_commits WHERE project_id=? AND state='pending' AND error IS NOT NULL ORDER BY created_at DESC LIMIT 1", proj['id'])
     last = net.store.one("SELECT commit_sha FROM auto_match_commits WHERE project_id=? AND state='done' ORDER BY created_at DESC LIMIT 1", proj['id'])
-    items = [dict(row) for row in net.store.all("SELECT f.name,q.error FROM auto_match_commits q JOIN functions f ON f.id=q.function_id WHERE q.project_id=? AND q.state='pending' ORDER BY q.created_at LIMIT 20", proj['id'])]
+    items = [dict(row) for row in net.store.all("SELECT f.name,q.error,a.name AS agent,t.via AS method FROM auto_match_commits q JOIN functions f ON f.id=q.function_id LEFT JOIN agents a ON a.id=q.agent_id LEFT JOIN attempts t ON t.id=q.attempt_id WHERE q.project_id=? AND q.state='pending' ORDER BY q.created_at LIMIT 20", proj['id'])]
     return {'enabled': enabled, 'pending': pending, 'items': items, 'error': error['error'] if error else '',
             'last_commit': last['commit_sha'] if last else ''}
 
@@ -79,6 +79,7 @@ def enqueue(net, proj, function_id, *, restored=False):
         agent = net.store.one('SELECT name FROM agents WHERE id=?', row['matched_agent_id'])
         snapshot = {'details': json.loads(row['details']), 'source': row['source'], 'header': row['header'],
                     'name': row['name'], 'info': {'vram': row['vram'], 'matched_by': agent['name'] if agent else '', 'readable': bool(row['readable'])}}
+        snapshot['origin'] = match_commit_notes.origin(net, row['attempt_id'], snapshot['info']['matched_by'], restored=restored)
         with net.store.tx() as db:
             fresh = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
             if fresh is None or not json.loads(fresh['config']).get('auto_commit_matches'):
@@ -170,8 +171,7 @@ def process(net, slug, output=log.info):
             try:
                 note = net.store.one('SELECT text FROM notes WHERE function_id=? AND agent_id=? AND created_at>=? ORDER BY id DESC LIMIT 1',
                                      job['function_id'], job['agent_id'], job['notes_after'])
-                name = json.loads(job['snapshot'])['name']
-                message = note['text'].strip() if note is not None and note['text'].strip() else 'Match ' + name
+                message = match_commit_notes.message(net, job, note)
                 root = repository_sync.checkout(cfg['auto_commit_folder'], clean=False)
                 if not repository_sync.progress_checkout(net, slug, root):
                     raise NetworkError('The linked progress checkout changed. Disable and re-enable automatic commits for the new folder.')
@@ -191,7 +191,7 @@ def process(net, slug, output=log.info):
                     if fresh is None or not net.cfg(fresh).get('auto_commit_matches'):
                         return
                     commit = repository_progress.commit_snapshot(root, files, paths, output, expected_head=head,
-                             expected_branch=branch, message=message+'\n\n'+marker, allow_empty=True)
+                             expected_branch=branch, message=message, allow_empty=True)
                 with net.store.tx() as db:
                     db.execute("UPDATE auto_match_commits SET state='done',commit_sha=?,error=NULL WHERE id=?", (commit, job['id']))
             except (NetworkError, OSError, ValueError, KeyError) as error:

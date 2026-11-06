@@ -1,6 +1,7 @@
 """The GUI's own logic, run in node against a stand-in for the page (tests/gui_polls.js): no browser needed."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -47,8 +48,10 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
 def gui():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
+    from decompnet import consoles
+    env = {**os.environ, 'GUI_CONSOLES':json.dumps([console.describe() for console in consoles.CONSOLES])}
     out = subprocess.run([NODE, str(Path(__file__).with_name("gui_polls.js"))], capture_output=True, text=True, encoding="utf-8",
-                         timeout=GUI_TIMEOUT_SECONDS, check=True)
+                         timeout=GUI_TIMEOUT_SECONDS, check=True, env=env)
     result = json.loads(out.stdout)
     assert result["errors"] == []
     return result
@@ -245,10 +248,12 @@ def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui)
     from decompnet.consoles.pc import scratch
 
     packs = gui["checks"]["pcPack"]
-    for head, pack, offered in packs:
+    for head, pack, offered, target in packs:
         built = scratch.describe(bytes.fromhex(head))
         assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
-    assert [p for _, p, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc"]
+        assert target == "x86" and built.machine == scratch.X86
+    assert [p for _, p, _, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc",
+                                          "msvc2015", "msvc2015", "msvc2005", "msvc2015", "msvc2015"]
 
 
 def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
@@ -612,3 +617,9 @@ def test_settings_panels_restore_server_jobs_without_restarting_work():
     if NODE is None:pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_settings_jobs.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_repository_push_counts_errors_and_project_switches():
+    if NODE is None:pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_repository_push.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

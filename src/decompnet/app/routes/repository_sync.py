@@ -23,6 +23,33 @@ def register(app):
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
 
+    @app.mcp.custom_route('/api/repository-push', methods=['GET', 'POST'])
+    async def push(request):
+        if bad := app.guard(request, write=request.method == 'POST'):
+            return bad
+        try:
+            from .. import repository_push
+            if request.method == 'GET':
+                return JSONResponse(await app.call(repository_push.status, app.net,
+                    str(request.query_params.get('slug', '')), str(request.query_params.get('folder', '')).strip()))
+            data = await app.body(request)
+            slug = str(data.get('slug', ''))
+            folder = str(data.get('folder', '')).strip()
+            # Reserve before spawning so duplicate clicks cannot queue two pushes.
+            if not lock.acquire(blocking=False):raise NetworkError('A repository operation is already running.')
+            def work(log):
+                try:return repository_push.run(app.net, slug, folder, log)
+                finally:lock.release()
+            try:
+                job = app.jobs.start('repository-push', work,
+                    cancel_message='Push stopped. Check origin before retrying; a completed push cannot be undone by Stop.')
+            except BaseException:
+                lock.release()
+                raise
+            return JSONResponse({'job':job})
+        except (NetworkError, ValueError, KeyError, OSError) as error:
+            return app.fail(error)
+
     @app.mcp.custom_route('/api/repository-sync', methods=['GET','POST'])
     async def sync(request):
         if bad:=app.guard(request,write=request.method=='POST'):

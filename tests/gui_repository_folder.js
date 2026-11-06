@@ -9,7 +9,7 @@ const end = source.indexOf("/* What agents said,", start);
 const field = {dataset:{}, value:""}, hint = {textContent:""};
 const buttons = {repositorySyncGo:{},repositoryCommitGo:{}};
 const requests = [];
-const ctx = {S:{slug:"first"}, $:id=>id === "repositoryFolder" ? field : buttons[id] || hint,
+const ctx = {refreshRepositoryPush(){},S:{slug:"first"}, $:id=>id === "repositoryFolder" ? field : buttons[id] || hint,
   api:url=>new Promise(resolve=>requests.push({url,resolve}))};
 vm.createContext(ctx); vm.runInContext(source.slice(start,end),ctx);
 (async () => {

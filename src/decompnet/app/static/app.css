@@ -2038,3 +2038,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 #dialogBody .deep-sweep-results td { padding:14px 10px; }
 
 .drawer-card.narrow:has(.deep-sweep-results) { width:min(900px,100vw); }
+
+.repository-publish { display:grid; gap:8px; padding-bottom:16px; margin-bottom:18px; border-bottom:1px solid var(--line); min-width:0; }
+.repository-publish > button { justify-self:start; }
+.repository-publish p { margin:0; overflow-wrap:anywhere; }

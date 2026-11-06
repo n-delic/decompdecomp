@@ -646,6 +646,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
+| Review and push existing Git commits to origin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Automatic per-match local commits with agent notes | ✓ | ✓ | ✓ | ✓ | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -3034,5 +3035,12 @@ ABI analysis and automatic source/profile selection remain planned.
   checkout files untouched and uncommitted. Whole-progress manual checkpoints keep
   their existing unrelated-edit gate; staged changes still pause automatic commits.
   Matches without notes use the short fallback rather than waiting.
+
+- Done: match commits identify their credited agent and recorded method, with compact
+  exact-attempt repair-example summaries when available. Settings shows unpushed
+  commits from locally fetched origin refs and a review drawer. Push commits to origin
+  refreshes the remote and pushes existing commits without staging working edits,
+  creating a commit, changing another upstream or force-pushing. ROM progress and
+  imported project checkouts share the push-only path. Full repair archives stay local.
 
 - Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.

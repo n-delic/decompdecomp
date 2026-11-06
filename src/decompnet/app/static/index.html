@@ -684,23 +684,30 @@
               <header class="repository-sync-heading">
                 <span class="repository-sync-label">Git repository</span>
                 <h3 id="repositorySyncTitle">Sync your verified matches</h3>
-                <p>Commit your saved progress, or copy matching C into a rebuildable export checkout.</p>
+                <p id="repositorySyncAbout">Commit your saved progress, or copy matching C into a rebuildable export checkout.</p>
               </header>
               <label class="field"><span>Repository folder</span><span class="pick-row"><input id="repositoryFolder" class="mono" placeholder="Choose an existing export checkout" aria-describedby="repositorySyncHint"><button class="ghost small-btn" type="button" data-pick="folder" data-for="repositoryFolder" data-title="Git checkout root">Choose…</button></span></label>
               <p class="small muted" id="repositorySyncHint">App-saved progress can be committed. Other checkout edits must be committed or moved first.</p>
-              <div class="repository-auto-commit">
+              <div class="repository-auto-commit" id="repositoryAutoCommitGroup">
                 <label class="check"><input type="checkbox" id="repositoryAutoCommit" aria-describedby="repositoryAutoCommitAbout repositoryAutoCommitState"><span>Automatically commit new matches</span></label>
-                <p class="small muted" id="repositoryAutoCommitAbout">Create one local commit per new match using the matching agent’s function notes. Uses “Match &lt;function&gt;” when notes are absent; removes that function’s previous best draft in the same commit. Nothing is pushed.</p>
+                <p class="small muted" id="repositoryAutoCommitAbout">Commit each new match with its agent notes or “Match &lt;function&gt;”, who found it and available repair summaries. Remove its previous best draft in the same commit. Commits stay local until you push.</p>
                 <p class="small muted" id="repositoryAutoCommitState" role="status"></p>
                 <button class="ghost small-btn" type="button" id="repositoryAutoCommitDetails" hidden>Pending commits</button>
                 <pre class="joblog" id="repositoryAutoCommitLog" hidden></pre>
               </div>
-              <div class="repository-sync-actions">
+              <div class="repository-publish">
+                <p class="small muted" id="repositoryPushState" role="status">Choose a linked Git checkout to see unpushed commits.</p>
+                <button class="ghost small-btn" type="button" id="repositoryUnpushedDetails" hidden>Unpushed commits</button>
+                <p class="small muted" id="repositoryPushBasis"></p>
+                <div class="row"><button class="primary small-btn" type="button" id="repositoryPushGo" disabled>Push commits to origin</button><button class="ghost small-btn" type="button" id="repositoryPushStop" hidden>Stop</button></div>
+                <pre class="joblog" id="repositoryPushLog" hidden></pre>
+              </div>
+              <div class="repository-sync-actions" id="repositorySyncActions">
                 <div><button class="primary small-btn" id="repositorySyncGo" type="button">Verify and sync</button><p>Leave changes ready to review.</p></div>
                 <div><button class="ghost small-btn" id="repositoryCommitGo" type="button">Verify, commit and push</button><p>Save progress and push the current branch.</p></div>
                 <button class="ghost small-btn" id="repositorySyncStop" type="button" hidden>Stop</button>
               </div>
-              <details class="repository-sync-help"><summary>How syncing works</summary><ul>
+              <details class="repository-sync-help" id="repositorySyncHelp"><summary>How syncing works</summary><ul>
                 <li>A linked progress checkout includes matches, drafts, notes and settings. Newer helper work stays uncommitted.</li>
                 <li>A rebuildable export checks the build in a private copy before updating your checkout.</li>
                 <li>Updates app-generated sources; keeps your build setup and hand-written C.</li>
@@ -1048,6 +1055,7 @@
 <script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/code-audit.js"></script>
 <script src="/assets/js/boundary-repairs.js"></script>
+<script src="/assets/js/repository-push.js"></script>
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/background-work.js"></script>
 <script src="/assets/js/pages.js"></script>
