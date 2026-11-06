@@ -186,8 +186,15 @@ class Agent:
 
     def config_model(self) -> str | None:
         """The model the user set as default in the agent's own settings, if any: a helper started without a model
-        is named after it."""
+        starts on it, as resolve_model makes it an id its CLI takes, and records it so that a later change of that
+        default doesn't switch the helper (#204)."""
         return None
+
+    def resolve_model(self, model: str, path: str | None) -> str:
+        """`model`, a name the agent's own settings hold, as the model id its own command line takes; "" when that
+        can't be told without running its program. Then a helper started on that default isn't pinned to it: it
+        starts on the CLI's own default, as before (#204)."""
+        return model
 
     # ------------------------------------------------------------------ one session of a program the app runs
 
