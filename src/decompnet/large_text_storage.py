@@ -5,6 +5,7 @@ views resolve only selected columns; metadata queries never inflate their payloa
 """
 
 FIELDS = {
+    'auto_match_commits': ('snapshot',),
     'reuse_trials': ('feedback',),
     'compiler_trial_evidence': ('record',),
     'helper_messages': ('text',),

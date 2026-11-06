@@ -1678,6 +1678,8 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .repository-sync-heading h3 { margin:0 0 6px; font-size:16px; line-height:1.35; color:var(--ink); }
 .repository-sync-heading p { margin:0; font-size:13px; line-height:1.5; color:var(--muted); }
 #repositorySyncHint { margin:6px 0 16px; font-size:11.5px; }
+.repository-auto-commit { display:grid; gap:8px; min-width:0; margin-bottom:18px; padding-bottom:16px; border-bottom:1px solid var(--line-soft); }
+.repository-auto-commit > button { justify-self:start; }
 .repository-sync-actions { display:flex; flex-wrap:wrap; align-items:flex-start; gap:14px 18px; }
 .repository-sync-actions > div { flex:1 1 190px; }
 .repository-sync-actions > div > button { width:100%; }

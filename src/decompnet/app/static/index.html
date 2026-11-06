@@ -688,6 +688,13 @@
               </header>
               <label class="field"><span>Repository folder</span><span class="pick-row"><input id="repositoryFolder" class="mono" placeholder="Choose an existing export checkout" aria-describedby="repositorySyncHint"><button class="ghost small-btn" type="button" data-pick="folder" data-for="repositoryFolder" data-title="Git checkout root">Choose…</button></span></label>
               <p class="small muted" id="repositorySyncHint">App-saved progress can be committed. Other checkout edits must be committed or moved first.</p>
+              <div class="repository-auto-commit">
+                <label class="check"><input type="checkbox" id="repositoryAutoCommit" aria-describedby="repositoryAutoCommitAbout repositoryAutoCommitState"><span>Automatically commit new matches</span></label>
+                <p class="small muted" id="repositoryAutoCommitAbout">Create one local commit per new match using the matching agent’s function notes. Waits for post-match notes; removes that function’s previous best draft in the same commit. Nothing is pushed.</p>
+                <p class="small muted" id="repositoryAutoCommitState" role="status"></p>
+                <button class="ghost small-btn" type="button" id="repositoryAutoCommitDetails" hidden>Pending commits</button>
+                <pre class="joblog" id="repositoryAutoCommitLog" hidden></pre>
+              </div>
               <div class="repository-sync-actions">
                 <div><button class="primary small-btn" id="repositorySyncGo" type="button">Verify and sync</button><p>Leave changes ready to review.</p></div>
                 <div><button class="ghost small-btn" id="repositoryCommitGo" type="button">Verify, commit and push</button><p>Save progress and push the current branch.</p></div>

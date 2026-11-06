@@ -118,7 +118,7 @@ def snapshot(net, slug, root, log, *, recover=True):
         return captured, paths, manifest
 
 
-def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_branch=None):
+def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_branch=None, message='Save matches and all decompilation progress', allow_empty=False):
     """Use a private index; helper writes after capture remain uncommitted in the working tree."""
     git = repository_git.git
     head = git(root, 'rev-parse', 'HEAD')
@@ -151,7 +151,7 @@ def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_bra
         records.extend(f'0 {zero}\t{name}\0' for name in sorted(paths - files.keys()))
         git(root, 'update-index', '-z', '--index-info', env=env, input=''.join(records).encode())
         tree = git(root, 'write-tree', env=env)
-        if tree == git(root, 'rev-parse', head+'^{tree}'):
+        if not allow_empty and tree == git(root, 'rev-parse', head+'^{tree}'):
             return head
         check = getattr(log, 'check_cancel', None)
         if check:check()
@@ -167,7 +167,7 @@ def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_bra
                 shutil.copyfileobj(source, output)
             if git(root, 'symbolic-ref', '--quiet', 'HEAD') != branch or git(root, 'diff', '--cached', '--name-only'):
                 raise NetworkError('The branch or staged files changed. Review Git before committing progress again.')
-            commit = git(root, 'commit-tree', tree, '-p', head, '-m', 'Save matches and all decompilation progress')
+            commit = git(root, 'commit-tree', tree, '-p', head, '-m', message)
             git(root, 'update-ref', '-m', 'Save decompilation progress', branch, commit, head)
             os.replace(lock, index_path)
             return commit

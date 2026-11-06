@@ -1,4 +1,4 @@
-"""Explicit verified export-to-checkout synchronization; commits and pushes only on an explicit button click."""
+"""Repository sync and the explicit opt-in for automatic local match commits."""
 import threading
 
 from starlette.responses import JSONResponse
@@ -9,6 +9,19 @@ from .. import repository_sync
 
 def register(app):
     lock=threading.Lock()
+
+    @app.mcp.custom_route('/api/repository-auto-commit', methods=['POST'])
+    async def auto_commit(request):
+        if bad := app.guard(request, write=True):
+            return bad
+        try:
+            from .. import match_commits
+            data = await app.body(request)
+            result = await app.call(match_commits.configure, app.net, str(data.get('slug', '')),
+                                    data.get('enabled'), str(data.get('folder', '')).strip())
+            return JSONResponse(result)
+        except (NetworkError, ValueError, KeyError, OSError) as error:
+            return app.fail(error)
 
     @app.mcp.custom_route('/api/repository-sync', methods=['GET','POST'])
     async def sync(request):

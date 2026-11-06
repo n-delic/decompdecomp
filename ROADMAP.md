@@ -646,6 +646,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
+| Automatic per-match local commits with agent notes | ✓ | ✓ | ✓ | ✓ | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -3012,3 +3013,11 @@ ABI analysis and automatic source/profile selection remain planned.
 - Done: Settings discovers active storage compression, compaction, header cleanup and transcript jobs from the server when reopened; restores progress and Stop controls without starting duplicate work.
 
 - Done: provider-limit waits recheck wall-clock reset deadlines at most every 30 seconds, including after system sleep and clock changes. Expired waits transition to availability checks; agent cards label overdue checks and show the date for later-day resets. Retry provider now tests one waiting worker; successful retries release the observed account cooldown without deleting newer limits.
+
+- Done: an opt-in checkbox makes one local Git commit per future ROM match using the
+  matching agent's post-match function notes, waiting until they arrive. The autosave
+  worker drains a durable queue with frozen match evidence; commits include only that function, its required
+  context/evidence and previous best-draft deletion. Failed Git operations remain
+  pending with visible diagnostics and function links; commits never push automatically.
+  PROJECT mode needs a per-unit commit adapter because multiple functions can share
+  one build-owned source file. Synthetic ROM/Git/UI tests cover N64, PS1, PS2 and PSP.

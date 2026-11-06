@@ -108,6 +108,7 @@ function renderSteering(ov) {
   $("saveAboutFork").hidden = ov.kind !== "fork";
   $("repositorySync").hidden = ov.kind === "fork";
   if (ov.kind !== "fork") loadRepositoryFolder(S.slug);
+  renderRepositoryAutoCommit(ov.auto_commit);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
   const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];
@@ -118,6 +119,49 @@ function renderSteering(ov) {
     <div class="row"><button class="primary small-btn" type="button" data-bapply="${r.id}">Cut it there</button><button class="ghost small-btn" type="button" data-bdismiss="${r.id}">Dismiss</button></div></div>`).join("") + sg.map(suggestionHtml).join(""));
   if (S.tab === "settings") renderCompilerWaiting(ov);
 }
+let repositoryAutoCommitBusy = false;
+let repositoryAutoCommitState = {};
+let repositoryAutoCommitSlug = null;
+function renderRepositoryAutoCommit(state = {}) {
+  if (repositoryAutoCommitBusy) return;
+  if (repositoryAutoCommitSlug !== S.slug) {
+    repositoryAutoCommitSlug = S.slug;
+    $("repositoryAutoCommitLog").textContent = "";
+    $("repositoryAutoCommitLog").hidden = true;
+  }
+  repositoryAutoCommitState = state;
+  $("repositoryAutoCommit").checked = !!state.enabled;
+  $("repositoryAutoCommitDetails").hidden = !state.pending;
+  $("repositoryAutoCommitDetails").textContent = `Pending commits (${state.pending || 0})`;
+  const status = $("repositoryAutoCommitState");
+  status.textContent = state.error || (state.enabled
+    ? `${state.pending || 0} pending · ${state.last_commit ? "Last commit: " + state.last_commit.slice(0, 8) : "Waiting for new matches and agent notes."}`
+    : "Off. Existing matches will not be committed automatically.");
+  status.classList.toggle("err", !!state.error);
+}
+$("repositoryAutoCommitDetails").onclick = () => {
+  const state = repositoryAutoCommitState;
+  dialog("Pending match commits", `<p>Each match waits for the matching agent’s notes and a safe Git checkpoint.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}<br><span class="small muted">${esc(item.error || "Waiting for agent notes or the next autosave check.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
+};
+$("repositoryAutoCommit").onchange = async () => {
+  const field = $("repositoryAutoCommit"), slug = S.slug, enabled = field.checked;
+  repositoryAutoCommitBusy = true;
+  const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [field], "Automatic commit preference saved.");
+  try {
+    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:$("repositoryFolder").value.trim()}});
+    if (S.slug === slug) {
+      repositoryAutoCommitBusy = false;
+      if (S.ov) S.ov.auto_commit = state;
+      renderRepositoryAutoCommit(state);
+    }
+  } catch (error) {
+    if (S.slug === slug) { field.checked = !enabled; showJobError($("repositoryAutoCommitLog"), error.message); }
+  } finally {
+    repositoryAutoCommitBusy = false; finish();
+    if (S.slug !== slug) renderRepositoryAutoCommit(S.ov?.auto_commit);
+  }
+};
+
 // Imported saves already remember their Git checkout; do not overwrite a path the user is editing.
 function loadRepositoryFolder(slug) {
   const field = $("repositoryFolder"), hint = $("repositorySyncHint");

@@ -212,13 +212,21 @@ class JudgeMixin:
 
     def _record(self, fn, *args, **kwargs):
         slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        matching = kwargs.get('matched', args[4] if len(args) > 4 else False)
+        proj = self.store.one('SELECT * FROM projects WHERE id=?', fn['project_id']) if matching and not self.progress.applying else None
+        automatic = proj is not None and self.cfg(proj).get('auto_commit_matches', False)
         with self.progress._project_lock(slug):
             # attempt()'s judging block already read progress just before this record; a second full read here made
             # every compile check the folder twice before and once after.
             if not self.progress.applying and not getattr(self.progress.local, "judging", None):
                 self.progress.sync(slug, force=True)
             self.progress.check_result()
-            return super()._record(fn, *args, **kwargs)
+            before = self.store.one('SELECT status FROM functions WHERE id=?', fn['id']) if automatic else None
+            result = super()._record(fn, *args, **kwargs)
+            if before is not None and before['status'] != 'matched':
+                from .. import match_commits
+                match_commits.enqueue(self, proj, fn['id'])
+            return result
 
     def _attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         self._yield_autopilot(function, project)

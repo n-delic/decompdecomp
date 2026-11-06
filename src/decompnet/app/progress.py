@@ -1345,6 +1345,17 @@ class Progress:
             self.disk[slug] = disk
             self._remember(pid, disk, rendered, _config_key(proj, net.cfg(proj)),
                            applied_dirty.token, applied_tokens)
+            if baseline is not None and net.cfg(proj).get('auto_commit_matches'):
+                # The restore judge temporarily reopens existing matches. Queue only genuine
+                # promotions, after attribution is restored to the contributing agent.
+                from . import match_commits
+                old = json.loads(baseline.projected.manifest or '{}').get('functions', {})
+                new = json.loads(rendered[saves.MANIFEST]).get('functions', {})
+                promoted_names = [name for name, info in new.items()
+                                  if 'matched_by' in info and 'matched_by' not in old.get(name, {})]
+                for name in promoted_names:
+                    row = net.store.one('SELECT id FROM functions WHERE project_id=? AND name=?', pid, name)
+                    if row:match_commits.enqueue(net, proj, row['id'], restored=True)
             return True
         if baseline is None:
             return self._publish_initial(slug, proj, folder, disk, dirty, config_key)
