@@ -3034,3 +3034,5 @@ ABI analysis and automatic source/profile selection remain planned.
   checkout files untouched and uncommitted. Whole-progress manual checkpoints keep
   their existing unrelated-edit gate; staged changes still pause automatic commits.
   Matches without notes use the short fallback rather than waiting.
+
+- Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.

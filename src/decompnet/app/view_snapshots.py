@@ -90,7 +90,8 @@ def map_payload(net, slug, since=None, delta=False):
         claims = net.store.all("SELECT c.function_id,c.agent_id,c.expires_at FROM claims c JOIN functions f ON f.id=c.function_id "
                                 "JOIN projects p ON p.id=f.project_id WHERE p.slug=? ORDER BY c.function_id",slug)
         link = net.links.get(slug)
-        fingerprint = (tuple(freshness),tuple(tuple(c) for c in claims),repr(link.claims) if link else '')
+        from .function_searches import active
+        fingerprint = (tuple(freshness),tuple(tuple(c) for c in claims),repr(link.claims) if link else '',active(net,slug))
         rows = snapshots.get(('map',slug,sig,fingerprint),lambda:incremental_map(net, slug),weight=len)
     keys = list(rows[0]) if rows else []
     def arrays():
@@ -130,6 +131,7 @@ def persistent(store, key, version, build):
 
 def incremental_map(net, slug):
     """Patch changed function rows, retaining full rebuilds for layout or shared evidence changes."""
+    from .function_searches import active
     snapshots = cache(net)
     proj = net._project(slug)
     pid = proj['id']
@@ -139,7 +141,8 @@ def incremental_map(net, slug):
         revision = net.store.one('SELECT revision FROM map_clock WHERE id=1')['revision']
         shared = (net.store.read_version('targets'), net.store.read_version('fingerprints', pid),
                   net.store.read_version('naming', pid), net.store.read_version('sdk_names'), proj['config'],
-                  repr(net.links[slug].claims) if slug in net.links else '')
+                  repr(net.links[slug].claims) if slug in net.links else '',
+                  active(net,slug))
         old = snapshots.maps.get(pid)
         rows = None
         if old and old[0] == shared:

@@ -500,7 +500,8 @@ def register(app: App) -> None:
         fn = net._function(request.query_params.get('name', ''), slug)
         return notes_page(net.store, fn, request.query_params.get('before'))
 
-    function_searches = {}
+    from ..function_searches import Searches
+    function_searches = net.function_searches = Searches(jobs)
 
     def p_function(slug, request, data):
         name = request.query_params.get("name", "")
