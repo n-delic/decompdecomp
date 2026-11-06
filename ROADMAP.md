@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: saved-match recovery eligibility scans use the current database without
+  triggering implicit progress-folder exports on every project/fork lookup. Explicit
+  synchronization and frozen-input checks remain at each bounded recovery group.
+  Empty candidate pools also avoid decoding headers.
+
 - Done: saved-match recovery defaults to checking all available candidates, with Stop
   available throughout. Independent optional time and compile limits are collapsed by
   default, and older historical matches are no longer hidden by a global record cap.

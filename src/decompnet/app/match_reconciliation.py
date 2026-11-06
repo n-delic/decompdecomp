@@ -32,7 +32,7 @@ def bank(net, proj):
 
 
 def candidates(net, proj, fn, records):
-    current=net._context(proj['id'],fn['unit'])['header']
+    current=None
     out=[]
     def add(source, header, origin):
         if source and len(source)<=128000 and len(header)<=1024*1024:
@@ -56,6 +56,7 @@ def candidates(net, proj, fn, records):
                 or any(old_abi.get(k)!=abi.get(k) for k in ('rom_sha1','arch','big_endian'))):continue
         source=function_names.canonical_source(row,row['source'])
         source=source_text(source,row['name'],fn['name'])
+        if current is None:current=net._context(proj['id'],fn['unit'])['header']
         add(source,current,'recorded exact source, current header')
         if proof.get('header_sha256')==match_bundle.digest(row['header']):
             add(source,row['header'],'recorded exact source/header')
@@ -123,6 +124,9 @@ def run(net, slug, seconds, attempts, log):
     def batch():
         method=getattr(getattr(net,'progress',None),'batch',None)
         return method(slug) if method else nullcontext()
+    def view():
+        method=getattr(getattr(net,'progress',None),'view',None)
+        return method() if method else nullcontext()
     def compile_one(proj, header, source, fn):
         with compiler.cancellable(checkpoint):
             checkpoint()
@@ -139,7 +143,7 @@ def run(net, slug, seconds, attempts, log):
     executor=ThreadPoolExecutor(width,thread_name_prefix='saved-recovery',initializer=workers.lower_priority)
     agent=None
     try:
-        with judging():
+        with judging(), view():
             checkpoint()
             proj=net.project_row(slug);records=bank(net,proj);agent,_=net.local_agent('autopilot')
             with net.store.tx(wait=checkpoint) as db:db.execute(SCHEMA)
@@ -152,15 +156,19 @@ def run(net, slug, seconds, attempts, log):
             group=[]
             # Functions without history need neither compiler work nor an expensive
             # forced progress-folder synchronization. Rebuild selected pools after pulling.
-            while len(group)<min(width,compile_limit-result['attempts']):
-                if not entries:break
-                row=entries.popleft()
-                checkpoint()
+            # Core.project_row and candidate_scope's fork lookup normally synchronize
+            # implicitly. Eligibility is only a database hint; pulling on every row can
+            # spend minutes exporting other agents' changes before any compiler starts.
+            with view():
                 current_proj=net.project_row(slug)
-                pool=candidates(net,current_proj,row,records)
-                if pool and next(remaining(enumerate(pool),row,current_proj),None) is not None:group.append(row)
-                else:done.add(row['id']);completed=len(done)
-                if len(done)%64==0:publish()
+                while len(group)<min(width,compile_limit-result['attempts']):
+                    if not entries:break
+                    row=entries.popleft()
+                    checkpoint()
+                    pool=candidates(net,current_proj,row,records)
+                    if pool and next(remaining(enumerate(pool),row,current_proj),None) is not None:group.append(row)
+                    else:done.add(row['id']);completed=len(done)
+                    if len(done)%64==0:publish()
             if not group:continue
             jobs=[]
             # This bounded group defers autosaves only until at most eight first

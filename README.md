@@ -1469,6 +1469,9 @@ Use recovery when previously verified functions reopen after header, compiler or
 changes, an interrupted restore, or compatible function renames/unit changes. It reuses
 earlier successful C and headers; functions with no successful history need other matching
 work. Functions claimed by agents are skipped and can be retried after those claims end.
+Preliminary eligibility scans read the database without implicitly synchronizing on each
+project lookup, so other agents' edits do not cause repeated exports before compiles start.
+Each selected group still synchronizes before compiling and publishes afterward.
 
 ROM code audits also show possible function-pointer references and unowned bytes inside
 mapped segments. These are review leads. N64 reimport can recover narrowly proven

@@ -277,7 +277,35 @@ def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(
         db.execute("UPDATE functions SET status='open',matched_source=NULL,best_source=NULL,best_score=NULL")
     net.progress.sync('game',force=True)
     log=lambda *args:None
+    if count > 1:
+        # A large open queue mostly has no successful history. Preliminary scanning
+        # must not invoke Core._project's filesystem synchronization for these rows.
+        with net.store.tx() as db:
+            for index in range(64):
+                db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs) '
+                           'SELECT project_id,?,vram+?,rom_offset+?,size,n_insns,target,relocs FROM functions WHERE id=?',
+                           (f'untried_{index}', (count+index)*8, (count+index)*8, fid))
+        net.progress.sync('game', force=True)
+        lookup=net.project_row
+        edits=[]
+        def dirty_project(slug):
+            proj=lookup(slug)
+            edits.append(1)
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_source=?,best_score=1 WHERE name='untried_0'",
+                           (f'void untried_0(void) {{ /* edit {len(edits)} */ }}',))
+            return proj
+        monkeypatch.setattr(net, 'project_row', dirty_project)
+    sync=net.progress.sync
+    implicit=[]
+    def tracked_sync(slug, **kwargs):
+        if not kwargs.get('force') and not net.progress._batching(slug) and not net.progress.applying:
+            implicit.append(slug)
+        return sync(slug, **kwargs)
+    monkeypatch.setattr(net.progress, 'sync', tracked_sync)
     result=recovery.run(net,'game',None,None,log)
+    assert len(implicit) == 2  # initial validation only, never preliminary per-function reads
+    assert not net.progress.viewing
     assert result['matched']==count and net._function('empty_return','game')['status']=='matched'
     assert net.store.one('SELECT via FROM attempts ORDER BY id DESC LIMIT 1')['via']=='saved-match-reconciliation'
     assert not net.store.one('SELECT 1 FROM claims')
@@ -521,3 +549,11 @@ def test_history_bank_includes_old_matches_beyond_former_global_cap(monkeypatch)
     records = recovery.bank(net, proj)
     assert len(records[4096]) == 4100
     assert records[4096][-1][0]['name'] == 'f'
+
+
+def test_empty_recovery_pool_does_not_decode_the_current_header(monkeypatch):
+    net, proj, fn = prepared_net()
+    with net.store.tx() as db:db.execute('DELETE FROM attempts')
+    fn = dict(fn, matched_source=None)
+    monkeypatch.setattr(net, '_context', lambda *a: pytest.fail('no historical candidate needs a current header'))
+    assert recovery.candidates(net, proj, fn, {}) == []
