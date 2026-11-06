@@ -371,6 +371,19 @@ class Quick(threading.Event):
         return self.is_set()
 
 
+class ClockQuick(Quick):
+    """Simulate elapsed wall time for deadline-aware waits without sleeping."""
+    def __init__(self,monkeypatch,now=None):
+        super().__init__()
+        self.now=time.time() if now is None else now
+        monkeypatch.setattr(time,'time',lambda:self.now)
+
+    def wait(self,timeout=None):
+        result=super().wait(timeout)
+        if not result:self.now+=timeout or 0
+        return result
+
+
 @pytest.fixture
 def quiet(monkeypatch):
     """Helpers that start without their real loop, and no agent's own settings read."""
@@ -595,7 +608,7 @@ def test_a_usage_limit_waits_until_it_resets_then_carries_on(tmp_path, monkeypat
     net = _game(tmp_path)
     m = agents.Manager(net, tmp_path, URL)
     s = m._record("game", "claude", "claude-1", "claude-1", {})
-    s.stop = Quick()
+    s.stop = ClockQuick(monkeypatch)
     resets = time.time() + 3 * 3600
     said = "You've hit your limit · resets 3pm"
     runs = []
@@ -611,7 +624,7 @@ def test_a_usage_limit_waits_until_it_resets_then_carries_on(tmp_path, monkeypat
     monkeypatch.setattr(m, "_run_cli", run)
     m._run(s)
     assert len(runs) == 2 and s.restarts == 1 and s.state == "stopped" and s.last_message == said
-    assert abs(max(w for w in s.stop.waits if w) - (3 * 3600 + agents.LIMIT_RESET_MARGIN)) < 5
+    assert abs(sum(w for w in s.stop.waits if w) - (3 * 3600 + agents.LIMIT_RESET_MARGIN)) < 5
     assert any("usage limit is reached" in f["text"] for f in s.feed)
     assert [r["outcome"] for r in net.store.all("SELECT outcome FROM helper_sessions")] == ["limit", "stopped"]
 

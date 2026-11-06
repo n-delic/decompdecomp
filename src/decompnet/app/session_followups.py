@@ -27,6 +27,19 @@ def remember_limit(manager, session, until):
     return until
 
 
+def active_limit(manager, session):
+    row=manager.net.store.one('SELECT value FROM settings WHERE key=?',account_key(session))
+    return bool(row and float(row['value'])>time.time())
+
+
+def clear_limit(manager, session):
+    """A successful retry releases only the cooldown it observed, never a newer limit."""
+    if not session.cooldown_observed:return
+    with manager.net.store.tx() as db:
+        db.execute('DELETE FROM settings WHERE key=? AND CAST(value AS REAL)<=?',
+                   (account_key(session),session.cooldown_observed))
+
+
 def cooldown(manager, session):
     row = manager.net.store.one('SELECT value FROM settings WHERE key=?',account_key(session))
     until = float(row['value']) if row else 0

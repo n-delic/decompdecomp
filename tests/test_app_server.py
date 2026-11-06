@@ -2656,3 +2656,20 @@ def test_settings_job_discovery_is_guarded_small_and_independent_of_database_sta
         assert client.get('/api/settings-jobs').json()['headers'] is None
     finally:
         captured['jobs'].jobs.pop('settings-discovery-test',None)
+
+
+def test_provider_retry_route_is_guarded_and_does_not_spawn_or_stop_workers(tmp_path):
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    mcp,manager,security,_=build(net,tmp_path,PORT,SECRET)
+    net.autosave.close()
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),
+                      base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
+    s=manager._record('example','claude','test-provider','Test provider',{})
+    s.state='waiting';s.provider_waiting=True
+    path='/api/agents/retry-provider'
+    assert client.post(path,json={'id':s.id}).status_code==403
+    response=client.post(path,json={'id':s.id},headers={'X-Decomp':'1'})
+    assert response.status_code==200 and response.json()=={'requested':True}
+    assert s.provider_retry_requested and not s.stop.is_set() and s.thread is None
+    s.provider_waiting=False
+    assert client.post(path,json={'id':s.id},headers={'X-Decomp':'1'}).status_code==400

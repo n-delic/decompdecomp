@@ -310,6 +310,13 @@ def register(app: App) -> None:
             return fail(e)
         return JSONResponse({"label": label})
 
+    @mcp.custom_route("/api/agents/retry-provider", methods=["POST"])
+    async def api_agents_retry_provider(request: Request) -> Response:
+        if (bad := guard(request, write=True)):return bad
+        data=await body(request)
+        try:return JSONResponse(await call(manager.retry_provider,str(data.get('id',''))))
+        except (NetworkError,ValueError) as error:return fail(error)
+
     @mcp.custom_route("/api/agents/retry-paused", methods=["POST"])
     async def api_agents_retry_paused(request: Request) -> Response:
         if (bad := guard(request, write=True)):return bad

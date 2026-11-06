@@ -3002,3 +3002,5 @@ ABI analysis and automatic source/profile selection remain planned.
 
 
 - Done: Settings discovers active storage compression, compaction, header cleanup and transcript jobs from the server when reopened; restores progress and Stop controls without starting duplicate work.
+
+- Done: provider-limit waits recheck wall-clock reset deadlines at most every 30 seconds, including after system sleep and clock changes. Expired waits transition to availability checks; agent cards label overdue checks and show the date for later-day resets. Retry provider now tests one waiting worker; successful retries release the observed account cooldown without deleting newer limits.
