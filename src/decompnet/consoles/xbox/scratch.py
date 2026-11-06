@@ -316,7 +316,7 @@ def game_info(path: Path) -> dict:
     regions = ", ".join(n for bit, n in REGIONS.items() if xbe.region & bit) or "unknown region"
     title = xbe.title or path.stem
     return {"id": re.sub(r"[^a-z0-9]+", "", title.lower()) or "game", "title": title, "compiler": compiler,
-            "compiler_why": why, "cannot_match": [], "xdk_build": build,
+            "compiler_why": why, "cannot_match": [], "xdk_build": build, "target": "x86",
             "summary": f"an Xbox program ({xbe.title_code}, {regions}, {xbe.keys} keys, "
                        f"XDK {build or 'unknown'}, {len(xbe.sections)} sections, {len(xbe.imports)} kernel imports)",
             "sha1": hashlib.sha1(pe_view(data)).hexdigest(), "xbe_sha1": hashlib.sha1(data).hexdigest(),

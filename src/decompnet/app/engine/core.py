@@ -111,8 +111,10 @@ class Core(Network):
             if row["root"] and not Path(row["root"]).exists() and here.is_dir():
                 with self.store.tx() as db:
                     cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (row["id"],)).fetchone()["config"])
-                    if cfg.get("progress_folder") and Path(cfg["progress_folder"]).is_relative_to(Path(row["root"])):
-                        cfg["progress_folder"] = str(here / Path(cfg["progress_folder"]).relative_to(Path(row["root"])))
+                    old_root = Path(row["root"])
+                    for key in ("progress_folder", "save_folder"):
+                        if cfg.get(key) and Path(cfg[key]).is_relative_to(old_root):
+                            cfg[key] = str(here / Path(cfg[key]).relative_to(old_root))
                         db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), row["id"]))
                     db.execute("UPDATE projects SET root=? WHERE id=?", (str(here), row["id"]))
                 moved.append(row["slug"])

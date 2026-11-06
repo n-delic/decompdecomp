@@ -111,6 +111,22 @@ def test_visual_cpp_exception_labels_are_not_reported_as_renamed_references(monk
     assert result.renamed == [("_func_0041B470", "_Helper")]  # a real name the game links by is still reported
 
 
+@pytest.mark.parametrize("label", ["$LN4", "$L0040101B"])
+def test_a_jump_tables_labels_are_not_reported_as_renamed_references(monkeypatch, tmp_path, label):
+    """A switch's jump table names places in its own function: Visual C++ 2017 labels them $LN4, and a PC project's
+    delinked original $L<address> (tools/delink.py), whose address can have letters in it. Both are local to the
+    function and the code links with them: the judge warned on matched functions that they differ."""
+    jumps = [_reference("$L0040103A", 1), _reference("_func_0041B470", 2)]
+    left = {"symbols": [_function(instructions=jumps, match_percent=100.0),
+                        {"name": "$L0040103A"}, {"name": "_func_0041B470"}]}
+    right = {"symbols": [_function(instructions=[_reference(label, 1), _reference("_Helper", 2)],
+                                   match_percent=100.0), {"name": label}, {"name": "_Helper"}]}
+    monkeypatch.setattr(objdiff, "_run", lambda *args, **kwargs: json.dumps({"left": left, "right": right}))
+    result = objdiff.diff(None, None, "demo_function", cwd=tmp_path)
+    assert result.matched
+    assert result.renamed == [("_func_0041B470", "_Helper")]  # a real name the game links by is still reported
+
+
 def test_a_function_its_unit_also_calls_keeps_its_score(monkeypatch, tmp_path):
     """A PC game's delinked object lists a function a second time, as an extern, when another function of the same
     object calls it: the unit's scores took that entry, said a matched destructor wasn't in the build, and reopened

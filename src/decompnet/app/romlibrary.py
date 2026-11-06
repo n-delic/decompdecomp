@@ -17,9 +17,6 @@ MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_SECONDS = 30
 ARCHIVES = {'.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz'}
 # Windows ctime is creation time and may not change after a same-size overwrite.
-CACHE_HASHES = os.name != 'nt'
-
-
 # Windows stat timestamps can remain unchanged after a same-size overwrite (ctime is creation time).
 # Rehash there rather than offering a stale ROM match. POSIX inode-change timestamps invalidate the cache.
 CACHE_HASHES = os.name != "nt"
@@ -73,6 +70,8 @@ def _candidate(path: Path, platform: str) -> int:
 
 
 def find(project, needs: dict, folder: str, log=print) -> dict:
+    versions = {str(v.get('sha1', '')).lower(): v.get('version')
+                for v in needs.get('rom_versions', [])}
     expected = {str(v.get('sha1', '')).lower() for v in needs.get('rom_versions', [])}
     expected.add(str(needs.get('sha1') or '').lower())
     expected = {v for v in expected if re.fullmatch('[0-9a-f]{40}', v)}
@@ -80,8 +79,13 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
         return {'path': None, 'reason': 'This project does not declare an expected ROM SHA-1.'}
     platform = project.detect_platform()
     local = project.root / needs['path'] if needs.get('path') else None
-    if local and fingerprint(local, platform) in expected:
-        return {'path': str(local), 'in_project': fingerprint(local, 'raw') in expected}
+    local_digest = fingerprint(local, platform) if local else None
+    if local and local_digest in expected:
+        result = {'path': str(local), 'in_project': fingerprint(local, 'raw') == str(needs.get('sha1') or '').lower()}
+        if local_digest in versions:
+            result['version'] = versions[local_digest]
+            result['in_project'] = result['in_project'] and result['version'] == needs.get('version', result['version'])
+        return result
     if not folder:
         return {'path': None, 'reason': 'Set a ROM library folder in Settings to find your game automatically.'}
     root = Path(folder).expanduser()
@@ -112,9 +116,13 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
                         'reason': 'Search reached its 2 GiB read limit. Choose the file manually or use a smaller folder.'}
             count += 1
             hashed += size
-            if fingerprint(path, platform) in expected:
+            digest = fingerprint(path, platform)
+            if digest in expected:
                 log(f'Found a matching game: {path}')
-                return {'path': str(path), 'in_project': False, 'scanned': count, 'skipped': skipped}
+                result = {'path': str(path), 'in_project': False, 'scanned': count, 'skipped': skipped}
+                if digest in versions:
+                    result['version'] = versions[digest]
+                return result
             if count % 100 == 0:
                 log(f'Checked {count} files…')
     return {'path': None, 'scanned': count, 'skipped': skipped,

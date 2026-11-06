@@ -294,9 +294,11 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     old_home, new_home = tmp_path / "old" / "Decomp", tmp_path / "new" / "Decomp"
     (old_home / "game").mkdir(parents=True)
     net = RomNetwork(old_home / "decomp.db", old_home)
+    old_root = old_home / "game"
     with net.store.tx() as db:
         db.execute("INSERT INTO projects(slug, name, root, config) VALUES('game', 'Game', ?, ?)",
-                   (str(old_home / "game"), json.dumps({"progress_folder": str(old_home / "game" / "progress")})))
+                   (str(old_root), json.dumps({"progress_folder": str(old_root / "progress"),
+                                               "save_folder": str(old_root / "exports")})))
     # Moving the folder is an offline operation; Windows won't remove open database files.
     reader = getattr(net.store._local, "conn", None)
     if reader is not None:
@@ -309,10 +311,12 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     with moved.store.tx() as db:
         old_root = str(old_home / "game")
         db.execute("UPDATE projects SET root=?,config=? WHERE slug='game'",
-                   (old_root, json.dumps({"progress_folder": str(old_home / "game" / "progress")})))
+                   (old_root, json.dumps({"progress_folder": str(old_home / "game" / "progress"),
+                                          "save_folder": str(old_home / "game" / "exports")})))
     assert moved.find_moved_projects() == ["game"]
     cfg = moved.cfg(moved.project_row("game"))
     assert cfg["progress_folder"] == str(new_home / "game" / "progress")
+    assert cfg["save_folder"] == str(new_home / "game" / "exports")
     assert saves.default_folder(moved, "game") == new_home / "game" / "progress"
 
 

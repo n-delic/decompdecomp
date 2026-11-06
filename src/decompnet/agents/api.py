@@ -50,6 +50,7 @@ PAYMENT_REQUIRED = 402
 TOO_MANY_REQUESTS = 429
 TOO_LONG_STATUSES = (400, 413, 422, 500)  # what servers answer a request too long for the model's context
 TOO_LONG_READ = 2000  # characters of that answer read for why
+API_RETRIES, API_RETRY_WAIT = 3, 10  # dropped requests and gateway 5xx: retry the same conversation in place
 # a function is done with when the helper compiled it to a match or released it: its work then folds into a line
 FINISHING = ("compile_and_diff", "compile_patch", "compile_variants", "compile_family", "release_function")
 FOLDED = 2  # messages a fold leaves: one call and its result
@@ -143,7 +144,7 @@ class Api(Agent):
                         request["reasoning_effort"] = s.options["effort"]
                     if s.record:
                         s.record('api_request', request)
-                    r = client.post(f"{base}/chat/completions", headers=headers, json=request)
+                    r = _post(client, f"{base}/chat/completions", headers, request, s.stop)
                     if s.rotated or r.status_code == 200 or not _too_long(r):
                         break
                     budget = int(budget * API_TRIM_FACTOR)  # the server counts differently, or knows better: trim more
@@ -334,6 +335,21 @@ def api_usage(usage: dict) -> dict:
     if not (prompt or output):
         return {"tokens": number(usage, "total_tokens"), "turns": 1}
     return {"input": max(0, prompt - cached), "cache_read": cached, "output": output, "turns": 1}
+
+
+def _post(client, url: str, headers: dict, request: dict, stop) -> httpx.Response:
+    """Retry a dropped request or gateway error without throwing away this session's conversation."""
+    for attempt in range(API_RETRIES + 1):
+        last = attempt == API_RETRIES
+        try:
+            response = client.post(url, headers=headers, json=request)
+        except httpx.TransportError:
+            if last or stop.is_set():
+                raise
+        else:
+            if last or stop.is_set() or not (response.status_code == 408 or response.status_code >= 500) or _too_long(response):
+                return response
+        stop.wait(API_RETRY_WAIT * 2 ** attempt)
 
 
 def _retry_after(r) -> float | None:

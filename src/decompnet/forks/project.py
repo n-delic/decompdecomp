@@ -279,6 +279,8 @@ class ForkProject:
         Direct configs supply the original hash. For generated images the Makefile names the input/output
         and the README supplies original hashes; a decompressed-image hash is never a cartridge hash.
         """
+        if (getattr(self, "platform", None) or self.detect_platform()) != "n64":
+            return {}
         makefile = self.root / "Makefile"
         if not makefile.is_file():
             return {}
@@ -294,18 +296,18 @@ class ForkProject:
                 try:
                     config = yaml.safe_load(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError, yaml.YAMLError):
-                    continue
+                    return {}
                 if not isinstance(config, dict) or not isinstance(config.get("options"), dict):
-                    continue
+                    return {}
                 options = config["options"]
                 digest = config.get("sha1", options.get("sha1"))
                 base = path.parent / str(options.get("base_path", "."))
-                if (options.get("target_path") == f"baserom.{version}.z64"
+                if not (options.get("target_path") == f"baserom.{version}.z64"
                         and base.resolve() == self.root.resolve()
                         and isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest)):
-                    originals[version] = digest.lower()
-            if originals:
-                return originals
+                    return {}
+                originals[version] = digest.lower()
+            return originals
         if not (re.search(r"^BASEROM\s*[:?+]?=\s*baserom\.\$\(VERSION\)\.z64\s*$", make, re.M) and
                 re.search(r"^DECOMPRESSED_BASEROM\s*[:?+]?=\s*decompressed\.\$\(VERSION\)\.z64\s*$", make, re.M)):
             return {}
@@ -589,14 +591,16 @@ class ForkProject:
             return [[cfg.get("custom_make") or "make", *cfg.get("custom_args", [])]]
         raise ForkError("decompdecomp can't tell how to build this project; follow its README, then refresh")
 
-    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None) -> tuple[bool, str]:
+    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None,
+            platform: str | None = None) -> tuple[bool, str]:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
         are added to `failed`."""
+        console = consoles.get((self.manifest or {}).get("platform") or platform or self.detect_platform())
         if self._docker_only_macos() and Path(cmd[0]).name in ("make", "gmake"):
             self._prepare_docker(log)
             cmd = self._docker_command(["make", *cmd[1:]])
         else:
-            cmd = consoles.get(self.detect_platform()).project_build_command(self, cmd)
+            cmd = console.project_build_command(self, cmd)
         env = dict(os.environ)
         # Existing project environments carry its pinned extractor dependencies. Do not install into the app.
         python = next((folder / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python3')
@@ -606,7 +610,6 @@ class ForkProject:
         project_python = [python.parent] if python else []
         if python:
             env['VIRTUAL_ENV'] = str(python.parent.parent)
-        console = consoles.get(self.detect_platform())
         project_tools = console.project_tool_paths(self)
         env.update(console.build_env())
         env["PATH"] = os.pathsep.join([*(str(d) for d in [*project_python, *_tool_dirs(), *project_tools]), env.get("PATH", "")])

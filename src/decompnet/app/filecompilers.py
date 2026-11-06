@@ -260,10 +260,10 @@ class FileCompilers:
         user decides (Settings), as the files each keep theirs where their matches need it."""
         proj, fp, cfg = self.net.forks.get(slug)
         console = consoles.get(cfg.get("platform"))
-        tc = next((c.id for c in console.compilers if compiler.strip().lower() in (c.id.lower(), c.name.lower())), None)
+        ours = console.project_compilers(fp)  # (a 32-bit PC game's: never a 64-bit compiler, which can't match it)
+        tc = next((c.id for c in ours if compiler.strip().lower() in (c.id.lower(), c.name.lower())), None)
         if tc is None:
-            raise NetworkError(f"no compiler {compiler!r} for this game; its platform's: "
-                               f"{', '.join(c.id for c in console.compilers)}")
+            raise NetworkError(f"no compiler {compiler!r} for this game; its own: {', '.join(c.id for c in ours)}")
         spans = parse_ranges(ranges)
         if not spans and function:  # the file the function is in
             fn = self.net.forks._fn(slug, function)

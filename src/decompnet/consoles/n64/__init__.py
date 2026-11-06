@@ -80,6 +80,32 @@ class Nintendo64(Console):
         with path.open('rb') as stream:
             return stream.read(4) in MAGIC
 
+    def fork_game_versions(self, project) -> dict[str, str]:
+        from .fork_versions import original_roms
+
+        return original_roms(project.root)
+
+    def fork_game_need(self, project, version: str | None) -> dict | None:
+        originals = self.fork_game_versions(project)
+        if not originals:
+            return None
+        selected = version if version in originals else self.default_fork_game_version(project)
+        return {"what": f"your original game ROM (baserom.{selected}.z64)",
+                "path": f"baserom.{selected}.z64", "sha1": originals[selected], "auto": True,
+                "rom_versions": [{"version": v, "sha1": digest} for v, digest in originals.items()],
+                "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order. "
+                        "Its normalized SHA-1 selects the build version."}
+
+    def default_fork_game_version(self, project) -> str | None:
+        from .fork_versions import default_version
+
+        return default_version(project.root, self.fork_game_versions(project))
+
+    def match_fork_game_version(self, project, game: Path, log=print) -> str | None:
+        from .fork_versions import match
+
+        return match(game, self.fork_game_versions(project), log)
+
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         if not target.lower().endswith(".z64"):
             return None

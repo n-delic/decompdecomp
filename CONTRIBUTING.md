@@ -71,7 +71,8 @@ works on which platform: every — in it is a gap to fill.
 ### Every console gets every feature
 
 decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
-in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When you add a feature:
+in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When
+you add a feature:
 
 1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
    for each mode, `arch/` for what depends on the processor.
@@ -226,9 +227,12 @@ Example: PC has Visual C++ 6.0 to 2010, and you want Visual C++ 2012 (11.0).
    accepts its licence in Setup. Never download it in code, a test or CI: public CI can't have it, and its tests
    skip there.
 3. **How it runs on Linux.** Windows compilers run through wibo (a pinned tool); check that the new `cl.exe` runs
-   there. One wibo can't run (2015 and newer) goes in a pack marked `wine = true`, run through the user's wine
-   (`wine.py`). wibo stops at the first Windows function it doesn't have and names it (2010's compiler needed
-   `msvcp100.dll` beside it; 2005's and later linkers stop at `lstrcmpiW` in wibo 1.2.0). A Linux compiler needs nothing; a 32-bit one may need `requires = ["runtime-i386"]`.
+   there. One wibo can't run goes in a pack marked `wine = true`, run through the user's wine (`wine.py`): the pack
+   decides, not the version number, so a 2012-2013 pack can be either (the app tells the build which packs in
+   `$DECOMPNET_WINE_PACKS`; a project's `configure.py` run by hand sends 2015 and newer to wine). wibo stops at the
+   first Windows function it doesn't have and names it (2010's compiler needed `msvcp100.dll` beside it; 2005's and
+   later linkers stop at `lstrcmpiW` in wibo 1.2.0). A Linux compiler needs nothing; a 32-bit one may need
+   `requires = ["runtime-i386"]`.
 4. **The console lists it**: `consoles/pc/__init__.py`, `MSVC_VERSIONS`. A ROM console's compilers are its
    `compilers` tuple: `Compiler(id, name, built, guess)` (see `consoles/ps2/__init__.py`).
 5. **Which game used it.** PC reads the program's Rich header: `RICH_COMPILERS` in `consoles/pc/scratch.py`
@@ -311,6 +315,8 @@ connector, `agents/__init__.py`.
 | `agents/codex.py` | Codex CLI | `codex exec --json`, the user's own MCP servers switched off for the run |
 | `agents/antigravity.py` | Antigravity CLI | `agy` with stream-json in and out; its models from `agy models`; once Gemini CLI |
 | `agents/opencode.py` | opencode | `opencode run`, its own server per helper (opencode 2); its models from `opencode models` |
+| `agents/cursor.py` | Cursor Agent | Headless stream JSON with private settings and MCP allowlist |
+| `agents/kimi.py` | Kimi Code | npm CLI, stdin prompt bridge and private settings |
 | `agents/zcode.py` | ZCode CLI | `zcode --output-format stream-json`, its own settings file for the app's MCP server, the prompt in an attached file |
 | `agents/api.py` | API helper | No program: the app's own loop for any OpenAI-compatible API, and the saved endpoints' presets |
 
@@ -325,7 +331,7 @@ Around them:
 
 An agent is one of two sorts:
 
-- **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI). The app
+- **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, Cursor Agent, Kimi Code, ZCode CLI). The app
   runs it headless, a session at a time, in a private folder. It connects only to the app's own MCP server, with a
   token of its own, and may use only decompdecomp's tools. The prompt goes in on stdin, or in a file the agent is
   given by path when its CLI has no stdin prompt (zcode's `--attach`), never as text on the command line; what it
@@ -337,7 +343,7 @@ An agent is one of two sorts:
 1. Open `agents/<id>.py`. Its docstring says how a session runs and what the agent prints.
 2. Change the part you need there. Something every agent needs (how long a helper waits after a failure) goes in
    `app/agents.py`.
-3. Run its tests: `uv run pytest tests/test_agents.py tests/test_agent_kinds.py -q`. Never run the real program in a
+3. Run its tests: `uv run pytest tests/test_agents.py tests/test_agent_kinds.py tests/test_cursor_agent.py tests/test_kimi_agent.py -q`. Never run the real program in a
    test: it starts the MCP servers in the user's own settings. Use a recorded line of its output instead.
 
 ### Adding an agent
@@ -364,6 +370,7 @@ An agent is one of two sorts:
    | Part | What it does |
    | :-- | :-- |
    | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. |
+   | `launch_command(argv)` | Adjust the command used to start the program when its installer uses a shim. |
    | `stdin(prompt)` | What goes in on stdin: the prompt, as the agent reads it. |
    | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. A protocol program (zcode) also says ("stdin", line) — the app writes the line to its stdin — and ("stop", line) when the work is done, ending a process that wouldn't exit on its own. |
    | `clean_stderr(line)` | A line of its stderr worth showing, or "" for noise. |
@@ -380,7 +387,7 @@ An agent is one of two sorts:
    file the agent is given by path, never as text on the command line.
 6. **Register it** in the list at the end of `agents/__init__.py` (`_registry`). The Agents page lists the agents in
    that order.
-7. **Pass the tests**: `uv run pytest tests/test_agent_kinds.py -q`. It checks the facts, the ids, the command line
+7. **Pass the tests**: `uv run pytest tests/test_agent_kinds.py tests/test_cursor_agent.py tests/test_kimi_agent.py -q`. It checks the facts, the ids, the command line
    (no token on it) and that no code outside `agents/` asks an agent's name. Add a test of its own to
    `tests/test_agents.py`: a recorded line of its output, and the feed items it gives.
 8. **Say it**: add the agent to README.md's list of agents, docs/GUIDE.md's table and the site's agent list
