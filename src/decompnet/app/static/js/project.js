@@ -238,6 +238,7 @@ async function poll() {
     addActivity(live.events, live.attempts, first);
     S.claims = live.claims;
     S.sessions = live.sessions;
+    if (S.fnDetail && !$("drawer").hidden) renderFunctionFocusedAgents(S.fnDetail, slug);
     for (const s of live.sessions) {
       if (s.feed.length) S.seq[s.id] = s.feed[s.feed.length - 1].seq;
     }

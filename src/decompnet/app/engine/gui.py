@@ -321,7 +321,7 @@ class GuiMixin:
             latest = self.store.one('SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1', fn['id'])
             source = latest['source'] if latest else fn['seed']
             kind = 'latest' if latest else 'draft' if fn['seed'] else None
-        return {**name_state(fn), **set_aside(fn), 'name': fn['name'], 'unit': fn['unit'],
+        return {'id':fn['id'], **name_state(fn), **set_aside(fn), 'name': fn['name'], 'unit': fn['unit'],
                 'vram': fn['vram'] or 0, 'rom_offset': fn['rom_offset'] or 0, 'size': fn['size'],
                 'insns': fn['n_insns'], 'status': fn['status'], 'best': fn['best_score'],
                 'source': source, 'source_kind': kind, 'asm': fn['asm'] or '',
@@ -338,7 +338,7 @@ class GuiMixin:
         fn = self._function(name, slug)
         deep_pass = sweep.history(slug, fn) if sweep else {'state': 'not tried', 'completed': False}
         if (fork := self.fork_slug(slug)):
-            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'])}
+            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'id':fn['id'], 'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'])}
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         from ..function_history import history
         saved_history = history(self.store, fn)
@@ -354,7 +354,7 @@ class GuiMixin:
         return {
             "assembly_verification":assembly_detail(proj,fn),
             "machine_draft_report": initial_report,
-            **name_state(fn), "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
+            **name_state(fn), "id":fn["id"], "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
             "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
             "boundary_review": boundary_reason(self.console(proj),fn),
             "boundary_override": bool(json.loads(fn["meta"] or "{}").get("boundary_override")),

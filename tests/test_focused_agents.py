@@ -78,7 +78,10 @@ def test_validation_and_persisted_deadline_survive_restore(tmp_path,quiet):  # n
     assert restored.sessions[sid].options['focus_until']==deadline
     restored._launch(restored.sessions[sid])
     assert restored.sessions[sid].options['focus_until']==deadline
-    assert restored.sessions[sid].snapshot()['focus_function']=='f0'
+    snapshot=restored.sessions[sid].snapshot()
+    assert snapshot['focus_function']=='f0'
+    assert snapshot['focus_id']==net._function('f0','game')['id']
+    assert snapshot['focus_minutes']==30
 
 
 def test_expired_restored_run_stops_without_model_call(tmp_path):

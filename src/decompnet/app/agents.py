@@ -458,6 +458,7 @@ class Session:
                 "selection": self.options.get("selection") or {},
                 "boundary_function":self.options.get("boundary_function"), "boundary_until":self.options.get("boundary_until"),
                 "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
+                "focus_id":self.options.get("focus_id"), "focus_minutes":self.options.get("focus_minutes"),
                 "per_session": self.options.get("per_session", PER_SESSION),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,

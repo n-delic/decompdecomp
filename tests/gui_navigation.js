@@ -16,7 +16,7 @@ function setup() {
     api: (url, options={}) => new Promise((resolve,reject) => calls.push({url,resolve,reject,...options})),
     show: () => {}, stopPolling: () => {}, markNav: () => {}, showDrawer: id => {el(id).hidden=false;},
     giveBack: () => {}, drawMap: () => {}, toast: e => errors.push(e), esc: String, hex8: String,
-    prepareProjectPeers: () => {}, renderKnownCompilerProfiles: () => {}, renderFnChart: () => {}, showFnTab: () => {},
+    renderFunctionFocusedAgents: () => {}, prepareProjectPeers: () => {}, renderKnownCompilerProfiles: () => {}, renderFnChart: () => {}, showFnTab: () => {},
     setEditorSourceMapping:data=>{S.sourceMap=data;},
     setEditor: source => {el('fnEdit').value=source;}, highlightAsm: String,
     nameChangeBusy: false, clock: String, groups: new Set(), L: {}, FUNCTION_ROWS: 200,

@@ -49,6 +49,7 @@ def test_preview_does_not_generate_drafts_or_scan_history(tmp_path, monkeypatch)
         with net.store.tx() as db:
             db.execute('UPDATE projects SET config=? WHERE id=1', ('{"kind":"' + kind + '"}',))
         result = net.function_preview('game', 'f')
+        assert result['id'] == 1
         assert result['source'] == 'saved C' and result['asm'] == 'saved assembly' and result['details_pending']
     assert not any('FROM attempts' in q for q in queries)
 
