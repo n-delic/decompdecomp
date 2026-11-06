@@ -9,19 +9,22 @@ import threading
 def token(net, fn, claim):
     if not claim:
         return ''
-    event=net.store.one("SELECT id FROM events WHERE project_id=? AND agent_id=? AND kind='claim' AND detail=? AND created_at>=? ORDER BY id DESC LIMIT 1",fn['project_id'],claim['agent_id'],fn['name'],claim['claimed_at'])
+    store = net.project_store(fn['project_id'])
+    event=store.one("SELECT id FROM events WHERE project_id=? AND agent_id=? AND kind='claim' AND detail=? AND created_at>=? ORDER BY id DESC LIMIT 1",fn['project_id'],claim['agent_id'],fn['name'],claim['claimed_at'])
     return hashlib.sha256(repr((fn['id'],claim['agent_id'],claim['claimed_at'],event['id'] if event else None)).encode()).hexdigest()[:24]
 
 
 def current(net, fn, agent):
-    claim=net.store.one('SELECT * FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+    store = net.project_store(fn['project_id'])
+    claim=store.one('SELECT * FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
     return token(net,fn,claim)
 
 
-def instruction(net, function_id, agent_id):
+def instruction(net, function_id, agent_id, *, project_id=None):
     """Give move-on callers the current lease token, without changing any claim."""
-    fn=net.store.one('SELECT id,project_id,name FROM functions WHERE id=?',function_id)
-    claim=net.store.one('SELECT * FROM claims WHERE function_id=? AND agent_id=?',function_id,agent_id)
+    store=net.project_store(project_id) if project_id is not None else net.store
+    fn=store.one('SELECT id,project_id,name FROM functions WHERE id=?',function_id)
+    claim=store.one('SELECT * FROM claims WHERE function_id=? AND agent_id=?',function_id,agent_id)
     if not fn or not claim:
         return 'Claim ended; claim another eligible function. Do not release this function again.'
     lease=token(net,fn,claim)
@@ -39,11 +42,12 @@ def operation(kind, *, protect_new=False):
             owner=args[0];net=owner if hasattr(owner,'store') else owner.net
             agent=v['agent'];slug=v.get('project') or v.get('slug')
             fn=net._function(v['function'],slug)
-            with net.store.lock:
+            store=net.project_store(fn['project_id'])
+            with store.lock:
                 lock=net._attempt_locks.setdefault((agent.id,fn['id']),threading.RLock())
             with lock:
                 key=f'release-receipts:{agent.id}:{fn["id"]}:{kind}'
-                row=net.store.one('SELECT value FROM settings WHERE key=?',key)
+                row=store.one('SELECT value FROM settings WHERE key=?',key)
                 receipts=json.loads(row['value']) if row else []
                 payload={k:v.get(k) for k in ('notes','not_c','needs','move_on','next_experiment') if k in v}
                 digest=hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
@@ -67,7 +71,7 @@ def operation(kind, *, protect_new=False):
                     saved=reply if len(reply)<=4096 else reply[:4096]+'\n[Earlier reply abbreviated. Read current function/claim state before acting.]'
                     receipts=[r for r in receipts if not (r['claim']==active and r['request']==digest)]
                     receipts.append({'claim':active,'request':digest,'reply':saved})
-                    with net.store.tx() as db:
+                    with store.tx() as db:
                         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(receipts[-2:])))
                 return reply
         return wrapped

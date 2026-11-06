@@ -44,14 +44,15 @@ def signature(net, proj, fn, common=None, shared=None):
 
 
 def released(net, fn, *, exhausted=False, agent=None):
-    proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
-    current = net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+    store = net.project_store(fn['project_id'])
+    proj = store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    current = store.one('SELECT * FROM functions WHERE id=?',fn['id'])
     if current['status'] != 'open' or not current['best_source']:
         return
     stamp = signature(net,proj,current)
     from .pause_scope import identity
     key = PREFIX+str(fn['id'])+identity(net,proj,agent)[0]
-    with net.store.tx() as db:
+    with store.tx() as db:
         row = db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()
         old = json.loads(row['value']) if row else {}
         history = old.get('history', {})
@@ -64,12 +65,13 @@ def released(net, fn, *, exhausted=False, agent=None):
 
 
 def blocked(net, proj, agent=None):
+    store = net.project_store(proj['id'])
     from . import candidate_quality, candidate_scope
     from .pause_scope import identity
     suffix=identity(net,proj,agent)[0]
     # Read small pause records first. Repeated workers of the same recorded model
     # need not reload every source/header or fingerprint every function again.
-    records=net.store.all("SELECT f.id,s.value AS stall FROM functions f JOIN settings s ON s.key=? || f.id || ? "
+    records=store.all("SELECT f.id,s.value AS stall FROM functions f JOIN settings s ON s.key=? || f.id || ? "
                           "WHERE f.project_id=? AND f.status='open' ORDER BY f.id",PREFIX,suffix,proj['id'])
     possible=[]
     for record in records:
@@ -81,7 +83,7 @@ def blocked(net, proj, agent=None):
         return result
     common=common_state(net,proj)
     def calculate():
-        rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' "
+        rows=store.all("SELECT * FROM functions WHERE project_id=? AND status='open' "
                            'AND id IN (SELECT value FROM json_each(?)) ORDER BY id',
                            proj['id'],json.dumps([ident for ident,_ in possible]))
         saved={ident:json.loads(value) for ident,value in possible}
@@ -97,9 +99,9 @@ def blocked(net, proj, agent=None):
     # Imported build files may change outside SQLite; always inspect those again.
     # ROM scheduling inputs are tracked by revision, while settings are keyed by
     # their actual records. No TTL can hide a new header/source, retry or model.
-    if hasattr(net.store,'read_cache') and not net.fork_slug(proj['slug']):
-        version=(net.store.read_version('inputs',proj['id']),proj['config'],tuple(possible),repr(common),getattr(net._context,'__func__',net._context))
-        paused=net.store.read_cache.get(('model-paused-functions',proj['id'],suffix),version,calculate)
+    if hasattr(store,'read_cache') and not net.fork_slug(proj['slug']):
+        version=(store.read_version('inputs',proj['id']),proj['config'],tuple(possible),repr(common),getattr(net._context,'__func__',net._context))
+        paused=store.read_cache.get(('model-paused-functions',proj['id'],suffix),version,calculate)
     else:
         paused=calculate()
     return list(dict.fromkeys([*result,*paused]))
@@ -107,14 +109,15 @@ def blocked(net, proj, agent=None):
 
 def resume(net, fn, agent=None, *, single_turn=False, _stamp=None):
     """Explicit review resets one input; retry grants only one further unchanged release."""
+    store = net.project_store(fn['project_id'])
     from .pause_scope import identity
-    proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    proj = store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     # Retry already checked this stamp under the same Store lock; do not hash it twice.
     stamp = _stamp if _stamp is not None else signature(net,proj,fn)
     prefix=PREFIX+str(fn['id'])
     keys=([prefix+identity(net,proj,agent)[0]] if agent is not None else
-          [r['key'] for r in net.store.all('SELECT key FROM settings WHERE key=? OR key LIKE ?',prefix,prefix+':%')] or [prefix])
-    with net.store.tx() as db:
+          [r['key'] for r in store.all('SELECT key FROM settings WHERE key=? OR key LIKE ?',prefix,prefix+':%')] or [prefix])
+    with store.tx() as db:
         for key in keys:
             row = db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()
             old = json.loads(row['value']) if row else {}
@@ -128,9 +131,10 @@ def resume(net, fn, agent=None, *, single_turn=False, _stamp=None):
 
 def grants(net, proj, agent):
     """Explicit grants alone bypass this worker's recent-release cooldown for the same inputs."""
+    store = net.project_store(proj['id'])
     from .pause_scope import identity
     suffix=identity(net,proj,agent)[0]
-    rows=net.store.all("SELECT f.*,s.value AS stall FROM functions f JOIN settings s ON s.key=? || f.id || ? WHERE f.project_id=? AND f.status='open'",PREFIX,suffix,proj['id'])
+    rows=store.all("SELECT f.*,s.value AS stall FROM functions f JOIN settings s ON s.key=? || f.id || ? WHERE f.project_id=? AND f.status='open'",PREFIX,suffix,proj['id'])
     common=common_state(net,proj) if rows else None
     return [f['id'] for f in rows if (r:=json.loads(f['stall'])).get('retry_grant')
             and r.get('stamp')==signature(net,proj,f,common)]

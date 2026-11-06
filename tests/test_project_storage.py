@@ -179,3 +179,145 @@ def test_shared_repair_and_reuse_locations_do_not_follow_project_store(scoped):
     assert library.path == archive_path(net.store.path).parent / 'match-library.sqlite3'
     assert archive_path(net.store.path) != archive_path(stores[1].path)
     assert library.path.parent != archive_path(stores[1].path).parent
+
+
+def test_claim_receipts_and_release_lifecycle_stay_in_their_project(scoped):
+    import json
+
+    from decompnet.app import claim_state
+    from decompnet.release_receipts import current
+
+    net, stores = scoped
+    catalog_settings = [tuple(r) for r in net.store.all('SELECT * FROM settings ORDER BY key')]
+    net.fork_slug = lambda _: None
+    agent = Agent(1, 'worker', None)
+    for pid in (1, 2):
+        with stores[pid].tx() as db:
+            db.execute("UPDATE functions SET best_source='int same_name(void) { return 1; }',best_score=20")
+    first = net.claim_row(agent, 'first')
+    second = net.claim_row(agent, 'second')
+    assert (first['id'], second['id']) == (10, 20)
+    one, two = current(net, first, agent), current(net, second, agent)
+    assert one and two and one != two
+    assert json.loads(claim_state.get_claims(net, agent, 'first'))['claims'][0]['claim_token'] == one
+    assert json.loads(claim_state.get_claims(net, agent, 'second'))['claims'][0]['claim_token'] == two
+    assert '## CLAIMED: second/same_name' in claim_state.brief(net, second, agent, 'CLAIMED')
+    assert net.claim_progress(agent, first)['claimed_at'] is not None
+
+    reply = net.release(agent, 'same_name', 'Trying another function.', 'first', claim_token=one)
+    assert 'Released' in reply
+    assert net.release(agent, 'same_name', 'Trying another function.', 'first', claim_token=one) == reply
+    assert current(net, second, agent) == two
+    assert stores[1].one('SELECT COUNT(*) n FROM claims')['n'] == 0
+    assert stores[2].one('SELECT COUNT(*) n FROM claims')['n'] == 1
+    assert stores[1].one("SELECT COUNT(*) n FROM settings WHERE key LIKE 'release-receipts:%'")['n'] == 1
+    assert stores[2].one("SELECT COUNT(*) n FROM settings WHERE key LIKE 'release-receipts:%'")['n'] == 0
+    assert net.store.one('SELECT COUNT(*) n FROM claims')['n'] == 0
+    assert [tuple(r) for r in net.store.all('SELECT * FROM settings ORDER BY key')] == catalog_settings
+
+
+def test_quality_list_fans_out_without_catalog_function_or_setting_reads(scoped, monkeypatch):
+    import hashlib
+    import json
+
+    from decompnet import candidate_quality
+
+    net, stores = scoped
+    for pid in (1, 2):
+        source = f'int same_name(void) {{ return {pid}; }}'
+        report = {'source_hash': hashlib.sha256(source.encode()).hexdigest(),
+                  'warning': f'project {pid}', 'alternatives': []}
+        with stores[pid].tx() as db:
+            db.execute('UPDATE functions SET best_source=?', (source,))
+            db.execute('INSERT INTO settings VALUES(?,?)', (candidate_quality.PREFIX+str(pid*10), json.dumps([report])))
+    original = net.store.all
+
+    def catalog_only(sql, *args):
+        assert sql == 'SELECT slug FROM projects ORDER BY id'
+        return original(sql, *args)
+
+    monkeypatch.setattr(net.store, 'all', catalog_only)
+    rows = candidate_quality.listing(net)
+    assert [(r['slug'], r['warning']) for r in rows] == [('first', 'project 1'), ('second', 'project 2')]
+    assert [r['slug'] for r in candidate_quality.listing(net, 'second')] == ['second']
+
+
+def test_pause_retries_and_candidate_stamps_use_operational_store(scoped):
+    from decompnet import candidate_scope, claim_stalls
+
+    net, stores = scoped
+    catalog_settings = [tuple(r) for r in net.store.all('SELECT * FROM settings ORDER BY key')]
+    net.fork_slug = lambda _: None
+    agent = Agent(1, 'worker', None)
+    first, second = (net._function('same_name', slug) for slug in ('first', 'second'))
+    for pid in (1, 2):
+        with stores[pid].tx() as db:
+            db.execute("UPDATE functions SET best_source='int same_name(void) { return 1; }',best_score=20")
+    first = net._function('same_name', 'first')
+    claim_stalls.released(net, first, exhausted=True, agent=agent)
+    assert claim_stalls.blocked(net, net._project('first'), agent) == [10]
+    assert claim_stalls.blocked(net, net._project('second'), agent) == []
+    claim_stalls.resume(net, first, agent, single_turn=True)
+    assert claim_stalls.grants(net, net._project('first'), agent) == [10]
+    assert claim_stalls.grants(net, net._project('second'), agent) == []
+    net.claim_row(agent, 'first')
+    assert claim_stalls.grants(net, net._project('first'), agent) == []
+    proj = net._project('second')
+    stamp = candidate_scope.key(net, proj, second)
+    with stores[2].tx() as db:
+        db.execute("UPDATE context_versions SET header='int changed_header;'")
+    assert candidate_scope.key(net, proj, second) != stamp
+    assert [tuple(r) for r in net.store.all('SELECT * FROM settings ORDER BY key')] == catalog_settings
+
+
+def test_quick_claim_serialization_never_waits_for_the_catalog_mutex(scoped):
+    import threading
+
+    from decompnet.app.claim_state import quick
+
+    net, _ = scoped
+    held, release = threading.Event(), threading.Event()
+
+    def hold_catalog():
+        with net.store.lock:
+            held.set()
+            assert release.wait(10)
+
+    @quick
+    def claim(net, agent, slug):
+        return net._function('same_name', slug)['id']
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(hold_catalog)
+        try:
+            assert held.wait(5)
+            result = pool.submit(claim, net, Agent(1, 'worker', None), 'second')
+            assert result.result(timeout=5) == 20
+        finally:
+            release.set()
+            writer.result(timeout=5)
+
+
+def test_scheduling_batch_cannot_reuse_another_projects_header_cache(scoped):
+    from decompnet import candidate_scope
+
+    net, _ = scoped
+    first, second = net._project('first'), net._project('second')
+    batch = candidate_scope.batch_context(net, first)
+    assert candidate_scope.context(net, first, '', batch)['header'] == 'int first;'
+    with pytest.raises(NetworkError, match='another project or database'):
+        candidate_scope.context(net, second, '', batch)
+    with pytest.raises(NetworkError, match='another project or database'):
+        candidate_scope.state(net, second, net._function('same_name', 'second'), batch)
+
+
+def test_implicit_claim_packet_recovers_project_scope_from_claim_label(scoped, monkeypatch):
+    from decompnet.app import agent_tokens
+
+    net, _ = scoped
+    agent = Agent(1, 'worker', None)
+    net.claim_row(agent, 'first')
+    monkeypatch.setattr(agent_tokens, 'brief', lambda net, text, *args: text)
+    text = '## CLAIMED: first/same_name\nCandidate C'
+    assert agent_tokens.claim_packet(net, agent, None, text) == text
+    assert 'No new functions were claimed' in agent_tokens.claim_packet(net, agent, None, text)

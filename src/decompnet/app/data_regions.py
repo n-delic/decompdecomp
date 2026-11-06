@@ -10,7 +10,8 @@ PREFIX = 'data-region:'
 
 
 def entries(net, proj, region):
-    rows = net.store.all('SELECT id,name,vram,rom_offset,size,target,status FROM functions WHERE project_id=? AND unit IS ? AND vram>=? AND vram<? ORDER BY vram,id',
+    store = net.project_store(proj['id'])
+    rows = store.all('SELECT id,name,vram,rom_offset,size,target,status FROM functions WHERE project_id=? AND unit IS ? AND vram>=? AND vram<? ORDER BY vram,id',
                          proj['id'], region['unit'], region['start'], region['end'])
     return [r for r in rows if (r['rom_offset'] - r['vram'] if r['rom_offset'] is not None else None) == region['image']]
 
@@ -20,7 +21,8 @@ def stamp(rows):
 
 
 def records(net, pid):
-    return [(r['key'], json.loads(r['value'])) for r in net.store.all('SELECT key,value FROM settings WHERE key LIKE ?', PREFIX+str(pid)+':%')]
+    store = net.project_store(pid)
+    return [(r['key'], json.loads(r['value'])) for r in store.all('SELECT key,value FROM settings WHERE key LIKE ?', PREFIX+str(pid)+':%')]
 
 
 def blocked(net, proj):
@@ -36,6 +38,7 @@ def blocked(net, proj):
 
 
 def report(net, agent, slug, function, start, end, reason):
+    store = net.project_store(slug)
     with view(net):
         proj = net._project(slug)
         if getattr(net, '_link', lambda _: None)(slug) is not None:
@@ -60,7 +63,7 @@ def report(net, agent, slug, function, start, end, reason):
         region['stamp'] = stamp(rows)
         identity = hashlib.sha256(repr((region['unit'], region['image'], lo, hi)).encode()).hexdigest()[:24]
         key = PREFIX+str(proj['id'])+':'+identity
-        with net.store.tx() as db:
+        with store.tx() as db:
             claim = db.execute('SELECT 1 FROM claims WHERE function_id=? AND agent_id=? AND expires_at>?',
                                (fn['id'], agent.id, time.time())).fetchone()
             if not claim:
@@ -91,11 +94,12 @@ def listing(net, slug):
 
 
 def decide(net, slug, key, action):
+    store = net.project_store(slug)
     if action not in {'pause', 'resume', 'dismiss'}:
         raise NetworkError('Choose pause, resume or dismiss.')
     with view(net):
         proj = net._project(slug)
-        with net.store.tx() as db:
+        with store.tx() as db:
             row = db.execute('SELECT value FROM settings WHERE key=? AND key LIKE ?',
                              (key, PREFIX+str(proj['id'])+':%')).fetchone()
             if not row:

@@ -15,7 +15,7 @@ import pytest
 from decompnet import toolchains
 from decompnet.app import permute, workers
 from decompnet.app.permute import MAX_TURNS, Permuter, State, weight_family
-from decompnet.network import Agent
+from decompnet.network import Agent, Network
 from decompnet.store import IN_MEMORY, Store
 
 SOURCE = "s32 f(s32 a) {\n    s32 b = a + 1;\n    return b * 2;\n}\n"
@@ -35,6 +35,7 @@ class FakeNet:
     header. The judge is the test's own (ScriptedPermuter._score)."""
 
     links: dict = {}
+    project_store = Network.project_store
 
     def __init__(self):
         self.store = Store(IN_MEMORY)

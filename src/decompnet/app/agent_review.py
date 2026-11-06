@@ -36,22 +36,24 @@ def _facts(net, proj, fn):
             'instructions':digest(json.loads(proj['config']).get('instructions'))}
 
 
-def load(net, key):
-    row = net.store.one('SELECT value FROM settings WHERE key=?', key)
+def load(net, key, *, project_id=None):
+    store = net.project_store(project_id) if project_id is not None else net.store
+    row = store.one('SELECT value FROM settings WHERE key=?', key)
     return json.loads(row['value']) if row else {}
 
 
 def observe(net, fn, agent, notes, progress, snapshot=None):
-    current = net.store.one('SELECT * FROM functions WHERE id=?', fn['id'])
-    proj = net.store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+    store = net.project_store(fn['project_id'])
+    current = store.one('SELECT * FROM functions WHERE id=?', fn['id'])
+    proj = store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
     key = PREFIX+str(fn['id'])
-    if current['status'] != 'open' or not CONCERN.search(notes) and not load(net,key):
+    if current['status'] != 'open' or not CONCERN.search(notes) and not load(net,key,project_id=fn['project_id']):
         return
     evidence = snapshot if snapshot is not None else facts(net, proj, current)
     concern = bool(CONCERN.search(notes))
     diagnostic=getattr(net,'_function_diagnostic_compiles',{}).get((agent.id,fn['id']))
     compiled = bool(progress and progress['compiles'] or diagnostic and progress and diagnostic>=progress.get('claimed_at',0))
-    with net.store.tx() as db:
+    with store.tx() as db:
         row = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
         prior = json.loads(row['value']) if row else {}
         releases = prior.get('releases', []) if prior.get('facts') == evidence else []
@@ -81,8 +83,9 @@ def listing(net, slug):
 
 
 def _listing(net, slug):
+    store = net.project_store(slug)
     proj = net.project_row(slug)
-    rows = net.store.all('SELECT f.*,s.value AS review FROM functions f LEFT JOIN settings s ON s.key=? || f.id '
+    rows = store.all('SELECT f.*,s.value AS review FROM functions f LEFT JOIN settings s ON s.key=? || f.id '
                          "WHERE f.project_id=? AND f.status='open' AND (s.value IS NOT NULL OR EXISTS("
                          "SELECT 1 FROM notes n WHERE n.function_id=f.id AND (n.text LIKE '%no%compile%' OR n.text LIKE '%not compiled%' OR n.text LIKE '%didn%compile%'))) "
                          'ORDER BY f.id LIMIT 200', PREFIX, proj['id'])
@@ -91,7 +94,7 @@ def _listing(net, slug):
         if fn['review']:
             item = entry(net,proj,fn,json.loads(fn['review']))
         else:
-            notes=net.store.all('SELECT n.text,n.created_at,a.name AS agent FROM notes n LEFT JOIN agents a ON a.id=n.agent_id '
+            notes=store.all('SELECT n.text,n.created_at,a.name AS agent FROM notes n LEFT JOIN agents a ON a.id=n.agent_id '
                                 'WHERE n.function_id=? ORDER BY n.id DESC LIMIT 12',fn['id'])
             evidence=[{'agent':r['agent'] or 'Earlier agent','notes':r['text'][:1000], 'at':r['created_at'],
                        'compiled':False,'concern':True} for r in notes if NO_COMPILE.search(r['text']) and CONCERN.search(r['text'])]
@@ -114,23 +117,24 @@ def acknowledge(net, slug, name):
 def _acknowledge(net, slug, name):
     # Review metadata uses the saved row; resolving an engine function can start
     # whole-project verification, which is unnecessary for acknowledgment.
+    store = net.project_store(slug)
     proj = net.project_row(slug)
-    fn = net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],name)
+    fn = store.one('SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],name)
     if fn is None:
         raise NetworkError('That function is no longer in this project. Refresh the review.')
-    state = load(net,PREFIX+str(fn['id']))
+    state = load(net,PREFIX+str(fn['id']),project_id=fn['project_id'])
     if state and state.get('facts') != facts(net,proj,fn):
         raise NetworkError('Inputs changed; refresh the review before acknowledging it.')
     if not state:
         state={'facts':facts(net,proj,fn),'releases':[]}
     state['reviewed'] = True
-    with net.store.tx() as db:
+    with store.tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(PREFIX+str(fn['id']),json.dumps(state)))
     return {'reviewed':True}
 
 
 def brief(net, proj, fn):
-    state = load(net,PREFIX+str(fn['id']))
+    state = load(net,PREFIX+str(fn['id']),project_id=fn['project_id'])
     if not state:
         return ''
     item = entry(net,proj,fn,state)
@@ -141,6 +145,7 @@ def brief(net, proj, fn):
 
 
 def save_experiment(net, agent, slug, name, proposal):
+    store = net.project_store(slug)
     from .agent_tokens import candidate
     if not isinstance(proposal, dict) or set(proposal) - {'revision','old','new','title'}:
         raise NetworkError('Next experiment needs revision, old, new and optional title only.')
@@ -150,11 +155,11 @@ def save_experiment(net, agent, slug, name, proposal):
     if proposal['revision'] != revision or not proposal['old'] or source.count(proposal['old']) != 1 or proposal['old'] == proposal['new']:
         raise NetworkError('Next experiment is stale, ambiguous or makes no edit. Use the current revision and one exact old anchor.')
     fn = net._function(name,slug)
-    if not net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id):
+    if not store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id):
         raise NetworkError('Hold the function before saving a next experiment.')
     state = dict(proposal, title=str(proposal.get('title') or 'Next experiment')[:160], source_sha256=digest(source),
                  facts=facts(net,net.project_row(slug),fn), agent=agent.name)
-    with net.store.tx() as db:
+    with store.tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(EXPERIMENT+str(fn['id']),json.dumps(state)))
     return 'Next experiment saved as an untested patch; it will be revalidated for the next candidate.'
 
@@ -162,7 +167,7 @@ def save_experiment(net, agent, slug, name, proposal):
 def experiment(net, agent, slug, name):
     from .agent_tokens import candidate
     fn = net._function(name,slug)
-    state = load(net,EXPERIMENT+str(fn['id']))
+    state = load(net,EXPERIMENT+str(fn['id']),project_id=fn['project_id'])
     if not state:
         return 'No structured next experiment is saved.'
     source, revision = candidate(net,agent,slug,name)

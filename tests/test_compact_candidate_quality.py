@@ -48,14 +48,15 @@ def test_compact_reads_include_only_the_current_report_without_heavy_brief(tmp_p
 
 def test_source_hash_review_status_and_matched_state_bound_the_hint():
     source = 'int f(){return 1;}'
-    fn = {'id':1, 'status':'open'}
+    fn = {'id':1, 'project_id':1, 'status':'open'}
     saved = [{'source_hash':hashlib.sha256(source.encode()).hexdigest(),
               'warning':'Concern', 'alternatives':[1]}]
     class Store:
         def one(self, sql, key):
             assert sql == 'SELECT value FROM settings WHERE key=?'
             return {'value':json.dumps(saved)}
-    net = SimpleNamespace(store=Store())
+    store = Store()
+    net = SimpleNamespace(store=store, project_store=lambda pid: store)
     assert candidate_quality.source_hint(net, fn, source)
     assert not candidate_quality.source_hint(net, fn, source + ' ')
     saved[0]['review'] = 'resume'

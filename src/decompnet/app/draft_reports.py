@@ -16,8 +16,9 @@ def key(plan, header, data, fn):
     return hashlib.sha256(repr((plan, header, data, fn['target'], fn['relocs'])).encode()).hexdigest()
 
 
-def read(net, fid):
-    row = net.store.one('SELECT value FROM settings WHERE key=?', PREFIX+str(fid))
+def read(net, fid, *, project_id=None):
+    store = net.project_store(project_id) if project_id is not None else net.store
+    row = store.one('SELECT value FROM settings WHERE key=?', PREFIX+str(fid))
     if not row:
         return {}
     try:return json.loads(row['value'])
