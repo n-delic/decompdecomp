@@ -3044,3 +3044,5 @@ ABI analysis and automatic source/profile selection remain planned.
   imported project checkouts share the push-only path. Full repair archives stay local.
 
 - Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.
+
+- Done: non-match compiler trials read metadata first, then prepare and judge up to eight functions independently; avoid implicit saved-file synchronization and whole-project payload loading, and hash common compiler/symbol inputs once per pass.

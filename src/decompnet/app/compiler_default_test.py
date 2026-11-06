@@ -10,6 +10,9 @@ from .compiler_cleanup import profile, replace_range
 
 
 def run(net, slug, selected, log=print, nonmatches=False):
+    if nonmatches:
+        from .compiler_nonmatch_test import run as test_nonmatches
+        return test_nonmatches(net,slug,selected,log)
     net._rom_only(slug, 'testing a compiler profile as default')
     if (not isinstance(selected, dict) or not isinstance(selected.get('toolchain'), str)
             or not isinstance(selected.get('flags'), list) or not all(isinstance(f, str) for f in selected['flags'])):
@@ -24,7 +27,7 @@ def run(net, slug, selected, log=print, nonmatches=False):
     if toolchains.installed(target[0]) is None:
         raise NetworkError('Install the selected compiler before testing it as default.')
     def population(items, config):
-        return [f for f in items if f['status'] == 'open'] if nonmatches else [f for f in items if f['status'] == 'matched' and profile(compiler_for(config, f['vram'], f)) == default]
+        return [f for f in items if f['status'] == 'matched' and profile(compiler_for(config, f['vram'], f)) == default]
     candidates = population(rows, cfg)
     def signature(items):
         return [tuple(f[k] for k in ('id','name','vram','unit','size','target','relocs','meta','status','matched_source','best_source','best_score')) for f in items]
@@ -33,39 +36,34 @@ def run(net, slug, selected, log=print, nonmatches=False):
     original_headers = headers()
     state = {'total':len(candidates), 'checked':0, 'passed':0, 'failed':0,
              'profile':{'toolchain':target[0], 'flags':list(target[1])},
-             'default':cfg['compiler'], 'failures':[], 'matches':[], 'stale':False, 'nonmatches':nonmatches}
+             'default':cfg['compiler'], 'failures':[], 'matches':[], 'stale':False, 'nonmatches':False}
     report = getattr(log, 'progress', lambda value:None)
     cancel = getattr(log, 'check_cancel', lambda:None)
     def publish():
-        report({**state, 'failures':list(state['failures']), 'matches':list(state['matches']), 'phase':'Testing non-matches' if nonmatches else 'Testing default-profile matches'})
+        report({**state, 'failures':list(state['failures']), 'matches':list(state['matches']), 'phase':'Testing default-profile matches'})
     publish()
-    log(f"Testing {len(candidates)} {'non-matching functions' if nonmatches else 'matched functions using the default'} against {target[0]} {' '.join(target[1])}. No settings will change.")
-    from . import compiler_match_batch as batch
-    proof_env=batch.environment(net,proj,selected) if nonmatches else None
-    proofs={}
+    log(f"Testing {len(candidates)} matched functions using the default against {target[0]} {' '.join(target[1])}. No settings will change.")
     def check(fn):
         cancel()
-        source = net._source_of(fn) if nonmatches else fn['matched_source']
+        source = fn['matched_source']
         if not source:
-            return fn, False, 'No saved C is available.', None
+            return fn, False, 'No saved C is available.'
         try:
-            signature=batch.fingerprint(net,proj,fn,source,proof_env) if nonmatches else None
             ok, diff, _ = net._judge_with(proj, fn, target[0], list(target[1]), source)
             reason = '' if ok else 'Does not compile or compare.' if diff is None else f'Different bytes (score {diff.score}).'
-            return fn, ok, reason, signature
+            return fn, ok, reason
         except (NetworkError, toolchains.ToolchainError, OSError) as error:
-            return fn, False, str(error)[:300], None
+            return fn, False, str(error)[:300]
     pending = [net._pool.submit(check, fn) for fn in candidates]
     try:
         for future in as_completed(pending):
             cancel()
-            fn, ok, reason, proof = future.result()
+            fn, ok, reason = future.result()
             state['function'] = fn['name']
             state['checked'] += 1
             state['passed' if ok else 'failed'] += 1
             if ok:
                 state['matches'].append(fn['name'])
-                if proof:proofs[fn['id']]=proof
             if not ok:
                 state['failures'].append({'function':fn['name'], 'reason':reason})
             publish()
@@ -77,25 +75,12 @@ def run(net, slug, selected, log=print, nonmatches=False):
     cancel()
     current = net.store.one('SELECT config FROM projects WHERE id=?', proj['id'])
     current_cfg = json.loads(current['config']) if current else None
-    latest = (net.store.all('SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY id',proj['id'],json.dumps(list(proofs)))
-              if nonmatches else net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id']))
-    if not nonmatches:
-        latest_candidates = population(latest, current_cfg) if current_cfg else []
-        state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
-                          or headers() != original_headers or signature(latest_candidates) != signature(candidates))
-    if nonmatches:
-        state['receipt']=batch.remember(net,slug,selected,proofs)
-        current_env=batch.environment(net,{**dict(proj),'config':json.dumps(current_cfg)},selected) if current_cfg else None
-        changed=[]
-        by_id={fn['id']:fn for fn in latest}
-        for old in candidates:
-            if old['id'] not in proofs:continue
-            fn=by_id.get(old['id'])
-            if fn is None or fn['status']!='open' or batch.fingerprint(net,proj,fn,net._source_of(fn),current_env)!=proofs[old['id']]:changed.append(old['name'])
-        state['changed_matches']=changed
-        state['stale']=bool(changed)
+    latest = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id'])
+    latest_candidates = population(latest, current_cfg) if current_cfg else []
+    state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
+                      or headers() != original_headers or signature(latest_candidates) != signature(candidates))
     state['compatible'] = bool(candidates) and state['failed'] == 0 and not state['stale']
-    log('Test finished. Settings, matches and saved scores are unchanged.' + ((' Inputs changed during the test; passing results can be freshly rechecked and applied.' if nonmatches else ' Inputs changed during the test; rerun before making a decision.') if state['stale'] else ''))
+    log('Test finished. Settings, matches and saved scores are unchanged.' + (' Inputs changed during the test; rerun before making a decision.' if state['stale'] else ''))
     return state
 
 
