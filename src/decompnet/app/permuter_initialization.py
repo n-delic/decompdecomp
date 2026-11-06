@@ -1,10 +1,12 @@
-"""Reject possible uninitialized reads in newly generated integer and pointer locals.
+"""Reject new uninitialized reads in generated integer and pointer locals.
 
 This is neither a C undefined-behavior checker nor a semantic equivalence proof. Unknown syntax,
-qualified/shadowed/escaped locals and existing names receive no verdict. Use the bounded local CFG,
+qualified/shadowed/escaped locals receive no verdict. Existing bindings are rejected only when
+the parent has a supported initialized verdict for that binding. Use the bounded local CFG,
 with separate initialization transfer rules: its liveness definitions include bare declarations.
 """
 import re
+from functools import lru_cache
 
 from . import local_flow
 from .integer_repair_support import IDENT, INTEGER, NUMBER, view
@@ -18,13 +20,32 @@ _DECL = re.compile(rf'\b(?P<type>{_TYPE})\s*(?P<name>{IDENT})\s*(?:=(?P<initial>
 
 
 def unsafe_temporary(parent, candidate, name, header=""):
-    """Whether a syntactically reachable introduced scalar read lacks definite initialization."""
-    part = view(candidate, name)
+    """Whether a new local is unsafe, or an existing local loses proven initialization."""
     original = view(parent, name)
-    if not part or not original:
+    if not original:
         return False
     old_names = set(re.findall(IDENT, original.clean))
-    combined = header+"\n"+parent+"\n"+candidate
+    verdicts = _initialization_verdicts(candidate, name, header)
+    unsafe = {variable for variable, verdict in verdicts.items() if verdict is True}
+    if unsafe-old_names:
+        return True
+    if not unsafe:
+        return False
+    previous = _parent_verdicts(parent, name, header)
+    return any(previous.get(variable) is False for variable in unsafe)
+
+
+@lru_cache(maxsize=8)
+def _parent_verdicts(source, name, header):
+    # A batch shares its parent. Do not rebuild its CFG for each rejected proposal.
+    return _initialization_verdicts(source, name, header)
+
+
+def _initialization_verdicts(candidate, name, header):
+    part = view(candidate, name)
+    if not part:
+        return {}
+    combined = header+"\n"+candidate
     macros = set(re.findall(r"^\s*#\s*define\s+("+IDENT+r")", combined, re.M))
     # This guard excludes both const and volatile aliases, including alias chains.
     qualified = qualified_types(re.sub(r"\bconst\b", "volatile", combined))
@@ -42,7 +63,7 @@ def unsafe_temporary(parent, candidate, name, header=""):
             continue
         if (set(re.findall(IDENT, decl['type'])) | {variable}) & (qualified | macros):
             continue
-        if variable in old_names or (prefix and prefix[-1] not in ';{}'):
+        if prefix and prefix[-1] not in ';{}':
             continue
         if len(re.findall(rf'\b(?:{INTEGER}|void|float|double)(?:\s+|(?:\s*\*)+\s*)'
                           rf'{variable}\s*(?=[;=,\[])', part.body)) != 1:
@@ -51,11 +72,11 @@ def unsafe_temporary(parent, candidate, name, header=""):
             continue
         declarations.append(decl)
     if not declarations or re.search(r"\bfor\s*\([^;]*;\s*;", part.body):
-        return False
+        return {}
     flow = local_flow.analyze(_without_type_only_records(candidate, part, macros), name,
                               declarations=declarations)
     if not flow or flow.entry is None:
-        return False
+        return {}
     # The native walk commonly wraps a single statement in do {...} while (0).
     # Prune only its literal-zero back edge; other constant controls receive no verdict.
     one_shot_conditions = set()
@@ -70,8 +91,8 @@ def unsafe_temporary(parent, candidate, name, header=""):
                     one_shot_conditions.add(index)
     # Unsupported writes to one temporary must not hide a separate unsafe capture.
     # Reuse the bounded CFG, but keep each binding's initialization verdict independent.
-    return any(_unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_conditions)
-               for decl in declarations)
+    return {decl['name']: _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_conditions)
+            for decl in declarations}
 
 
 def _without_type_only_records(candidate, part, macros):
@@ -106,6 +127,7 @@ def _without_type_only_records(candidate, part, macros):
 
 
 def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_conditions):
+    """True for a possible uninitialized read, False for initialized reads, None for unknown flow."""
     names = {decl['name']}
     declarations = [decl]
     pointers = names if '*' in decl['type'] else set()
@@ -121,10 +143,10 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
                 or (not text.strip() and "'" in candidate[node.start:node.end])
                 or set(re.findall(IDENT, text)) & opaque_macros
                 or re.search(r'\b(?:sizeof|_Alignof|typeof|__typeof__|true|false)\b', text)):
-            return False
+            return None
         # Expression sequencing, embedded writes and macro-like calls are beyond this guard.
         if names & set(re.findall(IDENT, text)) and re.search(r'\?|&&|\|\||\b(?:sizeof|_Alignof|typeof|__typeof__)\b|\b[A-Z_][A-Z_0-9]*\s*\(', text):
-            return False
+            return None
         uses = set(node.uses) & names
         generates, kills = set(), set()
         contained = [d for d in declarations if node.start <= d.start() and d.end() <= node.end]
@@ -135,7 +157,7 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
             if decl['initial'] is not None:
                 initializer = decl['initial']
                 if ',' in initializer or re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', initializer):
-                    return False
+                    return None
                 initial = {hit[0] for hit in re.finditer(IDENT, initializer)
                            if not re.search(r'(?:\.|->)\s*$', initializer[:hit.start()])} & names
                 uses |= initial
@@ -144,15 +166,15 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
         indirect = re.fullmatch(rf'\s*\*\s*({IDENT})\s*=(?!=)(.*?);?\s*', text, re.S)
         if indirect and indirect[1] in pointers:
             if ',' in indirect[2] or re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', indirect[2]):
-                return False
+                return None
             # Writing through a pointer reads its value; it does not assign that local.
             uses.add(indirect[1])
         elif assignment and assignment[1] in names:
             if ',' in assignment[2] or re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', assignment[2]):
-                return False
+                return None
             generates.add(assignment[1])
         elif not contained and re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', text):
-            return False
+            return None
         transfers.append((uses, generates, kills))
     reachable, pending = set(), [flow.entry]
     while pending:
