@@ -14,6 +14,17 @@ local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Int
 Mac and retail-game verification remain planned; Apple Silicon checks use the
 homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
 
+The ROM permuter now tries bounded matched-callee probes before random rewrites: at most three recent source
+contexts, three directly called matched functions, and six helper combinations within its existing turn budget.
+It validates the caller and included helper, retains alternative contexts even when their scores are worse, and
+persists judged misses across restarts. New source, headers, build settings or helper bodies/targets invalidate
+the corresponding cache entries. Compiler failures remain retryable. Complex declarations and shared-header
+callee declarations are left to agents; probes never change shared headers or compiler settings.
+
+Planned: use the same probes from autopilot when a callee newly matches, and revisit callers that exhausted their
+permuter turns. PROJECT-mode probes need a build-aware equivalent: injecting a private helper there may duplicate
+its existing translation-unit definition. Until then, this prepass is ROM-only; project permutation is unchanged.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to

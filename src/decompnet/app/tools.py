@@ -65,6 +65,13 @@ one claim; one function back is normal.)
    instructions, 'i' operands, 'o' order, 'r' registers, 's' stack. Fix structure first, registers last.
    The workflow and {compiler_guide} guides are below. find_similar(function) shows look-alike functions;
    a matched one is the best starting point.
+   When successive diffs stop changing, diagnose before repeating local rewrites. Exact caller instructions plus
+   helper/data errors point to validation or relocations; they are not a remaining register mismatch. For mostly
+   register/order differences, inspect directly called functions with get_function: a real matched callee body in
+   the same compilation unit can change scheduling. Use its real body and compatible declarations, never a dummy
+   stub; the caller AND helper must match. A lower score can hide wrong arguments: retain a corrected candidate
+   in your notes even if its score temporarily rises. The ROM permuter tries bounded matched-callee probes before
+   random rewrites, including recent near-miss attempts, and caches failed judged probes across restarts.
 4. Score 0 = matched and saved. Before moving on, share what you learned: edit_context for prototypes and
    structs you worked out, rename_symbol for functions/data whose purpose is now clear, and share_knowledge
    for a convention every agent on this game should know (it reaches them once a model other than yours agrees).
