@@ -244,3 +244,64 @@ def test_missing_source_recovery_never_overwrites_a_concurrent_edit(progress):
     with pytest.raises(NetworkError,match='Progress changed while recovering'):
         repository_progress.recover_missing_sources(net,'game',root,manifest,{'src/f.c'},print)
     assert path.read_text()=='contributor edit'
+
+
+def test_capture_does_not_resynchronize_through_project_reads(progress, monkeypatch):
+    net, root, _ = progress
+    original_read = saves._read_owned
+    original_project = net.project_row
+    reading = False
+    def read(folder):
+        nonlocal reading
+        files = original_read(folder)
+        reading = True
+        return files
+    def project_row(slug):
+        if reading:
+            raise AssertionError('A project lookup must not synchronize after reading the snapshot')
+        return original_project(slug)
+    monkeypatch.setattr(saves, '_read_owned', read)
+    monkeypatch.setattr(net, 'project_row', project_row)
+    files, _, manifest = repository_progress.snapshot(net, 'game', root, print)
+    assert files['src/f.c'] == (root/'src/f.c').read_bytes()
+    assert 'matched_by' in manifest['functions']['f']
+
+
+def test_missing_source_recovery_does_not_resynchronize_after_capture(progress, monkeypatch):
+    net, root, _ = progress
+    source = (root/'src/f.c').read_bytes()
+    (root/'src/f.c').unlink()
+    # Keep the old incomplete save acknowledged, as in the historical partial-save bug.
+    calls = []
+    monkeypatch.setattr(net.progress, 'sync', lambda *args, **kwargs: calls.append(kwargs.get('force')))
+    def unexpected_project_read(slug):
+        raise AssertionError('Recovery must not start an implicit saved-file synchronization')
+    monkeypatch.setattr(net, 'project_row', unexpected_project_read)
+    files, _, _ = repository_progress.snapshot(net, 'game', root, print)
+    assert files['src/f.c'] == source
+    assert calls == [True, True]
+
+
+@pytest.mark.parametrize('matched', [True, False])
+def test_recovered_source_is_rejudged_before_the_snapshot_is_captured(progress, monkeypatch, matched):
+    net, root, _ = progress
+    proj = net.store.one("SELECT * FROM projects WHERE slug='game'")
+    source = (root/'src/f.c').read_text()
+    (root/'src/f.c').unlink()
+    # Reproduce an old partial save whose baseline recorded the manifest but not its source.
+    baseline = net.progress._baseline(proj['id'])
+    baseline.disk.files.pop('src/f.c')
+    net.progress.signatures['game'] = net.progress._signature(root)
+    monkeypatch.setattr(net, 'apply_remote_layout', lambda *args: None)
+    judged = []
+    def attempt(agent, name, text, slug):
+        judged.append(name)
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status=?,matched_source=?,best_source=?,best_score=? WHERE project_id=? AND name=?",
+                       ('matched' if matched else 'open', text if matched else None, text, 0 if matched else 10, proj['id'], name))
+        return {'matched': matched}
+    monkeypatch.setattr(net, 'attempt', attempt)
+    files, _, manifest = repository_progress.snapshot(net, 'game', root, print)
+    assert judged == ['f']
+    assert files['src/f.c' if matched else 'best/f.c'] == source.encode()
+    assert ('matched_by' in manifest['functions']['f']) == matched

@@ -2512,6 +2512,8 @@ Automatic evidence checks and room services remain read-only here and use their 
   the checkpoint while helpers continue; later edits stay local. Unrelated files, staged
   edits, merge conflicts and concurrent Git operations remain protected. Shared ROM
   progress/Git integration is covered with homemade projects and local bare remotes.
+  Recovery captures avoid implicit synchronization after reading files; rechecked
+  matches rejected by the judge move to best drafts before their save is acknowledged.
 
 The background-work thread table explains registered thread roles, shows native IDs and sorts
 by measured CPU, name or purpose. macOS uses proc_pidinfo(PROC_PIDTHREADID64INFO); Linux

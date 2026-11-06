@@ -105,7 +105,8 @@ def test_editing_a_match_rejudges_it_and_preserves_a_failed_contribution(project
     net.progress.sync("game", force=True)
     assert net._function("f", "game")["status"] == "open"
     saves.save(net, "game")
-    assert path.read_text() == "different C"
+    assert not path.exists()
+    assert (folder / "best/f.c").read_text() == "different C\n"
     assert judged == [("f", "good original"), ("f", "different C")]
 
 

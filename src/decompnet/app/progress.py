@@ -1258,23 +1258,29 @@ class Progress:
             applied_dirty = self._dirty(pid)
             applied_tokens = [r["token"] for r in self._dirty_files(pid)]
             rendered, _ = saves._render(net, slug)
-            # The import judge may promote best/ C to a match after the pre-judge publish.
-            # Publish that promotion before acknowledging its dirty tokens, otherwise a no-op
-            # next save can permanently leave matched metadata pointing at a missing src/ file.
+            # The import judge can promote a draft or reject a former match. Publish both
+            # path transitions before acknowledging its dirty tokens, so the saved verdict
+            # and source location agree with the judge. Move only the unchanged input C.
             promoted = {name: text for name, text in rendered.items()
                         if name.startswith("src/") and name not in disk
                         and "best/"+name[4:] in disk
                         and saves._source_text(disk["best/"+name[4:]]) == text}
-            if promoted:
+            demoted = {name: text for name, text in rendered.items()
+                       if name.startswith("best/") and name not in disk
+                       and "src/"+name[5:] in disk
+                       and saves._source_text(disk["src/"+name[5:]]) == text}
+            if promoted or demoted:
                 obsolete = {"best/"+name[4:]: disk["best/"+name[4:]] for name in promoted}
-                promoted[saves.MANIFEST] = rendered[saves.MANIFEST]
-                if not saves._publish(folder, promoted, obsolete, expected=disk,
+                obsolete.update({"src/"+name[5:]: disk["src/"+name[5:]] for name in demoted})
+                transitions = promoted | demoted
+                transitions[saves.MANIFEST] = rendered[saves.MANIFEST]
+                if not saves._publish(folder, transitions, obsolete, expected=disk,
                                       chosen=bool(cfg.get("progress_folder"))):
                     return False  # an editor wrote meanwhile; leave dirty tokens for the retry
                 disk = _read(folder)
                 saves._remember_revision(net, slug, json.loads(rendered[saves.MANIFEST]))
                 proj = net._project(slug)
-                self.published[slug].update(promoted.keys() | obsolete.keys())
+                self.published[slug].update(transitions.keys() | obsolete.keys())
                 self.results[slug] = self.results[slug] | {
                     "matched": sum(name.startswith("src/") for name in rendered),
                     "best": sum(name.startswith("best/") for name in rendered)}
