@@ -73,6 +73,13 @@ def variants(source, name, header='', arch=None, *, language=None, int_bits=None
         if (not byte or close(rhs, rhs.index('(')) != len(rhs)
                 or integer_abi.scalar(byte[1], context, arch) != (8, False)):
             continue
+        operand = rhs[byte.end():-1].strip()
+        # The cast must bind the complete operand of the dereference. An initial
+        # byte cast in a comma/conditional expression says nothing about the
+        # final pointer type: *((u8 *)p, wide_pointer) is a wide load.
+        if not (re.fullmatch(IDENT, operand)
+                or (operand.startswith('(') and close(operand, 0) == len(operand))):
+            continue
         gap = part.clean[load.end():hit.start()]
         if re.search(r'[{}]|\b(?:if|else|switch|for|while|do|goto|return|break|continue)\b', gap):
             continue

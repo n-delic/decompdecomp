@@ -99,3 +99,16 @@ def test_unknown_or_reference_capable_language_is_not_guessed(scope):
 def test_extension_keyword_does_not_hide_an_address_escape():
     original=source('escape(__extension__ &v);')
     assert not generate(original,'demo',HEADER,'mips')
+
+
+@pytest.mark.parametrize('load', [
+    'v=*((u8 *)p, wide);',
+    'v=*((u8 *)p ? wide : wide);',
+])
+def test_initial_cast_does_not_prove_the_final_pointer_type(load):
+    original=source(load=load).replace('int demo(u8 *p)', 'int demo(u8 *p,u32 *wide)')
+    assert not generate(original,'demo',HEADER,'mips')
+
+
+def test_complete_cast_operand_can_contain_a_grouped_pointer_expression():
+    assert generate(source(load='v=*((u8 *)(p+1));'),'demo',HEADER,'mips')

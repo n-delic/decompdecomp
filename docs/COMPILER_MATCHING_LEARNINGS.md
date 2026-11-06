@@ -4968,3 +4968,12 @@ A separate focused1733 native lane received256 candidates, linked179, and found
 no improvement/exact. Restoring one original conversion statement boundary
 recovers1733 from printer1833 for both the baseline and one genuine staging
 candidate. This is one measured layout effect, not a blanket printer limitation.
+
+
+Byte-load recognizers must check cast binding, not only a leading cast token.
+`*((u8 *)p, wide_pointer)` and a conditional selecting wide pointers are wide
+loads despite their initial byte cast. The byte-normalization guard accepts
+only an identifier or one complete grouped operand under the byte cast. This
+retains the measured packed-field witness and leaves ambiguous pointer-expression
+shapes alone. Synthetic regressions demonstrated both false recognitions before
+this guard; neither occurred in the accepted game draft.
