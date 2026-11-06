@@ -2612,3 +2612,28 @@ def test_repair_evidence_settings_routes_validate_and_persist(app):
         assert read_options(net.store)==chosen
     finally:
         client.post('/api/database-storage',json=dict(action='save-repair-evidence',**DEFAULTS),headers=headers)
+
+
+def test_settings_job_discovery_is_guarded_small_and_independent_of_database_stats(app,monkeypatch):
+    from decompnet.app import header_cleanup
+    client,net,*_=app
+    assert client.get('/api/settings-jobs',headers={'User-Agent':'outside'}).status_code==401
+    captured={}
+    def start(net,jobs,action):
+        captured['jobs']=jobs
+        with jobs._lock:
+            jobs.jobs['settings-discovery-test']={'id':'settings-discovery-test','kind':'Database compaction',
+                'state':'running','progress':{'phase':'Compacting database'},'log':['large private log'],
+                'result':{'large':'result'}}
+        return 'settings-discovery-test'
+    monkeypatch.setattr(header_cleanup,'start',start)
+    client.post('/api/header-storage',json={'action':'compact'},headers={'X-Decomp':'1'})
+    monkeypatch.setattr(net.store,'one',lambda *_:(_ for _ in ()).throw(AssertionError('database access')))
+    try:
+        data=client.get('/api/settings-jobs').json()
+        assert data['headers']=={'id':'settings-discovery-test','kind':'Database compaction','state':'running',
+                                 'progress':{'phase':'Compacting database'}}
+        captured['jobs'].jobs['settings-discovery-test']['state']='done'
+        assert client.get('/api/settings-jobs').json()['headers'] is None
+    finally:
+        captured['jobs'].jobs.pop('settings-discovery-test',None)

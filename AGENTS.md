@@ -229,6 +229,13 @@ linting). In short:
   cancellation is supported. Reuse `beginWork`, `followJob`, `showJobError` and `.workbar`; clean up in
   `finally`. Show real progress when totals exist, otherwise indeterminate progress. Keep errors actionable
   and visible. Distinguish the current run from saved totals and never show stale data from another project.
+- User-started jobs must remain visible at their originating panel when the user navigates away
+  and returns or reopens the window. Discover active work from server-owned job IDs and explicit
+  task/project scope before loading potentially slow statistics; do not rely on browser variables.
+  Reattach the existing progress/log/Stop controls, disable duplicate starts, and show activity in
+  the panel heading even when collapsed. Reuse the same follow/completion/error path as a new job,
+  guard against duplicate followers and late discovery/statistics responses, and never restart work
+  merely to rediscover it. Test navigation, fresh-window attachment, completion, cancellation and errors.
 - Routine background synchronization should use a compact header indicator with details on demand, without
   inserting banners that shift content. Reserve prominent progress banners for full rechecks or work that
   requires attention; use explicit task scope rather than guessing from progress text.
