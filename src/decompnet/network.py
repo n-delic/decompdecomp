@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agents, scoring
+from . import agents, attempts, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
@@ -496,6 +496,8 @@ class Network:
         (the header, the file around the function...). Sources are compared without per-line indentation and
         trailing spaces (line numbers stay, for __LINE__)."""
         h = hashlib.sha1(f"{fn['id']}\0{self._generation.get(fn['project_id'], 0)}".encode())
+        for field in ("name", "vram", "target", "relocs"):
+            h.update(repr(fn[field]).encode())
         for part in state:
             h.update(b"\0" + normalized_source(part).encode("utf-8", "replace"))
         return h.hexdigest()
@@ -508,10 +510,17 @@ class Network:
         if hit is None:
             return None
         self._compiled.move_to_end(key)
+        if hit.get("diff") is not None:
+            self._last_diffs[(agent.id, fn["id"])] = hit["diff"]
+        with self.store.tx() as db:
+            self._event(db, fn["project_id"], agent.id, "repeat_seen",
+                        f"{fn['id']}:{self._generation.get(fn['project_id'], 0)}")
         who = "your" if hit["agent_id"] == agent.id else f"{self._agent_name(hit['agent_id'])}'s"
         head = (f"🔁 REPEAT: this source is the same (indentation aside) as {who} compile #{hit['n']} of {fn['name']} "
                 f"({_ago(hit['at'])}), and nothing it depends on changed since, so it wasn't built again and doesn't "
-                "count toward the move-on number. That compile's result:\n")
+                "count toward the move-on number. Use last_diff to inspect it; change a concrete hypothesis "
+                "(compiler, declaration, width or expression), or release with notes about this repeated probe. "
+                "That compile's result:\n")
         return {"text": head + hit["text"] + self.stall_note(fn["id"], agent.id), "score": hit["score"],
                 "matched": False, "repeat": True}
 
@@ -519,7 +528,8 @@ class Network:
         """A compile's result (without its move-on line), for repeat_of."""
         n = self.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?", fn["id"],
                            agent.id)["n"]
-        self._compiled[key] = {"text": text, "score": score, "agent_id": agent.id, "n": n, "at": time.time()}
+        self._compiled[key] = {"text": text, "score": score, "agent_id": agent.id, "n": n, "at": time.time(),
+                               "diff": self._last_diffs.get((agent.id, fn["id"])) if score is not None else None}
         while len(self._compiled) > REPEATS_KEPT:
             self._compiled.popitem(last=False)
 
@@ -535,7 +545,8 @@ class Network:
         for k, r in enumerate(rows[:-1], 1):  # (the last row is this compile)
             if r["score"] == score and normalized_source(r["source"] or "") != mine:
                 return (f"\nSame score as your compile #{k} of this claim ({score}) with a different source: this "
-                        "change made no difference the judge sees. Try a different kind of change.")
+                        "change has the same total score, but may differ in other instructions. Inspect last_diff before "
+                        "deciding what to try next.")
         return ""
 
     def _agent_name(self, agent_id) -> str:
@@ -944,6 +955,7 @@ class Network:
             elif fn["seed"]:
                 lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
+        lines += attempts.brief(self, fn, own, ctx["header"])
         notes = self.notes_for_brief(fn)
         if notes:
             lines += ["", "### Notes from previous agents on this function", *notes]
@@ -1000,20 +1012,26 @@ class Network:
                     db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
 
         ctx = self._context(proj["id"], fn["unit"])
-        key = self.compile_key(fn, ctx["header"], str(ctx["version"]), proj["config"] or "", source)
+        measured = attempts.provenance(compiler_for(json.loads(proj["config"]), fn["vram"]), source,
+                                       header=ctx["header"], context_version=ctx["version"], unit=fn["unit"])
+        # Progress publication and accounting do not change compiler inputs. Including them made every saved
+        # attempt miss the repeat cache, even when its source, header, target and compiler were unchanged.
+        build_cfg = {k: v for k, v in json.loads(proj["config"]).items() if k not in ("spend", "progress_revision")}
+        key = self.compile_key(fn, ctx["header"], str(ctx["version"]), json.dumps(build_cfg, sort_keys=True), source)
         if not scratch and (again := self.repeat_of(key, agent, fn)) is not None:
             return again
         result = self._compile(proj, ctx["header"], source, fn)
+        measured["language"] = result.language
 
         if not result.ok:
-            self._record(fn, agent, None, source, ctx["version"])
+            self._record(fn, agent, None, source, ctx["version"], provenance=measured)
             text = f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}"
             self.remember_compile(key, agent, fn, text, None)
             return {"text": text, "score": None, "matched": False}
 
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:
-            self._record(fn, agent, None, source, ctx["version"])
+            self._record(fn, agent, None, source, ctx["version"], provenance=measured)
             text = (f"❌ Compiled, but the object has no function named `{fn['name']}`. "
                     f"Define it with exactly that name (non-static).")
             self.remember_compile(key, agent, fn, text, None)
@@ -1024,7 +1042,7 @@ class Network:
         matched_now = d.bytes_match and not scratch
         last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
-        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now)
+        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, provenance=measured)
         self.keep_diff(agent.id, fn["id"], d.rows)
 
         if scratch:
@@ -1133,21 +1151,25 @@ class Network:
 
     # ---------------------------------------------------------- prerequisites
 
-    def wait_for(self, agent: Agent, fn, needs) -> None:
+    def wait_for(self, agent: Agent, fn, needs, reason: str = "") -> None:
         """Record that `fn` needs `needs` done first (see WAITING)."""
         with self.store.tx() as db:
-            db.execute("INSERT OR REPLACE INTO waits(function_id, needs_id, agent_id, created_at) VALUES(?,?,?,?)",
-                       (fn["id"], needs["id"], agent.id, time.time()))
+            db.execute("INSERT OR REPLACE INTO waits(function_id, needs_id, agent_id, created_at, reason) VALUES(?,?,?,?,?)",
+                       (fn["id"], needs["id"], agent.id, time.time(), reason))
             self._event(db, fn["project_id"], agent.id, "waits", f"{fn['name']} -> {needs['name']}")
 
     def dependency_brief(self, fn) -> list[str]:
         """For a brief: what this function waits for, and what waits for it."""
         out = []
-        row = self.store.one("SELECT n.name, n.status, a.name AS agent FROM waits w JOIN functions n ON n.id=w.needs_id "
+        row = self.store.one("SELECT n.name, n.status, w.reason, a.name AS agent FROM waits w JOIN functions n ON n.id=w.needs_id "
                              "LEFT JOIN agents a ON a.id=w.agent_id WHERE w.function_id=?", fn["id"])
         if row is not None and fn["status"] != "matched":
+            out += ["", "Dependency hypothesis (agent-reported, not verified): " +
+                    (row["reason"] or "no evidence recorded; reassess this legacy wait"),
+                    "An unmatched callee is not itself a blocker: calls link to known addresses. Identify a missing "
+                    "prototype, layout or inlined body. Recheck the hypothesis instead of copying the wait."]
             if row["status"] == "matched":
-                out += ["", f"### {row['name']} matches now: {row['agent'] or 'an agent'} found this function needs it "
+                out += ["", f"### {row['name']} matches now: {row['agent'] or 'an agent'} reported that this function needs it "
                             f"first (a callee or an inlined helper): read its code (get_function) and use it here."]
             elif self.store.one("SELECT 1 FROM waits WHERE function_id=(SELECT id FROM functions WHERE name=? AND "
                                 "project_id=?) AND needs_id=?", row["name"], fn["project_id"], fn["id"]):
@@ -1155,10 +1177,10 @@ class Network:
                             "callee, each one's convention coming from the other), so work on them together: "
                             f"compile_and_diff(function=\"{fn['name']}, {row['name']}\", source=both definitions)."]
             else:
-                out += ["", f"### Waits for {row['name']}: {row['agent'] or 'an agent'} found this function needs it "
-                            f"first (a callee or an inlined helper), so it's claimed after everything else until "
-                            f"{row['name']} matches. Work on it if you can; else release_function with "
-                            f"needs=\"{row['name']}\"."]
+                out += ["", f"### Waits for {row['name']}: {row['agent'] or 'an agent'} reported that this function needs it "
+                            f"first; the queue therefore claims it after other work until "
+                            f"{row['name']} matches. Work on this caller if its declarations are known; "
+                            "a release without needs clears the previous dependency hypothesis."]
         waiting = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
                                  "AND b.status='open' ORDER BY b.name LIMIT 8", fn["id"])
         if waiting and fn["status"] != "matched":
@@ -1176,12 +1198,13 @@ class Network:
                 f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
-                compiled: bool | None = None, via: str = "agent"):
+                compiled: bool | None = None, via: str = "agent", provenance: dict | None = None):
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         with self.store.tx() as db:
-            db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via))
+            db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via,provenance) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via,
+                                                   json.dumps(provenance) if provenance is not None else None))
             db.execute("UPDATE functions SET attempts=attempts+1 WHERE id=?", (fn["id"],))
             if score is not None:
                 db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=? "

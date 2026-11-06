@@ -30,3 +30,21 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
 ## Priorities
 Get the instruction count and control flow right first, then operands, then register allocation.
 Plausible original code beats contortions: games were written by people, quickly.
+
+## Reproducing a retained candidate
+Read its recorded compiler, flags and context version before changing it. Old scores without provenance are
+unknown, not evidence that today's compiler produced them. If the same source now scores worse, first use
+`try_compiler` to reproduce the recorded route. Do not change the whole project's compiler to test one function.
+A repeated identical attempt is not progress. Use `last_diff` to inspect every row, then change one hypothesis.
+Notes should say which compiler, flags and source were measured, the result, and what remains a guess.
+
+## Dependencies are hypotheses
+A caller can match while its callee is unmatched: a normal external call links to a known address. Use `needs`
+only for a specific missing prototype, layout or inlined body. Supply `needs_reason` with the relevant assembly
+or diff evidence. Reassess inherited dependency notes. Releasing without `needs` clears an old wait.
+
+## Width and field packing
+Fix incorrect constants and access widths before register allocation. A 128-bit clear is not two 64-bit stores.
+For hardware registers, compare bit widths, signedness, and field layout against the shifts and masks. Adjacent
+fields need not use the same C type. A signed short local can preserve narrowing that an assignment cast removes.
+Once the operations agree, test assignment order and pointer structure to resolve scheduling and register choices.

@@ -14,6 +14,22 @@ local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Int
 Mac and retail-game verification remain planned; Apple Silicon checks use the
 homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
 
+## Agent matching feedback
+
+- Attempts now record observed compiler settings and source/header identity; briefs flag changed settings,
+  unknown legacy provenance, and repeated regressions across agents. Project builds record their source unit,
+  compiler where exposed, and full source hash; transitive headers and build-owned flags remain unknown.
+- Dependency waits require a reason and are shown as agent hypotheses. A release without a dependency clears
+  an old wait. An unmatched external callee alone is not a prerequisite for matching its caller.
+- PS2 diffs use the R5900 reader for quadword and MMI instructions. Exact linked bytes still decide a match.
+- Alternate ROM compiler probes retain their source, compiler and input identity without accepting a match or
+  spending an attempt. Handoffs show better probes and mark stale inputs as historical.
+- Duplicate results transfer their diff and allow release without spending a dummy compile. Progress publication
+  and spending updates no longer invalidate an otherwise identical ROM attempt.
+- Follow-up: complete project build/header manifests and retain unsuccessful project compiler probes; safe duplicate
+  reuse across restarts requires those identities. Existing duplicate suppression remains in-memory.
+- Follow-up validation: measure a fresh agent on a withheld homemade matching task; do not provide its solution.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
