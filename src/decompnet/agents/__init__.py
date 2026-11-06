@@ -1,5 +1,5 @@
 """The connector: how decompdecomp talks to a helper agent. Every agent the app can start is a module in this folder
-(agents/claude.py, codex.py, antigravity.py, opencode.py, zcode.py, api.py) that makes an `Agent` below and fills in
+(agents/claude.py, codex.py, cursor.py, kimi.py, antigravity.py, opencode.py, zcode.py, api.py) that makes an `Agent` below and fills in
 its parts; the list at the end of this file registers them. The rest of the app (the helpers' manager in
 app/agents.py, the routes, the GUI) asks the agent of a helper, `agents.get(kind)`, and never compares agent names.
 A person or an agent adding support for another agent reads its module and this file, nothing else.
@@ -65,8 +65,20 @@ def _node() -> str | None:
 
 def cli_argv(argv: list[str]) -> list[str]:
     """Run npm's Windows shim through Node directly: cmd.exe would reinterpret quoted MCP config and shell symbols."""
+    if os.name == "nt" and sys.platform != "win32":
+        return argv  # a POSIX test simulating Windows must not construct WindowsPath
     shim = Path(argv[0])
-    if sys.platform != "win32" or shim.suffix.lower() != ".cmd":
+    if sys.platform != "win32":
+        node = shim.parent / "node"
+        if node.is_file() and os.access(node, os.X_OK):
+            try:
+                with shim.open("rb") as script:
+                    if script.readline(256).strip() == b"#!/usr/bin/env node":
+                        return [str(node), *argv]
+            except OSError:
+                pass
+        return argv
+    if shim.suffix.lower() != ".cmd":
         return argv
     try:
         text = shim.read_text(encoding="utf-8")
@@ -191,6 +203,10 @@ class Agent:
         nothing in it is parsed."""
         return prompt
 
+    def launch_command(self, cmd: list[str]) -> list[str]:
+        """Adapt a resolved CLI launcher before the helper process starts."""
+        return cmd
+
     def prompt_file(self, workdir: Path, prompt: str) -> Path | None:
         """The file holding the prompt for an agent that reads it by path (zcode's `--attach`), or None: the prompt
         goes in on stdin, as it does for every other agent. The prompt's text never goes on the command line."""
@@ -305,11 +321,13 @@ def _registry() -> list[Agent]:
     from .api import API
     from .claude import CLAUDE
     from .codex import CODEX
+    from .cursor import CURSOR
+    from .kimi import KIMI
     from .opencode import OPENCODE
     from .zcode import ZCODE
 
     # the order the Agents page lists them in (the launcher puts the recommended one first)
-    return [CLAUDE, CODEX, ANTIGRAVITY, OPENCODE, ZCODE, API]
+    return [CLAUDE, CODEX, CURSOR, KIMI, ANTIGRAVITY, OPENCODE, ZCODE, API]
 
 
 AGENTS: list[Agent] = _registry()

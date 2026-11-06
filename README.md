@@ -11,7 +11,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS%20Intel%20%2F%20Apple%20Silicon-15140f?style=flat-square">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-15140f?style=flat-square">
   <a href="https://discord.gg/hhEm3zZagB"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
-  <img alt="Agents: Claude Code, Codex, opencode, Antigravity, ZCode, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20API%20models-157a49?style=flat-square">
+  <img alt="Agents: Claude Code, Codex, Cursor, Kimi, opencode, Antigravity, ZCode, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Cursor%20%C2%B7%20Kimi%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
 
 decompdecomp is an app that decompiles games you own. AI agents write C or C++ for each function of the game. The
@@ -155,7 +155,7 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
    Demo Quest 64. For an N64, PlayStation or PlayStation 2 game, the app offers to install all of that console's
    compilers first. Then it tests which one built the game. Tick the box only if you accept the proprietary ones.
 2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
-   Codex, opencode, Antigravity CLI and ZCode CLI. Run several, and different models: they work on different
+   Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI and ZCode CLI. Run several, and different models: they work on different
    functions at the same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
    the easy ones for free, before any agent starts.
@@ -217,6 +217,10 @@ folder as work changes: matched C, best attempts, headers, names, notes and sett
 so you can keep it in a git repository. You can edit these files or pull another contributor's changes into `progress/`;
 decompdecomp reads them on the next project action and checks the saved functions again. GameCube, Wii and PC
 projects and community decomps are git repositories already: push them.
+
+In **Settings**, **Save now** remembers its last successful destination for each project and restores it when
+you open that project again. A project opened from a saved folder starts with that folder selected. Saving a
+backup elsewhere keeps the project's automatic progress folder in place. Clear the field to save there again.
 
 The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer. Copy the hidden
 `.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a

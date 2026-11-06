@@ -1032,6 +1032,15 @@ into = "7.0"
 url = "https://github.com/OmniBlade/decomp.me/releases/download/msvcwin9x/msvc7.0.tar.gz"  # holds 7.1 (13.10.3077)
 sha256 = "49eba7f9f72644f6f872a4176baeac544e8b5dfb2be1f47bb4d439b1136ffeac"
 into = "7.1"
+# 7.1's archive has no C runtime: wibo brings its own on Linux and macOS, but on Windows cl.exe needs msvcr71.dll and
+# its compiler passes (c1, c1xx) msvcp71.dll beside them, or Windows stops it with "MSVCR71.dll was not found" (7.0's
+# archive carries its MSVCR70.DLL). Both are 7.1's redistributable DLLs, from the archive mwcc already pins.
+[[msvc.parts]]
+url = "https://files.decomp.dev/compilers_20251118.zip"
+sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
+keep = { "X360/14.00.2110/msvcr71.dll" = "Bin/msvcr71.dll", "X360/14.00.2110/msvcp71.dll" = "Bin/msvcp71.dll" }
+into = "7.1"
+platforms = ["windows-x86_64"]
 
 # Each archive is a whole install: `keep` takes its compiler (Bin) and headers (Include: Visual C++'s and the Windows
 # SDK's in one folder, as the 6.0-7.1 pack has them), so the project's build finds every version the same way.
