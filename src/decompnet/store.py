@@ -10,7 +10,7 @@ import sqlite3
 import sys
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .read_cache import ReadCache
@@ -552,6 +552,35 @@ class Store:
         key = kind if project is None else f'{kind}:{project}'
         row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
         return row['revision'] if row else 0
+
+    @contextmanager
+    def try_tx(self):
+        """Optional bookkeeping only: yield None rather than queue behind another writer.
+
+        Reuse normal transaction rollback/commit semantics. Only acquisition BUSY is
+        optional; errors from the body or commit must still reach the caller.
+        """
+        if not self.lock.acquire(blocking=False):
+            yield None
+            return
+        try:
+            cursor = self.conn.execute('PRAGMA busy_timeout')
+            timeout = cursor.fetchone()[0]; cursor.close()
+            self.conn.execute('PRAGMA busy_timeout=0').close()
+            try:
+                with ExitStack() as stack:
+                    try:
+                        db = stack.enter_context(self.tx())
+                    except sqlite3.OperationalError as error:
+                        if getattr(error, 'sqlite_errorcode', 0) & 255 != sqlite3.SQLITE_BUSY:
+                            raise
+                        yield None
+                        return
+                    yield db
+            finally:
+                self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
+        finally:
+            self.lock.release()
 
     @contextmanager
     def tx(self, *, wait=None):

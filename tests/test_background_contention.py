@@ -1,9 +1,23 @@
 """Background scheduling changes stay local to maintenance, never foreground judging."""
 import threading
+import time
 from types import SimpleNamespace
+
+import pytest
 
 from decompnet.app import maintenance, saves
 from decompnet.app.agents import connection_retry_delay
+
+
+@pytest.fixture(autouse=True)
+def isolated_clocks(monkeypatch):
+    # These tests fake sleeps/CPU clocks while earlier integration tests may still
+    # have cleanup threads. Never replace functions on the shared stdlib module.
+    from decompnet.app import twins
+    for module in (maintenance, saves, twins):
+        monkeypatch.setattr(module, 'time', SimpleNamespace(
+            monotonic=time.monotonic, thread_time=time.thread_time,
+            sleep=time.sleep, time=time.time))
 
 
 def test_deep_autosave_checks_are_periodic_but_dirty_checks_continue(monkeypatch):
@@ -81,7 +95,13 @@ def test_duplicate_reuse_waits_without_occupying_the_lane(monkeypatch):
     from decompnet.app.twins import Job, Twins
     twin=Twins.__new__(Twins)
     twin._lock=threading.RLock();job=Job();twin.jobs={'game':job}
-    attempted=threading.Event()
+    attempted=threading.Event();waiting=threading.Event();release=threading.Event()
+    def wait_for_owner(_):
+        waiting.set()
+        assert release.wait(3)
+    # Wait for the duplicate to observe its owner, rather than assuming that the
+    # OS schedules the new thread within a fixed 50ms window.
+    monkeypatch.setattr('decompnet.app.twins.time.sleep',wait_for_owner)
     @contextmanager
     def forbidden(*args):
         attempted.set()
@@ -90,8 +110,12 @@ def test_duplicate_reuse_waits_without_occupying_the_lane(monkeypatch):
     result=[]
     worker=threading.Thread(target=lambda:result.append(twin.full_pass('game')))
     worker.start()
-    assert not attempted.wait(.05)
-    job.state='done';worker.join(2)
+    try:
+        assert waiting.wait(2)
+        assert not attempted.is_set()
+        job.state='done'
+    finally:
+        release.set();worker.join(2)
     assert result==[job] and not attempted.is_set()
 
 

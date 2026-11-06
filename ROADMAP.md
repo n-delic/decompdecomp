@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: authentication reads token identity on every request but coalesces advisory
+  presence timestamps to five seconds and skips them when a writer is busy.
+  Presence may temporarily look offline under contention; revoked tokens stay invalid.
+
 - Done: compiler-profile match application verifies up to eight candidates concurrently, reuses
   short-lived server-owned exact verdicts only for unchanged function inputs, and publishes
   settings/matches in one guarded transaction. Unrelated agent progress no longer invalidates

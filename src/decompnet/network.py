@@ -441,11 +441,19 @@ class Network:
         """The agent a token belongs to (helpers get theirs from the app when it starts them)."""
         if not token:
             raise NetworkError("missing token: only helpers decompdecomp starts can work on its projects")
-        row = self.store.one("SELECT id,name,owner,trusted FROM agents WHERE token_hash=?", hash_token(token))
+        token_hash = hash_token(token)
+        row = self.store.one("SELECT id,name,owner,trusted,last_seen FROM agents WHERE token_hash=?", token_hash)
         if row is None:
             raise NetworkError("invalid API token")
-        with self.store.tx() as db:
-            db.execute("UPDATE agents SET last_seen=? WHERE id=?", (time.time(), row["id"]))
+        now = time.time()
+        # Presence is advisory (the room uses a 30-second online window), not an
+        # authentication requirement. Polls must not queue behind compiler writes.
+        if row["last_seen"] is None or not 0 <= now - row["last_seen"] < 5:
+            with self.store.try_tx() as db:
+                if db is not None:
+                    db.execute("UPDATE agents SET last_seen=? WHERE id=? AND token_hash=? "
+                               "AND (last_seen IS NULL OR last_seen<=? OR last_seen>?)",
+                               (now, row["id"], token_hash, now-5, now))
         return Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
 
     # ---------------------------------------------------------------- pairing (an outside agent asks; the user approves)
