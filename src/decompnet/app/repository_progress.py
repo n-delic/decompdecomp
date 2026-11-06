@@ -26,7 +26,35 @@ def owned(manifest):
     return paths
 
 
-def snapshot(net, slug, root, log):
+def recover_missing_sources(net, slug, folder, manifest, missing, log):
+    """An older partial save could acknowledge a manifest without materializing its C files.
+    Restore only still-listed source from the current row, never overwrite a contributor's file."""
+    pid = net.project_row(slug)['id']
+    recovered = {}
+    for path in sorted(missing):
+        if not path.startswith(('src/', 'best/')) or not path.endswith('.c'):
+            continue
+        name = path.split('/', 1)[1][:-2]
+        info = manifest['functions'].get(name)
+        row = net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?', pid, name)
+        if not info or not row or row['vram'] != info.get('vram'):
+            continue
+        if path.startswith('src/'):
+            source = row['matched_source'] if row['status'] == 'matched' else None
+        else:
+            source = row['best_source'] if row['status'] != 'matched' else None
+        if source:
+            recovered[path] = saves._source_text(source)
+    if not recovered:
+        return False
+    if not saves._publish(folder, recovered, expected={name:None for name in recovered}, chosen=True):
+        raise NetworkError('Progress changed while recovering missing source files. Retry after its edits finish.')
+    for name in recovered:
+        log(f'Recovered missing saved source {name} from the project. It will be checked before committing.')
+    return True
+
+
+def snapshot(net, slug, root, log, *, recover=True):
     """Read contributions through the ordinary judge, then capture files under the autosave lock."""
     folder = saves.default_folder(net, slug).resolve()
     with net.progress._project_lock(slug):
@@ -48,7 +76,12 @@ def snapshot(net, slug, root, log):
                 files[name] = (folder/name).read_bytes().decode('utf-8')
         missing = owned(manifest) - files.keys()
         if missing:
-            raise NetworkError('Progress files are missing. Save the project again before committing.')
+            if recover and recover_missing_sources(net, slug, folder, manifest, missing, log):
+                return snapshot(net, slug, root, log, recover=False)
+            names = ', '.join(sorted(missing)[:12])
+            extra = f' (and {len(missing)-12} more)' if len(missing)>12 else ''
+            raise NetworkError(f'Cannot commit: {len(missing)} saved progress file(s) are missing: {names}{extra}. '
+                               'Restore these files from Git or save a recovered copy of the project, then retry.')
         prefix = folder.relative_to(root).as_posix()
         prefix = '' if prefix == '.' else prefix + '/'
         paths = {prefix + name for name in owned(manifest)}

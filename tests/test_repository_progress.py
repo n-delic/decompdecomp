@@ -202,3 +202,45 @@ def test_progress_commit_recovers_missing_upstream(progress):
     assert git(remote,'rev-parse','refs/heads/'+branch)==result['commit']
     assert git(root,'rev-parse','--abbrev-ref','@{upstream}')=='origin/'+branch
     assert git(root,'status','--porcelain')==''
+
+
+def test_commit_recovers_acknowledged_missing_sources_from_database(progress,monkeypatch):
+    net,root,_=progress
+    source=(root/'src/f.c').read_text()
+    (root/'src/f.c').unlink()
+    # An older autosave already acknowledged the incomplete snapshot, so sync considers it current.
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:False)
+    lines=[]
+    files,_,_=repository_progress.snapshot(net,'game',root,lines.append)
+    assert (root/'src/f.c').read_text()==source
+    assert files['src/f.c']==source.encode()
+    assert any('Recovered missing saved source src/f.c' in line for line in lines)
+
+
+def test_commit_lists_unrecoverable_missing_sources(progress,monkeypatch):
+    net,root,_=progress
+    (root/'src/f.c').unlink()
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:False)
+    with net.store.tx() as db:db.execute("UPDATE functions SET matched_source=NULL WHERE name='f'")
+    with pytest.raises(NetworkError,match=r'1 saved progress file.*src/f.c'):
+        repository_progress.snapshot(net,'game',root,print)
+    assert not (root/'src/f.c').exists()
+
+
+def test_commit_does_not_restore_a_deletion_processed_by_progress(progress):
+    net,root,_=progress
+    (root/'src/f.c').unlink()
+    with pytest.raises(NetworkError,match='src/f.c'):
+        repository_progress.snapshot(net,'game',root,print)
+    assert not (root/'src/f.c').exists()
+    assert net._function('f','game')['status'] != 'matched'
+
+
+def test_missing_source_recovery_never_overwrites_a_concurrent_edit(progress):
+    net,root,_=progress
+    path=root/'src/f.c'
+    path.write_text('contributor edit')
+    manifest=json.loads((root/saves.MANIFEST).read_text())
+    with pytest.raises(NetworkError,match='Progress changed while recovering'):
+        repository_progress.recover_missing_sources(net,'game',root,manifest,{'src/f.c'},print)
+    assert path.read_text()=='contributor edit'
