@@ -60,6 +60,7 @@ def run(net, slug, selected, log=print, nonmatches=False):
         for future in as_completed(pending):
             cancel()
             fn, ok, reason, proof = future.result()
+            state['function'] = fn['name']
             state['checked'] += 1
             state['passed' if ok else 'failed'] += 1
             if ok:

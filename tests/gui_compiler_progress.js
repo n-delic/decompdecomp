@@ -260,7 +260,7 @@ assert(!failureContext.profileFailureGroups([{function:'<unsafe>',reason:'<unsaf
 // A changing project must not hide freshly verified adoption of individual trial successes.
 (async()=>{
   const nodes=new Map();
-  const node=key=>{if(!nodes.has(key))nodes.set(key,{hidden:false,textContent:'',innerHTML:'',classList:{contains:()=>false}});return nodes.get(key);};
+  const node=key=>{if(!nodes.has(key))nodes.set(key,{hidden:false,textContent:'',innerHTML:'',removeAttribute(){},hasAttribute(){return false;},classList:{contains:()=>false}});return nodes.get(key);};
   let requests=[], result={stale:true,total:2,checked:2,passed:1,failed:1,matches:['candidate'],failures:[],receipt:'server-proof',changed_matches:['candidate']};
   const body={querySelector:node,addEventListener:()=>{}};
   const env={compilerDisplayedGroups:[{compiler:'Example compiler',parts:[{toolchain:'gcc',flag_list:['-O2']}]}],
