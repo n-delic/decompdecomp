@@ -305,3 +305,45 @@ def test_recovered_source_is_rejudged_before_the_snapshot_is_captured(progress, 
     assert judged == ['f']
     assert files['src/f.c' if matched else 'best/f.c'] == source.encode()
     assert ('matched_by' in manifest['functions']['f']) == matched
+
+
+def test_acknowledged_draft_alongside_a_match_is_committed(progress):
+    net, root, remote = progress
+    draft = root/'best/f.c'
+    draft.parent.mkdir(exist_ok=True)
+    draft.write_text('void f(void) { /* earlier draft */ }\n')
+    from decompnet.app.progress import _Snapshot
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    net.progress._baseline(pid).disk.files.update(_Snapshot.of({'best/f.c': draft.read_text()}).files)
+    net.progress.signatures['game'] = net.progress._signature(root)
+    result = repository_sync.run(net, 'game', root, commit_push=True)
+    assert result['pushed']
+    assert git(remote, 'show', 'HEAD:best/f.c') == draft.read_text().strip()
+    assert git(remote, 'show', 'HEAD:src/f.c') == 'void f(void) { return; }'
+    assert 'matched_by' in json.loads(git(remote, 'show', 'HEAD:decompdecomp.json'))['functions']['f']
+    assert git(root, 'status', '--porcelain') == ''
+
+
+def test_only_unrelated_paths_are_reported_as_blockers(progress):
+    net, root, _ = progress
+    (root/'private.rom').write_text('private homemade input')
+    with pytest.raises(NetworkError) as error:
+        repository_sync.run(net, 'game', root, commit_push=True)
+    message = str(error.value)
+    assert '(1 path)' in message and 'private.rom' in message
+    assert 'README.md' not in message and 'src/f.c' not in message
+
+
+def test_unacknowledged_draft_changes_are_preserved(progress, monkeypatch):
+    net, root, _ = progress
+    original = saves._read_owned
+    def edited(folder):
+        result = original(folder)
+        (root/'best').mkdir(exist_ok=True)
+        (root/'best/f.c').write_text('concurrent draft\n')
+        return result
+    monkeypatch.setattr(saves, '_read_owned', edited)
+    with pytest.raises(NetworkError, match='draft changed while capturing'):
+        repository_sync.run(net, 'game', root, commit_push=True)
+    assert (root/'best/f.c').read_text() == 'concurrent draft\n'
+    assert git(root, 'log', '-1', '--format=%s') == 'initial progress'

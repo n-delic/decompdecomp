@@ -94,10 +94,25 @@ def snapshot(net, slug, root, log, *, recover=True):
             paths.update(prefix + name for name in owned(previous))
         for name in paths:
             repository_sync.inside(root, name)
+        # Matching a function need not discard its earlier draft. The manifest selects
+        # src/, but the progress engine also acknowledges best/ files alongside it.
+        # Include only known functions' drafts whose exact contents it has acknowledged.
+        for name, info in manifest['functions'].items():
+            draft = f'best/{name}.c'
+            if 'matched_by' not in info or draft in files:
+                continue
+            path = repository_sync.inside(root, prefix + draft)
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding='utf-8')
+            if baseline.disk.files.get(draft) != _Snapshot.of({draft: text}).files[draft]:
+                raise NetworkError('A saved draft changed while capturing progress. Retry after its edits finish.')
+            files[draft] = text
+            paths.add(prefix + draft)
         changed = set(filter(None, repository_sync.git(root, 'diff', '--name-only', '--no-renames', '-z', 'HEAD').decode().split('\0')))
         changed.update(filter(None, repository_sync.git(root, 'ls-files', '--others', '--exclude-standard', '-z').decode().split('\0')))
         if changed - paths:
-            repository_sync.checkout(root)  # Keep the detailed list of unrelated changes.
+            repository_sync.checkout(root, blocking=changed - paths)  # Show only files that block this checkpoint.
         # Retired paths may be deleted, but never discard a file that survived a rename or layout change.
         if any(repository_sync.inside(root, name).exists() for name in paths - {prefix+n for n in files}):
             raise NetworkError('Retired progress files still contain edits. Move them before committing progress.')

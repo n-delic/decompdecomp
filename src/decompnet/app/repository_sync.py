@@ -77,7 +77,7 @@ def git(root, *args):
     return res.stdout
 
 
-def checkout_changes(raw):
+def checkout_changes(raw, *, only=None):
     """Describe staged and working-tree changes, preserving renamed and unusual file names."""
     records = iter(raw.split(b'\0'))
     changes = []
@@ -87,10 +87,16 @@ def checkout_changes(raw):
         if not record:
             continue
         code = record[:2].decode('ascii', errors='replace')
-        name = json.dumps(record[3:].decode('utf-8', errors='replace'), ensure_ascii=True)
+        current = record[3:].decode('utf-8', errors='replace')
+        paths = {current}
+        name = json.dumps(current, ensure_ascii=True)
         if 'R' in code or 'C' in code:
-            original = json.dumps(next(records).decode('utf-8', errors='replace'), ensure_ascii=True)
+            previous = next(records).decode('utf-8', errors='replace')
+            paths.add(previous)
+            original = json.dumps(previous, ensure_ascii=True)
             name = f'{original} -> {name}'
+        if only is not None and paths.isdisjoint(only):
+            continue
         if code == '??':
             state = 'untracked'
         elif code in {'DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'}:
@@ -102,14 +108,16 @@ def checkout_changes(raw):
     return changes
 
 
-def checkout(folder, *, clean=True):
+def checkout(folder, *, clean=True, blocking=None):
     """Validate the checkout root, normally requiring it to be clean before export verification."""
     root = Path(folder).expanduser().resolve()
     if not root.is_dir() or Path(git(root,'rev-parse','--show-toplevel').decode().strip()).resolve() != root:
         raise NetworkError('Choose the root folder of a local Git checkout.')
     raw = git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
     if raw and clean:
-        changes = checkout_changes(raw)
+        changes = checkout_changes(raw, only=blocking)
+        if not changes:
+            return root
         # Large autosaved projects can have thousands of dirty files; keep the error readable.
         shown = changes[:MAX_CHECKOUT_CHANGES]
         count = f"{len(changes)} path{'s' if len(changes) != 1 else ''}"
