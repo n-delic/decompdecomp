@@ -31,6 +31,9 @@ class Session:
         self.targets = OrderedDict()
         self.instructions = OrderedDict()
         self.metrics = {}
+        self.comparisons = OrderedDict()
+        self.comparison_sizes = {}
+        self.comparison_bytes = 0
 
     def prepare(self, cfg, header):
         from .compiler import _workspace

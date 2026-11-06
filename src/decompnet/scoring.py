@@ -276,7 +276,38 @@ def _prepared_target(target):
     return session.instructions[key]
 
 
+def _comparison_key(fn):
+    return (fn.name, fn.arch, fn.big_endian, fn.cpu, bytes(fn.code), tuple(r.key() for r in fn.relocs))
+
+
 def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+    # Advisory instruction comparisons only. Link verdicts and source locations are
+    # computed by callers for the actual object, even when two C variants emit alike.
+    session = compile_sessions.current()
+    key = None
+    if session is not None and len(target.code) + len(candidate.code) <= 32768:
+        key = (_comparison_key(target), _comparison_key(candidate))
+        cached = session.comparisons.get(key)
+        if cached is not None:
+            session.comparisons.move_to_end(key)
+            from .compile_timing import add
+            add('comparison_hits', 1)
+            return DiffResult(cached.score, cached.max_score, list(cached.rows), cached.bytes_match)
+    result = _diff(target, candidate)
+    if key is not None and result.score > 0 and not result.bytes_match:
+        # Bound both retained machine bytes and potentially large diagnostic rows.
+        size = len(repr((key, result)).encode())
+        if size <= 1024 * 1024:
+            session.comparisons[key] = DiffResult(result.score, result.max_score, list(result.rows), result.bytes_match)
+            session.comparison_bytes += size
+            session.comparison_sizes[key] = size
+            while len(session.comparisons) > 128 or session.comparison_bytes > 8 * 1024 * 1024:
+                old, _ = session.comparisons.popitem(last=False)
+                session.comparison_bytes -= session.comparison_sizes.pop(old)
+    return result
+
+
+def _diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
     t_ins, target_fingerprint = _prepared_target(target)

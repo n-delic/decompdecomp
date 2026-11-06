@@ -13,6 +13,7 @@ import time
 from collections import OrderedDict
 
 from .. import scoring
+from ..candidate_work import scope as candidate_work_scope
 from ..candidate_work import trial
 from ..compile_sessions import batched
 from ..network import NetworkError
@@ -613,6 +614,30 @@ class Search(Permuter):
                 hashlib.sha256(repr((dict(proj), dict(fn), source, compiler_identity(own), rules,
                                      sorted(os.environ.items()))).encode()).digest())
 
+    def _prime_trials(self, agent, proj, fn, sources, fork):
+        # Scope each candidate exactly as the single-candidate path does. The map
+        # lives for one generated chunk and never authorizes a winner.
+        keys = []
+        self._primed_scopes = {}
+        self._primed_trials = {}
+        for source in sources:
+            self.check()
+            with candidate_work_scope():
+                # External build inputs need a fresh filesystem scan at the actual
+                # trial. Avoid scanning those twice merely to batch one DB read.
+                recent_key = self._recent_key(proj, fn, source, fork)
+                if recent_key is None:continue
+                scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
+                self._primed_scopes[recent_key] = scope
+                keys.append('deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest())
+        for at in range(0, len(keys), 64):
+            group = keys[at:at+64]
+            rows = self.net.store.all(
+                'SELECT signature,feedback FROM reuse_trials WHERE function_id=? AND signature IN ('+
+                ','.join('?' for _ in group)+')', fn['id'], *group)
+            found = {row['signature']: row['feedback'] for row in rows}
+            self._primed_trials.update({(fn['id'], key): found.get(key) for key in group})
+
     @trial
     def _score_current(self, agent, proj, fn, source, best, fork):
         self.check()
@@ -640,11 +665,14 @@ class Search(Permuter):
                 return None
         # Scope includes the actual compiler/header/target and imported build dependencies. A previous
         # miss is reusable only in that scope. Better cached results are rejudged before being kept.
-        scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
+        scope = getattr(self, '_primed_scopes', {}).get(recent_key) if recent_key is not None else None
+        if scope is None:scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
         key = 'deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest()
         pending = trial_bookkeeping.lookup(self.net.store, ('reuse_trials', fn['id'], key))
-        cached = ({'feedback':pending} if pending is not None else self.net.store.one(
-            'SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key))
+        primed = getattr(self, '_primed_trials', {})
+        cached = ({'feedback':pending} if pending is not None else
+                  {'feedback':primed[fn['id'], key]} if (fn['id'], key) in primed else self.net.store.one(
+                      'SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key))
         feedback = json.loads(cached['feedback']) if cached and cached['feedback'] else None
         score = feedback.get('score') if isinstance(feedback, dict) else feedback
         self._cached_rows = feedback.get('rows', []) if isinstance(feedback, dict) else []
