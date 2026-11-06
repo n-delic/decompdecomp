@@ -20,6 +20,9 @@ def net(tmp_path, monkeypatch):
         for i,status in enumerate(['matched','matched','matched','open']):
             db.execute('INSERT INTO functions(project_id,name,vram,size,n_insns,status,matched_source,best_source,best_score) VALUES(1,?,?,?,?,?,?,?,?)',
                        (f'f{i}',0x80001000+16*i,16,4,status,f'int f{i}(void){{return 1;}}' if status=='matched' else None,'draft',0))
+    with net.store.tx() as db:db.execute("INSERT INTO context_versions(project_id,version,unit,header) VALUES(1,1,'','')")
+    monkeypatch.setattr(net,'on_match',lambda *args:None)
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kw:None)
     monkeypatch.setattr(trial.toolchains,'installed',lambda tc:object())
     monkeypatch.setattr(net,'_project',lambda slug:net.store.one('SELECT * FROM projects WHERE slug=?',slug))
     return net
@@ -144,7 +147,9 @@ def test_apply_rechecks_successes_and_uses_normal_compiler_match_path(net, monke
     monkeypatch.setattr(net, 'apply_function_compiler', lambda *args:applied.append(args) or {'newly_matched':True})
     result = trial.apply_matches(net, 'game', PROFILE, ['f3', 'f3', 'f0'])
     assert checked == [('f3', 'saved C')]
-    assert applied == [('game', 'f3', PROFILE['toolchain'], PROFILE['flags'])]
+    assert applied == []  # Batch publication does not repeat the single-function path.
+    assert net._function('f3','game')['status']=='matched'
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==1
     assert result['passed'] == 1 and result['failed'] == 1
     assert 'No longer unmatched' in result['failures'][0]['reason']
 
@@ -171,21 +176,22 @@ def test_apply_rechecks_active_claims(net, monkeypatch):
     calls=[]
     monkeypatch.setattr(net,'apply_function_compiler',lambda *args:calls.append(args) or {'newly_matched':True})
     result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
-    assert result['passed']==1 and calls[0][1]=='f3'
+    assert result['passed']==1 and calls==[]
+    assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
+    assert net._function('f3','game')['status']=='matched'
 
 
-def test_apply_returns_structured_affected_matches(net, monkeypatch):
-    monkeypatch.setattr(net, '_comparison_source', lambda fn:'saved C')
-    monkeypatch.setattr(net, '_judge_with', lambda *args:(True, NS(score=0), ''))
-    def blocked(*args):
-        error = NetworkError('Existing match would fail')
-        error.compiler_blockers = [{'function':'f0', 'reason':'different bytes'}]
-        raise error
-    monkeypatch.setattr(net, 'apply_function_compiler', blocked)
-    result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
-    failure = result['failures'][0]
-    assert failure['category'] == 'affected_matches'
-    assert failure['blockers'][0]['function'] == 'f0'
+def test_apply_never_changes_untested_neighbours(net, monkeypatch):
+    from decompnet.app import compiler_match_batch as batch
+    before=net._project('game')['config']
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(True,NS(score=0),''))
+    def unsafe(cfg,lo,hi,target):
+        cfg['compiler_ranges']=[{'start':0x80001000,'end':0x80001040,'toolchain':target[0],'flags':list(target[1])}]
+    monkeypatch.setattr(batch,'replace_range',unsafe)
+    with pytest.raises(NetworkError,match='untested neighbour'):
+        trial.apply_matches(net,'game',PROFILE,['f3'])
+    assert net._project('game')['config']==before
+    assert not net.store.all('SELECT * FROM attempts')
 
 
 def test_check_affected_uses_matched_source_and_changes_nothing(net, monkeypatch):
@@ -248,7 +254,8 @@ def test_bulk_safe_range_repairs_continue_after_a_skipped_function(net, monkeypa
     log.progress=progress.append
     result=trial.apply_matches(net, 'game', PROFILE, ['f0','f3','f3'], log, safe_ranges=True)
     assert result['total']==2 and result['passed']==1 and result['failed']==1
-    assert applied==[('f3', {'preserve_other_profiles':True})]
+    assert applied==[]
+    assert net._function('f3','game')['status']=='matched'
     assert result['matches']==['f3'] and result['failures'][0]['function']=='f0'
     assert progress[-1]['checked']==2
 
@@ -296,3 +303,159 @@ def test_bulk_apply_rejects_duplicate_overlay_identity(net, monkeypatch):
     result=trial.apply_matches(net,'game',PROFILE,['f3'])
     assert result['failed']==1
     assert result['failures'][0]['category']=='overlay'
+
+
+def test_apply_reuses_server_owned_trial_only_for_unchanged_function(net,monkeypatch):
+    seen=[]
+    monkeypatch.setattr(net,'_judge_with',lambda proj,fn,*args:(seen.append(fn['name']) or True,NS(score=0),''))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    assert seen==['f3']
+    result=trial.apply_matches(net,'game',PROFILE,out['matches'],receipt=out['receipt'])
+    assert result['reused']==result['passed']==1
+    assert seen==['f3']
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==1
+    assert net.store.one('SELECT COUNT(*) n FROM verified_matches')['n']==1
+
+
+def test_only_changed_candidate_is_recompiled_and_unrelated_activity_is_ignored(net,monkeypatch):
+    seen=[]
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE name='f2'")
+    monkeypatch.setattr(net,'_judge_with',lambda proj,fn,*args:(seen.append(fn['name']) or True,NS(score=0),''))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    seen.clear()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='changed' WHERE name='f2'")
+        db.execute("UPDATE functions SET matched_source='unrelated change' WHERE name='f0'")
+    result=trial.apply_matches(net,'game',PROFILE,out['matches'],receipt=out['receipt'])
+    assert result['passed']==2 and result['reused']==1
+    assert seen==['f2']
+
+
+def test_nonmatch_staleness_is_scoped_to_passing_function(net,monkeypatch):
+    def judge(*args):
+        with net.store.tx() as db:db.execute("UPDATE functions SET matched_source='unrelated' WHERE name='f0'")
+        return True,NS(score=0),''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    assert not out['stale'] and not out['changed_matches']
+
+
+def test_changed_header_and_unknown_receipts_require_fresh_verification(net,monkeypatch):
+    seen=[]
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(seen.append(1) or True,NS(score=0),''))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    with net.store.tx() as db:db.execute("INSERT INTO context_versions(project_id,version,unit,header) VALUES(1,2,'','typedef int changed;')")
+    assert trial.apply_matches(net,'game',PROFILE,['f3'],receipt=out['receipt'])['reused']==0
+    assert len(seen)==2
+
+
+def test_source_change_during_verification_skips_publication(net,monkeypatch):
+    before=net._project('game')['config']
+    def judge(*args):
+        with net.store.tx() as db:db.execute("UPDATE functions SET best_source='changed mid-check' WHERE name='f3'")
+        return True,NS(score=0),''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    out=trial.apply_matches(net,'game',PROFILE,['f3'])
+    assert out['failed']==1 and out['passed']==0
+    assert net._project('game')['config']==before
+    assert not net.store.all('SELECT * FROM attempts')
+
+
+def test_batch_verifies_in_parallel_and_updates_project_config_once(net,monkeypatch):
+    import threading
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE name='f2'")
+    barrier=threading.Barrier(2)
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(barrier.wait(timeout=3) is not None,NS(score=0),''))
+    statements=[]
+    net.store.conn.set_trace_callback(statements.append)
+    try:out=trial.apply_matches(net,'game',PROFILE,['f2','f3'])
+    finally:net.store.conn.set_trace_callback(None)
+    assert out['passed']==2
+    # Trace callbacks repeat a statement while its SQLite triggers execute. The compiler event
+    # is a stable assertion that exactly one settings publication occurred.
+    assert net.store.one("SELECT COUNT(*) n FROM events WHERE kind='compiler'")['n']==1
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==2
+
+
+def test_failed_batch_record_rolls_back_settings_matches_and_notifications(net,monkeypatch):
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE name='f2'")
+    before=net._project('game')['config'];notifications=[]
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(True,NS(score=0),''))
+    monkeypatch.setattr(net,'on_match',lambda *args:notifications.append(args))
+    record=net._record;count=[]
+    def fail_second(*args,**kwargs):
+        count.append(1)
+        if len(count)==2:raise NetworkError('injected recording failure')
+        return record(*args,**kwargs)
+    monkeypatch.setattr(net,'_record',fail_second)
+    with pytest.raises(NetworkError,match='injected'):
+        trial.apply_matches(net,'game',PROFILE,['f2','f3'])
+    assert net._project('game')['config']==before
+    assert not net.store.all('SELECT * FROM attempts')
+    assert not notifications
+
+
+def test_claim_acquired_during_check_is_redirected_after_exact_commit(net,monkeypatch):
+    import time
+    worker,_=net.local_agent('other-worker')
+    def judge(proj,fn,*args):
+        with net.store.tx() as db:db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],worker.id,time.time(),time.time()+3600))
+        return True,NS(score=0),''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    notifications=[]
+    monkeypatch.setattr(net,'on_external_match',lambda *args:notifications.append((args,net._function('f3','game')['status'])),raising=False)
+    result=trial.apply_matches(net,'game',PROFILE,['f3'])
+    assert result['failed']==0 and result['passed']==1
+    assert not net.store.one('SELECT agent_id FROM claims')
+    assert notifications[0][0][0]==worker.id and notifications[0][1]=='matched'
+
+
+@pytest.mark.parametrize('receipt',[None,'forged',{'untrusted':'proof'}])
+def test_client_cannot_supply_an_exact_verdict(net,monkeypatch,receipt):
+    seen=[]
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(seen.append(1) or False,NS(score=1),''))
+    before=net._project('game')['config']
+    result=trial.apply_matches(net,'game',PROFILE,['f3'],receipt=receipt)
+    assert seen==[1] and result['failed']==1 and result['passed']==0
+    assert net._project('game')['config']==before
+    assert not net.store.all('SELECT * FROM attempts')
+
+
+def test_cancelled_parallel_checks_do_not_publish_settings_or_matches(net,monkeypatch):
+    import threading
+    stopped=threading.Event();before=net._project('game')['config']
+    def judge(*args):stopped.set();return True,NS(score=0),''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    def log(line):pass
+    def cancel():
+        if stopped.is_set():raise RuntimeError('cancelled')
+    log.check_cancel=cancel
+    with pytest.raises(RuntimeError,match='cancelled'):
+        trial.apply_matches(net,'game',PROFILE,['f3'],log)
+    assert net._project('game')['config']==before
+    assert not net.store.all('SELECT * FROM attempts')
+
+
+def test_missing_address_skips_only_that_candidate(net,monkeypatch):
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='open',vram=NULL WHERE name='f2'")
+    seen=[]
+    monkeypatch.setattr(net,'_judge_with',lambda proj,fn,*args:(seen.append(fn['name']) or True,NS(score=0),''))
+    result=trial.apply_matches(net,'game',PROFILE,['f2','f3'])
+    assert result['passed']==1 and result['failed']==1 and seen==['f3']
+    assert result['matches']==['f3']
+
+
+def test_custom_command_is_verified_with_actual_invocation_not_trial_receipt(net,monkeypatch):
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(True,NS(score=0),''))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    cfg=json.loads(net._project('game')['config']);cfg['compiler']['cmd']=['custom compiler']
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=?',(json.dumps(cfg),))
+    def compile_custom(proj,header,source,fn):
+        assert trial.profile(compiler_for(json.loads(proj['config']),fn['vram'],fn))==trial.profile(PROFILE)
+        assert json.loads(proj['config'])['compiler']['cmd']==['custom compiler']
+        return NS(ok=False)
+    from decompnet.project import compiler_for
+    monkeypatch.setattr(net,'_compile',compile_custom)
+    result=trial.apply_matches(net,'game',PROFILE,['f3'],receipt=out['receipt'])
+    assert result['passed']==0 and result['failed']==1 and result['reused']==0
+    assert not net.store.all('SELECT * FROM attempts')
