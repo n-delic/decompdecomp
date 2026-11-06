@@ -7,9 +7,11 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
-from ... import consoles, scoring
+from ... import compile_sessions, compile_timing, consoles, scoring
 from ...network import MACHINE_AGENTS, Agent, Network, NetworkError, stall_line
 from ...release_receipts import operation as release_operation
 from ...request_timing import build as timed_build
@@ -18,6 +20,14 @@ from ...rom.symbols import SymbolTable
 from ..function_names import canonical_source
 from .common import _AUTO_TOKEN, BATCH_INSNS
 
+_search_evaluation = ContextVar("search_evaluation", default=False)
+
+
+@contextmanager
+def search_evaluation():
+    token = _search_evaluation.set(True)
+    try:yield
+    finally:_search_evaluation.reset(token)
 
 class JudgeMixin:
     def _compile(self, proj, header: str, source: str, fn=None):
@@ -27,24 +37,58 @@ class JudgeMixin:
 
     def _rom_target(self, fn) -> match.RomTarget:
         cfg = self.cfg(self.store.one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
-        return consoles.of(cfg).target_from_row(fn, cfg)
+        session = compile_sessions.current()
+        key = None
+        if session is not None:
+            row = dict(fn)
+            key = ('rom', id(self), fn['project_id'], repr(cfg),
+                   tuple((k, row.get(k)) for k in ('name', 'target', 'relocs', 'vram', 'meta')))
+            if key in session.targets:return session.targets[key]
+        target = consoles.of(cfg).target_from_row(fn, cfg)
+        if session is not None:
+            session.targets[key] = target
+            while len(session.targets) > 16:session.targets.popitem(last=False)
+        return target
 
     def _make_target(self, proj, rf, syms: SymbolTable):
         cfg = self.cfg(proj)
         return self.console(proj).target_from_split(rf, syms.resolve, cfg.get("big_endian", True), cfg.get("gp", 0))
 
     def _target_obj(self, fn, proj):
+        session = compile_sessions.current()
+        if session is not None and self.is_rom(proj):
+            syms = self.symbols(proj['id'])
+            row = dict(fn)
+            key = (id(self), proj['id'], proj['config'], id(syms),
+                   tuple((k, row.get(k)) for k in ('id', 'name', 'target', 'relocs', 'vram', 'meta', 'unit', 'size', 'rom_offset')),
+                   self._generation.get(proj['id'], 0))
+            if key in session.targets:
+                return session.targets[key][1]
+        else:key = None
         if not self.is_rom(proj):
             obj = super()._target_obj(fn, proj)
         else:
-            obj = self.console(proj).target_object(fn, self.cfg(proj), self.symbols(proj["id"]))
-        obj.cpu = self.console(proj).cpu_variant  # the diff reads a PSP's VFPU with its own reader (arch/)
+            obj = self.console(proj).target_object(fn, self.cfg(proj), self.symbols(proj['id']))
+        obj.cpu = self.console(proj).cpu_variant
+        if key is not None:
+            # Keep the symbol table alive so object-id reuse cannot produce a stale hit.
+            session.targets[key] = (syms, obj)
+            while len(session.targets) > 16:session.targets.popitem(last=False)
         return obj
 
     def _evaluate(self, fn, proj, obj: bytes):
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
-        res = match.link(obj, fn["name"], self._rom_target(fn), self.symbols(proj["id"]), self.reader(proj, fn))
+        with compile_timing.phase('link'):
+            target = self._rom_target(fn)
+            res = match.link(obj, fn["name"], target, self.symbols(proj["id"]), self.reader(proj, fn))
+        if _search_evaluation.get():
+            # The exact verdict always comes from the full linker. Only advisory diagnostics wait.
+            local = self.__dict__.setdefault('_search_link_local', threading.local())
+            local.last = (fn['id'], hashlib.sha256(obj).digest(), res, target)
+            return res.candidate, res.exact if res.candidate is not None else None, res.problems
+        local = self.__dict__.get('_search_link_local')
+        if local is not None and hasattr(local, 'last'):del local.last
         from ..candidate_diagnostics import export_layout, text, unresolved
         checks = {'linked_bytes': {'exact': res.exact}, 'link': unresolved(res.problems),
                   'export': export_layout(obj, fn['name'], res.exact, res.placements)}
@@ -58,7 +102,7 @@ class JudgeMixin:
         if res.linked_code is not None and res.candidate is not None and not res.problems and proj['arch'] == 'mips':
             from ...arch.mips_addresses import aligned
             rows = scoring.diff(self._target_obj(fn, proj), res.candidate).rows
-            address_rows = aligned(rows, self._rom_target(fn).code, res.linked_code, bool(proj['big_endian']))
+            address_rows = aligned(rows, target.code, res.linked_code, bool(proj['big_endian']))
             checks['address_mismatches'] = [row for row in address_rows
                                            if row['target'] is not None and row['candidate'] is not None
                                            and row['target'] != row['candidate']]
@@ -69,7 +113,6 @@ class JudgeMixin:
             from ...elfobj import FunctionObj
             from ..allocation_evidence import diagnose
             from ..allocation_evidence import text as allocation_text
-            target = self._rom_target(fn)
             cpu = self._target_obj(fn,proj).cpu
             physical = scoring.diff(FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),target.code,cpu=cpu),
                                     FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),res.linked_code,cpu=cpu)).rows
@@ -96,7 +139,27 @@ class JudgeMixin:
     def _search_rows(self, fn, proj, obj, fallback):
         if not isinstance(obj,(bytes,bytearray,memoryview)):
             return fallback
+        local = self.__dict__.get('_search_link_local')
+        last = getattr(local, 'last', None)
+        if last is not None:
+            del local.last
         cached = self.__dict__.get('_candidate_diagnostics', {}).get((fn['id'],hashlib.sha256(obj).hexdigest()))
+        if last is not None and last[:2] == (fn['id'], hashlib.sha256(obj).digest()):
+            res, target = last[2:]
+            if res.linked_code is not None and res.candidate is not None and not res.problems:
+                from ...elfobj import FunctionObj
+                from ..allocation_evidence import diagnose
+                # Search actually consumes physical register cycles. Keep those rows without
+                # producing unrelated export/address diagnostics or relinking the object.
+                cpu = self._target_obj(fn, proj).cpu
+                with compile_timing.phase('search_diagnostics'):
+                    physical = scoring.diff(
+                        FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),target.code,cpu=cpu),
+                        FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),res.linked_code,cpu=cpu)).rows
+                    diagnosis = diagnose(physical, proj['arch'])
+                if diagnosis['register_only'] and diagnosis['register_cycles']:
+                    return physical
+            return fallback
         return cached[2] if cached and len(cached)>2 and cached[2] is not None else fallback
 
     def rename_tokens(self, proj, text: str) -> str:
@@ -469,7 +532,9 @@ class JudgeMixin:
             return False,None,rejected
         header = self._context(proj["id"], fn["unit"])["header"]
         settings = {"toolchain": toolchain, "flags": flags, "timeout": 20}
-        result = compile_source(compiler_config(Path(proj["root"]), {"compiler": settings}), header, canonical_source(fn, source))
+        invocation = compiler_config(Path(proj['root']), {'compiler': settings})
+        invocation.identity = (proj['id'], fn['id'], fn['name'], fn['target'], fn['relocs'])
+        result = compile_source(invocation, header, canonical_source(fn, source))
         if not result.ok:
             compiler_flags.remember(self,toolchain,flags,result.log)
             return False, None, result.log

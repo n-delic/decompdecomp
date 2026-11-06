@@ -22,15 +22,26 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, stop_process_tree
 
-from . import limits, linuxvm, wsl
+from . import compile_sessions, compile_timing, limits, linuxvm, wsl
+from .request_timing import span
 
 MAX_SOURCE_BYTES = 64 * 1024
 # Per-compile resource caps (address space, CPU seconds, output file size) and a global
 # concurrency cap, so a hostile submission can't take the host down with it.
 LIMITS = ["--as=2147483648", "--cpu=30", "--fsize=67108864"]
-_SLOTS = threading.BoundedSemaphore(max(2, (os.cpu_count() or 4) - 1))
+def concurrency_limit():
+    default = max(2, (os.cpu_count() or 4) - 1)
+    try:
+        requested = int(os.environ.get('DECOMP_COMPILER_THREADS', '0'))
+    except ValueError:
+        requested = 0
+    return max(1, min(256, requested)) if requested > 0 else default
+
+
+_COMPILER_THREADS = concurrency_limit()
+_SLOTS = threading.BoundedSemaphore(_COMPILER_THREADS)
 # Background jobs cannot occupy the last compiler slot needed by an interactive request.
-_BACKGROUND_SLOTS = threading.BoundedSemaphore(max(1, max(2, (os.cpu_count() or 4) - 1) - 1))
+_BACKGROUND_SLOTS = threading.BoundedSemaphore(max(1, _COMPILER_THREADS - 1))
 _SCHEDULING = threading.local()
 _ARTIFACT_SINK = contextvars.ContextVar("compiler_artifact_sink", default=None)
 _CANCEL_CHECK = contextvars.ContextVar("compiler_cancel_check", default=None)
@@ -43,6 +54,7 @@ def background_thread():
 @contextmanager
 def _slot():
     acquired = []
+    queued = time.monotonic()
     gates = ([_BACKGROUND_SLOTS] if getattr(_SCHEDULING, 'background', False) else []) + [_SLOTS]
     try:
         for gate in gates:
@@ -52,6 +64,7 @@ def _slot():
             acquired.append(gate)
         if check := _CANCEL_CHECK.get():
             check()
+        compile_timing.add('queue', time.monotonic() - queued)
         yield
     finally:
         for gate in reversed(acquired):
@@ -122,7 +135,7 @@ class CompilerConfig:
     linux_vm: bool = False  # Linux-only compiler on macOS, isolated local VM jobs
     assembly_preprocess: tuple[str, ...] = ()
     assembly_compile: tuple[str, ...] = ()
-    identity: tuple | None = None  # coordinator's project/function/target snapshot; enables in-flight sharing
+    identity: tuple | None = None  # coordinator's project/function/target snapshot; enables in-flight sharing and scoped object reuse
 
 
 @dataclass
@@ -259,29 +272,66 @@ def _workspace(prefix):
         yield temporary
 
 
+def _stable_inputs(inputs, staged_names=()):
+    staged_names = set(staged_names)
+    for part in inputs:
+        # Translation phase two removes line splices before macro expansion.
+        text = part.replace(b'\\\r\n', b'').replace(b'\\\n', b'')
+        if any(word in text for word in (b'__TIME__', b'__DATE__', b'__TIMESTAMP__',
+                                        b'__FILE__', b'__BASE_FILE__', b'__has_include', b'##', b'%:%:', b'??')):
+            return False
+        text = text.replace(b'%:', b'#')
+        text = _COMMENTS_AND_STRINGS.sub(
+            lambda match: ' ' if match.group().startswith('/') else match.group(),
+            text.decode('utf-8', errors='replace')).encode()
+        for directive in re.finditer(rb'(?m)^\s*#\s*(include(?:_next)?|import)\b([^\n]*)', text):
+            include = re.match(rb'\s*"([^"\n]+)"', directive[2])
+            if directive[1] == b'include_next' or include is None or include[1] not in staged_names:
+                return False
+    return True
+
+
+def _captured_include_paths(command):
+    for index, arg in enumerate(command):
+        if arg == '-I' and command[index+1:index+2] == ['{include}']:continue
+        if arg == '-I{include}':continue
+        if arg.startswith(('-I', '-include', '-imacros', '-isystem', '-iquote', '-idirafter',
+                           '-iprefix', '-iwithprefix', '-Wp,', '/I', '/FI', '@')):
+            return False
+    return True
+
+
 def compile_source(cfg: CompilerConfig, context_header: str, source: str, trusted: bool = False) -> CompileResult:
     """Compile one function's C with the project's compiler in the sandbox, with the shared header as context.h.
     Agents' C (not `trusted`) is checked first. C++ is tried for what doesn't compile as C when the toolchain builds
     both."""
+    compile_timing.add('requests', 1)
+    if check := _CANCEL_CHECK.get():check()
     if not trusted:
         try:
             check_source(source)
         except SourceRejected as e:
             return CompileResult(False, None, f"rejected: {e}")
 
-    with _workspace("decompnet-") as tmp:
+    from contextlib import nullcontext
+    session = compile_sessions.current() if cfg.identity is not None and _ARTIFACT_SINK.get() is None else None
+    setup_started = time.monotonic()
+    prepared = session.prepare(cfg, context_header) if session else None
+    if prepared is None:session = None
+    with nullcontext(prepared) if session else _workspace("decompnet-") as tmp:
         work = Path(tmp)
         inc = work / "include"
-        inc.mkdir()
-        for d in cfg.include_dirs:
+        if not session:inc.mkdir()
+        for d in (() if session else cfg.include_dirs):
             shutil.copytree(d, inc, dirs_exist_ok=True)
-        for header in inc.rglob("*"):
+        for header in (() if session else inc.rglob("*")):
             if header.is_file() and header.suffix.lower() in (".h", ".hpp", ".hxx", ".inc", ".inl"):
                 data = header.read_bytes()
                 if b"\r\n" in data:  # old GCCs don't continue a macro before CRLF, even in copied headers
                     header.write_bytes(data.replace(b"\r\n", b"\n"))
         # LF on every platform: to the old GCCs a backslash before CRLF doesn't continue a line ("stray '\' in program")
-        (inc / "context.h").write_text(context_header, encoding="utf-8", newline="\n")
+        if not session:(inc / "context.h").write_text(context_header, encoding="utf-8", newline="\n")
+        compile_timing.add('setup', time.monotonic() - setup_started)
         root = _root(cfg, work)
         def build():
             result = _compile_as(cfg, work, root, source, "c")
@@ -293,12 +343,13 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
                     result = cpp
             return result
         # Capture the actual staged headers, configuration and environment, never a guessed source-only key.
-        # Explicit cancellation and artifact readers need their own process/private directory.
-        share = cfg.identity is not None and _ARTIFACT_SINK.get() is None and _CANCEL_CHECK.get() is None
-        staged = [(str(path.relative_to(inc)).encode(), path.read_bytes()) for path in sorted(inc.rglob('*')) if path.is_file()] if share else []
+        # Cancellable searches reuse only their own completed results; artifact readers always run privately.
+        share = cfg.identity is not None and _ARTIFACT_SINK.get() is None and (_CANCEL_CHECK.get() is None or session is not None)
+        staged = (session.staged if session else [(str(path.relative_to(inc)).encode(), path.read_bytes()) for path in sorted(inc.rglob('*')) if path.is_file()]) if share else []
         intrinsic = importlib.import_module(cfg.intrinsics).header().encode() if share and cfg.intrinsics else b''
         inputs = [source.encode(), cfg.prelude.encode(), intrinsic, *(part for entry in staged for part in entry)]
-        if share and not any(word in part for part in inputs for word in (b'__TIME__',b'__DATE__',b'__TIMESTAMP__')):
+        if share and _captured_include_paths(cfg.cmd) and _stable_inputs(
+                [*inputs, *(arg.encode() for arg in cfg.cmd)], [name for name, _ in staged]):
             from .compile_sharing import run as shared_compile
             digest = hashlib.sha256(repr((cfg, sorted(os.environ.items()))).encode())
             for part in inputs:
@@ -309,7 +360,17 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
                 if os.path.isabs(arg) and Path(arg).is_file():
                     st = Path(arg).stat()
                     digest.update(repr((arg, st.st_size, st.st_mtime_ns)).encode())
-            result = shared_compile(digest.digest(), build)
+            key = digest.digest()
+            if check := _CANCEL_CHECK.get():check()
+            result = session.get(key) if session else None
+            if result is not None:
+                compile_timing.add('cache_hits', 1)
+            elif session:
+                result = build()
+                if check := _CANCEL_CHECK.get():check()
+                session.put(key, result)
+            else:
+                result = shared_compile(key, build)
         else:
             result = build()
         if sink := _ARTIFACT_SINK.get():
@@ -331,7 +392,8 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     (work / "func.o").unlink(missing_ok=True)
     try:
         with _slot():
-            proc = _exec(cfg, work, argv, cfg.timeout,
+            with span("compile_execute"), compile_timing.phase("execute"):
+                proc = _exec(cfg, work, argv, cfg.timeout,
                          **({"outputs": ["func.o"], "stage": root} if _sandbox_mode(cfg) in ("wsl", "linux-vm") else {}))
     except subprocess.TimeoutExpired:
         return CompileResult(False, None, f"compiler timed out after {cfg.timeout}s")

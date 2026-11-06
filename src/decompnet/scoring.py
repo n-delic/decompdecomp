@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import capstone
 
-from . import arch
+from . import arch, compile_sessions
 from .elfobj import FunctionObj, mask_relocs
 
 PENALTY_STACKDIFF = 1
@@ -262,12 +262,27 @@ def compact_asm(text: str) -> str:
     return "\n".join(out)
 
 
+def _prepared_target(target):
+    session = compile_sessions.current()
+    if session is None or len(target.code) > 65536:
+        return disassemble(target), target.fingerprint()
+    # Key all fields actually used by disassembly/fingerprinting, including relocation
+    # symbol names and CPU variants. Never cache candidate instructions as target state.
+    key = (target.name, target.arch, target.big_endian, target.cpu, bytes(target.code),
+           tuple(r.key() for r in target.relocs))
+    if key not in session.instructions:
+        session.instructions[key] = (disassemble(target), target.fingerprint())
+        while len(session.instructions) > 8:session.instructions.popitem(last=False)
+    return session.instructions[key]
+
+
 def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
-    t_ins, c_ins = disassemble(target), disassemble(candidate, target.cpu)  # (a candidate is the target's processor)
+    t_ins, target_fingerprint = _prepared_target(target)
+    c_ins = disassemble(candidate, target.cpu)  # a candidate is the target's processor
     max_score = max(1, len(t_ins)) * PENALTY_INSERTION
-    bytes_match = target.fingerprint() == candidate.fingerprint()
+    bytes_match = target_fingerprint == candidate.fingerprint()
 
     sm = difflib.SequenceMatcher(a=[i.mnemonic for i in t_ins], b=[i.mnemonic for i in c_ins], autojunk=False)
     rows: list[tuple[str, str, str]] = []
