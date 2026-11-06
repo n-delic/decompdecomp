@@ -30,7 +30,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, console_python
 
-from ..limits import CompilerMemoryWatchdog, capped, killed_for_memory, stop_group
+from ..limits import CompilerMemoryWatchdog, attach_job, capped, killed_for_memory, stop_group
 from ..network import NetworkError
 from . import objdiff
 
@@ -466,6 +466,7 @@ class ForkProject:
                                     creationflags=NO_WINDOW, start_new_session=os.name != "nt")
         except FileNotFoundError:
             return False, f"{cmd[0]} isn't installed"
+        attach_job(proc)
         try:
             with CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
                 out, seen, quiet = [], collections.Counter(), 0

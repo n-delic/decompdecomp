@@ -150,6 +150,7 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
                             start_new_session=os.name != "nt")
+    limits.attach_job(proc)
     started = time.monotonic()
     try:
         with limits.CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:

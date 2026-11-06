@@ -117,9 +117,38 @@ def compiler_time_limit() -> float:
         return 300
 
 
+def attach_job(proc) -> None:
+    """Keep a Windows driver's children addressable after the driver itself exits."""
+    if os.name != 'nt':
+        return
+    import ctypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    kernel.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    kernel.AssignProcessToJobObject.restype = ctypes.c_int
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    job = kernel.CreateJobObjectW(None, None)
+    if not job:
+        return
+    if not kernel.AssignProcessToJobObject(job, int(proc._handle)):
+        kernel.CloseHandle(job)
+        return
+    proc._decomp_job = job
+
+
 def stop_group(proc) -> None:
     """Stop a tool and descendants launched in their own process group."""
     if os.name == 'nt':
+        if job := getattr(proc, '_decomp_job', None):
+            import ctypes
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel.TerminateJobObject(job, 1)
+            kernel.CloseHandle(job)
+            proc._decomp_job = None
+            return
         from .hostenv import stop_process_tree
         stop_process_tree(proc)
         return
