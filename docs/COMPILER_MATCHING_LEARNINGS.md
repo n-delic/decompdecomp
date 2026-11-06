@@ -5007,3 +5007,37 @@ excluded for internal temporary-type randomization;441 judgments passing these s
 no improvement/exact. The screens do not prove semantic equivalence. These limits and negative results stay explicit. Private
 current-seed-nov6 reports retain the full accounting; no generated game code is
 included here.
+
+### Verified repair: guarded call values after an interface correction
+
+A copied KMC GCC 2.7.2 menu caller (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
+acquired unwanted masks when its drawing declaration was corrected to actual
+byte count/mode parameters. The captured unsigned-halfword value was compared
+equal to one before the calls. Propagating that proven value into six arguments
+restored exact linked bytes: 825 to 0, with ordinary/diagnostic parity. This
+repairs an existing matched caller during a contract correction; it is not an
+additional game function match.
+
+The shared `guarded_call_value` family preserves the guard, loads, captures and
+calls. It substitutes only unescaped narrow automatic values in a true braced
+arm without writes or alternate label entry. A leading same-width copy can
+carry the fact. An unchanged signed32 comparison operand may supply the value;
+a dominating pure constant capture is inlined as its original cast expression,
+without assuming pointer/integer conversions preserve numeric values. Unknown
+macros, reflection, qualifiers, shadows and unsupported control/data flow give
+no proposal. The bounded common pipeline independently reproduced exact bytes
+on the copied case; every proposal still uses the ordinary compiler/judge.
+
+The surrounding 50-source interface correction passed a complete 12,582,912-byte
+cartridge comparison, preserving all 2,071 profiles and the other 2,021 selected
+objects. The open caller improved 950 to 750, not exact. Integer colour formals
+with byte stores worked for register arguments, but a stack alpha formal had to
+remain byte-sized to preserve LBU rather than LW. Promoting two other stack byte
+parameters with new locals or entry assignments changed homes/allocation and
+failed. Public opaque-pointer parameters with new early view initializers also
+changed scheduling; casts at existing dereferences preserved those exact objects.
+Do not copy a selected callee's prototype blindly or change every caller's
+narrowing without checking its actual argument preparation. Four scale arguments
+needed same-offset floating field reads, not numeric int-to-float conversions.
+Direct-call and literal-reference audits do not prove all dynamic indirect uses
+or every reconstructed object's memory model.

@@ -1096,3 +1096,18 @@ layout assertions in the actual compiler input; a syntax-only model may bypass
 only the known incompatible assertion. Do not alter genuine padding or infer a
 period ABI from the modern checker. Syntax acceptance does not replace linking
 and the exact-byte judge.
+
+A corrected narrow callee formal can add an ANDI even when a branch proves the
+argument equals one. Keep the capture and condition; a proven, unescaped local
+value can be propagated into the call. The `guarded_call_value` local family
+tries bounded safe cases, including a leading same-width copy. Never replace a
+fresh memory read merely because a similar earlier field was one. A copied
+caller recovered exact bytes this way after a prototype correction (825 to 0).
+
+When reconciling interfaces, inspect actual caller argument preparation too.
+Byte-only stores can admit integer formals with explicit byte conversions, but
+stack parameter types affect LBU versus LW and home placement. New pointer-view
+initializers can change scheduling; casts at existing accesses may preserve it.
+For an actual floating scale argument loaded through an integer field view, fix
+the field/read type, not by numerically converting the loaded integer. Recheck
+all affected callers and the cartridge before accepting a coordinated correction.

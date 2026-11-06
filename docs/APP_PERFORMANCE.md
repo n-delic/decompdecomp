@@ -222,3 +222,17 @@ and ordinary/diagnostic period-compiler checks preserve all1560 linked baseline
 bytes. The separately bounded search found no new exact match. No general speedup
 or match-rate improvement is inferred; the verified gain is access to previously
 hidden memory/address expressions.
+
+### Guarded values before spending agent turns
+
+Deterministic search now offers `guarded_call_value` in both ROM and imported
+project modes on supported 32-bit C targets. It keeps captures and conditions,
+then tries a value already established by a dominating equality in direct call
+arguments. It also follows a leading same-width local copy and can reuse an
+unchanged comparison operand. Unknown writes, escapes, shadows, macros, labels
+inside the arm, reflected types and unsupported ABIs stop the proposal.
+
+A copied caller with corrected byte parameters went from 825 to exact without
+an agent edit using this family. This is a controlled replay of an existing
+match, not a new game match or a claim about agent token savings. Ordinary and
+diagnostic outputs agreed. Search budgets and exact acceptance remain unchanged.

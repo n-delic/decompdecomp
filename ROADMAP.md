@@ -2887,3 +2887,9 @@ need independent evidence before receiving this specific GNU C repair.
   two-argument byte-field accessors, including nested reads and assignment lvalues.
   Ambiguous preprocessing and unsupported templates stay opaque; this is not a
   replacement C preprocessor or an automatic match guarantee.
+
+- Done: `guarded_call_value` offers bounded equality-proven local values in direct
+  call arguments through the shared deterministic pipeline and agent variants.
+  ROM and imported projects share the supported 32-bit C proof; unknown ABIs and
+  ambiguous source remain untouched. A copied prototype-correction replay recovered
+  exact bytes, without counting an additional game match.

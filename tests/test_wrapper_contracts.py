@@ -80,7 +80,8 @@ def test_claim_hint_does_not_query_callees(monkeypatch):
     monkeypatch.setattr(draft_reports, 'read', lambda *_: {})
     monkeypatch.setattr(draft_reports, 'summary', lambda *_: '')
     monkeypatch.setattr(claim_state, 'current', lambda *_: 'claim')
-    net = SimpleNamespace(store=SimpleNamespace(one=lambda *_: {'slug': 'sample', 'name': 'Sample'}))
+    net = SimpleNamespace(store=SimpleNamespace(
+        one=lambda sql, *_: {'slug': 'sample', 'name': 'Sample'} if 'FROM projects' in sql else None))
     fn = dict(id=1, project_id=7, status='open', name='stub', matched_source=None,
               best_source=SOURCE, seed=None, unit='', size=28)
     text = claim_state.brief(net, fn, SimpleNamespace(id=2), 'CLAIMED')
