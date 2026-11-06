@@ -5174,3 +5174,35 @@ CP0 privilege checks and hazards still apply: this is not an arbitrary CP0
 selector, processor fence, general inlined ordering guarantee, or interrupt
 atomic section. The complete-leaf seed checks encoded words, contiguity and the
 registered backend; normal linked judging remains mandatory.
+
+### A Status-write leaf needs more evidence than its extra NOP
+
+A retained four-instruction SDK leaf has `mtc0 a0,$12; nop; jr ra; nop`.
+A private fixed-operation prototype supplying only `mtc0 %0,$12`, with a
+compiler-selected input and a memory clobber, produced three instructions:
+`mtc0 a0,$12; jr ra; nop`. KMC-compatible GCC 2.7.2 with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` emitted the same 12 bytes in ordinary and
+`-da` compilation; the 16-byte target did **not** match. No intrinsic or automatic
+seed was shipped from this experiment, and no source was accepted.
+
+[NEC VR4300 manual, chapter 19](https://hack64.net/docs/VR43XX.pdf#page=622)
+describes hazards in terms of the dependent instruction and changed Status bits.
+It forbids MFC0 immediately after MTC0 and gives separate intervals for CU users,
+ERET and interrupt effects (table 19-2, printed page 624). This does not establish
+a universal one-NOP-before-return rule. The actual caller sets CU1 and reaches
+its FCSR access after intervening instructions; that call sequence alone does
+not establish a reusable standalone write barrier. Do not add a NOP just because
+it occurs in a target, or describe a memory clobber as a processor hazard barrier.
+Whether an original assembler hazard policy or another compiler profile explains
+the extra NOP remains unproven; this bounded negative is not an exhaustive claim
+that no C representation can match. No unsupported flag matrix was run.
+A future Status-write intrinsic needs an independently specified completion
+contract, including privilege/mode changes and the permitted following users.
+
+There is a narrower untested lead: the same manual's printed page 622,
+caution 2, warns that setting ITS immediately before a jump or branch causes
+a multi-instruction stall. An independently defined write-before-return spacing
+operation could address that specific case without claiming general Status
+completion. The current caller's CU1 change does not prove the original
+assembler's intent. Audit this branch-spacing contract separately before adding
+any instruction; the operation-only negative above does not settle it.
