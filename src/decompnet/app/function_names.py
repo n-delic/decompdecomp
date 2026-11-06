@@ -14,7 +14,8 @@ BUILTIN_NAMES = frozenset("memcpy memmove memset memcmp memchr strlen strchr str
 
 
 def generated(name: str) -> bool:
-    return bool(_GENERATED.fullmatch(name))
+    # Overlay/unit suffixes are arbitrary labels appended to an automatic address name.
+    return name.startswith(("func_", "_func_")) or bool(_GENERATED.fullmatch(name))
 
 
 def check_rename(old: str, new: str):
