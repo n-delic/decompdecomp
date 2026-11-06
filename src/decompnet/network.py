@@ -518,9 +518,18 @@ class Network:
             return rows[0]
         raise NetworkError("several projects exist; pass `project` (its slug)")
 
+    @staticmethod
+    def _function_reference(name: str, project: str | None):
+        """Claim labels include the project; @unit paths are part of a stored function name."""
+        prefix, separator, local = name.partition("/")
+        if separator and "@" not in prefix and (project is None or prefix == project):
+            return local, prefix
+        return name, project
+
     def _function(self, name: str, project: str | None):
-        if project is None and "/" in name and "@" not in name.split("/", 1)[0]:  # project/name (fork names hold units)
-            project, name = name.split("/", 1)
+        local, scope = self._function_reference(name, project)
+        if project is None:
+            name, project = local, scope
         if project is None:
             rows = self.store.all("SELECT * FROM functions WHERE name=?", name)
             if len(rows) > 1:
@@ -531,6 +540,12 @@ class Network:
                 "SELECT f.* FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=?",
                 project, name,
             )
+            # Preserve exact stored names before interpreting a copied project/name label.
+            if row is None and local != name:
+                row = self.store.one(
+                    "SELECT f.* FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=?",
+                    project, local,
+                )
         if row is None:
             raise NetworkError(f"no function {name!r}" + (f" in {project!r}" if project else ""))
         return row

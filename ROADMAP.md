@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: copied `project/function` claim labels resolve with an explicit matching project,
+  including imported `symbol@unit` paths and ordinary alias/held-claim selection.
+  Exact stored names, project isolation and ambiguous-name errors retain precedence.
+
 - Done: bounded independent integer/function-address setup permutations before visible
   loops and labels reach shared local, autopilot, deep/iterative, donor and replay paths
   for proven macro-free direct C32 GCC invocations.

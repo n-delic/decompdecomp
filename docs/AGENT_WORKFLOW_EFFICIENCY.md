@@ -4,6 +4,15 @@ These changes address repeated patterns in recorded app exchanges. They do not m
 exact-byte ROM judge, imported-project objdiff verdicts, or turn agent reports into proofs.
 The transcript sample predates these changes; it is not a performance benchmark of this build.
 
+## Function references copied from claims
+
+Tools accept a claim heading's `project/function` label even when the request already
+supplies that same project. Exact stored names are checked first, so path-like names
+remain intact. The prefix must match an explicit project; it never redirects a request
+to another project. Imported `symbol@unit/path` identities keep their unit suffix, and
+plain aliases still require an unambiguous function or the existing held-claim selection.
+This resolves names only: claim ownership, candidate revisions and exact judging are unchanged.
+
 ## Empty queues
 
 `claim_function` returns a compact `Work availability` JSON receipt when no eligible work is

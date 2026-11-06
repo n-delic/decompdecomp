@@ -264,6 +264,7 @@ class Core(Network):
         """Functions an agent may mean by a name that isn't stored as such: the plain symbol of a function whose
         name repeats across a fork's files (stored as symbol@unit), symbol@unit for one that doesn't repeat,
         Class::method, a name with its parameter list or in quotes."""
+        name, project = self._function_reference(name, project)
         try:
             proj = self._project(project)
         except NetworkError:

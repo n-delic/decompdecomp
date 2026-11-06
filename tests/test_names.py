@@ -66,3 +66,48 @@ def test_a_plain_name_means_the_function_the_agent_works_on(net):
     other, _ = net.local_agent("agent-2")
     with pytest.raises(NetworkError):
         net.resolve_function(other, "game", "fn_1_16F0")
+
+
+@pytest.mark.parametrize('name', ['fn_1_17958', 'fn_1_16F0@mdsingdll/REL/mdsingdll/mdsing',
+                                  'fn_1_17958@mdsing', 'Player::Update'])
+def test_claim_labels_work_with_an_explicit_project(net, name):
+    """Claim headings print project/name; tools already know the same project."""
+    agent, _ = net.local_agent('reader')
+    expected = net._function(name, 'game')['id']
+    assert net._function('game/' + name, 'game')['id'] == expected
+    assert tools._named(net, agent, 'game', {'function': 'game/' + name})['function'] == net._function(name, 'game')['name']
+
+
+def test_qualified_names_retain_ambiguity_and_claim_selection(net):
+    agent, _ = net.local_agent('reader')
+    with pytest.raises(NetworkError, match='different files'):
+        net._function('game/fn_1_16F0', 'game')
+    full = 'fn_1_16F0@mdsingdll/REL/mdsingdll/mdsing'
+    net.claim_row(agent, 'game', full)
+    assert net.resolve_function(agent, 'game', 'game/fn_1_16F0') == full
+    assert net.claim_row(agent, 'game', 'game/' + full)['name'] == full
+    other, _ = net.local_agent('other-reader')
+    with pytest.raises(NetworkError, match='different files'):
+        net.resolve_function(other, 'game', 'game/fn_1_16F0')
+
+
+def test_qualification_never_switches_an_explicit_project(net):
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,root,config) VALUES('other','Other','.', '{}')")
+    for query in ('game/fn_1_17958', 'game/Player::Update', 'game/fn_1_16F0@mdsing'):
+        with pytest.raises(NetworkError):
+            net._function(query, 'other')
+    assert net._function('game/fn_1_17958', None)['name'] == 'fn_1_17958'
+    assert net._function('fn_1_16F0@mdsingdll/REL/mdsingdll/mdsing', None)['unit'].startswith('mdsingdll/')
+
+
+def test_exact_stored_path_names_take_precedence(net):
+    from decompnet.network import Network
+
+    pid = net._project('game')['id']
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, 'game/fn_1_17958', 4, 1, 'open', 'path'))
+    for lookup in (net._function, lambda name, project: Network._function(net, name, project)):
+        assert lookup('game/fn_1_17958', 'game')['unit'] == 'path'
+        assert lookup('game/fn_1_16F0@mdsingdll/REL/mdsingdll/mdsing', 'game')['unit'].startswith('mdsingdll/')
