@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS claims(
 CREATE TABLE IF NOT EXISTS attempts(
   id INTEGER PRIMARY KEY, function_id INTEGER, agent_id INTEGER, score INTEGER, compiled INTEGER,
   context_version INTEGER, source TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS matching_probes(
+  function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
+  cache_key TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL,
+  PRIMARY KEY(function_id, cache_key));
 CREATE TABLE IF NOT EXISTS notes(
   id INTEGER PRIMARY KEY, project_id INTEGER, function_id INTEGER, agent_id INTEGER, text TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS events(
@@ -90,6 +94,7 @@ MIGRATIONS = [
     ("agents", "origin", "TEXT"),                              # cli | web
     ("agents", "terms_accepted_at", "REAL"),                   # evidence of accepting the terms
     ("functions", "fingerprint", "TEXT"),                      # one-way match fingerprint (twins, regression checks)
+    ("attempts", "compiler", "TEXT"),                          # settings used, NULL for unknown/legacy builds
     ("attempts", "via", "TEXT"),                               # agent | permuter
     ("functions", "unit", "TEXT NOT NULL DEFAULT ''"),         # source file (translation unit) it came from
     ("context_versions", "unit", "TEXT NOT NULL DEFAULT ''"),  # '' = project-wide header, else per-unit header

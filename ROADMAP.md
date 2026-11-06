@@ -31,6 +31,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | ✓ (RTTI, vtables) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Cross-agent stall diagnostics | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Bounded initializer field probes | ROM MIPS | ROM MIPS | ✓ EE-GCC replay | — | ROM MIPS | — | — | — | — | — | — |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Pieces of functions joined to their function | — | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -106,6 +108,16 @@ Where to start on a gap:
   weren't tried); what's missing is opening a save's best attempts in a new copy of the project.
 
 ## Recently done
+
+- **Stalled matching searches.** Briefs report cross-agent stalls (24 attempts by default; project config
+  `matching_stall_budget`, clamped to 8–256) and compiler provenance for newly recorded direct ROM attempts, autopilot and the permuter.
+  The ROM permuter rechecks the saved best under the active compiler before mutating it. If it does not reproduce,
+  the turn stops with a diagnostic. Small stalled functions can enter a bounded layout search outside the normal
+  near-miss cutoff: at most sixteen pointer/integer field combinations, with unchanged offsets, within the same
+  60-second turn. Negative probes and up to three alternate sources persist across restarts; header, compiler,
+  target and symbol changes invalidate them. An instruction-order metric keeps useful alternatives without changing
+  the exact-match judge. A controlled private PS2 replay found an exact match in four layout compiles plus the
+  baseline check; this is not a fresh-agent or model-comparison benchmark. Unsupported source shapes are skipped.
 
 - **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
@@ -561,6 +573,17 @@ Where to start on a gap:
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### Extend stalled-search recovery
+
+PROJECT mode has cross-agent stall briefs, but field probes and automatic baseline provenance checks need the
+source file's actual compiler recipe and a layout-safe edit within its headers; standalone ROM declarations cannot
+be transplanted into those builds. ARM/Thumb GBA and 64-bit ROM layout probes still need ABI-specific verification;
+32-bit MIPS probes use the shared ROM path, with compiler-backed verification currently on EE-GCC. Historical
+attempts and non-direct build paths can have unknown compiler provenance. Add exact recipe capture there rather
+than guessing from current settings. Reopen exhausted permuter budgets when new build evidence arrives, and add
+operator-configured model escalation; this change recommends a diagnostic handoff without changing model spending.
+Evaluate on held-out functions and compare exact matches, total compiles, elapsed time and model cost.
 
 ### Your own compiler for GameCube, Wii and DS
 

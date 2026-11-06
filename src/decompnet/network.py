@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agents, scoring
+from . import agents, matching_search, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
@@ -944,6 +944,7 @@ class Network:
             elif fn["seed"]:
                 lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
+        lines += matching_search.history(self.store, fn, own, cfg.get("matching_stall_budget", 24))
         notes = self.notes_for_brief(fn)
         if notes:
             lines += ["", "### Notes from previous agents on this function", *notes]
@@ -1003,17 +1004,18 @@ class Network:
         key = self.compile_key(fn, ctx["header"], str(ctx["version"]), proj["config"] or "", source)
         if not scratch and (again := self.repeat_of(key, agent, fn)) is not None:
             return again
+        provenance = compiler_for(json.loads(proj["config"]), fn["vram"])
         result = self._compile(proj, ctx["header"], source, fn)
 
         if not result.ok:
-            self._record(fn, agent, None, source, ctx["version"])
+            self._record(fn, agent, None, source, ctx["version"], compiler=provenance)
             text = f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}"
             self.remember_compile(key, agent, fn, text, None)
             return {"text": text, "score": None, "matched": False}
 
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:
-            self._record(fn, agent, None, source, ctx["version"])
+            self._record(fn, agent, None, source, ctx["version"], compiler=provenance)
             text = (f"❌ Compiled, but the object has no function named `{fn['name']}`. "
                     f"Define it with exactly that name (non-static).")
             self.remember_compile(key, agent, fn, text, None)
@@ -1024,7 +1026,7 @@ class Network:
         matched_now = d.bytes_match and not scratch
         last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
-        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now)
+        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, compiler=provenance)
         self.keep_diff(agent.id, fn["id"], d.rows)
 
         if scratch:
@@ -1176,12 +1178,13 @@ class Network:
                 f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
-                compiled: bool | None = None, via: str = "agent"):
+                compiled: bool | None = None, via: str = "agent", compiler: dict | None = None):
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         with self.store.tx() as db:
-            db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via))
+            db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via,compiler) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via,
+                                                   matching_search.compiler_stamp(compiler)))
             db.execute("UPDATE functions SET attempts=attempts+1 WHERE id=?", (fn["id"],))
             if score is not None:
                 db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=? "
