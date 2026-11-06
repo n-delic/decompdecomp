@@ -1196,6 +1196,9 @@ class Autosave:
                 if deep:
                     self.deep_check_after[row["slug"]] = time.monotonic() + 15
                 self.retry_after.pop(row['slug'], None)
+                if json.loads(row['config']).get('auto_commit_matches'):
+                    from . import match_commits
+                    match_commits.process(self.net, row['slug'], logger or log.info)
             except _AutosavePaused:
                 raise
             except Exception as error:  # keep other projects saving; do not flood logs every second
