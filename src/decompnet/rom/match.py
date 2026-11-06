@@ -319,17 +319,22 @@ class _Linker:
         if length <= 0:
             return
         mine = bytearray(sec.data()[off:off + length])
-        for at, rtype, s in self._relocs_in(shndx):  # relocated words inside the data, e.g. jump tables
-            at -= off
-            if rtype != R_MIPS_32 or not 0 <= at <= length - 4:
+        # Helpers are verified like data, but their calls need the same REL/RELA addend decoding
+        # and instruction patching as calls in the submitted function.
+        raw = raw_relocs(self.elf, shndx, off, length, bytes(mine))
+        for k, r in enumerate(raw):
+            at, rtype = r["off"], r["type"]
+            if rtype not in (R_MIPS_32, R_MIPS_26) or not 0 <= at <= length - 4:
                 continue
-            dest, own = self._pointee(s, int.from_bytes(mine[at:at + 4], self.target.order))
+            s = r["symtab"].get_symbol(r["symidx"])
+            dest, own = self._pointee(s, section_target("mips", raw, k))
             if own is not None:
                 dest = self.local_map.get(own)
             if dest is None:
                 self.problem(f"can't place a pointer inside your data at {sec.name}+0x{off + at:X}")
                 return
-            mine[at:at + 4] = (dest & 0xFFFFFFFF).to_bytes(4, self.target.order)
+            word = int.from_bytes(mine[at:at + 4], self.target.order)
+            mine[at:at + 4] = _patch(word, rtype, dest).to_bytes(4, self.target.order)
         n = self.significant(bytes(mine), addr, self.widths.get((shndx, off)))
         rom = self.read(addr, n)
         if rom is None:
