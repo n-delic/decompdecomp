@@ -556,7 +556,7 @@ class Permuter:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set():
                         break
                     if random_safety.unsafe_update(fn['best_source'], cand):
-                        continue  # do not promote a newly nested compound-update chain
+                        continue  # reject introduced update chains or empty constant-loop scaffolding
                     lineage = getattr(cand, 'lineage', None)
                     cand = m2cfix.static_helpers(cand)  # (a global helper would not link: m2cfix.py)
                     st.add(variants=1)

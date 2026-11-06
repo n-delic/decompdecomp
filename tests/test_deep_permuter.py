@@ -653,3 +653,24 @@ def test_deep_search_has_the_same_earned_complementary_sequence_limits(monkeypat
     assert best==0 and tested==sources[1:]
     assert search.local_status['sequence_evaluations']==2
     assert deep_permuter.repair_sequences.MAX_STEPS==4
+
+
+@pytest.mark.parametrize('imported', [False, True])
+def test_deep_search_skips_empty_padding_before_judge_but_keeps_nonempty_blocks(monkeypatch, imported):
+    net = setup(monkeypatch, imported)
+    monkeypatch.setattr(draft_repairs, 'variants', lambda *a, **kw: [])
+    parent = net.function()['best_source']
+    padded = parent.replace('return', 'do {} while (0); return')
+    useful = parent.replace('return b * 2;', 'do { b += a; } while(0); return b * 2;')
+    seen = []
+    def judge(self, agent, proj, fn, source, best, fork):
+        seen.append(source)
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=0,best_source=?,status='matched' WHERE id=?", (source,fn['id']))
+        return 0
+    monkeypatch.setattr(Permuter, '_score', judge)
+    batches(monkeypatch, [padded, useful])
+    result = deep_permuter.run(net, 'game', 'f', 1, 10, Log())
+    assert result['matched'] and seen == [useful]
+    assert net.function()['best_source'] == useful
+    assert net.store.one('SELECT COUNT(*) n FROM claims')['n'] == 0

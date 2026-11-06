@@ -2829,3 +2829,9 @@ need independent evidence before receiving this specific GNU C repair.
   reads only the saved report, without hydrating alternatives or the full brief;
   reviewed/historical reports do not attach to a different candidate. Reports
   remain hypotheses and never block work or automatically select source.
+
+- Shared random and deep search reject newly introduced empty literal-zero do
+  loops before judging them. Existing empty wrappers, genuine nonempty blocks
+  and dynamic-condition waits remain available. This prevents alignment-only
+  scaffolding from being retained as an apparent improvement; it is a bounded
+  source-shape guard, not a C equivalence checker or ban on block rewrites.

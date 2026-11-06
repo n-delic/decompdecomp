@@ -107,3 +107,8 @@ trials on the reported revision. An explicitly linked corrected alternative can
 be selected with `get_candidate(base="reported_corrected")`, then inspected and
 rejudged. A historical lower score does not prove a valid source model. Reports
 remain advisory and do not pause work or automatically replace source.
+
+Do not add empty constant-loop scaffolding merely to alter compiler layout.
+Random/deep search rejects newly introduced literal-zero empty do loops, while
+preserving existing wrappers, real nonempty blocks and dynamic waits. A lower
+score from artificial scaffolding is not a useful source reconstruction.
