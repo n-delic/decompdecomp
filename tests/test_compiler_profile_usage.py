@@ -26,3 +26,18 @@ def test_usage_counts_effective_profiles_in_project_with_range_precedence():
     assert "WHERE project_id=?" in calls[0][0]
     cfg["compiler"]["flags"] = ["-O2"]
     assert CompilerMixin.compiler_profile_usage(engine, {"id": 7})[0]["flags"] == ["-O2"]
+
+
+def test_profile_usage_indexes_legacy_overrides_once_instead_of_scanning_per_function():
+    class Overrides(dict):
+        scans=0
+        def values(self):
+            self.scans+=1
+            return super().values()
+    overrides=Overrides({str(n):dict(function=f'f{n}',vram=100,toolchain='gcc',flags=[f'-O{n%3}']) for n in range(100)})
+    cfg=dict(compiler=dict(toolchain='gcc',flags=['-O2']),function_compilers=overrides)
+    rows=[dict(name=f'f{n}',vram=100,rom_offset=None,status='open') for n in range(100)]
+    engine=SimpleNamespace(cfg=lambda _:cfg,store=SimpleNamespace(all=lambda *args:rows))
+    usage=CompilerMixin.compiler_profile_usage(engine,{'id':1})
+    assert overrides.scans==1
+    assert sorted(p['functions'] for p in usage)==[33,33,34]

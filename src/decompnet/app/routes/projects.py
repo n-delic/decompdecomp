@@ -245,7 +245,9 @@ def register(app: App) -> None:
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
         answer is old. POST: check again now (the survey and the applied ranges)."""
         if request.method == "POST" and data.get("all_installed"):
-            if net.fork_slug(slug):
+            with net.progress.view():
+                fork=net.fork_slug(slug)
+            if fork:
                 raise NetworkError("This comparison currently needs a ROM-mode project.")
             if type(data.get("auto_apply", False)) is not bool:
                 raise NetworkError("Auto-apply must be true or false.")

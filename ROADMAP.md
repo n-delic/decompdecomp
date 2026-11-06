@@ -3053,3 +3053,7 @@ ABI analysis and automatic source/profile selection remain planned.
 Portable-save Git setup shares the Save location panel. Create repository adds Git metadata and an allowlist `.gitignore`; Commit saved progress creates the initial local checkpoint without unrelated files. A remembered backup is adopted for ongoing progress only after its contents agree with the current save. Imported projects can add origin and push their source checkout; creating source checkouts and per-unit automatic commits remains planned.
 
 - Done: explicit Autopilot runs bypass the background CPU lane using dedicated coordinator and compile threads. Clicking during an automatic run promotes its existing reusable-code pass rather than queuing or duplicating it; automatic runs retain background pacing.
+
+- Done: compiler comparison starts from DB snapshots without implicit saved-file rechecks
+  or cold compiler-map builds; identity-aware linear profile counting, per-tool runtime probes,
+  streamed eligibility/content batches and visible timed preparation preserve comparison reuse.

@@ -14,6 +14,14 @@ function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
   wireCompilerResultCounts(box);
   const set = (key, text) => { box.querySelector(`[data-${key}]`).textContent = text; };
   const tally = result || progress;
+  if(progress?.phase==='preparation' && !result){
+    set('queue',progress.stage || 'Preparing compiler comparison');
+    const bar=box.querySelector('[data-queue-bar]');bar.removeAttribute('value');
+    set('current',progress.stage || 'Preparing…');
+    set('tested',`${Math.floor(progress.elapsed || 0)}s preparing`);
+    set('profile','Reading current project inputs. Saved-file synchronization continues separately.');
+    return;
+  }
   if (progress?.phase === 'eligibility' && !result) {
     const checked = progress.checked || 0, total = progress.scan_total || 0;
     const percent = total ? Math.round(100 * checked / total) : 0;
@@ -25,9 +33,10 @@ function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
     return;
   }
   const total = tally?.total, completed = result ? result.tried : (progress?.completed || 0);
-  set("queue", total == null ? "Preparing eligibility checks…" : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} queued for another run` : ""}`);
+  set("queue", total == null ? (progress?.function ? `${completed} functions done · discovering remaining functions…` : "Preparing comparison…") : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} queued for another run` : ""}`);
   const queueBar = box.querySelector("[data-queue-bar]");
-  queueBar.max = total || 1; queueBar.value = completed || 0;
+  queueBar.max = total || 1;
+  if(total==null)queueBar.removeAttribute('value');else queueBar.value=completed || 0;
   if (!progress && !result) {
     box.dataset.improved = "false";
     set("current", "Preparing…"); set("tested", "Waiting for the first result");
@@ -67,8 +76,9 @@ function renderSingleCompilerProgress(box, progress, result) {
   const set = (key, value) => { box.querySelector(`[data-${key}]`).textContent = value; };
   set('current', progress?.function || box.dataset.function || 'Preparing…');
   const tested = tally?.tested || 0, total = progress?.combinations || c?.tested || 0;
-  set('tested', total ? `${tested.toLocaleString()} / ${total.toLocaleString()} compiler and flag combinations · ${Math.round(100 * tested / total)}%` : 'Counting compiler and flag combinations…');
-  const bar = box.querySelector('[data-bar]'); bar.max = total || 1; bar.value = tested;
+  set('tested', progress?.phase==='preparation' ? progress.stage : total ? `${tested.toLocaleString()} / ${total.toLocaleString()} compiler and flag combinations · ${Math.round(100 * tested / total)}%` : 'Counting compiler and flag combinations…');
+  const bar = box.querySelector('[data-bar]'); bar.max = total || 1;
+  if(progress?.phase==='preparation')bar.removeAttribute('value');else bar.value=tested;
   set('before', tally?.before == null ? '—' : `${tally.before.toFixed(2)}%`);
   set('best', tally?.best == null ? '—' : `${tally.best.toFixed(2)}%`);
   set('single-exact', c?.exact_matches ?? progress?.exact_matches_current ?? 0);
