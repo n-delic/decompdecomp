@@ -464,3 +464,69 @@ def test_library_shortlists_shared_fingerprints_before_fetching_source(library,m
     monkeypatch.setattr(net.twins,'_attempt_twin',lambda *args,**kwargs:('match','verified'))
     assert lib.reuse(net.twins,net.project_row('game2'))==1
     assert queried==['same-code']
+
+
+def test_library_detail_retains_locations_and_default_name(library):
+    net,lib=library
+    lib.backfill();fid=lib.summary()['items'][0]['id']
+    data=lib.detail(fid)
+    assert {r['name'] for r in data['occurrences']}=={'f1','f2'}
+    assert all(r['vram']==4096 and r['available'] for r in data['occurrences'])
+    assert 'source' not in data and 'header' not in data
+    lib.set_name(fid,'shared_function')
+    lib.backfill()
+    assert lib.summary('shared_function')['items'][0]['name']=='shared_function'
+    assert lib.summary('f2')['items'][0]['name']=='shared_function'
+    net.remove_project('game1')
+    assert not next(r for r in lib.detail(fid)['occurrences'] if r['name']=='f1')['available']
+    assert lib.detail(fid)['name']=='shared_function'
+    with pytest.raises(Exception,match='C identifier'):lib.set_name(fid,'bad name')
+
+
+def test_apply_library_name_uses_checked_rename_and_reports_conflicts(library,monkeypatch):
+    from decompnet.network import NetworkError
+    net,lib=library
+    lib.backfill();fid=lib.summary()['items'][0]['id'];calls=[]
+    def rename(agent,slug,old,new,message):
+        calls.append((slug,old,new))
+        if slug=='game1':raise NetworkError('Name already used')
+        return '✅ Renamed'
+    monkeypatch.setattr(net,'rename_symbol',rename)
+    result=lib.apply_name(fid,'shared_function')
+    assert calls==[('game1','f1','shared_function'),('game2','f2','shared_function')]
+    assert result['results'][0]['message']=='Name already used'
+    assert result['results'][1]['message']=='✅ Renamed'
+    assert lib.detail(fid)['name']=='shared_function'
+
+
+def test_library_name_does_not_rename_replaced_function(library,monkeypatch):
+    net,lib=library
+    lib.backfill();fid=lib.summary()['items'][0]['id']
+    monkeypatch.setattr(net.twins,'prints',lambda proj:{})
+    monkeypatch.setattr(net,'rename_symbol',lambda *a,**k:pytest.fail('Must not rename an unrelated function'))
+    result=lib.apply_name(fid,'shared_function')
+    assert all('unavailable' in r['message'] for r in result['results'])
+
+
+def test_library_drawer_includes_current_names_after_project_rename(library):
+    net,lib=library
+    lib.backfill();fid=lib.summary()['items'][0]['id']
+    with net.store.tx() as db:db.execute("UPDATE functions SET name='better_name' WHERE id=1")
+    rows=lib.detail(fid)['occurrences']
+    assert any(r['name']=='f1' and not r['available'] for r in rows)
+    assert any(r['name']=='better_name' and r['available'] and r['vram']==4096 for r in rows)
+
+
+def test_library_drawer_and_apply_include_separate_copies_of_same_game(library,monkeypatch):
+    net,lib=library
+    lib.backfill();fid=lib.summary()['items'][0]['id']
+    # Give both loaded projects the same archived game identity, as two copies of one ROM do.
+    with lib.connect() as db:lib_key=db.execute("SELECT id FROM games WHERE slug='game1'").fetchone()['id']
+    monkeypatch.setattr(lib,'game_key',lambda proj:lib_key)
+    with net.store.tx() as db:db.execute("UPDATE functions SET name='f1' WHERE id=2")
+    rows=lib.detail(fid)['occurrences']
+    assert {r['slug'] for r in rows if r['available']}=={'game1','game2'}
+    calls=[]
+    monkeypatch.setattr(net,'rename_symbol',lambda agent,slug,*args:calls.append(slug) or '✅ Renamed')
+    lib.apply_name(fid,'shared_function')
+    assert sorted(calls)==['game1','game2']

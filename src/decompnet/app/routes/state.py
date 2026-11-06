@@ -46,9 +46,21 @@ def register(app: App) -> None:
     async def api_match_library(request):
         if bad := guard(request, write=request.method=='POST'):
             return bad
-        if request.method=='POST':
-            return JSONResponse({'job':jobs.start('Index verified match library', net.match_library.backfill)})
-        return JSONResponse(await call(net.match_library.summary, str(request.query_params.get('search',''))[:200]))
+        try:
+            if request.method=='POST':
+                data=await body(request)
+                if data.get('action') in ('name','apply-name'):
+                    fid=int(data['id']);name=await call(net.match_library.set_name,fid,data.get('name',''))
+                    if data['action']=='apply-name':
+                        return JSONResponse({'job':jobs.start('Apply library function name',
+                            lambda log:net.match_library.apply_name(fid,name,log))})
+                    return JSONResponse({'name':name})
+                return JSONResponse({'job':jobs.start('Index verified match library', net.match_library.backfill)})
+            if request.query_params.get('id'):
+                return JSONResponse(await call(net.match_library.detail,int(request.query_params['id'])))
+            return JSONResponse(await call(net.match_library.summary, str(request.query_params.get('search',''))[:200]))
+        except (ValueError,KeyError,NetworkError) as error:return fail(error)
+
 
 
     @mcp.custom_route('/api/database-cleanup', methods=['GET','POST'])
