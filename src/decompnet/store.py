@@ -337,6 +337,16 @@ class _ThreadReader:
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
+        from .writer_gate import WriterGate
+        self.writer_gate=WriterGate(self.path)
+        try:
+            with self.writer_gate.hold():
+                self._initialize()
+        except BaseException:
+            if hasattr(self,'conn'):self.conn.close()
+            raise
+
+    def _initialize(self):
         from .payload_storage import Connection
         self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None,factory=Connection)
         self.conn.row_factory = sqlite3.Row
@@ -555,43 +565,47 @@ class Store:
 
     @contextmanager
     def try_tx(self):
-        """Optional bookkeeping only: yield None rather than queue behind another writer.
-
-        Reuse normal transaction rollback/commit semantics. Only acquisition BUSY is
-        optional; errors from the body or commit must still reach the caller.
-        """
-        if not self.lock.acquire(blocking=False):
-            yield None
-            return
-        try:
-            cursor = self.conn.execute('PRAGMA busy_timeout')
-            timeout = cursor.fetchone()[0]; cursor.close()
-            self.conn.execute('PRAGMA busy_timeout=0').close()
+        """Optional bookkeeping never queues behind a local or remote writer."""
+        callbacks=[]
+        with self.writer_gate.hold(blocking=False) as admitted:
+            if not admitted:
+                yield None
+                return
+            if not self.lock.acquire(blocking=False):
+                yield None
+                return
             try:
-                with ExitStack() as stack:
-                    try:
-                        db = stack.enter_context(self.tx())
-                    except sqlite3.OperationalError as error:
-                        if getattr(error, 'sqlite_errorcode', 0) & 255 != sqlite3.SQLITE_BUSY:
-                            raise
-                        yield None
-                        return
-                    yield db
-            finally:
-                self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
-        finally:
-            self.lock.release()
+                cursor=self.conn.execute('PRAGMA busy_timeout')
+                timeout=cursor.fetchone()[0];cursor.close()
+                self.conn.execute('PRAGMA busy_timeout=0').close()
+                try:
+                    with ExitStack() as stack:
+                        try:db=stack.enter_context(self._transaction(callbacks))
+                        except sqlite3.OperationalError as error:
+                            if getattr(error,'sqlite_errorcode',0) & 255 != sqlite3.SQLITE_BUSY:raise
+                            yield None
+                            return
+                        yield db
+                finally:self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
+            finally:self.lock.release()
+        for callback in callbacks:callback()
 
     @contextmanager
     def tx(self, *, wait=None):
-        """Serialized transaction; optional cancellable waiting retries only lock acquisition.
+        """Wait outside SQLite for cooperating writers, then execute the body exactly once.
 
-        Ordinary acquisition uses its configured busy timeout in short attempts, releasing
-        the local mutex between external-writer waits. Never replay a transaction body.
-        Nested transactions still join the enclosing one.
+        wait can report/cancel acquisition. Raw external SQLite writers retain their
+        configured busy timeout; transaction bodies and commits are never replayed.
         """
+        callbacks=[]
+        with self.writer_gate.hold(wait=wait):
+            with self._transaction(callbacks,wait=wait) as db:
+                yield db
+        for callback in callbacks:callback()
+
+    @contextmanager
+    def _transaction(self,callbacks,*,wait=None):
         from .request_timing import timed_lock
-        callbacks = []
         deadline = None
         while True:
             busy=False
@@ -622,14 +636,15 @@ class Store:
                     self._local.after_commit = []
                     try:
                         yield self.conn
+                        self.conn.execute("COMMIT")
                     except BaseException:
-                        self.conn.execute("ROLLBACK")
+                        if self.conn.in_transaction:self.conn.execute("ROLLBACK")
                         self._local.after_commit = []
                         raise
                     finally:
                         self._local.in_tx = False
-                    self.conn.execute("COMMIT")
-                    callbacks, self._local.after_commit = self._local.after_commit, []
+                    callbacks.extend(self._local.after_commit)
+                    self._local.after_commit = []
             if not busy:break
             # No transaction or process-local writer lock is held while reporting/cancelling.
             if wait is not None:
@@ -641,8 +656,6 @@ class Store:
                     raise busy_error
                 delay=min(.05,remaining)
             time.sleep(delay)
-        for callback in callbacks:
-            callback()
 
     def after_commit(self, callback):
         """Publish external derived evidence only after its enclosing write succeeds."""

@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: app and permuter SQLite writers share OS-backed admission before BEGIN, including
+  schema initialization, match-library writes and maintenance. Waiting leaves readers and
+  the local connection mutex free; optional bookkeeping stays nonblocking, cancellation and
+  process-exit recovery release admission, and commit failures roll back without replay.
+
 - Done: saved-progress metadata scans read function status once, import missing historical
   evidence in cancellable batches and hash shared headers once per scan. Recovery indexes
   historical donors by address while retaining target, relocation, ABI and exact-byte checks.

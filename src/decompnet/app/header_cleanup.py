@@ -115,7 +115,7 @@ def compact(net, log):
     log.check_cancel()
     log.progress({'phase': 'Compacting database · writes wait until this finishes'})
     before = disk_bytes(path)
-    with store.lock:
+    with store.writer_gate.hold(wait=log.check_cancel),store.lock:
         log.check_cancel()
         store.conn.set_progress_handler(lambda: int(getattr(log, 'cancel_event', None) is not None and log.cancel_event.is_set()), 1000)
         try:

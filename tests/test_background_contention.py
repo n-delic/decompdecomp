@@ -14,6 +14,8 @@ def isolated_clocks(monkeypatch):
     # These tests fake sleeps/CPU clocks while earlier integration tests may still
     # have cleanup threads. Never replace functions on the shared stdlib module.
     from decompnet.app import twins
+    # Fake monotonic clocks must not inherit an earlier test's real-time yield stamp.
+    monkeypatch.setattr(maintenance._local,'yielded',float('-inf'),raising=False)
     for module in (maintenance, saves, twins):
         monkeypatch.setattr(module, 'time', SimpleNamespace(
             monotonic=time.monotonic, thread_time=time.thread_time,

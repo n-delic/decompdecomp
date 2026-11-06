@@ -101,12 +101,12 @@ def test_optional_transaction_rolls_back_body_errors_and_restores_timeout(identi
 def test_optional_transaction_propagates_non_busy_acquisition_errors(identity, monkeypatch):
     net, _, _ = identity
     @contextmanager
-    def broken():
+    def broken(*args,**kwargs):
         error = sqlite3.OperationalError('misuse')
         error.sqlite_errorcode = sqlite3.SQLITE_LOCKED
         raise error
         yield
-    monkeypatch.setattr(net.store, 'tx', broken)
+    monkeypatch.setattr(net.store, '_transaction', broken)
     before = net.store.conn.execute('PRAGMA busy_timeout').fetchone()[0]
     with pytest.raises(sqlite3.OperationalError, match='misuse'):
         with net.store.try_tx():
