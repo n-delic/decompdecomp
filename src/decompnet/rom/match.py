@@ -163,7 +163,6 @@ class _Linker:
         self.target_at = {off: (rtype, addr) for off, rtype, addr in target.relocs}
         self.data: dict[tuple[int, int], int] = {}  # every datum of its own the candidate uses -> ROM address
         self.widths: dict[tuple[int, int], int | None] = {}  # bytes the code loads from it (None: its address is used)
-        self._data_relocs: dict[int, list] = {}
         self.words: list[int] = []
         self.fn_shndx = None
         # the $gp the assembler assumed (.reginfo's ri_gp_value): a $gp-relative reference to the object's own data
@@ -244,18 +243,6 @@ class _Linker:
 
     # ------------------------------------------------------------------ the candidate's own data
 
-    def _relocs_in(self, shndx: int):
-        """(offset, type, symbol) of relocations inside one of the candidate's data sections."""
-        if shndx not in self._data_relocs:
-            out = []
-            for rsec in self.elf.iter_sections():
-                if isinstance(rsec, RelocationSection) and rsec["sh_info"] == shndx:
-                    rsym = self.elf.get_section(rsec["sh_link"])
-                    out += [(rel["r_offset"], rel["r_info_type"], rsym.get_symbol(rel["r_info_sym"]))
-                            for rel in rsec.iter_relocations()]
-            self._data_relocs[shndx] = sorted(out, key=lambda x: x[0])
-        return self._data_relocs[shndx]
-
     def extent(self, shndx: int, off: int) -> int:
         """Length of the datum at `off`: up to the next symbol or the next place this candidate uses (period
         assemblers don't record sizes; string literals have no symbol at all)."""
@@ -286,22 +273,54 @@ class _Linker:
             return None, None
         return None, (s["st_shndx"], in_sec)
 
+    def pointer_relocs(self, shndx: int, off: int, data: bytes) -> list[dict]:
+        """Pointers in data or a helper body; keep paired instruction addends together before patching either."""
+        raw = raw_relocs(self.elf, shndx, off, len(data), data)
+        for r in raw:
+            if r["type"] in (R_MIPS_HI16, R_MIPS_LO16) and not r["rela"]:
+                paired = any(q["symidx"] == r["symidx"] and q["symtab"] is r["symtab"] and
+                             ((r["type"] == R_MIPS_HI16 and q["type"] == R_MIPS_LO16 and q["off"] > r["off"]) or
+                              (r["type"] == R_MIPS_LO16 and q["type"] == R_MIPS_HI16 and q["off"] < r["off"]))
+                             for q in raw)
+                if not paired:
+                    self.problem(f"unpaired HI16/LO16 relocation inside your data at section {shndx}+0x{off + r['off']:X}")
+        return raw
+
     def place_pointees(self) -> None:
-        """Data the candidate's data points at (a table of strings) goes where the ROM's pointers point."""
+        """Place nested data from ROM pointers, including HI16/LO16 addresses in a submitted helper body."""
         todo = list(self.data)
         while todo:
             shndx, off = todo.pop()
-            if self.elf.get_section(shndx)["sh_type"] == "SHT_NOBITS":
+            sec = self.elf.get_section(shndx)
+            if sec["sh_type"] == "SHT_NOBITS":
                 continue
             addr, length = self.data[(shndx, off)], self.extent(shndx, off)
-            data = self.elf.get_section(shndx).data()
-            for at, rtype, s in self._relocs_in(shndx):
-                if rtype != R_MIPS_32 or not off <= at <= off + length - 4:
+            data = sec.data()[off:off + length]
+            raw = self.pointer_relocs(shndx, off, data)
+            # Read just the relocation words: a region's trailing alignment need not be present in the ROM.
+            linked = []
+            for r in raw:
+                word = self.read(addr + r["off"], 4)
+                linked.append({**r, "rela": False, "available": word is not None and len(word) == 4,
+                               "value": int.from_bytes(word or b"", self.target.order) &
+                               (0xFFFF if r["type"] in (R_MIPS_HI16, R_MIPS_LO16) else 0xFFFFFFFF)})
+            for k, r in enumerate(raw):
+                if r["type"] not in (R_MIPS_32, R_MIPS_HI16, R_MIPS_LO16):
                     continue
-                _, own = self._pointee(s, int.from_bytes(data[at:at + 4], self.target.order))
-                if own is None or own in self.data or (rom := self.read(addr + at - off, 4)) is None:
+                value = section_target("mips", raw, k)
+                _, own = self._pointee(r["symtab"].get_symbol(r["symidx"]), value)
+                if own is None or not linked[k]["available"]:
                     continue
-                self.local_map[own] = self.data[own] = int.from_bytes(rom, self.target.order)
+                if r["type"] in (R_MIPS_HI16, R_MIPS_LO16) and any(
+                        not q["available"] for q in linked if q["symidx"] == r["symidx"] and
+                        q["symtab"] is r["symtab"] and q["type"] in (R_MIPS_HI16, R_MIPS_LO16)):
+                    continue
+                dest = section_target("mips", linked, k) & 0xFFFFFFFF
+                if own in self.data:
+                    if self.data[own] != dest:
+                        self.problem(f"{sec.name}+0x{off + r['off']:X} points to conflicting ROM addresses")
+                    continue
+                self.local_map[own] = self.data[own] = dest
                 self.widths[own] = None
                 todo.append(own)
 
@@ -319,17 +338,19 @@ class _Linker:
         if length <= 0:
             return
         mine = bytearray(sec.data()[off:off + length])
-        for at, rtype, s in self._relocs_in(shndx):  # relocated words inside the data, e.g. jump tables
-            at -= off
-            if rtype != R_MIPS_32 or not 0 <= at <= length - 4:
+        raw = self.pointer_relocs(shndx, off, bytes(mine))
+        for k, r in enumerate(raw):
+            at, rtype = r["off"], r["type"]
+            if rtype not in (R_MIPS_32, R_MIPS_HI16, R_MIPS_LO16) or not 0 <= at <= length - 4:
                 continue
-            dest, own = self._pointee(s, int.from_bytes(mine[at:at + 4], self.target.order))
+            dest, own = self._pointee(r["symtab"].get_symbol(r["symidx"]), section_target("mips", raw, k))
             if own is not None:
                 dest = self.local_map.get(own)
             if dest is None:
                 self.problem(f"can't place a pointer inside your data at {sec.name}+0x{off + at:X}")
                 return
-            mine[at:at + 4] = (dest & 0xFFFFFFFF).to_bytes(4, self.target.order)
+            word = int.from_bytes(mine[at:at + 4], self.target.order)
+            mine[at:at + 4] = _patch(word, rtype, dest).to_bytes(4, self.target.order)
         n = self.significant(bytes(mine), addr, self.widths.get((shndx, off)))
         rom = self.read(addr, n)
         if rom is None:

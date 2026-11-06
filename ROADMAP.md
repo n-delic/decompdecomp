@@ -14,6 +14,9 @@ local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Int
 Mac and retail-game verification remain planned; Apple Silicon checks use the
 homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
 
+The MIPS ROM judge now relocates HI16/LO16 address pairs inside submitted helper bodies and verifies their
+nested jump tables against the ROM. Incorrect helper instructions and table entries still reject the candidate.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
