@@ -206,7 +206,7 @@ def test_failed_diagnostic_learns_only_explicit_requested_rejected_option(tmp_pa
     from types import SimpleNamespace
     net,agent,fn=game(tmp_path);calls=[]
     monkeypatch.setattr(net,'_context',lambda *a:{'header':''})
-    monkeypatch.setattr('decompnet.project.compiler_config',lambda *a:None)
+    monkeypatch.setattr('decompnet.project.compiler_config',lambda *a:SimpleNamespace())
     def compile(*a):
         calls.append(1)
         return SimpleNamespace(ok=False,log="cc1: Invalid option `-unsupported'\nignored suggestion: -another")
