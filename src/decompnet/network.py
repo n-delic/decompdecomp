@@ -639,7 +639,8 @@ class Network:
             lines.append(f"{len(yours)} you said no C makes: {', '.join(yours[:10])}{', ...' if len(yours) > 10 else ''}. "
                          f"Your verdict is counted; each is set aside once {NOT_C_AGENTS} agents of {NOT_C_MODELS} "
                          "models agree, or when the user sets it aside. Don't claim them again.")
-        if not held and len(waiting) == n_open:
+        if not held and len(yours) == n_open:  # (its own verdict on each: another's, an agent that only released
+            # them for now is still the second opinion they wait for)
             self._tell_user_verdicts_wait(proj, waiting)
             lines.append("Every open function is waiting on that verdict, and the user has been told: there's nothing "
                          "left for you here. Stop working on this project.")

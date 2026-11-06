@@ -281,6 +281,11 @@ def test_an_agent_isnt_handed_back_what_it_said_no_c_makes_and_the_user_hears_wh
     assert len(told) == 1 and told[0]["detail"].startswith("piece: waiting for you. 2 agents (claude-opus-5-5)")
     other, _ = net.local_agent("claude-sonnet-5-5-1")  # another model can still look
     assert net.claim_row(other, "game", None, "easiest")["name"] == "piece"
+    # and when it released the function for now, it isn't told to stop: its verdict is the one they wait for
+    net.release(other, "piece", "", "game")
+    assert net.claim_row(other, "game", None, "easiest") is None
+    said = net.nothing_to_claim(other, net.project_row("game"))
+    assert "Stop working on this project" not in said and "you released yourself" in said, said
 
 
 def test_a_set_aside_function_the_user_gives_back_stays_open(tmp_path, monkeypatch):
