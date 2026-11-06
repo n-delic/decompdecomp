@@ -421,6 +421,20 @@ class Network:
         self._context_trial_locks = {}
         self._compiled: OrderedDict[str, dict] = OrderedDict()  # compile_key -> result, for repeat_of
 
+    def project_store(self, project: int | str) -> Store:
+        """Select operational storage explicitly, by catalog ID or slug.
+
+        During the storage-boundary refactor every project still uses the legacy
+        file. Callers must keep this Store for the whole operation, including its
+        lock, read cache, transaction and after-commit callbacks. No thread-local
+        selection: background workers can operate on different projects at once.
+        Shared identities, settings and project discovery continue to use store.
+        """
+        if not ((type(project) is int and project > 0) or
+                (isinstance(project, str) and project.strip())):
+            raise ValueError("Project storage needs a positive catalog ID or a nonempty slug.")
+        return self.store
+
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
@@ -521,13 +535,18 @@ class Network:
 
     def _project(self, slug: str | None):
         if slug:
-            row = self.store.one("SELECT * FROM projects WHERE slug=?", slug)
+            row = self.project_store(slug).one("SELECT * FROM projects WHERE slug=?", slug)
             if row is None:
                 raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
             return row
         rows = self.store.all("SELECT * FROM projects")
         if len(rows) == 1:
-            return rows[0]
+            row = rows[0]
+            store = self.project_store(row["id"])
+            selected = row if store is self.store else store.one("SELECT * FROM projects WHERE id=?", row["id"])
+            if selected is None:
+                raise NetworkError(f"Project {row['slug']!r} is missing from its database. Restore it from backup.")
+            return selected
         raise NetworkError("several projects exist; pass `project` (its slug)")
 
     @staticmethod
@@ -548,13 +567,14 @@ class Network:
                 raise NetworkError(f"{name!r} exists in several projects; pass `project`")
             row = rows[0] if rows else None
         else:
-            row = self.store.one(
+            store = self.project_store(project)
+            row = store.one(
                 "SELECT f.* FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=?",
                 project, name,
             )
             # Preserve exact stored names before interpreting a copied project/name label.
             if row is None and local != name:
-                row = self.store.one(
+                row = store.one(
                     "SELECT f.* FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=?",
                     project, local,
                 )
@@ -565,19 +585,21 @@ class Network:
     def _context(self, project_id: int, unit: str | None = ""):
         """Latest header for a translation unit, falling back to the project-wide one. Real codebases have
         one header set per source file; small projects just have the project-wide header ('' unit)."""
+        store = self.project_store(project_id)
         unit = unit or ""
         def latest():
-            row = self.store.one("SELECT * FROM context_versions WHERE project_id=? AND unit=? "
+            row = store.one("SELECT * FROM context_versions WHERE project_id=? AND unit=? "
                                  "ORDER BY version DESC LIMIT 1", project_id, unit)
             if row is None and unit:
-                row = self.store.one("SELECT * FROM context_versions WHERE project_id=? AND unit='' "
+                row = store.one("SELECT * FROM context_versions WHERE project_id=? AND unit='' "
                                      "ORDER BY version DESC LIMIT 1", project_id)
             return row
-        return self.store.read_cache.get(('latest-context',project_id,unit),
-                                         self.store.read_version('scope_context',project_id),latest)
+        return store.read_cache.get(('latest-context',project_id,unit),
+                                         store.read_version('scope_context',project_id),latest)
 
     def _unit_contexts(self, project_id: int) -> set[str]:
-        return {r["unit"] for r in self.store.all(
+        store = self.project_store(project_id)
+        return {r["unit"] for r in store.all(
             "SELECT DISTINCT unit FROM context_versions WHERE project_id=? AND unit != ''", project_id)}
 
     def _effective_unit(self, fn, units: set[str]) -> str:
@@ -644,7 +666,8 @@ class Network:
 
     def remember_compile(self, key: str, agent: Agent, fn, text: str, score: int | None) -> None:
         """A compile's result (without its move-on line), for repeat_of."""
-        n = self.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?", fn["id"],
+        store = self.project_store(fn["project_id"])
+        n = store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?", fn["id"],
                            agent.id)["n"]
         self._compiled[key] = {"text": text, "score": score, "agent_id": agent.id, "n": n, "at": time.time(),
                                "diff": self._last_diffs.get((agent.id, fn["id"])) if score is not None else None}
@@ -745,7 +768,7 @@ class Network:
         file needs the function)."""
         if function:
             fn = self._function(function, project)
-            proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+            proj = self.project_store(fn["project_id"]).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
             ctx = self._context(proj["id"], fn["unit"])
         else:
             proj = self._project(project)
@@ -905,12 +928,12 @@ class Network:
 
     def set_selection(self, project: str, agent: str, policy: dict | None) -> dict:
         policy = self.validate_selection(policy)
-        with self.store.tx() as db:
+        with self.project_store(project).tx() as db:
             db.execute("INSERT OR REPLACE INTO agent_selection VALUES(?,?,?)", (project, agent, json.dumps(policy)))
         return policy
 
     def selection(self, project: str, agent: str) -> dict:
-        row = self.store.one("SELECT policy FROM agent_selection WHERE project=? AND agent=?", project, agent)
+        row = self.project_store(project).one("SELECT policy FROM agent_selection WHERE project=? AND agent=?", project, agent)
         return json.loads(row["policy"]) if row else {}
 
     def agent_stall_budget(self, fn, agent=None, agent_id=None):
@@ -920,13 +943,14 @@ class Network:
         if agent is None:
             return None
         name = agent.name if isinstance(agent, Agent) else agent['name']
-        project = self.store.one("SELECT slug FROM projects WHERE id=?", fn['project_id'])
+        project = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn['project_id'])
         return self.selection(project['slug'], name).get('stall_compiles')
 
     def attempt_limit(self, agent: Agent, fn) -> tuple[int | None, int]:
-        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        store = self.project_store(fn["project_id"])
+        slug = store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         limit = self.selection(slug, agent.name).get("max_tries")
-        used = self.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?",
+        used = store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?",
                               fn["id"], agent.id)["n"] if limit is not None else 0
         return limit, used
 
@@ -943,8 +967,9 @@ class Network:
     def attempt_turn(self, agent: Agent, fn):
         # A CLI can submit parallel tool calls: serialize this worker's candidates so two submissions cannot
         # both spend the last allowed try. Never hold the database write lock while compiling.
+        store = self.project_store(fn["project_id"])
         from .request_timing import timed_lock
-        with timed_lock(self.store.lock,'write_lock_wait'):
+        with timed_lock(store.lock,'write_lock_wait'):
             lock = self._attempt_locks.setdefault((agent.id, fn["id"]), threading.RLock())
         with timed_lock(lock,'candidate_lock_wait'):
             self.ensure_agent_active(agent)
@@ -953,15 +978,16 @@ class Network:
 
     def check_attempt_limit(self, agent: Agent, fn) -> None:
         """Candidate submissions (including compile errors) count across sessions, per worker and function."""
+        store = self.project_store(fn["project_id"])
         if fn["status"] != "open":
             return  # polishing and reads of matched code have their own queue
         limit, used = self.attempt_limit(agent, fn)
         if limit is None or used < limit:
             return
-        held = self.store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
+        held = store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
         if held:
             Network.release(self, agent, fn["name"], f"User's max tries reached ({used}/{limit}); best attempt retained.",
-                            self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"])
+                            store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"])
         raise NetworkError(f"Max tries reached for {fn['name']} ({used}/{limit}). Your work is saved. "
                            "Call claim_function for another function, or ask the user to raise the limit.")
 
@@ -1014,12 +1040,14 @@ class Network:
 
     def sdk_functions(self, proj) -> dict:
         """Recorded SDK identities; identification is separate from a verified C match."""
-        return self.store.read_cache.get(('recorded-sdk', proj['id']), self.store.read_version('naming', proj['id']),
+        store = self.project_store(proj["id"])
+        return store.read_cache.get(('recorded-sdk', proj['id']), store.read_version('naming', proj['id']),
                                          lambda: self._recorded_sdk_functions(proj))
 
     def _recorded_sdk_functions(self, proj):
+        store = self.project_store(proj["id"])
         out = {}
-        for row in self.store.all("SELECT id,meta FROM functions WHERE project_id=? AND "
+        for row in store.all("SELECT id,meta FROM functions WHERE project_id=? AND "
                                   "json_extract(meta, '$.naming.method')='sdk_signature'", proj["id"]):
             naming = json.loads(row["meta"])["naming"]
             out[row["id"]] = {"names": [naming.get("source_name") or naming["name"]],
@@ -1213,15 +1241,16 @@ class Network:
         counts one more give-up (the claim order puts those later). `not_c`: the agent found no C makes its code
         (NOT_C_AGENTS)."""
         fn = self._function(function, project)
+        store = self.project_store(fn["project_id"])
         if not_c and not notes.strip():
             raise NetworkError("say in notes why no C makes it: the next agents and the user read it")
         progress = self.claim_progress(agent, fn)
-        with self.store.tx() as db:
+        with store.tx() as db:
             row = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
             if row is None or row["agent_id"] != agent.id:
                 raise NetworkError(f"you don't hold a claim on {fn['name']}")
             from .app import agent_review
-            review_facts = (agent_review.facts(self,self.store.one('SELECT * FROM projects WHERE id=?',fn['project_id']),fn)
+            review_facts = (agent_review.facts(self,store.one('SELECT * FROM projects WHERE id=?',fn['project_id']),fn)
                             if agent_review.CONCERN.search(notes) or agent_review.load(self,agent_review.PREFIX+str(fn['id'])) else None)
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
@@ -1272,13 +1301,14 @@ class Network:
         26 functions, each confirmed by six agents in turn) gets them out of the way when it's checked again. Never a
         function the user gave back. Returns how many."""
         pid = self._project(slug)["id"]
+        store = self.project_store(pid)
         said: dict[int, dict] = collections.defaultdict(dict)
         # notes from before pieces were joined to a function were about a piece, not about it (decompdecomp's note
         # on a join says so): they don't count
-        joined = {r["function_id"]: r["t"] for r in self.store.all(
+        joined = {r["function_id"]: r["t"] for r in store.all(
             "SELECT n.function_id, MAX(n.created_at) AS t FROM notes n JOIN agents a ON a.id=n.agent_id WHERE "
             "n.project_id=? AND a.name='decompdecomp' AND n.text LIKE '%joined%' GROUP BY n.function_id", pid)}
-        for r in self.store.all("SELECT n.function_id, n.text, n.created_at, a.name FROM notes n JOIN agents a "
+        for r in store.all("SELECT n.function_id, n.text, n.created_at, a.name FROM notes n JOIN agents a "
                                 "ON a.id=n.agent_id JOIN functions f ON f.id=n.function_id WHERE f.project_id=? AND "
                                 "f.status='open' AND (f.meta IS NULL OR f.meta NOT LIKE '%\"reopened\"%') ORDER BY n.id",
                                 pid):
@@ -1288,7 +1318,7 @@ class Network:
             said[r["function_id"]][r["name"]] = {"model": model_of(r["name"]), "why": r["text"][:NOTE_CHARS],
                                                  "t": r["created_at"], "from": "note"}
         n = 0
-        with self.store.tx() as db:
+        with store.tx() as db:
             for fid, verdicts in said.items():
                 models = sorted({v["model"] for v in verdicts.values()})
                 if len(verdicts) < NOT_C_AGENTS or len(models) < NOT_C_MODELS:
@@ -1311,13 +1341,14 @@ class Network:
         word needs no agents agreeing (theirs is the project); "Give it back to the agents" undoes it. Never
         "matched": only the judge says that."""
         fn = self._function(function, project)
+        store = self.project_store(fn["project_id"])
         if fn["status"] != "open":
             raise NetworkError(f"{fn['name']} isn't open (it's {fn['status']}): only an open function can be set aside")
         why = why.strip() or "no C makes it"
         meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k != "reopened"}
         meta["not_c"] = {**meta.get("not_c", {}), "you": {"model": "you", "why": why[:NOTE_CHARS], "t": time.time()}}
         meta["asm_code"] = f"you set it aside: {why}"
-        with self.store.tx() as db:
+        with store.tx() as db:
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
             self._event(db, fn["project_id"], None, "not_c", f"{fn['name']}: set aside by you ({why[:120]})")
@@ -1343,8 +1374,9 @@ class Network:
         """The user gives a set-aside function back to the agents (they think C makes it after all): the agents'
         verdicts on it are forgotten, and no check sets it aside again."""
         fn = self._function(function, project)
+        store = self.project_store(fn["project_id"])
         meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k not in ("not_c", "asm_code", "asm_twin", "verified_assembly")}
-        with self.store.tx() as db:
+        with store.tx() as db:
             db.execute("UPDATE functions SET status='open', meta=? WHERE id=? AND status='asm'",
                        (json.dumps({**meta, "reopened": True}), fn["id"]))
             self._event(db, fn["project_id"], None, "reopen", f"{fn['name']}: open again (you gave it back to the agents)")
@@ -1384,12 +1416,13 @@ class Network:
         return self._brief(self._function(function, project), agent, header="VIEW")
 
     def _brief(self, fn, agent: Agent | None, header: str) -> str:
+        store = self.project_store(fn["project_id"])
         from .app import claim_state
         if header == "CLAIMED" and agent and claim_state.fast():
             return claim_state.brief(self,fn,agent,header)
-        proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+        proj = store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         ctx = self._context(proj["id"], fn["unit"])
-        claim = self.store.one("SELECT * FROM claims WHERE function_id=?", fn["id"])
+        claim = store.one("SELECT * FROM claims WHERE function_id=?", fn["id"])
         from . import candidate_quality
         lines = [f"## {header}: {proj['slug']}/{fn['name']}",
                  f"size {fn['size']} bytes, {fn['n_insns']} instructions, arch {proj['arch']}, "
@@ -1444,12 +1477,13 @@ class Network:
 
     def notes_for_brief(self, fn, best_text: str = "", show: int | None = None, when: bool = True) -> list[str]:
         """A function's notes for its brief (brief_notes), with when its best score was first reached."""
-        rows = self.store.all("SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
+        store = self.project_store(fn["project_id"])
+        rows = store.all("SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
                               f"WHERE n.function_id=? AND n.text != 'Deep permutation turn ended; improvements shared.' "
                               f"ORDER BY n.created_at DESC,n.id DESC LIMIT {BRIEF_NOTES * 8}", fn["id"])
         best_at = None
         if fn["status"] != "matched" and fn["best_score"] is not None:
-            row = self.store.one("SELECT MIN(created_at) AS t FROM attempts WHERE function_id=? AND score=?",
+            row = store.one("SELECT MIN(created_at) AS t FROM attempts WHERE function_id=? AND score=?",
                                  fn["id"], fn["best_score"])
             best_at = row["t"] if row else None
         from .search_notes import useful
@@ -1483,13 +1517,14 @@ class Network:
     def _attempt_unlimited(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         """Compile, score and record one attempt. Returns {"text", "score", "matched"} (score None: didn't compile)."""
         fn = self._function(function, project)
-        proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+        store = self.project_store(fn["project_id"])
+        proj = store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         now = time.time()
 
         self.check_attempt_limit(agent, fn)
 
         # Claim bookkeeping first: you can't score (or get credit) on someone else's function.
-        with self.store.tx() as db:
+        with store.tx() as db:
             self._expire_claims(db)
             claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
             scratch = fn["status"] == "matched"
@@ -1534,7 +1569,7 @@ class Network:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
         checks = self._candidate_checks(fn, proj, result.obj)
         matched_now = d.bytes_match and not scratch
-        last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
+        last = store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
         self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, effective_settings=getattr(result,"effective_settings",None))
         self.keep_diff(agent.id, fn["id"], self._search_rows(fn, proj, result.obj, d.rows))
@@ -1548,7 +1583,7 @@ class Network:
                             + ("\n" + checks["message"] if checks.get("message") else ""),
                     "score": 0, "matched": True, "checks": checks}
         else:
-            best = self.store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
+            best = store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
             head = (f"score {d.score} ({scoring.percent_text(d.percent)} match) — best so far {best}. "
                     f"Target {len([r for r in d.rows if r[1]])} insns, yours {len([r for r in d.rows if r[2]])}.")
             head += self._what_changed(d, last["score"] if last else None, best)
@@ -1670,21 +1705,23 @@ class Network:
 
     def wait_for(self, agent: Agent, fn, needs) -> None:
         """Record that `fn` needs `needs` done first (see WAITING)."""
-        with self.store.tx() as db:
+        store = self.project_store(fn["project_id"])
+        with store.tx() as db:
             db.execute("INSERT OR REPLACE INTO waits(function_id, needs_id, agent_id, created_at) VALUES(?,?,?,?)",
                        (fn["id"], needs["id"], agent.id, time.time()))
             self._event(db, fn["project_id"], agent.id, "waits", f"{fn['name']} -> {needs['name']}")
 
     def dependency_brief(self, fn) -> list[str]:
         """For a brief: what this function waits for, and what waits for it."""
+        store = self.project_store(fn["project_id"])
         out = []
-        row = self.store.one("SELECT n.name, n.status, a.name AS agent FROM waits w JOIN functions n ON n.id=w.needs_id "
+        row = store.one("SELECT n.name, n.status, a.name AS agent FROM waits w JOIN functions n ON n.id=w.needs_id "
                              "LEFT JOIN agents a ON a.id=w.agent_id WHERE w.function_id=?", fn["id"])
         if row is not None and fn["status"] != "matched":
             if row["status"] == "matched":
                 out += ["", f"### {row['name']} matches now: {row['agent'] or 'an agent'} found this function needs it "
                             f"first (a callee or an inlined helper): read its code (get_function) and use it here."]
-            elif self.store.one("SELECT 1 FROM waits WHERE function_id=(SELECT id FROM functions WHERE name=? AND "
+            elif store.one("SELECT 1 FROM waits WHERE function_id=(SELECT id FROM functions WHERE name=? AND "
                                 "project_id=?) AND needs_id=?", row["name"], fn["project_id"], fn["id"]):
                 out += ["", f"### Needs {row['name']}, which needs this one: they depend on each other (a caller and its "
                             "callee, each one's convention coming from the other), so work on them together: "
@@ -1694,7 +1731,7 @@ class Network:
                             f"first. This is a historical agent report, not proof that its body must match. "
                             f"Inspect the actual call and fix declarations here; do not repeat needs to skip work. "
                             f"New dependency pivots require original direct-call evidence and obey pause rules."]
-        waiting = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
+        waiting = store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
                                  "AND b.status='open' ORDER BY b.name LIMIT 8", fn["id"])
         if waiting and fn["status"] != "matched":
             out += ["", f"### Waited for by {', '.join(r['name'] for r in waiting)}: they need this one first, so "
@@ -1713,10 +1750,11 @@ class Network:
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None):
+        store = self.project_store(fn["project_id"])
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         improved = False
-        with self.store.tx(wait=write_wait) as db:
+        with store.tx(wait=write_wait) as db:
             if before_record is not None:
                 before_record()  # scoped callers can reject revoked or stale work before any writes
             current = db.execute("SELECT * FROM functions WHERE id=?", (fn["id"],)).fetchone()
@@ -1789,9 +1827,9 @@ class Network:
             except NetworkError:
                 pass  # the attempt itself still returns its diff; the next claim moves on
         if matched:
-            self.store.after_commit(lambda: self.on_match(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
+            store.after_commit(lambda: self.on_match(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
         elif improved:
-            self.on_improvement(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
+            self.on_improvement(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
 
     def _release_matched_claim(self, db, function_id, matching_agent_id=None):
         """The saved match owns the function; notify its displaced worker only after commit."""
@@ -1803,7 +1841,7 @@ class Network:
                 except Exception:
                     # Worker notification must never turn a committed match into a failed save.
                     logging.getLogger('decompdecomp').exception('Could not redirect worker after an external match')
-            self.store.after_commit(handoff)
+            self.project_store(owner['project_id']).after_commit(handoff)
         db.execute('DELETE FROM claims WHERE function_id=?',(function_id,))
 
     def on_improvement(self, proj, function_id: int) -> None:
@@ -1820,7 +1858,7 @@ class Network:
         that header still matches with the new one — that's the project's test suite."""
         if function:
             fn = self._function(function, project)
-            proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+            proj = self.project_store(fn["project_id"]).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
             unit = self._effective_unit(fn, self._unit_contexts(proj["id"]))
         else:
             proj = self._project(project)
@@ -1828,6 +1866,7 @@ class Network:
                 raise NetworkError(f"{proj['slug']} has one header per source file: pass `function` to edit the "
                                    f"header that function compiles against")
             unit = ""
+        store = self.project_store(proj["id"])
         if not message.strip():
             raise NetworkError("give a short commit message explaining the change")
         for _ in range(3):
@@ -1847,12 +1886,12 @@ class Network:
                 return ('❌ REJECTED by declaration preflight; no regression compiles run. Keep declarations candidate-local.\n'+listing)
             # Rejections only: exact header bytes and all judge inputs distinguish trials. A short
             # process-local lifetime also limits effects of external tool/environment changes.
-            symbols = self.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])
+            symbols = store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])
             state = repr((dict(proj),unit,ctx['version'],header,new_header,
                           [dict(m) for m in members],[dict(row) for row in symbols],
                           self._generation.get(proj['id'],0)))
             key=hashlib.sha256(state.encode()).hexdigest()
-            with self.store.lock:
+            with store.lock:
                 gate=self._context_trial_locks.setdefault((proj['id'],unit),threading.RLock())
             with gate:
                 cached=self._context_rejections.get(key)
@@ -1869,7 +1908,7 @@ class Network:
                     while len(self._context_rejections)>32:
                         self._context_rejections.popitem(last=False)
                     return result
-            with self.store.tx() as db:
+            with store.tx() as db:
                 if self._latest_version(db, proj["id"], unit) != ctx["version"]:
                     continue  # someone else committed meanwhile: re-apply on top and re-test
                 version = self._next_version(db, proj["id"])
@@ -1884,6 +1923,7 @@ class Network:
         header *and* in every matched source / best attempt, then regression-test the result.
         The rename is textual (whole words), so it is meant for unique names like `unk_1C` or `func_80012345`."""
         proj = self._project(project)
+        store = self.project_store(proj["id"])
         ident = re.compile(r"^[A-Za-z_]\w*$")
         if not (ident.match(old) and ident.match(new)):
             raise NetworkError("old and new must be C identifiers")
@@ -1894,7 +1934,7 @@ class Network:
             changed = {u: word.sub(new, c["header"]) for u, c in current.items() if word.search(c["header"])}
             if not changed:
                 raise NetworkError(f"`{old}` does not occur in any header")
-            matched = self.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
+            matched = store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
             rewritten = {r["id"]: word.sub(new, r["matched_source"]) for r in matched}
             header_for = lambda fn: changed.get(self._effective_unit(fn, units), current[self._effective_unit(fn, units)]["header"])  # noqa: B023  called within this pass of the loop
             broken = self.regression_test(proj, None, sources=rewritten, only=matched, header_for=header_for)
@@ -1902,7 +1942,7 @@ class Network:
                 listing = "\n".join(f"- {name}: {why}" for name, why in broken[:10])
                 return f"❌ REJECTED: renaming breaks {len(broken)} matched function(s).\n{listing}"
             msg = message.strip() or f"rename {old} -> {new}"
-            with self.store.tx() as db:
+            with store.tx() as db:
                 n_matched = db.execute("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='matched'",
                                        (proj["id"],)).fetchone()["n"]
                 if n_matched != len(matched) or any(self._latest_version(db, proj["id"], u) != current[u]["version"]
@@ -1932,15 +1972,17 @@ class Network:
                            (project_id,)).fetchone()["v"] or 0) + 1
 
     def _matched_using(self, proj, unit: str) -> list:
+        store = self.project_store(proj["id"])
         units = self._unit_contexts(proj["id"])
-        return [f for f in self.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
+        return [f for f in store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
                 if self._effective_unit(f, units) == unit]
 
     def regression_test(self, proj, header: str | None, sources: dict[int, str] | None = None,
                         only: list | None = None, header_for=None, progress=None) -> list[tuple[str, str]]:
         """Every matched function (or `only`) built again with a changed header or sources: (name, why) of each
         that no longer matches, so a header edit that breaks matches is refused."""
-        matched = only if only is not None else self.store.all(
+        store = self.project_store(proj["id"])
+        matched = only if only is not None else store.all(
             "SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
 
         def check(fn) -> tuple[str, str] | None:
@@ -1977,7 +2019,7 @@ class Network:
         fn = self._function(function, proj["slug"]) if function else None
         if not text.strip():
             raise NetworkError("empty note")
-        with self.store.tx() as db:
+        with self.project_store(proj["id"]).tx() as db:
             measured = (score_before, score_after) if all(type(v) is int and v >= 0 for v in (score_before, score_after)) else None
             # Keep one current deep-search summary per runner/function. Other function
             # notes append to their managed session handoff when session evidence exists.
@@ -1995,7 +2037,7 @@ class Network:
     def search_notes(self, project: str | None, query: str) -> str:
         """Notes on the project that contain `query`, newest first."""
         proj = self._project(project)
-        rows = self.store.all(
+        rows = self.project_store(proj["id"]).all(
             "SELECT n.text, n.created_at, a.name AS agent, f.name AS fn FROM notes n "
             "LEFT JOIN agents a ON a.id=n.agent_id LEFT JOIN functions f ON f.id=n.function_id "
             f"WHERE n.project_id=? AND n.text LIKE ? ORDER BY n.id DESC LIMIT {NOTES_FOUND}", proj["id"], f"%{query}%")
