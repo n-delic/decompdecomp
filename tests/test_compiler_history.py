@@ -339,12 +339,12 @@ def test_first_compile_precedes_later_eligibility_batches(comparison,monkeypatch
         checked.append(args[1]['id'])
         return digest(*args,**kwargs)
     def judge(*args):
-        if not timings:timings.append(len(set(checked)))
+        if not timings:timings.append(len(checked))
         return False,SimpleNamespace(percent=80.0,score=80),''
     monkeypatch.setattr(net,'_comparison_digest',tracked)
     monkeypatch.setattr(net,'_judge_with',judge)
     result=net.run_compiler_comparison('demo')
-    assert timings[0]<=25 and len(set(checked))==62
+    assert timings[0]<=25 and len(checked)==62
     assert result['tried']==62 and result['total']==62
 
 

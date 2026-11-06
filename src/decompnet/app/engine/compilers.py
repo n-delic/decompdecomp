@@ -432,6 +432,7 @@ class CompilerMixin:
             if n >= limit:
                 if all_installed:continue  # Count deferred work after the first results.
                 break
+            discovered = fn
             if all_installed and not function:
                 # Assembly and seeds are needed only for work actually selected to compile.
                 fn = self.store.one('SELECT * FROM functions WHERE project_id=? AND id=?', proj['id'], fn['id'])
@@ -446,8 +447,9 @@ class CompilerMixin:
             if not candidates:
                 skipped += 1
                 continue
-            input_digest = (self._comparison_digest(proj, fn, source, candidates, shared)
-                            if all_installed else planned_digests.get(fn["id"]))
+            input_digest = planned_digests.get(fn["id"])
+            if all_installed and any(fn[key] != discovered[key] for key in discovered.keys()):
+                input_digest = self._comparison_digest(proj, fn, source, candidates, shared)
             digest = hashlib.sha1(json.dumps([source, candidates]).encode()).hexdigest()[:16]
             if tried.get(str(fn["vram"])) == digest:
                 continue
