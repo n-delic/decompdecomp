@@ -54,6 +54,76 @@ def test_existing_locals_and_unreachable_reads_do_not_block():
     assert not unsafe_temporary(PARENT, 'int f(int condition) { int temp; return 0; return temp; }', 'f')
 
 
+@pytest.mark.parametrize('declaration,parameter', [
+    ('u8 *temp', 'u8 *bytes'), ('u8*temp', 'u8*bytes'),
+    ('void **temp', 'void **bytes'), ('void * *temp', 'void * *bytes'),
+])
+def test_introduced_pointer_captures_need_assignment_on_every_path(declaration, parameter):
+    parent = 'int f(int condition, '+parameter+') { consume(bytes); return 0; }'
+    bad = 'int f(int condition, '+parameter+') {'+declaration+'; if(condition) temp=bytes; consume(temp); return 0; }'
+    assert unsafe_temporary(parent, bad, 'f')
+    assert not unsafe_temporary(parent, bad.replace('if(condition) temp=bytes;', 'temp=bytes;'), 'f')
+    assert not unsafe_temporary(parent, bad.replace('if(condition) temp=bytes;',
+                                                    'if(condition) temp=bytes; else temp=bytes+1;'), 'f')
+
+
+@pytest.mark.parametrize('body', [
+    'u8 *temp; while(condition) { temp=bytes; } return temp[0];',
+    'u8 *temp; goto use; temp=bytes; use: return *temp;',
+    'u8 *temp; *temp=1; return 0;',
+    'u8 *temp; temp[0]=1; return 0;',
+])
+def test_pointer_use_or_pointee_write_does_not_initialize_pointer(body):
+    assert unsafe_temporary('int f(int condition, u8 *bytes) { return 0; }',
+                            'int f(int condition, u8 *bytes) {'+body+'}', 'f')
+
+
+def test_initialized_pointee_write_and_existing_pointer_remain_allowed():
+    parent = 'int f(u8 *bytes) { return bytes[0]; }'
+    good = 'int f(u8 *bytes) { u8 *temp=bytes; *temp=1; return temp[0]; }'
+    assert not unsafe_temporary(parent, good, 'f')
+    existing = 'int f(u8 *bytes) { u8 *temp; return *temp; }'
+    assert not unsafe_temporary(existing, existing, 'f')
+
+
+@pytest.mark.parametrize('header', ['typedef volatile int s32;', 'typedef const int s32;'])
+def test_qualified_pointee_alias_has_no_verdict(header):
+    assert not unsafe_temporary(PARENT, 'int f(int condition) { s32 *temp; return *temp; }', 'f', header)
+
+
+@pytest.mark.parametrize('body', [
+    'u8 *temp; initialize(&temp); return *temp;',
+    'const u8 *temp; if(condition) temp=bytes; return *temp;',
+    'u8 *volatile temp; if(condition) temp=bytes; return *temp;',
+    'Unknown *temp; if(condition) temp=bytes; consume(temp); return 0;',
+    'int (*temp)(void); if(condition) temp=callback; return temp();',
+    'u8 *temp; return sizeof(temp);',
+    'struct Record { u8 *temp; } record; return 0;',
+    'u8 *temp; if(condition) { u8 *temp=bytes; consume(temp); } return *temp;',
+])
+def test_ambiguous_pointer_bindings_keep_no_verdict(body):
+    assert not unsafe_temporary('int f(int condition, u8 *bytes) { return 0; }',
+                                'int f(int condition, u8 *bytes) {'+body+'}', 'f')
+
+
+def test_pointer_guard_filters_protocol_outputs(tmp_path):
+    parent = 'int f(int condition, u8 *bytes) { return bytes[0]; }'
+    bad = 'int f(int condition, u8 *bytes) { u8 *temp; if(condition) temp=bytes; return temp[0]; }'
+    good = bad.replace('if(condition) temp=bytes;', 'temp=bytes;')
+    script = tmp_path/'pointer_generator.py'
+    script.write_text('import json,sys\nfor line in sys.stdin:\n'
+                      ' for source in '+repr([bad, good])+':\n'
+                      '  print(json.dumps({"variant":source,"lineage":["perm_temp_for_expr"]}))\n'
+                      ' print(json.dumps({"done":True}),flush=True)\n')
+    gen = permute.Generator([sys.executable, str(script)])
+    try:
+        result = gen.batch(dict(source=parent, function='f'))
+    finally:
+        gen.close()
+    assert result == [good]
+    assert result[0].lineage == ['perm_temp_for_expr']
+
+
 def test_guard_filters_each_protocol_output_and_preserves_lineage(tmp_path):
     # The generator owns its internal random walk; the wrapper independently checks each output.
     bad = 'int f(int condition) { int temp; if(condition) temp=2; return temp; }'

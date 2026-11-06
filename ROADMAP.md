@@ -2870,3 +2870,8 @@ need independent evidence before receiving this specific GNU C repair.
   Exact-only rechecks retain input validation, release the displaced claim only on commit,
   and rotate its managed matching worker onto eligible work. CLI conversations are ended;
   API conversations switch at the next response/tool boundary without replaying obsolete calls.
+
+- Done: the shared native-permuter initialization guard also checks newly introduced
+  pointers to known integer/void types. A pointer assigned only inside a conditional
+  cannot be treated as initialized after that conditional; a pointee write does not
+  initialize the pointer. Ambiguous bindings still receive no verdict.

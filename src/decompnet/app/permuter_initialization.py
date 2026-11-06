@@ -1,4 +1,4 @@
-"""Reject a limited, possible uninitialized-read pattern in newly generated scalar locals.
+"""Reject possible uninitialized reads in newly generated integer and pointer locals.
 
 This is neither a C undefined-behavior checker nor a semantic equivalence proof. Unknown syntax,
 qualified/shadowed/escaped locals and existing names receive no verdict. Use the bounded local CFG,
@@ -11,7 +11,10 @@ from .integer_repair_support import IDENT, INTEGER, NUMBER, view
 from .pattern_repairs import close
 from .pointer_pair_repairs import qualified_types
 
-_DECL = re.compile(rf'\b(?P<type>{INTEGER})\s+(?P<name>{IDENT})\s*(?:=(?P<initial>[^;{{}}]*))?;')
+# Pointer captures need the same must-initialization check as integer captures.
+# Keep unknown pointee aliases, qualifiers, arrays and function pointers opaque.
+_TYPE = rf'(?:{INTEGER}(?=\s)|(?:{INTEGER}|void)(?:\s*\*)+)'
+_DECL = re.compile(rf'\b(?P<type>{_TYPE})\s*(?P<name>{IDENT})\s*(?:=(?P<initial>[^;{{}}]*))?;')
 
 
 def unsafe_temporary(parent, candidate, name, header=""):
@@ -41,7 +44,8 @@ def unsafe_temporary(parent, candidate, name, header=""):
             continue
         if variable in old_names or (prefix and prefix[-1] not in ';{}'):
             continue
-        if len(re.findall(rf'\b(?:{INTEGER}|void|float|double)\s*\**\s*{variable}\s*(?=[;=,\[])', part.body)) != 1:
+        if len(re.findall(rf'\b(?:{INTEGER}|void|float|double)(?:\s+|(?:\s*\*)+\s*)'
+                          rf'{variable}\s*(?=[;=,\[])', part.body)) != 1:
             continue
         if re.search(rf'&\s*(?:\(\s*)*{variable}\b', part.body):
             continue
@@ -52,6 +56,7 @@ def unsafe_temporary(parent, candidate, name, header=""):
     if not flow or flow.entry is None:
         return False
     names = flow.names
+    pointers = {decl['name'] for decl in declarations if '*' in decl['type']}
     from .permuter_macro_effects import transparent_macros
     opaque_macros = macros - transparent_macros(combined, names)
     # The native walk commonly wraps a single statement in do {...} while (0).
@@ -96,7 +101,13 @@ def unsafe_temporary(parent, candidate, name, header=""):
                 uses |= initial
                 generates.add(variable)
         assignment = re.fullmatch(rf'\s*({IDENT})\s*=(?!=)(.*?);?\s*', text, re.S)
-        if assignment and assignment[1] in names:
+        indirect = re.fullmatch(rf'\s*\*\s*({IDENT})\s*=(?!=)(.*?);?\s*', text, re.S)
+        if indirect and indirect[1] in pointers:
+            if ',' in indirect[2] or re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', indirect[2]):
+                return False
+            # Writing through a pointer reads its value; it does not assign that local.
+            uses.add(indirect[1])
+        elif assignment and assignment[1] in names:
             if ',' in assignment[2] or re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', assignment[2]):
                 return False
             generates.add(assignment[1])

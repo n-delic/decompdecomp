@@ -162,3 +162,23 @@ callbacks are never replayed. Nested transactions and explicit cancellable
 maintenance waits retain their existing behavior. This removes one local queue
 amplification; it does not eliminate external contention, long transactions or
 project synchronization waits. Controlled contention tests are not a live-app benchmark.
+
+## Reject introduced pointer captures with a possible uninitialized read
+
+The shared native generator checks simple introduced integer and pointer locals
+before candidate compilation. Pointer captures need the same must-initialization
+analysis: assigning a pointer inside `if (count > 0)` does not initialize it on
+the other branch. Writing through a pointer reads that pointer, rather than
+initializing it. Fully initialized captures remain available to the search.
+
+This applies to users of the shared generator in ROM and PROJECT mode, without
+depending on an architecture or compiler. It is a bounded syntactic guard, not
+a C equivalence or undefined-behavior checker. Qualified, escaped, shadowed,
+unknown pointee aliases and unsupported expression shapes retain no verdict.
+An accepted candidate still needs the ordinary compiler and exact judge.
+
+Replaying a private copied 1,000-emission run rejects ten additional possible
+uninitialized pointer captures that had reached compilation. Two manually
+confirmed bad captures are rejected; the reviewed valid field-address capture
+remains allowed. This is evidence for that run, not a general match-rate or
+performance estimate. Generated game sources and replay artifacts stay private.
