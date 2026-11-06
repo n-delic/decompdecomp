@@ -1617,10 +1617,14 @@ For ROM projects with a decompdecomp export, open **Settings → Sync to Git rep
 choose the checkout root, and click **Verify, commit and push**. The app checks new matches
 in a private build, saves all portable progress under `progress/` (including drafts, names,
 notes, headers and compiler settings), commits those files and pushes the current branch
-to its configured upstream using your existing Git credentials. The result shows the commit
+to its configured upstream using your existing Git credentials. If the branch has no upstream
+and the checkout has exactly one remote, it pushes the same branch name there and records
+the upstream after a successful push. A new remote branch can be created this way. With
+several remotes, configure the intended upstream first. The result shows the commit
 and, for GitHub remotes, a link. **Verify and sync** still leaves changes for manual review.
 
-Start with a clean checkout, a configured Git author and an upstream branch. If the remote
+Start with a clean checkout and a configured Git author. An existing upstream is respected;
+a checkout without one needs exactly one remote. If the remote
 has commits missing locally, pull them first. A failed push keeps the local commit; fix the
 credentials or upstream and retry. Nothing is force-pushed. Imported projects already work
 in their own source checkout; this export-sync button is currently for ROM projects.

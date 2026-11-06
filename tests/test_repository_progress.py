@@ -191,3 +191,14 @@ def test_snapshot_preserves_line_endings_and_rejects_a_new_head(progress):
     with pytest.raises(NetworkError, match='committed new work'):
         repository_progress.commit_snapshot(root, {'src/f.c': b'old'}, {'src/f.c'}, print, expected_head=head)
     assert git(root, 'rev-parse', 'HEAD') == commit
+
+
+def test_progress_commit_recovers_missing_upstream(progress):
+    net,root,remote=progress
+    git(root,'branch','--unset-upstream')
+    branch=git(root,'branch','--show-current')
+    result=repository_sync.run(net,'game',root,commit_push=True)
+    assert result['pushed'] and result['matched']==1
+    assert git(remote,'rev-parse','refs/heads/'+branch)==result['commit']
+    assert git(root,'rev-parse','--abbrev-ref','@{upstream}')=='origin/'+branch
+    assert git(root,'status','--porcelain')==''
