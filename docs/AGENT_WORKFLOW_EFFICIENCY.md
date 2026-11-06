@@ -410,3 +410,23 @@ lookups for C work retain their assembly exclusion; the naming cache is separate
 A read-only real indexed project recovers four libultra identities among34 assembly
 routines, including three generated names. This avoids treating known interrupt/
 TLB helpers as unknown game functions while preserving the queue safeguards.
+
+
+### Check explicit callback contracts before searching allocation
+
+The shared function brief now compares explicit direct-call callback formals
+against already-fetched selected callback definitions. In the saved V-Rally
+constructor draft it identifies `void(void)` callback declarations/casts versus
+selected `void(void*)` definitions. A cast does not repair callable-type
+compatibility. Review the real dispatcher, registered callbacks and other direct
+uses together; a consumed typed view behind a justified public entry may preserve
+the source's actual accesses, but must still compile and match independently.
+
+The cheap claim receipt only flags explicit callback casts and points to the full
+brief; it adds no selected-definition lookup on the reservation path.
+The full read-only hint reuses the bounded selected-callee lookup, reports at most two
+unique discrepancies and inspects at most16 direct call sites per helper. It does
+not scan an entire game's registry or mutate a signature. Unknown typedef callback
+types, indirect calls, conditional preprocessing and macro registries remain
+manual-review cases. An exact selected definition is evidence, not proof of the
+original interface or every object's runtime lifetime.

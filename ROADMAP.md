@@ -2812,3 +2812,10 @@ need independent evidence before receiving this specific GNU C repair.
   Copied V-Rally replay705->695 is not exact. External PROJECT commands without
   invocation-scope evidence remain excluded, as for promoted-entry local repairs;
   collect trusted language/int-width evidence before enabling this family there.
+
+
+- Shared ROM/PROJECT function briefs now flag bounded explicit callback-formal
+  discrepancies against selected matched definitions, without extra database
+  lookups or source changes. Typedef callback types, header-only callback evidence,
+  indirect calls and macro registries still need trustworthy type/dispatch evidence;
+  this advisory check must not be described as a complete registry auditor.

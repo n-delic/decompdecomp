@@ -41,7 +41,8 @@ def message(leads):
 
 def source_hint(source, name):
     callee = forwarding(source, name)
-    return message([(name, callee)]) if callee else ''
+    from .callback_contracts import source_hint as callback_hint
+    return '\n'.join(part for part in (message([(name, callee)]) if callee else '', callback_hint(source,name)) if part)
 
 
 def empty_contract(source, name):
@@ -71,7 +72,7 @@ def stub_message(names):
 
 def brief(net, proj, fn, source):
     """One bounded matched-callee lookup, also usable for project-mode C functions."""
-    from . import callee_contracts
+    from . import callback_contracts, callee_contracts
 
     leads, stubs, contracts = [], [], []
     if callee := forwarding(source, fn['name']):
@@ -80,7 +81,9 @@ def brief(net, proj, fn, source):
     body = _blank(source[span[0]:span[1]]) if span else ''
     if source:
         from ..candidate_scope import callees
-        for row in callees(net, proj, fn, source, max_source_chars=64000):
+        selected_rows = callees(net, proj, fn, source, max_source_chars=64000)
+        callbacks = callback_contracts.leads(source,fn['name'],{row['name']:row['matched_source'] or ''for row in selected_rows})
+        for row in selected_rows:
             name, selected = row['name'], row['matched_source'] or ''
             if callee := forwarding(selected, name):
                 leads.append((name, callee))
@@ -93,4 +96,4 @@ def brief(net, proj, fn, source):
                 contracts.append(discrepancy)
             if len(leads) + len(stubs) + len(contracts) >= LIMIT:
                 break
-    return '\n'.join(part for part in (message(leads), stub_message(stubs), callee_contracts.message(contracts)) if part)
+    return '\n'.join(part for part in (message(leads), stub_message(stubs), callee_contracts.message(contracts), callback_contracts.message(callbacks if source else [])) if part)
