@@ -640,6 +640,8 @@ def test_background_compile_discards_results_if_progress_changes(worker, project
     net, folder, _ = project
     from decompnet.scoring import DiffResult
 
+    # The permuter now captures a complete compiler profile before invoking the stub.
+    net._update_cfg("game", lambda cfg: cfg.update(compiler={"toolchain": "gcc-2.7.2-kmc", "flags": []}))
     proj = net.project_row("game")
     fn = net._function("f", "game")
     agent, _ = net.local_agent(worker)
