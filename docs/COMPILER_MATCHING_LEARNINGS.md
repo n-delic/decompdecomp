@@ -4906,3 +4906,16 @@ versions. The KMC guide records the flags, limitations and caller-narrowing rule
 No blanket qualification-removal family is enabled: compatible known caller
 contracts and actual object storage must guide a change before the unchanged judge
 can establish a match.
+
+
+### Split genuine local zero chains before register allocation
+
+A current-contract V-Rally6BA44 replay improves705 to695 by replacing the single
+standalone `a = (b = 0);` with two genuine zero stores, in the target's a-then-b
+order. The generated repair reproduces the researched source hash and ordinary
+linked score; ordinary/-da parity is1028 bytes. It does not match the function.
+`split_local_zero_chain` is bounded and requires verified C32 scope, distinct
+unescaped matching integer locals and no hidden binding/type observers. It is
+available through the shared local-repair generator, subject to the same external
+PROJECT invocation-evidence coverage gap as promoted-entry repairs. Three further
+slot/conversion/phase controls were negative and are not new repair families.

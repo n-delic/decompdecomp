@@ -2805,3 +2805,10 @@ need independent evidence before receiving this specific GNU C repair.
   initialization dominance. A copied N64 draft improves357 to277; combining the
   existing debug-boundary repair gives177, not exact. External PROJECT builds still
   require complete invocation evidence before enabling this guarded family.
+
+
+- Shared local zero-chain splitting now proposes two real independent stores for
+  matching visible unescaped32-bit integer locals, with proven direct C32 scope.
+  Copied V-Rally replay705->695 is not exact. External PROJECT commands without
+  invocation-scope evidence remain excluded, as for promoted-entry local repairs;
+  collect trusted language/int-width evidence before enabling this family there.

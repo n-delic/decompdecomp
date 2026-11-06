@@ -1049,3 +1049,21 @@ one using the same header, profile, target and linked-byte judge. In particular,
 shared between translation units; synchronize any justified correction with all
 known callers. Keep unknown indirect callers and unproven storage assumptions
 visible in the investigation notes.
+
+
+### Independent zero initialization versus an assignment chain
+
+In the current-contract `func_8006BA44` draft, `a = (b = 0);` emits the store to b
+before a. The target initializes a before b. Splitting this into `a = 0; b = 0;`
+improves score705 to695, with identical1028-byte ordinary and diagnostic linked
+outputs. Both stores are real initializations; neither new state nor an unused
+operation is added. The remaining register/control/conversion differences are
+not solved by this ten-point improvement.
+
+The shared `split_local_zero_chain` family makes this bounded proposal only for
+distinct unescaped ordinary locals with matching visible32-bit integer types,
+plain zero literals, standalone statements and verified C32 invocation evidence.
+It excludes pointer/volatile/ambiguous bindings, hidden preprocessing and observed
+locals. Reversing arbitrary assignment chains is not valid: side effects, aliasing,
+conversions and expression values can make their evaluation order observable.
+The unchanged destination judge decides whether an eligible proposal helps.
