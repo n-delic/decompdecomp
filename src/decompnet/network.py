@@ -1774,7 +1774,7 @@ class Network:
             except NetworkError:
                 pass  # the attempt itself still returns its diff; the next claim moves on
         if matched:
-            self.on_match(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent)
+            self.store.after_commit(lambda: self.on_match(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
         elif improved:
             self.on_improvement(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
 

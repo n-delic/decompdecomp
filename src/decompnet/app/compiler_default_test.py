@@ -14,6 +14,7 @@ def run(net, slug, selected, log=print, nonmatches=False):
     if (not isinstance(selected, dict) or not isinstance(selected.get('toolchain'), str)
             or not isinstance(selected.get('flags'), list) or not all(isinstance(f, str) for f in selected['flags'])):
         raise NetworkError('Choose a compiler profile from the current list.')
+    selected={'toolchain':selected['toolchain'],'flags':list(selected['flags'])}
     proj = net._project(slug)
     cfg = json.loads(proj['config'])
     default, target = profile(cfg['compiler']), profile(selected)
@@ -39,26 +40,31 @@ def run(net, slug, selected, log=print, nonmatches=False):
         report({**state, 'failures':list(state['failures']), 'matches':list(state['matches']), 'phase':'Testing non-matches' if nonmatches else 'Testing default-profile matches'})
     publish()
     log(f"Testing {len(candidates)} {'non-matching functions' if nonmatches else 'matched functions using the default'} against {target[0]} {' '.join(target[1])}. No settings will change.")
+    from . import compiler_match_batch as batch
+    proof_env=batch.environment(net,proj,selected) if nonmatches else None
+    proofs={}
     def check(fn):
         cancel()
         source = net._source_of(fn) if nonmatches else fn['matched_source']
         if not source:
-            return fn, False, 'No saved C is available.'
+            return fn, False, 'No saved C is available.', None
         try:
+            signature=batch.fingerprint(net,proj,fn,source,proof_env) if nonmatches else None
             ok, diff, _ = net._judge_with(proj, fn, target[0], list(target[1]), source)
             reason = '' if ok else 'Does not compile or compare.' if diff is None else f'Different bytes (score {diff.score}).'
-            return fn, ok, reason
+            return fn, ok, reason, signature
         except (NetworkError, toolchains.ToolchainError, OSError) as error:
-            return fn, False, str(error)[:300]
+            return fn, False, str(error)[:300], None
     pending = [net._pool.submit(check, fn) for fn in candidates]
     try:
         for future in as_completed(pending):
             cancel()
-            fn, ok, reason = future.result()
+            fn, ok, reason, proof = future.result()
             state['checked'] += 1
             state['passed' if ok else 'failed'] += 1
             if ok:
                 state['matches'].append(fn['name'])
+                if proof:proofs[fn['id']]=proof
             if not ok:
                 state['failures'].append({'function':fn['name'], 'reason':reason})
             publish()
@@ -74,6 +80,17 @@ def run(net, slug, selected, log=print, nonmatches=False):
     latest_candidates = population(latest, current_cfg) if current_cfg else []
     state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
                       or headers() != original_headers or signature(latest_candidates) != signature(candidates))
+    if nonmatches:
+        state['receipt']=batch.remember(net,slug,selected,proofs)
+        current_env=batch.environment(net,{**dict(proj),'config':json.dumps(current_cfg)},selected) if current_cfg else None
+        changed=[]
+        by_id={fn['id']:fn for fn in latest}
+        for old in candidates:
+            if old['id'] not in proofs:continue
+            fn=by_id.get(old['id'])
+            if fn is None or fn['status']!='open' or batch.fingerprint(net,proj,fn,net._source_of(fn),current_env)!=proofs[old['id']]:changed.append(old['name'])
+        state['changed_matches']=changed
+        state['stale']=bool(changed)
     state['compatible'] = bool(candidates) and state['failed'] == 0 and not state['stale']
     log('Test finished. Settings, matches and saved scores are unchanged.' + ((' Inputs changed during the test; passing results can be freshly rechecked and applied.' if nonmatches else ' Inputs changed during the test; rerun before making a decision.') if state['stale'] else ''))
     return state
@@ -106,7 +123,7 @@ def replace_default(net, slug, selected, log=print):
         return {'replaced':True, 'preserved':len(failures)}
 
 
-def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False):
+def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False, receipt=None):
     """Recheck selected trial successes and save through the ordinary compiler/match path."""
     net._rom_only(slug, 'applying compiler profile matches')
     if (not isinstance(functions, list) or not functions or len(functions) > 100000
@@ -115,53 +132,9 @@ def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False):
     if (not isinstance(selected, dict) or not isinstance(selected.get('toolchain'), str)
             or not isinstance(selected.get('flags'), list) or not all(isinstance(f, str) for f in selected['flags'])):
         raise NetworkError('Choose a compiler profile from the current list.')
-    names = list(dict.fromkeys(functions))
-    state = {'total':len(names), 'checked':0, 'passed':0, 'failed':0, 'matches':[], 'failures':[], 'applied':True}
-    report = getattr(log, 'progress', lambda value:None)
-    cancel = getattr(log, 'check_cancel', lambda:None)
-    for name in names:
-        cancel()
-        reason = None
-        try:
-            proj = net._project(slug)
-            fn = net._function(name, slug)
-            if fn['status'] != 'open':
-                raise NetworkError('No longer unmatched; skipped.')
-            if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
-                raise NetworkError('An agent is working on this function; retry after it releases the claim.')
-            siblings = net.store.all('SELECT id,rom_offset FROM functions WHERE project_id=? AND vram=?', proj['id'], fn['vram'])
-            if len(siblings) != 1 and (fn['rom_offset'] is None or any(
-                    row['id'] != fn['id'] and row['rom_offset'] == fn['rom_offset'] for row in siblings)):
-                raise NetworkError('Shares an overlay address without a unique ROM location; identify its original overlay before applying.')
-            # A known ROM location selects this entry alone through apply_function_compiler's
-            # function_compilers override. Never change an address range for shared overlays.
-            source = net._comparison_source(fn)
-            if not source:
-                raise NetworkError('No saved C is available.')
-            ok, _, _ = net._judge_with(proj, fn, selected['toolchain'], selected['flags'], source)
-            if not ok:
-                raise NetworkError('Saved C no longer matches this profile; rerun the test.')
-            cancel()
-            result = net.apply_function_compiler(slug, name, selected['toolchain'], selected['flags'],
-                                                 **({'preserve_other_profiles':True} if safe_ranges else {}))
-            if not result['newly_matched']:
-                raise NetworkError('Settings applied, but final verification did not save a new match. Review this function.')
-            state['matches'].append(name)
-            state['passed'] += 1
-        except (NetworkError, toolchains.ToolchainError, OSError) as error:
-            reason = str(error)
-            state['failures'].append({'function':name, 'reason':reason,
-                                      'blockers':getattr(error, 'compiler_blockers', []),
-                                      'category':'affected_matches' if getattr(error, 'compiler_blockers', []) else
-                                      'busy' if 'agent is working' in reason else
-                                      'overlay' if 'overlay address' in reason else
-                                      'no_source' if 'No saved C' in reason else
-                                      'changed' if 'No longer unmatched' in reason or 'no longer matches' in reason else 'verification'})
-            state['failed'] += 1
-        state['checked'] += 1
-        report({**state, 'phase':'Applying verified matches'})
-        log(f"{state['checked']}/{state['total']}: {name}: {reason or 'verified match saved'}")
-    return state
+    selected={'toolchain':selected['toolchain'],'flags':list(selected['flags'])}
+    from .compiler_match_batch import apply
+    return apply(net,slug,selected,list(dict.fromkeys(functions)),log,receipt)
 
 
 def check_affected(net, slug, selected, functions, log=print):

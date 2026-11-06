@@ -261,7 +261,7 @@ assert(!failureContext.profileFailureGroups([{function:'<unsafe>',reason:'<unsaf
 (async()=>{
   const nodes=new Map();
   const node=key=>{if(!nodes.has(key))nodes.set(key,{hidden:false,textContent:'',innerHTML:'',classList:{contains:()=>false}});return nodes.get(key);};
-  let requests=[], result={stale:true,total:2,checked:2,passed:1,failed:1,matches:['candidate'],failures:[]};
+  let requests=[], result={stale:true,total:2,checked:2,passed:1,failed:1,matches:['candidate'],failures:[],receipt:'server-proof',changed_matches:['candidate']};
   const body={querySelector:node,addEventListener:()=>{}};
   const env={compilerDisplayedGroups:[{compiler:'Example compiler',parts:[{toolchain:'gcc',flag_list:['-O2']}]}],
     S:{slug:'example',dialogKind:'compiler-default-test'},$:()=>({hidden:false}),esc:String,
@@ -279,6 +279,7 @@ assert(!failureContext.profileFailureGroups([{function:'<unsafe>',reason:'<unsaf
   result={total:1,checked:1,passed:0,failed:1,matches:[],failures:[]};
   await node('[data-apply-matches-button]').onclick();
   assert.equal(requests[1].action,'apply-matches');
+  assert.equal(requests[1].receipt,'server-proof');
   assert.deepEqual(Array.from(requests[1].functions),['candidate']);
   assert.equal(node('[data-apply-matches]').hidden,true);
   assert.match(node('[data-default-verdict]').textContent,/0 new matches saved/);

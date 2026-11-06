@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: compiler-profile match application verifies up to eight candidates concurrently, reuses
+  short-lived server-owned exact verdicts only for unchanged function inputs, and publishes
+  settings/matches in one guarded transaction. Unrelated agent progress no longer invalidates
+  every passing candidate; claimed, changed and ambiguous overlay entries are skipped.
+
 - Done: SQLite writer acquisition releases the process-local mutex between short busy
   waits, retaining the configured timeout and never replaying transaction bodies.
   Other processes can still cause timeouts; this removes a local queue amplification.

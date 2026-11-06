@@ -1166,9 +1166,9 @@ async function testProfileAsDefault(button, action="test") {
     if(p.checked!==undefined)currentResult=p;
     if(p.checked===undefined){get('[data-default-status]').textContent=`${p.phase || 'Checking settings'} · ${p.done || 0} / ${p.total || 0}`;get('[data-default-bar]').max=p.total || 1;get('[data-default-bar]').value=p.done || 0;return;}
     if(work._workStatus)work._workStatus.textContent=nonmatches ? 'Testing non-matches…' : 'Testing default-profile matches…';
-    get('[data-default-status]').textContent=`${p.checked.toLocaleString()} / ${p.total.toLocaleString()} functions checked · ${p.total ? Math.round(100*p.checked/p.total) : 100}%`;
+    get('[data-default-status]').textContent=`${p.applied ? `${p.phase || 'Applying matches'} · ` : ''}${p.checked.toLocaleString()} / ${p.total.toLocaleString()} functions checked · ${p.total ? Math.round(100*p.checked/p.total) : 100}%`;
     get('[data-default-bar]').max=p.total || 1;get('[data-default-bar]').value=p.checked;
-    get('[data-default-passed]').textContent=p.passed.toLocaleString();get('[data-default-failed]').textContent=p.failed.toLocaleString();
+    get('[data-default-passed]').textContent=(p.applied && p.phase==='Verifying selected matches' ? (p.verified || 0) : p.passed).toLocaleString();get('[data-default-failed]').textContent=p.failed.toLocaleString();
     get('[data-default-left]').textContent=Math.max(0,p.total-p.checked).toLocaleString();
     if(waitingBar?.classList.contains('workbar'))waitingBar.hidden=true;
     get('[data-default-matches]').hidden=!p.matches?.length;
@@ -1182,17 +1182,17 @@ async function testProfileAsDefault(button, action="test") {
     if(!active() || !out)return;
     if(out.replaced){get('[data-default-verdict]').textContent=`Default replaced. ${out.preserved} functions kept their previous compiler profile. All existing matches remain verified.`; if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();} return;}
     render(out);
-    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? `Inputs changed during testing. Recheck and apply the ${out.matches?.length || 0} passing results; only functions that still match will be saved.` : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
+    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? `${out.changed_matches?.length || 0} passing functions changed during testing. Unchanged exact results can be reused; changed functions will be rechecked; only functions that still match will be saved.` : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
       if(out.matches?.length){
         get('[data-apply-matches]').hidden=false;
         const apply=get('[data-apply-matches-button]');apply.textContent=out.stale ? `Recheck & apply ${out.matches.length} matches` : `Apply ${out.matches.length} matches`;
         apply.onclick=async()=>{
           const done=beginWork(work,'Rechecking and applying matches',[apply],'Apply finished.');
           try{
-            const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-matches',functions:out.matches}});
+            const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-matches',functions:out.matches,receipt:out.receipt}});
             const saved=await followJob(job,log,(_lines,state)=>{if(active())render(state.progress);},active);
             if(!active() || !saved)return;
-            render(saved);get('[data-default-verdict]').textContent=`${saved.passed} new matches saved. ${saved.failed} functions skipped or could not be applied; see the results below.`;
+            render(saved);get('[data-default-verdict]').textContent=`${saved.passed} new matches saved (${saved.reused || 0} unchanged checks reused). ${saved.failed} functions skipped or could not be applied; see the results below.`;
             get('[data-apply-matches]').hidden=true;
             if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();}
           }catch(error){if(active())showJobError(work,error.message);}
