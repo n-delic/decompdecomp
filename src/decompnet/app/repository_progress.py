@@ -29,7 +29,7 @@ def owned(manifest):
 def recover_missing_sources(net, slug, folder, manifest, missing, log):
     """An older partial save could acknowledge a manifest without materializing its C files.
     Restore only still-listed source from the current row, never overwrite a contributor's file."""
-    pid = net.project_row(slug)['id']
+    pid = net.store.one('SELECT id FROM projects WHERE slug=?', slug)['id']
     recovered = {}
     for path in sorted(missing):
         if not path.startswith(('src/', 'best/')) or not path.endswith('.c'):
@@ -64,12 +64,15 @@ def snapshot(net, slug, root, log, *, recover=True):
         saves._check_save_paths(folder, chosen=True)
         files = saves._read_owned(folder)
         from .progress import _Snapshot
-        baseline = net.progress._baseline(net.project_row(slug)['id'])
+        # project_row synchronizes saved files. A second sync here can rejudge recovered
+        # sources and replace the baseline after files were read, producing a false race.
+        proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+        baseline = net.progress._baseline(proj['id'])
         if baseline is None or any(baseline.disk.files.get(name) != value
                                    for name, value in _Snapshot.of(files).files.items()):
             raise NetworkError('Progress changed while capturing it. Retry after its edits finish.')
         manifest = json.loads(files[saves.MANIFEST])
-        if manifest.get('game', {}).get('sha1') != net.cfg(net.project_row(slug)).get('rom', {}).get('sha1'):
+        if manifest.get('game', {}).get('sha1') != net.cfg(proj).get('rom', {}).get('sha1'):
             raise NetworkError('The saved progress belongs to another game. Choose this project’s progress checkout.')
         for name in ('README.md', 'decompdecomp-progress.svg'):
             if (folder/name).is_file():
