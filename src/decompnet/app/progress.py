@@ -108,6 +108,17 @@ class _StillFailing(NetworkError):
 
 
 def _read(folder: Path) -> dict[str, str]:
+    # A git/editor update can remove a file between glob, lstat and read. Retry
+    # only this read-only capture; never apply a partial snapshot or replay writes.
+    for attempt in range(3):
+        try:
+            return _read_once(folder)
+        except FileNotFoundError:
+            if attempt == 2:
+                raise
+
+
+def _read_once(folder: Path) -> dict[str, str]:
     files = {}
     for directory in ("src", "best", "include"):
         path = folder / directory

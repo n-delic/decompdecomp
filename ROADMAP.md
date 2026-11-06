@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: a progress file disappearing during enumeration/stat/read restarts the entire
+  read-only capture, up to three attempts. Partial captures are discarded; persistent
+  failures, permissions, links, conflicts and ordinary exact verification remain guarded.
+
 - Done: progress-file failures name rejected relative paths and bounded filesystem
   error codes/filenames, preserving link rejection and the original exception cause.
   This improves diagnosis; it does not resolve long synchronization lock waits.

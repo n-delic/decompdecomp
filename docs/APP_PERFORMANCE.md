@@ -135,3 +135,16 @@ Failed synchronization also reports a bounded, escaped OS filename and error cod
 when available, without printing arbitrary exception arguments or source contents.
 These diagnostics preserve the original failure and all synchronization guards;
 they do not establish the cause of long per-project lock waits or retry failed work automatically.
+
+### Files disappearing during progress capture
+
+A listed file can disappear while git or an editor updates the progress folder.
+A missing-file error during capture now restarts the read from the manifest, up to
+three attempts, discarding the partial dictionary each time. This retries only file
+reads: imports, writes and transaction bodies are not replayed. Successful reads
+still pass the normal manifest, snapshot and exact-judging guards.
+
+Persistent disappearance propagates its last error. Permission failures, symbolic
+links, non-regular files and conflict markers still fail. This covers a reproducible
+read race; it does not prove the cause of every historical missing-file failure or
+resolve the separately observed database/project-lock contention.
