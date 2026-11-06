@@ -1067,3 +1067,10 @@ It excludes pointer/volatile/ambiguous bindings, hidden preprocessing and observ
 locals. Reversing arbitrary assignment chains is not valid: side effects, aliasing,
 conversions and expression values can make their evaluation order observable.
 The unchanged destination judge decides whether an eligible proposal helps.
+
+
+When both braced branches end with the same real scalar product, try computing
+it once at their common successor. A measured unmatched case improved2238 to2043
+with `-O2 -g3`; this is not a universal GCC rule or an exact-match result. Remove
+both old copies. Do not retain overwritten assignments to steer scheduling. The
+`common_scalar_tail` local repair offers bounded plain-local hypotheses.

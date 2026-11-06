@@ -4919,3 +4919,24 @@ unescaped matching integer locals and no hidden binding/type observers. It is
 available through the shared local-repair generator, subject to the same external
 PROJECT invocation-evidence coverage gap as promoted-entry repairs. Three further
 slot/conversion/phase controls were negative and are not new repair families.
+
+
+### Observation: common scalar branch tails
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+big-endian MIPS. In a private copied unmatched function, both flat if/else arms
+ended with the same local product. Removing both copies and placing one at the
+common successor after an independent literal assignment improved the ordinary
+linked score2238 to2043. This is a same-input source-placement observation,
+not an exact match or a claim that lower scores prove functional correctness.
+The generated repair independently reproduces2043 from the captured2238 source.
+The later1848 draft includes a separate table-base capture and is not attributed
+to this family alone. Evidence: private refinement-2238/common-tail-app-replay.
+
+`common_scalar_tail` proposes only identical local products in flat, braced arms.
+It excludes calls, transfers, labels, nested declarations/scopes, macro operands,
+qualified/escaped locals and unbraced parents. It can place the product directly
+at the successor or after one independent local literal assignment. Both original
+copies are removed: retaining a dead copy to manipulate scheduling is inadmissible.
+Shared draft generation exposes this to ROM and PROJECT local/deep repair paths;
+the normal compiler/judge remains required for every candidate.

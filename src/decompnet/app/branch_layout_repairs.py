@@ -244,3 +244,72 @@ def store_tails(source, name, header=''):
         if len(out) >= 4:
             break
     return out
+
+
+
+def scalar_tails(source, name, header=''):
+    """Sink identical final scalar products from both arms, optionally past one independent literal store."""
+    from . import pointer_pair_repairs
+    from .integer_repair_support import locals_for
+    part, _, macros = pointer_pair_repairs.context(source, name, header)
+    if not part:
+        return []
+    locals_ = {decl['name'] for decl in locals_for(part)
+               if part.clean[part.opening+1:decl.start()].count('{')
+               == part.clean[part.opening+1:decl.start()].count('}')}
+    out = []
+    tail = re.compile(rf'(?P<lhs>{IDENT})\s*=\s*(?P<rhs>{IDENT})\s*\*\s*(?P<n>{NUMBER})\s*;\s*$')
+    for hit in re.finditer(r'\bif\s*\(', part.body):
+        prefix = part.body[:hit.start()].rstrip()
+        if prefix and prefix[-1] not in ';{}':
+            continue  # no unbraced parent or else-if ownership changes
+        condition = close(part.clean, part.opening+1+hit.end()-1)
+        arm = re.match(r'\s*{', part.clean[condition:]) if condition else None
+        if not arm:
+            continue
+        a = condition+arm.end()-1
+        b = close(part.clean, a, '{', '}')
+        other = re.match(r'\s*else\s*{', part.clean[b:]) if b else None
+        if not other:
+            continue
+        c = b+other.end()-1
+        d = close(part.clean, c, '{', '}')
+        if not d:
+            continue
+        left, right = part.clean[a+1:b-1], part.clean[c+1:d-1]
+        matches = [tail.search(text) for text in (left, right)]
+        if not all(matches):
+            continue
+        one, two = matches
+        if one.groupdict() != two.groupdict():
+            continue
+        names = {one['lhs'], one['rhs']}
+        if not names <= locals_ or names & macros.keys():
+            continue
+        # Flat scalar arms only: no incoming labels, transfers, calls, nested
+        # scopes or declarations that could change lookup at the successor.
+        arms = left+'\n'+right
+        if set(re.findall(IDENT, arms)) & macros.keys():
+            continue  # object macros can hide transfers or declarations too
+        if re.search(r'[{}:]|\b(?:goto|return|break|continue|case|default|if|for|while|do)\b|'
+                     + IDENT+r'\s*\(', arms):
+            continue
+        if re.search(rf'\b{IDENT}\s+\**\s*{IDENT}\s*(?=[=;,\[])', arms):
+            continue
+        starts = (a+1+one.start(), c+1+two.start())
+        if any(part.clean[start-1] not in ';{} \t\n' for start in starts):
+            continue
+        # Match a complete statement, not the suffix of an array/member store.
+        if any(text[:match.start()].rstrip() and text[:match.start()].rstrip()[-1] != ';'
+               for text, match in zip((left, right), matches)):
+            continue
+        statement = source[starts[0]:a+1+one.end()].rstrip()
+        removals = [(starts[0], a+1+one.end(), ''), (starts[1], c+1+two.end(), '')]
+        out.append(('common_scalar_tail', edit(source, removals+[(d, d, '\n'+statement+'\n')])))
+        following = re.match(rf'\s*({IDENT})\s*=\s*{NUMBER}\s*;', part.clean[d:])
+        if following and following[1] in locals_-names and following[1] not in macros:
+            end = d+following.end()
+            out.append(('common_scalar_tail', edit(source, removals+[(end, end, '\n'+statement+'\n')])))
+        if len(out) >= 8:
+            break
+    return list(dict.fromkeys(out))

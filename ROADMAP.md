@@ -2835,3 +2835,8 @@ need independent evidence before receiving this specific GNU C repair.
   and dynamic-condition waits remain available. This prevents alignment-only
   scaffolding from being retained as an apparent improvement; it is a bounded
   source-shape guard, not a C equivalence checker or ban on block rewrites.
+
+- Shared local/deep repairs can sink identical plain-local product tails from
+  two flat braced branches, including placement after one independent literal
+  assignment. Both original copies are removed; unsafe flow/storage shapes are
+  left unchanged. A private copied unmatched witness improved2238 to2043, not exact.
