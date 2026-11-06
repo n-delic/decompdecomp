@@ -629,3 +629,9 @@ def test_repository_push_counts_errors_and_project_switches():
 def test_save_repository_setup_and_project_switches():
     subprocess.run([NODE, str(Path(__file__).with_name('gui_repository_setup.js'))], check=True,
                    capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not NODE, reason='node is not installed')
+def test_auto_push_preferences_defaults_errors_and_project_switches():
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_auto_push.js'))], check=True,
+                   capture_output=True, text=True)

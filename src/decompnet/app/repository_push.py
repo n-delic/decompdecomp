@@ -57,7 +57,7 @@ def status(net, slug, folder=''):
     return describe(root, *destination(root))
 
 
-def run(net, slug, folder, log):
+def run(net, slug, folder, log, *, validate=None):
     if not repository_sync._LOCK.acquire(blocking=False):
         raise NetworkError('Another repository operation is running. Wait for it to finish, then push again.')
     try:
@@ -65,6 +65,7 @@ def run(net, slug, folder, log):
         branch, ref = destination(root)
         head = git(root, 'rev-parse', 'HEAD')
         url = git(root, 'remote', 'get-url', 'origin')
+        if validate:validate(root, branch, ref, url)
         check = getattr(log, 'check_cancel', lambda: None)
         check()
         log('Checking origin before pushing existing commits…')
@@ -82,6 +83,8 @@ def run(net, slug, folder, log):
         git(root, 'merge-base', '--is-ancestor', head, git(root, 'rev-parse', 'HEAD'),
             error='Branch history changed while checking origin. Review the checkout before pushing again.')
         log('Pushing commit '+head[:12]+' to origin/'+ref.removeprefix('refs/heads/')+'…')
+        if validate:validate(root, branch, ref, url)
+        check()
         git(root, 'push', '--', 'origin', head+':'+ref,
             error='Push to origin failed. Your commits remain local. Check origin, permissions and Git credentials, then retry. No force push was attempted.')
         # Refresh the exact destination even with a custom fetch refspec. Never change an upstream.

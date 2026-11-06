@@ -648,6 +648,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
 | Create Git repository and initial checkpoint from a portable save | ✓ | ✓ | ✓ | ✓ | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned |
 | Add missing origin remote in Settings | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Opt-in automatic push after a configurable commit threshold | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Review and push existing Git commits to origin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Automatic per-match local commits with agent notes | ✓ | ✓ | ✓ | ✓ | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -3059,3 +3060,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
   streamed eligibility/content batches and visible timed preparation preserve comparison reuse.
 
 - Done: shutdown and restart preparation report flushed terminal stages, per-project final-save activity, failures and periodic elapsed-time updates; closing just the window explicitly says when background work continues.
+
+- Done: optional automatic pushes default to ten unpushed commits, with a configurable threshold of 1–10,000. A separate background worker checks local refs and only contacts origin at the threshold. It pins the selected checkout, branch and origin, uses ordinary non-force push checks, retains failed commits locally and retries failures once a minute. ROM progress and PROJECT source checkouts share the behavior; it is independent of automatic match commits.

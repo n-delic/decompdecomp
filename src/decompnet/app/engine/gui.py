@@ -51,7 +51,7 @@ class GuiMixin:
         return res
 
     def overview(self, slug: str, *, room_members=True, quick=False) -> dict:
-        from .. import match_commits
+        from .. import auto_push, match_commits
         proj = self._project(slug)
         if quick:
             cfg = self.cfg(proj)
@@ -59,7 +59,7 @@ class GuiMixin:
             return base | {'overview_pending':True, 'instructions':cfg.get('instructions') or '',
                            'priority':cfg.get('priority',[]), 'spend':cfg.get('spend'),
                            'suggestions':[], 'boundaries':[], 'compiler_ranges':base.get('compiler_ranges') or self._range_rows(cfg),
-                           'auto_commit':match_commits.status(self, proj),
+                           'auto_commit':match_commits.status(self, proj), 'auto_push':auto_push.status(self, proj),
                            'auto_compiler':self.auto_adjusts(proj), 'progress_syncing':self.progress.syncing(slug),
                            'progress_sync':self.progress.status(slug)}
         last = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
@@ -88,7 +88,7 @@ class GuiMixin:
                                                         "cross_candidates", "cross_tried", "cross_matched")},
                        "cross_game": self.twins.cross_game_results(slug),
                        "free_search": dict(self.store.one('SELECT * FROM reuse_runs WHERE project_id=? ORDER BY id DESC LIMIT 1', proj['id']) or {}),
-                       "auto_commit": match_commits.status(self, proj),
+                       "auto_commit": match_commits.status(self, proj), "auto_push": auto_push.status(self, proj),
                        "progress_syncing": self.progress.syncing(slug),
                        "progress_sync": self.progress.status(slug),
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",

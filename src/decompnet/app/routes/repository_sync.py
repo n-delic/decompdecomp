@@ -28,6 +28,17 @@ def register(app):
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
 
+    @app.mcp.custom_route('/api/repository-auto-push', methods=['POST'])
+    async def auto_push(request):
+        if bad := app.guard(request, write=True):return bad
+        try:
+            from .. import auto_push
+            data = await app.body(request)
+            return JSONResponse(await app.call(auto_push.configure, app.net, str(data.get('slug', '')),
+                data.get('enabled'), data.get('threshold', 10), str(data.get('folder', '')).strip()))
+        except (NetworkError, ValueError, KeyError, OSError) as error:
+            return app.fail(error)
+
     @app.mcp.custom_route('/api/repository-auto-commit', methods=['POST'])
     async def auto_commit(request):
         if bad := app.guard(request, write=True):

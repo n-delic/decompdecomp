@@ -116,6 +116,7 @@ function renderSteering(ov) {
   if (typeof refreshRepositorySetup === "function") refreshRepositorySetup();
   refreshRepositoryPush();
   renderRepositoryAutoCommit(ov.auto_commit);
+  if (typeof renderRepositoryAutoPush === "function") renderRepositoryAutoPush(ov.auto_push);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
   const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];

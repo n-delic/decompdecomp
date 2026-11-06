@@ -72,3 +72,45 @@ $("repositoryPushGo").onclick = async () => {
   }
 };
 setInterval(() => refreshRepositoryPush(), 10000);
+
+
+let repositoryAutoPushBusy = false, repositoryAutoPushSlug = "", repositoryAutoPushState = {};
+function renderRepositoryAutoPush(state = {}) {
+  if (repositoryAutoPushBusy) return;
+  if (repositoryAutoPushSlug !== S.slug) {
+    repositoryAutoPushSlug = S.slug;
+    $("repositoryAutoPushLog").textContent = ""; $("repositoryAutoPushLog").hidden = true;
+  }
+  repositoryAutoPushState = state;
+  $("repositoryAutoPush").checked = !!state.enabled;
+  if (document.activeElement !== $("repositoryAutoPushThreshold")) $("repositoryAutoPushThreshold").value = state.threshold || 10;
+  $("repositoryAutoPushState").textContent = state.error || state.phase || (state.enabled
+    ? `On · Push after ${state.threshold || 10} unpushed commits.${state.last_push ? " Last pushed: " + state.last_push.slice(0, 8) : ""}`
+    : "Off. Commits stay local until you push.");
+  $("repositoryAutoPushState").classList.toggle("err", !!state.error);
+}
+async function saveRepositoryAutoPush() {
+  if (repositoryAutoPushBusy) return;
+  const slug = S.slug, field = $("repositoryAutoPush"), threshold = $("repositoryAutoPushThreshold"), log = $("repositoryAutoPushLog");
+  const previous = repositoryAutoPushState;
+  repositoryAutoPushBusy = true;
+  const finish = beginWork(log, "Saving automatic push preference", [field, threshold], "Automatic push preference saved.");
+  try {
+    const state = await api("/api/repository-auto-push", {method:"POST", body:{slug, enabled:field.checked,
+      threshold:Number(threshold.value), folder:typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot}});
+    if (S.slug === slug) { repositoryAutoPushBusy = false; if (S.ov) S.ov.auto_push = state; renderRepositoryAutoPush(state); }
+  } catch (error) {
+    if (S.slug === slug) { field.checked = !!previous.enabled; showJobError(log, error.message); }
+  } finally {
+    repositoryAutoPushBusy = false; finish();
+    if (S.slug !== slug) {
+      log.hidden = true;
+      if (log._workStatus) log._workStatus.hidden = true;
+      if (log._workBar) log._workBar.hidden = true;
+      renderRepositoryAutoPush(S.ov?.auto_push);
+    }
+    if (typeof refreshRepositorySetup === "function") { repositorySetupChecked = 0; refreshRepositorySetup(); }
+  }
+}
+$("repositoryAutoPush").onchange = saveRepositoryAutoPush;
+$("repositoryAutoPushThreshold").onchange = saveRepositoryAutoPush;
