@@ -276,7 +276,7 @@ def test_machine_draft_api_scopes_reports_and_starts_a_reviewable_job(network, t
     for _ in range(100):
         if queued:break
         time.sleep(.01)
-    assert queued==[(proj['slug'],{'include_all':bool(include_all)})]
+    assert queued==[(proj['slug'],{'include_all':bool(include_all),'threads':0})]
     assert net.store.one('SELECT status FROM functions WHERE id=?',fn['id'])['status']=='open'
 
 
@@ -330,8 +330,9 @@ def test_regeneration_reports_function_before_work_finishes_and_final_counts(net
     snapshots = []
     def seed(*args):
         assert published.wait(5), 'Progress must be published while the draft is still running'
-    monkeypatch.setattr(net, '_seed_for', seed)
-    monkeypatch.setattr(net, '_autopilot_one', lambda *args: 'near')
+        return 'fresh C'
+    monkeypatch.setattr(draft_regeneration, 'generate', seed)
+    monkeypatch.setattr(draft_regeneration, 'trial', lambda *args: ('near', {'compiled':True}))
     monkeypatch.setattr(draft_reports, 'read', lambda *args: {'compiled': True})
     class Log:
         def __call__(self, *args): pass
@@ -340,7 +341,7 @@ def test_regeneration_reports_function_before_work_finishes_and_final_counts(net
             published.set()
     result = draft_regeneration.run(net, proj['slug'], Log())
     assert snapshots[0]['done'] == 0 and snapshots[0]['total'] == 1
-    assert snapshots[0]['function'] == fn['name']
+    assert snapshots[0]['function'].startswith(fn['name']+': ')
     assert snapshots[-1]['done'] == snapshots[-1]['total'] == 1
     assert snapshots[-1]['function'] == ''
     assert snapshots[-1]['compiled'] == result['compiled'] == 1

@@ -410,4 +410,14 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             res = subprocess.run(limits.capped(argv[:i] + argv[i + 2:]), capture_output=True, text=True, timeout=timeout,
                                  encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         out = res.stdout.strip()
-        return out if res.returncode == 0 and out else None
+        # m2c can exit successfully after emitting a partial function and bare diagnostics.
+        # Its error placeholders discard instructions; they are explanations, never baseline C.
+        errors = [line.strip() for line in out.splitlines()
+                  if re.match(r"\s*(?://\s*Error:|Bad function call operand\b)", line)
+                  or (valid and re.search(r"\bM2C_ERROR\s*\(", line))]
+        reason = '\n'.join(errors)[-MAX_REASON_CHARS:]
+        if res.returncode != 0 or not out or errors:
+            if strict:
+                raise DraftError(reason or (_failure(res) if out or res.stderr or res.returncode else 'm2c produced no C for this function.'))
+            return None
+        return out

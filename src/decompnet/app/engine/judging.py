@@ -102,7 +102,17 @@ class JudgeMixin:
     def rename_tokens(self, proj, text: str) -> str:
         """Show automatic names under their current names (func_80001234 -> deflate)."""
         syms = self.symbols(proj["id"])
-        return _AUTO_TOKEN.sub(lambda m: syms.label(int(m.group(0)[-8:], 16)), text)
+        def renamed(match):
+            original = match.group(0)
+            address = int(original[-8:], 16)
+            name, offset = syms.name_at(address)
+            if original.startswith('func_'):
+                # A containing symbol is useful for data, but is not a callable C name.
+                # Overlay addresses can also alias data in another image.
+                symbol = syms.by_name.get(name)
+                return name if not offset and symbol and symbol.kind == 'func' else original
+            return syms.label(address)
+        return _AUTO_TOKEN.sub(renamed, text)
 
     def claim(self, agent: Agent, project: str | None = None, function: str | None = None, strategy: str = "easiest") -> str:
         function = self.focus_target(agent,project,function)

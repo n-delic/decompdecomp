@@ -22,3 +22,9 @@ arithmetic are usually right; its types and names usually wrong. Start from it a
 - `saved_reg_*`: a register preserved for the caller; usually nothing to write in C.
 - m2c inlines expressions aggressively. The original often had temporaries; put them back when the
   register allocation differs.
+
+Machine drafts preserve exact call addresses: an interior `function+offset` is not a C callee.
+Partial m2c output and `M2C_ERROR` placeholders are reported as generation failures.
+Draft regeneration tries bounded private callback/frame repairs after compilation fails;
+only the ordinary compiler and exact judge can establish a match. Missing delay slots
+or targets outside the recorded function need boundary review, never invented instructions.

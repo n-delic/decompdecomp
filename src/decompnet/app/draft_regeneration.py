@@ -52,8 +52,8 @@ def generate(net, proj, fn, fork):
     return source
 
 
-def trial(net, agent, proj, fid, source, fork):
-    """One ordinary compiler/judge invocation, preserving existing better source."""
+def trial(net, agent, proj, fid, source, fork, stop=None):
+    """Compile the draft, then bounded private repairs only if it fails; keep the ordinary judge."""
     now = time.time()
     with net.store.tx() as db:
         net._expire_claims(db)
@@ -71,22 +71,45 @@ def trial(net, agent, proj, fid, source, fork):
         else:
             with net.progress.judging(proj['slug']):
                 ctx=net._context(proj['id'],fn['unit'])
-                result=net._compile(proj,ctx['header'],source,fn)
-                report['compiled']=result.ok
-                if not result.ok:
-                    draft_reports.failure(report,'compiler','raw_m2c',result.log)
-                else:
+                from . import initial_draft_repairs
+                from .engine.briefs import DRAFT_NOTE
+                def candidates():
+                    yield 'raw_m2c', source
+                    if report['compiled'] or (stop and stop.is_set()):
+                        return
+                    _, toolchain, context = net._draft_plan(fn, proj)
+                    prefix = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'
+                    draft = source.removeprefix(prefix)
+                    choices = initial_draft_repairs.recovery_drafts(
+                        draft, fn['name'], net._asm_text(fn,proj), proj['arch'], toolchain,
+                        context, '\n'.join(net._jtbl_asm(proj,fn)), report)
+                    for index, (family, repaired) in enumerate(choices):
+                        if index >= 6 or report['compiled'] or (stop and stop.is_set()):
+                            return
+                        yield family, prefix+repaired
+                report['trials'] = 0
+                seen = set()
+                for family, candidate_source in candidates():
+                    if stop and stop.is_set():break
+                    if candidate_source in seen:continue
+                    seen.add(candidate_source)
+                    result=net._compile(proj,ctx['header'],candidate_source,fn)
+                    report['trials'] += 1
+                    if not result.ok:
+                        draft_reports.failure(report,'compiler',family,result.log)
+                        continue
+                    report.update(compiled=True, compiled_source=candidate_source, family=family)
                     candidate,verdict,_=net._evaluate(fn,proj,result.obj)
                     if candidate is None:
-                        report['compiled_source']=source
-                        draft_reports.failure(report,'link','raw_m2c','Compiled C could not be evaluated against this target.')
+                        draft_reports.failure(report,'link',family,'Compiled C could not be evaluated against this target.')
                     else:
                         diff=scoring.diff(net._target_obj(fn,proj),candidate)
                         if verdict is not None:
                             diff=scoring.DiffResult(0 if verdict else max(1,diff.score),diff.max_score,diff.rows,verdict)
-                        net._record(fn,agent,diff.score,source,ctx['version'],matched=diff.bytes_match,
+                        net._record(fn,agent,diff.score,candidate_source,ctx['version'],matched=diff.bytes_match,
                                     effective_settings=getattr(result,'effective_settings',None))
                         report.update(scored=True,matched=diff.bytes_match)
+                    break
         report['complete']=True
         draft_reports.save(net,fid,report)
         return ('match' if report['matched'] else 'near' if report['scored'] else 'fail'), report
@@ -147,8 +170,8 @@ def run(net, slug, log, *, include_all=False, threads=0):
         confirmed = False
         try:
             if stop.is_set():return 'skip', {}
-            stage(fid, 'Compiling draft once')
-            outcome, report = trial(net,worker,proj,fid,source,fork)
+            stage(fid, 'Checking compiling C')
+            outcome, report = trial(net,worker,proj,fid,source,fork,stop)
             if link and not fork:
                 current = net.store.one('SELECT * FROM functions WHERE id=?',fid)
                 if outcome == 'match':

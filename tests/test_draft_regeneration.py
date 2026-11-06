@@ -55,7 +55,7 @@ def _room_trial(network_fixture, monkeypatch, *, fork=False, outcome='match', co
     net.links[proj['slug']] = SimpleNamespace(claims=[],claim=claim,attempt=send,call=call)
     monkeypatch.setattr(net, 'fork_slug', lambda slug: slug if fork else None)
     monkeypatch.setattr(draft_regeneration, 'generate', lambda *args: events.append(('generate',)) or 'fresh draft')
-    def judge(_net, agent, project, fid, source, is_fork):
+    def judge(_net, agent, project, fid, source, is_fork, stop=None):
         events.append(('judge', agent.name))
         if judge_error:raise NetworkError('Compiler test failed unexpectedly.')
         with net.store.tx() as db:
