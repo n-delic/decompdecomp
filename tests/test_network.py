@@ -58,6 +58,9 @@ def test_wrong_attempt_gets_scored_diff(net, agents):
     assert out.startswith("score ")
     assert "TARGET" in out and "YOURS" in out
     assert status_of(net, "clamp_s32") == "open"
+    import json
+    recorded = json.loads(net.store.one("SELECT provenance FROM attempts ORDER BY id DESC LIMIT 1")["provenance"])
+    assert recorded["compiler"] and recorded["header_sha256"] and recorded["source_sha256"]
     assert net.store.one("SELECT best_score FROM functions WHERE name='clamp_s32'")["best_score"] > 0
 
 

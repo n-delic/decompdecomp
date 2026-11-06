@@ -394,6 +394,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                              "on (before that it answers once with what to try; call again to release anyway).",
                              s(function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("true when you're sure no C makes its code (hand-written assembly); say why in notes"),
+                               needs_reason=st("required with needs: missing prototype, layout or inlined body and "
+                                               "supporting assembly/diff; an unmatched callee alone is not a blocker"),
                                needs=st("optional: another function this one needs done first (a callee or inlined "
                                         "helper): it then goes first and is handed to you"))),
         "get_context": ("The shared header included in every compile.", s()),

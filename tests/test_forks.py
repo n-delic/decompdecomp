@@ -189,6 +189,9 @@ def test_near_miss_gets_a_diff_and_release_restores_the_best(fork):
     near, worse = good.replace("return n;", "return n + 1;"), good.replace("n++;", "n += 2;")
     assert near != good and worse != good
     first = net.attempt(agent, "count_alive_entities", near, slug)
+    measured = json.loads(net.store.one("SELECT provenance FROM attempts ORDER BY id DESC LIMIT 1")["provenance"])
+    assert measured["unit"] and measured["build_source_sha256"]
+    assert measured["header_sha256"] is None  # project transitive headers are not captured yet
     assert not first["matched"] and first["score"] and "TARGET" in first["text"]
     d = net.function_diff(slug, "count_alive_entities")
     assert d["kind"] == "latest" and 0 < d["percent"] < 100 and any(r[0] != " " for r in d["rows"])

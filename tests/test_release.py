@@ -125,7 +125,8 @@ def test_a_release_naming_what_it_needs_waits_and_that_one_goes_first(tmp_path):
         net.release_function(a, "f", "", "game", needs="f")
     with pytest.raises(NetworkError, match="you already hold f; .*needs=\"g\""):
         net.claim_row(a, "game", "g")
-    said = net.release_function(a, "f", "calls g with esi; its convention comes from g's definition", "game", needs="g")
+    said = net.release_function(a, "f", "calls g with esi; its convention comes from g's definition", "game", needs="g",
+                                needs_reason="caller loads esi but g has no known argument declaration")
     assert said.startswith("Released f") and "f now waits for g" in said
     assert _held(net, a) == "g"  # handed over (no push-back: the agent said why compiling can't help yet)
     assert "doesn't count against your session's claims" in said
@@ -147,7 +148,7 @@ def test_two_functions_that_need_each_other_are_worked_on_together_not_both_held
     net, pid = _game(tmp_path, [("f", 10, "open"), ("g", 50, "open"), ("h", 5, "open")])
     ids = {r["name"]: r["id"] for r in net.store.all("SELECT id, name FROM functions")}
     with net.store.tx() as db:
-        db.execute("INSERT INTO waits VALUES(?,?,?,?)", (ids["g"], ids["f"], None, time.time()))  # g waits for f
+        db.execute("INSERT INTO waits(function_id,needs_id,agent_id,created_at) VALUES(?,?,?,?)", (ids["g"], ids["f"], None, time.time()))  # g waits for f
     a, _ = net.local_agent("a")
     net.claim_row(a, "game", "f")
     with pytest.raises(NetworkError, match=r"depend on each other.*compile_and_diff\(function=\"f, g\""):
@@ -155,7 +156,7 @@ def test_two_functions_that_need_each_other_are_worked_on_together_not_both_held
     assert _held(net, a) == "f"  # nothing released
     # a cycle already in the table (made before this check) holds neither back
     with net.store.tx() as db:
-        db.execute("INSERT INTO waits VALUES(?,?,?,?)", (ids["f"], ids["g"], None, time.time()))
+        db.execute("INSERT INTO waits(function_id,needs_id,agent_id,created_at) VALUES(?,?,?,?)", (ids["f"], ids["g"], None, time.time()))
     b, _ = net.local_agent("b")
     assert net.claim_row(b, "game", None, "easiest")["name"] == "g"  # not last (behind h): the wait is mutual
     brief = net.dependency_brief(net.store.one("SELECT * FROM functions WHERE name='g'"))
@@ -169,7 +170,7 @@ def test_what_a_function_waits_for_is_claimed_first_and_its_match_brings_it_back
     net, pid = _game(tmp_path, [("f", 10, "open"), ("g", 50, "open"), ("h", 5, "open")])
     ids = {r["name"]: r["id"] for r in net.store.all("SELECT id, name FROM functions")}
     with net.store.tx() as db:
-        db.execute("INSERT INTO waits VALUES(?,?,?,?)", (ids["f"], ids["g"], None, time.time()))
+        db.execute("INSERT INTO waits(function_id,needs_id,agent_id,created_at) VALUES(?,?,?,?)", (ids["f"], ids["g"], None, time.time()))
     a, _ = net.local_agent("a")
     assert net.claim_row(a, "game", None, "easiest")["name"] == "g"  # wanted: before the smaller h
     assert "Waiting for this one: f" in net.dependents_note(ids["g"])

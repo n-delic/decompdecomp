@@ -449,8 +449,8 @@ class CompilerMixin:
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "") -> str:
         """A function's C (`source`, else its best attempt) built with another compiler and flags, judged like an
-        attempt but recorded nowhere: to work out which compiler built a part of the game before suggesting it (on GTA
-        San Andreas an agent tried compilers by suggesting them: 128 of its 149 suggestions were disproved)."""
+        attempt but kept only as a probe, not an accepted match or a budgeted attempt: to work out the compiler
+        before suggesting it (agents once tried compilers by suggesting them: 128 of 149 suggestions were disproved)."""
         if self.fork_slug(slug):  # where the project lets each file have its own compiler (DS), the fork engine's
             return self.forks.try_compiler(agent, slug, function, compiler, flags, source)
         proj = self._project(slug)
@@ -461,7 +461,7 @@ class CompilerMixin:
         source = source.strip() or self._source_of(fn)
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
-        ok, d, problem = self._judge_with(proj, fn, tc, flag_list, source)
+        ok, d, problem = self._judge_with(proj, fn, tc, flag_list, source, observe=agent)
         what = f"{consoles.compiler_name(tc)} {' '.join(flag_list)}"
         if d is None:
             return f"{what}: doesn't compile:\n{problem.strip()[-1500:]}"

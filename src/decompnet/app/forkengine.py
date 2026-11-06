@@ -24,7 +24,7 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
+from .. import arch, attempts, classes, coffobj, consoles, similarity, structs, toolchains
 from ..forks import (
     convention,
     csource,
@@ -2403,6 +2403,7 @@ class ForkEngine:
             lines += ["", "### Current source", "```c", src_text[span[0]:span[1]].strip(), "```"]
         else:
             lines += ["", f"### Not in {unit.source or 'the source'} yet: compile_and_diff adds it at the end."]
+        lines += attempts.brief(self.net, fn)
         if fn["best_source"] and fn["status"] != "matched":
             lines += ["", f"### Best attempt so far (score {fn['best_score']})", "```c", fn["best_source"].strip(), "```"]
         elif fn["status"] != "matched" and (span is None or csource.is_stub(src_text[span[0]:span[1]])):
@@ -2952,6 +2953,9 @@ class ForkEngine:
                 if self._build_unit(proj, fp, unit)[0] and scores is not None:
                     self._keep_scores(proj, unit, before, scores)
 
+            measured = attempts.provenance(
+                {"toolchain": console.file_compiler(fp, unit.source) if unit.source else None, "flags": None},
+                code, unit=unit.name, build_source=after)
             ok, log = self._build_unit(proj, fp, unit)
             if not ok and (broken := fp.build_problem()) is not None:
                 # the build itself is broken, not the agent's code: nothing recorded or counted, and the project
@@ -2967,7 +2971,7 @@ class ForkEngine:
             if not ok:
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, None, code, 0)
+                    self.net._record(fn, agent, None, code, 0, provenance=measured)
                 why = "" if builds else ("\n(The file didn't build before your change either, so the error may be in "
                                          "other code of the file: fix that with edit_file.)")
                 return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}", "score": None,
@@ -2984,7 +2988,7 @@ class ForkEngine:
             if broken:
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, None, code, 0, compiled=True)
+                    self.net._record(fn, agent, None, code, 0, compiled=True, provenance=measured)
                 return {"text": remembered(f"❌ REJECTED and undone: your change breaks matched function(s) "
                                            f"{', '.join(broken[:8])}. Check you replaced the right definition "
                                            "(overloads?) and didn't change shared code.", None),
@@ -2992,7 +2996,7 @@ class ForkEngine:
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, None, code, 0, compiled=True)
+                    self.net._record(fn, agent, None, code, 0, compiled=True, provenance=measured)
                 return {"text": f"❌ REJECTED and undone: {unit.source} is linked into the game, and with your change "
                                 f"the game no longer builds byte for byte:\n{_tail(ok[1])}", "score": None,
                         "matched": False}
@@ -3002,7 +3006,7 @@ class ForkEngine:
             if not matched and not keep and not was_matched:  # tried, not kept: the file stays as it was
                 undo()
                 if quiet is None or score < quiet:
-                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                    self.net._record(fn, agent, score, code, 0, compiled=True, provenance=measured)
                 return {"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
                         "matched": False, "percent": pct}
             best = fn["best_score"]
@@ -3012,7 +3016,7 @@ class ForkEngine:
                 # the one the notes and the brief call the best (an agent found its 91.8% try there, not its 92.3%)
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                    self.net._record(fn, agent, score, code, 0, compiled=True, provenance=measured)
                 stall = self.net.stall_note(fn["id"], agent.id)
                 text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
                                   f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
@@ -3022,7 +3026,7 @@ class ForkEngine:
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
                 if quiet is None:  # a polishing helper's compiles count too (not as a match)
-                    self.net._record(fn, agent, score, code, 0)
+                    self.net._record(fn, agent, score, code, 0, provenance=measured)
                 if not matched:
                     undo()
                     why = "loads other constants" if d.literals else f"is {percent_text(pct)}"
@@ -3033,7 +3037,7 @@ class ForkEngine:
                                                         f"Edited by {agent.name} with decompdecomp.")
                 return {"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True}
-            self.net._record(fn, agent, score, code, 0, matched=matched)
+            self.net._record(fn, agent, score, code, 0, matched=matched, provenance=measured)
             self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
                                via=f"unit diff after a compile of {fn['name']}")
             self._remember(proj, fp, unit, d)

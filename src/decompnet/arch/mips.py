@@ -80,6 +80,7 @@ GP = 28  # the register $gp
 GP_SEARCH_BYTES = 0x400  # how far after the entry point start-up code sets $gp
 
 
+R5900 = "r5900"
 ALLEGREX = "allegrex"  # Console.cpu_variant of the PSP's processor
 # the Allegrex's VFPU (vector unit) instructions, by opcode: COP2 (mfv, mtv, bvf...), the VFPU0-7 groups (vadd,
 # vmul, vcmp, vmov, vpfxs, vmmul, vnop...) and its loads and stores (lv.s, lv.q, lvl.q, sv.s, sv.q, svl.q). On other
@@ -93,13 +94,22 @@ def allegrex_lines(code: bytes, big_endian: bool) -> list[tuple[int, str, str]]:
     min/max and clz/clo as other instructions (lv.q as bbit032, vadd.s as daddi, max as dadd), so a PSP diff would
     show other instructions than the game has. Branches read `.L<offset>` and jumps their target, as scoring's capstone path
     writes them, so a change of position alone never shows as a difference."""
+    return _variant_lines(code, big_endian, ALLEGREX)
+
+
+def r5900_lines(code: bytes, big_endian: bool) -> list[tuple[int, str, str]]:
+    """Decode the EE's scalar, quadword and MMI instructions instead of unrelated MIPS DSP opcodes."""
+    return _variant_lines(code, big_endian, R5900)
+
+
+def _variant_lines(code: bytes, big_endian: bool, cpu: str) -> list[tuple[int, str, str]]:
     import rabbitizer
 
     order = "big" if big_endian else "little"
     out = []
     for at in range(0, len(code) - 3, 4):
         word = int.from_bytes(code[at:at + 4], order)
-        ins = rabbitizer.Instruction(word, 0, rabbitizer.InstrCategory.R4000ALLEGREX)
+        ins = rabbitizer.Instruction(word, 0, rabbitizer_category(cpu))
         imm = (f".L{at + ins.getBranchOffsetGeneric():x}" if ins.isBranch()
                else f"{jump_target(word, 0):#x}" if ins.isJumpWithAddress() else None)
         mnemonic, _, operands = ins.disassemble(immOverride=imm).partition(" ")
@@ -113,6 +123,8 @@ def rabbitizer_category(cpu: str = ""):
     """rabbitizer's reading of a console's processor (Console.cpu_variant): the Allegrex's, or plain MIPS."""
     import rabbitizer
 
+    if cpu == R5900:
+        return rabbitizer.InstrCategory.R5900
     return rabbitizer.InstrCategory.R4000ALLEGREX if cpu == ALLEGREX else rabbitizer.InstrCategory.CPU
 
 

@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from ... import consoles, scoring
+from ... import attempts, consoles, scoring
 from ...network import MACHINE_AGENTS, WAITING, Agent, Network, NetworkError, stall_line
 from ...rom.symbols import SymbolTable
 from .common import _AUTO_TOKEN, BATCH_INSNS
@@ -197,7 +197,7 @@ class JudgeMixin:
         return said
 
     def release_function(self, agent: Agent, function: str, notes: str, project: str | None = None,
-                         needs: str = "", not_c: bool = False) -> str:
+                         needs: str = "", not_c: bool = False, needs_reason: str = "") -> str:
         """release_function as agents call it (the app's own releases and a room host's go straight to release).
         On a demo fork and a large x86 game, agents released functions seconds after claiming them, untried,
         for reasons a compile would have shown were none (12,565 releases, median 5 s after the claim): so a release
@@ -209,13 +209,18 @@ class JudgeMixin:
         it counts only once agents of two models agree."""
         fn = self._function(function, project)
         need = self._prerequisite(agent, fn, needs, project) if needs.strip() else None
+        if need is not None and not needs_reason.strip():
+            raise NetworkError("needs_reason is required with needs: identify the missing prototype, layout or "
+                               "inlined body and the assembly/diff evidence. An unmatched callee alone is not a blocker.")
         progress = self.claim_progress(agent, fn)
         if not not_c and need is None and progress is not None and \
                 (push := self._push_back(agent, fn, progress, project)):
             return push
         said = self.release(agent, function, notes, project, not_c)
+        with self.store.tx() as db:
+            db.execute("DELETE FROM waits WHERE function_id=?", (fn["id"],))
         if need is not None:
-            self.wait_for(agent, fn, need)
+            self.wait_for(agent, fn, need, needs_reason.strip())
             said += (f"\n{fn['name']} now waits for {need['name']}: it's claimed after everything else until "
                      f"{need['name']} matches, and {need['name']} goes first meanwhile.")
             said += self._pivot(agent, project, need)
@@ -281,6 +286,11 @@ class JudgeMixin:
         if fn["status"] != "open" or agent.name in MACHINE_AGENTS:
             return None
         n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
+        repeated = self.store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='repeat_seen' AND detail=? "
+                                  "AND created_at>=? LIMIT 1", agent.id,
+                                  f"{fn['id']}:{self._generation.get(fn['project_id'], 0)}", progress["claimed_at"])
+        if repeated:
+            return None  # an observed cached probe counts as trying, without spending a duplicate build to release
         if n and streak >= after:
             return None  # compile_and_diff said to move on
         pushed = self.store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND "
@@ -312,7 +322,7 @@ class JudgeMixin:
                  ("Compile it (a release with no compile isn't taken)." if not n else
                   f"release_function goes through at {after} compiles in a row without a better score, or if you "
                   "ask again now with notes saying why it can't get closer.")
-                 + " If it needs another function done first, release_function(..., needs=\"<that function>\") "
+                 + " If it needs another function done first, release_function(..., needs=\"<that function>\", needs_reason=\"<missing declaration/layout/inline body and evidence>\") "
                  "records that, puts that one first in the queue and hands it to you."]
         return "\n".join(lines)
 
@@ -334,13 +344,14 @@ class JudgeMixin:
     def spend(self, slug: str) -> dict | None:
         return self.cfg(self._project(slug)).get("spend")
 
-    def _judge_with(self, proj, fn, toolchain: str, flags: list[str], source: str):
-        """(matched, diff or None, log) for C built with this compiler and flags, judged like an attempt, recording
-        nothing."""
+    def _judge_with(self, proj, fn, toolchain: str, flags: list[str], source: str, observe: Agent | None = None):
+        """Judge another compiler without accepting a match. An explicit agent probe retains its measured inputs
+        for handoffs; surveys and range checks remain unrecorded."""
         from ...compiler import compile_source
         from ...project import compiler_config
 
-        header = self._context(proj["id"], fn["unit"])["header"]
+        ctx = self._context(proj["id"], fn["unit"])
+        header = ctx["header"]
         settings = {"toolchain": toolchain, "flags": flags, "timeout": 20}
         result = compile_source(compiler_config(Path(proj["root"]), {"compiler": settings}), header, source)
         if not result.ok:
@@ -349,7 +360,11 @@ class JudgeMixin:
         if cand is None:
             return False, None, "the function isn't in what it compiled to"
         d = scoring.diff(self._target_obj(fn, proj), cand)
-        return (verdict if verdict is not None else d.bytes_match), d, ""
+        matched = verdict if verdict is not None else d.bytes_match
+        if observe is not None:
+            measured = attempts.provenance(settings, source, header=header, context_version=ctx["version"], unit=fn["unit"])
+            attempts.record_probe(self, fn, observe.id, source, measured, 0 if matched else max(1, d.score), matched)
+        return matched, d, ""
 
     def _source_of(self, fn) -> str | None:
         """A function's best C, else its latest attempt."""

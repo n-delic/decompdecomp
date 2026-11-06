@@ -33,6 +33,7 @@ class PlayStation2(Console):
     short = "PS2"
     status = BETA  # tested on real games (GTA San Andreas, Ridge Racer V), not yet rebuilt byte for byte whole
     arch = "mips"
+    cpu_variant = mips.R5900
     big_endian = False
     mode = ROM
     layout = "splat"
