@@ -132,7 +132,11 @@ def register(app: App) -> None:
             return await call(closing_snapshot)
 
         if (await body(request)).get("keep"):
-            await call(window.close_app)
+            from ..shutdown_progress import terminal_note
+            def keep_working():
+                terminal_note("Closing the window; decompdecomp will keep working in the background.",app.jobs.logger,prefix="decompdecomp")
+                window.close_app()
+            await call(keep_working)
             return JSONResponse({"ok": True})
         threading.Thread(target=app.quit_app, daemon=True).start()
         return JSONResponse({"ok": True})

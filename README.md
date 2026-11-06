@@ -703,6 +703,10 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | PS2 SN Systems EE-GCC 2.95.2/2.95.3 and CodeWarrior 2.3.3/3.0.1 | Pinned Windows compilers through wibo on Intel and Apple Silicon; CodeWarrior requires license acceptance |
 | Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
 
+When launched from a terminal, quitting reports each shutdown stage and the project being saved.
+Stages taking more than five seconds print elapsed-time updates. Closing just the window while
+keeping work running is reported explicitly; it does not mean the app has quit.
+
 For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`.
 
 To avoid rebuilding a packaged app for each code update, open Settings → Run from Git / update when

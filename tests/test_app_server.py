@@ -2765,3 +2765,12 @@ def test_repository_setup_requires_write_guard_and_runs_as_job(app, monkeypatch)
         time.sleep(.01)
     assert result['state'] == 'done' and result['result']['repository']
     assert calls == [('game', 'origin', data['origin'])]
+
+
+def test_close_window_keep_working_explains_background_state_in_terminal(app,monkeypatch,capsys):
+    client,*_=app
+    closed=[]
+    monkeypatch.setattr(window,'close_app',lambda:closed.append(True))
+    response=client.post('/api/close',json={'keep':True},headers={'X-Decomp':'1'})
+    assert response.status_code==200 and closed==[True]
+    assert 'keep working in the background' in capsys.readouterr().err

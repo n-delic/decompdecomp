@@ -28,6 +28,8 @@ from ..network import NetworkError
 from . import agents, collab, maintenance, routes, saves, tools, updates, window, workers
 from .engine import RomNetwork
 from .routes import browser_bridge, forks, life, pages, projects, repair_feedback, repository_sync, rooms, setup, state
+from .shutdown_progress import Progress as ShutdownProgress
+from .shutdown_progress import terminal_note
 from .support import Jobs, Settings, session_options
 
 
@@ -53,30 +55,38 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         """The window ended without the app asking (the page found nothing working, or it crashed): quit, unless
         helpers or a job are working; they carry on, and the tray icon or `decomp` opens the window again."""
         if busy():
-            jobs.logger.info("window closed; helpers or a job keep working in the background")
+            terminal_note("Window closed; workers and tasks keep running in the background. Reopen decompdecomp to return.",jobs.logger,prefix="decompdecomp")
             return
         jobs.logger.info("window closed; quitting")
         quit_app()
 
+    def stop_workers(status, *, close_window=False):
+        status.step('Stopping startup maintenance',startup.close)
+        if getattr(net,'autosave',None):status.step('Stopping project autosave workers',net.autosave.close)
+        if close_window:status.step('Closing the app window',window.close_app)
+        status.step('Stopping deep searches and queued repairs',net.deep_sweeps.shutdown)
+        status.step('Stopping the permuter process',net.permuter.close)
+        status.step('Stopping agent processes and room connections',manager.shutdown)
+        status.step('Saving remaining project progress',lambda:flush_progress(status))
+
     def quit_app() -> None:
-        """Quit means quit: the window, every helper with everything it started, then the server."""
-        startup.close()
-        if getattr(net, "autosave", None):net.autosave.close()
-        window.close_app()
-        net.deep_sweeps.shutdown()
-        net.permuter.close()
-        manager.shutdown()
-        flush_progress()
-        wine.stop()  # (its wine server would otherwise stay up to 10 minutes after the last compile)
+        """Quit means quit; keep terminal users informed before each potentially slow step."""
+        with ShutdownProgress(jobs.logger) as status:
+            status.note('Shutting down decompdecomp; preserving saved work.')
+            stop_workers(status,close_window=True)
+            status.step('Stopping the Wine compiler runtime',wine.stop)
+            status.note('Shutdown complete. Exiting.')
         os._exit(0)
 
-    def flush_progress() -> None:
-        """Try every final save and leave a clear log entry when the user's progress folder is blocked."""
+    def flush_progress(status) -> None:
+        """Try every final save and report blocked progress folders in the terminal too."""
         try:
-            for slug, error in net.progress.flush().items():
-                jobs.logger.error("could not save %s before exit: %s", slug, error)
+            for slug,error in net.progress.flush(notify=lambda slug:status.update(f'Saving project {slug}')).items():
+                status.note(f'Could not save project {slug}: {error}')
+                jobs.logger.error('could not save %s before exit: %s',slug,error)
         except Exception:  # shutdown must continue even if the progress store itself is damaged
-            jobs.logger.exception("could not flush progress before exit")
+            status.note('Could not flush project progress; see the app log for details.')
+            jobs.logger.exception('could not flush progress before exit')
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
     maintenance.configure_cpu(settings.data.get("maintenance_cpu_percent", 0))
@@ -284,13 +294,11 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     def fail(e: Exception, code: int = 400) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=code)
 
-    def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
-        startup.close()
-        if getattr(net, "autosave", None):net.autosave.close()
-        net.deep_sweeps.shutdown()
-        net.permuter.close()
-        manager.shutdown()
-        flush_progress()
+    def before_restart() -> None:
+        with ShutdownProgress(jobs.logger) as status:
+            status.note('Preparing decompdecomp to restart; preserving saved work.')
+            stop_workers(status)
+            status.note('Shutdown preparation complete. Ready to restart.')
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use

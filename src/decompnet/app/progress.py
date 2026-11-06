@@ -845,10 +845,11 @@ class Progress:
         if not self.applying and pending and self.revisions.get(pending[0], 0) != pending[1]:
             raise NetworkError("Progress changed while this attempt compiled. Read the function again and retry with the updated project.")
 
-    def flush(self) -> dict[str, str]:
+    def flush(self, *, notify=None) -> dict[str, str]:
         """Synchronize every ROM project's final database work before the process exits."""
         failures = {}
         for row in self.net.store.all("SELECT slug FROM projects"):
+            if notify:notify(row["slug"])
             try:
                 self.sync(row["slug"], force=True)
             except NetworkError as error:

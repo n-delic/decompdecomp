@@ -2030,3 +2030,20 @@ def test_foreground_waits_until_saved_verification_evidence_is_installed(project
         assert background.result(timeout=5)
         assert foreground.result(timeout=5)['matched']
     assert net._function('g', 'game')['matched_source'].strip() == 'good foreground'
+
+
+def test_final_flush_reports_each_project_before_synchronizing(tmp_path,monkeypatch):
+    from decompnet.app.engine import RomNetwork
+    from decompnet.network import NetworkError
+    net=RomNetwork(tmp_path/'flush.db',tmp_path)
+    with net.store.tx() as db:
+        db.executemany('INSERT INTO projects(slug,root,config) VALUES(?,?,?)',
+                       [('first',str(tmp_path),'{}'),('second',str(tmp_path),'{}')])
+    events=[]
+    def sync(slug,**kwargs):
+        events.append(('sync',slug))
+        if slug=='first':raise NetworkError('blocked folder')
+    monkeypatch.setattr(net.progress,'sync',sync)
+    failures=net.progress.flush(notify=lambda slug:events.append(('notify',slug)))
+    assert events==[('notify','first'),('sync','first'),('notify','second'),('sync','second')]
+    assert failures=={'first':'blocked folder'}
