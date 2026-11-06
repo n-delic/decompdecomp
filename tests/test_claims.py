@@ -501,3 +501,26 @@ def test_a_function_pieces_were_joined_to_is_open_again_but_library_code_stays_a
         db.execute("UPDATE functions SET status='asm', meta=?", (json.dumps({"asm_code": "libc", "set_aside": True}),))
     net.joined("piece", "game")
     assert net.store.one("SELECT status FROM functions")["status"] == "asm"
+
+
+def test_no_compiling_c_excludes_successful_compiles_even_without_a_score(tmp_path):
+    net, pid = _game(tmp_path, [('never', 20, 'open'), ('failed', 4, 'open'), ('compiled', 4, 'open'), ('scored', 4, 'open')])
+    agent, _ = net.local_agent('worker')
+    with net.store.tx() as db:
+        for name, compiled in [('failed', 0), ('compiled', 1)]:
+            fid = net._function(name, 'game')['id']
+            db.execute('INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) VALUES(?,?,?,?,?,?,?)',
+                       (fid, agent.id, None, compiled, 1, 'candidate', 1))
+            db.execute('UPDATE functions SET attempts=1 WHERE id=?', (fid,))
+        db.execute("UPDATE functions SET best_score=50 WHERE name='scored'")
+    first = net.claim_row(agent, 'game', None, 'no_compiling_c')
+    assert first['name'] == 'never'
+    other, _ = net.local_agent('second')
+    assert net.claim_row(other, 'game', None, 'no_compiling_c')['name'] == 'failed'
+    third, _ = net.local_agent('third')
+    assert net.claim_row(third, 'game', None, 'no_compiling_c') is None
+    import pytest
+    with pytest.raises(network.NetworkError, match='already has a recorded compiling C'):
+        net.claim_row(third, None, 'compiled', 'no_compiling_c')
+    net.set_selection('game', third.name, {'strategy': 'no_compiling_c'})
+    assert net.claim_row(third, 'game', None) is None

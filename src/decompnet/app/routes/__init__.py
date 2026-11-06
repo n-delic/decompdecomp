@@ -6,8 +6,10 @@ module's register(), which adds that part's routes to the MCP server's web app:
 - projects: everything under a project (/api/project, /api/function, /api/compiler, /api/export, ...)
 - forks:    public decomps forked by their address, and projects started from scratch on that build
 - setup:    compilers and tools, helper agents and their sign-in, settings
+- repository_sync: verified additions to a standalone Git export checkout
 - life:     updates, the window, quitting
 - rooms:    decompiling together (collab.py)
+- pairing:  agents outside the app asking for access, approved in the window
 
 Routes check the request with app.guard (the window's secret, the host, and a header for writes) before anything
 else, run blocking work with app.call (a thread), and answer errors with app.fail.
@@ -45,9 +47,20 @@ class App:
     body: Callable[..., Any]  # await body(request): the JSON object sent, or {}
     call: Callable[..., Any]  # await call(fn, *args): fn run in a thread
     fail: Callable[..., Any]  # fail(error, code=400): the error as JSON
+    ui_call: Callable[..., Any] | None = None  # reserved capacity for snapshot-only UI reads
+    fast_call: Callable[..., Any] | None = None  # lightweight counters, isolated from diff/map work
     updater: updates.Updater | None = None
     busy: Callable[[], bool] | None = None  # whether helpers or a job are working
     quit_app: Callable[[], None] | None = None  # quit: the window, every helper, the server
     # what one part of the app lends another (set by the module that defines it)
+    web_login: Any = None  # optional localhost cookie sessions, separate from window/agent auth
+    headless: bool = False
     autopilot: Callable[[str], None] | None = None  # state: start autopilot on a project
     with_project: Callable[..., Any] | None = None  # projects: a project route from fn(slug, request, data)
+
+    async def read(self, fn, *args):
+        """Read current state in a worker without waiting for saved-progress verification."""
+        def snapshot():
+            with self.net.progress.view():
+                return fn(*args)
+        return await (self.ui_call or self.call)(snapshot)

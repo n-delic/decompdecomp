@@ -4,19 +4,55 @@ built-in API agent. Every tool works on the project the agent was started on."""
 from __future__ import annotations
 
 import re
+import time
+import uuid
 from importlib import resources
-from typing import Callable
+from typing import Callable, Literal
 
 import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import BaseModel, ConfigDict, Field
 
-from .. import __version__, agents, consoles
-from ..network import Agent, NetworkError
+from .. import __version__, agents, candidate_quality, consoles
+from ..network import Agent, Network, NetworkError
+from ..release_receipts import operation as release_operation
+from . import agent_tokens, boundary_investigations, claim_state, compiler_experiments, local_experiments
 from .engine import RomNetwork
 
+
+class NextFamilyTarget(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    mode: Literal['next']
+
+
+class AnchorFamilyTarget(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    mode: Literal['anchor']
+    old: str
+    occurrence: int = 0
+
+
+class DeclarationFamilyTarget(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    mode: Literal['declaration']
+    declaration: str
+
+
+class CompilerTrial(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    compiler: str = Field(description='current or an exact compiler ID. Repair families belong in try_local_repairs, not this tool.')
+    flags: str = ''
+    old: str | None = None
+    new: str = ''
+    occurrence: int = 0
+
+
 # The guides every console shares (app/guide/); each console's own are in its package (consoles/<id>/guides/)
+TOOL_HELP = {}
+
 GUIDES = {
+    "agent-experiments": "repair families, candidate revisions, compiler trials and recovery",
     "workflow": "the matching loop, reading diffs, priorities",
     "mips": "MIPS registers, calling convention, delay slots, types from instructions",
     "m2c": "reading the machine-generated draft",
@@ -37,7 +73,7 @@ INSTRUCTIONS = """\
 decompdecomp: you are decompiling a game ROM that the user owns into C that compiles to exactly the same
 machine code. Your C is compiled with the game's original compiler, linked at the function's real address
 and compared with the ROM: score 0 means byte-identical, and the function is saved as matched.
-Start with project_info, then claim_function -> compile_and_diff (repeat). guide(topic) has know-how.
+Use app-provided startup facts and the already claimed function when present; otherwise project_info then claim_function. Compile the first claim before taking another. guide(topic) has know-how.
 Everything runs on the user's computer. The game's code is the user's: never publish it anywhere.
 """
 
@@ -46,9 +82,7 @@ You are a decompilation agent in decompdecomp, working on {title}. Other agents 
 functions of the same game at the same time; the tools keep you from colliding.
 
 Your job: turn functions of this game into C that compiles to *exactly* the original machine code.
-Use only the decomp tools. Do {count} claims you compiled (a batch is one; one you released without compiling it
-doesn't count), then stop. Don't stop early because the functions look hard: what's left is hard, and a claim that
-gets its full compile budget is how they match. Nobody answers during a session: never stop to offer more claims "on
+Use only the decomp tools. Work on up to {count} compiled claims (a batch is one). Submit reusable matching discoveries with share_knowledge as soon as you have evidence; a second model is required for automatic acceptance, not for proposing. Continue with the next eligible function while session capacity remains, even after a difficult or unsuccessful claim. Difficulty, low expected yield, or a low effort setting alone is not a reason to end an unattended session. The claim count is a maximum, not a quota. Stop earlier when the session turn/context allowance is nearly used; leave precise notes for unfinished work. Do not apologise for missing the maximum. Nobody answers during a session: never stop to offer more claims "on
 request", just take them. (claim_function's count is something else: how many small neighbours may come along in
 one claim; one function back is normal.)
 
@@ -63,7 +97,7 @@ one claim; one function back is normal.)
 3. Write the C functions (same names as the assembly) and judge them: compile_and_diff(function="a, b, c",
    source=all the definitions) for a batch, one name for one. Read the diff: '<' '>' missing/extra
    instructions, 'i' operands, 'o' order, 'r' registers, 's' stack. Fix structure first, registers last.
-   The workflow and {compiler_guide} guides are below. find_similar(function) shows look-alike functions;
+   Read guide("workflow") or guide("{compiler_guide}") when needed. find_similar(function) shows look-alike functions;
    a matched one is the best starting point.
 4. Score 0 = matched and saved. Before moving on, share what you learned: edit_context for prototypes and
    structs you worked out, rename_symbol for functions/data whose purpose is now clear, and share_knowledge
@@ -73,13 +107,14 @@ one claim; one function back is normal.)
    leftovers or data? report_boundary(...) where it really ends, then work on as it is.
 5. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next one. Before
-   that, compile the next step instead of releasing. Needs another function done first (a callee, an inlined
-   helper)? release_function(needs=that one) hands it to you. Sure that
+   that, compile the next step instead of releasing. A direct callee blocks work?
+   release_function(needs=that one) allows one pivot per unchanged input, respecting pauses. Sure that
    no C makes its code at all (hand-written assembly): not_c=true, saying why.
+   A boundary-review warning comes first: inspect adjacent bytes and segment limits before candidate tuning.
+   A target ending without a return is not an assembly verdict; report or correct its extent first.
 
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
-(another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief
-in your messages: work, don't narrate.
+(another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief in your messages: work, don't narrate.
 """
 
 # A helper started on "make matched code readable" (options task=readable), in any project (app/readable.py);
@@ -125,9 +160,7 @@ You are a decompilation agent in decompdecomp, continuing {title}: {what}. Other
 other functions of the same project at the same time; the tools keep you from colliding.
 
 Your job: write functions in the project's own source files so they compile to *exactly* the original
-machine code, judged by objdiff. Use only the decomp tools. Do {count} claims you compiled (a batch is one; one you
-released without compiling it doesn't count), then stop. Don't stop early because the functions look hard: what's
-left is hard, and a claim that gets its full compile budget is how they match. Nobody answers during a session: never
+machine code, judged by objdiff. Use only the decomp tools. Work on up to {count} compiled claims (a batch is one). Submit reusable matching discoveries with share_knowledge as soon as you have evidence; a second model is required for automatic acceptance, not for proposing. Continue with the next eligible function while session capacity remains, even after a difficult or unsuccessful claim. Difficulty, low expected yield, or a low effort setting alone is not a reason to end an unattended session. The claim count is a maximum, not a quota. Stop earlier when the session turn/context allowance is nearly used; leave precise notes for unfinished work. Do not apologise for missing the maximum. Nobody answers during a session: never
 stop to offer more claims "on request", just take them. (claim_function's count is something else: how many small
 neighbours may come along in one claim; one function back is normal.)
 
@@ -156,8 +189,8 @@ neighbours may come along in one claim; one function back is normal.)
    assembly): not_c=true, saying why. Part of another function the analysis cut (no prologue, registers
    the code before set, a switch's cases in the next symbol)? join_functions(it, the other part, why), so it
    becomes one whole function. Very large functions: get the structure right first; a near miss
-   is worth the extra compiles. Another function of the game it needs done first (a callee, an inlined
-   helper): release_function(needs=that one) hands it to you.
+   is worth the extra compiles. A direct callee blocks work?
+   release_function(needs=that one) allows one pivot per unchanged input, respecting pauses.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
 scripts (the tools refuse). Never fetch or copy code from outside this project (another repository, a
@@ -165,6 +198,16 @@ finished decomp of this game, the internet): a match must come from your own C. 
 have written: match the file's style and names.
 Guides: {guides}. Be brief in your messages: work, don't narrate.
 """
+
+
+REPAIR_GUIDANCE = """\
+When a candidate makes a specific repair, optionally include a one-sentence repair_note, repair_category and
+repair_automation in compile_and_diff (single function only). These are saved only on a verified new match.
+Explain what changed and how a deterministic repair could do it; omit uncertain explanations. No extra compile
+is needed. report_repair can annotate your captured match afterwards. These are review ideas, never live rules.
+"""
+WORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
+FORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves an exact-anchor proposal. Retrieve it with get_function(section="experiment") and test through the normal judge. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
 
 
 def _console_guides() -> dict:
@@ -177,6 +220,9 @@ def guide_text(topic: str = "", platform: str | None = None) -> str:
     (for_platform)."""
     topic = topic.strip().lower()
     own = _console_guides()
+    if topic.startswith('tool:'):
+        name = topic[5:]
+        return TOOL_HELP.get(name, "No extended tool help loaded; use the tool's schema and guide() for the work loop.")
     if topic in own:
         return for_platform(own[topic].read_text(encoding="utf-8"), platform)
     if topic not in GUIDES:
@@ -217,7 +263,7 @@ def up_front(platform: str | None, kind: str, toolchain: str) -> str:
     guide = consoles.get(platform).up_front_guide(toolchain)
     topics = ["fork", "objdiff"] if kind == "fork" else ["workflow"]
     topics += [guide] if guide else []
-    return "\n\n".join(guide_text(t, platform) for t in topics)
+    return "Detailed guides available on demand: " + ", ".join(f'guide(topic="{t}")' for t in topics)
 
 
 def _fork(net: RomNetwork, slug: str, what: str) -> str:
@@ -226,58 +272,168 @@ def _fork(net: RomNetwork, slug: str, what: str) -> str:
     return slug
 
 
-def project_info(net: RomNetwork, slug: str) -> str:
+def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
     wish = net.instructions(slug)
-    text = _project_info(net, slug)
+    if not detail:
+        return _compact_project_info(net,slug) + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
+    text = _project_info(net, slug, detail)
     open_ = net.overview(slug).get("suggestions") or []
-    if open_:  # so agents agree with one (suggest the same) rather than repeat it in other words
+    if open_ and not detail:
+        text += f'\nOpen suggestions: {len(open_)} compiler/setup suggestions; project_info(detail=true) lists them.'
+    if open_ and detail:  # so agents agree with one (suggest the same) rather than repeat it in other words
         text += "\nOpen suggestions to the user (suggest the same compiler and flags to agree):\n" + "\n".join(
             f"- {s['toolchain'] or '(setup)'} {' '.join(s['flags'])}"
             + "".join(f" 0x{a:X}-0x{b:X}" for a, b in s.get("ranges", [])) + f": {s['text'][:200]} [{len(s['agents'])} agree"
             + (f"; {s['check']}" if s["check"] else "") + "]" for s in open_)
     if not net.fork_slug(slug) and (known := net.knowledge.for_prompt(slug)):
         text += "\n" + known + "\n"
+    if not detail and len(text) > 1800:
+        text = text[:1800] + "\n… project_info(detail=true) shows the full project facts and suggestions.\n"
     return text + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
 
 
-def _project_info(net: RomNetwork, slug: str) -> str:
+def _compact_project_info(net, slug):
+    """Indexed totals and saved metadata only: no overview, SDK, room or build scans."""
+    proj=net._project(slug)
+    cfg=net.cfg(proj)
+    totals=net.store.one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
+    profile=cfg.get('compiler') or {}
+    platform=consoles.get(cfg.get('platform'))
+    compiler=profile.get('toolchain') or 'set by the project build'
+    known=', '.join(c.id for c in platform.compilers)
+    return (f"{proj['name']} ({slug})\ncompiler: {compiler} {' '.join(profile.get('flags',[]))}\n"
+            + (f"this platform's compilers (for try_compiler): {known}\n" if known else '')
+            + (f"progress: {totals['matched']}/{totals['total']} functions matched; {totals['attempts']} compiles\n" if totals else 'Progress totals unavailable; no project scan performed.\n')
+            + 'Compact saved metadata; each claim uses its own effective compiler profile. '
+              'project_info(detail=true) loads full facts, knowledge and suggestions. Next: get_claims() to recover held work, or claim_function().')
+
+
+def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
     if net.fork_slug(slug):
         return net.forks.info(slug)
+    if not detail:
+        return _compact_project_info(net,slug)
     ov = net.overview(slug)
     pct = 100 * ov["matched_bytes"] / (ov["bytes"] or 1)
-    ranges = "".join(f"\n  0x{r['start']:X}-0x{r['end']:X}: {r['name']} {' '.join(r['flags'])}" for r in ov["compiler_ranges"])
+    ranges = "".join(f"\n  0x{r['start']:X}-0x{r['end']:X}: {r['name']} {' '.join(r['flags'])}" for r in ov["compiler_ranges"]) if detail else ""
     return (f"{ov['title']} ({ov['rom']['game_code']}, {ov['rom']['region']})\n"
             f"compiler: {ov['compiler']['name']} {' '.join(ov['compiler']['flags'])}"
-            + (f"; these address ranges are built with another:{ranges}" if ranges else "") + "\n"
-            + (f"this project's compilers (for try_compiler): {', '.join(ov['compilers'])}\n"
-               if len(ov["compilers"]) > 1 else "")
+            + (f"; these address ranges are built with another:{ranges}" if ranges else
+               f"; {len(ov['compiler_ranges'])} address-range overrides (each claim shows its applicable compiler)" if ov["compiler_ranges"] else "") + "\n"
+            + (f"this platform's compilers (for try_compiler): {', '.join(ov['compilers'])}\n" if len(ov["compilers"]) > 1 else "")
             + f"progress: {ov['matched']}/{ov['functions']} functions matched ({pct:.1f}% of code), "
             f"{ov['attempts']} compiles so far, context.h v{ov['context_version']}\n"
             f"Next: claim_function(). Guides: guide().")
 
 
 # name -> handler(net, agent, slug, **args); every handler returns text for the model
+@release_operation("tool", protect_new=True)
+def _release_with_experiment(net, agent, slug, function, notes, needs, not_c, move_on, next_experiment, claim_token=""):
+    from . import agent_review
+    saved = agent_review.save_experiment(net,agent,slug,function,next_experiment) if next_experiment is not None else ''
+    return agent_tokens.brief(net,net.release_function(agent,function,notes,slug,needs or '',bool(not_c),bool(move_on),claim_token=claim_token),slug,agent) + ('\n'+saved if saved else '')
+
+
+@claim_state.quick
 def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1) -> str:
     """A claim; one asked for that's matched, set aside (no C makes it) or someone else's is the next free function
     instead (an agent asking for those has nothing better to do than the next one, and is told why). count > 1: a
     batch of small ones."""
+    from . import work_availability
+    focused=agent.id in getattr(net,'_agent_focus',{})
+    if not focused and not function and (waiting := work_availability.cached(net,agent,slug)):
+        return waiting
+    def packet(text):
+        return work_availability.observe(net,agent,slug,text)
+    if focused:
+        function=net.focus_target(agent,slug,function)
+        count=1
     strategy = strategy or ("finish" if net.fork_slug(slug) else "easiest")
     if not function and int(count or 1) > 1:
-        return net.claim_many(agent, slug, int(count), strategy)
+        return packet(agent_tokens.claim_packet(net, agent, slug, net.claim_many(agent, slug, int(count), strategy)))
     try:
-        return net.claim(agent, slug, function or None, strategy)
+        return packet(agent_tokens.claim_packet(net, agent, slug, net.claim(agent, slug, function or None, strategy)))
     except NetworkError as e:
-        if not function or not re.search(r"already matched|is set aside|is claimed by", str(e)):
+        if focused or not function or not re.search(r"already matched|is set aside|is claimed by|outside this agent|Max tries reached", str(e)):
             raise
-        return f"({e}. Here's the next free function instead.)\n\n" + net.claim(agent, slug, None, strategy)
+        return packet(agent_tokens.brief(net, net.claim(agent, slug, None, strategy), slug, agent))
 
 
-def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: str) -> str:
-    """compile_and_diff; several names ("a, b, c") judge several definitions sent together."""
+def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: str,
+             repair_note: str = '', repair_category: str = 'other', repair_automation: str = '') -> str:
+    """Optional repair notes ride along with a candidate, saving a separate explanation round trip."""
+    from ..repair_feedback import CATEGORIES
     names = [n.strip() for n in function.split(",") if n.strip()]
+    if repair_note and repair_category not in CATEGORIES:
+        repair_note=f'[Original category: {repair_category}] '+repair_note
+        repair_category='other'
+    if repair_note and len(names) != 1:
+        raise NetworkError('Repair notes require one function and a valid category. Use report_repair after a batch.')
+    previous = net.store.one('SELECT MAX(id) AS id FROM repair_examples')['id'] or 0
+    previous_diff = None
+    previous_attempt = None
+    if len(names) == 1:
+        fn = net._function(names[0], slug)
+        previous_attempt = net.store.one('SELECT id,source FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
+        kept = net._last_diffs.get((agent.id, fn['id']))
+        previous_diff = list(kept[0]) if kept else None
     if len(names) <= 1:
-        return net.compile_and_diff(agent, names[0] if names else function, source, slug)
-    return net.attempt_many(agent, [net.resolve_function(agent, slug, n) for n in names], source, slug)
+        result = net.compile_and_diff(agent, names[0] if names else function, source, slug)
+    else:
+        result = net.attempt_many(agent, [net.resolve_function(agent, slug, n) for n in names], source, slug)
+    if len(names) == 1:
+        agent_tokens.outcome(net, agent, fn, source, result)
+        from . import agent_evidence
+        unchanged_note=agent_evidence.track(net,agent,slug,fn)
+        agent_tokens.remember(net, agent, fn, previous_attempt)
+        result = agent_tokens.feedback(net, agent, slug, names[0], result, previous_diff)
+        if unchanged_note:
+            result += '\n'+unchanged_note
+        _, revision = agent_tokens.candidate(net, agent, slug, names[0])
+        open_function = net._function(names[0],slug)['status']=='open'
+        held = net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+        if open_function and held:
+            state = net.stall_status(fn['id'],agent.id)
+            remaining = max(0,state['after']-state['no_better'])
+            result += f"\nBudget: {remaining}/{state['after']} without improvement remaining; Candidate revision {revision}."
+            limit = net.attempt_limit_note(agent,names[0],slug)
+            if limit:
+                result += limit
+            elif not remaining:
+                from ..release_receipts import instruction
+                result += '\nNext: '+instruction(net,fn['id'],agent.id)+'. Then claim another function.'
+        elif open_function:
+            result += f"\nCandidate revision {revision}. Claim ended; claim another eligible function. Do not release this function again."
+        else:
+            result += f"\nCandidate revision {revision}."
+        # Server conversion cannot recover tokens already sent. Coach once per claim when the exact
+        # submission was a small edit; keep accepting full rewrites without a rejection round trip.
+        if previous_attempt and previous_attempt['source'] and source!=previous_attempt['source']:
+            before = previous_attempt['source']
+            prefix = 0
+            while prefix<min(len(before),len(source)) and before[prefix]==source[prefix]:
+                prefix += 1
+            suffix = 0
+            while suffix<min(len(before),len(source))-prefix and before[-suffix-1]==source[-suffix-1]:
+                suffix += 1
+            changed=max(len(before),len(source))-prefix-suffix
+            claim=net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+            stamp=(agent.id,fn['id'],claim['claimed_at'] if claim else None)
+            coached=getattr(net,'_patch_coached',set())
+            if changed<=160 and len(source)>400 and stamp not in coached:
+                if len(coached)>=128:
+                    coached.clear()
+                coached.add(stamp);net._patch_coached=coached
+                result += '\nSmall edit: use compile_patch with revision, old and new next time; avoid resending the full C.'
+    if repair_note:
+        fn = net._function(names[0], slug)
+        case = net.store.one('SELECT e.id FROM repair_examples e JOIN attempts a ON a.id=e.attempt_id '
+                             'WHERE e.function_id=? AND e.agent_id=? AND e.id>? AND a.source=? '
+                             'ORDER BY e.id DESC LIMIT 1', fn['id'], agent.id, previous, source)
+        if case:
+            net.repair_feedback.report(agent, slug, names[0], repair_note, repair_category, repair_automation, case_id=case['id'])
+            result += f"\nRepair example #{case['id']} and your explanation saved for review."
+    return result
 
 
 def _add_note(net: RomNetwork, agent: Agent, slug: str, text: str, function: str = "") -> str:
@@ -290,16 +446,66 @@ def _add_note(net: RomNetwork, agent: Agent, slug: str, text: str, function: str
     return net.add_note(agent, slug, text, function)
 
 
+def _redraft(net, slug, function, context, agent=None):
+    if isinstance(context,str) and context.strip() and not re.search(r'[;{}#]',context):
+        raise NetworkError('redraft context must be C declarations, not prose. Save observations with add_note; use get_function(section=candidate) to read existing C.')
+    if not isinstance(context,str) or not context.strip():
+        raise NetworkError('redraft needs nonempty C declarations in context (a real struct, callee prototype or extern). '
+                           'To inspect existing C, use get_function(function, section="candidate"). No redraft was run.')
+    return agent_tokens.brief(net,net.redraft(slug,function,context),slug,agent)
+
+
+def _get_context(net, agent, slug, function=""):
+    if not function:
+        held = net.store.all('SELECT f.name FROM functions f JOIN claims c ON c.function_id=f.id '
+                             'JOIN projects p ON p.id=f.project_id WHERE c.agent_id=? AND p.slug=?', agent.id, slug)
+        if len(held) == 1:
+            function = held[0]['name']
+    return net.get_context(slug, function or None)
+
+
+def _report_data_region(net, agent, slug, function, start, end, reason):
+    from .data_regions import report
+    return report(net, agent, slug, function, start, end, reason)
+
+
+def _resolve_addresses(net, agent, slug, queries, context_function=""):
+    import json
+
+    from .address_lookup import resolve
+    return json.dumps(resolve(net,agent,slug,queries,context_function),ensure_ascii=False)
+
+
 HANDLERS: dict[str, Callable[..., str]] = {
-    "project_info": lambda net, agent, slug: project_info(net, slug),
+    "get_boundary_evidence": boundary_investigations.evidence,
+    "suggest_boundary": boundary_investigations.report,
+    "get_claims": claim_state.get_claims,
+    "resolve_addresses": _resolve_addresses,
+    "report_data_region": _report_data_region,
+    "project_info": lambda net, agent, slug, detail=False: project_info(net, slug, detail),
+    "get_candidate": agent_tokens.get_candidate,
+    "compile_patch": agent_tokens.patch,
+    "compile_variants": agent_tokens.variants,
+    "compiler_experiments": compiler_experiments.run,
+    "get_compiler_trial": compiler_experiments.retrieve,
+    "try_local_repairs": lambda net,agent,slug,function,revision,families=None,max_trials=6:
+        local_experiments.run(net,agent,slug,function,revision,families,max_trials),
+    "compile_family": agent_tokens.local_family,
+    "family_targets": agent_tokens.family_targets,
+    "get_assembly": lambda net, agent, slug, function, start=0, limit=60, focus="": agent_tokens.assembly(net, slug, function, start, limit, focus, agent),
     "claim_function": lambda net, agent, slug, function="", strategy="", count=1:
         _claim(net, agent, slug, function, strategy, count),
-    "get_function": lambda net, agent, slug, function: net.get_function(function, slug, agent),
-    "compile_and_diff": lambda net, agent, slug, function, source: _compile(net, agent, slug, function, source),
-    "last_diff": lambda net, agent, slug, function, context=2: net.last_diff(agent, function, slug, context),
-    "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False:
-        net.release_function(agent, function, notes, slug, needs or "", bool(not_c)),
-    "get_context": lambda net, agent, slug, function="": net.get_context(slug, function or None),
+    "get_function": agent_tokens.function_view,
+    "compile_and_diff": lambda net, agent, slug, function, source, repair_note='', repair_category='other', repair_automation='':
+        _compile(net, agent, slug, function, source, repair_note, repair_category, repair_automation),
+    "report_repair": lambda net, agent, slug, function, change, category='other', automation='':
+        net.repair_feedback.report(agent, slug, function, change, category, automation),
+    "last_diff": agent_tokens.diff_page,
+    "report_candidate_issue": lambda net, agent, slug, function, revision, issue, reason, alternative_revision="":
+        candidate_quality.report(net,agent,slug,function,revision,issue,reason,alternative_revision),
+    "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False, move_on=False, next_experiment=None, claim_token="":
+        _release_with_experiment(net,agent,slug,function,notes,needs,not_c,move_on,next_experiment,claim_token),
+    "get_context": _get_context,
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
     "rename_symbol": lambda net, agent, slug, old, new, message="": net.rename_symbol(agent, slug, old, new, message),
@@ -311,12 +517,12 @@ HANDLERS: dict[str, Callable[..., str]] = {
                                                             if net.fork_slug(slug) else net.read_data(slug, what, length)),
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
-    "redraft": lambda net, agent, slug, function, context: net.redraft(slug, function, context),
+    "redraft": lambda net, agent, slug, function, context: _redraft(net, slug, function, context, agent),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
     "add_note": lambda net, agent, slug, text, function="": _add_note(net, agent, slug, text, function),
-    "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, supports),
+    "share_knowledge": lambda net, agent, slug, text="", supports=0, evidence="": net.knowledge.share(agent, slug, text, supports, evidence),
     "search_flags": lambda net, agent, slug, function, compiler="", source="":
         net.search_flags(agent, slug, function, compiler, source),
     "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
@@ -342,11 +548,11 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+READ_ONLY = frozenset({"get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
-ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -360,32 +566,87 @@ def tool_names(fork: bool, console=None, ltcg: bool = False) -> list[str]:
     return [n for n in HANDLERS if n not in skip and (ltcg or n not in LTCG_ONLY)]
 
 
-def project_tools(net: RomNetwork, slug: str | None) -> list[str]:
+def project_tools(net: RomNetwork, slug: str | None, agent=None, include_disabled=False) -> list[str]:
     """tool_names for a project (None: no project yet)."""
     fork = bool(slug and net.fork_slug(slug))
     cfg = net.cfg(net._project(slug)) if fork else {}
+    from .tool_policy import visible
     manifest = (net.forks.get(slug)[1].manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
-    return tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None, bool(manifest.get("ltcg")))
+    names = tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None,
+                       bool(manifest.get("ltcg")))
+    return names if include_disabled else visible(net, slug, names, agent)
 
 
-def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
+def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dict:
     """Function names as agents write them (a plain symbol that repeats across files, symbol@unit, Class::method)
     turned into the stored name, preferring the function the agent holds."""
     function = args.get("function")
     if isinstance(function, str) and not function.strip():
         args = {**args, "function": ""}  # a blank name is no name: add_note says so, the other tools get none
     elif function and "," not in function:  # (several are resolved one by one, see _compile)
-        args = {**args, "function": net.resolve_function(agent, slug, function)}
+        try:
+            resolved = net.resolve_function(agent, slug, function)
+        except NetworkError:
+            address_like = re.fullmatch(r'(?:0[xX][0-9a-fA-F]+|(?:D_|func_)[0-9a-fA-F]{8,16})(?:\+(?:0x[0-9a-fA-F]+|[0-9]+))?',str(function))
+            symbol = net.store.one('SELECT 1 FROM symbols s JOIN projects p ON p.id=s.project_id WHERE p.slug=? AND s.name=?',slug,function)
+            if tool not in {"get_function", "get_assembly"} or not (address_like or symbol):
+                raise
+            from .address_lookup import read_function
+            resolved = read_function(net,agent,slug,function)
+        args = {**args, "function": resolved}
     return args
 
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Every helper sees pulled changes before acting; only tools that write work need a second synchronization."""
+    if boundary_investigations.scope(net,agent):
+        return _dispatch(net,agent,slug,name,args)
     net.progress.sync(slug, force=True)
-    result = HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
+    result = _dispatch(net,agent,slug,name,args)
     if name not in READ_ONLY:
         net.progress.sync(slug, force=True)
     return result
+
+
+def _dispatch(net,agent,slug,name,args, *, count_usage=True):
+    boundary_investigations.guard(net,agent,slug,name,args)
+    pending = getattr(net, '_pending_tool_handshakes', set())
+    handshake = (agent.id, slug) in pending
+    if handshake and name != 'project_info':
+        raise NetworkError('First call project_info(detail=false) to verify tools in this CLI session. No work was changed.')
+    from .tool_policy import record
+    record(net, agent, slug, name, count=count_usage)
+    if not count_usage:
+        return HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args, name))
+    from . import session_budget
+    from .agent_local_pass import after_tool
+    budget=session_budget.current(net,agent,slug)
+    if budget:
+        budget.begin()
+    result=''
+    try:
+        named=_named(net,agent,slug,args,name)
+        result=HANDLERS[name](net,agent,slug,**named)
+        if name in {'get_function','get_assembly'} and args.get('function') != named.get('function'):
+            result = f"Resolved read {str(args.get('function'))[:200]!r} to {named['function']}. This does not rename or create a function.\n"+result
+        if handshake and name == 'project_info':
+            pending.discard((agent.id, slug))
+        if name == 'try_compiler':
+            from .session_followups import diagnostic_completed
+            diagnostic_completed(net,agent,named.get('function',''),slug)
+        if name in {'report_boundary', 'report_data_region', 'report_candidate_issue', 'suggest_boundary'}:
+            from .session_followups import investigation_completed
+            investigation_completed(net, agent, slug, name)
+        result=after_tool(net,agent,slug,name,named,result)
+        if name in {'compile_patch','compile_and_diff','try_local_repairs','compile_family','compile_variants','compiler_experiments'}:
+            function=named.get('function','')
+            if function and ',' not in function:
+                from .efficiency_feedback import frontload
+                result=frontload(net,agent,slug,function,result)
+        return result
+    finally:
+        if budget:
+            budget.end(result or '')
 
 
 def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
@@ -405,67 +666,199 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
 ALWAYS_LOAD = agents.TOOL_META
 
 
-def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]]) -> MCPServer:
+def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]], observe=None) -> MCPServer:
     """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug)."""
+    from .tool_policy import ensure
+    ensure(net)
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
 
+    health_limiter = anyio.CapacityLimiter(2)
     async def run(ctx: Context, name: str, **args) -> str:
+        queued=time.monotonic()
         try:
-            agent, slug = agent_of(ctx)
-        except NetworkError as e:
-            raise ToolError(str(e)) from None
-        try:
-            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args))
-        except NetworkError as e:
-            raise ToolError(str(e)) from None
+            checking = name == 'project_info' and (ctx.headers or {}).get('x-decomp-connection-check') == '1'
+        except ValueError:
+            checking = False
+        prefix = 'connection_check_' if checking else ''
+        call_id = uuid.uuid4().hex
+        def execute():
+            from ..request_timing import capture
+            started=time.monotonic()
+            try:
+                agent,slug=agent_of(ctx)
+            except NetworkError as error:
+                raise ToolError(str(error)) from None
+            if observe:
+                observe(agent,slug,prefix+'tool_request',{'name':name,'arguments':args,'call_id':call_id})
+            result=None
+            error=None
+            with capture() as metrics:
+                dispatch=time.monotonic()
+                try:
+                    if checking:
+                        # The engine's project lookup also synchronizes saved C.
+                        # This authenticated wiring probe needs existence only;
+                        # ordinary project_info/work tools retain engine sync.
+                        Network._project(net,slug)
+                        result=f'Authenticated tools ready for {slug}. App-only connection check; project facts are supplied separately.'
+                    else:
+                        result=_dispatch(net,agent,slug,name,args,count_usage=True)
+                except Exception as exc:
+                    error=exc
+                elapsed=time.monotonic()-dispatch
+            timings={'queue_ms':round((started-queued)*1000,2),'dispatch_ms':round(elapsed*1000,2),
+                     'sql_read_ms':round(metrics['sql']*1000,2),'sql_reads':metrics['queries'],
+                     'build_ms':round(metrics.get('build',0)*1000,2),
+                     'write_lock_wait_ms':round(metrics.get('write_lock_wait',0)*1000,2),
+                     'candidate_lock_wait_ms':round(metrics.get('candidate_lock_wait',0)*1000,2),
+                     'before_dispatch_ms':round((dispatch-started)*1000,2)}
+            timings.update({phase+'_ms':round(metrics.get(phase,0.)*1000,2)
+                            for phase in ('sql_connection','sql_lock_wait','sql_execute','sql_fetch',
+                                          'progress_project_lock_wait','progress_verification_wait','progress_sync')})
+            if observe:
+                payload={'name':name,'call_id':call_id,'timings':timings}
+                payload['error' if error else 'content']=str(error) if error else result
+                observe(agent,slug,prefix+'tool_response',payload)
+            if isinstance(error,NetworkError):
+                raise ToolError(str(error)) from None
+            if error:
+                raise error
+            return result
+        return await anyio.to_thread.run_sync(execute,limiter=health_limiter if checking else None)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
-    async def project_info(ctx: Context) -> str:
+    def tool(fn):
+        full = " ".join((fn.__doc__ or "").split())
+        TOOL_HELP[fn.__name__] = full
+        description = full if len(full) <= 240 else full[:195].rsplit(' ', 1)[0] + f". More: guide(topic='tool:{fn.__name__}')."
+        return mcp.tool(meta=ALWAYS_LOAD, description=description)(fn)
+
+    @tool
+    async def project_info(ctx: Context, detail: bool = False) -> str:
         """Which game you're working on, its compiler, and progress so far."""
-        return await run(ctx, "project_info")
+        return await run(ctx, "project_info", detail=detail)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def claim_function(ctx: Context, function: str = "", strategy: str = "", count: int = 1) -> str:
         """Claim the next function to decompile (or a specific one by name or address).
 
-        Returns its assembly, the best previous attempt and notes from earlier agents, plus (ROM projects)
-        calls, data and a machine-made draft or (forks) the current diff and its source file. Each compile
-        renews the claim.
+        Returns a lightweight receipt with saved candidate C and claim token. No baseline compile, new draft or
+        imported build is run while claiming. Read get_assembly or get_function(section=brief) for supporting
+        evidence; get_candidate rechecks a baseline. get_claims recovers held work. Each compile renews the claim.
 
         Args:
             function: optional name or address (0x80001234) of a specific function
-            strategy: finish (forks' default: the files closest to being linked first), easiest (fewest
+            strategy: no_compiling_c (only functions without a recorded successful C compilation), untried (no compile attempts first), finish (forks' default: the files closest to being linked first), easiest (fewest
                 instructions; ROM projects' default), closest (nearly matched already), hardest, random
             count: up to 6: small functions come as a batch (neighbours in one file) to write together and
                 judge in one compile_and_diff; a big one comes alone
         """
         return await run(ctx, "claim_function", function=function, strategy=strategy, count=count)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
-    async def get_function(ctx: Context, function: str) -> str:
+    @tool
+    async def get_function(ctx: Context, function: str, section: str = 'summary', start: int = 0, limit: int = 6000) -> str:
         """Show any function (by name or address): assembly, status, best attempt, notes. Read matched
-        functions to learn how this codebase is written."""
-        return await run(ctx, "get_function", function=function)
+        functions to learn how this codebase is written. section: summary (default), brief, all, history, candidate, experiment, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset; candidate/brief always return complete C. Prefer the specific section you need."""
+        return await run(ctx, "get_function", function=function, section=section, start=start, limit=limit)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
-    async def compile_and_diff(ctx: Context, function: str, source: str) -> str:
-        """Compile your code for `function` and diff it against the original; score 0 = byte-identical.
+    @tool
+    async def compile_and_diff(ctx: Context, function: str, source: str, repair_note: str = '',
+                               repair_category: str = 'other', repair_automation: str = '') -> str:
+        """Submit a whole-function rewrite and judge it against the original. For small edits use compile_patch to avoid resending C; score 0 = byte-identical.
 
         ROM projects: compiled with the game's compiler (context.h included), linked at the function's
         address and compared with the ROM. Forks: send the complete definition (plus any #include "...",
         prototypes, externs or #pragma lines it needs); it replaces the function in its source file, which is
         built with the project's build system and diffed with objdiff. Several functions ("a, b, c"): send all
         their definitions in one source; each is judged on its own."""
-        return await run(ctx, "compile_and_diff", function=function, source=source)
+        return await run(ctx, "compile_and_diff", function=function, source=source, repair_note=repair_note,
+                         repair_category=repair_category, repair_automation=repair_automation)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
-    async def last_diff(ctx: Context, function: str, context: int = 2) -> str:
-        """Every differing row of your last compile_and_diff of `function`, where its result was cut ("more rows
-        not shown"). Costs no compile and counts for nothing. `context`: equal rows shown around each difference."""
-        return await run(ctx, "last_diff", function=function, context=context)
+    @tool
+    async def get_claims(ctx: Context) -> str:
+        """Recover your live claims, canonical function names and claim tokens in this project. Read-only; no builds, drafting, new claims or source selection. Use get_candidate for C/revision."""
+        return await run(ctx, "get_claims")
 
-    @mcp.tool(meta=ALWAYS_LOAD)
-    async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False) -> str:
+    @tool
+    async def get_candidate(ctx: Context, function: str, base: Literal["current", "saved_best", "last_compiling", "reported_corrected"] = "current") -> str:
+        """Read your current candidate C/revision and bounded advisory C-line mismatch locations, when compiler debug information is available. Use base="saved_best" to explicitly restore saved best C, base="reported_corrected" to select a compiled alternative explicitly linked to a quality report (an agent hypothesis, not verified correctness), or base="last_compiling" to recover your last scored C after compiler errors. Selection changes only your continuation; historical scores require rejudging. No full assembly listing or historical notes."""
+        return await run(ctx, 'get_candidate', function=function, base=base)
+
+    @tool
+    async def compile_patch(ctx: Context, function: str, revision: str, old: str, new: str, repair_note: str = '',
+                            repair_category: str = 'other', repair_automation: str = '', occurrence: int = 0) -> str:
+        """Compile one exact-text replacement in your versioned candidate. Use occurrence=1-based index for repeated old text; default 0 requires a unique anchor. Stale revisions are refused.
+        Uses the ordinary compiler, claim limits and exact judge; no files bypass the build checks."""
+        return await run(ctx, 'compile_patch', function=function, revision=revision, old=old, new=new, occurrence=occurrence,
+                         repair_note=repair_note, repair_category=repair_category, repair_automation=repair_automation)
+
+    @tool
+    async def compile_variants(ctx: Context, function: str, revision: str, patches: list[dict]) -> str:
+        """Try 1–6 independent old/new replacements against one candidate revision. Each patch can specify occurrence=1-based index for repeated old text. Normal judge and limits.
+        Stops on match or claim error; returns a compact table and current revision. Cached or rejected
+        trials may retain earlier C. Each patch starts from the original snapshot, not the previous patch."""
+        return await run(ctx, 'compile_variants', function=function, revision=revision, patches=patches)
+
+    @tool
+    async def compiler_experiments(ctx: Context, function: str, revision: str, trials: list[CompilerTrial]) -> str:
+        """Test 1–6 explicit compiler/flags profiles, optionally with independent old/new/occurrence patches against one saved revision. 60-second budget; diagnostic only. No source resends, match credit or compiler application."""
+        return await run(ctx,'compiler_experiments',function=function,revision=revision,trials=[t.model_dump(exclude_none=True) for t in trials])
+
+    @tool
+    async def get_compiler_trial(ctx: Context, function: str, trial_id: str, include_header: bool = False) -> str:
+        """Retrieve an exact experimental C/compiler/flags pair and its diagnostic result for this worker. In-memory, bounded history; no compile or application."""
+        return await run(ctx,'get_compiler_trial',function=function,trial_id=trial_id,include_header=include_header)
+
+    @tool
+    async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6) -> str:
+        """Try applicable local repairs against one revision; at most six normal compiles and 60 seconds. Omit families to discover repairs. Includes local_widening, callee_parameter_width, callee_return_width, split_integer_lifetime, merge_integer_lifetimes, branch_call, goto_leaf and switch_layout. Retain best continuation; use instead of parallel family probes."""
+        return await run(ctx,'try_local_repairs',function=function,revision=revision,families=families,max_trials=max_trials)
+
+    @tool
+    async def compile_family(ctx: Context, function: str, revision: str, family: str,
+                             selector: NextFamilyTarget | AnchorFamilyTarget | DeclarationFamilyTarget | None = None) -> str:
+        """Bounded local family; selector has exactly one mode: next, anchor (old/occurrence), or declaration (name).
+        Omit selector for pattern families or automatic signedness/declaration_order targets. Normal judge and budgets apply."""
+        return await run(ctx,'compile_family',function=function,revision=revision,family=family,
+                         selector=selector.model_dump() if selector else None)
+
+    @tool
+    async def family_targets(ctx: Context, function: str, family: str = 'declaration_order', expression: str = '') -> str:
+        """Read current revision and valid named targets/pairs with tried status. No compile or full source.
+        Optional expression gives literal occurrence counts and line numbers; family=casts needs expression."""
+        return await run(ctx, 'family_targets', function=function, family=family, expression=expression)
+
+    @tool
+    async def get_assembly(ctx: Context, function: str, start: int = 0, limit: int = 60, focus: str = "") -> str:
+        """Read target assembly: focus="mismatch" for the first differing target instruction, or a callee symbol/short anchor. Default focuses the first mismatch, or a bounded body region. Focus returns at most 40 lines. Use focus="page" for explicit start/limit paging (up to 200 lines)."""
+        return await run(ctx, 'get_assembly', function=function, start=start, limit=limit, focus=focus)
+
+    @tool
+    async def report_repair(ctx: Context, function: str, change: str, category: str = 'other', automation: str = '') -> str:
+        """Annotate your captured verified match: the decisive change and how a deterministic rule could make it.
+        Optional after-the-fact alternative to compile_and_diff's repair_note. One sentence is enough; do not
+        guess. This collects review evidence and never enables a rule. Categories: types, casts, constants,
+        addresses, signatures, layout, temporaries, expression_order, control_flow, compiler_settings, other.
+        """
+        return await run(ctx, 'report_repair', function=function, change=change, category=category, automation=automation)
+
+    @tool
+    async def last_diff(ctx: Context, function: str, context: int = 1, start: int = 0, limit: int = 40) -> str:
+        """A page of your last compile diff. Zero-based start and limit (up to 200 rows). Costs no compile.
+        context controls equal rows around differences; advance start for the next page."""
+        return await run(ctx, "last_diff", function=function, context=context, start=start, limit=limit)
+
+    @tool
+    async def report_candidate_issue(ctx: Context, function: str, revision: str, issue: str, reason: str, alternative_revision: str = "") -> str:
+        """Report a suspected invalid saved candidate by revision. Issues: uninitialized, loop_mutation,
+        wrong_store, wrong_value, other. Give a short concrete reason; optional alternative_revision must
+        be a different compiled/scored source of this function; it is retained separately and selectable with
+        get_candidate(base="reported_corrected"). Hypotheses only: no score or match is changed.
+        """
+        return await run(ctx, 'report_candidate_issue', function=function, revision=revision, issue=issue,
+                         reason=reason, alternative_revision=alternative_revision)
+
+    @tool
+    async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False, move_on: bool = False, next_experiment: dict | None = None, claim_token: str = "") -> str:
         """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
         the move-on rule), it answers once with what to try instead; call it again to release anyway.
@@ -473,39 +866,55 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         Args:
             function: the function you hold
             notes: what you tried, what is left
-            needs: optional: another function of the game this one needs done first (a callee whose convention or
-                body it depends on, a helper the original inlines). This one then waits, that one goes first in the
-                queue, and you get it when it's free.
-            not_c: true when you're sure no C makes its code at all (hand-written assembly), saying why in notes:
+            claim_token: always pass the token from the current claim, continuation state or get_candidate, including the first release and retries. A stale token cannot release a new claim.
+            next_experiment: optional untested exact patch with revision, old, new and title. Validated against your current candidate; rejected if stale or ambiguous. The next agent can retrieve it with get_function(section="experiment") and test through compile_patch.
+            needs: optional: a direct callee recorded in the original assembly that blocks this function. Paused
+                candidates cannot be selected this way. Explain indirect/inline/header concerns in notes instead.
+            move_on: explicitly release now with precise notes explaining why further exploration is unproductive. Skips the one-time release pushback; does not mark a match or no-C verdict.
+            not_c: true only with evidence no C makes its code at all (hand-written assembly), saying why in notes. Unsupported compiler extensions, asm-register/tool restrictions, return-address builtins or unsuitable build flags are not proof; describe those as blockers and release normally:
                 once agents of two models agree, it's set aside and no one is handed it again.
         """
-        return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c)
+        return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on, next_experiment=next_experiment, claim_token=claim_token)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def get_context(ctx: Context, function: str = "") -> str:
-        """The shared header (types, structs, prototypes) included before every compile."""
+        """The shared header (types, structs, prototypes) used by function. Omit function only when you hold exactly one claim, or the project has a single header. Pass function explicitly for per-file headers or multiple claims."""
         return await run(ctx, "get_context", function=function)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def edit_context(ctx: Context, old: str, new: str, message: str, function: str = "") -> str:
         """Edit the shared header: replace `old` (must occur exactly once) with `new`, or append `new` when
         old is "". Accepted only if every matched function still matches. Add prototypes and structs here."""
         return await run(ctx, "edit_context", old=old, new=new, message=message, function=function)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def rename_symbol(ctx: Context, old: str, new: str, message: str = "") -> str:
         """Give a function or data address a real name (e.g. func_80001234 -> player_update). Everything that
         uses the name changes with it (ROM: the assembly, matched sources, the header; a project: the game's
         symbols in its config and every source and header file); never breaks a match."""
         return await run(ctx, "rename_symbol", old=old, new=new, message=message)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def split_function(ctx: Context, function: str, at: str, new_name: str = "") -> str:
         """Split a function the disassembler merged with the next one (e.g. after a function that never
         returns). `at` is the address where the second function starts."""
         return await run(ctx, "split_function", function=function, at=at, new_name=new_name)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
+    async def get_boundary_evidence(ctx: Context, function: str) -> str:
+        """Original mapped instructions, neighbours, direct edges and symbols for boundary review; no claim or compile."""
+        return await run(ctx, "get_boundary_evidence", function=function)
+
+    @tool
+    async def suggest_boundary(ctx: Context, function: str, action: str, supporting: str, counter: str,
+                               uncertainty: str, citations: str, end: str = "", confidence: str = "tentative") -> str:
+        """Save an advisory boundary recommendation with cited hex instructions; never apply a layout change.
+        action: delay_slot, join_previous, adjust, padding, data, keep, unclear. end: exclusive hex address for adjust.
+        confidence: strong, tentative, unclear. citations: comma-separated hex instruction addresses from evidence."""
+        return await run(ctx, "suggest_boundary", function=function, action=action, supporting=supporting,
+                         counter=counter, uncertainty=uncertainty, citations=citations, end=end, confidence=confidence)
+
+    @tool
     async def report_boundary(ctx: Context, function: str, end: str, reason: str) -> str:
         """Report that a function really ends earlier: what follows `end` is alignment padding, linker leftovers
         or data, not code anyone wrote (or, in a PC project, another function the analysis merged with it), so no C
@@ -515,22 +924,39 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         when it isn't code, kept only if the game still builds byte for byte. Say how you can tell."""
         return await run(ctx, "report_boundary", function=function, end=end, reason=reason)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
+    async def report_data_region(ctx: Context, function: str, start: str, end: str, reason: str) -> str:
+        """Report a whole suspected data table, including entries mistaken for functions. Claim a representative
+        function first; its unit and original image identify the overlay. Use an exclusive end address and explain
+        byte evidence. One review covers the region. No match/status changes; the user can pause its new claims
+        in Settings. Do not misuse report_boundary to leave one word of a table pretending to be code."""
+        return await run(ctx, "report_data_region", function=function, start=start, end=end, reason=reason)
+
+    @tool
+    async def resolve_addresses(ctx: Context, queries: list[str], context_function: str = "") -> str:
+        """Resolve 1–20 symbols/hex addresses in one read-only call: function entry, interior, data, unknown or
+        ambiguous. Reports canonical names, owning function offsets, units and original image positions.
+        Supply context_function for overlays sharing RAM addresses; otherwise a unique held image supplies context.
+        Registered data is never silently treated as code. No rename, boundary, claim or matching-status changes."""
+        return await run(ctx, "resolve_addresses", queries=queries, context_function=context_function)
+
+    @tool
     async def read_data(ctx: Context, what: str, length: int = 64) -> str:
         """Hex dump of the original's data: an address or symbol (ROM projects), a data symbol such as
         lbl_1_data_10 (forks); text, pointers and floats decoded."""
         return await run(ctx, "read_data", what=what, length=length)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def redraft(ctx: Context, function: str, context: str) -> str:
-        """m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
+        """Requires nonempty actual C declarations in context; to inspect existing C use get_function(section="candidate").
+        m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
         you worked out) added to the shared header's; yours replace the header's where they declare the same
         names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped.
         PC games: Ghidra's draft made compilable again with them (a class declaring the function, a callee's
         prototype)."""
         return await run(ctx, "redraft", function=function, context=context)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def get_class(ctx: Context, what: str = "") -> str:
         """C++ classes found in the game (MIPS games' and PC programs' code; a PC program's run-time type
         information has the classes' own names): give a vtable address or a virtual function, constructor or destructor for its class's
@@ -538,7 +964,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         layout to write the class from: the judge still decides."""
         return await run(ctx, "get_class", what=what)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def guess_struct(ctx: Context, function: str, argument: str = "arg0") -> str:
         """The likely struct behind a function's pointer (MIPS games, PC programs), as C with offsets: from the loads
         and stores of every function the same pointer reaches, with how many agree on each field, where else the
@@ -548,7 +974,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         edit_file)."""
         return await run(ctx, "guess_struct", function=function, argument=argument)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def compiler_map(ctx: Context, survey: bool = False, check_ranges: bool = False) -> str:
         """Which compiler built each part of the game (ROM projects, MIPS; projects whose source files each have a
         compiler, PC and DS: over their files, with what the program itself says built it): where the code looks
@@ -559,18 +985,18 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         applied ranges (projects: the open checks) again the same way."""
         return await run(ctx, "compiler_map", survey=survey, check_ranges=check_ranges)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def list_functions(ctx: Context, status: str = "open", limit: int = 40) -> str:
         """List functions by status: open, matched or all."""
         return await run(ctx, "list_functions", status=status, limit=limit)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def add_note(ctx: Context, text: str, function: str) -> str:
         """Leave a note on a function for the next agent on it. Say which function it's for: something every agent
         on this game should know goes through share_knowledge."""
         return await run(ctx, "add_note", text=text, function=function)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def search_flags(ctx: Context, function: str, compiler: str = "", source: str = "") -> str:
         """The function's C (its best attempt, or source) built with each of its compiler's flag variants
         (optimisation levels, small data, code-shape options), judged and ranked. For C that looks right but won't
@@ -578,32 +1004,36 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         function's source file's flags (/Oy- keeps the frame pointer, /O1, /Ob1); one that matches stays the file's."""
         return await run(ctx, "search_flags", function=function, compiler=compiler, source=source)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def claim_readable(ctx: Context) -> str:
         """Take the next matched function that isn't readable yet: rename, type and comment it so people understand
         it, while it still matches byte for byte."""
         return await run(ctx, "claim_readable")
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def make_readable(ctx: Context, function: str, source: str) -> str:
         """A readable rewrite of a matched function (names, types, a comment). Kept only if it still matches byte
         for byte; otherwise the matching C stays."""
         return await run(ctx, "make_readable", function=function, source=source)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def tidy_done(ctx: Context, unit: str, summary: str) -> str:
         """The source file claim_readable gave you to tidy is done (its types, names and declarations): say what you
         changed in a sentence or two."""
         return await run(ctx, "tidy_done", unit=unit, summary=summary)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
-    async def share_knowledge(ctx: Context, text: str = "", supports: int = 0) -> str:
-        """Propose something every agent on this game should know (a convention, what a struct is, how the code
-        is organised), or back an open proposal with supports=its number. It reaches every agent once helpers
-        running two different models agree. Not for which compiler built what: that's the compiler map's job."""
-        return await run(ctx, "share_knowledge", text=text, supports=supports)
+    @tool
+    async def share_knowledge(ctx: Context, text: str = "", supports: int = 0, evidence: str = "") -> str:
+        """Keep text as the reusable rule without function-specific progress. Put concrete function names, scores and examples in evidence; evidence is retained for review, not included in every agent prompt.
+        Reusable game/compiler matching tips across functions. Not function-specific notes: use
+        release_function(notes=...) or add_note(function=...).
+        Propose a general technique or back an independently verified proposal with supports=its number.
+        Submit your own evidence-backed proposal now; do not wait for a second model before proposing.
+        The user may accept one model's proposal; automatic acceptance requires two models.
+        Compiler identity/profile changes belong in compiler_map, try_compiler/search_flags or suggest."""
+        return await run(ctx, "share_knowledge", text=text, supports=supports, evidence=evidence)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def suggest(ctx: Context, text: str, compiler: str = "", flags: str = "", function: str = "",
                       ranges: str = "", source: str = "") -> str:
         """Suggest a change to the project's setup you can't make yourself, for the user to apply: above all a
@@ -623,38 +1053,38 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "suggest", text=text, compiler=compiler, flags=flags, function=function, ranges=ranges,
                          source=source)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def try_compiler(ctx: Context, function: str, compiler: str, flags: str = "", source: str = "") -> str:
         """Compile a function's C with another compiler and flags and see the diff, recording nothing: to find out
         which compiler built a part of the game before you suggest it. Cheap: try several.
 
         Args:
             function: the function to judge it against
-            compiler: a toolchain id (project_info lists this project's); where each source file has its own
+            compiler: current retains this function's effective compiler and default flags, or a toolchain id (project_info lists this platform's); where each source file has its own
                 compiler (DS), "all" tries every one, and the one that matches becomes the file's
             flags: its flags (default: that compiler's defaults for this game)
             source: the C (default: the function's best attempt)
         """
         return await run(ctx, "try_compiler", function=function, compiler=compiler, flags=flags, source=source)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def search_notes(ctx: Context, query: str) -> str:
         """Search notes left by agents."""
         return await run(ctx, "search_notes", query=query)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def find_similar(ctx: Context, function: str, limit: int = 5) -> str:
         """Functions whose instructions look like this one's (copy-pasted code, the same inlined helper,
         template instances), matched ones first, with the matching source of the best one. Start there."""
         return await run(ctx, "find_similar", function=function, limit=limit)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def guide(ctx: Context, topic: str = "") -> str:
         """Decompilation know-how. Call without a topic for the list (workflow, mips, gcc-kmc, ido, m2c,
         data, structs, n64, naming)."""
         return await run(ctx, "guide", topic=topic)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def read_file(ctx: Context, path: str = "", start: int = 1, count: int = 200, file_path: str = "",
                         offset: int = 0, limit: int = 0) -> str:
         """Forks only: read a file of the project (path relative to its root), with line numbers."""
@@ -664,13 +1094,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
             raise ValueError("read_file needs path: the file, relative to the project's root")
         return await run(ctx, "read_file", path=path, start=offset or start, count=limit or count)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def search_code(ctx: Context, pattern: str, glob: str = "") -> str:
         """Forks only: search the project's C/C++ sources and headers with a regular expression. `glob`
         narrows the files (e.g. "include/**/*.h")."""
         return await run(ctx, "search_code", pattern=pattern, glob=glob)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def edit_file(ctx: Context, path: str, old: str, new: str, message: str = "") -> str:
         """Forks only: change a C/C++ source or header file. Replace `old` (exactly once) with `new`, or
         append `new` when old is "". The project is rebuilt and measured; the edit is undone if any matched
@@ -678,14 +1108,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         change is, for its commit."""
         return await run(ctx, "edit_file", path=path, old=old, new=new, message=message)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def file_status(ctx: Context, path: str) -> str:
         """Forks only: how far a source file (or a function's file) is from being linked into the game: which
         functions still differ, its data next to the original's (with what to fix), why the last link failed.
         A file is linked (the game built from its C) once every function and all its data match."""
         return await run(ctx, "file_status", path=path)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def standins_for(ctx: Context, what: str) -> str:
         """Games built with link-time code generation (the brief's "Calling convention" section says so): a starting
         harness for a unit, from the original's references. `what`: a unit, its source file or one of its functions.
@@ -696,7 +1126,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         ones its callers keep alive."""
         return await run(ctx, "standins_for", what=what)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def split_file(ctx: Context, path: str, at: str, new_name: str = "", data: str = "") -> str:
         """Forks (GameCube, Wii, DS): divide a source file in two where the game's original files divided (DS: or
         to give a function built by another compiler version a file, and compiler, of its own: split at it and at the
@@ -708,7 +1138,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         data are exactly one original file's."""
         return await run(ctx, "split_file", path=path, at=at, new_name=new_name, data=data)
 
-    @mcp.tool(meta=ALWAYS_LOAD)
+    @tool
     async def join_functions(ctx: Context, function: str, with_function: str, reason: str) -> str:
         """Forks: `function` and `with_function` are one function the game's analysis cut in two (or more: the
         symbols between them too). A piece with no prologue that uses registers the code before it set, an epilogue

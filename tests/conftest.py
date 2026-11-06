@@ -3,6 +3,8 @@ import tempfile
 
 # the apps the tests start never look for updates on the network (tests/test_updates.py checks that part offline)
 os.environ.setdefault("DECOMP_UPDATES", "off")
+# Post-match compiler analysis is explicitly exercised with fake workers in its own tests.
+os.environ["DECOMP_REPAIR_ANALYSIS"] = "off"
 # nothing a test starts may reach the user's own app or projects: listing agents' models runs the agent CLIs
 # installed on this computer, and Antigravity's settings once started the user's real app through the old
 # `decomp mcp` bridge, with this test environment, while it was restarting into an update

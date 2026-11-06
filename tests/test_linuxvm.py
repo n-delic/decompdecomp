@@ -31,13 +31,13 @@ def vm(monkeypatch, tmp_path):
 
 def test_only_opted_in_linux_packs_use_vm_and_native_profiles_keep_their_paths(vm, monkeypatch):
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
-    assert toolchains.get('ee-gcc-2.96').via_vm
+    assert toolchains.get('gcc-4.4.0-n64').via_vm
     assert not toolchains.get('gcc-2.7.2-kmc').via_vm
-    assert toolchains.path('ee-gcc-2.96') == vm / 'toolchains/linux-vm/ee-gcc-2.96'
+    assert toolchains.path('gcc-4.4.0-n64') == vm / 'toolchains/linux-vm/gcc-4.4.0-n64'
     assert toolchains.path('gcc-2.7.2-kmc') == vm / 'toolchains/gcc-2.7.2-kmc'
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'linux-x86_64')
-    assert not toolchains.get('ee-gcc-2.96').via_vm
-    assert toolchains.path('ee-gcc-2.96') == vm / 'toolchains/ee-gcc-2.96'
+    assert not toolchains.get('gcc-4.4.0-n64').via_vm
+    assert toolchains.path('gcc-4.4.0-n64') == vm / 'toolchains/gcc-4.4.0-n64'
 
 
 def test_readiness_never_starts_vm_and_ignores_remote_docker_environment(vm, monkeypatch):
@@ -79,12 +79,8 @@ def test_missing_host_runtime_has_actionable_setup_steps(vm, monkeypatch):
 def test_proprietary_vm_install_stops_before_any_runtime_setup(vm, monkeypatch):
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
     monkeypatch.setattr(linuxvm, 'setup', lambda **_: pytest.fail('VM started before license acceptance'))
-    from dataclasses import replace
-
-    tc = replace(toolchains.get('ee-gcc-2.96'), license='proprietary')
-    monkeypatch.setattr(toolchains, 'registry', lambda: {tc.id: tc})
     with pytest.raises(toolchains.ToolchainError, match='accept-license'):
-        toolchains.install(tc.id, log=lambda *_: None)
+        toolchains.install('ido-5.2', log=lambda *_: None)
 
 
 def test_guest_tools_are_atomic_shared_and_invalidated_by_manifest_or_driver(vm, monkeypatch):
@@ -141,13 +137,15 @@ def test_compile_and_export_use_the_same_vm_runner(vm, monkeypatch):
     assert calls[1][1]['outputs'] == ['source.o']
 
 
-def test_vm_config_uses_guest_dependency_paths(vm, monkeypatch):
+def test_vm_config_uses_guest_python_and_dependency_paths(vm, monkeypatch):
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
     monkeypatch.setattr(toolchains, 'runtime_dirs', lambda _: (vm / 'compiler', vm / 'dependency'))
     monkeypatch.setattr(linuxvm, 'prepare_tools', lambda dirs: tuple(f'/tools/cache/{i}' for i in range(len(dirs))))
-    cfg = compiler_config(vm, {'compiler': {'toolchain': 'ee-gcc-2.96'}})
-    assert cfg.linux_vm and not cfg.wsl
-    assert cfg.cmd[0] == '/tools/cache/0/bin/ee-gcc' and cfg.runtime32 is None
+    cfg = compiler_config(vm, {'compiler': {'toolchain': 'ido-5.2'}})
+    assert cfg.linux_vm and not cfg.wsl and cfg.cmd[:3] == ['/usr/bin/env', 'LD_LIBRARY_PATH=/tools/cache/1', 'python3']
+    assert '/tools/cache/2/irix.py' in cfg.cmd and '/tools/cache/0' in cfg.cmd
+    cfg = compiler_config(vm, {'compiler': {'toolchain': 'gcc-4.4.0-n64'}})
+    assert 'LD_LIBRARY_PATH=/tools/cache/1' in cfg.cmd
 
 
 def test_vm_transfers_headers_and_only_requested_outputs(vm, monkeypatch):
@@ -220,6 +218,42 @@ def test_worker_limits_paths_before_reading_input(vm):
         linuxvm_worker.compile_job({'files': {'../leak': 'eA=='}}, root=vm)
 
 
+@pytest.mark.parametrize('tid,code', [('gcc-egcs-1.1.2-4','03e0000800851021'), ('gcc-4.4.0-n64','03e0000800a41021')])
+def test_real_mac_vm_engine_comparison_and_export_compile(tmp_path, tid, code):
+    import os
+
+    from decompnet.app.engine import RomNetwork
+    from decompnet.elfobj import extract_function
+
+    if os.environ.get('DECOMP_LINUX_VM_TESTS') != '1' or not toolchains.get(tid).via_vm or not toolchains.installed(tid):
+        pytest.skip('explicit opt-in with an isolated VM and installed free compiler packs')
+    target = bytes.fromhex(code)
+    (tmp_path / 'homemade.bin').write_bytes(target)
+    flags = toolchains.get(tid).flags
+    cfg = {'kind': 'rom', 'platform': 'n64', 'big_endian': True, 'rom': {'file': 'homemade.bin', 'sha1': hashlib.sha1(target).hexdigest()},
+           'segments': [{'name': 'main', 'rom_start': 0, 'rom_end': 8, 'vram': 0x80001000}],
+           'compiler': {'toolchain': tid, 'flags': flags}}
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,config,arch,big_endian) VALUES(?,?,?,?,?,?)',
+                         ('demo', 'Homemade test', str(tmp_path), json.dumps(cfg), 'mips', 1)).lastrowid
+        db.execute('INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,?,?,?)', (pid, 1, '', ''))
+        db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,status) '
+                   'VALUES(?,?,?,?,?,?,?,?,?)', (pid, 'probe', 0x80001000, 0, 8, 2, target, '[]', 'open'))
+    source = 'int probe(int a,int b){return a+b;}'
+    proj, fn = net._project('demo'), net._function('probe', 'demo')
+    matched, diff, log = net._judge_with(proj, fn, tid, flags, source)
+    assert matched and diff.bytes_match, log
+    # The exported project's build helper uses relative paths and selected input/output files.
+    inc = tmp_path / 'include ü'
+    inc.mkdir()
+    (inc / 'test.h').write_text('#define EXTRA 0\n')
+    (tmp_path / 'source.c').write_text('#include "test.h"\nint probe(int a,int b){return a+b+EXTRA;}')
+    compile_cfg = compiler_config(tmp_path, cfg)
+    argv = [a.replace('{src}', 'source.c').replace('{obj}', 'out.o').replace('{include}', 'include ü') for a in compile_cfg.cmd]
+    result = run_in(compile_cfg, tmp_path, argv, inputs=['source.c', 'include ü'], outputs=['out.o'])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert extract_function((tmp_path / 'out.o').read_bytes(), 'probe').code == target
 
 
 def test_real_vm_timeout_and_cancellation_remove_jobs(tmp_path, monkeypatch):
@@ -252,11 +286,11 @@ def test_vm_installs_are_separate_and_keep_dependency_routing(vm, monkeypatch):
     from dataclasses import replace
 
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
-    monkeypatch.setattr(linuxvm, 'setup', lambda **_: pytest.fail('install must not prepare the VM'))
-    monkeypatch.setattr(linuxvm, 'status', lambda refresh=False: (True, ''))
+    monkeypatch.setattr(linuxvm, 'setup', lambda **_: {'ready': True})
+    monkeypatch.setattr(linuxvm, 'status', lambda: (True, ''))
     original = toolchains.registry()
     profiles = {}
-    for tid in ['ee-gcc-2.96', 'runtime-i386']:
+    for tid in ['gcc-4.4.0-n64', 'runtime-gcc-math']:
         source = vm / tid
         source.mkdir()
         (source / 'example').write_bytes(b'original pinned file')
@@ -266,18 +300,18 @@ def test_vm_installs_are_separate_and_keep_dependency_routing(vm, monkeypatch):
         profiles[tid] = replace(original[tid], parts=[{'url': archive.as_uri(), 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                                                      'platforms': ['linux-x86_64']}])
     monkeypatch.setattr(toolchains, 'registry', lambda: profiles)
-    native = toolchains.path('ee-gcc-2.96', vm=False)
+    native = toolchains.path('gcc-4.4.0-n64', vm=False)
     native.mkdir(parents=True)
     (native / 'preserved').write_text('native install')
-    installed = toolchains.install('ee-gcc-2.96', log=lambda *_: None)
-    assert installed == vm / 'toolchains/linux-vm/ee-gcc-2.96'
+    installed = toolchains.install('gcc-4.4.0-n64', log=lambda *_: None)
+    assert installed == vm / 'toolchains/linux-vm/gcc-4.4.0-n64'
     assert (native / 'preserved').read_text() == 'native install'
-    metadata = toolchains.installed('runtime-i386')
-    assert metadata['archive_parts'][0]['sha256'] == profiles['runtime-i386'].parts[0]['sha256']
-    assert not (vm / 'toolchains/linux-vm/runtime-i386/example').exists()
-    assert (vm / 'toolchains/linux-vm/runtime-i386' / metadata['archive_parts'][0]['archive']).is_file()
-    assert toolchains.installed('ee-gcc-2.96')['linux_vm'] is True
-    assert toolchains.installed('ee-gcc-2.96')['wsl'] is False
+    metadata = toolchains.installed('runtime-gcc-math')
+    assert metadata['archive_parts'][0]['sha256'] == profiles['runtime-gcc-math'].parts[0]['sha256']
+    assert not (vm / 'toolchains/linux-vm/runtime-gcc-math/example').exists()
+    assert (vm / 'toolchains/linux-vm/runtime-gcc-math' / metadata['archive_parts'][0]['archive']).is_file()
+    assert toolchains.installed('gcc-4.4.0-n64')['linux_vm'] is True
+    assert toolchains.installed('gcc-4.4.0-n64')['wsl'] is False
 
 
 def test_guest_cache_wraps_compiler_but_never_the_runtime_library(vm, monkeypatch):
@@ -320,6 +354,32 @@ def test_guest_cache_wraps_compiler_but_never_the_runtime_library(vm, monkeypatc
     assert (root / 'testkey/keep').read_text() == 'active snapshot'
 
 
+def test_proxy_installer_preserves_case_colliding_archive_without_extracting(vm, monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
+    monkeypatch.setattr(linuxvm, 'setup', lambda **_: {'ready': True})
+    monkeypatch.setattr(linuxvm, 'status', lambda: (True, ''))
+    archive = vm / 'compiler.tar.gz'
+    with tarfile.open(archive, 'w:gz') as tar:
+        for name, content in [('libC.so.1', b'C++ runtime'), ('libc.so.1', b'C runtime')]:
+            info = tarfile.TarInfo('usr/lib/' + name)
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    profile = replace(toolchains.get('ido-5.2'), requires=[], parts=[{
+        'url': archive.as_uri(), 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+        'platforms': ['linux-x86_64']}])
+    monkeypatch.setattr(toolchains, 'registry', lambda: {'ido-5.2': profile})
+    monkeypatch.setattr(toolchains, '_extract', lambda *_: pytest.fail('must extract on Linux'))
+    directory = toolchains.install('ido-5.2', accept_license=True, log=lambda *_: None)
+    metadata = toolchains.installed('ido-5.2')
+    saved = directory / metadata['archive_parts'][0]['archive']
+    assert saved.read_bytes() == archive.read_bytes()
+    assert toolchains.require('ido-5.2') == directory
+    metadata.pop('archive_parts')
+    (directory / '.decompnet-toolchain.json').write_text(json.dumps(metadata))
+    with pytest.raises(toolchains.ToolchainError, match='Reinstall'):
+        toolchains.require('ido-5.2')
 
 
 def test_guest_archive_checksum_and_escape_are_rejected(tmp_path):

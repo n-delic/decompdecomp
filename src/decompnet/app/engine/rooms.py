@@ -9,7 +9,7 @@ import re
 import secrets
 import time
 
-from ...network import NetworkError
+from ...network import Network, NetworkError
 from ...rom.symbols import Symbol
 
 
@@ -64,6 +64,27 @@ class RoomMixin:
         except NetworkError:
             return None
 
+    def _room_claim_row(self, agent, project, name, strategy):
+        """Mirror a host-granted lease, replacing only this worker's stale local room leases.
+
+        Call only after link.claim succeeds. Local expiry and host expiry can differ;
+        asking the host again cannot fix a leftover local lease. Roll back if local
+        validation fails, and never release another worker's or the host's claim.
+        """
+        proj = self._project(project)
+        fn = self._function(name, project)
+        self._yield_autopilot(name, project)  # wait outside the transaction for local draft work
+        with self.store.tx() as db:
+            stale = db.execute('SELECT f.id,f.name FROM claims c JOIN functions f ON f.id=c.function_id '
+                               'WHERE c.agent_id=? AND f.project_id=? AND f.id<>?',
+                               (agent.id,proj['id'],fn['id'])).fetchall()
+            for row in stale:
+                db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (row['id'],agent.id))
+            row = Network.claim_row(self, agent, project, name, strategy)
+            for old in stale:
+                self._event(db,proj['id'],agent.id,'room_claim_resynced',old['name']+' -> '+name)
+            return row
+
     def _remote_agent(self, name: str) -> int:
         label = "@" + name
         if label in self._remote_ids:
@@ -84,16 +105,17 @@ class RoomMixin:
             db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                        (project_id, aid, kind, detail, created_at))
 
-    def apply_remote_match(self, slug: str, vram: int, source: str, agent_name: str) -> None:
+    def apply_remote_match(self, slug: str, vram: int, source: str, agent_name: str, *, rom_offset=None) -> None:
         proj = self._project(slug)
         aid = self._remote_agent(agent_name)
         with self.store.tx() as db:
-            row = db.execute("SELECT id, status FROM functions WHERE project_id=? AND vram=?", (proj["id"], vram)).fetchone()
+            rows = db.execute("SELECT id,status,rom_offset FROM functions WHERE project_id=? AND vram=?", (proj["id"], vram)).fetchall()
+            row = next((r for r in rows if r['rom_offset']==rom_offset),None) if rom_offset is not None else (rows[0] if len(rows)==1 else None)
             if row is None or row["status"] == "matched":
                 return
             db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, matched_at=?, "
                        "best_score=0, best_source=? WHERE id=?", (source, aid, time.time(), source, row["id"]))
-            db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+            self._release_matched_claim(db,row["id"],aid)
 
     def apply_remote_match_named(self, slug: str, name: str, agent_name: str) -> None:
         """A git project's room: who matched a function (the code itself arrives with the host's commits)."""
@@ -109,37 +131,48 @@ class RoomMixin:
                            (aid, time.time(), row["id"]))
             elif row["matched_agent_id"] is None:
                 db.execute("UPDATE functions SET matched_agent_id=? WHERE id=?", (aid, row["id"]))
-            db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+            self._release_matched_claim(db,row["id"],aid)
 
-    def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float) -> None:
+    def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
         proj = self._project(slug)
         row = self.store.one("SELECT id FROM functions WHERE project_id=? AND name=?", proj["id"], function) if function else None
         fid = row["id"] if row else None
-        if self.store.one("SELECT 1 FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid):
+        existing = self.store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
+        if existing:
+            if score_before is not None and score_after is not None:
+                with self.store.tx() as db:
+                    db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
             return
         aid = self._remote_agent(agent_name)
         with self.store.tx() as db:
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                       (proj["id"], fid, aid, text, created_at))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
+                       (proj["id"], fid, aid, text, created_at, score_before, score_after))
 
-    def apply_remote_best(self, slug: str, vram: int, score: int, source: str) -> None:
+    def apply_remote_best(self, slug: str, vram: int, score: int, source: str, *, rom_offset=None) -> None:
         proj = self._project(slug)
         with self.store.tx() as db:
-            db.execute("UPDATE functions SET best_score=?, best_source=? WHERE project_id=? AND vram=? AND status='open' "
-                       "AND (best_score IS NULL OR best_score > ?)", (score, source, proj["id"], vram, score))
+            rows=db.execute('SELECT id,rom_offset FROM functions WHERE project_id=? AND vram=?',(proj['id'],vram)).fetchall()
+            row=next((r for r in rows if r['rom_offset']==rom_offset),None) if rom_offset is not None else (rows[0] if len(rows)==1 else None)
+            if row is not None:
+                db.execute("UPDATE functions SET best_score=?,best_source=? WHERE id=? AND status='open' "
+                           "AND (best_score IS NULL OR best_score > ?)",(score,source,row['id'],score))
 
-    def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float) -> None:
+    def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
         proj = self._project(slug)
         fid = None
         if vram is not None:
             row = self.store.one("SELECT id FROM functions WHERE project_id=? AND vram=?", proj["id"], vram)
             fid = row["id"] if row else None
-        if self.store.one("SELECT 1 FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid):
+        existing = self.store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
+        if existing:
+            if score_before is not None and score_after is not None:
+                with self.store.tx() as db:
+                    db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
             return
         aid = self._remote_agent(agent_name)
         with self.store.tx() as db:
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                       (proj["id"], fid, aid, text, created_at))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
+                       (proj["id"], fid, aid, text, created_at, score_before, score_after))
 
     def apply_remote_context(self, slug: str, header: str, host_version: int) -> None:
         proj = self._project(slug)

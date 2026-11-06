@@ -1,6 +1,6 @@
 """Private rooms: friends who each own the same game decompile it together.
 
-The host's decompdecomp is the hub. It serves a small, separate HTTP app (only /collab routes; never the GUI or the
+The host's decompdecomp is the hub. It serves a small, separate HTTP app (the member workspace and /collab routes; never the private GUI or the
 agents' MCP endpoint) that a quick tunnel makes reachable. A friend joins with the invite link *and their own copy of
 the game*: the ROM's SHA-1 must equal the host's, checked on both sides. No ROM bytes or assembly ever cross the
 wire. Each side reads the code from its own copy; what travels is the work: claims (so nobody does the same function
@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from decompnet.hostenv import NO_WINDOW
@@ -40,7 +40,7 @@ from ..rom.symbols import AUTO_NAME
 from . import forkroom
 
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
-MAX_BODY = 256 * 1024
+MAX_BODY = 2 * 1024 * 1024
 TUNNEL_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 # what the host answers someone it hasn't let in; the guest's screen says which (gui.py: the room's state)
 WAITING = "waiting for the host to let you in"
@@ -112,6 +112,7 @@ class Room:
                 db.execute("UPDATE agents SET origin=?, token_hash=? WHERE id=?",
                            (self.origin + ":declined", "declined:" + secrets.token_hex(16), row["id"]))
         self._members = (0.0, [])
+        self._members_lock = threading.Lock()
 
     @property
     def cfg(self) -> dict:
@@ -160,30 +161,53 @@ class Room:
     def origin(self) -> str:
         return f"collab:{self.slug}"
 
-    def members(self) -> list[dict]:
+    def members(self, *, refresh=True) -> list[dict]:
         at, cached = self._members
-        if time.time() - at < 3:
+        if not refresh or time.time() - at < 3:
             return cached
-        out = self._members_now()
-        self._members = (time.time(), out)
-        return out
+        lock = self.__dict__.setdefault('_members_lock', threading.Lock())
+        with lock:
+            at, cached = self._members
+            if time.time() - at < 3:
+                return cached
+            out = self._members_now()
+            self._members = (time.time(), out)
+            return out
 
     def _members_now(self) -> list[dict]:
         # in the order they joined: each member's colour on every computer's screen (agents.js: computerColour)
         rows = self.net.store.all("SELECT id, name, created_at, last_seen FROM agents WHERE origin=? AND owner IS NULL "
                                   "ORDER BY created_at, id", self.origin)
+        if not rows:
+            return []
+        # Count distinct functions across a person's agents, not every improving
+        # compile. Keep credit after another contributor improves or matches it.
+        # Older/fork attempts lack the recorded verdict: compare their score with
+        # the preceding project-wide history, never just that member's attempts.
+        from .history_summary import summary as history_summary
+        history = history_summary(self.net.store, self.proj['id'])['agents']
+        improvements = {}
+        children = self.net.store.all('SELECT id,name,owner FROM agents WHERE origin=? AND owner IS NOT NULL', self.origin)
+        by_owner = {}
+        for agent in children:
+            by_owner.setdefault(agent['owner'], []).append(agent)
+            improvements.setdefault(agent['owner'], set()).update(history.get(agent['id'], {}).get('verified_improved', ()))
+        ids_json = json.dumps([a['id'] for a in children])
+        matched_by_agent = {r['matched_agent_id']:r['n'] for r in self.net.store.all(
+            'SELECT matched_agent_id,COUNT(*) AS n FROM functions WHERE project_id=? AND matched_agent_id IN '
+            '(SELECT value FROM json_each(?)) GROUP BY matched_agent_id', self.proj['id'], ids_json)}
+        working_by_agent = {}
+        for claim in self.net.store.all('SELECT c.agent_id,f.name FROM claims c JOIN functions f ON f.id=c.function_id '
+                                       'WHERE c.agent_id IN (SELECT value FROM json_each(?))', ids_json):
+            working_by_agent.setdefault(claim['agent_id'], []).append(claim['name'])
         out = []
         for r in rows:
-            agents = self.net.store.all("SELECT id, name FROM agents WHERE origin=? AND owner=?", self.origin, r["name"])
-            ids = [a["id"] for a in agents] or [-1]
-            matched = self.net.store.one(
-                f"SELECT COUNT(*) AS n FROM functions WHERE matched_agent_id IN ({','.join('?' * len(ids))})", *ids)["n"]
-            working = [c["name"] for c in self.net.store.all(
-                f"SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id IN "
-                f"({','.join('?' * len(ids))})", *ids)]
+            agents = by_owner.get(r['name'], [])
+            matched = sum(matched_by_agent.get(a['id'], 0) for a in agents)
+            working = [name for a in agents for name in working_by_agent.get(a['id'], ())]
             out.append({"name": r["name"], "joined": r["created_at"], "last_seen": r["last_seen"],
                         "online": bool(r["last_seen"]) and time.time() - r["last_seen"] < 30,
-                        "agents": [a["name"].split(".", 1)[1] for a in agents], "matched": matched, "working": working})
+                        "agents": [a["name"].split(".", 1)[1] for a in agents], "matched": matched, "improved": len(improvements.get(r["name"], ())), "working": working})
         return out
 
     def join(self, name: str, sha1: str) -> tuple[str, str]:
@@ -252,7 +276,9 @@ class Room:
         """The host-side identity of one of a member's agents, e.g. alex.claude-1."""
         label = re.sub(r"[^A-Za-z0-9_-]", "", str(label or "agent"))[:24] or "agent"
         name = f"{member.name}.{label}"
-        row = self.net.store.one("SELECT id FROM agents WHERE name=?", name)
+        row = self.net.store.one("SELECT id, owner, origin FROM agents WHERE name=?", name)
+        if row is not None and (row["owner"] != member.name or row["origin"] != self.origin):
+            raise NetworkError("That worker name belongs to another connection. Join with a different member name.")
         if row is None:
             with self.net.store.tx() as db:
                 aid = db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
@@ -289,29 +315,49 @@ class Room:
         kinds = {ev["kind"] for ev in events}
         names = {ev["detail"] for ev in events if ev["kind"] in ("match",)}
         first = e == 0
-        if first or names:
-            rows = net.store.all("SELECT f.name, f.vram, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
-                                 "ON a.id=f.matched_agent_id WHERE f.project_id=? AND f.status='matched'", pid)
-            out["matched"] = [dict(r) for r in rows if first or r["name"] in names]
-        best = net.store.all("SELECT f.name, f.vram, f.best_score, f.best_source, MAX(t.id) AS last FROM attempts t "
-                             "JOIN functions f ON f.id=t.function_id WHERE f.project_id=? AND t.id>? AND f.status='open' "
-                             "AND f.best_source IS NOT NULL GROUP BY f.id", pid, a)
-        out["best"] = [{"name": r["name"], "vram": r["vram"], "score": r["best_score"], "source": r["best_source"]} for r in best]
-        last = net.store.one("SELECT MAX(t.id) AS m FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?", pid)
-        out["a"] = max(a, last["m"] or 0)
+        if first or fresh or names:
+            narrowed = not (first or fresh)
+            condition = " AND f.name IN (SELECT value FROM json_each(?))" if narrowed else ""
+            rows = net.store.all("SELECT f.name, f.vram, f.rom_offset, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
+                                 "ON a.id=f.matched_agent_id WHERE f.project_id=? AND f.status='matched'" + condition,
+                                 pid, *([json.dumps(sorted(names))] if narrowed else []))
+            out["matched"] = [dict(r) for r in rows]
+        if first or fresh or names or kinds & {'compiler','context'}:
+            cfg=net.cfg(net.project_row(self.slug))
+            out['compiler_settings']={k:cfg.get(k,[] if k=='compiler_ranges' else {}) for k in ('compiler','compiler_ranges','function_compilers')}
+            units=net._unit_contexts(pid)
+            narrowed = bool(names) and not (first or fresh or kinds & {'compiler','context'})
+            condition = " AND name IN (SELECT value FROM json_each(?))" if narrowed else ""
+            context_rows = net.store.all('SELECT vram,rom_offset,name,unit FROM functions WHERE project_id=?' + condition,
+                                         pid, *([json.dumps(sorted(names))] if narrowed else []))
+            out['function_contexts']=[{'vram':r['vram'],'rom_offset':r['rom_offset'],'name':r['name'],'header':net._context(pid,r['unit'])['header']}
+                                      for r in context_rows if r['unit'] and r['unit'] in units]
+        # Capture the upper bound before reading updates: a concurrent insert must be
+        # delivered next poll, never hidden by advancing the cursor after the query.
+        upper = max(a, net.store.one("SELECT MAX(id) AS m FROM attempts")["m"] or 0)
+        fields = "f.name,f.vram,f.rom_offset,f.best_score,f.best_source"
+        if a == 0:
+            best = net.store.all(f"SELECT {fields} FROM functions f WHERE f.project_id=? "
+                                 "AND f.status='open' AND f.best_source IS NOT NULL",pid)
+        else:
+            best = net.store.all(f"SELECT {fields} FROM functions f WHERE f.id IN "
+                                 "(SELECT function_id FROM attempts WHERE id>? AND id<=?) "
+                                 "AND f.project_id=? AND f.status='open' AND f.best_source IS NOT NULL",a,upper,pid)
+        out["best"] = [{"name": r["name"], "vram": r["vram"], "rom_offset":r['rom_offset'], "score": r["best_score"], "source": r["best_source"]} for r in best]
+        out["a"] = upper
         if first or kinds & {"rename", "split"}:
             out["symbols"] = [dict(r) for r in net.store.all(
                 "SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid) if not AUTO_NAME.match(r["name"])]
         if first or fresh or kinds & {"rename", "split"}:
             # fresh: a guest sharing saved work asks for the layout without the room's whole history
             out["functions"] = [dict(r) for r in net.store.all(
-                "SELECT name, vram, size FROM functions WHERE project_id=? ORDER BY vram", pid)]
+                "SELECT name, vram, rom_offset, size FROM functions WHERE project_id=? ORDER BY vram", pid)]
         ctx = net._context(pid)
         if ctx["version"] != ctx_version:
             out["context"] = {"version": ctx["version"], "header": ctx["header"]}
         if first or kinds & {"note"}:
             out["notes"] = [dict(r) for r in net.store.all(
-                "SELECT n.id, n.text, n.created_at, f.vram, a.name AS agent FROM notes n LEFT JOIN functions f ON f.id=n.function_id "
+                "SELECT n.id, n.text, n.score_before, n.score_after, n.created_at, f.vram, a.name AS agent FROM notes n LEFT JOIN functions f ON f.id=n.function_id "
                 "LEFT JOIN agents a ON a.id=n.agent_id WHERE n.project_id=? ORDER BY n.id", pid)]
         out["claims"] = [dict(r) for r in net.store.all(
             "SELECT f.name, f.vram, a.name AS agent FROM claims c JOIN functions f ON f.id=c.function_id JOIN agents a "
@@ -334,7 +380,7 @@ class Room:
             out["matched"] = [dict(r) for r in rows if e == 0 or fresh or r["name"] in names]
         if e == 0 or any(ev["kind"] == "note" for ev in events):
             out["notes"] = [dict(r) for r in net.store.all(
-                "SELECT n.id, n.text, n.created_at, f.name AS function, a.name AS agent FROM notes n LEFT JOIN functions f "
+                "SELECT n.id, n.text, n.score_before, n.score_after, n.created_at, f.name AS function, a.name AS agent FROM notes n LEFT JOIN functions f "
                 "ON f.id=n.function_id LEFT JOIN agents a ON a.id=n.agent_id WHERE n.project_id=? ORDER BY n.id", pid)]
         out["claims"] = [dict(r) for r in net.store.all(
             "SELECT f.name, f.vram, a.name AS agent FROM claims c JOIN functions f ON f.id=c.function_id JOIN agents a "
@@ -358,11 +404,14 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         return room
 
     async def body(request: Request) -> dict:
-        if int(request.headers.get("content-length") or 0) > MAX_BODY:
-            raise NetworkError("request too large")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > MAX_BODY:
+                raise NetworkError("request too large")
         try:
-            data = await request.json()
-        except ValueError:
+            data = json.loads(raw)
+        except (ValueError, UnicodeError):
             raise NetworkError("invalid request") from None
         if not isinstance(data, dict):
             raise NetworkError("invalid request")
@@ -377,7 +426,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
                 data = await body(request) if request.method == "POST" else dict(request.query_params)
                 member = await anyio.to_thread.run_sync(room.member, request) if auth else None
                 result = await anyio.to_thread.run_sync(lambda: fn(room, member, data))
-                return JSONResponse(result)
+                return JSONResponse(result, headers={"Cache-Control": "no-store"})
             except NetworkError as e:
                 return JSONResponse({"error": str(e)}, status_code=400)
         return handler
@@ -409,25 +458,55 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
 
     def claim(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
+        if "selection" in d:
+            net.set_selection(room.slug, agent.name, d["selection"])
+        from ..permuter_claims import clear, nonexclusive
+        if nonexclusive(agent):
+            with net.store.tx() as db:clear(db)
+            fn=net._function(str(d.get('function') or ''),room.slug)
+            return {'function':fn['name'] if fn['status']=='open' else None,
+                    'vram':fn['vram'], 'claim_token':''}
         fn = net.claim_row(agent, room.slug, d.get("function") or None, str(d.get("strategy") or "easiest"))
-        return {"function": fn["name"] if fn else None, "vram": fn["vram"] if fn else None}
+        from ..release_receipts import current
+        return {"function": fn["name"] if fn else None, "vram": fn["vram"] if fn else None,
+                "claim_token":current(net,fn,agent) if fn else ''}
 
     def attempt(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
-        res = net.attempt(agent, str(d.get("function", "")), str(d.get("source", "")), room.slug)
-        return {"score": res["score"], "matched": res["matched"]}
+        if room.fork:
+            from ..permuter_claims import nonexclusive
+            if nonexclusive(agent):
+                res=net.forks.attempt(agent,room.slug,str(d.get('function','')),str(d.get('source','')),keep=False,background=True)
+            else:
+                res = net.attempt(agent, str(d.get("function", "")), str(d.get("source", "")), room.slug)
+            return {"score": res["score"], "matched": res["matched"]}
+        from .room_matches import verify
+        return verify(net,room.slug,agent,str(d.get('function','')),str(d.get('source','')),d.get('evidence'))
 
     def best(room, member, d):
         """A member's attempt got better: kept as the function's best so far, as reported (no compile here: the host
         only spends its CPU on verifying matches)."""
         agent = room.agent_for(member, d.get("agent"))
-        net.apply_reported_best(room.slug, str(d.get("function", "")), int(d.get("score", 0)), str(d.get("source", ""))[:65536], agent)
+        guard=None
+        if not room.fork and d.get('evidence') is not None:
+            from .deep_room import comparable
+            if not comparable(net,room.slug,str(d.get('function','')),d['evidence']):
+                return {'ok':False,'reason':'Saved score uses different build inputs; local candidate retained.'}
+            def guard():
+                if not comparable(net,room.slug,str(d.get('function','')),d['evidence']):
+                    raise NetworkError('Build inputs changed before saving the improved candidate. Retry with fresh evidence.')
+        net.apply_reported_best(room.slug, str(d.get("function", "")), int(d.get("score", 0)), str(d.get("source", ""))[:65536], agent, before_record=guard)
         return {"ok": True}
 
     def release(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
-        return {"text": net.release(agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
-                                     bool(d.get("not_c")))}
+        from ..permuter_claims import clear, nonexclusive
+        if nonexclusive(agent):
+            with net.store.tx() as db:clear(db)
+            return {'text':'Permutation workers do not reserve functions.'}
+        from ..release_receipts import transport_release
+        return {"text": transport_release(net, agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
+                                     bool(d.get("not_c")), claim_token=str(d.get("claim_token") or ""))}
 
     def context(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -450,7 +529,8 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         agent = room.agent_for(member, d.get("agent"))
         if not d.get("function"):
             return {"text": net.knowledge.share(agent, room.slug, str(d.get("text", "")))}
-        return {"text": net.add_note(agent, room.slug, str(d.get("text", "")), d["function"])}
+        return {"text": net.add_note(agent, room.slug, str(d.get("text", "")), d["function"],
+                                     score_before=d.get("score_before"), score_after=d.get("score_after"))}
 
     def edit(room, member, d):
         """A member's edit of a git project's file (a header, a new or shared source file): made and checked here."""
@@ -488,16 +568,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
                        (member.name, room.origin))
         return {"ok": True}
 
-    async def landing(request: Request):
-        return HTMLResponse("<!doctype html><meta charset=utf-8><title>decompdecomp room</title>"
-                            "<body style='font:16px system-ui;max-width:36em;margin:4rem auto;padding:0 1rem'>"
-                            "<h1>decompdecomp room</h1><p>This is an invite to decompile a game together. Open "
-                            "<b>decompdecomp</b>, choose <b>Join a friend</b>, and paste this page's address. "
-                            "You'll need your own copy of the game.</p><p>Don't have the app? "
-                            "<a href='https://github.com/n-delic/decompdecomp'>decompdecomp</a></p>")
-
     routes = [
-        Route("/", landing), Route("/join/{code}", landing),
         Route("/collab/hello", endpoint(hello, auth=False)),
         Route("/collab/join", endpoint(join, auth=False), methods=["POST"]),
         Route("/collab/state", endpoint(state)),
@@ -515,6 +586,8 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         Route("/collab/split_file", endpoint(split_file), methods=["POST"]),
         Route("/collab/bundle", get_bundle),
     ]
+    from . import room_browser
+    routes.extend(room_browser.routes(net, endpoint))
     return Starlette(routes=routes)
 
 
@@ -658,6 +731,8 @@ class Link:
         # kept with the link: from 0 after every restart, the room's whole history came again, twice in the feed
         self.cursor = {"e": 0, "a": 0, "v": 0} | (info.get("cursor") or {})
         self.saved = dict(self.cursor)
+        # A prior applied snapshot remains usable while reconnecting. Old clients persisted only cursors.
+        self.cached = bool(info.get("cached") or any(self.cursor.values()))
         self.claims: list[dict] = []
         self.members: list[dict] = []
         self.error = ""
@@ -678,14 +753,19 @@ class Link:
 
     def _req(self, method: str, path: str, data: dict | None = None) -> dict:
         headers = {"authorization": f"Bearer {self.token}", "x-room": self.room}
+        quick={'timeout':httpx.Timeout(5,connect=3)} if path in ('/collab/claim','/collab/release','/collab/best') else {}
         try:
             if method == "GET":
-                r = self.client.get(f"{self.url}{path}", params={**(data or {}), "room": self.room}, headers=headers)
+                r = self.client.get(f"{self.url}{path}", params={**(data or {}), "room": self.room}, headers=headers, **quick)
             else:
-                r = self.client.post(f"{self.url}{path}?room={self.room}", json=data or {}, headers=headers)
+                r = self.client.post(f"{self.url}{path}?room={self.room}", json=data or {}, headers=headers, **quick)
         except httpx.HTTPError as e:
             self.error = f"can't reach the host ({type(e).__name__})"
             raise NetworkError(f"the room's host isn't reachable right now: {self.error}") from None
+        if r.status_code >= 500 or r.status_code in (408, 429):
+            # A tunnel failure is not a rejection: saved-progress upload must retain this candidate for retry.
+            self.error = f"host connection temporarily unavailable (HTTP {r.status_code})"
+            raise NetworkError(f"{self.error}; try again when the connection recovers")
         out = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.status_code != 200:
             raise Refused(out.get("error") or f"host answered {r.status_code}")
@@ -711,12 +791,23 @@ class Link:
     # -- actions, called by RomNetwork for a linked project
 
     def claim(self, agent: Agent, function: str | None, strategy: str) -> str | None:
-        return self._req("POST", "/collab/claim", {"agent": agent.name, "function": function, "strategy": strategy})["function"]
+        result = self._req("POST", "/collab/claim", {"agent": agent.name, "function": function, "strategy": strategy,
+                                                    "selection": self.net.selection(self.slug, agent.name)})
+        if result.get('function') and result.get('claim_token'):
+            leases=self.__dict__.setdefault('_release_claim_tokens',{})
+            leases[agent.id,result['function']]=result['claim_token']
+        return result['function']
 
     def attempt(self, agent: Agent, function: str, source: str) -> dict:
+        if not self.fork:
+            from .room_matches import send
+            return send(self,agent,function,source)
         return self._req("POST", "/collab/attempt", {"agent": agent.name, "function": function, "source": source})
 
     def call(self, route: str, agent: Agent, /, **data) -> str:
+        if route == '/collab/release':
+            lease=getattr(self,'_release_claim_tokens',{}).get((agent.id,data.get('function')))
+            if lease:data['claim_token']=lease
         return self._req("POST", route, {"agent": agent.name, **data}).get("text", "")
 
     # -- mirroring the host's work into the local project
@@ -729,11 +820,20 @@ class Link:
                 self.error, self.refused = str(e), True
                 raise
             self.refused = False
+            if not self.fork and not getattr(self,'_recovered_matches',False):
+                from .room_matches import recover_client
+                snapshot=st if not self.cursor['e'] else self._req('GET','/collab/state',self.cursor | {'fresh':1})
+                recover_client(self,snapshot)
+                for field in ('compiler_settings','function_contexts'):
+                    if field in snapshot:st[field]=snapshot[field]
+                self._recovered_matches=True
             self.apply(st)
+            had_cache = self.cached
+            self.cached = True
             self.behind = int(st.get("behind") or 0)
             self.received += len(st.get("events") or []) if self.behind or self.received else 0
             self.synced = self.synced or not self.behind
-            if self.cursor != self.saved:
+            if self.cursor != self.saved or not had_cache:
                 self._save_cursor()
         with self._saved_progress_lock:
             saved_progress = self.saved_progress
@@ -746,6 +846,12 @@ class Link:
                 # every candidate was sent, refused or skipped; a transport failure raised above and kept the rest
                 self.saved_progress = None
                 self._save_saved_progress()
+
+        if not self.fork:
+            from .room_matches import pump
+            pump(self)
+            from . import deep_room
+            deep_room.pump(self)
 
     def _save_saved_progress(self) -> None:
         """Keep queued work in its own small table, not in projects.config (parsed on every project access): a guest
@@ -783,6 +889,7 @@ class Link:
         cfg = json.loads(proj["config"])
         if "link" in cfg:  # (left the room meanwhile: nothing to keep)
             cfg["link"]["cursor"] = self.saved = dict(self.cursor)
+            cfg["link"]["cached"] = self.cached
             with self.net.store.tx() as db:
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
 
@@ -796,7 +903,8 @@ class Link:
             state = "offline"  # (never answered yet and no error: just started, getting the host's work)
         else:
             state = "connected" if self.synced else "syncing"
-        return {"state": state, "received": self.received, "behind": self.behind}
+        return {"state": state, "received": self.received, "behind": self.behind,
+                "cached": getattr(self, "cached", False)}
 
     def apply(self, st: dict) -> None:
         if self.fork:
@@ -807,14 +915,16 @@ class Link:
         mine = f"{self.member}."
         if st.get("symbols") is not None or st.get("functions") is not None:
             net.apply_remote_layout(slug, st.get("functions") or [], st.get("symbols") or [])
+        from .room_matches import sync_inputs
+        sync_inputs(net,slug,st)
         if st.get("context"):
             net.apply_remote_context(slug, st["context"]["header"], st["context"]["version"])
             self.cursor["v"] = st["context"]["version"]
         _in_batches(net, st.get("matched") or [], lambda m: net.apply_remote_match(
-            slug, m["vram"], m["matched_source"], m["agent"] or "host"))
-        _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"]))
+            slug, m["vram"], m["matched_source"], m["agent"] or "host",rom_offset=m.get('rom_offset')))
+        _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"],rom_offset=b.get('rom_offset')))
         _in_batches(net, st.get("notes") or [], lambda n: net.apply_remote_note(
-            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"]))
+            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after")))
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "rename", "split", "collab", "polish", "readable") and not (ev["agent"] or "").startswith(mine):
                 net.remote_event(pid, ev["kind"], ev["detail"], ev["agent"] or "host", ev["created_at"])
@@ -832,7 +942,7 @@ class Link:
         for m in st.get("matched") or []:
             net.apply_remote_match_named(slug, m["name"], m["agent"] or "host")
         for n in st.get("notes") or []:
-            net.apply_remote_note_named(slug, n["function"], n["text"], n["agent"] or "host", n["created_at"])
+            net.apply_remote_note_named(slug, n["function"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after"))
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "source", "split", "collab", "link", "polish",
                               "readable") \
@@ -956,6 +1066,12 @@ def _saved_progress(net, *, slug: str | None = None, identity: str | None = None
     return candidates
 
 
+def _join_progress(log, phase, **counts):
+    """Publish a foreground snapshot without requiring every background sync logger to support it."""
+    if hasattr(log, 'progress'):
+        log.progress({'phase': phase, **counts})
+
+
 def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *, fork: bool,
                           best_comparable: bool = False, log, sync_room: bool = True,
                           forget=None) -> None:
@@ -964,10 +1080,11 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
     for the next sync."""
     if not candidates:
         return
+    _join_progress(log, "Comparing your saved work with the host")
+    log(f"Comparing {len(candidates)} saved functions with the host's existing results.")
     state = link._req("GET", "/collab/state", link.cursor | {"fresh": 1})
     matched_names = {row["name"] for row in state.get("matched", [])}
-    matched_vrams = {row["vram"] for row in state.get("matched", [])}
-    host_functions = {row["vram"]: row for row in state.get("functions", [])}
+    host_functions = {(row["vram"],row['name']): row for row in state.get("functions", [])}
     host_best = {row["vram"]: row["score"] for row in state.get("best", [])}
     local_names = set()
     if fork:
@@ -991,13 +1108,13 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
                 done(candidate)
                 continue
         else:
-            host_fn = host_functions.get(candidate["vram"])
+            host_fn = host_functions.get((candidate["vram"],candidate['name']))
             if host_fn is None or host_fn["size"] != candidate["size"] or host_fn["name"] != candidate["name"]:
                 skipped += 1
                 done(candidate)
                 continue
             function = host_fn["name"]
-            if candidate["vram"] in matched_vrams:
+            if candidate['name'] in matched_names:
                 done(candidate)
                 continue
         if candidate["status"] == "matched":
@@ -1011,7 +1128,12 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
     matches = best_attempts = 0
     if transfers:
         agent, _ = net.local_agent("saved-progress")
-    for kind, function, source, score, candidate in transfers:
+    total = len(transfers)
+    log(f"Sending {total} saved functions to the host. Each is checked there before it counts.")
+    for index, (kind, function, source, score, candidate) in enumerate(transfers, 1):
+        _join_progress(log, "Host checking saved work", finished=index-1, total=total,
+                       function=function, confirmed=matches, submitted=best_attempts)
+        log(f"Host checking saved function {index} of {total}: {function}")
         try:
             if kind == "match":
                 result = link.attempt(agent, function, source)
@@ -1030,7 +1152,10 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
             raise
         else:
             done(candidate)
+        _join_progress(log, "Host checking saved work", finished=index, total=total,
+                       function=None, confirmed=matches, submitted=best_attempts)
 
+    _join_progress(log, "Synchronizing the host's results")
     if sync_room:
         try:
             link.sync()
@@ -1047,6 +1172,7 @@ def reconnect(net, slug: str, link: str, log=print, client: httpx.Client | None 
     """Guest: the host restarted and shared a new link. Reconnect this project as the same member if the host still
     knows us, or join again with the invite."""
     http = client or httpx.Client(timeout=httpx.Timeout(60, connect=15))
+    _join_progress(log, "Connecting to the host")
     url, code, hello = _hello(http, link)
     proj = net.project_row(slug)
     cfg = json.loads(proj["config"])
@@ -1093,6 +1219,30 @@ def _in_batches(net, items: list, apply_one, size: int = 500) -> None:
             raise
 
 
+def project_game(net, slug: str) -> Path:
+    """Use an existing project's local game; joining still verifies its identity with the host."""
+    proj = net.project_row(slug)
+    if proj is None:
+        raise NetworkError("This project is no longer open. Open it again or choose a game file when joining.")
+    cfg = json.loads(proj['config'])
+    root = Path(proj['root'])
+    if net.fork_slug(slug):
+        _, fp, own = net.forks.get(slug)
+        relative = fp.needs(own.get('version')).get('path')
+    else:
+        relative = cfg.get('rom', {}).get('file')
+    if relative and (root / relative).is_file():
+        return root / relative
+    if relative and net.fork_slug(slug) and (root / relative).is_dir():
+        folder = root / relative
+        candidates = [folder / 'sys' / 'main.dol'] + sorted(p for p in folder.iterdir() if p.is_file())[:32]
+        identity = forkroom.project_identity(cfg)
+        for candidate in candidates:
+            if candidate.is_file() and identity and forkroom.game_identity(candidate) == identity:
+                return candidate
+    raise NetworkError("This project's original game file is no longer available. Restore its game copy, or use New project → Join a team's room to choose a file.")
+
+
 def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: httpx.Client | None = None,
               start: bool = True) -> str:
     """Guest: check the invite, check the ROM is the same game, import it locally, join, link. Returns the slug.
@@ -1101,6 +1251,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
     from .. import consoles
 
     http = client or httpx.Client(timeout=httpx.Timeout(60, connect=15))
+    _join_progress(log, "Connecting to the host")
     url, code, hello = _hello(http, link)
     slug, _info = _linked_project(net, hello["sha1"], hello["room"])
     if slug:
@@ -1112,6 +1263,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
         return _join_fork(net, http, url, code, hello, name, rom, log, client, start)
     if isinstance(rom, Path):
         rom = rom.read_bytes()
+    _join_progress(log, "Checking your game matches the host")
     picked = consoles.identify(rom).read_game(rom)
     if picked.info["sha1"] != hello["sha1"]:
         raise NetworkError(f"this ROM isn't the same as the host's: the room is for {hello['title']} "
@@ -1120,6 +1272,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
     # #80: import before joining, so a join the host refuses (a bad name) or a guest that quits while the game is
     # split never leaves a member behind on the host. An import that was already there stays if the join fails.
     before = {p["slug"] for p in net.store.all("SELECT slug FROM projects")}
+    _join_progress(log, "Opening your local project")
     slug = net.import_rom(rom, toolchain=hello["compiler"]["toolchain"], flags=hello["compiler"]["flags"],
                           confirmed=True, log=log)
     try:
@@ -1160,6 +1313,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
                     room_link.sync()
                 except NetworkError as e:
                     log(f"Couldn't sync the room after sending saved progress: {e}")
+    _join_progress(log, "Finishing room setup")
     if start:
         room_link.run()
     log(f"linked as {joined['name']}: your agents now work with the room")
@@ -1201,6 +1355,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         headers = {"authorization": f"Bearer {joined['token']}", "x-room": hello["room"]}
         if joined.get("waiting"):  # the host's files come only to members it let in
             log("waiting for the host to let you in")
+            _join_progress(log, "Waiting for the host to approve your join")
             _wait_to_be_let_in(http, url, hello["room"], headers)
 
         def get_bundle(have: str) -> bytes:
@@ -1216,6 +1371,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         slug = net.forks._free_slug(re.sub(r"[^a-z0-9]+", "-", hello["title"].lower()).strip("-")[:40] or "room")
         dest = net.workspace / slug
         try:
+            _join_progress(log, "Receiving the host's project files")
             forkroom.clone(dest, hello, get_bundle, log=log)
             forkroom.register_member(net, slug, dest, hello, hello["title"])
         except BaseException:
@@ -1224,6 +1380,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         info = {"url": url, "room": hello["room"], "token": joined["token"], "member": joined["name"],
                 "host_title": hello["title"], "head": forkroom.head(dest)}
         room_link = net.link_project(slug, info, client=client, start=False)  # its agents wait for the room from the start
+        _join_progress(log, "Building the room project locally")
         log("building the project with your copy of the game and your tools")
         net.forks.setup(slug, game, game.name if tmp is None else "", log=log, move=tmp is not None)
         if candidates:

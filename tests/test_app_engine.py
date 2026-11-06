@@ -98,6 +98,9 @@ def test_wrong_code_gets_a_diff_and_link_notes(net):
     assert "score" in out and "mystery" in out
     # the GUI's diff: the same judge, row by row, with the link problems
     d = net.function_diff("demo-quest-64", "func_80000A0C")
+    assert "Mismatch categories (advisory)" in d["mismatch_summary"]
+    assert "source_map" in d and isinstance(d["source_map"]["lines"], list)
+    assert "C-line mapping" in out or "Compiled C lines associated with differences" in out
     assert d["kind"] == "latest" and d["score"] > 0 and any(r[0] != " " for r in d["rows"])
     assert any("mystery" in p for p in d["problems"])
     assert net.function_diff("demo-quest-64", "func_80000A0C") == d  # cached
@@ -147,7 +150,8 @@ def test_autopilot_matches_machine_drafts_for_free(net):
 
     before = net.overview("demo-quest-64")["matched"]
     net.start_autopilot("demo-quest-64")
-    for _ in range(600):
+    # Initial drafts now include bounded compiler recovery; keep checking full completion.
+    for _ in range(1800):
         if net.autopilot_status("demo-quest-64")["state"] != "running":
             break
         time.sleep(0.1)
@@ -230,3 +234,81 @@ def test_boundary_reports_wait_for_the_user(net):
     [req] = [r for r in net.overview(slug)["boundaries"] if r["function"] == other["name"]]
     net.resolve_boundary(slug, req["id"], apply=False)
     assert net.store.one("SELECT size FROM functions WHERE id=?", other["id"])["size"] == other["size"]
+
+
+@pytest.mark.parametrize('change_header', [False, True])
+def test_deep_trial_alongside_agent_preserves_claim_and_rejects_stale_context(built, tmp_path, monkeypatch, change_header):  # noqa: F811
+    from decompnet.app.deep_permuter import Search
+
+    from .test_deep_permuter import Log
+
+    net = RomNetwork(tmp_path/'parallel.db', tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda _: None)
+    owner, _ = net.local_agent('owner')
+    search_agent, _ = net.local_agent('side-search')
+    net.split_function(owner, slug, 'func_800007C4', '0x800007D0')
+    name = 'func_800007D0'
+    net.claim(owner, slug, name)
+    claim = dict(net.store.one('SELECT * FROM claims WHERE agent_id=?', owner.id))
+    proj, fn = net.project_row(slug), net._function(name, slug)
+    search = Search(net, 1, 10, Log(), fn)
+    assert search._hold(search_agent, fn)
+    wrong = 's32 func_800007D0(s32 v, s32 lo, s32 hi) { return 7; }'
+    if change_header:
+        compile_source = net._compile
+        def change(*args):
+            result = compile_source(*args)
+            with net.store.tx() as db:
+                ctx = net._context(proj['id'], '')
+                db.execute('INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,?,?,?)',
+                           (proj['id'], ctx['version']+1, ctx['header']+'\n/* updated */', ''))
+            return result
+        monkeypatch.setattr(net, '_compile', change)
+        before = net.store.one('SELECT COUNT(*) n FROM attempts')['n']
+        with pytest.raises(NetworkError, match='inputs changed'):
+            search._score_work(search_agent, proj, fn, CLAMP, float('inf'), None)
+        assert net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == before
+    else:
+        assert search._score_work(search_agent, proj, fn, wrong, float('inf'), None) > 0
+        # Another agent's newer, better result must win even if this search started earlier.
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_score=1,best_source=? WHERE id=?', ('newer better source', fn['id']))
+        search._score_work(search_agent, proj, fn, wrong, float('inf'), None)
+        assert net._function(name, slug)['best_source'] == 'newer better source'
+    search._let_go(search_agent, fn)
+    assert dict(net.store.one('SELECT * FROM claims WHERE agent_id=?', owner.id)) == claim
+    if not change_header:
+        assert search._score_work(search_agent, proj, net._function(name, slug), CLAMP, float('inf'), None) == 0
+        assert net._function(name, slug)['status'] == 'matched'
+        assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', owner.id) is None
+
+
+def test_function_detail_defers_optional_name_search(net, monkeypatch):
+    fn = net.store.one("SELECT id,name FROM functions WHERE status='open' ORDER BY id LIMIT 1")
+    assert fn
+    def unexpected(*_):
+        raise AssertionError('Optional similarity search')
+    monkeypatch.setattr(net.twins, 'suggestions', unexpected)
+    monkeypatch.setattr(net, '_seed_for', lambda *_: None)
+    detail = net.function_detail('demo-quest-64', fn['name'], include_hints=False)
+    assert detail['id'] == fn['id']
+    assert detail['name'] == fn['name'] and detail['asm']
+    assert detail['cross_game_hints'] == []
+    with pytest.raises(AssertionError, match='Optional similarity search'):
+        net.function_detail('demo-quest-64', fn['name'])
+
+
+def test_an_exact_scratch_recheck_keeps_credit_without_a_regression(built, tmp_path):  # noqa: F811
+    from decompnet import match_bundle
+
+    net=RomNetwork(tmp_path/'scratch.db',tmp_path)
+    slug=net.import_rom(built,confirmed=True,log=lambda *_:None)
+    owner,_=net.local_agent('owner');scratch,_=net.local_agent('scratch')
+    net.split_function(owner,slug,'func_800007C4','0x800007D0')
+    assert net.attempt(owner,'func_800007D0',CLAMP,slug)['matched']
+    result=net.attempt(scratch,'func_800007D0',CLAMP,slug)
+    assert 'scratch' in result['text'] and result['score']==0 and not result['matched']
+    fn=net._function('func_800007D0',slug)
+    assert fn['status']=='matched' and fn['matched_agent_id']==owner.id
+    assert match_bundle.status(net,fn)['regression'] is None
+    assert not net.store.one("SELECT 1 FROM events WHERE kind='regression'")

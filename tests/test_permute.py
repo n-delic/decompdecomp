@@ -7,6 +7,8 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +22,14 @@ SOURCE = "s32 f(s32 a) {\n    s32 b = a + 1;\n    return b * 2;\n}\n"
 HEADER = "/* the game's types */\n#define TWO 2\ntypedef int s32;\n"
 
 
+class ProjectStub:
+    """Filesystem facts needed by scoped imported-project repair evidence."""
+    def get(self, slug):
+        project=SimpleNamespace(root=Path('synthetic-project'),
+                                unit=lambda _:SimpleNamespace(source=None,target=None))
+        return None,project,{}
+
+
 class FakeNet:
     """What the permuter uses of the engine: the store (real, in memory), one project with one near miss, and its
     header. The judge is the test's own (ScriptedPermuter._score)."""
@@ -28,12 +38,16 @@ class FakeNet:
 
     def __init__(self):
         self.store = Store(IN_MEMORY)
+        self._generation = {}
         with self.store.tx() as db:
             db.execute("INSERT INTO projects(id, slug, name, arch, root, config) VALUES(1, 'game', 'Game', 'mips', '.', ?)",
                        (json.dumps({"compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": "-O2"}}),))
             db.execute("INSERT INTO agents(id, name, token_hash) VALUES(1, 'permuter', 'x')")
             db.execute("INSERT INTO functions(id, project_id, name, n_insns, best_score, best_source, vram) "
                        "VALUES(1, 1, 'f', 10, 40, ?, 2147483648)", (SOURCE,))
+
+    def attribution_agent(self, name):
+        return AGENT
 
     def cfg(self, proj):
         return json.loads(proj["config"])
@@ -97,7 +111,7 @@ def test_variants_come_in_batches_from_the_first_and_the_best_c_in_turn(monkeypa
     jobs = batches(monkeypatch, ["broken", "far", "closer"], ["far too"], ["same", "never judged"])
     st = State()
     p._permute(AGENT, net.project_row("game"), net.function(), st)
-    assert [j["source"] for j in jobs] == [SOURCE, "closer", SOURCE]
+    assert [j["source"] for j in jobs] == [SOURCE, "closer", "closer"]
     assert jobs[0]["header"] == HEADER and jobs[0]["function"] == "f" and jobs[0]["family"] == "gcc"
     assert p.judged == ["broken", "far", "closer", "far too", "same"]
     assert (st.variants, st.improved, st.matched, st.tried, st.current) == (5, 2, 1, 1, "")
@@ -119,7 +133,7 @@ def test_c_decomp_permuter_cant_read_falls_back_to_the_simple_rewrites(monkeypat
     net = FakeNet()
     p = ScriptedPermuter(net, {})
     jobs = batches(monkeypatch, None)
-    monkeypatch.setattr(permute, "SECONDS", 0.3)
+    monkeypatch.setattr(p, "seconds", 0.3)
     p._permute(AGENT, net.project_row("game"), net.function(), State())
     assert len(jobs) == 1 and p.judged[0] != SOURCE and all("s32 f(s32 a)" in c for c in p.judged)
 
@@ -193,7 +207,7 @@ def test_workers_yield_the_cpu_to_the_app():
     if app >= 19:
         pytest.skip("this test already runs at the lowest priority")
     assert workers.pool().submit(priority).result() == min(19, app + workers.NICE) and priority() == app
-    assert 1 <= workers.WORKERS <= workers.MAX_WORKERS
+    assert workers.WORKERS >= 1
 
 
 def test_drafts_and_the_permuter_share_one_pool_of_workers(monkeypatch):
@@ -213,7 +227,7 @@ def test_drafts_and_the_permuter_share_one_pool_of_workers(monkeypatch):
     d._one = lambda *args: d.stop("game")
     d._loop("game", d.jobs.setdefault("game", drafts.State()))
     assert used == ["pool", "pool"]
-    assert workers.WORKERS <= workers.MAX_WORKERS == 4
+    assert workers.WORKERS == workers.default_workers()
 
 
 def test_compilers_pick_decomp_permuters_weights():
@@ -273,7 +287,7 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
     gen = permute.Generator()
     try:
         variants = gen.batch(job)
-        assert len(variants) == len(set(variants)) == 20
+        assert 0 < len(variants) == len(set(variants)) <= 20  # possibly uninitialized new temporaries are filtered
         assert all(" f(" in v and "typedef" not in v and "the game's types" not in v for v in variants)
         assert gen.batch({**job, "source": "s32 f(s32 a) { return M2C_FIELD(a, s32 *, 4); }"}) is None  # a macro call
         assert gen.batch({**job, "seed": 2}) != variants  # it answers on after C it couldn't read
@@ -309,8 +323,7 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
         db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES('g','G','','arm',0,?,'{}')",
                    (str(tmp_path),))
         db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(1,'f',8,2,'open','a')")
-    p = permute.Permuter.__new__(permute.Permuter)
-    p.net = net
+    p = permute.Permuter(net)
     monkeypatch.setattr(p, "_permute", lambda *a: (_ for _ in ()).throw(NetworkError("send the function definition\nmore")),
                         raising=False)
     with caplog.at_level("INFO", logger="decompdecomp"):
@@ -319,3 +332,150 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
     assert caplog.records[-1].exc_info is None
     # the same best attempt is refused every time: its other turns go too
     assert net.store.one("SELECT permuted FROM functions WHERE id=1")["permuted"] == permute.MAX_TURNS
+
+
+def test_a_draft_in_m2cs_macros_is_permuted_as_plain_c_and_a_helper_stays_local(monkeypatch):
+    """decomp-permuter's parser knows no macros: the turn starts from the draft written out. A helper it adds is
+    `static`, so the project still links."""
+    net = FakeNet()
+    macros = "typedef s32 M2C_UNK;\n#define M2C_FIELD(e, t, o) (*(t)((char *)(e) + (o)))\n"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=? WHERE id=1",
+                   (macros.join(["#ifndef M2C_DEFINES\n", "#endif\n"]) + "s32 f(void *p) { return M2C_FIELD(p, s32 *, 4); }\n",))
+    jobs = batches(monkeypatch, ["inline s32 inline_fn(void) { return 1; }\ns32 f(void *p) { return inline_fn(); }\n"])
+    p = ScriptedPermuter(net, {})
+    p._permute(AGENT, net.project_row("game"), net.function(), State())
+    assert "M2C_" not in jobs[0]["source"] and "(*(s32 *)((char *)(p) + 4))" in jobs[0]["source"]
+    assert p.judged[0].startswith("static inline s32 inline_fn")
+
+
+def test_configured_size_and_turn_limits_admit_large_exhausted_near_misses():
+    net = FakeNet()
+    p = Permuter(net)
+    proj = net.project_row('game')
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET n_insns=800, best_score=100, permuted=4 WHERE id=1')
+    assert p.candidates(proj) == []
+    p.configure({'permuter_max_insns': 1000, 'permuter_max_turns': 5, 'permuter_seconds': 180})
+    assert [r['name'] for r in p.candidates(proj)] == ['f']
+    assert p._hold(AGENT, net.function())
+    assert not net.store.one('SELECT * FROM claims')
+    assert net.function()['permuted'] == 5
+    p._let_go(AGENT, net.function())
+    assert p.candidates(proj) == []
+    p.configure({})
+    assert (p.max_insns, p.seconds, p.max_turns) == (400, 60, 4)
+
+
+@needs_tool
+def test_traced_generator_keeps_successful_rewrite_lineage_without_changing_candidates():
+    job = {'header': HEADER, 'source': SOURCE, 'function': 'f', 'family': 'gcc', 'seed': 3, 'count': 12}
+    gen = permute.Generator()
+    try:
+        ordinary = gen.batch(job)
+        traced = gen.batch(job | {'trace': True})
+    finally:
+        gen.close()
+    assert ordinary == traced and len(traced) == 12
+    assert all(v.lineage and all(name.startswith('perm_') for name in v.lineage) for v in traced)
+
+
+def test_the_worker_count_defaults_to_what_the_computer_can_spare_and_is_a_setting(monkeypatch):
+    """Cores less two by default; a setting of 0 or nothing is automatic; anything above is taken as it is. A new
+    count replaces the pool, and what the old one was given finishes there."""
+    monkeypatch.setattr(workers, "CORES", 16)
+    monkeypatch.setattr(workers, "_pool", None)
+    monkeypatch.setattr(workers, "WORKERS", workers.default_workers())
+    assert workers.default_workers() == 14
+    assert [workers.clamp(v) for v in (None, 0, "junk", -3, 1, 6, 99)] == [14, 14, 14, 14, 1, 6, 99]
+    monkeypatch.setattr(workers, "CORES", 2)
+    assert workers.default_workers() == 1 and workers.clamp(None) == 1
+    monkeypatch.setattr(workers, "CORES", 16)
+    first = workers.pool()
+    assert first._max_workers == 14
+    assert workers.configure(3) == 3
+    second = workers.pool()
+    assert second is not first and second._max_workers == 3
+    assert workers.configure(3) == 3 and workers.pool() is second  # (the same count keeps the pool)
+    assert workers.configure(None) == 14 and workers.pool()._max_workers == 14
+    workers.pool().shutdown(wait=False)
+
+
+def test_the_permuter_queues_a_function_for_every_worker(monkeypatch):
+    net = FakeNet()
+    monkeypatch.setattr(workers, "WORKERS", 30)
+    seen = []
+    net.store.all = lambda *a, **k: seen.append(a[-1]) or []
+    from decompnet.app import permuter_inputs
+
+    monkeypatch.setattr(permuter_inputs, "refresh", lambda *a: None)
+    Permuter(net).candidates(net.store.one("SELECT * FROM projects WHERE id=1"))
+    assert seen[-1] == 60  # (twice the workers, where 20 would leave ten of them idle)
+
+
+def test_the_permuters_status_says_how_many_threads_it_has(monkeypatch):
+    monkeypatch.setattr(workers, "WORKERS", 7)
+    p = Permuter(FakeNet())
+    p.jobs["game"] = State()
+    assert p.status("game")["threads"] == 7 and p.status("other") is None
+
+
+def test_improvement_discards_siblings_and_regenerates_from_winner(monkeypatch):
+    net = FakeNet()
+    permuter = ScriptedPermuter(net, {'better':10, 'exact':0})
+    jobs = batches(monkeypatch, ['better','obsolete sibling'], ['exact'])
+    state = State()
+    permuter._permute(AGENT,net.project_row('game'),net.function(),state)
+    assert permuter.judged == ['better','exact']
+    assert jobs[1]['source'] == 'better'
+    assert state.matched == 1
+
+
+def test_new_saved_improvement_reseeds_next_batch(monkeypatch):
+    net = FakeNet()
+    net._function = lambda *args: net.function()
+    calls=[]
+    class UpdatingPermuter(ScriptedPermuter):
+        def _baseline(self, agent, proj, fn, state, fork):
+            calls.append(fn['best_source'])
+            return fn['best_score'],0
+        def _score(self, agent, proj, fn, source, best, fork):
+            if source == 'old miss':
+                with net.store.tx() as db:
+                    db.execute("UPDATE functions SET best_source='external winner',best_score=5 WHERE id=1")
+            return super()._score(agent,proj,fn,source,best,fork)
+    jobs=batches(monkeypatch,['old miss'],['exact'])
+    permuter=UpdatingPermuter(net,{'exact':0})
+    permuter._permute(AGENT,net.project_row('game'),net.function(),State())
+    assert calls == ['external winner']
+    assert jobs[1]['source'] == 'external winner'
+
+
+def test_random_search_skips_new_compound_update_chains_and_retains_checkpoint(monkeypatch):
+    from decompnet.app.random_safety import view
+    net=FakeNet()
+    invalid='void f(void){a+=(b+=(c+=(d+=n)));}'
+    p=ScriptedPermuter(net,{invalid:0,'closer':10})
+    batches(monkeypatch,[invalid,'closer'],[])
+    state=State()
+    p._permute(AGENT,net.project_row('game'),net.function(),state)
+    assert invalid not in p.judged and 'closer' in p.judged
+    assert state.matched==0
+    assert SOURCE in '\n'.join(view(net,net.function()))
+
+
+def test_status_is_json_safe_with_internal_source_preparation_state():
+    permuter=Permuter(FakeNet())
+    state=permuter.jobs['game']=State(tried=2,variants=7,improved=1,repairs=3)
+    state.preparation_agent=Agent(1,'autopilot',None)
+    state.source_measurement={'pair':('private source','private header'),'rows':[['i','old','new']]}
+    state.future_internal=object()
+    state.holding('entry',True)
+    response=permuter.status('game')
+    assert json.loads(json.dumps(response))==response
+    assert set(response)=={'state','tried','variants','improved','matched','current','started_at','repairs','threads'}
+    assert response['current']=='entry' and response['repairs']==3 and response['variants']==7
+    assert 'private source' not in json.dumps(response)
+    assert state.preparation_agent.name=='autopilot' and state.source_measurement['pair'][1]=='private header'
+    state.state='stopped'
+    assert json.loads(json.dumps(permuter.status('game')))['state']=='stopped'

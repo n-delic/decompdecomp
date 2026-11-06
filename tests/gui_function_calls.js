@@ -1,0 +1,37 @@
+// Exercise the shared inspector markup with dense graphs and unsafe symbol names.
+const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
+const path = require('node:path');
+const base = path.join(__dirname, '../src/decompnet/app/static/js');
+const context = vm.createContext({});
+const source = fs.readFileSync(path.join(base, 'function.js'), 'utf8');
+vm.runInContext(source.slice(source.indexOf('function functionCallsHTML'), source.indexOf('function relatedFunctionLink')), context);
+// Use the app's escaping and navigation button, rather than test copies.
+vm.runInContext(fs.readFileSync(path.join(base, 'base.js'), 'utf8').split('\n').find(line => line.startsWith('const esc =')), context);
+vm.runInContext(fs.readFileSync(path.join(base, 'agents.js'), 'utf8').split('\n').find(line => line.startsWith('function fnLink(')), context);
+assert.equal(context.functionCallsHTML({calls: [], called_by: []}), '');
+assert.equal(context.functionCallsHTML({}), '');
+const names = Array.from({length: 150}, (_, i) => `func_${i}_ovl_01`);
+const unsafe = 'Class::method<Thing>&"';
+const html = context.functionCallsHTML({calls: names, called_by: [unsafe]});
+assert.match(html, /id="xref-calls">Calls<span class="xref-count">150<\/span>/);
+assert.match(html, /id="xref-called_by">Called by<span class="xref-count">1<\/span>/);
+assert.equal((html.match(/<li>/g) || []).length, 151);
+assert.equal((html.match(/class="fn"/g) || []).length, 151);
+assert.match(html, /tabindex="0" aria-label="Calls"/);
+assert(!html.includes(unsafe));
+assert(html.includes('Class::method&lt;Thing&gt;&amp;&quot;'));
+for (const name of names) assert(html.includes(`data-fn="${name}"`));
+assert(!context.functionCallsHTML({called_by: ['caller']}).includes('id="xref-calls"'));
+console.log('Function call cards: counts, complete lists, keyboard access and escaped navigation passed.');
+let writes = 0, opened;
+const button = {dataset: {fn: 'callee+0x4'}};
+const panel = {set innerHTML(value) { writes++; }, querySelectorAll: () => [button]};
+context.$ = () => panel;
+context.openFn = name => { opened = name; };
+context.renderFunctionCalls({calls: ['callee+0x4']});
+button.onclick();
+assert.equal(opened, 'callee');
+context.renderFunctionCalls({calls: ['callee+0x4']});
+assert.equal(writes, 1, 'unchanged polls preserve scroll and focus');
+context.renderFunctionCalls({called_by: ['new_caller']});
+assert.equal(writes, 2, 'changed relationships refresh the card');

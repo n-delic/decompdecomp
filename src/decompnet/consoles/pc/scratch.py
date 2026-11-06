@@ -1882,7 +1882,8 @@ def tool_args(kit_ids=()) -> list[str]:
     the compilers in the user's copies of the kits `kit_ids` (the console's Console.kits: --own).
     Nothing about wine: a 2017 file finds it when it builds (WindowsPC.build_env), so no configure.py, older or
     new, is given an argument it doesn't know."""
-    packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None]
+    packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None
+             and all(toolchains.installed(h) is not None for h in toolchains.get(p).headers)]
     if not packs:
         raise ForkError("PC games are built with Microsoft Visual C++, which is proprietary: install it in Setup "
                         "(Visual C++) if you accept that, then try again")

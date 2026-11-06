@@ -59,6 +59,7 @@ class PlayStation2(Console):
     demo_tools = ("ee-gcc-2.96", "binutils-mips")
     own_features = frozenset({EXPORT})
     as_flags = ("-EL", "-march=r5900", "-mabi=eabi")
+    reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
 
     def sniff(self, head: bytes, file) -> bool:
         from . import chd, cso, disc, elf
@@ -196,10 +197,10 @@ class PlayStation2(Console):
         for guess in sorted({g for *_, g in parts if g != main}):
             spans = []
             for start, end, g in parts:
-                inside = net.store.all("SELECT vram FROM functions WHERE project_id=? AND vram>=? AND vram<?",
+                inside = net.store.all("SELECT name,vram,rom_offset FROM functions WHERE project_id=? AND vram>=? AND vram<?",
                                        proj["id"], start, end)
                 if g == guess and inside and not (main_agrees and all(
-                        family.get(compiler_for(cfg, r["vram"])["toolchain"]) == guess.split("-")[0] for r in inside)):
+                        family.get(compiler_for(cfg, r["vram"], r)["toolchain"]) == guess.split("-")[0] for r in inside)):
                     spans.append((start, end))
             if spans:
                 net.suggest(agent, slug, f"The program's symbols say {by_guess[guess].name} built these object files.",

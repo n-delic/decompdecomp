@@ -64,7 +64,7 @@ def fail(msg: str) -> None:
 def run(argv: list[str]) -> None:
     res = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if res.returncode != 0:
-        fail(f"{' '.join(argv[:3])} ...\n{(res.stdout + res.stderr)[-3000:]}")
+        fail(f"{' '.join(argv[:3])} ... exited with {res.returncode}\n{(res.stdout + res.stderr)[-3000:]}")
 
 
 def binutils(tool: str) -> str:
@@ -203,7 +203,7 @@ def trim(path: Path) -> None:
 
 
 def build_objects(todo: list[tuple[str, str, str]]) -> None:
-    vram_of = {c_source(fn): fn["vram"] for fn in B["functions"] if c_source(fn)}  # a range's compiler builds its C
+    function_of = {c_source(fn): fn for fn in B["functions"] if c_source(fn)}
     configs = {}
     as_ = binutils("as")
     for kind, src, obj in todo:
@@ -214,7 +214,8 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         if kind == "asm":
             run([as_, *B["as_flags"], "-o", obj, src])
         else:
-            compiler = compiler_for(B, vram_of.get(src))
+            fn = function_of.get(src)
+            compiler = compiler_for(B, fn['vram'] if fn else None, fn)
             key = json.dumps(compiler, sort_keys=True)
             cfg = configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
             argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "include") for a in cfg.cmd]
@@ -224,8 +225,20 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
             if src.endswith(".cpp"):  # C++ names back to the game's, as decompdecomp judged it
                 names = {*B["symbols"], *(f["name"] for f in B["functions"])}
                 target.write_bytes(unmangle(target.read_bytes(), lambda n: n in names or bool(AUTO_NAME.match(n))))  # noqa: B023  called within this pass of the loop
-            trim(target)
-            weaken_data(obj)
+            entry=next((f for f in B['functions'] if c_source(f)==src),None)
+            if entry and entry.get('entry_only'):
+                normalize_entry(entry,target)
+            else:
+                trim(target)
+                weaken_data(obj)
+
+
+def normalize_entry(fn, path):
+    """Matching-only extraction, recompiled and rejudged every build; never copies target instructions."""
+    from export_entry import write
+
+    try:write(ROOT,B,fn,path)
+    except ValueError as error:fail(str(error))
 
 
 def weaken_data(obj: str) -> None:
@@ -300,11 +313,14 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
             lines += [f"    .{seg['name']}_bss 0x{bss_vram:08X} (NOLOAD) : SUBALIGN(4)", "    {"]
             lines += [f"        . = 0x{b['vram'] - bss_vram:X}; {b['obj']}(.bss .sbss)" for b in seg["bss"]]
             lines.append("    }")
+    # These NOLOAD pools alias original data already present in the image. The judge proved each base and
+    # constant byte; keep it exact even when compiling one function gave its pool a larger preferred alignment.
+    # Without SUBALIGN, ld rounds a base eight bytes short of 16 and changes the function's relocation operands.
     n = 0
     for fn in B["functions"]:
         for section, base in (fn.get("own") or {}).items():
             if c_source(fn):
-                lines.append(f"    .own_{n} 0x{base:08X} (NOLOAD) : {{ {provides[fn['name']]}({section}) }}")
+                lines.append(f"    .own_{n} 0x{base:08X} (NOLOAD) : SUBALIGN(1) {{ {provides[fn['name']]}({section}) }}")
                 n += 1
     # own data of C functions nobody placed yet: kept out of the image; `build.py check` places it
     lines.append(f"    .unplaced 0xF0000000 (NOLOAD) : {{ build/src/*({OWN}) }}")
@@ -312,6 +328,24 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
     if B.get("gp"):
         lines.append(f"_gp = 0x{B['gp']:08X};")
     lines += [f"{name} = 0x{addr:08X};" for name, addr in B["symbols"].items()]
+    # The splitter can leave references into raw data or across local labels in separate function objects.
+    # Only generated address-bearing names can supply their own absolute address. PROVIDE keeps real definitions
+    # authoritative; arbitrary unresolved names still fail at link time and the whole-image comparison stays fixed.
+    from elftools.elf.elffile import ELFFile
+
+    auto_addresses = {}
+    for obj in set(provides.values()):
+        with open(ROOT / obj, "rb") as stream:
+            symtab = ELFFile(stream).get_section_by_name(".symtab")
+            for symbol in symtab.iter_symbols() if symtab else ():
+                if symbol["st_shndx"] != "SHN_UNDEF":
+                    continue
+                name = symbol.name
+                address = AUTO_NAME.match(name) or re.fullmatch(r"\.L([0-9A-Fa-f]{8})", name)
+                if address:
+                    auto_addresses[name] = int(address.group(1), 16)
+    lines += [f'PROVIDE("{name}" = 0x{address:08X});' for name, address in sorted(auto_addresses.items())]
+
     # jump tables in the data point at labels inside functions (.L001006F8), and hand-written assembly branches into
     # another function (a PSP SDK's deflate routine, cut in pieces); with one object per function those labels are
     # local to another object, so give them their addresses (which their names spell out)
@@ -347,12 +381,24 @@ def build() -> bool:
     objs = sorted({obj for _, _, obj in todo} | {obj for _, obj in gaps})
     # the objects in a response file: a PSP game with its modules has 48,000 functions, past the command line's limit
     (ROOT / "build" / "objects.txt").write_text("\n".join(objs) + "\n", encoding="utf-8")
-    run([binutils("ld"), *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"])
+    run([binutils("ld"), "--no-keep-memory", *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"])
     run([binutils("objcopy"), "-O", "binary", "build/game.elf", B["output"]])
     out, base = (ROOT / B["output"]).read_bytes(), (ROOT / B["image"]).read_bytes()
     c_count = sum(1 for fn in B["functions"] if c_source(fn))
     if out == base:
-        print(f"identical: {B['output']} matches {B['image']} byte for byte "
+        if cartridge := B.get("cartridge"):
+            from decompnet.consoles.n64.rnc import rebuild_cartridge
+
+            original = (ROOT / cartridge["image"]).read_bytes()
+            if hashlib.sha1(original).hexdigest() != cartridge["sha1"]:
+                raise ValueError("original cartridge checksum differs from the fixed export target")
+            out = rebuild_cartridge(out, original, cartridge["blocks"])
+            (ROOT / B["output"]).write_bytes(out)
+            if out != original:
+                print("differs: reconstructed cartridge does not match the original")
+                return False
+            print(f"cartridge verified: {cartridge['sha1']}")
+        print(f"identical: {B['output']} matches {B.get('cartridge', {}).get('image', B['image'])} byte for byte "
               f"({c_count} of {len(B['functions'])} functions in C)")
         return True
     at = next((i for i in range(min(len(out), len(base))) if out[i] != base[i]), min(len(out), len(base)))
@@ -396,7 +442,7 @@ def check(name: str) -> bool:
                     return image[at:at + n]
         return None
 
-    cfg = compiler_config(ROOT, {"compiler": compiler_for(B, fn["vram"])})
+    cfg = compiler_config(ROOT, {"compiler": compiler_for(B, fn["vram"], fn)})
     text = (ROOT / src).read_text(encoding="utf-8")
     m = re.match(r'\s*#include "([^"]+)"\s*\n', text)
     header = (ROOT / "include" / m.group(1)).read_text(encoding="utf-8") if m else ""
@@ -411,7 +457,15 @@ def check(name: str) -> bool:
             print(f"  - {p}")
         return False
     fn["c"] = src
-    fn["own"] = {sec: min(a - o for o, a in offs.items()) for sec, offs in linked.placements.items()}
+    from decompnet.rom.export import _section_bases, _single_definition
+    _,problem=_section_bases(linked.placements)
+    if problem or not _single_definition(res.obj,name):
+        # A full-image rebuild still has to pass before this becomes accepted C.
+        fn['entry_only']=True
+        fn['own']={}
+    else:
+        fn.pop('entry_only',None)
+        fn["own"] = {sec: min(a - o for o, a in offs.items()) for sec, offs in linked.placements.items()}
     (ROOT / "build.json").write_text(json.dumps(B, indent=1), encoding="utf-8")
     print(f"{name}: identical to the original; recorded in build.json")
     return True

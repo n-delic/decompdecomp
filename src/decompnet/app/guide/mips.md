@@ -42,3 +42,60 @@ Types from instructions
 Stack frame
 - `addiu $sp, $sp, -N` / `addiu $sp, $sp, N`: frame size. On N64, GCC and IDO both reserve 0x10 bytes
   for the argument area of calls. Locals whose address is taken live on the stack (`addiu $a1, $sp, 0x10` = `&local`).
+
+
+### Cheap scheduling experiments
+
+Before rewriting a near match by hand, `compile_family` can test `typed_temporary`,
+`branch_orientation`, or `narrowing` with just the function and candidate revision. The first
+materializes narrow stores or dereferenced call arguments into typed locals; the second exchanges
+braced branches and negates a simple comparison; the third explores mask-to-cast narrowing.
+These are bounded hypotheses, always checked by the exact judge. Under known `-g`/`-g3` flags,
+`source_lines` tests text-only statement placement that an AST formatter cannot preserve.
+Keep the successful source layout when debug labels affect scheduling. Compiler flags must remain
+those verified for the function; formatting variants do not justify changing the judge or guessing ABI arguments.
+
+For large formatting-library routines, inspect local SDK/library leads before broad permutation.
+Keep character and output-length variables distinct, signed output arguments, macros, fallthrough
+case groups and flag-loop labels. Try `condition_assignment`, `conditional_output`, `switch_flag_loop`,
+`shared_tail_copy`, `target_switch_order` and `formatter_bundle` through local repairs. These are
+bounded hypotheses, not match claims. Recheck a historical best against the current header/compiler;
+only the destination's exact linked verdict accepts C. See docs/COMPILER_MATCHING_LEARNINGS.md.
+
+### Count-loop and frame-only repairs
+
+For a count loop whose final misses are a NOP/shift or register scheduling, try
+`count_phase_lifetime`, `count_load_qualification` and `count_lifetime_bundle`.
+They preserve the existing read locations, prove an unsigned16 count and restore
+its value for later phases. Qualification alone can worsen allocation, so use the
+bounded combined candidates rather than assuming each intermediate must improve.
+`normalization_scope` tests an equivalent one-iteration block around an existing
+signed16 normalization. No load or cast is moved across the loop test.
+
+If only stack offsets differ, `modular_guard_width` is prioritized. It recognizes
+an existing bounded identity guard, not arbitrary locals, and checks the selected
+compiler's integer/narrowing contract. The demonstrated KMC result is a controlled
+replay of one known match. Never add observable calls, reads, stale captures or
+undefined arithmetic to manufacture a frame. Mismatch categories and rendered
+position counts guide investigation; the ordinary exact judge still accepts C.
+
+`proven_local_width` tries narrower signed storage only after proving bounds across all
+assignments in a straight-line function. Branches and unknown expressions are skipped.
+`learned_expression` reuses small templates from exact results under the same compiler
+profile. Local repair batches and deep search spend their normal compile allowance on these
+hypotheses; no model call is needed to generate them. They still require an exact judge.
+
+
+Before tuning a candidate, check any **Boundary review** warning. A target ending in a
+prologue or load sequence can be truncated by a segment boundary; it does not establish
+handwritten assembly. Inspect adjacent original bytes and known mappings, then use a
+copied reimport or proven piece join. Do not spend the candidate budget on an incomplete
+extent or vote it assembly just because no return was imported. Gap audit results are
+review leads, including when direct control flow closes; they never establish a match.
+
+Old GCC narrow-store experiments need a declaration at the beginning of a compound
+statement: use `{ u8 tmp = value; *destination = tmp; }` so an unbraced `if/else`
+remains valid C89. For signed scalar normalization, the local repair recognizes
+both `-value - bias` and `0 - value - bias` under its existing unused-local guards.
+A successful frozen-output replay still needs the ordinary exact game judge before
+it counts as a match.

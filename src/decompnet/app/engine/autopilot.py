@@ -4,14 +4,19 @@ token; and what happens when a function matches (its twins are tried).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
 import time
+from contextlib import nullcontext
+from itertools import chain
 
-from ... import scoring, seeds, toolchains
+from ... import m2cfix, scoring, seeds, toolchains
 from ...network import Agent, NetworkError
 from ...project import compiler_for, unknown_compiler_message
+from ...repair_feedback import trial as repair_trial
+from ..draft_context import candidate_context
 
 
 class AutopilotMixin:
@@ -20,6 +25,7 @@ class AutopilotMixin:
         background. Whatever already matches is saved before any agent spends a token on it; drafts that compile
         become the function's best attempt, so agents start from them. Agents and autopilot never collide: a
         function is held only while its draft compiles, and claimed ones are skipped."""
+        self.cascades.resume(slug)
         state = self.autopilots.get(slug)
         if state and state["state"] == "running":
             return state
@@ -57,6 +63,8 @@ class AutopilotMixin:
         return state
 
     def stop_autopilot(self, slug: str) -> None:
+        self.cascades.pause(slug)
+        self.twins.stop(slug)
         if (state := self.autopilots.get(slug)) and state["state"] == "running":
             state["stop"].set()
 
@@ -104,7 +112,7 @@ class AutopilotMixin:
             with self.store.tx() as db:
                 cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
                 cfg["autopilot"] = {k: state.get(k) for k in ("total", "tried", "matched", "near", "twins", "started_at",
-                                                              "finished_at")}
+                                                              "finished_at", "no_drafts")}
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
             drafts = state["matched"] - state.get("twins", 0)
             if drafts:  # (twins announce their own)
@@ -112,35 +120,62 @@ class AutopilotMixin:
                     self._event(db, proj["id"], agent.id, "autopilot",
                                 f"{drafts} of {state['tried']} functions matched from machine drafts")
 
+    def on_improvement(self, proj, function_id: int) -> None:
+        if proj is not None:
+            self.cascades.notify(proj, function_id)
+
     def on_match(self, proj, function_id: int, agent: Agent | None = None) -> None:
         """Its twins get its code, at once. (Not for the full twins pass's own matches while it runs: it tries
         those twins itself.)"""
         if proj is None:
             return
-        if self.progress.applying:
-            return  # importing authoritative progress must not start new work before all its headers are loaded
+        from .. import repair_mappings
+        repair_mappings.harvest(self.twins, proj, function_id)
+        self.twins.index_function(proj, function_id)
+        if library := getattr(self, "match_library", None):
+            library.capture(proj, function_id)
+        self.cascades.notify(proj, function_id)
         if agent is not None and agent.name == "autopilot" and self.twins._full_running(proj["slug"]):
             return
         self.twins.after_match(proj, function_id)
         if any(c["status"] in ("checking", "waiting") for c in self.cfg(proj).get("range_checks", [])):
             self.rangechecks.recheck(proj["slug"])  # a neighbour of a suggested range may have spoken
 
-    def try_quietly(self, agent, proj, fn, source: str) -> dict:
-        """Judge one candidate for a function nobody holds (autopilot's tries): held only while it compiles,
-        recorded as an attempt like any other. {"matched", "score"}."""
-        with self.progress.judging(proj["slug"]):
-            return self._try_quietly(agent, proj, fn, source)
+    def try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
+        """Judge a scoped candidate. Exact-only rechecks may supersede a claim after an exact save;
+        ordinary autopilot attempts acquire their own short claim. {"matched", "score"}."""
+        with self.progress.judging(proj["slug"]) if hasattr(self, "progress") else nullcontext():
+            return AutopilotMixin._try_quietly(self, agent, proj, fn, source, **({'before_record': before_record} if before_record is not None else {}), exact_only=exact_only)
 
-    def _try_quietly(self, agent, proj, fn, source: str) -> dict:
+    def _try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
+        from ..boundary_repairs import blocked
+        if fn["id"] in blocked(self,proj):raise NetworkError("Review this function boundary before starting a local search.")
         fn = self.store.one("SELECT * FROM functions WHERE id=?", fn["id"])
         if fn is None or fn["status"] != "open":
             raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")
-        now = time.time()
-        with self.store.tx() as db:
-            self._expire_claims(db)
-            if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
-                raise NetworkError(f"{fn['name']} is claimed")
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
+        if exact_only:
+            from ..source_preparation import inputs
+            # The frozen source being judged remains valid if an agent saves a newer draft.
+            # Target, boundaries, headers, symbols and compiler inputs must still be identical.
+            def signature(project, function):
+                return (inputs(self,project,{**dict(function),'best_source':None}),
+                        tuple(function[k] for k in ('meta','rom_offset','n_insns')),
+                        project['arch'],project['big_endian'])
+            expected = signature(proj,fn)
+            def validate():
+                latest=self.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+                current=self.store.one('SELECT * FROM projects WHERE id=?',proj['id'])
+                if (latest is None or latest['status']!='open' or current is None
+                        or signature(current,latest)!=expected):
+                    raise NetworkError('Function or build inputs changed during exact verification. Recheck the match.')
+                if before_record is not None:before_record()
+        else:
+            now = time.time()
+            with self.store.tx() as db:
+                self._expire_claims(db)
+                if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
+                    raise NetworkError(f"{fn['name']} is claimed")
+                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
         try:
             ctx = self._context(proj["id"], fn["unit"])
             result = self._compile(proj, ctx["header"], source, fn)
@@ -152,16 +187,32 @@ class AutopilotMixin:
             d = scoring.diff(self._target_obj(fn, proj), cand)
             if verdict is not None:
                 d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
-            self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match)
-            return {"matched": d.bytes_match, "score": d.score}
+            if exact_only and not d.bytes_match:
+                return {"matched":False,"score":d.score}
+            self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
+                         effective_settings=getattr(result, 'effective_settings', None),
+                         before_record=validate if exact_only else before_record)
+            from ...source_lines import mismatches
+            from ..repair_localisation import bind
+            locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
+                filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
+            return {"repair_locations":locations,"matched": d.bytes_match, "score": d.score, "max_score": d.max_score,
+                    "percent": d.percent, "rows": self._search_rows(fn,proj,result.obj,d.rows),
+                    "candidate_target": cand.code.hex(),
+                    "candidate_relocs": json.dumps([(r.offset, r.type, 0) for r in cand.relocs])}
         finally:
-            with self.store.tx() as db:
-                db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
+            if not exact_only:
+                with self.store.tx() as db:
+                    db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
 
     def _autopilot_one(self, agent, proj, fid: int) -> str:
         """match | near | far | fail | skip, for one function's draft. A draft autopilot already judged with the same
         header is skipped: autopilot tries a function again when its draft changed (the background drafter asks it
         to after the header or the compiler changed, app/drafts.py), not to judge the same C twice."""
+        with self.progress.judging(proj["slug"]) if hasattr(self, "progress") else nullcontext():
+            return AutopilotMixin._autopilot_one_work(self, agent, proj, fid)
+
+    def _autopilot_one_work(self, agent, proj, fid: int) -> str:
         now = time.time()
         with self.store.tx() as db:
             self._expire_claims(db)
@@ -170,33 +221,126 @@ class AutopilotMixin:
                 return "skip"
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
         try:
-            self._seed_for(fn, proj)  # the readable draft, for the agents that come after
-            with self.progress.judging(proj["slug"]):
-                ctx = self._context(proj["id"], fn["unit"])
-                _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
-                own = compiler_for(self.cfg(proj), fn["vram"])
-                data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
-                draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context,
-                                                data_asm, valid=True)
-                if not draft:
-                    return "fail"
-                # (its compiler named in it: the same draft is worth judging again with another compiler)
-                source = (f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
-                          f"{seeds.M2C_MACROS}\n{draft}\n")
-                if self.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND context_version=? "
-                                  "AND source=?", fid, agent.id, ctx["version"], source):
-                    return "skip"
+            seed = self._seed_for(fn, proj)  # keep one valid-syntax draft for the brief and the compiler
+            ctx = self._context(proj["id"], fn["unit"])
+            plan, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
+            own = compiler_for(self.cfg(proj), fn["vram"], fn)
+            data_asm = "\n".join(self._jtbl_asm(proj, fn))
+            target_asm = self._asm_text(fn, proj)
+            from .. import draft_reports, initial_draft_repairs
+            input_key = draft_reports.key(plan, ctx['header'], data_asm, fn)
+            previous = draft_reports.read(self, fid)
+            external_inputs = own.get('cmd') or own.get('ro_paths') or any(flag.startswith(('-I','-include','-imacros')) for flag in own.get('flags',[]))
+            if not external_inputs and previous.get('key') == input_key and previous.get('complete'):
+                return 'skip'
+            data_key = hashlib.sha256((data_asm or '').encode()).hexdigest()
+            report = {'key': input_key, 'seed_key':plan, 'data_key':data_key, 'compiled': False, 'scored': False, 'matched': False, 'trials': 0, 'failures': []}
+            from .briefs import DRAFT_NOTE
+            prefix = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'
+            seed_row = self.store.one('SELECT seed_key FROM functions WHERE id=?',fid)
+            if (seed and seed.startswith(prefix) and seed_row and seed_row['seed_key'] == plan
+                    and previous.get('data_key',data_key) == data_key):
+                draft = seed[len(prefix):]
+            elif previous.get('seed_key') == plan and previous.get('failures'):
+                report['failures'] = previous['failures']
+                draft = None
+            else:
+                try:
+                    draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm, valid=True, strict=True, timeout=20)
+                except seeds.DraftError as error:
+                    draft_reports.failure(report, 'generation', 'raw_m2c', error)
+                    draft = None
+            if not draft:
+                report['complete'] = True
+                draft_reports.save(self, fid, report)
+                return 'fail'
+            # (its compiler named in it: the same draft is worth judging again with another compiler)
+            note = f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
+            candidates = [('raw_m2c', f"{note}{seeds.M2C_MACROS}\n{draft}\n")]
+            if (seeds.m2c_target(toolchain) or "").startswith("mips"):
+                # next to m2c's own draft, the same with its usual mistakes undone (m2cfix.py): few lines change
+                refined = m2cfix.refine_draft(draft, fn["name"], target_asm)
+                if refined:
+                    candidates.append(('refined_m2c', f"{note}{seeds.M2C_MACROS}\n{refined}\n"))
+            from ..capture_followup_repairs import callee_evidence
+            from ..recent_capture_repairs import variants as captured_variants
+            known_callees=callee_evidence(self,proj,fn,draft)
+            for family,source in captured_variants(draft,fn['name'],'mips' if (seeds.m2c_target(toolchain) or '').startswith('mips') else '',target_asm,ctx['header'],known_callees):
+                if family in ('overlay_callee_alias','argument_home_slot','untouched_argument_forwarding'):
+                    candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
+            for canonical in (False,True):
+                if array := m2cfix.stack_array(draft,fn['name'],canonical):
+                    family = 'stack_array_indexed' if canonical else 'stack_array'
+                    candidates.append((family, f"{note}{seeds.M2C_MACROS}\n{array}\n"))
+            def local_candidates():
+                # Lazy fallback: successful normal drafts never pay for another m2c invocation.
+                # Imported projects use their file-context drafting route; forwarding their saved
+                # declarations here remains planned (ROADMAP).
+                if not fn['best_source']:
+                    return
+                roots = self._current_names(proj, seeds.asm_names(fn['asm'] or ''))
+                alternative = candidate_context(ctx['header'], fn['best_source'], roots, fn['name'])
+                if not alternative:
+                    return
+                try:
+                    local = seeds.generate_from_asm(self._asm_text(fn, proj), fn['name'], toolchain,
+                                                   alternative, data_asm, valid=True, strict=True)
+                except seeds.DraftError:
+                    return
+                if not local:
+                    return
+                yield 'local_context_m2c', f"{note}{seeds.M2C_MACROS}\n{local}\n"
+                if (seeds.m2c_target(toolchain) or '').startswith('mips'):
+                    refined = m2cfix.refine_draft(local, fn['name'], fn['asm'] or '')
+                    if refined and refined != local:
+                        yield 'local_context_refined', f"{note}{seeds.M2C_MACROS}\n{refined}\n"
+
+            def recovery_candidates():
+                if report['compiled']:
+                    return
+                for index, (family, source) in enumerate(initial_draft_repairs.recovery_drafts(
+                        draft, fn['name'], target_asm, proj['arch'], toolchain, context, data_asm, report)):
+                    if report['compiled'] or index >= 6:
+                        return
+                    yield family, f"{note}{seeds.M2C_MACROS}\n{source}\n"
+
+            from ..compiler_shape_repairs import machine_draft_copies
+            outcomes, seen = [], set()
+            for family, source in chain(machine_draft_copies(chain(candidates, local_candidates()), fn['name'], ctx['header']), recovery_candidates()):
+                if source in seen:
+                    continue
+                seen.add(source)
                 result = self._compile(proj, ctx["header"], source, fn)
+                report['trials'] += 1
                 if not result.ok:
-                    return "fail"
-                cand, verdict, _ = self._evaluate(fn, proj, result.obj)
+                    draft_reports.failure(report, 'compiler', family, result.log)
+                else:
+                    report['compiled'] = True
+                    report['family'] = family
+                    report['compiled_source'] = source
+                cand, verdict, _ = self._evaluate(fn, proj, result.obj) if result.ok else (None, None, None)
                 if cand is None:
-                    return "fail"
+                    if result.ok:
+                        draft_reports.failure(report, 'link', family, 'Compiled C could not be evaluated against this target; review its symbols and data mapping.')
+                    outcomes.append("fail")
+                    continue
                 d = scoring.diff(self._target_obj(fn, proj), cand)
                 if verdict is not None:
                     d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
-                self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match)
-                return "match" if d.bytes_match else "near" if d.percent >= 90 else "far"
+                # Keep the generating path visible: an already automatic match need not be mistaken
+                # for an unimplemented agent repair when this record is reviewed later.
+                with repair_trial({'kind': 'machine draft', 'family': family}):
+                    self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
+                                 effective_settings=getattr(result, 'effective_settings', None))
+                report['scored'] = True
+                report['matched'] = d.bytes_match
+                report.pop('compiled_source', None)  # scored source is already retained in attempts
+                outcomes.append("match" if d.bytes_match else "near" if d.percent >= 90 else "far")
+                if d.bytes_match:
+                    break
+            report['complete'] = True
+            draft_reports.save(self, fid, report)
+            return min(outcomes or ['fail'], key=("match", "near", "far", "skip", "fail").index)
         finally:
             with self.store.tx() as db:
                 db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fid, agent.id))

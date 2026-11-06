@@ -133,8 +133,9 @@ class RangeChecks:
     # ------------------------------------------------------------------ evidence
 
     def _rows(self, proj) -> list:
-        return self.net.store.all(f"SELECT {ROW_COLUMNS} FROM functions WHERE project_id=? AND vram IS NOT NULL "
-                                  "ORDER BY vram", proj["id"])
+        return self.net.store.read_cache.get(('compiler-range-rows', proj['id']),
+            self.net.store.read_version('compiler_rows', proj['id']), lambda: self.net.store.all(
+                f"SELECT {ROW_COLUMNS} FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram", proj['id']))
 
     @staticmethod
     def _at(rows, vram: int):
@@ -162,7 +163,7 @@ class RangeChecks:
         """One function's verdict on "built by `label`" (see the module's docstring)."""
         if (fn["n_insns"] or 0) < MIN_INSNS:
             return "neutral"
-        own = compiler_for(cfg, fn["vram"])
+        own = compiler_for(cfg, fn["vram"], fn)
         built = (own["toolchain"], tuple(own["flags"]))  # what it's built with now (and matched with, if it is)
         kind = compilermap.kind(label)
         # the other side of the question: today's compiler, or the game's own where the range already applies. Whole
@@ -298,11 +299,23 @@ class RangeChecks:
 
     # ------------------------------------------------------------------ verdicts and tasks
 
+    @staticmethod
+    def waiting_reason(c: dict, rows) -> str:
+        """Explain why valid small matches cannot identify a compiler, without calling them mismatches."""
+        short = [r for r in rows if r["status"] == "matched" and (r["n_insns"] or 0) < MIN_INSNS
+                 and any(a <= r["vram"] < b for a, b in c["spans"])]
+        if short:
+            sizes = ", ".join(str(r["n_insns"] or 0) for r in short)
+            return (f"Matched, but too short to identify the compiler ({sizes} instructions; minimum {MIN_INSNS}). "
+                    "Small functions can match several compilers, so adjoining short matches do not confirm each other. "
+                    "Waiting for a longer neighbouring function to distinguish the compiler and flags. Your matches remain valid.")
+        return "Waiting for neighbouring functions to confirm or rule out these compiler settings."
+
     def _task(self, proj, c: dict, nxt: Step | None, rows, at) -> None:
         """Give the nearest unknown neighbour to the next agent (first in line, with a note), or wait."""
         if c.get("audit"):  # an applied range, looked at again: free evidence only, agents keep their work
             c["status"] = "waiting"
-            self._save(proj, c, "unsettled: no neighbour confirms or refutes it yet")
+            self._save(proj, c, self.waiting_reason(c, rows))
             return
         given = set(c["tasks"])
         if nxt is not None and nxt.vram in given:
@@ -316,7 +329,7 @@ class RangeChecks:
             self._save(proj, c, f"checking: {fn['name']} is next (first in line for an agent)")
             return
         c["status"] = "waiting"
-        self._save(proj, c, "waiting: no neighbour settled it yet; the user decides, or agents' next matches do")
+        self._save(proj, c, self.waiting_reason(c, rows))
 
     def task_text(self, c: dict, name: str) -> str:
         short = self.net._short((c["toolchain"], tuple(c["flags"])))
@@ -327,6 +340,9 @@ class RangeChecks:
                 f"Either answer helps.")
 
     def _finish(self, proj, c: dict, rows, status: str, start: int, end: int, evidence: dict, why: str = "") -> None:
+        stored = next((row for row in self.net.cfg(self.net._project(proj['slug'])).get('range_checks', []) if row['id']==c['id']), None)
+        if stored and stored.get('status')=='function_applied':
+            return  # An exact function bundle settled this check while the background job compiled.
         c["status"], c["range"], c["evidence"] = status, [start, end], evidence
         short = self.net._short((c["toolchain"], tuple(c["flags"])))
         agent, _ = self.net.local_agent("autopilot")
@@ -367,6 +383,8 @@ class RangeChecks:
         c["said"] = said
         stored = next((old for old in self.net.cfg(self.net._project(proj["slug"])).get("range_checks", [])
                        if old["id"] == c["id"]), None)
+        if stored and stored.get('status')=='function_applied' and c.get('status')!='function_applied':
+            return
         if c == stored and resolve is None:
             return  # nothing new (GTA San Andreas's 60 unsettled audits were written again on every run)
 
@@ -396,7 +414,7 @@ class RangeChecks:
         for c in self._open(proj):
             if c["toolchain"] == toolchain and c["flags"] == list(flags):
                 cfg = self.net.cfg(proj)
-                own = compiler_for(cfg, fn["vram"])
+                own = compiler_for(cfg, fn["vram"], fn)
                 if not self.net._judge_with(proj, fn, own["toolchain"], list(own["flags"]), source)[0]:
                     c["evidence"][str(fn["vram"])] = "confirmed"
                     c["status"] = "checking"

@@ -119,7 +119,12 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
         start = code_before(rom, lo + frames[0], floor)
         end = min((lo + returns[-1] + 8 + 0xF) & ~0xF, len(rom))
         accept(start, end, start + mapping)
-    return sorted(found)
+    from .code_tails import complete
+
+    found=complete(rom,sorted(found),taken)
+    from .code_references import complete as referenced_gaps
+
+    return sorted(found+referenced_gaps(rom,sorted(taken+found)))
 
 
 # ---------------------------------------------------------------------------------------------- compressed code
@@ -214,6 +219,21 @@ def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
             if len(out) == size and _looks_like_code(out):
                 found.append((at, out))
         at = rom.find(b"Yaz0", at + 4)
+    from . import rnc
+
+    at = rom.find(b"RNC\x01")
+    while at >= 0:
+        size = int.from_bytes(rom[at + 4:at + 8], "big")
+        packed = int.from_bytes(rom[at + 8:at + 12], "big")
+        if 0x1000 <= size <= rnc.MAX_OUTPUT and at + rnc.HEADER_BYTES + packed <= len(rom):
+            try:
+                out = rnc.unpack(rom[at:at + rnc.HEADER_BYTES + packed])
+            except rnc.RncError:
+                pass
+            else:
+                if _looks_like_code(out):
+                    found.append((at, out))
+        at = rom.find(b"RNC\x01", at + 4)
     return sorted(found)
 
 
@@ -221,11 +241,16 @@ def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
 
 def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     """An N64 game's code outside the main segment (n64code.py), added to splat's config as code segments of their
-    own. Compressed code (Rare's, Yaz0) is unpacked first and appended to a working copy of the ROM, which splat then
+    own. Compressed code (Rare's, Yaz0, RNC method 1) is unpacked first and appended to a working copy of the ROM, which splat then
     reads instead (and an export rebuilds). Returns the image splat reads."""
     import hashlib
 
     import yaml
+
+    from . import overlays
+
+    if result := overlays.add(config, workdir, image, log):
+        return result
 
     original = image
     rom = (workdir / image).read_bytes()
@@ -243,6 +268,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
     taken = split.code_ranges(config)
     found = find_segments(rom, taken, tuple(s.rom_end for s in split.segments_from_config(config))) if taken else []
+    from .boot_mapping import recover
+
+    recover(config, rom, found, log)
     if not found:
         return original
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
@@ -253,16 +281,30 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     def start_of(seg):
         return seg[0] if isinstance(seg, list) else seg.get("start")
 
+    # splat measures a parent's VRAM end as ROM length + bss_size. New code segments can split its data
+    # tail: remember that end so the explicit BSS still describes the same addresses after the split.
+    bss_ends = {}
+    for seg in split.segments_from_config(config):
+        raw = next(s for s in cfg["segments"] if isinstance(s, dict) and s.get("start") == seg.rom_start)
+        if raw.get("bss_size") and any(isinstance(sub, dict) and sub.get("type") == "bss" and "vram" in sub
+                                       for sub in raw.get("subsegments", [])):
+            bss_ends[seg.rom_start] = seg.vram + seg.rom_end - seg.rom_start + raw["bss_size"]
+
     starts = {st for st, _, _ in found}
     segs = [s for s in cfg["segments"] if not (isinstance(s, dict) and s.get("type") == "bin" and start_of(s) in starts)
             and not isinstance(s, list)]  # the end marker comes back at the image's end
     for st, en, vram in found:
         name = f"code_{vram:08X}"
         segs.append({"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]})
-        if en < len(rom) and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
+        if en < len(rom) and en not in starts and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
             segs.append({"type": "bin", "start": en})
     segs.sort(key=lambda s: start_of(s) if start_of(s) is not None else -1)
     segs.append([len(rom)])
+    for i, seg in enumerate(segs[:-1]):
+        start = start_of(seg)
+        if start in bss_ends:
+            end = next(start_of(s) for s in segs[i + 1:] if start_of(s) is not None)
+            seg["bss_size"] = bss_ends[start] - seg["vram"] - (end - start)
     cfg["segments"] = segs
     config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
     kib = sum(en - st for st, en, _ in found) // 1024

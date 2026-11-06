@@ -101,3 +101,112 @@ def test_the_api_cannot_call_add_note_without_a_function():
 
     add_note = next(t["function"] for t in api_tool_schemas() if t["function"]["name"] == "add_note")
     assert "function" in add_note["parameters"]["required"]
+
+
+def test_user_can_accept_single_model_tip_without_claiming_model_consensus(net):
+    a=agent(net,'claude-opus-5.5-1')
+    kid=int(net.knowledge.share(a,'game','For register-only differences, shorten temporary live ranges.').split('#')[1].split('.')[0])
+    net.knowledge.set_auto('game',True)
+    assert net.knowledge.listing('game')['items'][0]['status']=='proposed'
+    net.knowledge.decide('game',kid,accept=True)
+    listing=net.knowledge.listing('game')['items'][0]
+    assert listing['status']=='accepted' and len(listing['models'])==1
+    assert 'shorten temporary' in net.knowledge.for_prompt('game')
+    assert 'agreed by different models' not in net.knowledge.for_prompt('game')
+    assert 'shorten temporary' not in net.knowledge.for_prompt('other')
+    net.knowledge.decide('game',kid,accept=False)
+    assert 'shorten temporary' not in net.knowledge.for_prompt('game')
+
+
+def test_reusable_compiler_behavior_tips_are_allowed_and_function_note_destination_is_documented(net):
+    a=agent(net,'claude-opus-5.5-1')
+    assert 'Proposed' in net.knowledge.share(a,'game','GCC matching tip: reuse a local across disjoint live ranges to affect register allocation.')
+    from decompnet.agents.api import api_tool_schemas
+    description=next(t['function']['description'] for t in api_tool_schemas() if t['function']['name']=='share_knowledge')
+    assert 'NOT function-specific' in description and 'add_note(function=' in description
+
+
+def test_pending_proposal_ui_offers_manual_acceptance():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node=shutil.which('node')
+    if node is None:
+        pytest.skip('needs node')
+    subprocess.run([node,str(Path(__file__).with_name('gui_knowledge_accept.js'))],check=True,timeout=30)
+
+
+def test_function_specific_knowledge_is_scoped_without_deleting_history(net):
+    a = agent(net, 'worker')
+    pid = net._project('game')['id']
+    with net.store.tx() as db:
+        db.execute('INSERT INTO functions(project_id,name) VALUES(?,?)', (pid,'func_example'))
+        db.execute("INSERT INTO knowledge(project_id,text,status,created_at) VALUES(?,?,'accepted',1)",
+                   (pid,'Semantic caution: func_example reads an uninitialized local.'))
+        db.execute("INSERT INTO knowledge(project_id,text,status,created_at) VALUES(?,?,'accepted',2)",
+                   (pid,'Reuse locals to reproduce register allocation.'))
+    prompt = net.knowledge.for_prompt('game')
+    assert 'func_example' not in prompt and 'Reuse locals' in prompt
+    assert 'uninitialized' in '\n'.join(net.knowledge.for_function(net._function('func_example','game')))
+    with pytest.raises(NetworkError, match='specific function'):
+        net.knowledge.share(a,'game','func_example needs a corrected pointer.')
+    assert net.store.one('SELECT COUNT(*) AS n FROM knowledge')['n'] == 2
+
+
+def test_reusable_rule_keeps_concrete_examples_out_of_prompts(net):
+    worker=agent(net,'claude-opus-1')
+    pid=net._project('game')['id']
+    with net.store.tx() as db:db.execute("INSERT INTO functions(project_id,name,status) VALUES(?,?,'open')",(pid,'func_example'))
+    rule='When a compiler masks a bitfield condition, cast the field to its unsigned byte type to test the extracted value.'
+    response=net.knowledge.share(worker,'game',rule+' (func_example matched this way.)')
+    kid=int(response.split('#')[1].split('.')[0])
+    item=net.knowledge.listing('game')['items'][0]
+    assert item['text']==rule and 'func_example' in item['evidence'][0]['text']
+    net.knowledge.decide('game',kid,True)
+    assert rule in net.knowledge.for_prompt('game') and 'func_example' not in net.knowledge.for_prompt('game')
+    with pytest.raises(NetworkError):net.knowledge.share(worker,'game','In func_example improved the score from 40 to 0.')
+
+
+def test_generic_rule_can_name_a_library_call_in_code(net):
+    worker=agent(net,'claude-opus-1');pid=net._project('game')['id']
+    with net.store.tx() as db:db.execute("INSERT INTO functions(project_id,name,status) VALUES(?,?,'open')",(pid,'sqrtf'))
+    rule='When the compiler gives a sum its own register, use separate assignments such as `sq=x*x; sq+=y*y; len=sqrtf(sq);` rather than nesting all arithmetic in one expression.'
+    response=net.knowledge.share(worker,'game',rule)
+    kid=int(response.split('#')[1].split('.')[0]);net.knowledge.decide('game',kid,True)
+    assert rule in net.knowledge.for_prompt('game')
+    with pytest.raises(NetworkError):net.knowledge.share(worker,'game','I tried to cast `sqrtf` and improved its score by 10; remaining differences are in the loop.')
+
+
+@pytest.mark.parametrize('flag',['-g3','-O2','-G0'])
+def test_flags_can_describe_source_technique_conditions_without_selecting_settings(net,flag):
+    worker=agent(net,'claude-opus-1');pid=net._project('game')['id']
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name) VALUES(?,?)",(pid,'library_begin'))
+    rule=(f'With GCC and {flag}, debug line notes can affect delay-slot scheduling. '
+          'If calls expand from a macro, keep the expanded calls on one source line '
+          'such as `library_begin(task); library_end(task);` to test their shared line note.')
+    response=net.knowledge.share(worker,'game',rule,evidence='Synthetic caller: score 40 to 20 with unchanged flags.')
+    kid=int(response.split('#')[1].split('.')[0])
+    item=net.knowledge.listing('game')['items'][0]
+    assert item['text']==rule and item['status']=='proposed'
+    assert item['evidence'][0]['text'].startswith('Synthetic caller:')
+    assert rule not in net.knowledge.for_prompt('game',worker)
+    # Context does not exempt an actual function progress report.
+    with pytest.raises(NetworkError,match='specific function'):
+        net.knowledge.share(worker,'game',f'With GCC {flag}, library_begin is stuck at score 40.')
+    net.knowledge.share(agent(net,'gpt-1'),'game',supports=kid)
+    assert net.knowledge.listing('game')['items'][0]['status']=='agreed'
+    assert rule not in net.knowledge.for_prompt('game',worker)
+    net.knowledge.decide('game',kid,True)
+    assert rule in net.knowledge.for_prompt('game')
+
+
+@pytest.mark.parametrize('selection',[
+    'This part is built with GCC -O2.', 'The compiler is GCC.',
+    'Use the compiler GCC.', 'Switch to GCC.', 'Change flags to -g3.',
+    'Try -O2.', 'Use -g3.', 'Switch to -G0.',
+])
+def test_explicit_compiler_or_flag_selection_still_requires_compiler_tools(net,selection):
+    with pytest.raises(NetworkError,match='compiler map'):
+        net.knowledge.share(agent(net,'claude-opus-1'),'game',selection)
+    assert net.knowledge.listing('game')['items']==[]

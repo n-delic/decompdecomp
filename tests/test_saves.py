@@ -4,6 +4,7 @@ only restores onto the same game."""
 
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -15,7 +16,38 @@ from .test_app_engine import CLAMP
 from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
 
 
-def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, monkeypatch):
+def test_restore_notes_preserves_measurements_without_scanning_history(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')",
+                         (str(tmp_path),)).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'f',4096,4,1,'open','')", (pid,))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    monkeypatch.setattr(net, "add_note", lambda *args: pytest.fail("restore must not infer a new session"))
+    statements = []
+    net.store.conn.set_trace_callback(statements.append)
+    notes = [{"by": "worker", "function": "f", "text": f"note {i}", "created_at": 123,
+              "score_before": 120, "score_after": 120} for i in range(100)]
+    notes += [{"by": "worker", "text": "legacy"},
+              {"by": "worker", "function": "gone", "text": "removed function"}]
+    saves._apply_context(net, "game", tmp_path, {"notes": notes}, lambda *_: None)
+    net.store.conn.set_trace_callback(None)
+    rows = net.store.all("SELECT * FROM notes ORDER BY id")
+    assert len(rows) == 101
+    assert (rows[0]["score_before"], rows[0]["score_after"], rows[0]["created_at"]) == (120, 120, 123)
+    assert rows[-1]["score_before"] is None
+    assert not any("FROM attempts" in sql or "FROM helper_sessions" in sql for sql in statements)
+    proj = net._project("game")
+    manifest = saves._render(net, "game")[0]
+    saved = json.loads(manifest[saves.MANIFEST])["notes"]
+    assert saved[0]["score_before"] == saved[0]["score_after"] == 120
+    assert saved[0]["created_at"] == 123
+    assert proj["id"] == pid
+
+
+@pytest.mark.parametrize("author", ["@alex.claude-opus-1", "claude-sonnet-5-5-1"])
+def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, monkeypatch, author):
     """A room credit starts with @; opening its save used runner-name validation and aborted restoration."""
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     with net.store.tx() as db:
@@ -33,11 +65,14 @@ def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, mo
         return {"matched": False}
 
     monkeypatch.setattr(net, "attempt", attempt)
-    author = "@alex.claude-opus-1"
+    original_agent, token = net.local_agent(author)
+    original_hash = net.store.one("SELECT token_hash FROM agents WHERE id=?", original_agent.id)["token_hash"]
     manifest = {"notes": [{"by": author, "text": "Try an unsigned comparison.", "function": "f"}],
                 "functions": {"f": {"vram": 4096, "best_by": author}}}
     result = saves._apply(net, "game", tmp_path, manifest, lambda *_: None)
-    agent, _ = net.local_agent(author)
+    agent = net.attribution_agent(author)
+    assert net.authenticate(token).id == original_agent.id
+    assert net.store.one("SELECT token_hash FROM agents WHERE id=?", agent.id)["token_hash"] == original_hash
     assert result == {"matched": 0, "best": 1, "lost": []}
     assert judged == [(net.local_agent("progress-judge")[0].id, "f", "void f(void) {}", "game")]
     assert net.store.one("SELECT agent_id FROM notes WHERE text=?", "Try an unsigned comparison.")["agent_id"] == agent.id
@@ -333,3 +368,85 @@ def test_a_project_mode_games_save_writes_its_closest_attempts(tmp_path):
     best = (root / "progress" / "best" / "f.c").read_text()
     assert "97.0% match" in best and "claude-sonnet-5-5-1" in best and "src/auto/u.c" in best and "return 1;" in best
     assert not (root / "progress" / "best" / "g.c").exists() and (root / "progress" / "README.md").exists()
+
+
+def test_plain_save_directs_standalone_build_checkouts_to_repository_sync(tmp_path):
+    (tmp_path/'build.json').write_text('{}')
+    (tmp_path/'build.py').write_text('# keep build setup')
+    with pytest.raises(NetworkError,match='Sync to Git repository'):
+        saves._check_save_paths(tmp_path,chosen=True)
+    assert (tmp_path/'build.py').read_text()=='# keep build setup'
+
+
+def test_new_attribution_has_no_token_and_later_runner_keeps_its_identity(tmp_path):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    credit = net.attribution_agent("new-author")
+    row = net.store.one("SELECT token_hash FROM agents WHERE id=?", credit.id)
+    assert row["token_hash"].startswith("attribution:")
+    assert net.attribution_agent("new-author").id == credit.id
+    runner, token = net.local_agent("new-author")
+    assert runner.id == credit.id and net.authenticate(token).id == credit.id
+    assert net.attribution_agent("new-author").id == credit.id
+    assert net.authenticate(token).id == credit.id
+
+
+@pytest.mark.parametrize('public_import', [False, True])
+def test_combined_checkout_restores_verified_work_without_building(worked, tmp_path, public_import, monkeypatch):
+    from decompnet.forks.project import ForkProject
+
+    net, slug, other = worked
+    checkout = tmp_path / 'checkout'
+    saves.save(net, slug, checkout / 'progress')
+    (checkout / 'objdiff.json').write_text('{}')
+    (checkout / 'build.json').write_text('{}')
+    (checkout / 'build.py').write_text('raise RuntimeError("do not execute the standalone build")')
+    assert ForkProject(checkout).needs()['saved_progress']
+    fresh_home = tmp_path / 'fresh'
+    fresh_home.mkdir()
+    fresh = RomNetwork(fresh_home / 'db', fresh_home)
+    if public_import:
+        fresh.forks._register('checkout', 'Checkout', '', checkout,
+                              {'kind': 'fork', 'ready': False, 'platform': 'n64', 'repo_url': 'https://example.com/repo'}, 'cloned')
+        result = fresh.forks.setup('checkout', ROM, log=lambda *_: None)
+        assert fresh.store.one("SELECT 1 FROM projects WHERE slug='checkout'") is None
+        assert checkout.is_dir()
+    else:
+        result = saves.restore(fresh, str(checkout), ROM, log=lambda *_: None)
+    assert result['matched'] == 1 and result['best'] == 1 and result['lost'] == []
+    assert fresh._function('clamp_s32', result['slug'])['status'] == 'matched'
+    assert fresh._function(other, result['slug'])['best_source']
+    assert fresh.instructions(result['slug']) == 'Name functions in snake_case.'
+    config = fresh.cfg(fresh.project_row(result['slug']))
+    assert Path(config['progress_folder']) == checkout / 'progress'
+    if public_import:
+        assert config['repo_url'] == 'https://example.com/repo'
+
+
+@pytest.mark.parametrize('error,advice', [(PermissionError('denied'), 'write permission'),
+                                         (FileNotFoundError('gone'), 'disk is connected'),
+                                         (OSError(28, 'disk full'), 'Free disk space'),
+                                         (RuntimeError('invalid manifest'), 'complete traceback')])
+def test_autosave_errors_show_cause_folder_build_and_retry_other_projects(tmp_path, caplog, monkeypatch, error, advice):
+    from types import SimpleNamespace
+
+    clock = [100.0]
+    monkeypatch.setattr(saves.time, 'monotonic', lambda: clock[0])
+    rows = [{'slug': 'bad', 'root': str(tmp_path), 'config': '[]'},
+            {'slug': 'good', 'root': str(tmp_path), 'config': '{}'}]
+    calls = []
+    def sync(slug, **kwargs):
+        calls.append(slug)
+        if slug == 'bad':
+            raise error
+        return True
+    net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows), progress=SimpleNamespace(sync=sync))
+    auto = saves.Autosave(net)
+    assert auto.run_once() == ['good']
+    assert advice in caplog.text and type(error).__name__ in caplog.text
+    assert str(tmp_path / 'progress') in caplog.text
+    assert 'RetroReversing fork' in caplog.text
+    auto.run_once()
+    assert calls == ['bad', 'good', 'good']
+    clock[0] += 31
+    auto.run_once()
+    assert calls.count('bad') == 2

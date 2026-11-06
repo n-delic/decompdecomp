@@ -56,6 +56,9 @@ class FakeNet:
         self.priority, self.notes, self.events, self.applied = [], [], [], []
         self.sql, self.judged = [], []  # what was read, and what the judge was asked
         self.store = self
+        from decompnet.read_cache import ReadCache
+        self.read_cache = ReadCache(bypass=lambda: True)  # this scripted store has no revision triggers
+        self.read_version = lambda *args: 0
         self.rangechecks = RangeChecks(self)
         self.rangechecks.background = False
 
@@ -299,3 +302,13 @@ def test_auto_adjust_is_a_setting_of_each_project(tmp_path):
     assert net.auto_adjusts(net._project("rr5")) and net.auto_adjusts(net._project("gta"))
     net.set_auto_adjust("rr5", False)
     assert not net.auto_adjusts(net._project("rr5")) and net.auto_adjusts(net._project("gta"))
+
+
+def test_waiting_explains_short_matches_without_discrediting_them():
+    claim = {"spans": [[0x1000, 0x1040]]}
+    rows = [{"vram": 0x1000, "status": "matched", "n_insns": 8},
+            {"vram": 0x1020, "status": "matched", "n_insns": 8}]
+    said = RangeChecks.waiting_reason(claim, rows)
+    assert "minimum 12" in said and "adjoining short matches" in said and "matches remain valid" in said
+    rows[0]["n_insns"] = rows[1]["n_insns"] = 20
+    assert "too short" not in RangeChecks.waiting_reason(claim, rows)

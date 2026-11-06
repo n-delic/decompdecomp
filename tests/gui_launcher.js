@@ -21,6 +21,7 @@ class Element {
     this.isConnected = true;
   }
   focus() {}
+  closest(selector) { return selector === ".lz-body" ? this.parentBox || null : null; }
   setAttribute(key, value) { this.attributes[key] = value; }
   querySelectorAll(selector) { return []; }
   querySelector() { return null; }
@@ -30,11 +31,12 @@ class Box extends Element {
   set innerHTML(html) {
     this.html = html;
     this.elements = [];
-    const tagPattern = /<(button|input|select|option|output|a|span)\b([^>]*)>/g;
+    const tagPattern = /<(button|input|select|option|output|a|span|pre)\b([^>]*)>/g;
     for (const match of html.matchAll(tagPattern)) {
       const attrs = {};
       for (const item of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[item[1]] = item[2] ?? "";
       const element = new Element(match[1], attrs);
+      element.parentBox = this;
       if (match[1] === "span") element.textContent = html.slice(match.index + match[0].length, html.indexOf("</span>", match.index));
       this.elements.push(element);
     }
@@ -80,17 +82,21 @@ const calls = [];
 const endpoint = { id: "e1", name: "Local", model: "base", base_url: "http://127.0.0.1:8080/v1", max_sessions: 4 };
 const ctx = {
   console, Promise, Map, Set, JSON, Math, Date, Object, Array, String, Number, Symbol, Error, RegExp, encodeURIComponent,
+  setInterval:()=>1, clearInterval(){},
   document: { addEventListener() {}, getElementById: get },
   $: get, S: { slug: "game", settings: {}, st: { settings: { endpoints: [endpoint], per_session: 4 }, agents: [] } },
   AUTO: "autopilot", esc: (value) => String(value ?? ""), setHtml: (el, html) => { el.innerHTML = html; },
   wireCopies() {}, wireEndpointFields() {}, endpointFields: () => "", hostOf: () => "127.0.0.1",
   polishOffered: () => false, cFunctions: () => 0, cmdBox: () => "", effortOf: () => "", EFFORT_NAMES: {},
   MAX_PER_SESSION: 20, MAX_AT_ONCE: 8, poll() {}, loadNav() {}, hideLaunch() {}, toast() {},
-  beginWork() { return () => {}; }, showJobError() {}, followJob: async () => {},
+  beginWork() { return () => {}; }, showJobError() {}, followJob: async (job,log,update) => {
+    if(update) update(['Preparing project in test'],{state:'running'});
+    return {started:['helper']};
+  },
   api: async (url, options = {}) => {
     if (url.startsWith("/api/endpoints/models")) return { models: [{ id: "m-one", name: "Model one" }, { id: "m-two", name: "Model two" }] };
     calls.push({ url, body: options.body });
-    return { started: ["helper"] };
+    return url === "/api/agents/start" ? {job:"creation-job"} : { started: ["helper"] };
   },
   TASKS: [["", "Decompile", "decompile"]], location: { hash: "" },
 };
@@ -98,6 +104,12 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "js", "agents.js"), "utf8"), ctx);
 
+const discovered = {takes_effort:true, efforts:["low","high"], models:[{id:"example",efforts:["high"]}]};
+ctx.discovered=discovered;
+vm.runInContext('LZ.model="example"; LZ.effort="low";',ctx);
+requireOk(vm.runInContext('effortOf(discovered)',ctx)==="", "unsupported discovered effort must not be sent");
+requireOk(!vm.runInContext('effortField(discovered)',ctx).includes('value="low"'), "only supported model efforts are offered");
+vm.runInContext('LZ.model=""; LZ.effort="";',ctx);
 const apiAgent = { id: "api", name: "API", uses_endpoints: true, installed: true, recommended: true, takes_effort: false };
 const cliAgent = { id: "claude", name: "Claude Code", installed: true, recommended: false, takes_effort: false,
   models: [{ id: "opus", name: "Opus" }, { id: "sonnet", name: "Sonnet" }, { id: "haiku", name: "Haiku" }] };
@@ -136,6 +148,7 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   const apiStart = box.querySelector('[data-act="start"]');
   await apiStart.onclick();
   const apiCall = calls.find((call) => call.url === "/api/agents/start" && call.body.kind === "api");
+  requireOk(apiCall.body.background === true, "launcher must use nonblocking agent creation");
   requireOk(apiCall && apiCall.body.options.multiple_models && apiCall.body.options.models[0].endpoint === "e1" &&
     apiCall.body.options.models[0].model === "m-one", "API launch must send only selected endpoint/model pairs");
 
@@ -234,5 +247,13 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   box.querySelectorAll("[data-step]").find((button) => button.dataset.step === "1").onclick();
   requireOk(box.querySelector("[data-model-limit]").textContent.includes("2 sessions"),
     "API per-model count guidance must update with the How many control");
+  let accepted, submissions=0;
+  ctx.api=()=>{submissions++;return new Promise(resolve=>{accepted=resolve;});};
+  const pending=ctx.startAgents(cliAgent,'opus',1,null);
+  await ctx.startAgents(cliAgent,'opus',1,null);
+  requireOk(submissions===1,'a pending creation must not submit duplicates');
+  ctx.renderLauncher(box);
+  requireOk(box.html.includes('Creating agents for') && box.html.includes('request continues'), 'reopening launcher must show pending creation');
+  accepted({started:['new-worker']});await pending;
   console.log("launcher model selections passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

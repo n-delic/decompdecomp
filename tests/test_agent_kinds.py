@@ -47,7 +47,8 @@ def test_every_agent_says_everything_the_app_asks(agent, stand_in, tmp_path):
         work = tmp_path / "work"
         work.mkdir()
         cmd, env = agent.session_command(str(stand_in), work, "http://127.0.0.1:1/mcp", TOKEN, "some-model")
-        assert cmd[0] == str(stand_in) and "some-model" in cmd
+        assert cmd[0] == str(stand_in)
+        assert "some-model" in cmd, "the launcher's model reaches the session"
         assert not any(TOKEN in a for a in cmd), "a token on the command line is there for every process to read"
         assert all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
         assert "line one" in agent.stdin(PROMPT) and agent.parse_line("not json") == [("info", "not json")]
@@ -77,6 +78,7 @@ def test_ids_are_unique_and_older_ids_lead_to_their_agent():
     for agent in agents.AGENTS:
         assert agents.get(agent.id) is agent
         assert all(agents.get(old) is agent and agents.kind_id(old) == agent.id for old in agent.aliases)
+    assert agents.kind_id("zcode-cli") == "zcode"
     assert agents.kind_id("autopilot") == "autopilot"  # any other name stays as it is
 
 
@@ -179,3 +181,42 @@ def test_nothing_outside_agents_asks_an_agents_name():
             if _NAME_CHECK.search(line):
                 found.append(f"{path.relative_to(SRC)}:{number}: {line.strip()}")
     assert not found, "\n".join(found)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX npm launchers")
+def test_nvm_agents_are_found_and_run_without_shell_initialization(tmp_path, monkeypatch):
+    import os
+    import subprocess
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("NVM_DIR", raising=False)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    for version in ("v9.0.0", "v24.0.0"):
+        folder = tmp_path / ".nvm/versions/node" / version / "bin"
+        folder.mkdir(parents=True)
+        cli = folder / "example-agent"
+        cli.write_text("#!/usr/bin/env node\nnot actual javascript\n")
+        cli.chmod(0o755)
+        node = folder / "node"
+        node.write_text('#!/bin/sh\nprintf "%s\\n" "$2"\n')
+        node.chmod(0o755)
+    found = helpers._which("example-agent")
+    assert found == str(cli)
+    argv = agents.cli_argv([found, "--version"])
+    assert argv == [str(node), found, "--version"]
+    result = subprocess.run(argv, capture_output=True, text=True, env=dict(os.environ), check=True)
+    assert result.stdout.strip() == "--version"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX nvm layout and executable permissions")
+def test_custom_nvm_directory_is_searched_but_nonexecutables_are_ignored(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "empty-home")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("NVM_DIR", str(tmp_path / "custom-nvm"))
+    folder = tmp_path / "custom-nvm/versions/node/v24.0.0/bin"
+    folder.mkdir(parents=True)
+    cli = folder / "example-agent"
+    cli.write_text("not executable")
+    assert helpers._which("example-agent") is None
+    cli.chmod(0o755)
+    assert helpers._which("example-agent") == str(cli)

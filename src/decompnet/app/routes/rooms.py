@@ -30,7 +30,8 @@ def register(app: App) -> None:
 
     # The tunnel only ever reaches this separate little server, never the GUI or the MCP endpoint above.
 
-    share = {"servers": {}, "tunnel": None, "links": {}}
+    share = {"servers": {}, "tunnel": None, "links": {}, "restore_errors": {}, "restore_job": None}
+    room_lock = threading.RLock()
 
     def collab_server(public_port: int | None = None) -> int:
         """The room server: on 127.0.0.1 behind a quick tunnel, or on every network interface at `public_port` for
@@ -66,7 +67,7 @@ def register(app: App) -> None:
         share["servers"][key] = (server, port)
         return port
 
-    def open_room(slug: str, mode: str, address: str = "", port: int = 0, log=print, keep: bool = False) -> str:
+    def _open_room(slug: str, mode: str, address: str = "", port: int = 0, log=print, keep: bool = False) -> str:
         room = net.rooms.get(slug) or collab.Room(net, slug)
         if mode == "address":
             address = address.strip().rstrip("/")
@@ -88,34 +89,112 @@ def register(app: App) -> None:
         share["links"][slug] = link
         return link
 
-    # rooms shared at an address of the host's own come back when the app starts, with the same invite
-    for p in net.store.all("SELECT slug, config FROM projects"):
-        c = json.loads(p["config"]).get("collab") or {}
-        if c.get("open") and c.get("mode") == "address" and c.get("address"):
-            try:
-                open_room(p["slug"], "address", c["address"], int(c.get("port") or 6481), keep=True)
-            except (NetworkError, OSError):
-                pass
+    def open_room(*args, **kwargs):
+        with room_lock:
+            link = _open_room(*args, **kwargs)
+            share['restore_errors'].pop(args[0], None)
+            return link
+
+    if any((json.loads(p['config']).get('collab') or {}).get('open')
+           for p in net.store.all('SELECT config FROM projects')):
+        from ..hosted_rooms import restore
+        def reopen(log):
+            # Serialize startup with explicit stop/rotate so a closed room cannot reopen behind the user.
+            with room_lock:
+                share['restore_errors'] = restore(net, open_room, log)
+            return {'errors':share['restore_errors']}
+        share['restore_job'] = jobs.start('Restore hosted rooms', reopen)
 
     @mcp.custom_route("/api/collab", methods=["GET"])
     async def api_collab(request: Request) -> Response:
         if (bad := guard(request)):
             return bad
         slug = request.query_params.get("slug", "")
+        def snapshot():
+            # Project/room helpers may synchronize progress. This UI read must not wait
+            # for thousands of rechecks, nor run database/network work on the event loop.
+            with net.progress.view():
+                info = net._room_info(slug)
+                room = net.rooms.get(slug)
+                cfg = (json.loads(net.project_row(slug)["config"]).get("collab") or {}) if slug else {}
+                return JSONResponse({"sharing": room is not None, "link": share["links"].get(slug), "room": info,
+                                     "settings": room.settings if room else {"visibility": cfg.get("visibility", "private"),
+                                                                               "approve": bool(cfg.get("approve"))},
+                                     "pending": room.pending() if room else [],
+                                     "mode": cfg.get("mode", "tunnel"), "address": cfg.get("address", ""), "port": cfg.get("port", 6481),
+                                     "was_sharing": bool(cfg.get("open")) and room is None,
+                                     "restoring": bool(share['restore_job'] and jobs.jobs.get(share['restore_job'], {}).get('state') == 'running'),
+                                     "restore_error": share['restore_errors'].get(slug),
+                                     "stable_link": cfg.get('mode') == 'address',
+                                     "addresses": collab.local_addresses(),
+                                     "tunnel_supported": collab.cloudflared_available()})
         try:
-            info = await call(net._room_info, slug)
-        except NetworkError as e:
-            return fail(e)
-        room = net.rooms.get(slug)
-        cfg = (json.loads(net.project_row(slug)["config"]).get("collab") or {}) if slug else {}
-        return JSONResponse({"sharing": room is not None, "link": share["links"].get(slug), "room": info,
-                             "settings": room.settings if room else {"visibility": cfg.get("visibility", "private"),
-                                                                       "approve": bool(cfg.get("approve"))},
-                             "pending": room.pending() if room else [],
-                             "mode": cfg.get("mode", "tunnel"), "address": cfg.get("address", ""), "port": cfg.get("port", 6481),
-                             "was_sharing": bool(cfg.get("open")) and room is None,
-                             "addresses": await anyio.to_thread.run_sync(collab.local_addresses),
-                             "tunnel_supported": collab.cloudflared_available()})
+            return await (app.ui_call or call)(snapshot)
+        except (NetworkError, OSError) as error:
+            return fail(error)
+
+    @mcp.custom_route('/api/collab/matches', methods=['GET','POST'])
+    async def api_room_matches(request: Request) -> Response:
+        if (bad := guard(request,write=request.method=='POST')):
+            return bad
+        from .. import room_matches
+        data=await body(request) if request.method=='POST' else dict(request.query_params)
+        slug=str(data.get('slug') or '')
+        try:
+            await app.read(net.project_row, slug)
+            if request.method=='GET':
+                return JSONResponse({'rows':await app.read(room_matches.public,net,slug),'guest':slug in net.links})
+            if await app.read(net.fork_slug, slug):
+                raise NetworkError('Imported-project rooms verify their source tree/build settings; portable compiler/header bundles currently support ROM projects.')
+            key=str(data.get('key') or '')
+            if key and not key.startswith(room_matches.PREFIX+str((await app.read(net.project_row, slug))['id'])+':'):
+                raise NetworkError('Choose a submission in this project.')
+            def verify_pending(log):
+                log.progress({'finished':0,'total':0,'phase':'Loading pending room submissions'})
+                if data.get('recover') and slug not in net.links:
+                    log.progress({'finished':0,'total':0,'phase':'Recovering older submissions'})
+                    log(f'Recovered {room_matches.recover_legacy(net,slug)} older submissions.')
+                rows=[r for r in room_matches.pending(net,slug) if not key or r['key']==key]
+                if data.get('all') is not True:
+                    rows=rows[:5]
+                matched=failed=0
+                results=[]
+                for index,row in enumerate(rows):
+                    if getattr(log,'cancelled',False):break
+                    if hasattr(log,'progress'):log.progress({'finished':index,'total':len(rows),'phase':'Host verification','function':row['function']})
+                    log(f"Verifying {row['function']} ({index+1}/{len(rows)})")
+                    try:
+                        if row['direction']=='client':
+                            if slug not in net.links:raise NetworkError('Reconnect to this room before resubmitting.')
+                            log.progress({'finished':index,'total':len(rows),'function':row['function'],
+                                          'phase':'Sending saved match to the host and waiting for verification'})
+                            result=room_matches.resend(net.links[slug],row['key'])
+                        else:
+                            def report(value, index=index, row=row):
+                                log.progress({'finished':index,'total':len(rows),'function':row['function'],'results':list(results),**value})
+                            result=room_matches.retry(net,slug,row['key'],progress=report)
+                        results.append({'key':row['key'],'function':row['function'],'matched':bool(result.get('matched')),'rejected':bool(result.get('rejected')),
+                                        'reason':result.get('reason') or ('Host verified exact bytes' if result.get('matched') else 'Still pending'),
+                                        'compiler':result.get('compiler')})
+                        matched+=bool(result.get('matched'))
+                        log(result.get('reason') or ('Host confirmed match' if result.get('matched') else 'Still pending'))
+                    except (NetworkError,ValueError) as error:
+                        failed+=1
+                        results.append({'key':row['key'],'function':row['function'],'matched':False,'reason':str(error)})
+                        if data.get('all') is not True:
+                            log.progress({'finished':index+1,'total':len(rows),'phase':'Verification needs attention','results':list(results)})
+                            raise
+                        log(f"Could not verify {row['function']}: {error}")
+                    if hasattr(log,'progress'):log.progress({'finished':index+1,'total':len(rows),'phase':'Host verification','results':list(results)})
+                return {'matched':matched,'failed':failed,'total':len(rows),'results':results}
+            def work(log):
+                with net.progress.batch(slug, logger=log):
+                    result = verify_pending(log)
+                    log.progress({'finished':len(result['results']),'total':result['total'],
+                                  'phase':'Saving verified room matches', 'results':result['results']})
+                return result
+            return JSONResponse({'job':jobs.start('room match verification',work)})
+        except (NetworkError,ValueError) as error:return fail(error)
 
     @mcp.custom_route("/api/collab/start", methods=["POST"])
     async def api_collab_start(request: Request) -> Response:
@@ -125,7 +204,7 @@ def register(app: App) -> None:
         slug = str(data.get("slug", ""))
         if slug in net.links:
             return fail(ValueError("this project belongs to a friend's room; only its host can invite people"))
-        if net.fork_slug(slug) and not json.loads(net.project_row(slug)["config"]).get("ready"):
+        if await app.read(net.fork_slug, slug) and not json.loads((await app.read(net.project_row, slug))["config"]).get("ready"):
             return fail(ValueError("set the project up first (its Overview): then friends can join it"))
         mode = "address" if data.get("mode") == "address" else "tunnel"
 
@@ -146,40 +225,47 @@ def register(app: App) -> None:
         room = net.rooms.get(slug)
         if room is None:
             return fail(ValueError("this project isn't being shared"))
-        try:
-            if action == "remove":
-                room.remove(name)
-            elif action in ("approve", "decline"):
-                room.approve(name, action == "approve")
-            elif action == "settings":
-                room.configure(data.get("visibility"), data.get("approve"))
-                c = room.cfg.get("collab") or {}
-                share["links"][slug] = open_room(slug, c.get("mode", "tunnel"), c.get("address", ""),
-                                                 int(c.get("port") or 6481), keep=True)
-            elif action == "rotate":
-                c = room.cfg.get("collab") or {}
-                share["links"][slug] = open_room(slug, c.get("mode", "tunnel"), c.get("address", ""),
-                                                 int(c.get("port") or 6481), keep=False)
-            else:
-                return fail(ValueError("unknown action"))
-        except NetworkError as e:
-            return fail(e)
-        return JSONResponse({"ok": True, "link": share["links"].get(slug), "members": room.members(),
-                             "pending": room.pending(), "settings": room.settings})
+        def manage():
+            try:
+                if action == "remove":
+                    room.remove(name)
+                elif action in ("approve", "decline"):
+                    room.approve(name, action == "approve")
+                elif action == "settings":
+                    room.configure(data.get("visibility"), data.get("approve"))
+                    c = room.cfg.get("collab") or {}
+                    share["links"][slug] = open_room(slug, c.get("mode", "tunnel"), c.get("address", ""),
+                                                     int(c.get("port") or 6481), keep=True)
+                elif action == "rotate":
+                    c = room.cfg.get("collab") or {}
+                    share["links"][slug] = open_room(slug, c.get("mode", "tunnel"), c.get("address", ""),
+                                                     int(c.get("port") or 6481), keep=False)
+                else:
+                    return fail(ValueError("unknown action"))
+            except NetworkError as e:
+                return fail(e)
+            return JSONResponse({"ok": True, "link": share["links"].get(slug), "members": room.members(),
+                                 "pending": room.pending(), "settings": room.settings})
+
+        return await app.call(manage)
 
     @mcp.custom_route("/api/collab/stop", methods=["POST"])
     async def api_collab_stop(request: Request) -> Response:
         if (bad := guard(request, write=True)):
             return bad
         slug = str((await body(request)).get("slug", ""))
-        room = net.rooms.pop(slug, None)
-        if room is not None:
-            room.close()
-        share["links"].pop(slug, None)
-        if not net.rooms and share["tunnel"] is not None:
-            share["tunnel"].stop()
-            share["tunnel"] = None
-        return JSONResponse({"ok": True})
+        def stop():
+            with room_lock:
+                room = net.rooms.pop(slug, None) or collab.Room(net, slug)
+                room.close()  # also closes a saved room whose startup restoration failed
+                share['restore_errors'].pop(slug, None)
+                share["links"].pop(slug, None)
+                if not net.rooms and share["tunnel"] is not None:
+                    share["tunnel"].stop()
+                    share["tunnel"] = None
+            return JSONResponse({"ok": True})
+
+        return await app.call(stop)
 
     @mcp.custom_route("/api/collab/join", methods=["POST"])
     async def api_collab_join(request: Request) -> Response:
@@ -190,31 +276,36 @@ def register(app: App) -> None:
             return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
         link, name = q.get("link", ""), q.get("name", "")
         game: Path | None = None
-        if q.get("path"):  # a file on this computer (a disc is gigabytes: not through the browser)
+        uploaded = False
+        project = q.get("project", "")
+        if not project and q.get("path"):  # a file on this computer (a disc is gigabytes: not through the browser)
             game = hostenv.local_path(q["path"])
-            if not game.is_file():
+            if not await app.call(lambda: game.is_file()):
                 return fail(ValueError(f"no file at {game}"))
-        else:  # the browser's upload, streamed to disk
+        elif not project:  # the browser's upload, streamed to disk
             upload = home / "uploads" / uuid.uuid4().hex[:8]
-            upload.mkdir(parents=True, exist_ok=True)
+            await app.call(lambda: upload.mkdir(parents=True, exist_ok=True))
             game = upload / (Path(q.get("filename") or "game.bin").name or "game.bin")
             size = 0
-            with open(game, "wb") as f:
+            async with await anyio.open_file(game, "wb") as f:
                 async for chunk in request.stream():
                     size += len(chunk)
                     if size > MAX_DISC:
-                        f.close()
-                        shutil.rmtree(upload, ignore_errors=True)
+                        await f.aclose()
+                        await app.call(lambda: shutil.rmtree(upload, ignore_errors=True))
                         return fail(ValueError("that file is larger than any game disc"))
-                    f.write(chunk)
+                    await f.write(chunk)
             if size == 0:
-                shutil.rmtree(upload, ignore_errors=True)
+                await app.call(lambda: shutil.rmtree(upload, ignore_errors=True))
                 game = None
-        uploaded = game is not None and game.parent.parent == home / "uploads"
+            uploaded = game is not None
 
         def work(log):
             try:
-                slug = collab.join_room(net, link, name, game or b"", log=log)
+                copy = collab.project_game(net, project) if project else game
+                if project:
+                    log("Using the game copy already stored in your project; checking it against the host's game.")
+                slug = collab.join_room(net, link, name, copy or b"", log=log)
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)

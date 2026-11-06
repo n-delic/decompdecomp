@@ -50,7 +50,8 @@ class Compiler:
     name: str  # what the app shows: "KMC GCC 2.7.2"
     built: str = ""  # which games it built, for Setup: "many third-party N64 games"
     guess: str = ""  # what read_game calls it when a program looks built by it ("KMC", "EEGCC-2.95.2")
-    target: str = ""  # the processor its code is for, where a console's compilers differ ("x86", "x64"): Console.target
+    target: str = ""  # processor for compiler versions that differ within one console (PC x86 and x64)
+    automatic: bool = True  # routine comparisons; experimental profiles remain available by explicit selection
 
 
 class Console:
@@ -107,7 +108,7 @@ class Console:
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
-    reference_tools: tuple[str, str, str] = ()
+    reference_tools: tuple[str, str, str] = ()  # pinned toolchain, assembler and linker for verified splat references
     # ROM mode, a program that's an ELF: the platform splat's config names, when it isn't the PS2's (splat's
     # create_config reads ELF programs as PS2 ones: rom/split.py)
     splat_platform = ""
@@ -123,13 +124,13 @@ class Console:
     def __repr__(self) -> str:
         return f"<console {self.id}>"
 
-    def generate_objdiff(self, project, config_path, config, version: str | None = None, log=print) -> bool:
-        """Generate byte-verified Splat references for consoles with pinned assembler tools."""
+    def generate_objdiff(self, project, config_path, config, log=print) -> bool:
+        """A supported splat build can acquire ROM-derived reference objects after its first verified build."""
         if not self.reference_tools:
             return False
         from ..forks.splatrefs import generate
 
-        return generate(project, config_path, config, self, version=version, log=log)
+        return generate(project, config_path, config, self, log=log)
 
     @property
     def features(self) -> frozenset[str]:
@@ -347,9 +348,24 @@ class Console:
         """What the game file is: {"platform", "id", "title", "sha1"}, the sha1 of what decides which game it is."""
         raise RomError(f"{self.name} projects can't be made from scratch")
 
+    def library_sha1(self, path: Path) -> str:
+        """Hash a library file in the byte order expected by this console's public projects."""
+        import hashlib
+
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha1").hexdigest()
+
+    def project_build_command(self, project, command: list[str]) -> list[str]:
+        """Point a public build at an installed tool when this console knows its compiler declaration."""
+        return command
+
+    def project_tool_paths(self, project) -> list[Path]:
+        """Installed tools available only to this project's build process (never the user's global PATH)."""
+        paths = arch.get(self.arch).build_tool_paths
+        return paths(project) if paths else []
+
     def build_env(self) -> dict[str, str]:
-        """What its projects' builds need in their environment, beyond this computer's (the PC's: where wine is, for
-        Visual C++ 2017). Set on every build step the app runs (forks/project.py, ForkProject.run)."""
+        """Extra environment for this console's project builds."""
         return {}
 
     def tool_args(self) -> list[str]:
@@ -363,22 +379,6 @@ class Console:
     def library_candidate(self, path: Path, size: int) -> bool:
         """Whether a library file is plausible before the search hashes its contents."""
         return True
-
-    def fork_game_versions(self, project) -> dict[str, str]:
-        """Original game hashes for supported versions of a public decomp."""
-        return {}
-
-    def fork_game_need(self, project, version: str | None) -> dict | None:
-        """Versioned game file required by a public decomp, if this console recognizes it."""
-        return None
-
-    def default_fork_game_version(self, project) -> str | None:
-        """Default version of a public decomp, when this console recognizes its build."""
-        return None
-
-    def match_fork_game_version(self, project, game: Path, log=print) -> str | None:
-        """Version matching a supplied game, or None when this console has no versioned build."""
-        return None
 
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         """Console-specific guidance for supplying a game file to a public decomp, or None for its usual help."""
@@ -405,14 +405,14 @@ class Console:
         return None
 
     def target(self, fp) -> str:
-        """The processor a project's code is for, where the console's compilers make code for more than one (PC:
-        32-bit or 64-bit); "": they all make the same."""
+        """Processor target for project compilers, or empty when all compilers apply."""
         return ""
 
     def project_compilers(self, fp) -> list[Compiler]:
-        """The compilers a project's files can be built with (Settings, try_compiler): those for its target."""
+        """Compilers able to build this project's target."""
         target = self.target(fp)
-        return [c for c in self.compilers if not target or not c.target or c.target == target]
+        return [compiler for compiler in self.compilers
+                if not target or not compiler.target or compiler.target == target]
 
     def file_compiler(self, fp, source: str) -> str | None:
         """The compiler (one of `compilers`) the project builds a source file with, when its build lets each file have
@@ -536,6 +536,12 @@ class Console:
         reason = arch.get(self.arch).asm_reason
         return reason(code, self.big_endian, cpu=self.cpu_variant) if reason else None
 
+    def boundary_reason(self, code: bytes) -> str | None:
+        """Advisory target-extent warning where the processor has a reader."""
+        reason=arch.get(self.arch).boundary_reason
+        if not reason or self.asm_reason(code):return None
+        return reason(code,self.big_endian,cpu=self.cpu_variant)
+
     def up_front_guide(self, compiler: str) -> str:
         """The guide every helper gets before its first claim: on matching `compiler`'s code ("" for none)."""
         return self.compiler_guide
@@ -580,8 +586,7 @@ class Console:
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [*(tool for tool, _ in self.packs), *self.kits],
-                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target}
-                              for c in self.compilers],
+                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target} for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
                 "sets_aside": self.mode == PROJECT and self.sets_aside,

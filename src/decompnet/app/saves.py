@@ -21,7 +21,9 @@ import subprocess
 import tempfile
 import threading
 import time
-from contextlib import nullcontext
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, nullcontext
 from pathlib import Path
 
 from .. import compiler, consoles, toolchains
@@ -34,7 +36,7 @@ from . import save_readme
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
-SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")  # why an agent or user set a function aside
+SET_ASIDE_META = ("asm_code", "not_c", "asm_twin", "verified_assembly")  # why an agent or user set a function aside
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
@@ -111,6 +113,7 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             _remember_revision(net, slug, json.loads(files[MANIFEST]))
         else:
             net.progress.sync(slug, force=True)
+            net.progress.prune_matched_drafts(slug)
             manifest_path = target / MANIFEST
             manifest_before = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
             files, result = _render(net, slug, target)
@@ -247,6 +250,9 @@ def _check_progress_folder(folder: Path, *, chosen: bool = False) -> None:
 
 def _check_save_paths(folder: Path, *, chosen: bool = False) -> None:
     """Reject links before README, the map or a save's files can follow one outside the selected save folder."""
+    if (folder / 'build.json').is_file() and (folder / 'build.py').is_file():
+        raise NetworkError('This is a standalone build checkout. Use Sync to Git repository instead of Save now, '
+                           'and keep the progress folder separate from the build tree.')
     _check_progress_folder(folder, chosen=chosen)
     for name in ("src", "best", "include"):
         path = folder / name
@@ -295,7 +301,9 @@ def _function_rows(net, project_id: int, *, sources: bool) -> list:
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
     """The progress manifest and its function index from function rows (with or without their source text)."""
     pid = proj["id"]
-    names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
+    agent_ids = sorted({r[k] for r in rows for k in ('matched_agent_id', 'best_agent_id') if r[k] is not None})
+    names = {r["id"]: r["name"] for r in net.store.all(
+        "SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))", json.dumps(agent_ids))}
     functions = {}
     for r in rows:
         if r["status"] == "matched" and r["has_matched"]:
@@ -305,8 +313,11 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
             functions[r["name"]] = {"vram": r["vram"], "best_score": r["best_score"],
                                     "best_by": names.get(r["best_agent_id"], "")}
     units = {""} | net._unit_contexts(pid)
-    notes = [{"function": r["fn"], "text": r["text"], "by": r["agent"] or ""} for r in net.store.all(
-        "SELECT n.text, a.name AS agent, f.name AS fn FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
+    notes = [{"function": r["fn"], "text": r["text"], "by": r["agent"] or "",
+              "created_at": r["created_at"], "score_before": r["score_before"],
+              "score_after": r["score_after"]} for r in net.store.all(
+        "SELECT n.text,n.created_at,n.score_before,n.score_after, a.name AS agent, f.name AS fn "
+        "FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
         "LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)]
     knowledge = [r["text"] for r in net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
@@ -315,6 +326,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "title": proj["name"], "platform": cfg.get("platform"),
         "game": {"sha1": cfg.get("rom", {}).get("sha1"), "file": cfg.get("rom", {}).get("file")},
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
+        "function_compilers": cfg.get('function_compilers') or {},
         "instructions": cfg.get("instructions") or "", "knowledge": knowledge,
         "priority": cfg.get("priority") or [],
         "auto_compiler": cfg.get("auto_compiler"),
@@ -331,6 +343,9 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
                        **{k: v for k, v in json.loads(r["meta"] or "{}").items() if k in SET_ASIDE_META}}
                       for r in rows if r["status"] == "asm"],
     }
+    from ..match_bundle import portable
+    if bundle := portable(net, pid):
+        manifest['verification'] = bundle
     return manifest, functions, units
 
 
@@ -430,7 +445,7 @@ def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None =
     manifest, functions, units = _manifest_from_rows(net, proj, cfg, rows, readme_folder)
     files = _source_files(rows)
     for unit in sorted(units):
-        files["include/" + _header_file(unit)] = net._context(pid, unit)["header"]
+        files["include/" + _header_file(unit)] = (net._context(pid, unit) or {"header": ""})["header"]
     files[MANIFEST] = json.dumps(manifest, indent=1) + "\n"
     if readme_key is None or _readme_key(manifest) != readme_key:
         _write_readme(net, proj, readme_folder, manifest, functions)
@@ -452,7 +467,7 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
     files = {MANIFEST: json.dumps(manifest, indent=1) + "\n"}
     if headers:
         for unit in sorted(units):
-            files["include/" + _header_file(unit)] = net._context(pid, unit)["header"]
+            files["include/" + _header_file(unit)] = (net._context(pid, unit) or {"header": ""})["header"]
     if names:
         for start in range(0, len(names), 400):
             chunk = names[start:start + 400]
@@ -472,10 +487,12 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
 def _save_best(net, proj, folder: Path) -> dict:
     """A project-mode game's save: each open function's closest attempt as best/<function>.c, with how close it is,
     who wrote it and its source file in a comment at its top. Its matched C is in the project's own files."""
-    names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, unit, n_insns, best_source, best_score, best_agent_id, meta FROM functions WHERE "
                          "project_id=? AND status='open' AND best_source IS NOT NULL AND best_score IS NOT NULL "
                          "ORDER BY unit, name", proj["id"])
+    agent_ids = sorted({r['best_agent_id'] for r in rows if r['best_agent_id'] is not None})
+    names = {r['id']: r['name'] for r in net.store.all(
+        "SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))", json.dumps(agent_ids))}
     folder.mkdir(parents=True, exist_ok=True)
     files = {}
     for r in rows:
@@ -551,6 +568,9 @@ def restore(net, source: str, game: Path, log=print) -> dict:
     log("checking the saved project and your game copy")
     with tempfile.TemporaryDirectory(prefix="decomp-restore-") as tmp:
         folder = fetch(source, Path(tmp) / "save", log)
+        from ..forks.project import ForkProject
+        if not (folder / MANIFEST).exists() and (saved := ForkProject(folder).progress_save()):
+            folder = saved[0]
         try:
             manifest = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -567,7 +587,7 @@ def restore(net, source: str, game: Path, log=print) -> dict:
         manifest = _manifest(files, {"rom": {"sha1": game_sha1}})
         log("importing and splitting your game copy")
         existing = net.store.all("SELECT slug,root,config FROM projects")
-        source_folder = Path(source).expanduser()
+        source_folder = folder if Path(source).expanduser().is_dir() else Path(source).expanduser()
         same_game = []
         for row in existing:
             cfg = json.loads(row["config"])
@@ -680,7 +700,7 @@ def _saved_source(folder: Path, files: dict[str, str] | None, name: str) -> str 
 
 
 def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
-                   files: dict[str, str] | None = None) -> tuple[dict, dict]:
+                   files: dict[str, str] | None = None, *, restore_notes: bool = True) -> tuple[dict, dict]:
     """Put back everything a save changes before its C is judged: layout, names, settings, notes, set-aside."""
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = net._project(slug)
@@ -702,7 +722,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             row = _set_aside_row(db, pid, item)
             if row is None:
                 continue
-            why = {key: value for key, value in item.items() if key in SET_ASIDE_META}
+            why = restored_aside(item)
             meta = json.loads(row["meta"] or "{}") | why
             db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?", (json.dumps(meta), row["id"]))
 
@@ -722,6 +742,8 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             log("left out saved compiler ranges whose compiler decompdecomp doesn't have: " + ", ".join(
                 f"0x{int(r.get('start') or 0):X}-0x{int(r.get('end') or 0):X} {r.get('toolchain')}" for r in gone))
         cfg["compiler_ranges"] = kept
+        cfg['function_compilers']={key:value for key,value in (manifest.get('function_compilers') or {}).items()
+                                   if toolchains.known(str(value.get('toolchain') or ''))}
         cfg["instructions"] = manifest.get("instructions") or ""
         cfg["priority"] = manifest.get("priority") or []
         cfg["auto_compiler"] = manifest.get("auto_compiler")
@@ -730,7 +752,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     if manifest.get("title"):
         with net.store.tx() as db:
             db.execute("UPDATE projects SET name=? WHERE id=?", (manifest["title"], pid))
-    restorer, _ = net.local_agent("restored")
+    restorer = net.attribution_agent("restored")
     with net.store.tx() as db:
         for unit, file in (manifest.get("headers") or {}).items():
             check_cancel()
@@ -744,87 +766,208 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             if not db.execute("SELECT 1 FROM knowledge WHERE project_id=? AND text=?", (pid, text)).fetchone():
                 db.execute("INSERT INTO knowledge(project_id, text, status, created_at, decided_at) VALUES(?,?,?,?,?)",
                            (pid, text, "accepted", time.time(), time.time()))
-    for note in manifest.get("notes") or []:
-        check_cancel()
-        try:
-            net.add_note(net.local_agent(note.get("by") or "restored")[0], slug, note["text"], note.get("function"))
-        except NetworkError:
-            continue  # its function is gone (a split the layout couldn't make again)
+    # Restored notes are historical records, not new agent handoffs. Going through add_note
+    # recalculates attempt/session history once per note and can hold the writer for minutes.
+    # Resolve the small identity/function sets once; old saves without measurements stay unknown.
+    functions = {r["name"]: r["id"] for r in net.store.all(
+        "SELECT id,name FROM functions WHERE project_id=?", pid)}
+    authors = {}
+    with net.store.tx() as db:
+        for note in (manifest.get("notes") or []) if restore_notes else []:
+            check_cancel()
+            name = note.get("function")
+            if name and name not in functions:
+                continue  # A split may have removed this function.
+            author = note.get("by") or "restored"
+            if author not in authors:
+                authors[author] = net.attribution_agent(author).id
+            before, after = note.get("score_before"), note.get("score_after")
+            if not all(type(value) is int and value >= 0 for value in (before, after)):
+                before = after = None
+            at = note.get("created_at")
+            if type(at) not in (int, float):
+                at = time.time()
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) "
+                       "VALUES(?,?,?,?,?,?,?)", (pid, functions.get(name), authors[author], note["text"],
+                                               at, before, after))
     with net.store.tx() as db:
         for item in manifest.get("set_aside") or []:
             row = _set_aside_row(db, pid, item)
             if row is not None:
-                why = {k: v for k, v in item.items() if k in SET_ASIDE_META}
+                why = restored_aside(item)
                 db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",
                            (json.dumps({**json.loads(row["meta"] or "{}"), **why}), row["id"]))
     by_name = {r["name"]: r for r in net.store.all("SELECT name,vram FROM functions WHERE project_id=?", pid)}
     return by_name, manifest.get("functions") or {}
 
 
+def _saved_name(old_name, info, by_name, by_vram):
+    row = by_name.get(old_name)
+    if row is not None and row["vram"] == info["vram"]:
+        return old_name
+    candidates = by_vram.get(info["vram"], [])
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
+    """Compile a bounded window ahead; only the caller may judge or change project state."""
+    from . import workers
+
+    pending = deque()
+    entries = iter(saved.items())
+    width = workers.WORKERS if judge_code else 1
+    # Shared background workers can be waiting for this project's lock. Never queue compiles
+    # behind those tasks while holding that lock. Compiler._SLOTS still caps subprocesses globally.
+    pool = (ThreadPoolExecutor(width, thread_name_prefix="progress-compile", initializer=workers.lower_priority)
+            if judge_code else None)
+    stopped = threading.Event()
+
+    def compile_one(proj, header, text, fn):
+        def check():
+            if stopped.is_set():
+                raise NetworkError("Saved-progress compilation stopped.")
+            check_cancel()
+        with compiler.cancellable(check):
+            check()
+            return net._compile(proj, header, text, fn)
+
+    try:
+        while True:
+            while len(pending) < width:
+                check_cancel()
+                entry = next(entries, None)
+                if entry is None:
+                    break
+                old_name, info = entry
+                kind = "src" if "matched_by" in info else "best"
+                text = _saved_source(folder, files, f"{kind}/{old_name}.c")
+                name = _saved_name(old_name, info, by_name, by_vram)
+                prepared = None
+                if judge_code and name is not None and text is not None:
+                    fn = dict(net.store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
+                    if fn["status"] != "matched" and not (kind == "best" and fn["best_source"] == text):
+                        ctx = net._context(proj["id"], fn["unit"])
+                        if ctx is not None:
+                            snapshot = net._compile_snapshot(proj, fn, ctx["header"], text)
+                            future = pool.submit(compile_one, dict(proj), ctx["header"], text, fn)
+                            prepared = (snapshot, future)
+                pending.append((old_name, info, kind, text, name, prepared))
+            if not pending:
+                return
+            item = pending.popleft()
+            try:
+                yield item
+            finally:
+                if item[-1] is not None:
+                    item[-1][1].cancel()
+    finally:
+        stopped.set()
+        for *_, prepared in pending:
+            if prepared is not None:
+                prepared[1].cancel()
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
                  files: dict[str, str] | None = None, judge_code: bool = True) -> dict:
     check_cancel = getattr(log, "check_cancel", lambda: None)
-    pid = net._project(slug)["id"]
+    proj = dict(net._project(slug))
+    pid = proj["id"]
     by_vram: dict[int, list[str]] = {}
     for name, row in by_name.items():
         by_vram.setdefault(row["vram"], []).append(name)
     matched, lost, best = 0, [], 0
     log(f"judging {len(saved)} saved functions again")
-    for old_name, info in saved.items():
-        check_cancel()
-        log(f"checking {old_name}")
-        kind = "src" if "matched_by" in info else "best"
-        text = _saved_source(folder, files, f"{kind}/{old_name}.c")
-        row = by_name.get(old_name)
-        name = old_name if row is not None and row["vram"] == info["vram"] else None
-        if name is None:
-            candidates = by_vram.get(info["vram"], [])
-            name = candidates[0] if len(candidates) == 1 else None
-        if name is None or text is None:
-            lost.append(old_name) if kind == "src" else None
-            continue
-        current = net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
-        if current["status"] == "matched":
-            matched += kind == "src"
-            continue
-        if kind == "best" and current["best_source"] == text:
-            best += 1
-            continue
-        if not judge_code:
-            # A pull that changed only the manifest's metadata applies its settings, notes and layout, but does not
-            # compile every saved attempt again (the folder's C did not change).
-            if kind == "src":
-                matched += current["status"] == "matched"
-            else:
-                best += 1
-            continue
-        credit, _ = net.local_agent((info.get("matched_by") or info.get("best_by") or "restored"))
-        agent, _ = net.local_agent("progress-judge")
-        try:
-            result = net.attempt(agent, name, text, slug)
-        except (NetworkError, toolchains.ToolchainError) as e:
-            # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
-            # from coming back; the function stays open for when the user picks one (#118).
-            log(f"{name}: {e}")
-            result = {"matched": False}
-        finally:
-            with net.store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
-                db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
-                           "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
-        with net.store.tx() as db:
-            db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
-                       (credit.id, pid, name, agent.id))
-            db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
-                       (credit.id, pid, name, agent.id))
-        if kind == "src":
-            if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
+    update = getattr(log, "progress", lambda **fields: None)
+    from ..match_bundle import restore_evidence_many
+    def evidence_names():
+        for old_name, info in saved.items():
+            check_cancel()
+            name = _saved_name(old_name, info, by_name, by_vram)
+            kind = "src" if "matched_by" in info else "best"
+            if name is not None and _saved_source(folder, files, f"{kind}/{old_name}.c") is not None:
+                yield name, old_name
+    progress = getattr(net, "progress", None)
+    verdict_lock = progress._project_lock(slug) if progress is not None else nullcontext()
+    with verdict_lock:
+        restore_evidence_many(net, pid, evidence_names(), manifest, check_cancel)
+        if progress is not None and (active := progress.rechecking.get(slug)) is not None:
+            # Expose the foreground lane only after old saved evidence is installed;
+            # it must never replace a new match's verification bundle.
+            active.ready = True
+    # Metadata imports run under the project lock and do not compile or change function
+    # status. One snapshot replaces thousands of identical point queries in that scan.
+    current_rows = None if judge_code else {row["name"]:row for row in net.store.all(
+        "SELECT name,status,best_source FROM functions WHERE project_id=?", pid)}
+    last_update = 0
+    checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel)
+    with closing(checks):
+        for index, (old_name, info, kind, text, name, prepared) in enumerate(checks):
+            # Compile workers do no writes. Wait outside the lock so a slow compiler cannot
+            # occupy the foreground judge's publication lane.
+            if prepared is not None:
+                while not prepared[1].done():
+                    check_cancel()
+                    time.sleep(0.01)
+            with verdict_lock:
+                now = time.monotonic()
+                if judge_code or now - last_update >= 0.1:
+                    update(phase="Verifying saved functions" if judge_code else "Reading saved function records",
+                           done=index, total=len(saved), function=old_name, matched=matched, best=best, lost=len(lost))
+                    last_update = now
+                check_cancel()
+                if judge_code:
+                    log(f"checking {old_name}")
+                if name is None or text is None:
+                    lost.append(old_name) if kind == "src" else None
+                    continue
+                current = (net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
+                           if judge_code else current_rows[name])
+                if current["status"] == "matched":
+                    matched += kind == "src"
+                    continue
+                if kind == "best" and current["best_source"] == text:
+                    best += 1
+                    continue
+                if not judge_code:
+                    # A pull that changed only the manifest's metadata applies its settings, notes and layout, but does not
+                    # compile every saved attempt again (the folder's C did not change).
+                    if kind == "src":
+                        matched += current["status"] == "matched"
+                    else:
+                        best += 1
+                    continue
+                credit = net.attribution_agent(info.get("matched_by") or info.get("best_by") or "restored")
+                agent, _ = net.local_agent("progress-judge")
+                try:
+                    with net.compiled_ahead(prepared):
+                        result = net.attempt(agent, name, text, slug)
+                except (NetworkError, toolchains.ToolchainError) as e:
+                    check_cancel()  # A paused/cancelled check is not a failed match; abort and roll back instead.
+                    # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
+                    # from coming back; the function stays open for when the user picks one (#118).
+                    log(f"{name}: {e}")
+                    result = {"matched": False}
+                finally:
+                    with net.store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
+                        db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
+                                   "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
                 with net.store.tx() as db:
-                    db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
-            matched += bool(result.get("matched"))
-            if not result.get("matched"):
-                lost.append(name)
-        else:
-            best += 1
+                    db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
+                               (credit.id, pid, name, agent.id))
+                    db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
+                               (credit.id, pid, name, agent.id))
+                if kind == "src":
+                    if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
+                        with net.store.tx() as db:
+                            db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
+                    matched += bool(result.get("matched"))
+                    if not result.get("matched"):
+                        lost.append(name)
+                else:
+                    best += 1
+    update(done=len(saved), total=len(saved), function=None, matched=matched, best=best, lost=len(lost))
     log(f"restored: {matched} matched functions, {best} best attempts" + (f"; {len(lost)} no longer match" if lost else ""))
     return {"matched": matched, "best": best, "lost": lost}
 
@@ -921,31 +1064,189 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
     net._syms.pop(pid, None)
 
 
+class _AutosavePaused(RuntimeError):
+    """Cancel only a background check; foreground saves remain enabled."""
+
+
 class Autosave:
     """Follow local work and contributions in progress/, including while no project window is open."""
 
-    def __init__(self, net):
-        self.net = net
+    def __init__(self, net, settings=None):
+        self.net, self.settings = net, settings
         self.stop = threading.Event()
+        self.retry_after = {}
+        self.deep_check_after = {}
+        self.lock = threading.RLock()
+        self.lane = threading.Semaphore(1)
+        self.workers = {}
+        self.paused = set(settings.data.get('autosave_paused', [])) if settings else set()
+        self.thread = None
 
     def start(self) -> None:
-        threading.Thread(target=self._loop, daemon=True, name="autosave").start()
+        with self.lock:
+            if self.thread is not None:
+                return
+            self.thread = threading.Thread(target=self._loop, daemon=True, name="autosave-coordinator")
+            self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        with self.lock:
+            for worker in self.workers.values():
+                worker['cancel'].set()
+
+    def snapshot(self):
+        with self.lock:
+            return [dict(key=slug, state=('pausing' if worker['running'] else 'paused')
+                         if slug in self.paused else ('running' if worker['running'] else 'waiting'),
+                         thread_id=worker['thread'].native_id, detail=worker['detail'])
+                    for slug, worker in self.workers.items()]
+
+    def pause(self, slug, paused=True):
+        with self.lock:
+            if slug not in self.workers:
+                raise NetworkError('This project autosave is no longer available. Refresh the list.')
+            worker = self.workers[slug]
+            if paused:
+                self.paused.add(slug)
+                worker['cancel'].set()
+            else:
+                self.paused.discard(slug)
+                # Never clear an active operation's cancellation request before it acknowledges it.
+                if not worker['running']:
+                    worker['cancel'].clear()
+                self.retry_after.pop(slug, None)
+                self.deep_check_after.pop(slug, None)
+            if self.settings is not None:
+                self.settings.data['autosave_paused'] = sorted(self.paused)
+                self.settings.save()
+
+    def _projects(self):
+        store = self.net.store
+        if hasattr(store, 'read_cache'):
+            return store.read_cache.get('autosave-projects', store.read_version('project_list'),
+                                        lambda: store.all("SELECT slug,root,config FROM projects"))
+        return store.all("SELECT slug,root,config FROM projects")
+
+    def _reconcile(self):
+        projects = {}
+        for row in self._projects():
+            cfg = json.loads(row['config'])
+            if cfg.get('kind') == 'rom' and cfg.get('rom', {}).get('sha1'):
+                projects[row['slug']] = row
+        with self.lock:
+            for slug in list(self.workers):
+                if slug not in projects:
+                    self.workers.pop(slug)['cancel'].set()
+            for slug, row in projects.items():
+                if slug in self.workers:
+                    self.workers[slug]['row'] = row
+                    continue
+                worker = dict(row=row, cancel=threading.Event(), running=False,
+                              detail='Background file checks; explicit saves remain enabled.')
+                worker['thread'] = threading.Thread(target=self._project_loop, args=(slug, worker),
+                                                     daemon=True, name=f'autosave-{slug}')
+                self.workers[slug] = worker
+                worker['thread'].start()
 
     def _loop(self) -> None:
+        from .workers import lower_priority
+        lower_priority()
         while not self.stop.is_set():
-            self.run_once()
+            try:
+                self._reconcile()
+                retention=getattr(self.net,'database_retention',None)
+                if retention is not None:retention.tick()
+            except Exception:
+                log.exception('Could not refresh project autosave workers')
+            self.stop.wait(2)
+
+    def _project_loop(self, slug, worker):
+        from .workers import lower_priority
+        lower_priority()
+        def check_cancel():
+            if self.stop.is_set() or worker['cancel'].is_set():
+                raise _AutosavePaused('Background autosave paused')
+        def report(message):
+            check_cancel()
+            with self.lock:worker['detail'] = str(message)
+            log.info('%s: %s', slug, message)
+        report.check_cancel = check_cancel
+        while not self.stop.is_set():
+            with self.lock:
+                if self.workers.get(slug) is not worker:
+                    return
+                paused = slug in self.paused
+                if not paused:
+                    worker['cancel'].clear()
+            if not paused and self.lane.acquire(timeout=.1):
+                try:
+                    with self.lock:
+                        check_cancel()
+                        worker['running'] = True
+                    self.run_once(force=False, rows=[worker['row']], logger=report)
+                except _AutosavePaused:
+                    pass
+                finally:
+                    with self.lock:
+                        worker['running'] = False
+                    self.lane.release()
             self.stop.wait(1)
 
-    def run_once(self) -> list[str]:
-        """Synchronize every ROM project, including file changes that have no database event."""
+    def run_once(self, *, force=True, rows=None, logger=None) -> list[str]:
+        """Save dirty work each cycle; background cycles deeply inspect unchanged files every 15 seconds.
+
+        Explicit callers retain forced checks, including external edits with unchanged directory timestamps.
+        """
         saved = []
-        for row in self.net.store.all("SELECT slug FROM projects"):
+        projects = self._projects() if rows is None else rows
+        for row in projects:
+            if time.monotonic() < self.retry_after.get(row['slug'], 0):
+                continue
             try:
-                if self.net.progress.sync(row["slug"], force=True, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
+                deep = force or time.monotonic() >= self.deep_check_after.get(row["slug"], 0)
+                if self.net.progress.sync(row["slug"], force=deep, retry=False, **({"logger": logger} if logger else {})):  # (a failed one waits: RETRY_FAILED_SECONDS)
                     saved.append(row["slug"])
-            except Exception as e:  # never stands between the user and their work
+                if deep:
+                    self.deep_check_after[row["slug"]] = time.monotonic() + 15
+                self.retry_after.pop(row['slug'], None)
+                if json.loads(row['config']).get('auto_commit_matches'):
+                    from . import match_commits
+                    match_commits.process(self.net, row['slug'], logger or log.info)
+            except _AutosavePaused:
+                raise
+            except Exception as error:  # keep other projects saving; do not flood logs every second
                 from .progress import _StillFailing
 
-                if not isinstance(e, _StillFailing):  # (#167: the same failure, logged once, not every second)
-                    log.exception("saving %s failed", row["slug"])
+                if isinstance(error, _StillFailing):
+                    continue
+                self.retry_after[row['slug']] = time.monotonic() + 30
+                try:
+                    cfg = json.loads(row['config'])
+                    folder = cfg.get('progress_folder') or str(Path(row['root']) / SAVE_FOLDER)
+                except (ValueError, TypeError, AttributeError):
+                    folder = str(Path(row['root']) / SAVE_FOLDER)
+                if isinstance(error, PermissionError):
+                    action = "Check write permission for this folder and its files."
+                elif isinstance(error, FileNotFoundError):
+                    action = "Check that the project folder exists and its disk is connected."
+                elif isinstance(error, OSError) and error.errno == 28:
+                    action = "Free disk space on the drive containing this folder."
+                elif 'locked' in str(error).lower():
+                    action = "Close other programs using this project database; retry after they finish."
+                else:
+                    action = "Resolve any reported progress-file conflict or invalid file; include the complete traceback when reporting this error."
+                from . import build_info
+                log.exception("Progress sync failed for %s at %s: %s: %s. %s Retrying in 30 seconds. "
+                              "Do not delete or overwrite progress files. Build: %s",
+                              row['slug'], folder, type(error).__name__, str(error), action, build_info.label())
         return saved
+
+
+def restored_aside(item):
+    """Keep assembly provenance on restore, but require a fresh local assembler/data check."""
+    meta={k:v for k,v in item.items() if k in SET_ASIDE_META}
+    if isinstance(meta.get('verified_assembly'),dict):
+        meta['verified_assembly']={**meta['verified_assembly'],'verified':False}
+    else:meta.pop('verified_assembly',None)
+    return meta

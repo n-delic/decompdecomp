@@ -1,0 +1,238 @@
+# Interactive app performance
+
+The desktop app and private web interface use the same local implementation. This change does not add public hosting or external caching.
+
+## Data and invalidation
+
+- `project_totals` stores progress accounting, maintained by SQLite triggers in the same transaction as function changes. Import, reimport, room sync, corrected metadata, moved functions and rollback use the same rules as `PROGRESS_COLUMNS`. Existing databases bootstrap once in an atomic migration.
+- Sidebar reads join project rows, totals and indexed last-activity timestamps in one query. Per-project errors remain isolated. Room claims use one batched lookup, including name-based imported projects.
+- Constant-time map revisions replace aggregate scans. Relevant source metadata, status, target, names and build membership invalidate the revisions. Target/layout revisions invalidate cross-project byte membership independently of ordinary attempts.
+- Per-engine view snapshots retain at most 100,000 row units and 64 entries. Concurrent identical snapshot builds coalesce. Overview diagnostics expire after five seconds; map/cross-project snapshots after thirty seconds. Transactional map reads are not cached. Full map requests also include attempt revisions and current claims in their freshness key.
+- Clients opt into changed-row maps. Compatible layouts patch existing objects and draw changed cells; missing old snapshots and structural changes return full maps. Older clients continue receiving full maps.
+
+## Scheduling and compilation
+
+Sidebar/live reads use a separate two-request lane from the four-request heavy UI lane. Both read saved progress while verification runs. They cannot bypass mutation or judge synchronization gates.
+
+Background worker threads acquire a background compiler gate as well as the existing global compiler gate, leaving one global slot available for foreground requests. Cancellation is checked while waiting at either gate. Explicit worker counts still determine search concurrency; they do not remove compiler resource limits.
+
+Only simultaneous identical, deterministic sandboxed ROM compiles share work. Keys include coordinator identity/target snapshot, command/settings, staged header contents, environment, preludes/intrinsics and executable metadata. Results are copied for each follower. There is no persistent compiled-object cache. Cancellation and diagnostic artifact capture bypass sharing; custom commands/mounts/extra include flags and clock-dependent macros are conservative bypasses. Each ordinary request retains its own linking, exact-byte judge, attempt recording and attribution. Imported project builds retain their existing locks and judge.
+
+## Reproduce measurements
+
+```sh
+PYTHONPATH=src python tools/benchmark_project_views.py
+pytest -q tests/test_project_views.py tests/test_compile_sharing.py tests/test_loading.py
+node tests/gui_map_delta.js
+```
+
+A scratch synthetic database with 12 projects and 24,000 functions, measured on the development Mac:
+
+| Operation | Median / measured time |
+|---|---:|
+| Previous per-project progress aggregates | 3.817 ms |
+| Stored progress rows, one query | 0.013 ms |
+| First cross-project identity scan | 14.726 ms |
+| Cached cross-project identity lookup | 0.002 ms |
+
+Read timings use warmed data, with 40 repeats; the cold membership scan is a single measurement.
+They measure components, not end-to-end project opening, compiler speed or performance on other hardware.
+A separate synthetic run measured 1,000 attempt-counter updates in one transaction at 4.577 ms
+with rollups versus 2.274 ms without them (about 2.3 microseconds extra per update). This excludes
+per-transaction durability costs and is not a compiler-throughput benchmark. Compilation and
+project file analysis can still dominate real workloads.
+
+Regression checks cover totals versus the original SQL after edits/moves/deletion, migration, rollback,
+map snapshot/delta/fallback behaviour, fresh attempt counts, shared compile identity and result isolation,
+cancellation, and foreground capacity while background/detail requests are blocked.
+
+## Queue and inspector throughput
+
+Deep-pass selection reads at most 128 function input rows at a time, joining pass state and
+host claims. It retains only identities and scope hashes while waiting for dispatch. Each
+worker reloads the current function and scope before searching; removed or already matched
+functions are skipped. Eligibility checks still inspect the actual source/build inputs.
+
+Both ROM and imported-project inspectors return at most 800 chart points. Each of up to
+160 ID-range buckets preserves its first/last attempts, best/worst scores and a failed
+compile. The chart identifies representative sampling and displays the full attempt count;
+all attempts remain stored. Notes load 40 raw records per page, then apply the existing
+handoff grouping/filtering. **Load older notes** uses a timestamp/ID cursor and preserves
+loading state across polling; changing function or project ignores old responses.
+
+Ordinary deep-search progress snapshots coalesce over 200 ms, including a trailing flush.
+New workers, phase changes, improvements, errors and completion publish immediately. Full
+technical logs are still recorded. Search progress callbacks use this same coalescing path.
+
+Project GET response encoding and map JSON/gzip encoding run in workers. Full maps reuse
+their array representation and encoded bytes while their exact snapshot remains cached.
+The wire cache has an 8 MiB encoded-byte budget and 30-second expiry; unique snapshot tokens
+prevent ID reuse or cross-project collisions. Delta/unchanged replies are small and encoded
+directly. Map arrays count against the existing row budget.
+
+### Optional timing diagnostics
+
+Start a checkout with `DECOMP_PERF=1` to add numeric `Server-Timing` headers and application
+log entries for project requests and maps. `queue` measures time before the request worker
+starts; `work` includes SQL and other handler work; `sql` is its subset of SQLite read time;
+`encode` covers JSON/gzip response construction (including cache hits). Query counts are
+logged too. These timings exclude network transport and SQL outside the request thread.
+SQL text, bindings, invite URLs and source contents are not included.
+
+For browser diagnostics, run `localStorage.setItem('decomp.perf','1')` in its developer console.
+Subsequent API calls log total fetch/JSON time and server timing headers. Function rendering,
+charts and map drawing log local durations (map animation samples at most once a second).
+Disable with `localStorage.removeItem('decomp.perf')` and by removing `DECOMP_PERF` on the server.
+The browser diagnostics remain in its console.
+
+Run `PYTHONPATH=src python tools/benchmark_function_history.py` for a scratch-only synthetic
+comparison. On the development Mac, 20,000 attempts produced 20,000 points / 786,721 JSON bytes
+with the full-history path versus 485 points / 24,248 bytes with sampling. Median query,
+Python conversion and JSON encoding time over 12 warm runs was 12.03 ms versus 10.44 ms.
+This is a component benchmark: it does not measure browser rendering or claim faster judging.
+
+
+### SQL phases in agent tool transcripts
+
+MCP tool response timings include `sql_connection_ms`, `sql_lock_wait_ms`,
+`sql_execute_ms` and `sql_fetch_ms`, summed across the call's database reads.
+Connection and execute durations are retained when a read raises an error,
+including a SQLite busy timeout. `sql_lock_wait_ms` measures the fallback read
+connection's Python lock; SQLite's own busy wait is included in execute/fetch,
+not that lock field. These numeric fields contain no SQL text or bindings.
+They supplement `sql_read_ms`, `sql_reads`, writer-lock and candidate-lock timings;
+they do not account for every part of dispatch or identify a blocking writer.
+
+
+### Saved-progress synchronization waits
+
+Agent tool transcripts also record `progress_project_lock_wait_ms` and
+`progress_verification_wait_ms`: time waiting to enter the project's progress
+synchronization lock and the shared verification slot. `progress_sync_ms` is the
+inclusive synchronization duration (including both waits, work and cleanup),
+retained on early return and failure. These durations accumulate per request;
+they are not CPU percentages. Do not add the inclusive total to its wait fields.
+The lock ordering and verification requirements are unchanged. These measurements
+help distinguish waiting behind another saved-progress check from work in the
+current check; they do not establish the owner or cause of every dispatch delay.
+
+
+### Unchanged progress checks
+
+Saved-progress synchronization keeps its per-project lock while checking dirty
+state, configuration and existing file signatures. If those checks establish an
+unchanged project, it returns without taking the shared verification slot. This
+also applies to forced checks that verify an unchanged full file signature.
+Actual imports, progress writes and verification still acquire that shared slot;
+project metadata, pause and cancellation state are rechecked after waiting.
+This removes an unrelated-project queue from no-op checks. It does not bypass
+same-project synchronization or guarantee that a real import/full recheck is fast.
+
+### Progress filesystem failures
+
+Rejected links and non-regular progress paths identify their relative filename.
+Failed synchronization also reports a bounded, escaped OS filename and error code
+when available, without printing arbitrary exception arguments or source contents.
+These diagnostics preserve the original failure and all synchronization guards;
+they do not establish the cause of long per-project lock waits or retry failed work automatically.
+
+### Files disappearing during progress capture
+
+A listed file can disappear while git or an editor updates the progress folder.
+A missing-file error during capture now restarts the read from the manifest, up to
+three attempts, discarding the partial dictionary each time. This retries only file
+reads: imports, writes and transaction bodies are not replayed. Successful reads
+still pass the normal manifest, snapshot and exact-judging guards.
+
+Persistent disappearance propagates its last error. Permission failures, symbolic
+links, non-regular files and conflict markers still fail. This covers a reproducible
+read race; it does not prove the cause of every historical missing-file failure or
+resolve the separately observed database/project-lock contention.
+
+### SQLite writer acquisition
+
+The app and its intended permuter child can contend for the same WAL database.
+Ordinary `Store.tx` acquisition now waits for SQLite in at most 100 ms slices and
+releases its local writer mutex between attempts. The configured busy timeout is
+one deadline from the first acquisition attempt; zero remains immediate. The
+original timeout is restored before running the body and after failed acquisition.
+
+Only `BEGIN IMMEDIATE` acquisition is retried. Transaction bodies, commits and
+callbacks are never replayed. Nested transactions and explicit cancellable
+maintenance waits retain their existing behavior. This removes one local queue
+amplification; it does not eliminate external contention, long transactions or
+project synchronization waits. Controlled contention tests are not a live-app benchmark.
+
+## Reject introduced pointer captures with a possible uninitialized read
+
+The shared native generator checks simple introduced integer and pointer locals
+before candidate compilation. Pointer captures need the same must-initialization
+analysis: assigning a pointer inside `if (count > 0)` does not initialize it on
+the other branch. Writing through a pointer reads that pointer, rather than
+initializing it. Fully initialized captures remain available to the search.
+
+This applies to users of the shared generator in ROM and PROJECT mode, without
+depending on an architecture or compiler. It is a bounded syntactic guard, not
+a C equivalence or undefined-behavior checker. Qualified, escaped, shadowed,
+unknown pointee aliases and unsupported expression shapes retain no verdict.
+An accepted candidate still needs the ordinary compiler and exact judge.
+
+Replaying a private copied 1,000-emission run rejects ten additional possible
+uninitialized pointer captures that had reached compilation. Two manually
+confirmed bad captures are rejected; the reviewed valid field-address capture
+remains allowed. This is evidence for that run, not a general match-rate or
+performance estimate. Generated game sources and replay artifacts stay private.
+
+
+## Keep native initialization verdicts independent
+
+An unsupported embedded assignment to one introduced temporary no longer cancels
+analysis of another binding. The guard shares one bounded control-flow graph and
+computes a separate must-initialization verdict for each eligible integer/pointer.
+A local record typedef containing only scalar fields and literal array bounds is
+ignored as a type declaration, with offsets preserved. It does not add executable
+reads. Complex fields, macro-expanded declarations, variable bounds and aggregate
+initializers remain opaque; the shared lifetime-repair parser is unchanged.
+
+A private replay of 640 retained candidate sources previously gave no verdict for
+all of them because of a local matrix typedef. The revised guard rejects 18 possible
+uninitialized captures, including the reviewed pointer assigned only in an earlier
+possibly empty loop. Original and layout-restored baseline sources remain allowed.
+These are skipped unsafe compilations, not new exact matches or a measured runtime
+speedup. Floating temporaries and semantic equivalence remain outside this guard.
+
+
+## Expose simple byte-field macros before native mutation
+
+The shared ROM/PROJECT native input preparation recognizes unique, unconditional
+accessors shaped like `FIELD(base, offset)` whose entire body dereferences a typed
+pointer at a byte address. Nested loads and assignment destinations become real
+memory expressions in the parser instead of opaque function calls. Parameter
+evaluation counts, types, byte scaling, definitions and physical lines are retained.
+This changes search visibility, not the exact judge or compiler profile.
+
+This is deliberately not a C preprocessor. Conditional/include/undef directives,
+redefinitions, stringification/pasting, line observers, splices, unsupported bodies
+and multiline invocations retain their original form. Unknown macros and ordinary
+functions are not guessed. The existing special m2c expansions remain separate.
+
+A private copied function exposed44 accessor calls, including7 assignment lvalues;
+only11 real helper calls remain. Full translation-unit AST/declaration equivalence
+and ordinary/diagnostic period-compiler checks preserve all1560 linked baseline
+bytes. The separately bounded search found no new exact match. No general speedup
+or match-rate improvement is inferred; the verified gain is access to previously
+hidden memory/address expressions.
+
+### Guarded values before spending agent turns
+
+Deterministic search now offers `guarded_call_value` in both ROM and imported
+project modes on supported 32-bit C targets. It keeps captures and conditions,
+then tries a value already established by a dominating equality in direct call
+arguments. It also follows a leading same-width local copy and can reuse an
+unchanged comparison operand. Unknown writes, escapes, shadows, macros, labels
+inside the arm, reflected types and unsupported ABIs stop the proposal.
+
+A copied caller with corrected byte parameters went from 825 to exact without
+an agent edit using this family. This is a controlled replay of an existing
+match, not a new game match or a claim about agent token savings. Ordinary and
+diagnostic outputs agreed. Search budgets and exact acceptance remain unchanged.

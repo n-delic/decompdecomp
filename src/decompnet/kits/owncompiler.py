@@ -89,6 +89,22 @@ class OwnCompilers(Kit):
         # the kinds whose version the folder names; none named: the first. (A PSP GCC 1.3.1 also holds psp/bin/gcc,
         # which 1.7.1 runs: named nowhere, it isn't offered.)
         named = [(exe, k) for exe, (*_, ks) in read.items() for k in ks]
+        # An installed pack's exact compiler binary identifies its build even when the executable has no
+        # dotted version string (SN N64's 2.72 and 2.81 both call theirs cc1n64.exe).
+        from .. import toolchains
+
+        for exe, kinds in by_program.items():
+            exact = []
+            for kind in kinds:
+                tid = kind[0]
+                if toolchains.installed(tid) is None:
+                    continue
+                bundled = toolchains.path(tid) / packs(self.platform)[tid][0]
+                if bundled.is_file() and bundled.stat().st_size == exe.stat().st_size \
+                        and hashlib.sha256(bundled.read_bytes()).hexdigest()[:8] == read[exe][0]:
+                    exact.append((exe, kind))
+            if exact:
+                named = [(candidate, kind) for candidate, kind in named if candidate != exe] + exact
         if not named and by_program:
             exe, kinds = next(iter(by_program.items()))
             named = [(exe, kinds[0])]

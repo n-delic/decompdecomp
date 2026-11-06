@@ -1,7 +1,7 @@
 """Variants of one function's C, made by decomp-permuter's randomizer (MIT, a pinned tool: toolchains.toml).
 
 A program of its own, not a module of decompdecomp: app/permute.py runs it with the Python of decomp-permuter's
-environment, `python -I permuter_gen.py <decomp-permuter's folder>`, and it imports nothing of decompdecomp. Our
+environment, `python -I permuter_gen.py <decomp-permuter's folder>`, and it imports only our dependency-free capture guard. Our
 own judge scores what it writes; this only makes candidates, so a variant that doesn't compile costs one compile.
 
 In, on stdin, one job per line, each a JSON object:
@@ -30,9 +30,12 @@ import json
 import random
 import re
 import sys
+from functools import wraps
+from pathlib import Path
 
 KEEP = 0.6  # decomp-permuter's default chance of building on the last variant instead of starting again
 SOURCE_STARTS = "DECOMPDECOMP_SOURCE_STARTS"  # a typedef put between the header and the source, to find the seam
+
 TRIES_PER_VARIANT = 4  # rewrites can repeat or fail: give up on a job that yields nothing new this many times over
 MAX_SEED = 10**20
 # a comment, or a string or character literal (group 1), which keeps any /* inside it
@@ -45,9 +48,37 @@ def plain_c(text: str, directives: bool = True) -> str:
     return text if directives else "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
+def private_inline(original):
+    """Keep newly generated helpers local to their candidate's translation unit."""
+    @wraps(original)
+    def call(fn, ast, indices, region, random):
+        existing = {id(node) for node in ast.ext}
+        result = original(fn, ast, indices, region, random)
+        for node in ast.ext:
+            if (id(node) not in existing and type(node).__name__ == 'FuncDef'
+                    and 'inline' in node.decl.funcspec and not node.decl.storage):
+                # GNU89 external inline still emits an out-of-line global body.
+                # Separate accepted functions could otherwise define the same
+                # helper, or add text outside the judged function's byte range.
+                node.decl.storage.append('static')
+        return result
+    return call
+
+
+def supported_methods(methods):
+    """Do not manufacture self reads or arithmetic cancellations to shape allocation."""
+    # Native perm_add_self_assignment also inserts x++; x--;. Signed overflow,
+    # pointer bounds and uninitialized/qualified reads make these unsafe without
+    # range and type proofs. They add no source-level computation to recover.
+    return [(method, weight) for method, weight in methods
+            if method.__name__ != 'perm_add_self_assignment']
+
+
 def main() -> int:
     sys.path.insert(0, sys.argv[1])  # decomp-permuter's folder: its `src` package and its own copy of pycparser
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from perm_pycparser import c_ast
+    from permuter_capture import protect_expand
     from src.ast_util import to_c
     from src.candidate import Candidate
     from src.helpers import get_default_randomization_weights
@@ -63,7 +94,10 @@ def main() -> int:
                 f"{plain_c(source, directives=False)}\n")
         rng = random.Random(job["seed"])
         try:
-            weights = get_default_randomization_weights(job.get("family") or "base")
+            weights = dict(get_default_randomization_weights(job.get("family") or "base"))
+            for key, factor in job.get("weight_boosts", {}).items():
+                if key in weights and isinstance(factor, (int, float)) and 0.25 <= factor <= 4:
+                    weights[key] *= factor
             first = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
         except Exception as e:  # the C or the header isn't C pycparser reads (a macro call, a compiler extension)
             yield {"error": f"{type(e).__name__}: {e}"}
@@ -78,12 +112,36 @@ def main() -> int:
 
         seen = {own_part(first.ast)}  # the source as decomp-permuter prints it: not a variant
         cand = first
+        lineage = []
+        blocked = set(re.findall(r'\b[A-Za-z_]\w*\b', "\n".join(
+            line for line in (job["header"]+"\n"+source).splitlines() if line.lstrip().startswith("#"))))
+
+        def configure(candidate):
+            def wrap(method):
+                def call(*args):
+                    result = method(*args)
+                    if job.get("trace"):
+                        lineage.append(method.__name__)
+                    return result
+                return call
+            def guarded(method):
+                if method.__name__ == "perm_expand_expr":
+                    return protect_expand(method, blocked, lambda: [
+                        node for node in candidate.ast.ext if isinstance(node, c_ast.Typedef)])
+                if method.__name__ == "perm_inline":
+                    return private_inline(method)
+                return method
+            candidate.randomizer.methods = [(wrap(guarded(method)), weight)
+                                             for method, weight in supported_methods(candidate.randomizer.methods)]
+        configure(cand)
         for _ in range(count * TRIES_PER_VARIANT):
             if len(seen) > count:
                 break
             try:
                 if cand is None or rng.random() >= KEEP:
                     cand = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
+                    lineage = []
+                    configure(cand)
                 cand.randomize_ast()
                 variant = own_part(cand.ast)
             except Exception:  # a rewrite that trips over this code: start again from the source
@@ -91,7 +149,10 @@ def main() -> int:
                 continue
             if variant not in seen:
                 seen.add(variant)
-                yield {"variant": directives + variant}
+                result = {"variant": directives + variant}
+                if job.get('trace'):
+                    result['lineage'] = list(lineage)
+                yield result
 
     for line in sys.stdin:
         if line.strip():

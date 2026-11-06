@@ -55,31 +55,30 @@ users bring (`src/decompnet/kits/`, a connector like `consoles/` and `agents/`):
 that only came in them (the Xbox XDK and its early Visual C++ builds), which nobody may publish, so nothing can pin
 them. The user points Setup at their own copy; decompdecomp records the folder and reads it there, never copies or
 downloads it, and checks its files against the SHA-256 of the builds it knows (`Kit.known`). A console takes a kit
-by naming it (`Console.kits`); the user may give several copies of one kit (two XDKs, a Visual C++ 6.0 and a 2008), and
-a console picks the copy whose build is the game's; nothing outside `kits/` and that console names one
-(`tests/test_kits.py`). splat is a Python dependency in `pyproject.toml`. Proprietary compilers are only installed
-after the user accepts that in Setup; don't add code that fetches them silently.
+by naming it (`Console.kits`); the user may give several copies of one kit (two XDKs, a Visual C++ 6.0 and a 2008), and a console picks the copy whose build is the game's; nothing outside `kits/` and that console names one (`tests/test_kits.py`). splat is a Python dependency in
+`pyproject.toml`. Proprietary compilers are only installed after the user accepts that in Setup; don't add code that
+fetches them silently.
 
 ## Consoles, and the two ways a game is decompiled
 
 Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps1/`, `ps2/`, `gc_wii/`
 (GameCube and Wii), `pc/` (Windows games), `nds/` (Nintendo DS). Its `__init__.py` makes the console (its facts and
-parts) and its docstring lists its files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part,
-one line each) and the list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine:
-`self.console(proj)`) and never compares console names: a console-specific `if` outside `consoles/` is a bug. What
-depends only on the processor (relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/`
-(`mips.py`, `ppc.py`, `x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
+parts) and its docstring lists its files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part, one line each) and the
+list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine: `self.console(proj)`) and never
+compares console names: a console-specific `if` outside `consoles/` is a bug. What depends only on the processor
+(relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/` (`mips.py`, `ppc.py`,
+`x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
 
 1. **ROM mode** (N64, PS1, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
    code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
-   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they
-   share). Exported as a rebuildable tree by `rom/export*.py`.
-3. **PROJECT mode** (GameCube/Wii/PC/DS started from scratch, and public decomps forked by repository address): a
+   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they share). Exported as a
+   rebuildable tree by `rom/export*.py`.
+2. **PROJECT mode** (GameCube/Wii/PC/DS started from scratch, and public decomps forked by repository address): a
    community-shaped project on disk with an `objdiff.json`; objdiff judges each unit. The console makes the project
    (`consoles/gc_wii/scratch.py`: dtk-template; `consoles/pc/scratch.py`: Ghidra finds functions, decompdecomp
    delinks them into COFF objects itself, from `consoles/pc/project_template/`; `consoles/nds/scratch.py`: ds-decomp,
-   with a CodeWarrior version per source file that `try_compiler` switches, `Console.file_compiler`). `forks/project.py`
-   detects and builds projects, `app/forkengine.py` drives them. Fork-mode helpers that read objects with pyelftools must
+   with a CodeWarrior version per source file that `try_compiler` switches, `Console.file_compiler`). `forks/project.py` detects and
+   builds projects, `app/forkengine.py` drives them. Fork-mode helpers that read objects with pyelftools must
    tolerate COFF (PC, Xbox): treat an `ELFError` as "no verdict".
 
 **One pipeline, every console.** A feature is built for every console it can reach, ROM mode and project mode
@@ -125,32 +124,40 @@ pass `tests/test_consoles.py`, add a ROADMAP.md column) and adding a compiler to
 ## Agents
 
 The helper agents the app starts work the same way. Each agent is a module in `src/decompnet/agents/`: `claude.py`
-(Claude Code), `codex.py`, `antigravity.py` (Antigravity CLI), `opencode.py`, `cursor.py`, `kimi.py`, `zcode.py` (ZCode CLI), and `api.py`
+(Claude Code), `codex.py`, `antigravity.py` (Antigravity CLI), `opencode.py`, `zcode.py` (ZCode CLI), and `api.py`
 (the API helper: the app's own loop for any OpenAI-compatible API). `agents/__init__.py` is the connector: the
 `Agent` class (every fact and part, one line each) and the list of agents. What's the same for every agent
 (starting, restarting, waiting out usage limits, the records, ending their processes) is in `app/agents.py`. The
-rest of the app asks `agents.get(kind)` and never compares agent names: an agent-specific `if` outside `agents/` is
-a bug (`tests/test_agent_kinds.py` checks it, the GUI too: it gets facts like `uses_endpoints` from the server).
-Adding an agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`):
-CONTRIBUTING.md, "Adding an agent".
+rest of the app asks
+`agents.get(kind)` and never compares agent names: an agent-specific `if` outside `agents/` is a bug
+(`tests/test_agent_kinds.py` checks it, the GUI too: it gets facts like `uses_endpoints` from the server). Adding an
+agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`): CONTRIBUTING.md,
+"Adding an agent".
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
 from the vtables constructors store, MIPS and x86, named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`
-tool and the class lines of `get_function`), `structs.py` (struct layouts from the loads and stores through pointers, read by
-the processor’s `Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct`
-tool and the brief’s lines, `app/engine/layouts.py`), `compilermap.py` (which compiler built each part of a MIPS game; the
-judge's survey is `engine.survey_compilers`; `app/rangecheck.py` tests a suggested range on its neighbours before it
-applies), `app/tools.py` (the MCP tools helpers get and their prompt; MCP is only the app's private wiring to the CLI
-helpers it starts), `app/window.py` + `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses
-system GTK/WebKitGTK, macOS uses Cocoa/WebKit through the app's Python; the page answers only a window with the
-secret in its user agent; Linux and Windows have a tray icon; tests set `DECOMP_WINDOW=0` and `DECOMP_TRAY=0`),
-`app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a project
-restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn, shared once
-two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter), `structs.py` (struct
-layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through
-`guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order;
-`js/base.js` says which is which).
+tool and the class lines of `get_function`),
+`m2cfix.py` (m2c's usual mistakes undone for MIPS GCC games, and its macros expanded for the permuter),
+`structs.py` (struct layouts from the loads and stores through pointers, read by the processor's
+`Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct` tool and the brief's lines, `app/engine/layouts.py`),
+`compilermap.py` (which compiler built each part of a MIPS game; the judge's survey is `engine.survey_compilers`;
+`app/rangecheck.py` tests a suggested range on its neighbours before it applies), `app/tools.py` (the MCP
+tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`
++ `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses system GTK/WebKitGTK, macOS uses
+Cocoa/WebKit through the app's Python; the page answers only a window with the secret in its user agent; Linux and
+Windows have a tray icon; tests set `DECOMP_WINDOW=0` and
+`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a
+project restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn,
+shared once two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter),
+`structs.py` (struct layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, plain scripts loaded in order; `js/base.js` says which is which).
+
+## Compiler matching evidence
+
+When a match reveals a reusable compiler behaviour, update `docs/COMPILER_MATCHING_LEARNINGS.md`.
+Record the exact compiler/flags, source change, measured result and evidence level. Include failed
+experiments that would otherwise be repeated. Keep game data private and distinguish controlled
+regression tests from new matches. Add a short version to the appropriate compiler guide when useful.
 
 ## Conventions
 
@@ -159,8 +166,7 @@ linting). In short:
 
 - Match the surrounding code: plain-English docstrings and comments that say *why*, often citing the issue or the
   case that motivated a rule ("#22: ..."). Describe a game by its kind, never by its title ("a PS2 game with 3,000
-  functions"), in code, tests, commits and PRs alike; older comments that name one stay until touched. No new
-  dependencies for a few lines; capstone, pyelftools, httpx are there.
+  functions"), in code, tests, commits and PRs alike; older comments that name one stay until touched. No new dependencies for a few lines; capstone, pyelftools, httpx are there.
 - Heavy external tools run through `limits.capped(...)` (memory cap) with a timeout.
 - A window, dialog or panel that shows progress text or logs while doing work also shows a progress bar. Reuse
   `beginWork`, `followJob` and `showJobError` in `app/static/js/base.js` and the shared `.workbar` styling; start
@@ -170,11 +176,10 @@ linting). In short:
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.
 - `uv run ruff check src tests projects` passes (CI runs it). No formatter: don't run `ruff format`.
-- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`,
-  `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); a pull request from any other branch fails
-  `.github/workflows/labels.yml`, and the prefix labels it. An issue you open (`gh issue create`) gets `--label`
-  for its kind (`bug`, `enhancement`, `documentation`, `question`) and for each console (`n64`, `psx`, `ps2`, `gc`, `wii`,
-  `pc`, `ds`, `new-console`) and system (`linux`, `windows`) it's about: `gh label list` has them all.
+- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); a pull request from any other branch fails `.github/workflows/labels.yml`,
+  and the prefix labels it. An issue you open (`gh issue create`) gets `--label` for its kind (`bug`, `enhancement`,
+  `documentation`, `question`) and for each console (`n64`, `psx`, `ps2`, `gc`, `wii`, `pc`, `ds`, `new-console`) and
+  system (`linux`, `windows`) it's about: `gh label list` has them all.
 - Releases bump the version in four places together: `pyproject.toml`, `src/decompnet/__init__.py`,
   `site/public/install.sh`, `uv.lock`; `packaging/release.sh X.Y.Z "what users get"` does that, commits, tags and
   pushes (a tag pushed before the bump fails release.yml's version check). Commit subjects read
@@ -191,6 +196,53 @@ linting). In short:
   `site/public/index.html` (the console's card and picker entry, the install section) in the same pull request;
   reviewing a change checks it, like the ROADMAP table.
 
+## Shared UI and UX patterns
+
+- Reuse the app's existing components before adding markup or CSS. Project tools and settings use
+  `<details class="panel settings-disclosure">`, a `<summary class="panel-head"><h2>…</h2></summary>`
+  and a `<div class="pad">` body. Include the full shell: `settings-disclosure` alone does not provide
+  header spacing. Keep independent tools as sibling cards, collapsed by default; preserve open state
+  during refreshes. Use `disclosure-context` for a short purpose or count beside the title.
+- Data tables should sort by clicking their column headings. Use native buttons inside `th scope="col"`,
+  visible direction indicators and `aria-sort`; toggle ascending/descending, sort numbers numerically,
+  keep missing values last, and preserve the choice across refreshes of the same view. Default to the most
+  useful ordering (compiler comparisons: Used by, highest first). Keep action-only columns unsortable and
+  preserve each row's identity when sorting so its actions still affect the correct item.
+- Within a panel, group status, counters and controls with spacing and subtle dividers rather than an
+  extra bordered card inside the card. Reserve nested boxes for genuinely separate content.
+- Keep standalone actions directly visible in the active card. Do not hide buttons such as Reset metrics
+  inside a generic “More actions” disclosure. Disclosures are for optional settings, explanations and
+  diagnostic details; use a labeled action button for a single secondary action. Use ⋮ menus only when
+  grouping several related secondary actions avoids a crowded row.
+- Avoid rows of secondary action buttons. Keep the main action visible and group related secondary actions
+  in a vertical ⋮ overflow menu using the existing `agent-menu` / `agent-menu-items` pattern (also used by
+  compiler profiles). Give the trigger a descriptive accessible label, show one action per line, retain
+  disabled states, close on selection/outside click/Escape, and restore focus to the trigger. Keep actions
+  such as Stop visible while work is running; do not hide essential progress or errors inside menus.
+- Start with one sentence explaining the outcome and when the tool is useful. Put limits beside their
+  labeled inputs, use a clear action verb on the primary button, and keep technical details in a secondary
+  disclosure. Avoid generic “Finished” messages, repeated descriptions and unexplained internal terms.
+- Use the shared dropdown styling for native single-choice `select` controls, shared field,
+  button, status and progress styles, and theme variables. Do not introduce native-looking one-off menus,
+  hard-coded theme colors or a separate card system. Check both themes and narrow layouts.
+- A click that starts work must show feedback immediately, disable duplicate starts, and offer Stop when
+  cancellation is supported. Reuse `beginWork`, `followJob`, `showJobError` and `.workbar`; clean up in
+  `finally`. Show real progress when totals exist, otherwise indeterminate progress. Keep errors actionable
+  and visible. Distinguish the current run from saved totals and never show stale data from another project.
+- User-started jobs must remain visible at their originating panel when the user navigates away
+  and returns or reopens the window. Discover active work from server-owned job IDs and explicit
+  task/project scope before loading potentially slow statistics; do not rely on browser variables.
+  Reattach the existing progress/log/Stop controls, disable duplicate starts, and show activity in
+  the panel heading even when collapsed. Reuse the same follow/completion/error path as a new job,
+  guard against duplicate followers and late discovery/statistics responses, and never restart work
+  merely to rediscover it. Test navigation, fresh-window attachment, completion, cancellation and errors.
+- Routine background synchronization should use a compact header indicator with details on demand, without
+  inserting banners that shift content. Reserve prominent progress banners for full rechecks or work that
+  requires attention; use explicit task scope rather than guessing from progress text.
+- Make summary metrics actionable when details exist: use the shared side drawer and retain function links.
+  Verify collapsed/expanded, working, empty, success and error states for the UI touched. Existing examples:
+  `machineDraftPanel`, `savedMatchRecoveryPanel` and project settings in `app/static/index.html`.
+
 ## Never
 
 - Commit, download or publish game data (ROMs, discs, executables, extracted code or assets). Generated projects
@@ -198,3 +250,28 @@ linting). In short:
 - Let agents edit a project's build setup: `forks/project.py` (`EDITABLE`, `FORBIDDEN_PARTS`) limits them to
   source and header files on purpose.
 - Weaken the judge: a match means byte-identical after linking (ROM mode) or objdiff 100% (fork mode).
+
+## RetroReversing contribution workflow
+
+Always submit decompdecomp changes on a feature or fix branch through a pull request; do not commit directly to main.
+
+The user has asked that completed PRs be merged to main after inspection and required checks, until they
+revoke this preference. The user updates their running app themselves: merging a PR does not authorize
+pulling into its checkout, stopping, updating or restarting it. Leave the running app in
+`/Volumes/Data/Github/decompdecomp-rr` and its home `/Volumes/Data/Decomps/decompdecomp` alone unless the
+user explicitly requests deployment. This replaces the previous automatic-update authorization.
+
+When the user explicitly requests deployment, use `git pull origin main` followed by
+`DECOMP_HOME=/Volumes/Data/Decomps/decompdecomp /Volumes/Data/Github/decompdecomp-rr/.venv/bin/decomp`.
+Use a clean checkout of main (a detached origin/main runtime checkout is acceptable when main is held by
+another worktree), preserve all other branches and local changes, stop only this home's app gracefully,
+launch it persistently and verify health/revision. Experiments must still use isolated homes and must
+not mutate live projects.
+
+When a change requires clients to update, build a fresh shareable macOS app after testing
+with `bash packaging/macos/build.sh --app-only`. Deliver the .app folder directly in Downloads,
+without a ZIP unless requested. For Apple Silicon, always deliver to the stable folder
+`/Users/a/Downloads/decompdecomp_RetroReversing_macos_arm64/decompdecomp.app`, replacing
+the previous exported app instead of creating version/commit-named folders. State the
+architecture, version and source commit in the response. This export must not replace
+or restart the installed Applications app unless explicitly requested.

@@ -919,3 +919,41 @@ def test_a_symbol_of_the_game_is_renamed_in_its_config(tmp_path):
     (gc / "symbols.txt").write_text("fn_80003100 = .text:0x80003100; // type:function size:0x40\n")
     consoles.get("gc").rename_symbol(fp, "v2", "fn_80003100", "OSInit")
     assert (gc / "symbols.txt").read_text() == "OSInit = .text:0x80003100; // type:function size:0x40\n"
+
+
+def test_diagnostic_profile_restores_even_an_exact_match(per_file):
+    net,slug,agent,root,state,lerp=per_file
+    N64.set_file_compiler(None,'src/game.c',BAD)
+    before=(root/'src/game.c').read_bytes()
+    head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root)
+    result=net.try_compiler(agent,slug,'lerp',GOOD,source=lerp,keep_match=False)
+    assert 'MATCH' in result and state['compiler']==BAD
+    assert (root/'src/game.c').read_bytes()==before
+    assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=root)==head
+    assert net._function('lerp',slug)['status']=='open'
+    assert net.store.one('SELECT COUNT(*) AS n FROM attempts')['n']==0
+
+
+def test_imported_baseline_evidence_is_cached_without_applying_matches(per_file):
+    from decompnet.app import agent_evidence
+    net,slug,agent,root,state,lerp=per_file
+    fn=net._function('lerp',slug)
+    before=(root/'src/game.c').read_bytes()
+    first=agent_evidence.baseline(net,agent,slug,fn,lerp)
+    second=agent_evidence.baseline(net,agent,slug,fn,lerp)
+    assert first is second and first['rows'] is not None and first['exact']
+    assert (root/'src/game.c').read_bytes()==before
+    assert net._function('lerp',slug)['status']=='open'
+    assert net.store.one('SELECT COUNT(*) AS n FROM attempts')['n']==0
+
+
+def test_current_profile_alias_diagnoses_own_compiler_without_switching(per_file):
+    net,slug,agent,root,state,lerp=per_file
+    before=(root/'src/game.c').read_bytes()
+    head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root)
+    result=net.try_compiler(agent,slug,'lerp','current',source=lerp,keep_match=False)
+    assert 'nothing to switch' in result and state['sets']==[]
+    assert state['compiler']==GOOD and (root/'src/game.c').read_bytes()==before
+    assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=root)==head
+    assert net._function('lerp',slug)['status']=='open'
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==0

@@ -10,18 +10,24 @@ from __future__ import annotations
 import collections
 import hashlib
 import json
+import logging
 import re
 import secrets
+import threading
 import time
+import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agents, scoring
+from . import agent_notes, agents, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
+from .release_receipts import operation as release_operation
+from .request_timing import build as timed_build
 from .store import Store
 
 CLAIM_TTL = 30 * 60
@@ -95,6 +101,19 @@ NOT_C_NOTE = re.compile(
 FLAG_NOTE = re.compile(r"flag-blocked|\b(compiler|compiler's|project|project's|build|game's|its own|other|different|"
                        r"right|wrong|these|those|default)\s+flags\b|flags?\s+(search|blocked)|-O[0-3s]\b|-framepointer|"
                        r"-mips\d|try_compiler|search_flags|compiler range", re.I)
+
+def assembly_blocker(why):
+    """Tool/compiler limitations do not establish that a target was handwritten assembly."""
+    if FLAG_NOTE.search(why):
+        return 'Compiler/build settings need review; unsuitable flags are not proof that no C exists.'
+    extension = re.search(r'asm|extension|builtin|register|return.address|\$31|\$ra',why,re.I)
+    rejected = re.search(r'unsupported|not supported|reject|forbid|disallow|tool(?:ing)?.{0,30}restrict',why,re.I)
+    return_address = re.search(r'__builtin_return_address|return.address',why,re.I)
+    if extension and (rejected or return_address):
+        return 'Compiler-extension or return-address support needs review; a tooling restriction is not proof of handwritten assembly.'
+    return None
+
+
 # Routing between models (claim_row): on an N64 game free models matched 14-25% of the functions they claimed and
 # spent 17-31 compiles a match, stronger ones 42-77% and 3-6, and every model was handed the functions the others
 # gave up on. A model well behind the strongest one at work leaves functions given up on ESCALATE_AFTER times to it;
@@ -147,6 +166,9 @@ WAITING = ("SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_i
 READY = "SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status = 'matched'"
 WANTED = "SELECT w.needs_id FROM waits w JOIN functions b ON b.id=w.function_id WHERE b.status = 'open'"
 STRATEGIES = {
+    "no_compiling_c": "f.attempts ASC, f.n_insns ASC",
+    "oldest_checked": "COALESCE((SELECT MAX(t.created_at) FROM attempts t WHERE t.function_id=f.id),0) ASC, f.id ASC",
+    "least_tried": "f.attempts ASC, f.n_insns ASC",
     # (a failing part waits even for its twins: they'd fail the same way)
     "easiest": f"{_FAILING}, " + _TWINS + f"f.abandons > 0, (f.n_insns + {SIZE_STEP - 1}) / {SIZE_STEP} ASC, "
                                           f"{_SHARE} DESC, f.n_insns ASC",
@@ -158,6 +180,7 @@ STRATEGIES = {
                        "g.project_id=f.project_id AND g.unit=f.unit AND g.status='open') ASC, f.n_insns ASC",
     # near-misses, the ones given up on least first (else every agent resumes the same stuck one)
     "closest": "f.best_score IS NULL, f.abandons ASC, CAST(f.best_score AS REAL) / (f.n_insns * 100) ASC",
+    "untried": "f.attempts > 0, f.abandons > 0, f.n_insns ASC",
     "hardest": "f.n_insns DESC",
     "random": "RANDOM()",
 }
@@ -168,9 +191,9 @@ class NetworkError(Exception):
 
 
 
-def _no_better(scores: list[int | None]) -> int:
+def _no_better(scores: list[int | None], baseline: int | None = None) -> int:
     """How many of the last compiles in a row (oldest first in `scores`) didn't beat the best before them."""
-    best, since = None, 0
+    best, since = baseline, 0
     for s in scores:
         if s is not None and (best is None or s < best):
             best, since = s, 0
@@ -311,7 +334,7 @@ def set_aside(fn) -> dict:
     {"set_aside": the reason, "not_c": whether agents agreed no C makes it}, or nothing."""
     meta = json.loads(fn["meta"] or "{}")
     if fn["status"] != "asm" and not meta.get("set_aside"):
-        return {}
+        return {"boundary_review":meta["boundary_review"]} if meta.get("boundary_review") and fn["status"]!="matched" else {}
     why = meta.get("asm_code") or (f"the same code as {meta['asm_twin']}, a matched assembly function"
                                    if meta.get("asm_twin") else "hand-written assembly")
     return {"set_aside": why, "not_c": "not_c" in meta}
@@ -345,11 +368,14 @@ def stall_budget_text() -> str:
             "every compile_and_diff result shows where you stand, as in \"no better in 2/6 compiles (move on at 6)\"")
 
 
-def move_on_brief(fn) -> str:
+def move_on_brief(fn, after=None) -> str:
     """The brief's line naming the function's own move-on number (the one compile_and_diff counts against)."""
-    after = stall_budget(fn["n_insns"] or 0)
-    return (f"move on after {after} compiles in a row without a better score (this function's number, by its size; "
-            f"each compile_and_diff result shows the count)")
+    custom = after is not None
+    after = after if custom else stall_budget(fn["n_insns"] or 0)
+    basis = "your worker setting" if custom else "this function’s size"
+    return (f"move on after {after} compiles in a row without a better score ({basis}; "
+            f"each compile_and_diff result shows the count). Recovery above the inherited best does not reset it. "
+            'To leave earlier with a reason, use release_function(move_on=true, claim_token="the current claim_token", notes="what you tried and why").')
 
 
 def normalized_source(source: str) -> str:
@@ -379,17 +405,25 @@ def _ago(ts: float | None) -> str:
 class Network:
     def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL):
         self.store = Store(db_path)
+        from .permuter_claims import clear
+        with self.store.tx() as db:clear(db)
         self.claim_ttl = claim_ttl
+        self._compile_ahead_local = threading.local()
+        self._attempt_locks: dict[tuple[int, int], threading.RLock] = {}
         self._pool = ThreadPoolExecutor(max_workers=8)
         # (agent id, function id) -> its last compile's diff rows and their legend, for last_diff
+        from .repair_feedback import RepairFeedback
+        self.repair_feedback = RepairFeedback(self)
         self._last_diffs: dict[tuple[int, int], tuple[list, str]] = {}
         self._generation: dict[int, int] = {}  # project id -> changes compiles depend on (bump_generation)
+        self._context_rejections = OrderedDict()
+        self._context_trial_locks = {}
         self._compiled: OrderedDict[str, dict] = OrderedDict()  # compile_key -> result, for repeat_of
 
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
-        """Mint an agent token for one of the app's helpers (`trusted` stays on the record for older databases)."""
+        """Mint an agent token for a managed helper or manual MCP connection (`trusted` stays on the record for older databases)."""
         name = name.strip()
         if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
             raise NetworkError("agent name must be 1-40 chars of [A-Za-z0-9-_.]")
@@ -409,12 +443,78 @@ class Network:
         """The agent a token belongs to (helpers get theirs from the app when it starts them)."""
         if not token:
             raise NetworkError("missing token: only helpers decompdecomp starts can work on its projects")
-        row = self.store.one("SELECT id,name,owner,trusted FROM agents WHERE token_hash=?", hash_token(token))
+        token_hash = hash_token(token)
+        row = self.store.one("SELECT id,name,owner,trusted,last_seen FROM agents WHERE token_hash=?", token_hash)
         if row is None:
             raise NetworkError("invalid API token")
-        with self.store.tx() as db:
-            db.execute("UPDATE agents SET last_seen=? WHERE id=?", (time.time(), row["id"]))
+        now = time.time()
+        # Presence is advisory (the room uses a 30-second online window), not an
+        # authentication requirement. Polls must not queue behind compiler writes.
+        if row["last_seen"] is None or not 0 <= now - row["last_seen"] < 5:
+            with self.store.try_tx() as db:
+                if db is not None:
+                    db.execute("UPDATE agents SET last_seen=? WHERE id=? AND token_hash=? "
+                               "AND (last_seen IS NULL OR last_seen<=? OR last_seen>?)",
+                               (now, row["id"], token_hash, now-5, now))
         return Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
+
+    # ---------------------------------------------------------------- pairing (an outside agent asks; the user approves)
+
+    PAIR_SECRET_CHARS = 16  # the requester's own secret, so only it can read the answer
+
+    def pair_request(self, name: str, secret: str) -> str:
+        """An agent outside the app asks to work one of its projects: a request the user sees and approves (or not)
+        in the window. The secret stays the requester's: without it, the answer (the token) can't be read."""
+        name = name.strip()
+        if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
+            raise NetworkError("agent name must be 1-40 chars of [A-Za-z0-9-_.]")
+        if not isinstance(secret, str) or len(secret) < self.PAIR_SECRET_CHARS:
+            raise NetworkError(f"secret must be at least {self.PAIR_SECRET_CHARS} characters")
+        with self.store.tx() as db:
+            pending = db.execute("SELECT COUNT(*) FROM pairings WHERE state='pending'").fetchone()[0]
+            if pending >= 10:
+                raise NetworkError("too many pending pairing requests: decide them in the window first")
+            id = uuid.uuid4().hex
+            db.execute("INSERT INTO pairings(id,name,secret_hash,created_at) VALUES(?,?,?,?)",
+                       (id, name, hash_token(secret), time.time()))
+        return id
+
+    def pairings(self) -> list[dict]:
+        """The requests waiting for the user's decision."""
+        return [dict(r) for r in self.store.all("SELECT id,name,created_at FROM pairings WHERE state='pending'")]
+
+    def pair_decide(self, id: str, approve: bool, project: str | None) -> dict:
+        """Approve (with the one project the agent may work) or refuse a pairing. Approving mints the agent now; the
+        token reaches the requester when it asks again with its secret."""
+        if approve and (not project or self.store.one("SELECT 1 FROM projects WHERE slug=?", project) is None):
+            raise NetworkError(f"no project called {project!r}")
+        with self.store.tx() as db:
+            row = db.execute("SELECT name,state FROM pairings WHERE id=?", (id,)).fetchone()
+            if row is None or row["state"] != "pending":
+                raise NetworkError("no such pending pairing")
+            if approve:
+                token = self.register_agent(row["name"], "you", origin="paired")
+                agent_id = self.store.one("SELECT id FROM agents WHERE token_hash=?", hash_token(token))["id"]
+                db.execute("UPDATE pairings SET state='approved',agent_id=?,project=?,token=?,decided_at=? WHERE id=?",
+                           (agent_id, project, token, time.time(), id))
+            else:
+                db.execute("UPDATE pairings SET state='denied',decided_at=? WHERE id=?", (time.time(), id))
+        return {"state": "approved" if approve else "denied"}
+
+    def pair_answer(self, id: str, secret: str) -> dict:
+        """What the requester sees: its request's state, with the token once the user approved it."""
+        row = self.store.one("SELECT secret_hash,token,state FROM pairings WHERE id=?", id)
+        if row is None or not secrets.compare_digest(row["secret_hash"], hash_token(secret)):
+            raise NetworkError("no such pairing request")
+        out = {"state": row["state"]}
+        if row["state"] == "approved":
+            out["token"] = row["token"]
+        return out
+
+    def pairing_project(self, agent_id: int) -> str | None:
+        """The project a paired agent was approved for (the app's own helpers are mapped in memory instead)."""
+        row = self.store.one("SELECT project FROM pairings WHERE agent_id=? AND state='approved'", agent_id)
+        return row["project"] if row else None
 
     # ---------------------------------------------------------------- helpers
 
@@ -429,9 +529,18 @@ class Network:
             return rows[0]
         raise NetworkError("several projects exist; pass `project` (its slug)")
 
+    @staticmethod
+    def _function_reference(name: str, project: str | None):
+        """Claim labels include the project; @unit paths are part of a stored function name."""
+        prefix, separator, local = name.partition("/")
+        if separator and "@" not in prefix and (project is None or prefix == project):
+            return local, prefix
+        return name, project
+
     def _function(self, name: str, project: str | None):
-        if project is None and "/" in name and "@" not in name.split("/", 1)[0]:  # project/name (fork names hold units)
-            project, name = name.split("/", 1)
+        local, scope = self._function_reference(name, project)
+        if project is None:
+            name, project = local, scope
         if project is None:
             rows = self.store.all("SELECT * FROM functions WHERE name=?", name)
             if len(rows) > 1:
@@ -442,6 +551,12 @@ class Network:
                 "SELECT f.* FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=?",
                 project, name,
             )
+            # Preserve exact stored names before interpreting a copied project/name label.
+            if row is None and local != name:
+                row = self.store.one(
+                    "SELECT f.* FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=?",
+                    project, local,
+                )
         if row is None:
             raise NetworkError(f"no function {name!r}" + (f" in {project!r}" if project else ""))
         return row
@@ -450,9 +565,15 @@ class Network:
         """Latest header for a translation unit, falling back to the project-wide one. Real codebases have
         one header set per source file; small projects just have the project-wide header ('' unit)."""
         unit = unit or ""
-        return self.store.one(
-            "SELECT * FROM context_versions WHERE project_id=? AND unit IN (?, '') "
-            "ORDER BY unit=? DESC, version DESC LIMIT 1", project_id, unit, unit)
+        def latest():
+            row = self.store.one("SELECT * FROM context_versions WHERE project_id=? AND unit=? "
+                                 "ORDER BY version DESC LIMIT 1", project_id, unit)
+            if row is None and unit:
+                row = self.store.one("SELECT * FROM context_versions WHERE project_id=? AND unit='' "
+                                     "ORDER BY version DESC LIMIT 1", project_id)
+            return row
+        return self.store.read_cache.get(('latest-context',project_id,unit),
+                                         self.store.read_version('scope_context',project_id),latest)
 
     def _unit_contexts(self, project_id: int) -> set[str]:
         return {r["unit"] for r in self.store.all(
@@ -468,6 +589,8 @@ class Network:
         )
 
     def _expire_claims(self, db) -> None:
+        from .permuter_claims import clear
+        clear(db)
         now = time.time()
         own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
         for row in db.execute("SELECT c.function_id, c.agent_id, f.project_id, f.name FROM claims c "
@@ -508,6 +631,9 @@ class Network:
         if hit is None:
             return None
         self._compiled.move_to_end(key)
+        if hit.get('diff'):
+            rows, legend = hit['diff']
+            self.keep_diff(agent.id, fn['id'], rows, legend)
         who = "your" if hit["agent_id"] == agent.id else f"{self._agent_name(hit['agent_id'])}'s"
         head = (f"🔁 REPEAT: this source is the same (indentation aside) as {who} compile #{hit['n']} of {fn['name']} "
                 f"({_ago(hit['at'])}), and nothing it depends on changed since, so it wasn't built again and doesn't "
@@ -519,7 +645,8 @@ class Network:
         """A compile's result (without its move-on line), for repeat_of."""
         n = self.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?", fn["id"],
                            agent.id)["n"]
-        self._compiled[key] = {"text": text, "score": score, "agent_id": agent.id, "n": n, "at": time.time()}
+        self._compiled[key] = {"text": text, "score": score, "agent_id": agent.id, "n": n, "at": time.time(),
+                               "diff": self._last_diffs.get((agent.id, fn["id"])) if score is not None else None}
         while len(self._compiled) > REPEATS_KEPT:
             self._compiled.popitem(last=False)
 
@@ -542,12 +669,62 @@ class Network:
         row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
         return row["name"] if row else "?"
 
+    @timed_build
     def _compile(self, proj, header: str, source: str, fn=None):
         """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
         cfg = json.loads(proj["config"])
-        if fn is not None and cfg.get("compiler_ranges"):
-            cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"])}
-        return compile_source(compiler_config(Path(proj["root"]), cfg), header, source)
+        if fn is not None and (cfg.get("compiler_ranges") or cfg.get('function_compilers')):
+            cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"], fn)}
+        invocation = compiler_config(Path(proj["root"]), cfg)
+        identity = dict(fn) if fn is not None else {}
+        c = cfg['compiler']
+        if 'toolchain' in c and not c.get('ro_paths') and not any(
+                flag.startswith(('-I','-include','-imacros','/I','/FI')) for flag in c.get('flags',[])):
+            invocation.identity = (proj['id'], proj['root'], proj['config'],
+                                   *(identity.get(k) for k in ('id','name','vram','meta','target','relocs')))
+        try:
+            result = compile_source(invocation, header, source)
+        except OSError as error:
+            from .storage_errors import message
+            if reason := message(error):
+                # Host resource failures are retryable; they are not failed candidate C.
+                raise NetworkError(reason) from error
+            raise
+        result.effective_settings = {'compiler':cfg['compiler'], 'effective_command':list(invocation.cmd),
+                                     'language':getattr(result,'language','unknown'), 'settings_source':'compile invocation snapshot'}
+        return result
+
+    @staticmethod
+    def _compile_snapshot(proj, fn, header, source):
+        # Include naming metadata: canonical_source can change the compiler input after a rename.
+        return (proj["id"], proj["root"], proj["config"], fn["id"], fn["name"], fn["vram"],
+                fn["meta"], header, source)
+
+    @contextmanager
+    def compiled_ahead(self, prepared):
+        """Offer one background compile to the ordinary attempt/judge on this thread only.
+
+        A changed compiler, header, source or function identity falls back to a fresh compile.
+        No claims, judging or result recording may run in the compile worker.
+        """
+        previous = getattr(self._compile_ahead_local, "prepared", None)
+        self._compile_ahead_local.prepared = prepared
+        try:
+            yield
+        finally:
+            self._compile_ahead_local.prepared = previous
+
+    def _attempt_compilation(self, proj, header, source, fn):
+        prepared = getattr(self._compile_ahead_local, "prepared", None)
+        if prepared is not None:
+            snapshot, future = prepared
+            if snapshot == self._compile_snapshot(proj, fn, header, source):
+                return future.result()
+        return self._compile(proj, header, source, fn)
+
+    def _candidate_checks(self, fn, proj, obj: bytes) -> dict:
+        """Advisory diagnostics supplied by ROM engines; imported builds keep their whole-image gate."""
+        return {}
 
     def _evaluate(self, fn, proj, obj: bytes) -> tuple[FunctionObj | None, bool | None, list[str]]:
         """(candidate, verdict, problems) for a compiled object. verdict None means: decide by comparing
@@ -604,12 +781,15 @@ class Network:
                 "your claim on it, not a new one. Compile the next step; release_function goes through once you've "
                 "compiled it, when you ask again.\n\n")
 
-    def _own_release_cutoff(self, db, agent_id: int, now: float) -> float:
+    def _own_release_cutoff(self, db, agent_id: int, now: float, proj=None) -> float:
         """Releases by this agent after this time keep it off those functions: the last SELF_RELEASE_WINDOW, and
         only since its run started (its last 'freed' event, release_stopped's, or 'stopped', a helper's own)."""
         row = db.execute("SELECT MAX(created_at) AS t FROM events WHERE agent_id=? AND kind IN ('freed', 'stopped')",
                          (agent_id,)).fetchone()
-        return max(now - SELF_RELEASE_WINDOW, (row["t"] if row else None) or 0)
+        from .pause_scope import cooldown_start
+        worker=db.execute('SELECT id,name FROM agents WHERE id=?',(agent_id,)).fetchone()
+        boundary=cooldown_start(self,proj,worker) if proj is not None and worker else 0
+        return max(now - SELF_RELEASE_WINDOW, (row["t"] if row else None) or 0, boundary)
 
     def nothing_to_claim(self, agent: Agent, proj, scope: str = "") -> str:
         """What a claim that found nothing tells the agent: whether the open functions are held (by whom, for how
@@ -625,13 +805,29 @@ class Network:
             "LEFT JOIN agents a ON a.id=c.agent_id WHERE f.project_id=? AND f.status='open' ORDER BY c.expires_at",
             proj["id"])
         with self.store.tx() as db:
-            cutoff = self._own_release_cutoff(db, agent.id, now)
+            cutoff = self._own_release_cutoff(db, agent.id, now, proj)
         mine = self.store.all(
             "SELECT DISTINCT f.name FROM functions f JOIN events e ON e.project_id=f.project_id AND e.detail=f.name "
             "WHERE f.project_id=? AND f.status='open' AND e.agent_id=? AND e.kind='release' AND e.created_at > ? "
             "AND f.id NOT IN (SELECT function_id FROM claims) ORDER BY f.name", proj["id"], agent.id, cutoff)
+        policy = self.selection(proj["slug"], agent.name)
+        selection_note = (f" Work selection: {policy.get('strategy') or 'automatic'}"
+                          + (f", below {policy['match_below']:g}% match" if policy.get("match_below") is not None else "")
+                          + (f", max {policy['max_tries']} tries per function" if policy.get("max_tries") else "")
+                          + ". No eligible free function is available; do not repeatedly claim. Change the filter or wait."
+                          if any(v is not None and v != "" for v in policy.values()) else "")
         lines = [f"Nothing to claim in {proj['slug']} right now: {n_open} function{'s' * (n_open != 1)} "
-                 f"{'are' if n_open != 1 else 'is'} open, but none is free for you."]
+                 f"{'are' if n_open != 1 else 'is'} open, but none is free for you.{selection_note}"]
+        from . import claim_stalls
+        paused = claim_stalls.blocked(self,proj,agent)
+        from .app.data_regions import blocked as data_blocked
+        data_paused = data_blocked(self,proj)
+        if data_paused:
+            lines.append(f'{len(data_paused)} entries are paused for data-region review in Settings. Existing work is retained.')
+        if paused:
+            lines.append(f'{len(paused)} unchanged candidates are paused after repeated releases. Quality warnings do not block work. Exhausted candidates retry when '
+                         'source, build context, symbols or repair rules change. Explicit claim_function(function=name) '
+                         'can still select one; do not loop on automatic claims.')
         if held:
             shown = ", ".join(f"{r['name']} ({r['agent'] or '?'}, {max(0, int(r['expires_at'] - now)) // 60} min left)"
                               for r in held[:10])
@@ -644,17 +840,221 @@ class Network:
                          f"To take one now, call claim_function with function=\"{names[0]}\".")
         return "\n".join(lines)
 
+    @staticmethod
+    def validate_selection(policy: dict | None) -> dict:
+        """User queue choices are enforced by the scheduler, not left to the model's prompt."""
+        if policy is not None and not isinstance(policy, dict):
+            raise NetworkError("Work selection must contain a strategy and optional match percentage")
+        policy = dict(policy or {})
+        strategy = policy.get("strategy", "")
+        if strategy is None:
+            strategy = ""
+        if not isinstance(strategy, str) or (strategy and strategy not in STRATEGIES):
+            raise NetworkError(f"strategy must be one of {', '.join(STRATEGIES)}")
+        below = policy.get("match_below")
+        if below is not None and below != "":
+            try:
+                below = float(below)
+            except (ValueError, TypeError):
+                raise NetworkError("Match percentage must be a number from 0 to 100") from None
+            if not 0 <= below <= 100:
+                raise NetworkError("Match percentage must be a number from 0 to 100")
+        else:
+            below = None
+        result = {"strategy": strategy, "match_below": below}
+        if "disabled_tools" in policy:
+            from .app.tool_policy import validate
+            result["disabled_tools"] = validate(policy["disabled_tools"])
+        if 'assembly_metadata' in policy:
+            if type(policy['assembly_metadata']) is not bool:
+                raise NetworkError('Assembly byte and address columns must be true or false.')
+            result['assembly_metadata'] = policy['assembly_metadata']
+        if 'model_untried' in policy:
+            if not isinstance(policy['model_untried'], bool):
+                raise NetworkError('Never tried by model must be true or false.')
+            result['model_untried'] = policy['model_untried']
+        limit = policy.get("max_tries")
+        if limit is not None and limit != "":
+            try:
+                value = float(limit)
+            except (ValueError, TypeError):
+                raise NetworkError("Max tries must be a whole number from 1 to 10000") from None
+            if isinstance(limit, bool) or not 1 <= value <= 10000 or not value.is_integer():
+                raise NetworkError("Max tries must be a whole number from 1 to 10000")
+            result["max_tries"] = int(value)
+        stall = policy.get("stall_compiles")
+        if stall is not None and stall != "":
+            try:
+                value = float(stall)
+            except (ValueError, TypeError):
+                raise NetworkError("No-improvement compiles must be a whole number from 1 to 1000") from None
+            if isinstance(stall, bool) or not 1 <= value <= 1000 or not value.is_integer():
+                raise NetworkError("No-improvement compiles must be a whole number from 1 to 1000")
+            result["stall_compiles"] = int(value)
+        unchanged=policy.get('unchanged_compiles')
+        if unchanged is not None and unchanged != '':
+            try:
+                value=float(unchanged)
+            except (TypeError,ValueError):
+                raise NetworkError('Unchanged-output compiles must be a whole number from 0 to 1000') from None
+            if isinstance(unchanged,bool) or not 0<=value<=1000 or not value.is_integer():
+                raise NetworkError('Unchanged-output compiles must be a whole number from 0 to 1000')
+            result['unchanged_compiles']=int(value)
+        return result
+
+    def set_selection(self, project: str, agent: str, policy: dict | None) -> dict:
+        policy = self.validate_selection(policy)
+        with self.store.tx() as db:
+            db.execute("INSERT OR REPLACE INTO agent_selection VALUES(?,?,?)", (project, agent, json.dumps(policy)))
+        return policy
+
+    def selection(self, project: str, agent: str) -> dict:
+        row = self.store.one("SELECT policy FROM agent_selection WHERE project=? AND agent=?", project, agent)
+        return json.loads(row["policy"]) if row else {}
+
+    def agent_stall_budget(self, fn, agent=None, agent_id=None):
+        """A worker override shared by briefs, compile feedback and release checks."""
+        if agent is None and agent_id is not None:
+            agent = self.store.one("SELECT name FROM agents WHERE id=?", agent_id)
+        if agent is None:
+            return None
+        name = agent.name if isinstance(agent, Agent) else agent['name']
+        project = self.store.one("SELECT slug FROM projects WHERE id=?", fn['project_id'])
+        return self.selection(project['slug'], name).get('stall_compiles')
+
+    def attempt_limit(self, agent: Agent, fn) -> tuple[int | None, int]:
+        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        limit = self.selection(slug, agent.name).get("max_tries")
+        used = self.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?",
+                              fn["id"], agent.id)["n"] if limit is not None else 0
+        return limit, used
+
+    def focus_target(self,agent,project,function=None):
+        from .app.focused_agents import target
+        return target(self,agent,project,function)
+
+    def ensure_agent_active(self, agent):
+        if agent.id in getattr(self,'_agent_focus',{}):self.focus_target(agent,None)
+        if agent.id in getattr(self, '_revoked_manual_agents', ()):
+            raise NetworkError('This manual MCP connection was revoked. Create a new connection in the app.')
+
+    @contextmanager
+    def attempt_turn(self, agent: Agent, fn):
+        # A CLI can submit parallel tool calls: serialize this worker's candidates so two submissions cannot
+        # both spend the last allowed try. Never hold the database write lock while compiling.
+        from .request_timing import timed_lock
+        with timed_lock(self.store.lock,'write_lock_wait'):
+            lock = self._attempt_locks.setdefault((agent.id, fn["id"]), threading.RLock())
+        with timed_lock(lock,'candidate_lock_wait'):
+            self.ensure_agent_active(agent)
+            self.check_attempt_limit(agent, fn)
+            yield
+
+    def check_attempt_limit(self, agent: Agent, fn) -> None:
+        """Candidate submissions (including compile errors) count across sessions, per worker and function."""
+        if fn["status"] != "open":
+            return  # polishing and reads of matched code have their own queue
+        limit, used = self.attempt_limit(agent, fn)
+        if limit is None or used < limit:
+            return
+        held = self.store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
+        if held:
+            Network.release(self, agent, fn["name"], f"User's max tries reached ({used}/{limit}); best attempt retained.",
+                            self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"])
+        raise NetworkError(f"Max tries reached for {fn['name']} ({used}/{limit}). Your work is saved. "
+                           "Call claim_function for another function, or ask the user to raise the limit.")
+
+    def selection_remaining(self, project: str, agent: Agent, *, include_paused: bool = False, available_only: bool = False) -> int:
+        policy = self.selection(project, agent.name)
+        from .model_checks import tried
+        excluded = tried(self, project, agent) if policy.get('model_untried') else set()
+        from . import claim_stalls
+        if not include_paused:
+            excluded.update(claim_stalls.blocked(self,self._project(project),agent))
+        from .app.data_regions import blocked as data_blocked
+        excluded.update(data_blocked(self,self._project(project)))
+        return self.store.one(
+            "SELECT COUNT(*) AS n FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? "
+            "AND f.id NOT IN (SELECT value FROM json_each(?)) "
+            "AND (?=0 OR f.id NOT IN (SELECT function_id FROM claims WHERE expires_at>?)) "
+            "AND f.status='open' AND (? IS NULL OR f.best_score IS NULL OR "
+            "MAX(0.0, 100.0 * (1.0 - CAST(f.best_score AS REAL) / MAX(1, f.n_insns * 100))) < ?) "
+            "AND (? IS NULL OR (SELECT COUNT(*) FROM attempts a WHERE a.function_id=f.id AND a.agent_id=?) < ?)",
+            project, json.dumps(list(excluded)), available_only, time.time(), policy.get("match_below"), policy.get("match_below"), policy.get("max_tries"), agent.id,
+            policy.get("max_tries"))["n"]
+
+    def selection_wait_reason(self, project: str, agent: Agent) -> tuple[str, str]:
+        """Explain the automatic-selection gate without implying its timer resets exhaustion."""
+        total = self.store.one("SELECT COUNT(*) n FROM functions f JOIN projects p ON p.id=f.project_id "
+                               "WHERE p.slug=? AND f.status='open'", project)["n"]
+        selected = self.selection_remaining(project, agent, include_paused=True)
+        eligible = self.selection_remaining(project, agent)
+        paused = max(0, selected - eligible)
+        filtered = max(0, total - selected)
+        facts = [f"{paused} unchanged candidates paused in this worker's selection"] if paused else []
+        from .app.boundary_repairs import blocked as boundary_blocked
+        review_ids=boundary_blocked(self,self._project(project))
+        review_count=self.store.one("SELECT COUNT(*) n FROM functions WHERE status='open' AND gone_mark IS NULL AND id IN (SELECT value FROM json_each(?))",json.dumps(list(review_ids)))['n']
+        if review_count:facts.append(f"{review_count} incomplete entries waiting for boundary review")
+        if filtered:
+            facts.append(f"{filtered} open functions excluded by this worker's Work selection")
+        if not facts:
+            facts.append(f"{total} open functions; none currently available for automatic selection")
+        held = self.store.one("SELECT COUNT(*) n FROM claims c JOIN functions f ON f.id=c.function_id "
+                              "JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.status='open' "
+                              "AND c.expires_at>?", project, time.time())["n"]
+        why = "; ".join(facts) + f". Project: {total} open functions, {held} currently claimed (counts can overlap)."
+        todo = ("No AI request is running. Checks again every 30 seconds; this does not reset paused candidates. "
+                "Candidate pauses are shared across agents using the same recorded model after repeated releases or reported exhaustion; other models can still try. "
+                "Work resumes when source, build context, symbols, project instructions or repair rules change. "
+                "Use Retry paused functions for a bounded fresh turn with this model, or claim an individual function explicitly by name. Change Work selection if functions are filtered out.")
+        if review_count:todo += " Boundary entries require Settings → Code coverage → Review & repair boundaries. Keep an intentional entry explicitly to allow agent work."
+        return why, todo
+
+    def sdk_functions(self, proj) -> dict:
+        """Recorded SDK identities; identification is separate from a verified C match."""
+        return self.store.read_cache.get(('recorded-sdk', proj['id']), self.store.read_version('naming', proj['id']),
+                                         lambda: self._recorded_sdk_functions(proj))
+
+    def _recorded_sdk_functions(self, proj):
+        out = {}
+        for row in self.store.all("SELECT id,meta FROM functions WHERE project_id=? AND "
+                                  "json_extract(meta, '$.naming.method')='sdk_signature'", proj["id"]):
+            naming = json.loads(row["meta"])["naming"]
+            out[row["id"]] = {"names": [naming.get("source_name") or naming["name"]],
+                              "corpora": naming.get("source_corpora", []), "evidence": "recorded SDK signature"}
+        return out
+
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None,
-                  strategy: str = "easiest"):
+                  strategy: str = "easiest", *, batch_from=None):
         """Claim (or renew) a function and return its row, or None when nothing is left."""
         if strategy not in STRATEGIES:
             raise NetworkError(f"strategy must be one of {', '.join(STRATEGIES)}")
         proj = self._project(project) if (project or function is None) else None
+        function = self.focus_target(agent,project,function)
+        if batch_from is not None and agent.id in getattr(self,'_agent_focus',{}):return None
+        sdk = self.sdk_functions(proj) if proj is not None and not function else {}
+        from . import claim_stalls
+        blocked = claim_stalls.blocked(self,proj,agent) if proj is not None and not function else []
+        from .app.data_regions import blocked as data_blocked
+        region_blocked = data_blocked(self,proj) if proj is not None else []
+        blocked = list(set(blocked) | set(region_blocked))
+        retry_grants = claim_stalls.grants(self,proj,agent) if proj is not None else []
         now = time.time()
         with self.store.tx() as db:
+            self.ensure_agent_active(agent)
+            region_blocked = data_blocked(self,proj) if proj is not None else []
+            blocked = list(set(blocked) | set(region_blocked))
             self._expire_claims(db)
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                               (agent.id,)).fetchone()
+            if batch_from is not None:
+                held = None
+            elif held is not None and function:
+                requested = self._function(function, proj['slug'] if proj else None)
+                if db.execute('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',
+                              (requested['id'],agent.id)).fetchone():
+                    held = requested  # renew any task in an existing batch, not just its first row
             if held is not None:
                 if function and held["id"] != self._function(function, proj["slug"] if proj else None)["id"]:
                     want = self._function(function, proj["slug"] if proj else None)["name"]
@@ -665,18 +1065,48 @@ class Network:
                 db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
             elif function:
                 fn = self._function(function, proj["slug"] if proj else None)
+                if fn["gone_mark"] is not None:
+                    raise NetworkError("This entry is archived outside the detected build. Review or undo its boundary decision first.")
                 if fn["status"] == "matched":
                     raise NetworkError(f"{fn['name']} is already matched; use get_function to read its source")
                 if fn["status"] == "asm":
                     raise NetworkError(f"{fn['name']} is set aside ({set_aside(fn)['set_aside']}): claim another")
+                slug = proj["slug"] if proj else db.execute("SELECT slug FROM projects WHERE id=?", (fn["project_id"],)).fetchone()["slug"]
+                if fn['id'] in (region_blocked if proj is not None else data_blocked(self,db.execute('SELECT * FROM projects WHERE id=?',(fn['project_id'],)).fetchone())):
+                    raise NetworkError('This entry needs boundary/data-region review. Review it in Settings and explicitly keep/resume it before claiming.')
+                self.check_attempt_limit(agent, fn)
+                selected = self.selection(slug, agent.name)
+                if selected.get('model_untried'):
+                    from .model_checks import tried
+                    if fn['id'] in tried(self, slug, agent):
+                        raise NetworkError('This function has already been checked by this model; claim another.')
+                below = selected.get("match_below")
+                if below is not None and fn["best_score"] is not None:
+                    percent = max(0.0, 100.0 * (1.0 - fn["best_score"] / max(1, fn["n_insns"] * 100)))
+                    if percent >= below:
+                        raise NetworkError(f"{fn['name']} is outside this agent's match percentage filter; claim another")
+                if (self.selection((proj or db.execute("SELECT slug FROM projects WHERE id=?", (fn["project_id"],)).fetchone())["slug"], agent.name).get("strategy") or strategy) == "no_compiling_c" and (
+                        fn["best_score"] is not None or db.execute(
+                            "SELECT 1 FROM attempts WHERE function_id=? AND compiled=1 LIMIT 1", (fn["id"],)).fetchone()):
+                    raise NetworkError(f"{fn['name']} already has a recorded compiling C candidate; choose another function")
                 other = db.execute("SELECT agent_id, expires_at FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
                 if other is not None:
-                    raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(other['agent_id'])} "
+                    owner = self._agent_name(other['agent_id'])
+                    if owner == 'you':
+                        raise NetworkError(f"{fn['name']} is claimed by the user in the C editor. The user can select Let agents work on this; choose another eligible function meanwhile")
+                    raise NetworkError(f"{fn['name']} is claimed by {owner} "
                                        f"for another {int(other['expires_at'] - now) // 60} min")
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
             else:
-                route = self._route(db, proj["id"], agent, now)
+                policy = self.selection(proj["slug"], agent.name)
+                from .model_checks import tried as model_tried
+                excluded = model_tried(self, proj['slug'], agent) if policy.get('model_untried') else set()
+                custom = bool(policy.get("strategy"))
+                strategy = policy.get("strategy") or strategy
+                # Explicit user ordering wins over adaptive routing and release penalties. Leases and the
+                # agent's recent-release exclusion still prevent two workers or a tight retry loop.
+                route = None if custom else self._route(db, proj["id"], agent, now)
                 family = model_family(agent.name)
                 kin = [r["id"] for r in db.execute("SELECT id, name FROM agents") if model_family(r["name"]) == family]
                 tried = db.execute("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
@@ -688,31 +1118,48 @@ class Network:
                 query = (
                     f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
                         WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
+                        AND (:batch_unit IS NULL OR (f.unit=:batch_unit AND f.n_insns<=:batch_limit AND f.boost>=0
+                             AND f.id NOT IN ({WAITING})))
+                        AND f.id NOT IN (SELECT value FROM json_each(:batch_sdk))
+                        AND (:below IS NULL OR f.best_score IS NULL OR
+                             MAX(0.0, 100.0 * (1.0 - CAST(f.best_score AS REAL) / MAX(1, f.n_insns * 100))) < :below)
+                        AND (:tries IS NULL OR (SELECT COUNT(*) FROM attempts a
+                             WHERE a.function_id=f.id AND a.agent_id=:agent) < :tries)
+                        AND ({int(strategy != 'no_compiling_c')} OR (f.best_score IS NULL AND NOT EXISTS (
+                             SELECT 1 FROM attempts compiled_attempt WHERE compiled_attempt.function_id=f.id AND compiled_attempt.compiled=1)))
                         AND f.id NOT IN (SELECT function_id FROM claims)
-                        AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
-                                           AND kind='release' AND created_at > :mine)
-                        ORDER BY f.id IN ({WAITING}),
-                                 f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
-                                            AND kind='release'),
-                                 f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
+                        AND f.id NOT IN (SELECT value FROM json_each(:stalled))
+                        AND f.id NOT IN (SELECT value FROM json_each(:model_tried))
+                        AND (f.id IN (SELECT value FROM json_each(:retry_grants)) OR f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                                           AND kind='release' AND created_at > :mine))
+                        ORDER BY CASE WHEN :custom THEN 0 ELSE f.id IN (SELECT value FROM json_each(:sdk)) END,
+                                 CASE WHEN :custom THEN 0 ELSE f.id IN ({WAITING}) END,
+                                 CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                                            AND kind='release') END,
+                                 CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
                                             AND agent_id IN (SELECT value FROM json_each(:kin)) AND created_at >
                                             COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=:pid
-                                                      AND kind IN ('context', 'compiler')), 0)),
-                                 f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
-                                            AND created_at > :cooled),
-                                 f.id IN ({READY}) DESC, f.id IN ({WANTED}) DESC,
+                                                      AND kind IN ('context', 'compiler')), 0)) END,
+                                 CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
+                                            AND created_at > :cooled) END,
+                                 CASE WHEN :custom THEN 0 ELSE f.id IN ({READY}) END DESC, CASE WHEN :custom THEN 0 ELSE f.id IN ({WANTED}) END DESC,
                                  :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
                 escalate = self._escalation(db, proj["id"]) if route else ESCALATE_AFTER
-                args = {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
+                args = {"retry_grants":json.dumps(retry_grants), "batch_sdk": json.dumps(batch_from.get("deferred",[]) if batch_from is not None else []), "batch_unit": batch_from["unit"] if batch_from is not None else None,
+                        "batch_limit": batch_from["limit"] if batch_from is not None else None, "model_tried": json.dumps(list(excluded)), "stalled":json.dumps(blocked), "sdk": json.dumps(list(sdk)), "pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
                         "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
-                        "mine": self._own_release_cutoff(db, agent.id, now)}
+                        "mine": self._own_release_cutoff(db, agent.id, now, proj), "custom": custom,
+                        "below": policy.get("match_below"), "tries": policy.get("max_tries")}
                 fn = db.execute(query, args).fetchone()
                 if fn is None and route == "weak":  # only what stronger models are for is left: better tried than idle
                     fn = db.execute(query, args | {"weak": False}).fetchone()
                 if fn is None:
                     return None
+                if fn['id'] in retry_grants and fn['id'] not in claim_stalls.grants(self,proj,agent):
+                    return None  # a same-model worker consumed this grant before our claim transaction
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+            if proj is not None and fn['id'] in retry_grants:claim_stalls.consume(self,proj,fn,agent,db)
             # a wait that's over has had its turn at the front once it's claimed
             db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
                        "WHERE status='matched')", (fn["id"],))
@@ -759,24 +1206,34 @@ class Network:
         weak = any(s < WEAK_SHARE * best for s in share.values())
         return "strong" if share[mine] == best and weak else None
 
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False) -> str:
+    @release_operation("release")
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "") -> str:
         """An agent gives a function back: its claim ends, its notes stay for the next agent, and the function
         counts one more give-up (the claim order puts those later). `not_c`: the agent found no C makes its code
         (NOT_C_AGENTS)."""
         fn = self._function(function, project)
         if not_c and not notes.strip():
             raise NetworkError("say in notes why no C makes it: the next agents and the user read it")
+        progress = self.claim_progress(agent, fn)
         with self.store.tx() as db:
             row = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
             if row is None or row["agent_id"] != agent.id:
                 raise NetworkError(f"you don't hold a claim on {fn['name']}")
+            from .app import agent_review
+            review_facts = (agent_review.facts(self,self.store.one('SELECT * FROM projects WHERE id=?',fn['project_id']),fn)
+                            if agent_review.CONCERN.search(notes) or agent_review.load(self,agent_review.PREFIX+str(fn['id'])) else None)
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
-            if notes.strip():
-                db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                           (fn["project_id"], fn["id"], agent.id, notes.strip(), time.time()))
+            if notes.strip() and notes.strip() != "Deep permutation turn ended; improvements shared.":
+                agent_notes.save(db, fn["project_id"], fn["id"], agent.id, notes.strip())
             self._event(db, fn["project_id"], agent.id, "release", fn["name"])
             said = self._not_c(db, fn, agent, notes.strip()) if not_c else ""
+        from . import claim_stalls
+        claim_stalls.released(self,fn,agent=agent,exhausted=bool(progress and progress['compiles'] and progress['no_better'] >= progress['after']))
+        from . import candidate_quality
+        candidate_quality.capture(self,fn,agent,notes,progress)
+        from .app import agent_review
+        agent_review.observe(self,fn,agent,notes,progress,snapshot=review_facts)
         return (f"Released {fn['name']}. Your best attempt and notes are saved so the next agent starts "
                 f"where you left off.{said} Call claim_function for a new one.")
 
@@ -784,6 +1241,17 @@ class Network:
         """An agent's verdict that no C makes fn's code; with NOT_C_AGENTS agents of NOT_C_MODELS models agreeing, fn
         is set aside (status asm). Returns what to tell the agent."""
         meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (fn["id"],)).fetchone()["meta"] or "{}")
+        reader=getattr(self,'console',None)
+        project=db.execute('SELECT * FROM projects WHERE id=?',(fn['project_id'],)).fetchone()
+        boundary=reader(project).boundary_reason(fn['target'] or b'') if reader else None
+        if meta.get('boundary_review') or boundary:
+            return ' No assembly verdict recorded: review the incomplete target boundary first; the function remains available.'
+        if (blocker := assembly_blocker(why)):
+            meta['not_c'] = {name:vote for name,vote in meta.get('not_c',{}).items() if name != agent.name and not assembly_blocker(vote.get('why',''))}
+            meta['assembly_review'] = {'reason':blocker, 'notes':why[:NOTE_CHARS], 'agent':agent.name, 't':time.time()}
+            db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),fn['id']))
+            return ' No assembly verdict recorded. '+blocker+' The function remains available; findings are saved in notes.'
+        meta['not_c'] = {name:vote for name,vote in meta.get('not_c',{}).items() if not assembly_blocker(vote.get('why',''))}
         said = meta.setdefault("not_c", {})
         said[agent.name] = {"model": model_of(agent.name), "why": why[:NOTE_CHARS], "t": time.time()}
         models = sorted({v["model"] for v in said.values()})
@@ -814,7 +1282,7 @@ class Network:
                                 "f.status='open' AND (f.meta IS NULL OR f.meta NOT LIKE '%\"reopened\"%') ORDER BY n.id",
                                 pid):
             if r["name"] in ("you", "decompdecomp", *MACHINE_AGENTS) or r["created_at"] <= joined.get(r["function_id"], float("-inf")) \
-                    or not NOT_C_NOTE.search(r["text"]) or FLAG_NOTE.search(r["text"]):
+                    or not NOT_C_NOTE.search(r["text"]) or assembly_blocker(r["text"]):
                 continue
             said[r["function_id"]][r["name"]] = {"model": model_of(r["name"]), "why": r["text"][:NOTE_CHARS],
                                                  "t": r["created_at"], "from": "note"}
@@ -825,8 +1293,10 @@ class Network:
                 if len(verdicts) < NOT_C_AGENTS or len(models) < NOT_C_MODELS:
                     continue
                 meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (fid,)).fetchone()["meta"] or "{}")
+                if meta.get('boundary_review'):
+                    continue
                 why = max(verdicts.values(), key=lambda v: v["t"])["why"].split("\n")[0][:300]
-                meta["not_c"] = {**meta.get("not_c", {}), **verdicts}
+                meta["not_c"] = {**{name:v for name,v in meta.get("not_c", {}).items() if not assembly_blocker(v.get("why", ""))}, **verdicts}
                 meta["asm_code"] = f"{len(verdicts)} agents ({', '.join(models)}) said in their notes that no C makes it: {why}"
                 db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fid))
                 name = db.execute("SELECT name FROM functions WHERE id=?", (fid,)).fetchone()["name"]
@@ -872,7 +1342,7 @@ class Network:
         """The user gives a set-aside function back to the agents (they think C makes it after all): the agents'
         verdicts on it are forgotten, and no check sets it aside again."""
         fn = self._function(function, project)
-        meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k not in ("not_c", "asm_code", "asm_twin")}
+        meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k not in ("not_c", "asm_code", "asm_twin", "verified_assembly")}
         with self.store.tx() as db:
             db.execute("UPDATE functions SET status='open', meta=? WHERE id=? AND status='asm'",
                        (json.dumps({**meta, "reopened": True}), fn["id"]))
@@ -893,9 +1363,8 @@ class Network:
                 db.execute("DELETE FROM claims WHERE agent_id=?", (aid,))
                 for r in rows:
                     if aid not in own:  # decompdecomp's own tries leave no notes
-                        db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                                   (r["project_id"], r["id"], aid, f"Released because its agent stopped ({why}); its "
-                                    "attempts are kept.", now))
+                        agent_notes.save(db, r["project_id"], r["id"], aid,
+                                         f"Released because its agent stopped ({why}); its attempts are kept.", now)
                     self._event(db, r["project_id"], aid, "freed", r["name"])
                     freed.append(r["name"])
                 if not rows:
@@ -914,28 +1383,45 @@ class Network:
         return self._brief(self._function(function, project), agent, header="VIEW")
 
     def _brief(self, fn, agent: Agent | None, header: str) -> str:
+        from .app import claim_state
+        if header == "CLAIMED" and agent and claim_state.fast():
+            return claim_state.brief(self,fn,agent,header)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         ctx = self._context(proj["id"], fn["unit"])
         claim = self.store.one("SELECT * FROM claims WHERE function_id=?", fn["id"])
+        from . import candidate_quality
         lines = [f"## {header}: {proj['slug']}/{fn['name']}",
                  f"size {fn['size']} bytes, {fn['n_insns']} instructions, arch {proj['arch']}, "
                  f"context.h v{ctx['version']} ({len(ctx['header'].splitlines())} lines)"]
         cfg = json.loads(proj["config"])
-        own = compiler_for(cfg, fn["vram"])
+        own = compiler_for(cfg, fn["vram"], fn)
         if own is not cfg.get("compiler"):  # a range built by another compiler than the rest of the game
             lines.append(f"compiled with {own['toolchain']} {' '.join(own['flags'])}: this address range's compiler, "
                          f"not the project's")
+        if own.get('toolchain'):
+            lines.append(f"compiler ID: {own['toolchain']}; compiler_experiments compiler=\"current\" retains it")
         if claim:
+            from .release_receipts import token
+            lines.append("claim_token: "+token(self,fn,claim))
             who = "you" if agent and claim["agent_id"] == agent.id else self._agent_name(claim["agent_id"])
             lines.append(f"claimed by {who}, lease expires in {int(claim['expires_at'] - time.time()) // 60} min "
                          f"(each compile_and_diff renews it)")
         if fn["status"] != "matched":
-            lines.append(move_on_brief(fn))
+            lines.append(move_on_brief(fn, self.agent_stall_budget(fn, agent)))
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
                       "```c", fn["matched_source"].strip(), "```"]
-        lines += ["", "### Target assembly", "```asm", scoring.compact_asm(self._asm_text(fn, proj)), "```"]
-        lines += self._extra_brief(fn, proj)
+        assembly = self._asm_text(fn, proj)
+        compact = header == 'CLAIMED' and fn['best_source'] and fn['best_score'] is not None and 0 < fn['best_score'] <= max(1,fn['n_insns'])*5
+        if compact and len(assembly.splitlines()) > 40:
+            kept = self._last_diffs.get((agent.id,fn['id'])) if agent else None
+            if kept:
+                lines += ['', '### Saved mismatch evidence', scoring.render_rows(kept[0],context=2,max_rows=16)]
+            assembly = '\n'.join(assembly.splitlines()[:40])
+            lines += ['Near-match brief: first 40 target lines. Use get_assembly(start,limit) or get_function(section=full) for full evidence.']
+        lines += ["", "### Target assembly", "```asm", scoring.compact_asm(assembly), "```"]
+        if not compact:
+            lines += self._extra_brief(fn, proj)
         if fn["status"] != "matched":
             if fn["best_source"]:
                 lines += ["", f"### Best attempt so far: score {fn['best_score']} by "
@@ -952,18 +1438,21 @@ class Network:
             lines.insert(2, f"source unit {fn['unit']}: call get_context with function=\"{fn['name']}\" for its header")
         if header == "CLAIMED":
             lines += ["", self._next_step(proj, ctx)]
+        lines += candidate_quality.brief(self,fn)
         return "\n".join(lines)
 
     def notes_for_brief(self, fn, best_text: str = "", show: int | None = None, when: bool = True) -> list[str]:
         """A function's notes for its brief (brief_notes), with when its best score was first reached."""
         rows = self.store.all("SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-                              f"WHERE n.function_id=? ORDER BY n.id DESC LIMIT {BRIEF_NOTES * 8}", fn["id"])
+                              f"WHERE n.function_id=? AND n.text != 'Deep permutation turn ended; improvements shared.' "
+                              f"ORDER BY n.created_at DESC,n.id DESC LIMIT {BRIEF_NOTES * 8}", fn["id"])
         best_at = None
         if fn["status"] != "matched" and fn["best_score"] is not None:
             row = self.store.one("SELECT MIN(created_at) AS t FROM attempts WHERE function_id=? AND score=?",
                                  fn["id"], fn["best_score"])
             best_at = row["t"] if row else None
-        return brief_notes(rows, fn, best_at, best_text, show, when)
+        from .search_notes import useful
+        return brief_notes(useful(rows), fn, best_at, best_text, show, when)
 
     def _next_step(self, proj, ctx) -> str:
         """The brief's last line for the agent that claimed the function."""
@@ -973,14 +1462,29 @@ class Network:
 
     # --------------------------------------------------------- compile & diff
 
+    def attempt_limit_note(self, agent: Agent, function: str, project: str | None) -> str:
+        fn = self._function(function, project)
+        limit, used = self.attempt_limit(agent, fn)
+        if fn["status"] == "open" and limit is not None and used >= limit:
+            return (f"\nMax tries reached ({used}/{limit}); this function is released and your best attempt is saved. "
+                    "Call claim_function for the next function.")
+        return ""
+
     def compile_and_diff(self, agent: Agent, function: str, source: str, project: str | None = None) -> str:
-        return self.attempt(agent, function, source, project)["text"]
+        text = self.attempt(agent, function, source, project)["text"]
+        return text + self.attempt_limit_note(agent, function, project)
 
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
+        with self.attempt_turn(agent, self._function(function, project)):
+            return self._attempt_unlimited(agent, function, source, project)
+
+    def _attempt_unlimited(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         """Compile, score and record one attempt. Returns {"text", "score", "matched"} (score None: didn't compile)."""
         fn = self._function(function, project)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         now = time.time()
+
+        self.check_attempt_limit(agent, fn)
 
         # Claim bookkeeping first: you can't score (or get credit) on someone else's function.
         with self.store.tx() as db:
@@ -991,11 +1495,14 @@ class Network:
                 if claim is None:
                     held = db.execute("SELECT 1 FROM claims WHERE agent_id=?", (agent.id,)).fetchone()
                     if held:
-                        raise NetworkError("you hold another claim; release it before working on a different function")
+                        from .app.claim_state import ownership_hint
+                        raise NetworkError(ownership_hint(self,agent,fn["project_id"]))
                     db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                     self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
                 elif claim["agent_id"] != agent.id:
-                    raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(claim['agent_id'])}")
+                    owner = self._agent_name(claim['agent_id'])
+                    hint = ('the user in the C editor. The user can select Let agents work on this to release it; choose another eligible function meanwhile.' if owner == 'you' else owner)
+                    raise NetworkError(f"{fn['name']} is claimed by {hint}")
                 else:
                     db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
 
@@ -1003,17 +1510,19 @@ class Network:
         key = self.compile_key(fn, ctx["header"], str(ctx["version"]), proj["config"] or "", source)
         if not scratch and (again := self.repeat_of(key, agent, fn)) is not None:
             return again
-        result = self._compile(proj, ctx["header"], source, fn)
+        result = self._attempt_compilation(proj, ctx["header"], source, fn)
 
         if not result.ok:
-            self._record(fn, agent, None, source, ctx["version"])
+            if re.search(r"Unknown section type|converter did not produce a big-endian ELF32|Missing [^\n]*reinstall", result.log, re.I):
+                raise NetworkError("Toolchain infrastructure failure; this did not consume a repair attempt. Fix the compiler/converter setup before retrying.\n" + result.log.strip())
+            self._record(fn, agent, None, source, ctx["version"], effective_settings=getattr(result,"effective_settings",None))
             text = f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}"
             self.remember_compile(key, agent, fn, text, None)
             return {"text": text, "score": None, "matched": False}
 
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:
-            self._record(fn, agent, None, source, ctx["version"])
+            self._record(fn, agent, None, source, ctx["version"], effective_settings=getattr(result,"effective_settings",None))
             text = (f"❌ Compiled, but the object has no function named `{fn['name']}`. "
                     f"Define it with exactly that name (non-static).")
             self.remember_compile(key, agent, fn, text, None)
@@ -1021,39 +1530,49 @@ class Network:
         d = scoring.diff(self._target_obj(fn, proj), cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+        checks = self._candidate_checks(fn, proj, result.obj)
         matched_now = d.bytes_match and not scratch
         last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
-        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now)
-        self.keep_diff(agent.id, fn["id"], d.rows)
+        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, effective_settings=getattr(result,"effective_settings",None))
+        self.keep_diff(agent.id, fn["id"], self._search_rows(fn, proj, result.obj, d.rows))
 
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
         elif d.bytes_match:
             return {"text": f"✅ MATCH! {fn['name']} is byte-identical to the target ({fn['n_insns']} instructions). "
                             f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
-                            f"{self.dependents_note(fn['id'])}",
-                    "score": 0, "matched": True}
+                            f"{self.dependents_note(fn['id'])}"
+                            + ("\n" + checks["message"] if checks.get("message") else ""),
+                    "score": 0, "matched": True, "checks": checks}
         else:
             best = self.store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
             head = (f"score {d.score} ({scoring.percent_text(d.percent)} match) — best so far {best}. "
                     f"Target {len([r for r in d.rows if r[1]])} insns, yours {len([r for r in d.rows if r[2]])}.")
-            head += self._what_changed(d, last["score"] if last else None)
+            head += self._what_changed(d, last["score"] if last else None, best)
             if d.rows and all(m == " " for m, _, _ in d.rows):
                 head += ("\nNOT A MATCH YET: every instruction reads the same, but the bytes differ"
                          + (" because of the linking notes at the end: fix those." if problems else
                             ": an encoding the listing doesn't show (branch form, an immediate, a relocation)."))
+        if checks.get("link"):
+            head += "\n" + checks["link"]["message"]
+        if checks.get("address_mismatches"):
+            head += "\n" + checks["message"]
         warn = f"\ncompiler output:\n{result.log.strip()}" if result.log.strip() else ""
         if problems:
             warn += "\nwhen linking your code at the function's address:\n" + "\n".join(f"- {p}" for p in problems)
-        text = f"{head}\n{d.render()}{warn}"
+        from .source_lines import mismatches as source_mismatches
+        from .source_lines import render as render_source_lines
+        mapped = source_mismatches(result.obj, fn["name"], d.rows, source,
+                                   filename="func.cpp" if getattr(result,"language","c") == "c++" else "func.c")
+        text = f"{head}\n{d.render()}{render_source_lines(mapped, source)}{warn}"
         if not scratch:
             self.remember_compile(key, agent, fn, text, d.score)
             text += self.same_score_note(fn["id"], agent.id, d.score, source)
-        return {"text": text + self.stall_note(fn["id"], agent.id), "score": d.score, "matched": False}
+        return {"text": text + self.stall_note(fn["id"], agent.id), "score": d.score, "matched": False, "checks": checks}
 
     @staticmethod
-    def _what_changed(d: scoring.DiffResult, last: int | None) -> str:
+    def _what_changed(d: scoring.DiffResult, last: int | None, best: int | None = None) -> str:
         """What the agent's last change did, and where the first difference is now: one small change per compile
         works best, and an agent that sees which way the score moved knows whether to keep or undo it."""
         said = ""
@@ -1061,12 +1580,21 @@ class Network:
             said = ("\nYour last change: no effect on the score." if d.score == last else
                     f"\nYour last change made it better ({last} → {d.score}): keep it." if d.score < last else
                     f"\nYour last change made it worse ({last} → {d.score}): undo it, or it fixed one thing and broke another.")
+        if best is not None and d.score > best:
+            said = said.replace(': keep it.', '; this recovers from your previous attempt.')
+            said += (f"\nSaved best is {best}; this candidate is still {d.score - best} points worse. "
+                     'Use get_candidate(base="saved_best") to restore that starting point, or continue a bounded exploration. '
+                     'Recovery above the inherited best does not reset the move-on budget.')
         same, total, row = scoring.first_mismatch(d.rows)
         if row is not None:
             mark, target, yours = row
             said += (f"\nThe first {same} of {total} target instructions match; the first difference "
                      f"({scoring.MARKERS.get(mark, mark)}): target `{target or '-'}`, yours `{yours or '-'}`.")
         return said
+
+    def _search_rows(self, fn, proj, obj, fallback):
+        """Advisory rows; ROM adapters can provide physical linked operands without changing verdicts."""
+        return fallback
 
     def keep_diff(self, agent_id: int, function_id: int, rows: list, legend: str = scoring.LEGEND) -> None:
         """A compile's diff rows, kept for last_diff (memory only: the next compile replaces them)."""
@@ -1093,20 +1621,23 @@ class Network:
         counted the claim's and said "no better in 8 compiles in a row" whatever the count was: in one project a
         release was refused with the last 4 of 7 no better, then let through after exactly one more compile, so
         agents spent a compile to get past the check (446 push-backs, 36 of them improved after it)."""
-        row = self.store.one("SELECT n_insns FROM functions WHERE id=?", function_id)
-        after = stall_budget((row["n_insns"] if row else 0) or 0)
+        row = self.store.one("SELECT n_insns, project_id FROM functions WHERE id=?", function_id)
+        custom = self.agent_stall_budget(row, agent_id=agent_id) if row else None
+        after = custom if custom is not None else stall_budget((row["n_insns"] if row else 0) or 0)
         claim = self.store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", function_id, agent_id)
+        baseline = None
         if claim is not None:
             start = claim["claimed_at"] or 0
-            rows = self.store.all("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+            rows = self.store.all("SELECT score,score_before FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
                                   "ORDER BY id", function_id, agent_id, start)
             scores = [r["score"] for r in rows]
+            baseline = rows[0]["score_before"] if rows else None
         else:
             start = None
             rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC "
-                                  f"LIMIT {STALL_LOOKBACK}", function_id, agent_id)
+                                  f"LIMIT {max(STALL_LOOKBACK, after + 1)}", function_id, agent_id)
             scores = [r["score"] for r in reversed(rows)]
-        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores), "after": after,
+        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores, baseline), "after": after, "inherited_best": baseline,
                 "best": min((s for s in scores if s is not None), default=None)}
 
     def stall_note(self, function_id: int, agent_id: int) -> str:
@@ -1121,9 +1652,11 @@ class Network:
         since, after = st["no_better"], st["after"]
         if since < after:
             return f"\n\nMove-on count: {stall_line(since, after)}."
-        return (f"\n\n⏭ Move on: {stall_line(since, after)}. release_function with notes (what you tried, what's "
-                "left) goes through now; then claim the next one: functions that match mostly do in the first few "
-                "tries, and this one keeps your best attempt for whoever comes next.")
+        from .release_receipts import instruction
+        action=instruction(self,function_id,agent_id)
+        return (f"\n\n⏭ Move on: {stall_line(since, after)}. {action}. "
+                "Use this claim_token on the first release and on retries. Then claim the next function; "
+                "your best attempt stays saved for whoever comes next.")
 
     def claim_progress(self, agent: Agent, fn) -> dict | None:
         """This agent's claim on `fn` as release_function judges it: stall_status, the same count compile_and_diff
@@ -1156,9 +1689,9 @@ class Network:
                             f"compile_and_diff(function=\"{fn['name']}, {row['name']}\", source=both definitions)."]
             else:
                 out += ["", f"### Waits for {row['name']}: {row['agent'] or 'an agent'} found this function needs it "
-                            f"first (a callee or an inlined helper), so it's claimed after everything else until "
-                            f"{row['name']} matches. Work on it if you can; else release_function with "
-                            f"needs=\"{row['name']}\"."]
+                            f"first. This is a historical agent report, not proof that its body must match. "
+                            f"Inspect the actual call and fix declarations here; do not repeat needs to skip work. "
+                            f"New dependency pivots require original direct-call evidence and obey pause rules."]
         waiting = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
                                  "AND b.status='open' ORDER BY b.name LIMIT 8", fn["id"])
         if waiting and fn["status"] != "matched":
@@ -1176,25 +1709,103 @@ class Network:
                 f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
-                compiled: bool | None = None, via: str = "agent"):
+                compiled: bool | None = None, via: str = "agent", effective_settings=None,
+                prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None):
         now = time.time()
         compiled = score is not None if compiled is None else compiled
-        with self.store.tx() as db:
-            db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via))
+        improved = False
+        with self.store.tx(wait=write_wait) as db:
+            if before_record is not None:
+                before_record()  # scoped callers can reject revoked or stale work before any writes
+            current = db.execute("SELECT * FROM functions WHERE id=?", (fn["id"],)).fetchone()
+            if prepared_assembly:
+                if not (matched and score==0 and prepared_header is not None and prepared_inputs is not None and current['status']=='asm'):
+                    raise NetworkError('Assembly reconsideration requires an explicitly approved exact prepared bundle.')
+                from .app.source_preparation import inputs
+                proj=db.execute('SELECT * FROM projects WHERE id=?',(current['project_id'],)).fetchone()
+                if inputs(self,proj,current)!=prepared_inputs:
+                    raise NetworkError('Assembly candidate inputs changed. Run its source check again.')
+                meta={k:v for k,v in json.loads(current['meta'] or '{}').items() if k not in ('not_c','asm_code','asm_twin')}
+                db.execute("UPDATE functions SET status='open',meta=? WHERE id=?",(json.dumps({**meta,'reopened':True}),current['id']))
+                self._event(db,current['project_id'],agent.id,'reopen',current['name']+': exact local source bundle verified')
+                current=db.execute('SELECT * FROM functions WHERE id=?',(fn['id'],)).fetchone()
+            if prepared_compiler is not None:
+                if not matched or prepared_header is None or score != 0:
+                    raise NetworkError("Only a reverified exact prepared bundle can change its compiler profile.")
+                from .app.prepared_evidence import publish_profile
+                prepared_inputs = publish_profile(self, db, current, prepared_inputs, prepared_compiler, agent)
+            # A compiler check can finish while this candidate is still compiling with the old flags.
+            # Keep that attempt as evidence, but never turn its old-profile verdict into a new green status.
+            config = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (fn["project_id"],)).fetchone()["config"])
+            used = (effective_settings or {}).get("compiler")
+            own = compiler_for(config, current["vram"], current) if used else None
+            stale = bool(score is not None and used and any(used.get(k) != own.get(k) for k in ("toolchain", "flags")))
+            if restoring_exact and not (matched and score==0 and prepared_header is not None and prepared_inputs is not None):
+                raise NetworkError('Saved-match restoration requires a fresh exact source/header verdict.')
+            if prepared_header is not None:
+                from .app.source_preparation import promote_context
+                if stale or score is None or (current['best_score'] is not None and score >= current['best_score']
+                        and not (restoring_exact and current['status']=='open' and matched and score==0)):
+                    raise NetworkError("The prepared candidate no longer improves this function. Run the pass again.")
+                ctx_version = promote_context(self, db, current, prepared_inputs, prepared_header, agent)
+                current = db.execute("SELECT * FROM functions WHERE id=?", (fn['id'],)).fetchone()
+            attempt = db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
+                       "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via)).lastrowid
+            self.repair_feedback.attempt(db, current, attempt, ctx_version, effective_settings)
+            if matched and not stale:
+                from .match_bundle import capture as capture_bundle
+                capture_bundle(db,current,attempt,source,ctx_version,effective_settings)
+                self.repair_feedback.capture(db, current, source, agent.id, via, ctx_version, attempt)
+            if not matched and not stale and (not used or all(used.get(k)==own.get(k) for k in ("toolchain","flags"))):
+                from .match_bundle import failed_recheck
+                if failed_recheck(db,fn,attempt,source,score):
+                    self._event(db,fn['project_id'],agent.id,'regression',fn['name'])
             db.execute("UPDATE functions SET attempts=attempts+1 WHERE id=?", (fn["id"],))
-            if score is not None:
-                db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=? "
-                           "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
-                           (score, source, agent.id, fn["id"], score))
-            if matched:
+            from . import candidate_quality
+            reported = not matched and candidate_quality.reported_source(self, current, source)
+            if score is not None and not stale and not reported:
+                improved = db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=? "
+                                      "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
+                                      (score, source, agent.id, fn["id"], score)).rowcount
+                if improved:
+                    from .app.permuter_inputs import external_seed
+                    external_seed(db, current, source, agent.name)
+            if matched and not stale:
                 db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, "
                            "matched_at=?, best_score=0, best_source=? WHERE id=?",
                            (source, agent.id, now, source, fn["id"]))
-                db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
+                self._release_matched_claim(db,fn['id'],agent.id)
                 self._event(db, fn["project_id"], agent.id, "match", fn["name"])
+            db.execute('UPDATE attempts SET score_before=?,score_improved=? WHERE id=?',
+                       (current['best_score'], int(bool(improved or (matched and not stale and current['status'] != 'matched'))), attempt))
+
+        if stale:
+            raise NetworkError("Compiler settings changed while this candidate was compiling. Your attempt is saved; compile it again with today's settings.")
+        if not matched and fn["status"] == "open":
+            try:
+                self.check_attempt_limit(agent, fn)
+            except NetworkError:
+                pass  # the attempt itself still returns its diff; the next claim moves on
         if matched:
-            self.on_match(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent)
+            self.store.after_commit(lambda: self.on_match(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
+        elif improved:
+            self.on_improvement(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
+
+    def _release_matched_claim(self, db, function_id, matching_agent_id=None):
+        """The saved match owns the function; notify its displaced worker only after commit."""
+        owner=db.execute('SELECT c.agent_id,f.name,f.project_id FROM claims c JOIN functions f ON f.id=c.function_id '
+                         'WHERE c.function_id=?',(function_id,)).fetchone()
+        if owner and owner['agent_id']!=matching_agent_id and (notify:=getattr(self,'on_external_match',None)):
+            def handoff():
+                try:notify(owner['agent_id'],owner['name'],owner['project_id'])
+                except Exception:
+                    # Worker notification must never turn a committed match into a failed save.
+                    logging.getLogger('decompdecomp').exception('Could not redirect worker after an external match')
+            self.store.after_commit(handoff)
+        db.execute('DELETE FROM claims WHERE function_id=?',(function_id,))
+
+    def on_improvement(self, proj, function_id: int) -> None:
+        """A better unfinished candidate was saved; subclasses may schedule bounded reuse."""
 
     def on_match(self, proj, function_id: int, agent: Agent | None = None) -> None:
         """A function just matched (subclasses try its code on its twins)."""
@@ -1227,11 +1838,35 @@ class Network:
             else:
                 new_header = header.rstrip("\n") + "\n\n" + new.strip("\n") + "\n"
             members = self._matched_using(proj, unit)
-            broken = self.regression_test(proj, new_header, only=members)
-            if broken:
-                listing = "\n".join(f"- {name}: {why}" for name, why in broken[:10])
-                return (f"❌ REJECTED: the edit breaks {len(broken)} already-matched function(s), so the header "
-                        f"stays at v{ctx['version']}.\n{listing}")
+            from .context_preflight import conflicts
+            incompatible=conflicts(new_header,members)
+            if incompatible:
+                listing='\n'.join(f'- {fn}: conflicting extern {name}' for fn,name in incompatible[:8])
+                return ('❌ REJECTED by declaration preflight; no regression compiles run. Keep declarations candidate-local.\n'+listing)
+            # Rejections only: exact header bytes and all judge inputs distinguish trials. A short
+            # process-local lifetime also limits effects of external tool/environment changes.
+            symbols = self.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])
+            state = repr((dict(proj),unit,ctx['version'],header,new_header,
+                          [dict(m) for m in members],[dict(row) for row in symbols],
+                          self._generation.get(proj['id'],0)))
+            key=hashlib.sha256(state.encode()).hexdigest()
+            with self.store.lock:
+                gate=self._context_trial_locks.setdefault((proj['id'],unit),threading.RLock())
+            with gate:
+                cached=self._context_rejections.get(key)
+                if cached and time.monotonic()-cached[0]<120:
+                    if self._context(proj['id'],unit)['version']!=ctx['version']:
+                        continue
+                    return 'Cached rejected header edit (no regression compiles run).\n'+cached[1]
+                broken = self.regression_test(proj, new_header, only=members)
+                if broken:
+                    listing = "\n".join(f"- {name}: {why}" for name, why in broken[:10])
+                    result=(f"❌ REJECTED: the edit breaks {len(broken)} already-matched function(s), so the header "
+                            f"stays at v{ctx['version']}.\n{listing}\nKeep the declaration candidate-local unless a safe shared change is needed.")
+                    self._context_rejections[key]=(time.monotonic(),result)
+                    while len(self._context_rejections)>32:
+                        self._context_rejections.popitem(last=False)
+                    return result
             with self.store.tx() as db:
                 if self._latest_version(db, proj["id"], unit) != ctx["version"]:
                     continue  # someone else committed meanwhile: re-apply on top and re-test
@@ -1300,7 +1935,7 @@ class Network:
                 if self._effective_unit(f, units) == unit]
 
     def regression_test(self, proj, header: str | None, sources: dict[int, str] | None = None,
-                        only: list | None = None, header_for=None) -> list[tuple[str, str]]:
+                        only: list | None = None, header_for=None, progress=None) -> list[tuple[str, str]]:
         """Every matched function (or `only`) built again with a changed header or sources: (name, why) of each
         that no longer matches, so a header edit that breaks matches is refused."""
         matched = only if only is not None else self.store.all(
@@ -1324,19 +1959,35 @@ class Network:
                 return []
             res = self._compile(proj, header, "")
             return [] if res.ok else [("<header>", res.log.strip()[:300])]
-        return [b for b in self._pool.map(check, matched) if b]
+        broken = []
+        for done, result in enumerate(self._pool.map(check, matched), 1):
+            if result:
+                broken.append(result)
+            if progress:
+                progress({"phase": "Checking affected matches", "done": done, "total": len(matched)})
+        return broken
 
     # ------------------------------------------------------------------ notes
 
-    def add_note(self, agent: Agent, project: str | None, text: str, function: str | None = None) -> str:
+    def add_note(self, agent: Agent, project: str | None, text: str, function: str | None = None, *, score_before=None, score_after=None) -> str:
         """A note for the agents after this one, on a function or on the whole project."""
         proj = self._project(project)
         fn = self._function(function, proj["slug"]) if function else None
         if not text.strip():
             raise NetworkError("empty note")
         with self.store.tx() as db:
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                       (proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS], time.time()))
+            measured = (score_before, score_after) if all(type(v) is int and v >= 0 for v in (score_before, score_after)) else None
+            # Keep one current deep-search summary per runner/function. Other function
+            # notes append to their managed session handoff when session evidence exists.
+            if fn and text.startswith('Deep permuter:'):
+                row = db.execute("SELECT id FROM notes WHERE function_id=? AND agent_id=? "
+                                 "AND text LIKE 'Deep permuter:%' ORDER BY id DESC LIMIT 1",
+                                 (fn['id'], agent.id)).fetchone()
+                if row:
+                    db.execute('UPDATE notes SET text=?,created_at=?,score_before=?,score_after=? WHERE id=?',
+                               (text.strip()[:NOTE_CHARS], time.time(), *(measured or agent_notes.current_scores(db, fn['id'], time.time())), row['id']))
+                    return 'Updated the deep permuter summary.'
+            agent_notes.save(db, proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS], measured=measured)
         return "Noted. Other agents will see it" + (f" when they open {fn['name']}." if fn else " in their briefings.")
 
     def search_notes(self, project: str | None, query: str) -> str:
@@ -1359,8 +2010,11 @@ class Network:
             ids = [r["id"] for r in db.execute("SELECT id FROM functions WHERE project_id=?", (proj["id"],))]
             for table in ("claims", "attempts"):
                 db.executemany(f"DELETE FROM {table} WHERE function_id=?", [(i,) for i in ids])
-            for table in ("notes", "events", "context_versions", "functions", "symbols", "twin_misses"):
+            for table in ("notes", "events", "context_versions", "functions", "symbols", "twin_misses",
+                          "cross_game_index", "library_transfers"):
                 db.execute(f"DELETE FROM {table} WHERE project_id=?", (proj["id"],))
+            db.execute("DELETE FROM cross_game_attempts WHERE project_id=? OR source_project_id=?",
+                       (proj["id"], proj["id"]))
             db.execute("DELETE FROM projects WHERE id=?", (proj["id"],))
         if progress := getattr(self, "progress", None):
             progress.forget(slug, proj["id"])

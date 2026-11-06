@@ -116,10 +116,14 @@ def _add_cast(lines, rng):
 MUTATIONS = [_swap_statements, _shuffle_declarations, _retype_local, _toggle_register, _rewrite, _rewrite, _add_cast]
 
 
-def mutate(source: str, rng: random.Random) -> str | None:
+def mutate(source: str, rng: random.Random, focus: str = "") -> str | None:
     lines = source.split("\n")
+    preferred = {"stack": [_shuffle_declarations, _toggle_register],
+                 "register": [_swap_statements, _shuffle_declarations],
+                 "call": [_retype_local, _add_cast], "constant": [_rewrite, _add_cast],
+                 "control": [_rewrite, _swap_statements]}.get(focus, [])
     for _ in range(6):
-        out = rng.choice(MUTATIONS)(list(lines), rng)
+        out = rng.choice(MUTATIONS + preferred * 2)(list(lines), rng)
         if out is not None and out != lines:
             return "\n".join(out)
     return None

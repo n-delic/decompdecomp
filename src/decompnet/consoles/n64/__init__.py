@@ -1,14 +1,16 @@
-"""Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC 2.7.2 and IDO 5.3 / 7.1, ROM mode.
+"""Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC, IDO and SN64 GCC, ROM mode.
 
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
-- guides/: what agents read about the N64 (n64.md) and its compilers (gcc-kmc.md, ido.md).
+- boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
+- guides/: what agents read about the N64 (n64.md) and its compilers (gcc-kmc.md, ido.md, sn64.md).
 
 Its demo game is projects/demo-rom (the Demo Quest game in projects/demo-n64/original, built with KMC GCC).
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ...rom import Picked, RomError
@@ -28,6 +30,21 @@ class Nintendo64(Console):
         Compiler("gcc-2.7.2-kmc", "KMC GCC 2.7.2", "many third-party N64 games", guess="KMC"),
         Compiler("ido-7.1", "IDO 7.1", "most later first-party N64 games", guess="IDO"),
         Compiler("ido-5.3", "IDO 5.3", "early N64 games (1996-97)"),
+        Compiler("sn-n64-281", "SN64 GCC 2.8.1", "SN Systems toolchains used by some third-party games"),
+        Compiler("sn-n64-272-0001", "SN64 GCC 2.7.2 (0001)", "earlier SN Systems N64 toolchains"),
+        Compiler("sn-n64-272-0004", "SN64 GCC 2.7.2 (0004)", "preserved SN compiler and assembler build"),
+        Compiler("sn-n64-272-0006", "SN64 GCC 2.7.2 (0006)", "later SN 2.7.2 build used in some boot code"),
+        Compiler("gcc-2.8.1-pm-sn-as", "GCC 2.8.1 + SN ASN64 2.56", "GCC code generation with original SN assembly"),
+        Compiler("gcc-2.8.1-pm", "GCC 2.8.1 (PM matching)", "patched GCC with its paired GNU assembler"),
+        Compiler("gcc-egcs-2.91.66", "EGCS 1.1.2 / GCC 2.91.66", "later iQue rebuild toolchains"),
+        Compiler("sn-n64-272-970404", "Reconstructed SN64 GCC 2.7.2 (970404)", "reconstructed SN codegen with compatibility assembly"),
+        Compiler("ido-5.3-cxx", "IDO 5.3 C++", "separate SGI C++ frontend; Linux, WSL or macOS VM", automatic=False),
+        Compiler("ido-5.2", "IDO 5.2", "experimental SGI comparison; Linux, WSL or macOS VM", automatic=False),
+        Compiler("ido-6.0", "IDO 6.0", "experimental SGI comparison; Linux, WSL or macOS VM", automatic=False),
+        Compiler("ido-4.1", "IDO 4.1", "experimental early SGI comparison; Linux, WSL or macOS VM", automatic=False),
+        Compiler("mipspro-7.4.4", "MIPSpro 7.4.4", "experimental; retail N64 use unconfirmed; Linux, WSL or macOS VM", automatic=False),
+        Compiler("gcc-egcs-1.1.2-4", "Original EGCS 1.1.2-4", "original Linux release; iQue toolchain comparison"),
+        Compiler("gcc-4.4.0-n64", "GCC 4.4.0 (MIPS64 ELF)", "experimental modern toolchain; Linux, WSL or macOS VM", automatic=False),
     )
     kits = ("own-n64",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("mips",)
@@ -124,6 +141,17 @@ class Nintendo64(Console):
         rom, info = read_info(Path(file).read_bytes() if isinstance(file, (str, Path)) else bytes(file))
         return Picked(self.id, rom, "rom.z64", info.to_dict() | {"platform": self.id, "gp": 0}, True)
 
+    def library_sha1(self, path: Path) -> str:
+        from .rom import file_hashes
+
+        hashes = file_hashes(path)
+        return hashes.normalized_sha1 or hashes.source_sha1
+
+    def project_build_command(self, project, command: list[str]) -> list[str]:
+        from .buildtools import command as prepare
+
+        return prepare(project, command)
+
     def default_compiler(self, info: dict, splat_guess: str) -> str:
         """splat's look at the code first (it says KMC or IDO), then the ROM reader's."""
         by_guess = {c.guess: c.id for c in self.compilers if c.guess}
@@ -136,10 +164,19 @@ class Nintendo64(Console):
 
     def up_front_guide(self, compiler: str) -> str:
         compiler = compiler.lower()  # (a fork of a public decomp: "project", its own build's)
-        return "ido" if "ido" in compiler else "gcc-kmc" if "gcc" in compiler else ""
+        if compiler in ("gcc-2.8.1-pm-sn-as", "gcc-2.8.1-pm", "gcc-egcs-2.91.66", "gcc-egcs-1.1.2-4", "gcc-4.4.0-n64"):
+            return "gcc-variants"
+        return "ido" if "ido" in compiler or "mipspro" in compiler else "sn64" if compiler.startswith("sn-n64") else "gcc-kmc" if "gcc" in compiler else ""
 
     def m2c_target(self, compiler: str = "") -> str:
-        return "mips-ido" if "ido" in compiler.lower() else "mips-gcc"
+        return "mips-ido" if "ido" in compiler.lower() or "mipspro" in compiler.lower() else "mips-gcc"
+
+    def export_asm(self, text: str) -> str:
+        text = super().export_asm(text)
+        # Some inferred code ranges include data decoded as a later MIPS `pref`.
+        # VR4300 cannot assemble it; retain its original non-relocating word.
+        return re.sub(r"^(\s*/\* [0-9A-Fa-f]+ [0-9A-Fa-f]{8} ([0-9A-Fa-f]{8}) \*/\s*)pref\b[^\n]*",
+                      lambda m: f"{m[1]}.word 0x{m[2]}", text, flags=re.M)
 
 
 N64 = Nintendo64()

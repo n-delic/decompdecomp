@@ -5,10 +5,9 @@
   instead (allegrex_lines);
 - code no compiler makes (asm_reason): coprocessor 0 (the system: mfc0, mtc0, rfe, eret) or a console's coprocessor 2
   (the PS2's VU0: ctc2, mtc2, lwc2, cop2 commands), which C compilers never emit (C that drives VU0 does it with
-  inline asm, which decompdecomp doesn't take), or the Allegrex's VFPU; a system call (a kernel entry stub); code
-  that ends without a return or a jump and so runs on into the next function (an extra entry point into hand-written
-  code: the splitter cut it off); or a first block that reads a temporary register (at, v0, v1, t0-t9) or k0/k1 before setting it (compiled
+  inline asm, which decompdecomp doesn't take), or the Allegrex's VFPU; a system call (a kernel entry stub); or a first block that reads a temporary register (at, v0, v1, t0-t9) or k0/k1 before setting it (compiled
   code gets its arguments in a0-a3);
+- incomplete extents (boundary_reason) are advisory flow/boundary findings, never assembly provenance;
 - where a stretch of code is loaded (place): its calls are absolute, so they say it. The N64's code segments that
   load later (consoles/n64/code.py) and the PS2's overlays (consoles/ps2/overlays.py) are both found this way.
 """
@@ -20,6 +19,22 @@ import re
 import struct
 
 import capstone
+
+
+def abi_register_names(text: str) -> str:
+    """m2c recognises ABI names such as $ra; numeric GPRs otherwise look like indirect jumps."""
+    names = ('zero at v0 v1 a0 a1 a2 a3 t0 t1 t2 t3 t4 t5 t6 t7 '
+             's0 s1 s2 s3 s4 s5 s6 s7 t8 t9 k0 k1 gp sp fp ra').split()
+    lines = []
+    for line in text.splitlines(keepends=True):
+        code, marker, comment = line.partition('#')
+        if re.match(r'^\s*[a-z][a-z0-9.]*\s+', code):
+            control = bool(re.match(r'^\s*(?:d?m[ft]c0|[cm][ft]c[12])\s+', code))
+            comma = code.find(',') if control else len(code)
+            code = re.sub(r'\$(\d+)\b', lambda m, comma=comma: '$' + names[int(m[1])]
+                          if int(m[1]) < 32 and m.start() < comma else m[0], code)
+        lines.append(code + marker + comment)
+    return ''.join(lines)
 
 # an instruction word's fields: opcode (6 bits), rs, rt, rd (5 bits each), then SPECIAL's function (6 bits)
 OPCODE_SHIFT, RS_SHIFT, RT_SHIFT, RD_SHIFT = 26, 21, 16, 11
@@ -312,6 +327,14 @@ def raw_doubles(text: str, big_endian: bool) -> str:
     return _EIGHT_BYTES.sub(one, text)
 
 
+def padding_reason(code: bytes, big_endian: bool = True, **_facts) -> str | None:
+    """splat can name zero-filled regions as functions; trimming leaves one NOP. Keep the bytes for rebuilding,
+    but don't ask agents to compile a target with no control flow. This needs no console or ABI facts."""
+    if code and len(code) % 4 == 0 and not any(code):
+        return "contains only NOPs: zero-filled padding or a code fragment, not a complete C function"
+    return None
+
+
 def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str = "", cpu: str = "") -> str | None:
     """Why this MIPS function (its code, from the entry) can't come from a compiler, or None. The console says what
     its compilers do: `eabi`, eight integer arguments (a0-a3 and t0-t3, the PS2's EABI) instead of four; `cop2`, what
@@ -321,6 +344,8 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
     words = [int.from_bytes(code[at:at + 4], order) for at in range(0, len(code) - 3, 4)]
     if not words:
         return None
+    if why := padding_reason(code):
+        return why
     for w in words:
         op = w >> OPCODE_SHIFT
         if op == SPECIAL and w & FUNCT_BITS == SYSCALL:  # not break (0x0D): GCC emits that for its own divide-by-zero checks
@@ -337,8 +362,7 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
     while len(body) > 1 and body[-1] == 0:  # alignment padding
         body.pop()
     if not any(_mips_transfer(w) for w in body[-2:]):
-        return ("ends without a return or a jump, so it runs on into the next function: an entry point inside "
-                "hand-written code (compiled functions end with jr ra)")
+        return None  # an incomplete target is not evidence of handwritten assembly
     names = {1: "at", 2: "v0", 3: "v1", 24: "t8", 25: "t9", 26: "k0", 27: "k1"}
     temps = _MIPS_TEMPS - EABI_ARGUMENTS if eabi else _MIPS_TEMPS
     args = "a0-a3 and t0-t3" if eabi else "a0-a3"
@@ -381,3 +405,81 @@ def gp_from_entry(image: bytes, entry: int, segments: list) -> int:
         elif hi is not None and name == "ori" and ins.rt.value == GP and ins.rs.value == GP:
             return hi | (word & IMMEDIATE_BITS)
     return 0
+
+
+def prepared_call_arguments(assembly: str, callee: str) -> int:
+    """Advisory o32 argument-register setup before a direct call, including its delay slot."""
+    import re
+
+    suffix = re.search(r'_([0-9A-Fa-f]{8})$', callee)
+    names = re.escape(callee) + (r'|func_' + suffix[1] if suffix else '')
+    lines = assembly.splitlines()
+    for index, line in enumerate(lines):
+        if not re.search(r'\bjal\s+(?:' + names + r')\b', line):
+            continue
+        window = lines[max(0, index-12):index+2]
+        registers = [int(m[1]) for text in window for m in
+                     re.finditer(r'\b[a-z][a-z0-9.]*\s+\$a([0-3])\s*,', text)]
+        return max(registers, default=-1) + 1
+    return 0
+
+
+def boundary_reason(code: bytes, big_endian: bool = True, **_facts) -> str | None:
+    """Follow reachable direct flow: a call is not a terminal return; delay slots need bytes.
+
+    This only detects falling out of the supplied extent, not the historical
+    language. Indirect/tail jumps and closed loops are allowed, without proving
+    their destinations. Never extend a target from this advisory result.
+    """
+    if not code or len(code)%4 or not any(code):return None
+    order='big' if big_endian else 'little'
+    words=[int.from_bytes(code[i:i+4],order) for i in range(0,len(code),4)]
+    pending=[0];seen=set();incomplete=False
+    while pending and len(seen)<8192:
+        i=pending.pop()
+        if i in seen:continue
+        if i>=len(words):incomplete=True;break
+        if i<0:continue  # a tail branch into another known region is not fallthrough
+        seen.add(i);w=words[i];op,rs,rt,_,funct=fields(w)
+        branch=op in BRANCHES or op==REGIMM or (op==COP1 and rs==BC1)
+        jump=op in (J,JAL) or (op==SPECIAL and funct in (JR,JALR))
+        if not branch and not jump:
+            pending.append(i+1);continue
+        if i+1>=len(words):incomplete=True;break
+        if jump:
+            if op==JAL or (op==SPECIAL and funct==JALR):pending.append(i+2)
+            continue  # jr/j: terminal or tail transfer, not proof of a complete CFG
+        # Calls through REGIMM link instructions return to the fallthrough path.
+        if op==REGIMM and rt in (0x10,0x11,0x12,0x13):pending.append(i+2)
+        else:
+            dest=i+1+signed_immediate(w)
+            if 0<=dest<len(words):pending.append(dest)
+            unconditional=(op==BEQ and rs==rt) or (op==REGIMM and rs==ZERO and rt==BGEZ)
+            if not unconditional:pending.append(i+2)
+    if incomplete:
+        return ('Target falls through its extent or lacks a transfer delay slot. It may be truncated or a separate entry into a larger function. '
+                'Inspect adjacent original bytes and segment boundaries before spending candidate compiles; reimport or join proven pieces. '
+                'This is not proof of handwritten assembly. Review this extent before automatic candidate searches; an explicit boundary decision can keep an intentional entry point.')
+    return None
+
+
+def gcc_register_aliases(number):
+    """Legacy GCC GPR numbers, not pseudo-register numbers or another processor's ABI."""
+    names = ('zero at v0 v1 a0 a1 a2 a3 t0 t1 t2 t3 t4 t5 t6 t7 '
+             's0 s1 s2 s3 s4 s5 s6 s7 t8 t9 k0 k1 gp sp fp ra').split()
+    if not 0 <= number < len(names):
+        return ()
+    return (names[number], str(number)) + (('s8',) if number == 30 else ())
+
+
+def boundary_instruction(word, address):
+    """Facts used in boundary review; a direct edge is evidence, never an ownership verdict."""
+    import rabbitizer
+
+    ins = rabbitizer.Instruction(word, address)
+    target = (ins.getBranchVramGeneric() if ins.isBranch() else
+              ins.getInstrIndexAsVram() if ins.isJumpWithAddress() else None)
+    return {'address': address, 'instruction': ins.disassemble(), 'delay_slot': ins.hasDelaySlot(),
+            'return': ins.isReturn(), 'call': ins.doesLink(), 'target': target,
+            'terminal': ins.isReturn() or (not ins.doesLink() and
+                        (ins.isUnconditionalBranch() or ins.isJump()))}

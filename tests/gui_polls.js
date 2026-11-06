@@ -64,6 +64,7 @@ const old = Array.from({ length: 60 }, (_, i) => ({ id: i + 1, kind: "match", de
 let liveB = [];
 answers["/api/state"] = () => ({ version: "test", settings: {}, agents: [], toolchains: [] });
 answers["/api/projects"] = () => [];
+answers["/api/sdk-library"] = () => ({ folders: [], libraries: [], selection: null });
 answers["/api/agents/detected"] = () => [];
 answers["/api/mapcolumns"] = () => ({ keys: ["vram", "cc", "ccx"], rows: [] });
 answers["/api/knowledge"] = () => ({ auto: false, items: [] });
@@ -86,7 +87,7 @@ ctx.SERVER_CONSOLES = JSON.parse(process.env.GUI_CONSOLES || "[]");
 vm.createContext(ctx);
 // GUI_JS: another copy of the scripts (an older one, to see the test fail there)
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "transcripts", "repair-feedback", "function", "compiler-progress", "repository-push", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 ctx.toast = (html) => toasts.push(html);
@@ -271,13 +272,60 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       h[0] ^= 1;
       return { good: good && [good.platform, good.code, good.title], broken: identifyHead(h, file), said: notSupported(h, file) };
     })(),
+    // Optional attempt caps must stay integers, and blank must stay unlimited.
+    selectionStall: (() => {
+      const box = value => ({querySelector: sel => ({value: sel === '[data-selection-stall]' ? value : ''})});
+      let rejected = false;
+      try { readSelection(box('2.5')); } catch (_) { rejected = true; }
+      return [readSelection(box('30')), readSelection(box('')), rejected, selectionFields({stall_compiles: 30}).includes('value="30"')];
+    })(),
+    selectionUnchanged: (() => {
+      const box = value => ({querySelector: sel => ({value: sel === '[data-selection-unchanged]' ? value : ''})});
+      const invalid = ['-1', '1.5', '1001', 'hardest'].map(value => {
+        try { readSelection(box(value)); return false; } catch (_) { return true; }
+      });
+      return [readSelection(box('')), readSelection(box('0')), readSelection(box('8')), invalid,
+        selectionFields({unchanged_compiles: 0}).includes('value="0"')];
+    })(),
+    selectionCap: (() => {
+      const box = (tries) => ({querySelector: (sel) => ({value: sel === "[data-selection-unchanged]" ? "" : sel === "[data-selection-stall]" ? "" : sel === "[data-selection-below]" ? "" : sel === "[data-selection-tries]" ? tries : "hardest"})});
+      let rejected = false;
+      try { readSelection(box("1.5")); } catch (_) { rejected = true; }
+      return [readSelection(box("12")), rejected, selectionFields({max_tries: 12}).includes('value="12"')];
+    })(),
     // the launcher keeps the last effort picked: Claude Code's xhigh isn't one opencode offers
+    selection: (() => {
+      const box = (raw, strategy) => ({querySelector: (sel) => ({value: sel === "[data-selection-unchanged]" ? "" : sel === "[data-selection-stall]" ? "" : sel === "[data-selection-below]" ? raw : sel === "[data-selection-tries]" ? "" : strategy})});
+      let rejected = false;
+      try { readSelection(box("101", "hardest")); } catch (_) { rejected = true; }
+      return [readSelection(box("80", "hardest")), readSelection(box("", "untried")), rejected,
+        selectionFields({strategy: "hardest", match_below: 75}).includes('value="hardest" selected')];
+    })(),
+    agentCards: (() => {
+      const sessions = [{agent: "a", label: "A", model: "z-model", state: "working", started_at: 100, tokens: 10000},
+                        {agent: "b", label: "B", model: "a-model", state: "working", started_at: 200, tokens: 3000},
+                        {agent: "c", label: "C", model: "b-model", state: "stopped", started_at: 1, tokens: 0}];
+      const board = new Map([["a", {matched: 2, improved: 8}], ["b", {matched: 3, improved: 4}]]);
+      return {sorts: ["matches", "improved", "runtime", "model", "efficiency"].map(mode =>
+        sortAgentCards(sessions, board, mode, 400).map(s => s.agent)),
+        elapsed: agentRuntime(sessions[0], 400), stopped: agentRuntime(sessions[2], 400),
+        rate: agentTokenRate(sessions[0], board.get("a")), empty: agentTokenRate(sessions[2], {}),
+        html: agentMetrics(sessions[0], board.get("a")),
+        least: selectionFields({strategy: "least_tried"}).includes('value="least_tried" selected')};
+    })(),
     efforts: (() => {
       LZ.effort = "xhigh";
       const claude = { takes_effort: true, efforts: ["low", "medium", "high", "xhigh", "max"] };
       const opencode = { takes_effort: true, efforts: ["low", "medium", "high", "max"] };
       return [withEffort(claude, "opus"), withEffort(opencode, "deepseek/v4"), withEffort({ takes_effort: false }, "m")];
     })(),
+    projectCompiler: [projectCompilerFacts({kind: "fork", project_compiler: {
+      name: "IDO 5.3", command: "tools/ido/cc", flags: [{variable: "OPT_FLAGS", value: "-O2"}],
+      overrides: [{pattern: "src/audio/%.o", variable: "OPT_FLAGS", operator: "=", value: "-O3"}],
+      sources: ["Makefile"], note: "Declared settings"
+    }}), projectCompilerFacts({kind: "rom"}), projectCompilerFacts({kind: "fork"})],
+    helperResults: [helperResults({polished: 2, matched: 9}, "readable"), helperResults(undefined, "readable"),
+                    helperResults({polished: 2, matched: 9, improved: 4}, "")],
     systemThemes: ["", "?system-theme=light", "?system-theme=dark", "?system-theme=invalid"].map((search) => {
       location.search = search;
       return systemTheme();
@@ -325,10 +373,10 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       S.claims = [claim(null), claim(undefined)];
       const nameless = workingAgents().n;
       const at = (label, state, task = "decompile") => ({ id: label, label, state, task });
-      const flip = (first, second) => [at("alpha", first), at("beta", second)].sort(sessionOrder).map((s) => s.label);
+      const flip = (first, second) => sortAgentCards([at("alpha", first), at("beta", second)], new Map(), "state").map((s) => s.label);
       const flipped = flip("waiting", "working"), again = flip("working", "waiting");
-      const rows = [at("stopped-one", "stopped"), at("working-one", "working"), at("polishing", "waiting", "readable"),
-                    at("paused-one", "paused", "readable")].sort(sessionOrder).map((s) => s.label);
+      const rows = sortAgentCards([at("stopped-one", "stopped"), at("working-one", "working"), at("polishing", "waiting", "readable"),
+                    at("paused-one", "paused", "readable")], new Map(), "state").map((s) => s.label);
       S.sessions = was.sessions; S.claims = was.claims;
       return { ownOnly, outside, nameless, flipped, again, rows };
     })(),

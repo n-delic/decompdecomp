@@ -27,15 +27,38 @@ def is_stub(code: str) -> bool:
     return bool(re.match(r"\s*(?:#\s*pragma\s+)?(?:INCLUDE_ASM|GLOBAL_ASM|INCLUDE_RODATA_FN)\s*\(", code))
 
 
+def _code_only(text: str) -> str:
+    clean = _blank(text)
+    # Preprocessor logical lines can contain braces/loops that are not C function scopes.
+    # Keep offsets and line breaks so extraction and __LINE__ context remain exact.
+    lines = clean.splitlines(True)
+    continuation = False
+    for index, line in enumerate(lines):
+        directive = continuation or bool(re.match(r'^[ \t]*#', line))
+        continuation = directive and line.rstrip('\r\n').endswith('\\')
+        if directive:
+            lines[index] = re.sub(r'[^\n]', ' ', line)
+    clean = ''.join(lines)
+    return clean
+
+
 def find(text: str, name: str) -> tuple[int, int] | None:
     """(start, end) of the definition of `name`, or of its asm stub; None when absent."""
-    clean = _blank(text)
+    clean = _code_only(text)
     simple = name.split("::")[-1]
     if "::" in name:  # Class::method: match it exactly
         pat = re.compile(rf"(?<![\w:~]){re.escape(name)}\s*\(")
     else:  # plain name: also match a definition written as Class::name
         pat = re.compile(rf"(?<![\w:~])(?:[\w~<>]+::)*{re.escape(name)}\s*\(")
     for m in pat.finditer(clean):
+        # A call inside a for increment can be followed by a brace too. Require a
+        # declaration prefix, not an expression, while allowing K&R and C++ forms.
+        boundary = max(clean.rfind(";", 0, m.start()), clean.rfind("{", 0, m.start()),
+                       clean.rfind("}", 0, m.start())) + 1
+        prefix = clean[boundary:m.start()]
+        prefix = re.sub(r"(?m)^[ \t]*#[^\n]*", "", prefix).strip()
+        if re.search(r"[=()+/!|%]", prefix) or re.search(r"\b(?:for|while|return|if|switch)\b", prefix):
+            continue
         # walk to the end of the parameter list
         depth, i = 0, m.end() - 1
         while i < len(clean):
@@ -66,11 +89,13 @@ def find(text: str, name: str) -> tuple[int, int] | None:
         if j >= len(clean) or clean[j] != "{":
             continue
         line_start = clean.rfind("\n", 0, m.start()) + 1
-        if clean[line_start:m.start()].strip().startswith(("#", "return", "if", "else")):
+        # A typedef/global/previous definition can share this line. Its declaration
+        # boundary must not become part of the requested function or its repair view.
+        start = max(line_start, boundary)
+        if clean[start:m.start()].strip().startswith(("#", "return", "if", "else")):
             continue
         # include the return type / storage class on preceding lines that belong to this declaration
-        start = line_start
-        prev_end = start - 1
+        prev_end = start - 1 if start == line_start else -1
         while prev_end > 0:
             prev_start = clean.rfind("\n", 0, prev_end) + 1
             prev = clean[prev_start:prev_end].strip()

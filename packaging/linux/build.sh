@@ -31,6 +31,7 @@ rm -rf "$APP/python/lib/python3.12/EXTERNALLY-MANAGED" "$APP/python/lib/python3.
 uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages \
   --requirements "$WORK/runtime-requirements.txt"
 uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages --no-deps "$WORK"/wheel/*.whl
+"$APP/python/bin/python3.12" "$ROOT/packaging/stamp_build.py" "$ROOT"
 rm -f "$APP/python/bin/decomp"  # its shebang names this build's folder: the launchers below run the module instead
 cp "$(command -v uv)" "$APP/bin/uv"
 find "$APP/python" -name __pycache__ -prune -exec rm -rf {} +

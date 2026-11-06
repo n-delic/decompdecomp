@@ -26,9 +26,9 @@ from pathlib import Path
 from decompnet.hostenv import NO_WINDOW, find_uv
 
 from .. import __version__, toolchains
-from . import edition, window
+from . import edition, source_checkout, window
 
-REPO = "n-delic/decompdecomp"
+REPO = "RetroReversing/decompdecomp"
 RECHECK = {"release": 3 * 3600, "branch": 15 * 60}  # GitHub allows 60 unauthenticated API calls an hour
 
 
@@ -45,7 +45,7 @@ def installed() -> dict:
         data = {}
     if not isinstance(data, dict) or data.get("channel") not in ("release", "branch"):
         data = {"channel": "release"}
-    if data["channel"] == "branch" and data.get("branch") in ("", None, "main"):
+    if data["channel"] == "branch" and data.get("branch") in ("", None, "main") and not data.get("track_branch"):
         # main is the release line: installed from a checkout of it, every commit (a website edit too) was offered
         # as an update; it updates on releases, as an install from the installer does
         data = {**data, "channel": "release", "branch": "", "commit": ""}
@@ -54,15 +54,40 @@ def installed() -> dict:
     return data
 
 
-def record(channel: str, branch: str = "", commit: str = "", repo: str = REPO) -> dict:
+def record(channel: str, branch: str = "", commit: str = "", repo: str = REPO, *, track_branch: bool = False) -> dict:
     """Write how this copy was installed, for the next update check."""
     data = {"channel": channel if channel in ("release", "branch") else "release", "repo": repo or REPO,
-            "branch": branch, "commit": commit, "version": __version__, "t": time.time()}
+            "branch": branch, "commit": commit, "track_branch": track_branch, "version": __version__, "t": time.time()}
     if data["channel"] == "release":
         data.update(branch="", commit="")
     info_file().parent.mkdir(parents=True, exist_ok=True)
     info_file().write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return data
+
+
+def repository(value: str) -> str:
+    """Only public GitHub repository identifiers; never credentials, arbitrary hosts or git arguments."""
+    value = value.strip().rstrip('/')
+    if value.startswith('https://github.com/'):
+        value = value[len('https://github.com/'):]
+    value = value.removesuffix('.git')
+    if not re.fullmatch(r'[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+', value) or value.split('/')[1] in ('.', '..'):
+        raise ValueError('Enter a GitHub repository URL such as https://github.com/RetroReversing/decompdecomp.')
+    return value
+
+
+def configure_source(repo: str, branch: str = 'main') -> dict:
+    repo = repository(repo)
+    branch = branch.strip()
+    if not BRANCH_NAME.fullmatch(branch) or '..' in branch or branch.startswith(('-', '/')):
+        raise ValueError('Enter a valid branch name, for example main.')
+    # Validate before replacing a working source; do not install or restart merely to save a preference.
+    target = {**installed(), 'repo': repo, 'channel': 'branch', 'branch': branch, 'commit': ''}
+    try:
+        _check_branch(target)
+    except (OSError, KeyError, ValueError) as e:
+        raise ValueError(f'Could not check {repo} branch {branch}: {e}. The update source was not changed.') from None
+    return record('branch', branch, repo=repo, track_branch=True)
 
 
 def version_key(v: str) -> tuple[int, ...]:
@@ -225,7 +250,7 @@ def install(found: dict, log=print) -> dict:
     log("getting the tools this version needs")
     _stream([*decomp, "setup"], log, "setting up the new version's tools failed")
     data = {"channel": cur["channel"], "repo": cur.get("repo") or REPO, "branch": cur.get("branch") or "",
-            "commit": found["latest"].get("commit") or "", "version": found["latest"].get("version") or "",
+            "commit": found["latest"].get("commit") or "", "track_branch": cur.get("track_branch", False), "version": found["latest"].get("version") or "",
             "t": time.time()}
     info_file().parent.mkdir(parents=True, exist_ok=True)
     info_file().write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -269,6 +294,15 @@ class Updater:
         self.last: dict | None = None
         self.job = {"state": "idle", "log": [], "error": None}
         self._lock = threading.Lock()
+        self.checkout = source_checkout.Checkout()
+
+    def set_source(self, repo: str, branch: str) -> dict:
+        with self._lock:
+            if self.job['state'] in ('installing', 'restarting'):
+                raise ValueError('Wait for the current update to finish before changing its source.')
+            source = configure_source(repo, branch)
+            self.last = None
+            return source
 
     def status(self, refresh: bool = False) -> dict:
         cur = self.last

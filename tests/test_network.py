@@ -165,6 +165,8 @@ def test_give_ups_are_recounted_once_without_decomp_wtfs_own_expiries(tmp_path):
     path = tmp_path / "old.db"
     Store(path)
     db = sqlite3.connect(path)
+    from decompnet.payload_storage import register
+    register(db)  # Raw maintenance connections must understand the stored text codecs.
     db.execute("DELETE FROM settings WHERE key='abandons_recounted'")  # a database from before
     db.execute("INSERT INTO agents(id,name,token_hash,created_at) VALUES(1,'autopilot','x',0),(2,'claude-1','y',0)")
     db.execute("INSERT INTO projects(id,slug,root,config) VALUES(1,'p','/','{}')")
@@ -247,7 +249,9 @@ def test_a_function_is_found_by_its_address_from_an_index(tmp_path):
 
     store = Store(tmp_path / "s.db")
     plan = store.all("EXPLAIN QUERY PLAN SELECT id, status FROM functions WHERE project_id=? AND vram=?", 1, 0x100000)
-    assert "idx_functions_vram" in " ".join(str(r[3]) for r in plan)
+    detail=" ".join(str(r[3]) for r in plan)
+    # SQLite may prefer the newer covering compiler index with the same leading keys.
+    assert "SEARCH functions USING" in detail and "(project_id=? AND vram=?)" in detail
 
 
 def test_a_note_is_found_by_its_function_and_text_from_an_index(tmp_path):

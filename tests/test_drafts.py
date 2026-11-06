@@ -187,7 +187,8 @@ def test_every_open_function_gets_a_draft_in_the_background_and_autopilot_tries_
     monkeypatch.setattr(net, "_autopilot_one", lambda agent, proj, fid: asked.append(fid) or judge(agent, proj, fid))
     st = net.drafter.start(SLUG)
     try:
-        for _ in range(1200):
+        # Fresh drafts now include compilation and normal progress publication.
+        for _ in range(3000):
             if st.total and st.made >= st.total and not net.stale_drafts(proj):
                 break
             time.sleep(0.1)

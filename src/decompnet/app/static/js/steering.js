@@ -13,7 +13,7 @@ function showDrawer(id) {
 function hideDrawer(id) {
   const d = $(id);
   if (d.hidden) return;
-  if (id === "drawer") { giveBack(null); S.fn = null; if (S.map.length) drawMap(); }
+  if (id === "drawer") { if (typeof cancelFunctionRead === "function") cancelFunctionRead(); giveBack(null); S.fn = null; S.fnDetail = null; S.fnNav = (S.fnNav || 0) + 1; if (S.map.length) drawMap(); }
   if (id === "dialog") S.dialogKind = "";
   d.hidden = true;
   if ($("drawer").hidden && $("dialog").hidden) document.body.classList.remove("locked");
@@ -77,16 +77,20 @@ $("joinBtn").onclick = openJoin;
 function decompClose() {
   api("/api/close").then((st) => {
     if (!st.busy) return api("/api/close", { method: "POST", body: {} });
-    const what = st.helpers ? `${plural(st.helpers, "helper")} ${st.helpers === 1 ? "is" : "are"} still working on your games.`
-      : "A job is still running.";
+    const what = st.helpers ? `${plural(st.helpers, "worker")} ${st.helpers === 1 ? "is" : "are"} still active on your games.`
+      : "Background work is still running.";
+    const workers = st.workers || [], tasks = st.tasks || [];
+    const context = (workers.length ? `<div class="compiler-table"><table><thead><tr><th>Worker</th><th>Project</th><th>Status</th></tr></thead><tbody>${workers.map(w => `<tr><td class="mono">${esc(w.name)}</td><td>${esc(w.project)}</td><td>${esc(w.state)}${w.why ? `<br><span class="muted small">${esc(w.why)}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : "")
+      + (tasks.length ? `<h3>Background tasks</h3><ul>${tasks.map(t => `<li>${esc(t.name)}${t.phase ? ` · ${esc(t.phase)}` : ""}${t.function ? ` · ${esc(t.function)}` : ""}</li>`).join("")}</ul>` : "");
     const back = st.tray ? "The decompdecomp icon in the tray brings the window back." : "Open decompdecomp again to come back to them.";
-    const body = dialog("Close decompdecomp?", `<p>${what}</p>
+    const body = dialog("Close decompdecomp?", `<p>${what}</p>${context}
       <p class="muted small">They can keep working without the window. ${back}</p>
-      <div class="row"><button class="primary" id="closeKeep" type="button">Keep them working</button>
-        <button class="ghost" id="closeQuit" type="button">Stop them and quit</button>
+      <div class="row"><button class="ghost" id="closeKeep" type="button">Keep them working</button>
+        <button class="primary" id="closeQuit" type="button">Stop them and quit</button>
         <button class="ghost" data-close type="button">Cancel</button></div>`);
     body.querySelector("#closeKeep").onclick = () => api("/api/close", { method: "POST", body: { keep: true } }).catch((e) => toast(esc(e.message), "err"));
     body.querySelector("#closeQuit").onclick = () => api("/api/close", { method: "POST", body: {} }).catch((e) => toast(esc(e.message), "err"));
+    body.querySelector("#closeQuit").focus();
   }).catch(() => api("/api/close", { method: "POST", body: {} }));
   return "wait";
 }
@@ -102,6 +106,15 @@ function renderSteering(ov) {
   $("saveTitle").textContent = ov.kind === "fork" ? "Save the closest attempts" : "Save your progress";
   $("saveAbout").hidden = ov.kind === "fork";
   $("saveAboutFork").hidden = ov.kind !== "fork";
+  $("repositorySync").hidden = false;
+  $("repositoryAutoCommitGroup").hidden = ov.kind === "fork";
+  $("repositorySyncActions").hidden = ov.kind === "fork";
+  $("repositorySyncHelp").hidden = ov.kind === "fork";
+  $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Sync your verified matches";
+  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Commit your saved progress, or copy matching C into a rebuildable export checkout.";
+  loadRepositoryFolder(S.slug);
+  refreshRepositoryPush();
+  renderRepositoryAutoCommit(ov.auto_commit);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
   const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];
@@ -112,6 +125,81 @@ function renderSteering(ov) {
     <div class="row"><button class="primary small-btn" type="button" data-bapply="${r.id}">Cut it there</button><button class="ghost small-btn" type="button" data-bdismiss="${r.id}">Dismiss</button></div></div>`).join("") + sg.map(suggestionHtml).join(""));
   if (S.tab === "settings") renderCompilerWaiting(ov);
 }
+let repositoryAutoCommitBusy = false;
+let repositoryAutoCommitState = {};
+let repositoryAutoCommitSlug = null;
+function renderRepositoryAutoCommit(state = {}) {
+  if (repositoryAutoCommitBusy) return;
+  if (repositoryAutoCommitSlug !== S.slug) {
+    repositoryAutoCommitSlug = S.slug;
+    $("repositoryAutoCommitLog").textContent = "";
+    $("repositoryAutoCommitLog").hidden = true;
+  }
+  repositoryAutoCommitState = state;
+  $("repositoryAutoCommit").checked = !!state.enabled;
+  $("repositoryAutoCommitDetails").hidden = !state.pending;
+  $("repositoryAutoCommitDetails").textContent = `Pending commits (${state.pending || 0})`;
+  const status = $("repositoryAutoCommitState");
+  status.textContent = state.error || (state.enabled
+    ? `${state.pending || 0} pending · ${state.last_commit ? "Last commit: " + state.last_commit.slice(0, 8) : "Waiting for new matches."}`
+    : "Off. Existing matches will not be committed automatically.");
+  status.classList.toggle("err", !!state.error);
+}
+$("repositoryAutoCommitDetails").onclick = () => {
+  const state = repositoryAutoCommitState;
+  dialog("Pending match commits", `<p>Each match uses its agent’s notes, or a short “Match &lt;function&gt;” message when notes are absent.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}${item.agent || item.method ? `<br><span class="small muted">${esc([item.agent, item.method].filter(Boolean).join(" · "))}</span>` : ""}<br><span class="small muted">${esc(item.error || "Waiting for the next autosave check.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
+};
+$("repositoryAutoCommit").onchange = async () => {
+  const field = $("repositoryAutoCommit"), slug = S.slug, enabled = field.checked;
+  repositoryAutoCommitBusy = true;
+  const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [field], "Automatic commit preference saved.");
+  try {
+    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:$("repositoryFolder").value.trim()}});
+    if (S.slug === slug) {
+      repositoryAutoCommitBusy = false;
+      if (S.ov) S.ov.auto_commit = state;
+      renderRepositoryAutoCommit(state);
+    }
+  } catch (error) {
+    if (S.slug === slug) { field.checked = !enabled; showJobError($("repositoryAutoCommitLog"), error.message); }
+  } finally {
+    repositoryAutoCommitBusy = false; finish();
+    if (S.slug !== slug) renderRepositoryAutoCommit(S.ov?.auto_commit);
+  }
+};
+
+// Imported saves already remember their Git checkout; do not overwrite a path the user is editing.
+function loadRepositoryFolder(slug) {
+  const field = $("repositoryFolder"), hint = $("repositorySyncHint");
+  if (field.dataset.slug === slug) return;
+  field.dataset.slug = slug;
+  field.value = "";
+  field.dataset.progressFolder = "";
+  const setMode = progress => {
+    $("repositorySyncGo").textContent = progress ? "Review saved progress" : "Verify and sync";
+    $("repositoryCommitGo").textContent = progress ? "Commit and push" : "Verify, commit and push";
+  };
+  setMode(false);
+  const defaultHint = "Commit or move any existing checkout changes first.";
+  hint.textContent = defaultHint;
+  field.oninput = () => {
+    const progress = field.value.trim() === field.dataset.progressFolder;
+    setMode(progress);
+    hint.textContent = progress ? "App-saved progress can be committed; newer helper edits stay local." : defaultHint;
+    refreshRepositoryPush(true);
+  };
+  api(`/api/repository-sync?slug=${encodeURIComponent(slug)}`).then(result => {
+    if (S.slug !== slug || field.dataset.slug !== slug) return;
+    if (!field.value) {
+      field.value = result.folder || "";
+      field.dataset.progressFolder = result.mode === "progress" ? field.value : "";
+      setMode(result.mode === "progress");
+      hint.textContent = result.message || defaultHint;
+      refreshRepositoryPush(true);
+    }
+  }).catch(() => {});
+}
+
 /* What agents said, for the user to read (suggestions, what they learned): a status, who (as chips) and when on a
    line of their own, then what they said with its `code` and **bold**. It was one run of plain text, hard to tell
    where one agent's words ended and the next began. */
@@ -122,10 +210,26 @@ const saidText = (text) => `<div class="said-text">${miniMarkdown(text)}</div>`;
 const tcName = (id) => (S.st?.toolchains || []).find((t) => t.id === id)?.name || id;
 function suggestionHtml(s) {
   const ok = s.check && s.check.includes("matches the game");
+  const single = s.function_scope?.function;
   return `<div class="note">${saidHead(s.agents.length > 1 ? `${s.agents.length} agents agree` : "suggested", s.agents, s.t, true)}${saidText(s.text)}
     ${s.check ? `<p class="said-check${ok ? " ok" : ""}">${ok ? "✓ " : ""}${esc(s.check)}</p>` : ""}
-    <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${(s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
+    ${s.toolchain ? `<p class="small muted">${single ? `Scope: ${esc(single)} only. Rechecks and saves its exact source, header and flags together; neighbours are unchanged.` : (s.ranges || []).length ? 'Scope: selected address ranges. Only functions whose settings change are checked.' : 'Scope: project default. This can require checking thousands of existing matches; use a range suggestion for a local change.'}</p>` : ''}
+    <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${single ? ` for ${esc(single)} only` : (s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
 }
+function compilerSuggestionHtml(s) {
+  const single = s.function_scope?.function;
+  const scope = single ? `Only ${single}` : (s.ranges || []).length ? plural(s.ranges.length, "address range") : "Project default";
+  const verified = (s.check || "").includes("matches the game");
+  return `<article class="compiler-inbox-item">
+    <div class="compiler-inbox-item-head"><h4>${esc(tcName(s.toolchain))}</h4><span class="said-badge quiet">${esc(scope)}</span></div>
+    <code class="compiler-inbox-flags">${esc((s.flags || []).join(" "))}</code>
+    ${saidHead("", s.agents || [], s.t, true)}
+    <p class="small ${verified ? "ok" : "muted"}">${verified ? "✓ Matching C checked" : "Verification required"} · Existing matches are checked before applying.</p>
+    <div class="row"><button class="primary small-btn" type="button" data-apply="${s.id}">Apply suggestion</button><button class="ghost small-btn" type="button" data-dismiss="${s.id}">Dismiss</button></div>
+    <details class="compiler-inbox-evidence"><summary>Why this was suggested</summary>${saidText(s.text)}${s.check ? `<p class="small muted">${esc(s.check)}</p>` : ""}</details>
+  </article>`;
+}
+
 $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
   const cut = e.target.closest("button[data-bapply], button[data-bdismiss]");
   if (cut) {
@@ -137,14 +241,55 @@ $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
     } catch (err) { toast(esc(err.message), "err"); }
     return;
   }
+  const dismissAll = e.target.closest('button[data-dismiss-all]');
+  if (dismissAll) { await dismissWaitingSuggestions(dismissAll); return; }
+  const batch = e.target.closest('button[data-apply-all]');
+  if (batch) { await acceptWaitingSuggestions(batch); return; }
   const b = e.target.closest("button[data-apply], button[data-dismiss]");
   if (!b) return;
   const apply = b.dataset.apply != null;
+  const slug = S.slug;
+  if (apply) {
+    const body = dialog("Applying compiler suggestion", `<p>Checking affected functions with the suggested compiler and flags. Existing matches must still match byte for byte; saved attempts are rescored before the settings are saved.</p>
+      <p class="muted small">You can close this dialog; the checks will continue in the background.</p>
+      <p class="small" data-suggestion-progress role="status">Preparing checks…</p>
+      <progress class="deep-sweep-bar" data-suggestion-meter aria-label="Current compiler-check phase" max="100" value="0" hidden></progress>
+      <pre class="log" id="suggestionApplyLog" aria-label="Compiler checks"></pre>
+      <button class="ghost" type="button" data-close>Close</button>`);
+    const log = body.querySelector("#suggestionApplyLog");
+    const finish = beginWork(log, "Checking compiler settings and protecting existing matches", [b], "Compiler settings applied.");
+    try {
+      const { job } = await api("/api/suggestion", { method: "POST", body: { slug, id: Number(b.dataset.apply), action: "apply", background: true } });
+      const overview = await followJob(job, log, (_lines, snapshot) => {
+        const progress = snapshot.progress;
+        if (!progress?.phase) return;
+        const total = Number(progress.total || 0), done = Number(progress.done || 0);
+        const percent = total ? Math.round(100 * done / total) : 100;
+        body.querySelector('[data-suggestion-progress]').textContent = `${progress.phase} · ${done.toLocaleString()} / ${total.toLocaleString()} · ${percent}%${progress.affected != null ? ` · ${progress.affected.toLocaleString()} affected functions` : ''}`;
+        const meter = body.querySelector('[data-suggestion-meter]'); meter.hidden=false; meter.value=percent;
+        const waitingBar = log.previousElementSibling;
+        if (waitingBar?.classList.contains('workbar')) waitingBar.hidden=true;
+      });
+      body.querySelector('[data-suggestion-progress]').textContent = 'Compiler settings applied; project progress saved.';
+      body.querySelector('[data-suggestion-meter]').value = 100;
+      if (S.slug === slug) {
+        S.ov = overview;
+        renderStats(S.ov);
+        renderProjectSettings();
+      }
+      toast("Applied. Agents use the new settings from their next attempt.");
+    } catch (err) { showJobError(log, err.message); }
+    finally { finish(); }
+    return;
+  }
   try {
-    S.ov = await api("/api/suggestion", { method: "POST", body: { slug: S.slug, id: Number(b.dataset.apply || b.dataset.dismiss), action: apply ? "apply" : "dismiss" } });
-    renderStats(S.ov);
-    renderProjectSettings();
-    toast(apply ? "Applied. Agents compile with it from their next attempt on." : "Dismissed.");
+    const overview = await api("/api/suggestion", { method: "POST", body: { slug, id: Number(b.dataset.dismiss), action: "dismiss" } });
+    if (S.slug === slug) {
+      S.ov = overview;
+      renderStats(S.ov);
+      renderProjectSettings();
+    }
+    toast("Dismissed.");
   } catch (err) { toast(esc(err.message), "err"); }
 };
 // a disc's title is often only its serial (GTA San Andreas imports as SLES-52541): the user names it
@@ -173,19 +318,28 @@ async function renderKnowledge(force = false) {
   let k;
   try { k = await api(`/api/knowledge?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
   $("knowAuto").checked = k.auto;
+  const evidence = (it) => it.evidence?.length ? `<details><summary>Supporting examples · ${it.evidence.length}</summary>${it.evidence.map(e => `<p class="small muted">${esc(e.agent || 'Agent')}: ${esc(e.text)}</p>`).join('')}</details>` : '';
   const row = (it) => {
-    if (it.status === "agreed") return `<div class="note">${saidHead("agreed · waiting for you", it.models, it.t)}${saidText(it.text)}
+    const verification=it.verification ? `<p class="small muted">Independent review queued for ${esc(it.verification.agent)} · ${esc(it.verification.model)} · next session</p>` : '';
+    if (it.status === "agreed") return `<div class="note">${saidHead("agreed · waiting for you", it.models, it.t)}${saidText(it.text)}${evidence(it)}
       <div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Give it to agents</button>
       <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
-    if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}
+    if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}
       <div class="row"><button class="ghost small-btn" data-know="${it.id}" type="button">Take it back</button></div></div>`;
-    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}</div>`;
+    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}${verification}<div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Accept for all agents</button><button class="ghost small-btn" data-verify-knowledge="${it.id}" type="button">Verify with another model</button><button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
   };
   const waiting = k.items.filter((it) => it.status === "agreed").length;
   $("knowState").textContent = waiting ? `${waiting} waiting for you` : k.items.length ? "" : "nothing yet";
   setHtml($("knowList"), k.items.map(row).join(""));
 }
 $("knowList").onclick = async (e) => {
+  const verify=e.target.closest('[data-verify-knowledge]');
+  if(verify?.dataset.verifyKnowledge){
+    const slug=S.slug, work=$('knowledgeVerifyWork'), finish=beginWork(work,'Queueing independent verification',[verify],'');
+    try {const result=await api('/api/knowledge/verify',{method:'POST',body:{slug,id:Number(verify.dataset.verifyKnowledge)}});if(S.slug===slug){toast(esc(result.message));await renderKnowledge(true);}}
+    catch(error){showJobError(work,error.message);}finally{finish();}
+    return;
+  }
   const b = e.target.closest("[data-know]");
   if (!b) return;
   try {
@@ -219,7 +373,219 @@ async function togglePrio(name, on) {
 
 /* Autopilot: free matches before any agent spends a token: identical code (twins) of what's matched, then every
    function's machine draft through the judge; the permuter works on near misses meanwhile. */
+function renderSavedMatchRecovery(ov) {
+  const stop = $("savedMatchStop"), log = $("savedMatchLog");
+  $("savedMatchRecoveryPanel").hidden = ov.kind === "fork";
+  const recover = $("recoverSavedMatches");
+  const limits = [$("savedMatchSeconds"), $("savedMatchAttempts")];
+  const updateLabel = () => { recover.textContent = limits.some(input => input.value.trim() !== "")
+    ? "Recover saved matches" : "Recover all saved matches"; };
+  limits.forEach(input => { input.oninput = updateLabel; });
+  updateLabel();
+  const start = async (route, label) => {
+    const slug = S.slug;
+    const finish = beginWork(log, label, [recover, ...limits], "Saved-match recovery ended");
+    log.hidden = false;
+    $("savedMatchSummary").textContent = "Preparing saved-match recovery…";
+    stop.hidden = false; stop.disabled = true;
+    try {
+      const result = await api(route, {method: "POST", body: {slug,
+        seconds: $("savedMatchSeconds").value.trim() === "" ? null : Number($("savedMatchSeconds").value),
+        attempts: $("savedMatchAttempts").value.trim() === "" ? null : Number($("savedMatchAttempts").value)}});
+      stop.disabled = false;
+      stop.onclick = async () => {
+        try { await api("/api/job/cancel", {method: "POST", body: {id: result.job}}); }
+        catch (e) { showJobError(log, e.message); }
+      };
+      await followJob(result.job, log, (lines, job) => {
+        if (S.slug !== slug) return;
+        const p = job.progress || job.result;
+        if (p) $("savedMatchSummary").textContent = `${p.matched || 0} matched · ${p.attempts || 0} compiles · ${(p.matches_per_minute || 0).toFixed(2)} matches/min`;
+      });
+    } catch (e) { showJobError(log, e.message); }
+    finally { finish(); stop.hidden = true; }
+  };
+  recover.onclick = () => start("/api/reconcile-matches", "Recovering saved matches");
+}
+
 function renderAutopilot(ov) {
+  const draftButton = $('regenerateMachineDrafts'), draftScope = $('machineDraftIncludeAll');
+  if (draftScope && renderAutopilot.draftProject !== S.slug) {
+    draftScope.checked = false;
+    renderAutopilot.draftProject = S.slug;
+  }
+  if (draftButton) draftButton.onclick = async () => {
+    const log = $('machineDraftLog'), stop = $('machineDraftStop');
+    let jobId = null, summary = null;
+    log._showJobProgress = true;
+    if (stop) {
+      stop.hidden = false; stop.disabled = true;
+      stop.onclick = async () => {
+        if (!jobId) return;
+        stop.disabled = true;
+        try { await api('/api/job/cancel', {method:'POST',body:{id:jobId}}); }
+        catch (error) { stop.disabled = false; showJobError(log, error.message); }
+      };
+    }
+    log.hidden = false;
+    const finish = beginWork(log, 'Regenerating machine drafts', [draftButton, $('machineDraftIncludeAll'), $('machineDraftThreads')], 'Draft refresh finished');
+    showJobError(log, '');
+    try {
+      const { job } = await api('/api/drafts', {method:'POST', body:{slug:S.slug, include_all:$('machineDraftIncludeAll').checked, threads:Number($('machineDraftThreads').value)}});
+      jobId = job;
+      if (stop) stop.disabled = false;
+      const result = await followJob(job, log, lines => { log.hidden = lines.length === 0; });
+      if (result) summary = `${result.completed} / ${result.total} functions reviewed · ${result.compiled} compiling · ${result.matched} matched · ${result.skipped} skipped · ${result.failed} failed`;
+    } catch(error) { showJobError(log, error.message); }
+    finally {
+      if (stop) stop.hidden = true;
+      finish();
+      if (summary && log._workStatus) log._workStatus.textContent = summary;
+      if (!log.textContent.trim()) log.hidden = true;
+    }
+  };
+
+  renderSavedMatchRecovery(ov);
+  const collapsed = renderAutopilot.collapsed ||= new Set();
+  const toggle = $("crossGameToggle"), body = $("crossGameBody");
+  body.hidden = collapsed.has(ov.slug);
+  toggle.setAttribute('aria-expanded', String(!body.hidden));
+  toggle.onclick = () => {
+    body.hidden = !body.hidden;
+    if (body.hidden) collapsed.add(ov.slug); else collapsed.delete(ov.slug);
+    toggle.setAttribute('aria-expanded', String(!body.hidden));
+  };
+  $("crossGameWork").hidden = $("crossGameLog")._slug !== ov.slug;
+  const run = $("crossGameRun"), minutes = $("crossGameMinutes"), attempts = $("crossGameAttempts");
+  const preset = $("crossGamePreset"), stop = $("crossGameStop");
+  stop.hidden = !run._working || $("crossGameLog")._slug !== ov.slug;
+  run.hidden = !stop.hidden;
+  const budgetKey = `cross-game-budget:${ov.slug}`;
+  if (minutes._slug !== ov.slug) {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(budgetKey)); } catch (_) { /* Storage may be unavailable. */ }
+    // Migrate only the old default pair; keep explicitly saved Quick and custom budgets.
+    if (saved && !saved.version && saved.minutes === 2 && saved.attempts === 128) saved = {...saved, minutes:20};
+    minutes.value = saved?.minutes || 20; attempts.value = saved?.attempts || 128;
+    minutes._slug = ov.slug;
+    preset.value = saved?.preset || (Number(minutes.value) === 20 && Number(attempts.value) === 128 ? 'standard' : 'custom');
+  }
+  const saveBudget = () => {
+    try { localStorage.setItem(budgetKey, JSON.stringify({version:2, preset:preset.value, minutes: Number(minutes.value), attempts: Number(attempts.value)})); }
+    catch (_) { /* The search still works when device storage is unavailable. */ }
+  };
+  minutes.onchange = attempts.onchange = () => { preset.value = 'custom'; saveBudget(); };
+  preset.onchange = () => {
+    const values = {standard: [20, 128], quick: [2, 128], thorough: [60, 10000], overnight: [720, 100000]}[preset.value];
+    if (values) { [minutes.value, attempts.value] = values; saveBudget(); }
+  };
+  const busy = ov.twins?.state === 'running' || ov.autopilot?.state === 'running';
+  run.disabled = !!run._working || busy;
+  run.textContent = busy || run._working ? 'Searching…' : 'Start search';
+  const logState = $("crossGameLog");
+  $("crossGameState").textContent = run._working ? logState._slug === ov.slug ? logState._state || "Searching other games" : "A search is running in another project" : busy ? "A free matching pass is running" : logState._slug === ov.slug && logState._state ? logState._state : "Ready to search";
+  run.onclick = async () => {
+    if (run._working || !minutes.reportValidity() || !attempts.reportValidity()) return;
+    body.hidden = false; collapsed.delete(ov.slug);
+    toggle.setAttribute('aria-expanded', 'true');
+    saveBudget();
+    const seconds = Number(minutes.value) * 60, limit = Number(attempts.value);
+    const slug = ov.slug, log = $("crossGameLog");
+    const status = $("crossGameBudgetStatus"), bar = $("crossGameBudgetBar");
+    status.textContent = `Preparing · 0 / ${limit.toLocaleString()} checks used · ${Number(minutes.value).toLocaleString()} min limit`;
+    bar.setAttribute('aria-valuemax', String(limit)); bar.setAttribute('aria-valuenow', '0');
+    bar.firstElementChild.style.width = '0%'; bar.hidden = true;
+    $('crossGamePhaseStatus').textContent = 'Requesting a search worker…';
+    $('crossGameActivity').hidden = false;
+    $("crossGamePhaseBar").hidden = true;
+    log._state = 'Starting search…'; $("crossGameState").textContent = log._state;
+    log._showJobProgress = false;
+    run._working = true; run.hidden = true; run.textContent = "Starting…"; log._slug = slug; $("crossGameWork").hidden = false;
+    showJobError(log, '');
+    const finish = beginWork(log, 'Checking other games', [run, minutes, attempts, preset], 'Cross-game check finished.');
+    stop.hidden = false; stop.disabled = true; stop.textContent = 'Starting…';
+    const startedAt = Date.now();
+    let latestProgress = null;
+    const updateElapsed = () => {
+      if (S.slug !== slug) return;
+      const p = latestProgress, elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      status.textContent = `${(p?.attempts || 0).toLocaleString()} / ${(p?.attempt_limit || limit).toLocaleString()} checks used · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s elapsed · ${Math.round((p?.second_limit || seconds) / 60)} min limit · ${p?.confirmed || 0} verified this run`;
+    };
+    updateElapsed();
+    const elapsedTimer = setInterval(updateElapsed, 1000);
+    try {
+      const {job} = await api('/api/cross-game/run', {method:'POST', body:{slug, seconds, attempts: limit}});
+      stop.disabled = false; stop.textContent = 'Stop'; run.textContent = 'Searching…';
+      log._state = 'Searching other games';
+      if (S.slug === slug) { $('crossGameState').textContent = log._state; $('crossGamePhaseStatus').textContent = 'Waiting for the search worker to report its current step…'; }
+      stop.onclick = async () => {
+        stop.disabled = true; stop.textContent = 'Stopping…';
+        if (S.slug === slug) $("crossGameState").textContent = 'Stopping search…';
+        try { await api('/api/job/cancel', {method:'POST', body:{id: job}}); }
+        catch (error) { stop.disabled = false; stop.textContent = "Stop"; if(S.slug === slug) {$("crossGameState").textContent = "Searching other games"; $("crossGamePhaseStatus").textContent = "Could not stop: " + error.message;} showJobError(log, error.message); }
+      };
+      const result = await followJob(job, log, (_lines, snapshot) => {
+        const p = snapshot.progress;
+        if (!p || S.slug !== slug) return;
+        latestProgress = p; updateElapsed();
+        renderCrossGameProgress(p);
+        bar.hidden = !p.attempts;
+        bar.setAttribute('aria-valuemax', String(p.attempt_limit)); bar.setAttribute('aria-valuenow', String(p.attempts));
+        bar.firstElementChild.style.width = `${Math.min(100, 100 * p.attempts / p.attempt_limit)}%`;
+      });
+      log._state = 'Search complete';
+      if (S.slug === slug) {
+        $("crossGameState").textContent = log._state;
+        $("crossGamePhaseBar").hidden = true;
+        $("crossGamePhaseStatus").textContent = `${result.matched} verified ${result.matched === 1 ? "match" : "matches"} · ${result.improved} partial ${result.improved === 1 ? "improvement" : "improvements"} saved. You can run another search.`;
+        await poll(false); refreshMap();
+      }
+      toast(`${result.matched} matches · ${result.improved} partial improvements from other games.`, 'match');
+    } catch (error) {
+      log._state = /stopp|cancel/i.test(error.message) ? 'Search stopped' : 'Search could not finish';
+      if (S.slug === slug) { $("crossGameState").textContent = log._state; $("crossGamePhaseStatus").textContent = error.message; $("crossGamePhaseBar").hidden = true; }
+      showJobError(log, error.message);
+    }
+    finally { clearInterval(elapsedTimer); if (S.slug === slug) $('crossGameActivity').hidden = true; finish(); stop.hidden = true; stop.textContent = 'Stop'; run._working = false; run.hidden = false; run.textContent = 'Start search'; }
+  };
+  const cross = ov.cross_game || { counts: {}, recent: [] };
+  const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
+  $("crossGamePanel").hidden = false;
+  $("crossGameContext").textContent=`— ${count.toLocaleString()} verified · ${tried.toLocaleString()} checked`;
+  $("crossGameSummary").innerHTML = `<p class="transfer-saved-caption">Results across all searches</p><div class="transfer-totals" aria-label="Saved results across runs"><span><strong>${count.toLocaleString()}</strong> verified matches</span><span><strong>${(cross.counts.improved || 0).toLocaleString()}</strong> partial improvements</span><span><strong>${tried.toLocaleString()}</strong> candidate checks</span></div>`;
+  const discovery = cross.discovery;
+  $("crossGameSummary").innerHTML += discovery
+    ? `<details class="transfer-context"><summary>Shared-code leads <span class="muted">· ${discovery.ready.toLocaleString()} ready to test</span></summary><p><b>${discovery.detected.toLocaleString()}</b> functions with shared code detected · <b>${discovery.ready.toLocaleString()}</b> ready to test · <b>${discovery.blocked.toLocaleString()}</b> need writable C scaffolding.</p><p class="muted small">Signatures are leads, not recovered C. The search prepares supported assembly-only units and tests candidates with this project's judge. Unsupported builds keep their original setup.</p>${discovery.block_reason ? `<p class="muted small">Setup blocker: ${esc(discovery.block_reason)}</p>` : ''}</details>`
+    : "";
+  if (ov.free_search?.seconds > 0) $("crossGameSummary").innerHTML += `<details class="transfer-context"><summary>Last free matching pass</summary><p>${ov.free_search.matched} matches from ${ov.free_search.attempts} checks. The saved totals above cover cross-game transfers.</p></details>`;
+  if(!count && tried && !$('crossGameFilter')._chosen)$('crossGameFilter').value='all';
+  const renderTransfers = () => {
+    const filter = $("crossGameFilter").value;
+    const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match')) : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
+    const list = $("crossGameRecent");
+    const expanded = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.transferDetail));
+    list.innerHTML = rows.slice(0, 12).map((r) => {
+      const detailKey = encodeURIComponent(JSON.stringify([ov.slug, r.created_at, r.target, r.source_slug, r.source, r.reason]));
+      const matched = r.outcome === 'match', improved = r.outcome === 'improved';
+      const status = matched ? 'Verified byte match' : improved ? 'Improved · not matched' : r.outcome === 'miss' ? 'Not matched' : r.outcome === 'skip' ? 'Skipped' : r.outcome === 'asm' ? 'Assembly only' : r.outcome;
+      const similarity = (r.reason || '').match(/similar code \((\d+)%\)/);
+      const score = (r.reason || '').match(/score\s+(\d+)/);
+      const previous = (r.reason || '').match(/previous score\s+(\d+|None)/);
+      const scoreText = matched ? 'Exact match' : score ? previous && previous[1] !== 'None' ? `${previous[1]} → ${score[1]}` : previous ? `First score: ${score[1]}` : `Score: ${score[1]}` : 'No score';
+      const targetLink = `<button class="fn" type="button" data-transfer-function="${esc(r.target)}" data-slug="${esc(ov.slug)}" title="Open target function"><b>${esc(r.target)}</b></button>`;
+      const sourceLink = r.source_slug ? `<button class="fn" type="button" data-transfer-function="${esc(r.source)}" data-slug="${esc(r.source_slug)}" title="Open original function in ${esc(r.game)}">${esc(r.source)}</button>` : esc(r.source);
+      const hint = similarity ? `Assembly similarity: ${similarity[1]}%` : '';
+      return `<li class="transfer-row"><div class="transfer-target">${targetLink}<span class="transfer-status ${matched ? 'verified' : improved ? 'improved' : ''}">${esc(status)}</span></div>
+        <div class="transfer-source"><span>From ${esc(r.game)}</span>${sourceLink}</div>
+        <div class="transfer-score ${improved ? 'improved' : ''}" title="${esc(r.reason || (matched ? 'The receiving game verified identical bytes.' : 'No scored result.'))}"><strong>${esc(scoreText)}</strong><span>${matched ? 'Byte for byte' : score ? 'Mismatch score · lower is better' : hint || 'Not compiled'}</span>${score && hint ? `<span>${hint}</span>` : ''}</div>${!matched && r.reason ? `<details class="transfer-diagnostic" data-transfer-detail="${esc(detailKey)}"${expanded.has(detailKey) ? " open" : ""}><summary>Check details</summary><p>${esc(r.reason.split(';').filter(part=>part.trim()!=='transfer').join(' · '))}</p></details>` : ''}</li>`;
+    }).join('') || `<li class="transfer-empty">${filter === 'matches' ? run._working ? 'Searching indexed matches first. Candidate checks and rejection reasons appear here as they finish.' : tried ? 'No exact matches from these checks yet. Choose All recent attempts to see why candidates did not pass.' : 'Start a search to check saved matches first, then other projects and local SDKs.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : 'No recent transfer attempts.'}</li>`;
+  };
+  $("crossGameRecent").onclick = e => {
+    const button = e.target.closest("button[data-transfer-function]");
+    if (button) openNoted(button.dataset.slug, button.dataset.transferFunction);
+  };
+  $("crossGameFilter").onchange = () => {$("crossGameFilter")._chosen=true;renderTransfers();};
+  renderTransfers();
   const box = $("autopilot"), ap = ov.autopilot, tw = ov.twins, pm = ov.permuter;
   const canRun = (ov.kind !== "fork" || ov.ready) && cFunctions(ov) - ov.matched > 0;
   box.hidden = !ap && !canRun && !tw && !pm;
@@ -227,28 +593,35 @@ function renderAutopilot(ov) {
   const running = ap && ap.state === "running";
   const twinsRunning = tw && tw.state === "running";
   box.classList.toggle("on", !!(running || twinsRunning));
-  $("apBar").hidden = !running || ap.phase === "twins";
+  const reuseRunning = twinsRunning || (running && ap.phase === "twins");
+  $("apBar").hidden = !(running || twinsRunning);
+  $("apBar").className = reuseRunning ? "workbar" : "upbar";
+  if (reuseRunning) $("apBar").firstElementChild.style.width = "";
   const perm = pm && (pm.tried || pm.state === "running")
-    ? ` The permuter ${pm.state === "running" ? `is rewriting near misses${pm.current ? ` (now ${pm.current})` : ""}` : "rewrote near misses"}: ${plural(pm.tried, "function")}, ${pm.matched} matched.` : "";
+    ? ` The permuter ${pm.state === "running" ? `is rewriting near misses${pm.threads ? ` on ${plural(pm.threads, "thread")}` : ""}${pm.current ? ` (now ${pm.current})` : ""}` : "rewrote near misses"}: ${plural(pm.tried, "function")}, ${pm.matched} matched.` : "";
   const twinsDone = (ap && ap.twins) || (tw && tw.matched) || 0;
-  if (running && ap.phase === "twins") {
-    $("apTitle").textContent = "Autopilot: matching code the game has more than once (twins of matched functions)";
-    $("apSub").textContent = `Each match's code is tried on its identical copies, names swapped; the judge decides.${perm}`;
+  if (reuseRunning) {
+    $("apTitle").textContent = "Autopilot: trying verified C from this game and other projects";
+    const progress = tw?.progress || {phase: 'Preparing reusable-code search'};
+    updateWorkProgress({_workBar: $('apBar'), _workStatus: $('apSub')}, {...progress, confirmed: null});
+    if (!(Number(progress.total) > 0)) $('apSub').textContent += ' · Total not yet known';
+    $('apSub').textContent += ` · ${(tw?.matched || 0).toLocaleString()} verified matches${perm}`;
     $("apBtn").textContent = "Stop";
   } else if (running) {
     $("apTitle").textContent = `Autopilot: trying each function's machine draft · ${ap.matched.toLocaleString()} matched for free`;
-    $("apSub").textContent = `${ap.tried.toLocaleString()} of ${ap.total.toLocaleString()} tried${ap.near ? ` · ${ap.near} more are 90%+ there` : ""}${ap.twins ? ` · ${ap.twins.toLocaleString()} from identical code` : ""}. Agents work alongside it.${perm}`;
-    $("apBar").firstElementChild.style.width = `${(100 * ap.tried) / Math.max(1, ap.total)}%`;
+    $("apSub").textContent = `${ap.tried.toLocaleString()} of ${ap.total.toLocaleString()} tried${ap.near ? ` · ${ap.near} more are 90%+ there` : ""}${ap.twins ? ` · ${ap.twins.toLocaleString()} from reused C` : ""}. Agents work alongside it.${perm}`;
+    updateWorkProgress({_workBar: $('apBar'), _workStatus: {textContent: ''}}, {phase: 'Trying machine drafts', done: ap.tried, total: ap.total});
     $("apBtn").textContent = "Stop";
   } else if (ap || tw) {
     const total = (ap ? ap.matched : 0) + (ap ? 0 : twinsDone);
-    $("apTitle").textContent = twinsRunning ? `Matching identical code: ${tw.matched.toLocaleString()} so far`
+    $("apTitle").textContent = twinsRunning ? `Trying reusable C: ${tw.matched.toLocaleString()} so far`
       : total ? `Autopilot matched ${total.toLocaleString()} function${total === 1 ? "" : "s"} for free` : "Autopilot found no free matches this time";
     const parts = [];
-    if (twinsDone) parts.push(`${twinsDone.toLocaleString()} from identical code`);
+    if (twinsDone) parts.push(`${twinsDone.toLocaleString()} from reused C`);
     if (tw && tw.asm) parts.push(`${tw.asm.toLocaleString()} copies of assembly set aside (not for agents)`);
     if (ap && ap.tried) parts.push(`${ap.tried.toLocaleString()} machine drafts tried${ap.near ? `, ${ap.near} more 90%+ there` : ""}`);
-    $("apSub").textContent = (parts.length ? parts.join(" · ") + ". " : "") + (ap && ap.no_drafts ? "" : "Run it again after agents add types and names: drafts get better.") + perm;
+    if (ap && ap.no_drafts && !ap.tried) $("apTitle").textContent = "Autopilot could not try machine drafts";
+    $("apSub").textContent = (parts.length ? parts.join(" · ") + ". " : "") + (ap && ap.no_drafts ? ap.no_drafts : "Run it again after agents add types and names: drafts get better.") + perm;
     $("apBtn").textContent = "Run again";
   } else {
     $("apTitle").textContent = "Free matches first";
@@ -258,13 +631,61 @@ function renderAutopilot(ov) {
     $("apBtn").textContent = "Run autopilot";
   }
   $("apBtn").onclick = async () => {
+    const label = $("apBtn").textContent;
     $("apBtn").disabled = true;
+    $("apBtn").textContent = running || twinsRunning ? "Stopping…" : "Starting…";
     try {
-      S.ov = await api("/api/autopilot", { method: "POST", body: { slug: S.slug, action: running ? "stop" : "start" } });
+      S.ov = await api("/api/autopilot", { method: "POST", body: { slug: S.slug, action: running || twinsRunning ? "stop" : "start" } });
       renderAutopilot(S.ov);
-    } catch (e) { toast(esc(e.message), "err"); } finally { $("apBtn").disabled = false; }
+    } catch (e) { $("apBtn").textContent = label; toast(esc(e.message), "err"); } finally { $("apBtn").disabled = false; }
   };
 }
+
+function renderCrossGameProgress(p) {
+  const known=p.total>0 && p.done!=null;
+  $('crossGamePhaseStatus').textContent=`${p.phase || 'Checking candidates'}${known ? ` · ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${Math.floor(100*p.done/p.total)}%)` : ''}${p.game ? ` · ${p.game}` : ''}${p.function ? ` · ${p.function}` : ''}`;
+  $('crossGameLeadStatus').textContent=`${Number(p.indexed_candidates || 0).toLocaleString()} target functions with indexed shared code · ${Number(p.cached_skips || 0).toLocaleString()} unchanged rejected candidates skipped${p.donor ? ` · source: ${p.donor}` : ''}`;
+  const phaseBar=$('crossGamePhaseBar');phaseBar.hidden=!known;
+  $('crossGameActivity').hidden=known;
+  $('crossGameActivity').setAttribute('aria-label',p.phase || 'Checking candidates');
+  if(known){phaseBar.max=p.total;phaseBar.value=p.done;}
+}
+
+async function renderSdkSelection() {
+  const data = await api(`/api/sdk-library?slug=${encodeURIComponent(S.slug)}`);
+  $("sdkMode").value = data.selection === null ? "auto" : "manual";
+  const detected = data.libraries.filter(r => r.detected);
+  $("sdkDetected").textContent = detected.length
+    ? `${detected.length} local libraries share exact function signatures with this game.`
+    : "No library signatures detected yet. Add folders in global Settings or build the imported project's target objects first.";
+  $("sdkChoices").innerHTML = data.libraries.map(r => `<label class="check"><input type="checkbox" data-sdk-corpus="${esc(r.corpus)}" ${r.enabled ? "checked" : ""}><span>${esc(r.corpus.split(" / sha256:")[0])} · ${r.detected} fingerprints</span></label>`).join("");
+  const toggle = () => { $("sdkChoices").hidden = $("sdkMode").value === "auto"; };
+  $("sdkMode").onchange = toggle; toggle();
+}
+$("sdkSelectionSave").onclick = async () => {
+  const log = $("sdkSelectionLog"), button = $("sdkSelectionSave");
+  const finish = beginWork(log, "Saving this game's libraries", [button], "Library selection saved.");
+  try {
+    const selection = $("sdkMode").value === "auto" ? null : Array.from($("sdkChoices").querySelectorAll("input:checked"), e => e.dataset.sdkCorpus);
+    await api("/api/sdk-library", { method: "POST", body: { slug: S.slug, selection } });
+    S.ov = await api(`/api/project?slug=${encodeURIComponent(S.slug)}`);
+    await renderProjectSettings();
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
+};
+
+$("sdkImport").onclick = async () => {
+  const button = $("sdkImport"), log = $("sdkLog");
+  showJobError(log, "");
+  const finish = beginWork(log, "Indexing local SDK signatures", [button], "SDK signatures indexed.");
+  try {
+    const result = await api("/api/sdk-signatures", { method: "POST", body: {
+      slug: S.slug, path: $("sdkPath").value, corpus: $("sdkCorpus").value,
+      source_path: $("sdkSourcePath").value, header_path: $("sdkHeaderPath").value } });
+    log.hidden = false;
+    await renderSdkSelection();
+    log.textContent = `${result.signatures} signatures and ${result.sources || 0} C definitions indexed from ${result.corpus}.`;
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
+};
 
 const cwName = (c) => (c.startsWith("DS/") ? `CodeWarrior for DS ${c.slice(3)}` : `CodeWarrior ${c}`);
 
@@ -351,14 +772,110 @@ async function exportNow() {
 }
 
 /* ------------------------------------------------------------------ project settings */
+function projectCompilerFacts(ov) {
+  const c = ov.project_compiler;
+  if (ov.kind !== "fork" || !c) return [];
+  return [c.name ? ["Compiler (declared)", c.name] : null,
+    c.command ? ["Compiler command (declared)", c.command] : null,
+    ...(c.flags || []).map(f => [f.variable + " (declared)", f.value]),
+    c.overrides?.length ? ["Per-file flags (declared)", c.overrides.map(f => `${f.pattern}: ${f.variable} ${f.operator} ${f.value}`).join("; ")] : null,
+    c.sources?.length ? ["Compiler settings read from", c.sources.join(", ") + ". " + c.note] : null].filter(Boolean);
+}
+
+function blockerReviewHTML(items) {
+  if (!items.length) return '<div class="blocker-empty"><b>No blocker reports to review</b><p>Reports appear here when agents repeatedly report a blocker without compiling. You can keep working as usual.</p></div>';
+  return items.map(item=>{
+    const changed=item.changed || [], releases=item.releases || [];
+    const state=item.historical ? 'Older reports · recheck needed' : item.needs_review ? 'Needs your review' : 'Build inputs changed';
+    const guidance=item.historical ? 'Older notes are not tied to the current build. Open the function and recheck the concern against its current source and compiler.'
+      : changed.length ? 'The build inputs changed since these reports. Inspect the updated function before deciding whether the blocker still applies.'
+      : 'Check the saved C and compiler settings against the agent notes before deciding the next experiment.';
+    return `<article class="blocker-review-card"><header><h3 class="mono">${esc(item.function)}</h3><span class="blocker-state">${state}</span></header><div class="blocker-facts"><span><b>${item.no_compile_releases}</b> ${item.no_compile_releases===1 ? 'report' : 'reports'} without a compile</span>${item.score!=null ? `<span>Saved score <b>${esc(item.score)}</b></span>` : ''}</div><p class="blocker-guidance">${guidance}</p>${!item.historical && changed.length ? `<p class="small muted">Changed: ${esc(changed.join(', '))}.</p>` : ''}<details class="blocker-evidence"><summary>Read agent notes <span class="muted">(${releases.length})</span></summary><ol>${releases.map(r=>`<li><header><b>${esc(r.agent)}</b>${r.at ? `<time datetime="${esc(new Date(r.at*1000).toISOString())}">${esc(new Date(r.at*1000).toLocaleString())}</time>` : ''}</header><span class="small muted">${r.compiled ? 'Compiled during this turn' : 'No compile during this turn'}</span><p>${esc(r.notes)}</p></li>`).join('')}</ol></details><footer><button type="button" class="primary small-btn" aria-label="Open ${esc(item.function)}" data-blocker-function="${esc(item.function)}">Open function <span aria-hidden="true">↗</span></button>${item.needs_review ? `<button type="button" class="ghost small-btn" title="Record this review; matching status and paused work stay unchanged" aria-label="Mark ${esc(item.function)} reviewed" data-ack-blocker="${esc(item.function)}">Mark reviewed</button>` : ''}</footer></article>`;
+  }).join('');
+}
+let blockerReviewRequest=0;
+async function loadBlockerReviews() {
+  const slug=S.slug, gen=S.gen, request=++blockerReviewRequest;
+  if (!slug) return;
+  const items=$("agentBlockerItems");
+  if(items.dataset.slug!==slug){items.dataset.slug=slug;items.innerHTML='<p class="small muted">Loading reports…</p>';$("agentBlockerContext").textContent='— Loading';}
+  const refresh=$("agentBlockerRefresh");
+  refresh.disabled=true; refresh.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Refreshing…';
+  refresh.setAttribute("aria-busy","true");
+  const work=$("agentBlockerWork"), finish=beginWork(work,'Loading blocker reports',[], '');
+  const status=$("agentBlockerStatus");status.textContent="";status.hidden=true;
+  try{
+    const result=await api(`/api/agent-reviews?slug=${encodeURIComponent(slug)}`);
+    if(S.slug!==slug || S.gen!==gen || request!==blockerReviewRequest)return;
+    const count=result.items.filter(i=>i.needs_review).length;
+    $("agentBlockerContext").textContent=count ? `— ${count} ${count===1 ? "needs" : "need"} review` : result.items.length ? '— Updated inputs to inspect' : '— Nothing to review';
+    $("agentBlockerItems").innerHTML=blockerReviewHTML(result.items);
+  }catch(error){if(S.slug===slug && S.gen===gen && request===blockerReviewRequest){$("agentBlockerContext").textContent='— Could not load';showJobError(work,error.message);}}
+  finally{finish();if(request===blockerReviewRequest){refresh.disabled=false;refresh.textContent='↻ Refresh';refresh.removeAttribute("aria-busy");}}
+}
+$("agentBlockerRefresh").onclick=event=>{event.preventDefault();event.stopPropagation();loadBlockerReviews();};
+$("agentBlockerItems").onclick=async event=>{
+  const link=event.target.closest('[data-blocker-function]');
+  if(link){openFn(link.dataset.blockerFunction);return;}
+  const ack=event.target.closest('[data-ack-blocker]');
+  if(!ack || ack.disabled)return;
+  const slug=S.slug, gen=S.gen, work=$("agentBlockerWork");
+  ack.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Marking reviewed…';
+  ack.setAttribute("aria-busy","true");
+  const finish=beginWork(work,'Saving review',[ack],'');
+  try{
+    await api('/api/agent-review',{method:'POST',body:{slug,function:ack.dataset.ackBlocker}});
+    if(S.slug!==slug || S.gen!==gen)return;
+    await loadBlockerReviews();
+    if(S.slug===slug && S.gen===gen){const status=$("agentBlockerStatus");status.textContent='Marked reviewed. Function status and paused work are unchanged.';status.hidden=false;}
+  }catch(error){if(S.slug===slug && S.gen===gen)showJobError(work,error.message);}
+  finally{finish();ack.textContent='Mark reviewed';ack.removeAttribute("aria-busy");}
+};
+
+function dataRegionHTML(items) {
+  return items.length ? items.map(item=>`<article class="profile-failure-card"><div class="profile-failure-heading"><b>${esc(item.unit || 'Default unit')}</b><span class="small muted">${item.stale ? 'Changed inputs · pause lifted' : item.status==='paused' ? 'New claims paused' : item.status==='dismissed' ? 'Dismissed' : 'Needs review'}</span></div><p class="mono small">0x${Number(item.start).toString(16).toUpperCase()}–0x${Number(item.end).toString(16).toUpperCase()} <span class="muted">· exclusive end · ${item.functions.length} entries</span></p><p class="small muted">ROM ${item.rom_start==null ? 'address unavailable' : '0x'+Number(item.rom_start).toString(16).toUpperCase()} · ${item.evidence.length} ${item.evidence.length===1 ? 'report' : 'reports'}</p><details class="more"><summary>Evidence and affected entries</summary>${item.evidence.map(e=>`<p class="small"><b>${esc(e.agent)}</b><br>${esc(e.reason)}</p>`).join('')}<div class="row wrap">${item.functions.map(f=>`<button type="button" class="link mono small" data-region-function="${esc(f.name)}">${esc(f.name)}</button><span class="small muted">${esc(f.status)}</span>`).join('')}</div></details><div class="row wrap">${item.status!=='dismissed' ? `<button type="button" class="ghost small-btn" data-region-id="${esc(item.id)}" data-region-action="${item.status==='paused' ? 'resume' : 'pause'}" ${item.stale ? 'disabled' : ''}>${item.status==='paused' ? 'Resume new claims' : 'Pause new claims for review'}</button><button type="button" class="ghost small-btn" data-region-id="${esc(item.id)}" data-region-action="dismiss">Dismiss report</button>` : ''}</div></article>`).join('') : '<p class="small muted">No data regions reported. Agents can report a whole suspected table with its overlay and byte evidence.</p>';
+}
+async function loadDataRegions() {
+  const slug=S.slug, gen=S.gen, work=$('dataRegionWork'), finish=beginWork(work,'Loading data region reviews',[], '');
+  try {
+    const result=await api(`/api/data-regions?slug=${encodeURIComponent(slug)}`);
+    if(S.slug!==slug || S.gen!==gen)return;
+    const reviewCount=result.items.filter(i=>i.status==='review').length;
+    $('dataRegionContext').textContent=`— ${reviewCount} ${reviewCount===1 ? 'needs' : 'need'} review · ${result.items.filter(i=>i.status==='paused'&&!i.stale).length} paused`;
+    $('dataRegionItems').innerHTML=dataRegionHTML(result.items);
+  }catch(error){if(S.slug===slug)showJobError(work,error.message);}finally{finish();}
+}
+$('dataRegionRefresh').onclick=event=>{event.preventDefault();event.stopPropagation();loadDataRegions();};
+$('dataRegionItems').onclick=async event=>{
+  const link=event.target.closest('[data-region-function]');
+  if(link){openFn(link.dataset.regionFunction);return;}
+  const button=event.target.closest('[data-region-action]');
+  if(!button)return;
+  const slug=S.slug, work=$('dataRegionWork'), finish=beginWork(work,'Updating region review',[button],'');
+  try {await api('/api/data-regions',{method:'POST',body:{slug,id:button.dataset.regionId,action:button.dataset.regionAction}});if(S.slug===slug)await loadDataRegions();}
+  catch(error){showJobError(work,error.message);}finally{finish();}
+};
+
 async function renderProjectSettings() {
+  loadDataRegions();
+  loadBlockerReviews();
+  $("codeAuditPanel").hidden = !S.ov?.code_audit;
+  loadCodeAudit();
+  const settingsGen = S.gen, settingsSlug = S.slug;
+  renderDeepSweep();
+  if ($("compilerImprovements").dataset.slug !== S.slug) $("compilerImprovements").replaceChildren();
+  if ($("compilerProgress").dataset.slug !== S.slug) {
+    $("compilerProgress").hidden = true;
+    $("compilerAutoApply").checked = false;
+    $("compilerLogDetails").hidden = true;
+  }
   const ov = S.ov;
   if (!ov) return;
-  renderSaveLocation(ov);
   const fork = ov.kind === "fork";
   $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
   // project's flags its build's and nothing for the ROM engine's survey to check
+  $("installedCompilerTest").hidden = fork;
   $("compilerPanel").hidden = !(ov.compilers || []).length;
   for (const id of ["setFlagsRow", "setTcReset", "autoAdjustRow", "compilerHow"]) $(id).hidden = fork;
   $("setTcWhat").textContent = fork
@@ -366,15 +883,26 @@ async function renderProjectSettings() {
     : "Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.";
   if (!$("compilerPanel").hidden) {
     if (!S.st) await loadState();
-    fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform, fork ? ov.compilers : null);
+    if (settingsGen !== S.gen || settingsSlug !== S.slug) return;
+    fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform);
+    for (const option of $("setTc").options) if (option.value === ov.compiler.toolchain) option.textContent += " · Default";
     $("setFlags").value = ov.compiler.flags.join(" ");
     $("autoAdjust").checked = !!ov.auto_compiler;
     $("setRanges").value = "";
     renderCompilerWaiting(ov);
     loadCompilerAnswer();
   }
+  const prep = ov.source_preparation || {};
+  $("sourcePrepEnabled").checked = !!prep.enabled;
+  $("sourcePrepAutoExact").checked = !!prep.auto_exact;
+  for (const [id, key] of [["Root", "root"], ["Header", "header"], ["Includes", "include_roots"], ["Mappings", "mappings"], ["Overrides", "overrides"], ["Aliases", "aliases"], ["Definitions", "definitions"], ["Contexts", "contexts"], ["Helpers", "helpers"], ["AssemblyHeader", "assembly_header"], ["AssemblyMappings", "assembly_mappings"]]) $("sourcePrep" + id).value = prep[key] || "";
+  await renderSdkSelection();
   const facts = [["Platform", ov.platform_name], ["Game", ov.rom?.title || ov.title], [fork ? "Version" : "Game code", ov.rom?.game_code || ov.version],
     !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
+    ...projectCompilerFacts(ov),
+    ov.libultra ? ["Libultra (header)", ov.libultra.header_version || "Unknown"] : null,
+    ov.libultra ? ["Libultra detection", ov.libultra.note] : null,
+    ov.libultra ? ["Libultra signatures", ov.libultra.signature_candidates.slice(0, 3).map(r => `${r.corpus.split(" / ").slice(0, 2).join(" / ")}: ${r.fingerprints} exact fingerprints (${r.version_specific_fingerprints} specific to this version among local archives)`).join("; ") || "No matching local archive signatures indexed"] : null,
     fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
     ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`], ["Folder", ov.folder]].filter(Boolean);
   $("projFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd></div>`).join("");
@@ -442,6 +970,18 @@ $("autoAdjust").onchange = async () => {
   } catch (err) { $("autoAdjust").checked = !on; toast(esc(err.message), "err"); }
 };
 $("compilerParts").onclick = async (e) => {
+  const menuAction = e.target.closest('.compiler-profile-menu button');
+  if (menuAction) {
+    const menu = menuAction.closest('details');
+    menu.open = false;
+    menu.querySelector('summary').focus();
+  }
+  const fn = e.target.closest("[data-compiler-function]");
+  if (fn) { openFn(fn.dataset.compilerFunction); return; }
+  const testDefault = e.target.closest("button[data-profile-test-default]");
+  if (testDefault) { await testProfileAsDefault(testDefault, testDefault.dataset.profileAction || "test"); return; }
+  const profileButton = e.target.closest("button[data-profile-default]");
+  if (profileButton) { await compareProfileWithDefault(profileButton); return; }
   const b = e.target.closest("button[data-unrange]");
   if (!b) return;
   const remove = (reopen) => api("/api/compiler", { method: "POST", body: { slug: S.slug, ranges: b.dataset.unrange, remove: true, reopen } });
@@ -459,7 +999,7 @@ $("compilerParts").onclick = async (e) => {
 };
 $("setTc").onchange = () => { $("setFlags").value = ""; };  // one compiler's flags aren't another's (-G8 vs -sdatathreshold): its defaults
 $("setTcSave").onclick = async () => {
-  const wholeProject = S.ov.kind === "fork" && !$("setRanges").value.trim();
+  const wholeProject = !$("setRanges").value.trim();
   const finish = wholeProject ? beginWork($("setTcLog"), "Changing project compiler", [$("setTcSave")], "Project compiler change finished.") : () => {};
   $("setTcSave").disabled = true;
   if (wholeProject) showJobError($("setTcLog"), "");
@@ -470,7 +1010,7 @@ $("setTcSave").onclick = async () => {
     if (r.job) {  // the whole game, where each source file has a compiler: every file is tried in turn
       $("setTcLog").hidden = false;
       const res = await followJob(r.job, $("setTcLog"));
-      said = `${plural(res.switched, "source file")} built with it now${res.stayed.length ? `; ${plural(res.stayed.length, "file")} kept theirs (their matches need it)` : ""}.`;
+      said = res.said || `${plural(res.switched, "source file")} built with it now${res.stayed.length ? `; ${plural(res.stayed.length, "file")} kept theirs (their matches need it)` : ""}.`;
       S.ov = await api(`/api/project?slug=${S.slug}`);
     } else S.ov = r;
     renderStats(S.ov);
@@ -522,30 +1062,15 @@ $("recheckBtn").onclick = async () => {
   } catch (e) { toast(esc(e.message), "err"); } finally { b.disabled = false; b.textContent = "Check again"; }
 };
 
-function renderSaveLocation(ov) {
-  const input = $("saveFolder");
-  if (input.dataset.slug === ov.slug) return;
-  input.dataset.slug = ov.slug;
-  input.value = ov.save_folder || "";
-  $("saveState").textContent = "";
-  $("saveLog").textContent = "";
-  $("saveLog").hidden = true;
-}
-
 $("saveGo").onclick = async () => {
-  const slug = S.slug, kind = S.ov.kind, input = $("saveFolder"), log = $("saveLog");
-  const finish = beginWork(log, "Saving project", [$("saveGo")], "Project save finished.");
-  showJobError(log, "");
+  $("saveGo").disabled = true;
   try {
-    const r = await api("/api/save", { method: "POST", body: { slug, folder: input.value.trim() || undefined } });
-    if (slug !== S.slug) return;
-    S.ov.save_folder = r.folder;
-    input.value = r.folder;
+    const r = await api("/api/save", { method: "POST", body: { slug: S.slug, folder: $("saveFolder").value.trim() || undefined } });
     $("saveState").textContent = `saved ${clock(Date.now() / 1000).slice(0, 5)}`;
-    log.hidden = false;
-    log.textContent = kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
+    $("saveLog").hidden = false;
+    $("saveLog").textContent = S.ov.kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
       : `Saved to ${r.folder}: ${plural(r.matched || 0, "matched function")}, ${plural(r.best || 0, "best attempt")}.`;
-  } catch (e) { if (slug === S.slug) showJobError(log, e.message); } finally { finish(); }
+  } catch (e) { toast(esc(e.message), "err"); } finally { $("saveGo").disabled = false; }
 };
 
 /* ------------------------------------------------------------------ the compiler, as one answer
@@ -556,6 +1081,7 @@ $("saveGo").onclick = async () => {
 const COMPILER_ANSWER_EVERY_MS = 5000;  // while the app checks, the answer is asked again this often
 const PART_STATE = {
   confirmed: ["checked", "its neighbours agree"],
+  function_applied: ["function applied", "exact source and compiler settings saved for this function only"],
   quirk: ["doubtful", "its neighbours don't agree: it may be one function's quirk"],
   checking: ["being checked", "the app tries its neighbours with that compiler"],
   waiting: ["waiting", "agents try its neighbours when they take them"],
@@ -571,17 +1097,258 @@ async function loadCompilerAnswer() {
   renderCompilerAnswer(a);
   if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
 }
-function renderCompilerAnswer(a) {
-  const parts = a.parts || [];
-  setHtml($("compilerAnswer"), `This game was built with <b>${esc(a.compiler)}</b>${a.flags ? ` <span class="flags mono" title="the flags it was given">${esc(a.flags)}</span>` : ""}.${parts.length ? ` ${parts.length === 1 ? "One part" : `${parts.length} parts`} of it with another compiler: below.` : ""}`
-    + (a.elsewhere_count ? ` <span class="muted">${a.elsewhere_count === 1 ? "One more stretch of code looks" : `${a.elsewhere_count.toLocaleString()} more stretches of code look`} like another compiler's work; the app suggests a change once agents' C proves it.</span>` : ""));
-  $("compilerState").textContent = a.checking ? "checking…" : "";
-  setHtml($("compilerParts"), parts.length ? `<ol class="parts">${parts.map((p) => {
+
+$("compilerAnswer").addEventListener("click", e => {
+  const fn = e.target.closest("[data-compiler-function]");
+  if (fn) openFn(fn.dataset.compilerFunction);
+});
+$("compilerCleanupGo").onclick = async () => {
+  const slug = S.slug, button = $("compilerCleanupGo"), log = $("compilerCleanupLog"), result = $("compilerCleanupResult");
+  const limit = Number($("compilerRareLimit").value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 25) return toast("Choose a limit from 1 to 25 functions.", "err");
+  result.textContent = "";
+  const finish = beginWork(log, "Checking uncommon compiler settings", [button], "Compiler cleanup finished.");
+  try {
+    const {job} = await api("/api/compiler/cleanup", {method:"POST", body:{slug, rare_limit:limit}});
+    const out = await followJob(job, log);
+    if (S.slug !== slug) return;
+    result.textContent = `${out.changed.length} functions moved · ${out.profiles_before} → ${out.profiles_after} used profiles · ${out.ranges_before} → ${out.ranges_after} ranges · ${out.tested} trial comparisons · ${out.unchanged} unchanged · ${out.skipped} busy or shared-address functions skipped`;
+    await loadCompilerAnswer();
+  } catch (error) { if (S.slug === slug) showJobError(log, error.message); }
+  finally { finish(); }
+};
+
+function compilerFunctionLinks(functions) {
+  return (functions || []).map(f => `<button class="link mono" type="button" data-compiler-function="${esc(f.name)}" title="${esc(f.status || "")}">${esc(f.name)}</button>`).join("");
+}
+let compilerPartsAnswer = null;
+let compilerPartsSlug = null;
+let compilerDisplayedGroups = [];
+const compilerProfileJobs = new Map();
+async function compareProfileWithDefault(button) {
+  const group = compilerDisplayedGroups[Number(button.dataset.profileDefault)], part = group?.parts[0];
+  if (!part || group.default) return;
+  const slug = S.slug, key = `${slug}:${group.id}`;
+  if (compilerProfileJobs.get(key)?.running) return;
+  const profile = {toolchain:part.toolchain, flags:part.flag_list || part.flags.split(/\s+/).filter(Boolean)};
+  const item = {running:true, message:"Comparing matched functions against the default…"};
+  compilerProfileJobs.set(key, item); renderCompilerParts(compilerPartsAnswer);
+  try {
+    const {job} = await api("/api/compiler/cleanup", {method:"POST", body:{slug,profile,action}});
+    const out = await followJob(job, null, lines => {
+      item.message = lines[lines.length - 1] || "Comparing against default…";
+      if (S.slug === slug) renderCompilerParts(compilerPartsAnswer);
+    });
+    item.message = `${out.changed.length} moved to default · ${out.unchanged} kept their settings · ${out.skipped} busy/shared-address skips · ${out.tested} comparisons`;
+    if (S.slug === slug) toast(esc(item.message), out.changed.length ? "match" : undefined);
+  } catch (error) { item.message = error.message; }
+  finally {
+    item.running = false;
+    if (S.slug === slug) { renderCompilerParts(compilerPartsAnswer); await loadCompilerAnswer(); }
+  }
+}
+function profileFailureGroups(failures) {
+  const groups = new Map();
+  const titles = {affected_matches:"Other matches affected by this compiler range", busy:"Functions currently claimed", overlay:"Shared overlay addresses", no_source:"No saved C", changed:"Inputs or status changed", verification:"Verification or compiler error"};
+  const link = name => `<button type="button" class="link mono" data-profile-function="${esc(name)}">${esc(name)}</button>`;
+  for (const failure of failures || []) {
+    const key = failure.category || (failure.reason?.startsWith('Different bytes') ? 'Different compiled bytes' : failure.reason || 'Verification failed');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(failure);
+  }
+  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure profile-failure-group" open><summary class="panel-head"><h3>${esc(titles[key] || key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="profile-failure-body">
+    ${key==='affected_matches' ? `<div class="profile-range-toolbar"><p class="small muted">Narrow each override to its function. Existing matches keep their profiles and are protected by verification. Affected functions are not necessarily callers.</p><button class="primary small-btn" type="button" data-safe-profile-ranges="${esc(JSON.stringify(rows.map(f=>f.function)))}">Fix all ${rows.length} ranges &amp; apply matches</button></div>` : ''}
+    <div class="profile-failure-cards">${rows.map(f => `<article class="profile-failure-card"><div class="profile-failure-heading">${link(f.function)}<span class="small muted">${f.blockers?.length ? 'Range blocked' : 'Needs review'}</span></div>${f.blockers?.length ? `<p class="small muted">Protect these existing matches</p><div class="profile-related-functions">${f.blockers.map(b=>link(b.function)).join('')}</div><div class="profile-failure-actions"><button class="primary small-btn" type="button" data-safe-profile-range="${esc(f.function)}">Fix range &amp; apply match</button><button class="ghost small-btn" type="button" data-check-profile-blockers="${esc(JSON.stringify(f.blockers.map(b=>b.function)))}">Check affected functions</button></div><div data-blocker-result class="small" role="status"></div>` : `<p class="small muted">${esc(f.reason)}</p>`}</article>`).join('')}</div></div></details>`).join('');
+}
+
+async function testProfileAsDefault(button, action="test") {
+  const group = compilerDisplayedGroups[Number(button.dataset.profileTestDefault)], part = group?.parts[0];
+  if (!part || group.default) return;
+  const slug = S.slug;
+  const profile = {toolchain:part.toolchain, flags:part.flag_list || part.flags.split(/\s+/).filter(Boolean)};
+  const replacing=action==='replace', nonmatches=action==='nonmatches';
+  const body = dialog(replacing ? 'Replace project default compiler' : nonmatches ? 'Test all non-matches' : 'Test compiler profile as default', `<p class="profile-test-intro">${replacing ? 'Check compatibility and replace the project default.' : nonmatches ? 'Find exact matches for currently unmatched functions.' : 'Check whether this profile preserves matches using the project default.'}</p>
+    <div class="profile-test-selection"><span class="small muted">Compiler to test</span><strong>${esc(group.compiler)}</strong><code class="compiler-arguments">${esc(profile.flags.join(' '))}</code></div>
+    <p class="small muted">${replacing ? 'Make this profile the default. Existing matches that need the previous default keep it as a non-default override. Other profiles keep their settings. Saved attempts are rescored before settings are saved.' : nonmatches ? 'Includes all compiler profiles. Testing changes nothing; apply verified matches afterward. Functions without saved C are reported.' : 'Test only. Compiler settings, ranges and saved matches stay unchanged. Functions using other profiles are excluded.'}</p>
+    <section class="default-profile-test" aria-label="Compiler profile test progress"><div class="profile-test-heading"><p data-default-status role="status">${nonmatches ? 'Preparing non-matching functions…' : 'Preparing default-profile matches…'}</p><span class="small muted" data-default-count></span><button class="ghost small-btn" type="button" data-default-stop hidden>Stop</button></div>
+    <div data-default-work></div><progress class="deep-sweep-bar" data-default-bar hidden max="1" aria-label="Functions checked"></progress><p class="small muted profile-test-current" data-default-function></p>
+    <dl class="default-profile-counts"><div><dt>Passed</dt><dd class="ok" data-default-passed>0</dd></div><div><dt>Did not pass</dt><dd data-default-failed>0</dd></div><div><dt>Remaining</dt><dd data-default-left>—</dd></div></dl></section>
+    <p class="err-msg" data-default-error role="alert" hidden></p><p class="profile-test-verdict" data-default-verdict></p><div data-apply-matches hidden><button type="button" class="primary" data-apply-matches-button>Apply verified matches</button><p class="small muted">Rechecks the saved C, assigns this profile to passing functions and saves exact byte matches. Verified matches release active claims so agents can move to another function.</p></div><details data-default-matches hidden><summary>Functions that match this profile</summary><div data-default-match-list class="mono"></div></details><details data-default-failures hidden><summary>Functions that did not pass</summary><div class="profile-failure-list" data-default-failure-list></div></details>
+    <details class="profile-test-log"><summary>Technical log</summary><pre class="joblog" data-default-log></pre></details>`, 'compiler-default-test');
+  const get = selector=>body.querySelector(selector), log=get('[data-default-log]'), work=get('[data-default-work]');
+  const active=()=>S.dialogKind==='compiler-default-test' && !$("dialog").hidden && get('[data-default-log]')===log;
+  work._errorBox = get('[data-default-error]');
+  let testJob = null;
+  const stop = get('[data-default-stop]');
+  stop.onclick = async () => {
+    if (testJob == null || stop.disabled) return;
+    stop.disabled = true; stop.textContent = 'Stopping…';
+    try { await api('/api/job/cancel', {method:'POST', body:{id:testJob}}); }
+    catch (error) { if (active()) { showJobError(work,error.message); stop.disabled=false; stop.textContent='Stop'; } }
+  };
+  const followTest = async (job, update) => {
+    testJob = job;
+    if (active()) { stop.hidden=false; stop.disabled=false; stop.textContent='Stop'; }
+    try { return await followJob(job,log,update,active); }
+    finally { testJob=null; if(active())stop.hidden=true; }
+  };
+  const startWork = (label, controls) => {
+    const done = beginWork(work, label, controls, '');
+    // This drawer owns the visible progress; shared work still handles cleanup and errors.
+    if (work._workBar) work._workBar.hidden = false;
+    if (work._workStatus) work._workStatus.hidden = true;
+    work._errorBox.hidden = true;
+    get('[data-default-status]').textContent = `${label}…`;
+    get('[data-default-count]').textContent = '';
+    get('[data-default-function]').textContent = '';
+    get('[data-default-bar]').removeAttribute('value');
+    get('[data-default-bar]').hidden = true;
+    return done;
+  };
+  const fail = error => {
+    get('[data-default-status]').textContent = /stopp|cancel/i.test(error.message) ? 'Test stopped' : 'Could not finish';
+    // Stop indeterminate motion on failure; keep measured progress for partial work.
+    if (!get('[data-default-bar]').hasAttribute('value')) get('[data-default-bar]').value = 0;
+    get('[data-default-bar]').hidden = false;
+    if (work._workBar) work._workBar.hidden = true;
+    showJobError(work, error.message);
+  };
+  let rangeBusy=false, currentResult=null;
+  body.addEventListener('click', async event=>{
+    const fn=event.target.closest('[data-profile-function]');
+    if(fn){$("dialog").hidden=true;openFn(fn.dataset.profileFunction);return;}
+    const fix=event.target.closest('[data-safe-profile-range], [data-safe-profile-ranges]');
+    if(fix){
+      if(rangeBusy)return;
+      rangeBusy=true;
+      const functions=fix.dataset.safeProfileRanges ? JSON.parse(fix.dataset.safeProfileRanges) : [fix.dataset.safeProfileRange];
+      const controls=[...body.querySelectorAll('[data-safe-profile-range], [data-safe-profile-ranges], [data-check-profile-blockers]')];
+      const done=startWork(`Fixing ${functions.length} compiler ranges`,controls);
+      try{
+        const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-safe-range',functions}});
+        const saved=await followTest(job,(_lines,state)=>{
+          if(!active() || !state.progress)return;
+          const p=state.progress;
+          get('[data-default-status]').textContent=`Repairing ranges · ${p.checked || 0} / ${p.total || functions.length} checked`;
+          get('[data-default-bar]').max=p.total || functions.length;get('[data-default-bar]').value=p.checked || 0;
+          get('[data-default-bar]').hidden=false;if(work._workBar)work._workBar.hidden=true;
+        });
+        if(saved && active()){
+          const successful=new Set(saved.matches || []), attempted=new Set(functions);
+          const failures=[...(currentResult?.failures || []).filter(f=>!successful.has(f.function) && !attempted.has(f.function)),...(saved.failures || [])];
+          const previous=currentResult || {total:saved.total,checked:saved.total,passed:0,matches:[]};
+          render({...previous,passed:previous.passed+saved.passed,failed:failures.length,failures,matches:[...(previous.matches || []),...(saved.matches || [])]});
+          get('[data-default-verdict]').textContent=`${saved.passed} matches saved by range repair. ${saved.failed} could not be repaired; remaining issues are listed below. Existing matches remain protected.`;
+        }
+        if(saved?.passed && S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();}
+      }catch(error){if(active())fail(error);}finally{done();rangeBusy=false;}
+      return;
+    }
+    const check=event.target.closest('[data-check-profile-blockers]');
+    if(!check || rangeBusy)return;
+    const result=check.parentElement.querySelector('[data-blocker-result]');
+    const done=beginWork(result,'Checking affected functions',[check],'Read-only check complete; no settings changed.');
+    try{
+      const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'check-affected',functions:JSON.parse(check.dataset.checkProfileBlockers)}});
+      const checked=await followTest(job);
+      if(checked)result.appendChild(Object.assign(document.createElement('p'),{textContent:checked.results.map(r=>`${r.function}: ${r.reason}`).join(' ')}));
+    }catch(error){showJobError(result,error.message);}finally{done();}
+  });
+  const finish=startWork(nonmatches ? 'Preparing non-matching functions' : 'Preparing default-profile matches',[button]);
+  const render=p=>{
+    if(!p)return;
+    if(p.checked!==undefined)currentResult=p;
+    const checked = p.checked ?? p.done ?? 0, counted = Number.isFinite(p.total) && p.total > 0;
+    get('[data-default-status]').textContent = p.phase || (p.total === 0 ? 'No functions to test' : p.applied ? 'Applying matches' : nonmatches ? 'Testing non-matches' : 'Testing default-profile matches');
+    get('[data-default-count]').textContent = counted ? `${checked.toLocaleString()} / ${p.total.toLocaleString()} · ${Math.round(100*checked/p.total)}%` : '';
+    get('[data-default-function]').textContent = p.function ? `${p.applied ? 'Checking' : 'Last checked'}: ${p.function}` : '';
+    const bar = get('[data-default-bar]');
+    bar.max = p.total || 1;
+    bar.hidden = !counted && p.total !== 0;
+    if (work._workBar) work._workBar.hidden = !bar.hidden;
+    if (counted || p.total === 0) bar.value = p.total === 0 ? 1 : checked; else bar.removeAttribute('value');
+    if(p.checked===undefined)return;
+    get('[data-default-passed]').textContent=(p.applied && p.phase==='Verifying selected matches' ? (p.verified || 0) : p.passed).toLocaleString();get('[data-default-failed]').textContent=p.failed.toLocaleString();
+    get('[data-default-left]').textContent=Math.max(0,p.total-p.checked).toLocaleString();
+    get('[data-default-matches]').hidden=!p.matches?.length;
+    get('[data-default-match-list]').textContent=(p.matches || []).join(', ');
+    get('[data-default-failures]').hidden=!p.failures?.length;
+    get('[data-default-failure-list]').innerHTML=profileFailureGroups(p.failures);
+  };
+  try {
+    const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action}});
+    const out=await followTest(job,(_lines,state)=>{if(active())render(state.progress);});
+    if(!active() || !out)return;
+    if(out.replaced){get('[data-default-status]').textContent='Default compiler replaced';get('[data-default-verdict]').textContent=`Default replaced. ${out.preserved} functions kept their previous compiler profile. All existing matches remain verified.`; if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();} return;}
+    render(out);
+    get('[data-default-status]').textContent=out.total ? 'Test complete' : 'No functions to test';
+    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? `${out.changed_matches?.length || 0} passing functions changed during testing. Unchanged exact results can be reused; changed functions will be rechecked; only functions that still match will be saved.` : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
+      if(out.matches?.length){
+        get('[data-apply-matches]').hidden=false;
+        const apply=get('[data-apply-matches-button]');apply.textContent=out.stale ? `Recheck & apply ${out.matches.length} matches` : `Apply ${out.matches.length} matches`;
+        apply.onclick=async()=>{
+          const done=startWork('Rechecking and applying matches',[apply]);
+          try{
+            const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-matches',functions:out.matches,receipt:out.receipt}});
+            const saved=await followTest(job,(_lines,state)=>{if(active())render(state.progress);});
+            if(!active() || !saved)return;
+            render(saved);get('[data-default-status]').textContent='Matches saved';get('[data-default-verdict]').textContent=`${saved.passed} new matches saved (${saved.reused || 0} unchanged checks reused). ${saved.failed} functions skipped or could not be applied; see the results below.`;
+            get('[data-apply-matches]').hidden=true;
+            if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();}
+          }catch(error){if(active())fail(error);}
+          finally{done();}
+        };
+      }return;}
+    get('[data-default-verdict]').textContent=out.stale ? 'Inputs changed while testing. Results are outdated; rerun before deciding.' : !out.total ? 'No matched functions currently use the default. No compatibility conclusion can be drawn.' : out.compatible ? 'All tested default-profile matches still match byte for byte. This profile is a compatible default candidate for this population. Nothing has been changed.' : `${out.failed} functions did not pass. These functions need their previous compiler profile if you replace the default. Nothing has been changed.`;
+  } catch(error){if(active())fail(error);}
+  finally{finish();}
+}
+
+const compilerGroupsOpen = new Set();
+const compilerReasonsOpen = new Set();
+function renderCompilerParts(a) {
+  if (compilerPartsSlug !== S.slug) { compilerPartsSlug = S.slug; compilerGroupsOpen.clear(); compilerReasonsOpen.clear(); }
+  compilerPartsAnswer = a;
+  const parts = a.parts || [], mode = $("compilerGroup").value, sort = $("compilerSort").value;
+  $("compilerViewControls").hidden = !parts.length;
+  const row = (p, showProfile) => {
     const [word, why] = PART_STATE[p.check] || PART_STATE[""];
-    return `<li><code>${hexShort(p.start)}–${hexShort(p.end)}</code><span class="grow">${esc(p.compiler)} <span class="flags mono">${esc(p.flags)}</span></span>
-      ${p.file ? `<span class="muted small mono">${esc(p.file)}</span>` : ""}<span class="part-state ${esc(p.check || "none")}" title="${esc(p.said || why)}">${word}</span>
-      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with ${esc(a.compiler)} again" title="Build this part with ${esc(a.compiler)} again">Remove</button></li>`;
-  }).join("")}</ol>` : "");
+    return `<li class="compiler-range"><div class="compiler-range-heading"><code>${hexShort(p.start)}–${hexShort(p.end)}</code>
+      <span class="part-state ${esc(p.check || "none")}">${esc(word)}</span>
+      ${p.functions != null ? `<span class="muted small">${plural(p.functions, "function")}</span>` : ""}
+      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" title="Return this range to the default compiler">Remove</button></div>
+      ${showProfile ? `<div class="small"><b>${esc(p.compiler)}</b><code class="compiler-arguments">${esc(p.flags)}</code></div>` : ""}
+      ${p.file ? `<div class="muted small mono">${esc(p.file)}</div>` : ""}
+      <div class="compiler-function-links">${compilerFunctionLinks(p.function_list)}</div>
+      ${p.said || why ? `<details class="compiler-range-reason" data-range-reason="${p.start}-${p.end}"${compilerReasonsOpen.has(`${p.start}-${p.end}`) ? " open" : ""}><summary>Verification details</summary><p class="small muted">${esc(p.said || why)}</p></details>` : ""}</li>`;
+  };
+  const groups = compilerPartGroups(parts, mode, sort);
+  compilerDisplayedGroups = groups;
+  setHtml($("compilerParts"), mode === "range" ? `<ol class="compiler-range-list">${groups.flatMap(g => g.parts).map(p => row(p, true)).join("")}</ol>`
+    : groups.map((g, index) => `<details class="compiler-profile" data-compiler-group="${esc(g.id)}"${compilerGroupsOpen.has(g.id) ? " open" : ""}>
+      <summary><span><b>${esc(mode === "family" ? g.family.toUpperCase() : g.compiler)}</b>${g.default ? ` <span class="chip-s">${mode === "family" && g.profiles > 1 ? "Includes default" : "Default"}</span>` : ""}${mode === "settings" ? `<code class="compiler-arguments">${esc(g.flags || "No arguments")}</code>` : ""}<span class="compiler-profile-count">${plural(g.parts.length, "range")}${g.functions != null ? ` · ${plural(g.functions, "function")}` : ""}${mode === "family" ? ` · ${plural(g.profiles, "argument profile")}` : ""}</span></span></summary>
+      ${mode === "settings" && !g.default && S.ov.kind !== "fork" ? `<div class="compiler-profile-action"><div class="compiler-profile-tools"><span class="small muted">Profile actions</span><details class="agent-menu compiler-profile-menu"><summary aria-label="Actions for ${esc(g.compiler)} profile" title="Compiler profile actions">⋮</summary><div class="agent-menu-items"><button type="button" data-profile-default="${index}"${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.running ? " disabled" : ""}>Compare all matches with default</button><button type="button" data-profile-test-default="${index}">Test this profile as default</button><button type="button" data-profile-test-default="${index}" data-profile-action="replace">Replace default with this profile</button><button type="button" data-profile-test-default="${index}" data-profile-action="nonmatches">Test all non-matches</button></div></details></div><p class="small muted">Only exact byte matches move to the project default. Drafts and non-matches keep their settings.</p><p class="small" role="status">${esc(compilerProfileJobs.get(`${S.slug}:${g.id}`)?.message || "")}</p></div>` : ""}
+      <ol class="compiler-range-list">${g.parts.map(p => row(p, mode === "family")).join("")}</ol></details>`).join(""));
+  $("compilerParts").querySelectorAll("details[data-range-reason]").forEach(d => d.ontoggle = () => {
+    if (!d.isConnected) return;
+    if (d.open) compilerReasonsOpen.add(d.dataset.rangeReason); else compilerReasonsOpen.delete(d.dataset.rangeReason);
+  });
+  $("compilerParts").querySelectorAll("details[data-compiler-group]").forEach(d => d.ontoggle = () => {
+    if (!d.isConnected) return;
+    if (d.open) compilerGroupsOpen.add(d.dataset.compilerGroup); else compilerGroupsOpen.delete(d.dataset.compilerGroup);
+  });
+}
+for (const id of ["compilerGroup", "compilerSort"]) $(id).onchange = () => { if (compilerPartsAnswer) renderCompilerParts(compilerPartsAnswer); };
+function renderCompilerAnswer(a) {
+  $("compilerCleanup").hidden = S.ov.kind === "fork";
+  $("installedCompilerTest").hidden = S.ov.kind === "fork" || !a.mips;
+  const parts = a.parts || [];
+  const defaultOpen = $("compilerAnswer").querySelector("[data-default-functions]")?.open;
+  setHtml($("compilerAnswer"), `<div class="compiler-default"><span class="small muted">Default settings</span><div><b>${esc(a.compiler)}</b></div><code class="compiler-arguments">${esc(a.flags || "No arguments")}</code></div>
+    ${a.default_function_list?.length ? `<details data-default-functions${defaultOpen ? " open" : ""}><summary>Functions using the default settings (${a.default_function_list.length})</summary><div class="compiler-function-links">${compilerFunctionLinks(a.default_function_list)}</div></details>` : ""}
+    <p class="small muted">${a.default_functions != null ? `${plural(a.default_functions, "function")} use the default. ` : ""}${plural(parts.length, "explicit range")}${a.elsewhere_count ? ` · ${plural(a.elsewhere_count, "other range")} look like a different compiler; not applied.` : "."}</p>`);
+  $("compilerState").textContent = a.checking ? "checking…" : "";
+  renderCompilerParts(a);
   const sv = a.survey || {};
   const checks = (a.checks || []).slice(-20).reverse();
   setHtml($("compilerEvidence"), `<p class="small">The app works out which compiler built each part by itself: it tries agents' C for functions that don't match yet with the other compilers the game uses (${
@@ -598,10 +1365,17 @@ function renderCompilerAnswer(a) {
 }
 function renderCompilerWaiting(ov) {
   const sg = compilerSuggestions(ov);
-  setHtml($("compilerWaiting"), sg.length ? `<p class="col-title">Waiting for you</p>${sg.map(suggestionHtml).join("")}` : "");
+  // Keep a pending batch's controls and feedback stable during overview polling.
+  if ($("compilerWaiting").dataset.dismissing === S.slug) return;
+  setHtml($("compilerWaiting"), sg.length ? `<section class="compiler-inbox" aria-labelledby="compilerInboxTitle">
+    <header class="compiler-inbox-head"><div><h3 id="compilerInboxTitle">Waiting for you <span class="said-badge quiet">${sg.length}</span></h3><p class="small muted">Review suggested compiler settings for this game.</p></div>
+    <div class="row"><button type="button" class="primary small-btn" data-apply-all>Accept all ${sg.length} suggestions</button><button type="button" class="ghost small-btn" data-dismiss-all>Dismiss all</button></div></header>
+    <div data-inbox-status role="status" hidden></div>
+    <div class="compiler-inbox-list">${sg.map(compilerSuggestionHtml).join("")}</div></section>` : "");
 }
+$("closeProjectBtn").onclick=()=>closeUnfinishedProject(S.slug,S.ov.title);
 $("deleteBtn").onclick = () => {
-  dialog("Remove project", `<p>Remove <b>${esc(S.ov.title)}</b> from decompdecomp? Matched functions and notes are deleted.</p>
+  dialog("Remove project", `<p>Remove <b>${esc(S.ov.title)}</b> from decompdecomp? Verified matches stay in your local match library. Project notes are removed.</p>
     <label class="check"><input type="checkbox" id="delFiles"><span>Also delete the project folder (your ROM copy and exported sources in it)</span></label>
     <div class="row"><button class="primary" id="delGo" type="button">Remove</button><button class="ghost" data-close type="button">Cancel</button></div>`);
   $("delGo").onclick = async () => {
@@ -613,3 +1387,779 @@ $("deleteBtn").onclick = () => {
     } catch (e) { toast(esc(e.message), "err"); }
   };
 };
+
+function updateCompilerTestScope() {
+  const usedOnly = $("compilerUsedProfilesOnly").checked, flagsOnly = $("compilerFlagsOnly").checked, retest = $("compilerRetest").checked;
+  $("compilerTestScope").textContent = `${usedOnly ? "Only profiles used in this project, with exact flags" : flagsOnly ? "Current compiler only, with supported flag variations" : "All installed compilers and supported flag variations"} · ${retest ? "including completed attempts" : "new or changed attempts only"}.`;
+  if ($("testInstalledCompilers")._compilerRun) return;
+  $("testInstalledCompilers").textContent = retest ? "Retest compiler settings" : "Find better settings";
+}
+for (const id of ["compilerFlagsOnly", "compilerUsedProfilesOnly", "compilerRetest"]) $(id).onchange = () => {
+  if (id === "compilerUsedProfilesOnly" && $(id).checked) $("compilerFlagsOnly").checked = false;
+  if (id === "compilerFlagsOnly" && $(id).checked) $("compilerUsedProfilesOnly").checked = false;
+  updateCompilerTestScope();
+};
+$("testInstalledCompilers").onclick = async () => {
+  const slug = S.slug;
+  const button = $("testInstalledCompilers"), log = $("installedCompilerLog");
+  if (button._compilerRun) return button._compilerRun.cancel();
+  const work = $("installedCompilerWork");
+  const stop = button, stopError = $("compilerStopError");
+  let jobId = null;
+  const controls = [$("compilerUsedProfilesOnly"), $("compilerFlagsOnly"), $("compilerRetest"), $("compilerAutoApply")];
+  const disabled = controls.map(control => control.disabled);
+  controls.forEach(control => { control.disabled = true; });
+  button.disabled = true; button.textContent = "Starting…";
+  stopError.hidden = true; stopError.textContent = "";
+  button._compilerRun = {cancel: async () => {
+    if (!jobId) return;
+    stop.disabled = true; stop.textContent = "Stopping…";
+    stopError.hidden = true; stopError.textContent = "";
+    try {
+      await api("/api/job/cancel", {method: "POST", body: {id: jobId}});
+    } catch (e) {
+      if (!jobId) return;
+      stop.disabled = false; stop.textContent = "Stop comparison";
+      stopError.textContent = `Could not stop: ${e.message}. Try again.`; stopError.hidden = false;
+    }
+  }};
+  $("compilerLogDetails").hidden = false;
+  $("compilerLogDetails").open = false;
+  $("compilerFollowLog").checked = false;
+  log._followTail = false;
+  log.textContent = "";
+  $("compilerFollowLog").onchange = (e) => {
+    log._followTail = e.target.checked;
+    if (log._followTail) log.scrollTop = log.scrollHeight;
+  };
+  log.onscroll = () => {
+    if (log.scrollHeight - log.clientHeight - log.scrollTop >= 32) {
+      log._followTail = false;
+      $("compilerFollowLog").checked = false;
+    }
+  };
+  $("compilerImprovements").replaceChildren();
+  delete $("compilerImprovements").dataset.filter;
+  $("compilerProgress").dataset.slug = slug;
+  renderCompilerProgress(null);
+  showJobError(work, "");
+  try {
+    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked, untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked } });
+    jobId = job; stop.disabled = false; stop.textContent = "Stop comparison";
+    const result = await followJob(job, log, (_lines, snapshot) => {
+      if (S.slug === slug && snapshot.progress) renderCompilerProgress(snapshot.progress);
+    });
+    if (S.slug !== slug) return;
+    renderCompilerProgress(null, result);
+    if (!$("compilerImprovements").dataset.filter) renderCompilerImprovements(slug, compilerResultRows(result.results || result.improvements || [], "improved"));
+    log.textContent += `\n${result.tried} functions tested; ${result.skipped || 0} completed comparisons skipped. Results saved.`;
+  } catch (e) {
+    if (e.job?.state === "cancelled") {
+      if (S.slug === slug) {
+        $("compilerProgress").querySelector("[data-current]").textContent = "Comparison stopped";
+        $("compilerProgress").querySelector("[data-profile]").textContent = "Completed results remain available. Find better settings resumes with the unfinished work.";
+      }
+    } else showJobError(work, e.message);
+  } finally {
+    jobId = null; delete button._compilerRun; button.disabled = false;
+    controls.forEach((control, index) => { control.disabled = disabled[index]; });
+    updateCompilerTestScope();
+  }
+};
+
+function renderCompilerImprovements(slug, rows, filter = "improved") {
+  const list = $("compilerImprovements");
+  list.dataset.slug = slug;
+  list.dataset.filter = filter;
+  for (const button of $("compilerProgress").querySelectorAll("[data-results-filter]")) button.setAttribute("aria-expanded", String(button.dataset.resultsFilter === filter));
+  const applied = $("compilerProgress")._compilerApplied ||= new Set();
+  for (const row of rows) if (row.applied) applied.add(row.function);
+  const pending = rows.filter(r => !applied.has(r.function) && r.profile && (r.improved !== false || r.exact));
+  const title = { completed: "Finished functions", improved: "Better settings", exact: "Exact matches" }[filter];
+  setHtml(list, `<div class="row"><h3>${esc(title)} · ${rows.length}</h3><button type="button" class="ghost small-btn" data-refresh-results>Refresh results</button>${pending.length ? `<button type="button" class="ghost small-btn" data-apply-all>Apply all · ${pending.length}</button>` : ""}</div><div data-apply-all-status role="status"></div><p class="small muted">Completed comparisons from this run, highest percentage first. Apply individually or apply all results in this group; each function is rechecked before any change. Automatically applied results are marked below. Refresh to include newly finished functions.</p>`
+    + (rows.length ? `<div class="compiler-table"><table><thead><tr><th>Function</th><th>Before → tested</th><th>Compiler and flags</th><th>Action</th></tr></thead><tbody>${rows.map((r, i) => `<tr><td><button type="button" class="ghost small-btn mono" data-result-function="${i}">${esc(r.function)}</button></td><td>${r.before == null ? "—" : `${r.before.toFixed(2)}%`} → <b>${r.best == null ? "—" : `${r.best.toFixed(2)}%`}</b></td><td>${r.profile ? `${esc(r.profile[0])}<br><span class="mono">${esc(r.profile[1].join(" "))}</span>` : "No compiled result"}</td><td>${applied.has(r.function) ? '<span class="small">Applied and rechecked</span>' : r.profile && (r.improved !== false || r.exact) ? `<button type="button" class="ghost small-btn" data-apply-improvement="${i}">Apply to function</button><span class="small" role="status">${esc(r.apply_error || "")}</span>` : '<span class="small muted">No improvement</span>'}</td></tr>`).join("")}</tbody></table></div>` : '<p class="small muted">No completed results in this group yet.</p>'));
+  list.onclick = async (e) => {
+    if (S.slug !== slug || list._applying) return;
+    const allButton = e.target.closest("[data-apply-all]");
+    if (allButton) {
+      const status = list.querySelector("[data-apply-all-status]");
+      const controls = [...list.querySelectorAll("button")];
+      const finish = beginWork(status, `Applying ${pending.length} results`, controls, "Rechecks finished.");
+      list._applying = true;
+      let done = 0;
+      const failures = [];
+      try {
+        for (const r of pending) {
+          if (S.slug !== slug) break;
+          if (applied.has(r.function)) continue;
+          status.textContent = `Rechecking ${done + failures.length + 1}/${pending.length}: ${r.function}`;
+          try {
+            await api("/api/compiler", {method:"POST", body:{slug, function:r.function, toolchain:r.profile[0], flags:r.profile[1]}});
+            applied.add(r.function); done++;
+          } catch (error) { failures.push(`${r.function}: ${error.message}`); }
+        }
+      } finally {
+        list._applying = false; finish();
+        if (S.slug === slug) {
+          renderCompilerImprovements(slug, rows, filter);
+          list.querySelector("[data-apply-all-status]").textContent = `${done} applied and rechecked; ${failures.length} could not be applied.${failures.length ? " " + failures.join("; ") : ""}`;
+          await refreshMap(true);
+        }
+      }
+      return;
+    }
+    if (e.target.closest("[data-refresh-results]")) {
+      renderCompilerImprovements(slug, compilerResultRows($("compilerProgress")._compilerRows || [], filter), filter);
+      return;
+    }
+    const fn = e.target.closest("button[data-result-function]");
+    if (fn) { openFn(rows[Number(fn.dataset.resultFunction)].function); return; }
+    const button = e.target.closest("button[data-apply-improvement]");
+    if (!button) return;
+    const r = rows[Number(button.dataset.applyImprovement)], status = button.nextElementSibling;
+    const finish = beginWork(status, `Applying settings to ${r.function}`, [button], "Function updated.");
+    try {
+      await api("/api/compiler", { method: "POST", body: { slug, function: r.function, toolchain: r.profile[0], flags: r.profile[1] } });
+      applied.add(r.function);
+      button.hidden = true;
+      status.textContent = "Applied and rechecked";
+      if (S.slug === slug) await refreshMap(true);
+    } catch (err) { status.textContent = err.message; } finally { finish(); }
+  };
+}
+
+
+$("sourcePrepSave").onclick = async () => {
+  const log = $("sourcePrepLog"), button = $("sourcePrepSave");
+  const finish = beginWork(log, "Saving reference source settings", [button], "Reference source settings saved.");
+  try {
+    const body = { slug: S.slug, enabled: $("sourcePrepEnabled").checked, auto_exact: $("sourcePrepAutoExact").checked };
+    for (const [id, key] of [["Root", "root"], ["Header", "header"], ["Includes", "include_roots"], ["Mappings", "mappings"], ["Overrides", "overrides"], ["Aliases", "aliases"], ["Definitions", "definitions"], ["Contexts", "contexts"], ["Helpers", "helpers"], ["AssemblyHeader", "assembly_header"], ["AssemblyMappings", "assembly_mappings"]]) body[key] = $("sourcePrep" + id).value;
+    const saved = await api("/api/source-preparation", { method: "POST", body });
+    if (S.ov) S.ov.source_preparation = saved;
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
+};
+
+$("sourcePrepRun").onclick = async () => {
+  const log = $("sourcePrepLog"), button = $("sourcePrepRun");
+  const finish = beginWork(log, "Preparing local source candidates", [button], "Local source preparation finished.");
+  try {
+    const { job } = await api("/api/source-preparation", { method: "POST", body: { slug: S.slug, action: "run" } });
+    await followJob(job, log);
+    refreshMap();
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
+};
+
+
+$("sourcePrepExportRun").onclick = async () => {
+  const log = $("sourcePrepLog"), button = $("sourcePrepExportRun"), slug = S.slug;
+  const functions = $("sourcePrepExportNames").value.trim().split(/[\s,]+/).filter(Boolean);
+  const finish = beginWork(log, "Repairing exact functions for export", [button], "Export repair finished.");
+  try {
+    const { job } = await api("/api/source-preparation", { method: "POST", body: { slug, action: "repair-export", functions } });
+    await followJob(job, log);
+    if (S.slug === slug) await refreshMap(true);
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
+};
+
+let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null;
+let deepMetricRows = [], deepMetricSlug = null, deepMetricResultStatus = {};
+function deepAttentionReason(issue) {
+  const error=String(issue.error || "Search stopped");
+  if (/^no function ['"]/.test(error)) return "Function lookup failed during search";
+  return issue.function ? error.replace(/[A-Za-z_$][\w$]*/g, token=>token===issue.function ? "This function" : token) : error;
+}
+function deepAttentionAction(issue) {
+  return /^no function ['"]/.test(String(issue.error || ""))
+    ? "The search could not resolve a function name. It may have changed, or be missing on the room host. Open the current function and retry the search with fresh inputs. The suggested names are lookup hints, not required replacements."
+    : issue.action || "Open the function to inspect its saved C and compiler settings.";
+}
+
+function openDeepMetric(kind) {
+  const slug = S.slug;
+  if (!slug || $("deepSweepPanel").dataset.slug !== slug) return;
+  const titles = {matched:"Matched by deep permuter", improved:"Improved by deep permuter", active:"Searching now", attention:"Functions needing attention"};
+  if (!titles[kind]) return;
+  dialog(titles[kind], "", "deep-metric:" + kind);
+  deepMetricSlug = slug;
+  $("dialogBody")._deepMetricHtml = null;
+  renderDeepMetricDrawer();
+}
+function renderDeepMetricDrawer() {
+  if (!S.dialogKind?.startsWith("deep-metric:") || $("dialog").hidden) return;
+  if (deepMetricSlug !== S.slug) { closeDialog(); return; }
+  const kind = S.dialogKind.slice("deep-metric:".length), status = deepSweepSnapshot || {};
+  const active = kind === "active", attention = kind === "attention", body = $("dialogBody");
+  if (kind === "improved") {
+    if (body._deepMetricHtml && body._deepMetricSource === deepMetricResultStatus && body._deepMetricKind === kind) return;
+    renderDeepImprovementTable(deepMetricResultStatus, body);
+    body._deepMetricHtml = body.innerHTML; body._deepMetricSource = deepMetricResultStatus; body._deepMetricKind = kind;
+    return;
+  }
+  const source = active ? status.state === "running" ? status.progress?.workers : null : attention ? status.attention : deepMetricRows;
+  if (body._deepMetricHtml && body._deepMetricSource === source && body._deepMetricKind === kind) return;
+  body._deepMetricSource = source; body._deepMetricKind = kind;
+  const rows = active || attention ? source || [] : deepMetricRows.filter(row => kind === "matched" ? row.new_score === 0 : row.new_score < row.starting_score);
+  const intro = attention ? "Searches that stopped for the current inputs. Open a function to inspect it; the reason and next step are shown below." : active ? "Live searches for this project. Select a function to inspect it."
+    : "Saved deep-permuter results since the last metrics reset, across runs. Improved includes functions that reached a match.";
+  const html = `<p class="small muted">${intro}</p><p><b>${rows.length.toLocaleString()} function${rows.length === 1 ? "" : "s"}</b></p>` + (rows.length
+    ? `<ul class="deep-metric-list">${rows.map((row, i) => {
+      const percent = n => n == null ? "—" : `${Number(n).toFixed(1)}%`;
+      const before = active ? percent(row.starting_percent) : row.starting_percent_text || "—";
+      const after = active ? percent(row.best_percent) : row.new_percent_text || "—";
+      const info = attention ? deepAttentionReason(row) : active ? `${row.phase || "Searching"}${row.current_family ? " · " + row.current_family : ""} · ${(row.tested || 0).toLocaleString()} candidates tested`
+        : `Score ${row.starting_score} → ${row.new_score}${row.new_score === 0 ? " · Byte-for-byte match" : ""}`;
+      const updated = !active && row.updated_at ? `<p class="small muted">Last improvement: <time datetime="${esc(new Date(row.updated_at * 1000).toISOString())}">${esc(new Date(row.updated_at * 1000).toLocaleString())}</time></p>` : "";
+      return `<li><header><button type="button" class="ghost small-btn mono" data-deep-metric-function="${i}">${esc(row.function)}</button>${attention ? "" : `<span class="deep-metric-match">${esc(before)} → <b>${esc(after)}</b></span>`}</header><p><b>${esc(info)}</b></p>${attention ? `<p class="small muted">${esc(deepAttentionAction(row))}</p><details><summary>Technical details</summary><p class="small mono">${esc(row.error || "No additional details.")}</p></details>` : updated}</li>`;
+    }).join("")}</ul>` : `<p class="deep-metric-empty">${attention ? "No functions currently need attention." : active ? "No functions are being searched right now." : kind === "matched" ? "No matches from the deep permuter yet. Verified matches will appear here." : "No improvements from the deep permuter yet. Verified improvements will appear here."}</p>`);
+  if (body._deepMetricHtml === html) return;
+  const scrollTop = body.scrollTop;
+  const focused = document.activeElement?.dataset?.deepMetricFunction;
+  const focusedFunction = focused != null ? body.querySelector(`[data-deep-metric-function="${focused}"]`)?.textContent : null;
+  body.innerHTML = html; body._deepMetricHtml = html; body.scrollTop = scrollTop;
+  body.querySelectorAll("[data-deep-metric-function]").forEach(button => {
+    const name = rows[Number(button.dataset.deepMetricFunction)].function;
+    button.onclick = () => { if (S.slug === deepMetricSlug) { closeDialog(); openFn(name); } };
+    if (focusedFunction === name) button.focus({preventScroll:true});
+  });
+}
+function renderDeepSweepResults(status) {
+  deepMetricResultStatus = status;
+  deepMetricRows = status.improvements || [];
+  renderDeepMetricDrawer();
+  const attention = status.attention || [];
+  $("deepSweepAttention").hidden = !attention.length;
+  $("deepSweepAttentionTitle").textContent = `${attention.length} function${attention.length === 1 ? "" : "s"} could not be searched — view reasons`;
+  const issueGroups = new Map();
+  attention.forEach((issue, index) => {
+    // A function name embedded in an otherwise identical error should not repeat the guidance.
+    const reason = deepAttentionReason(issue);
+    const key = JSON.stringify([reason, issue.action || ""]);
+    if (!issueGroups.has(key)) issueGroups.set(key, {reason, action:deepAttentionAction(issue), functions:[]});
+    issueGroups.get(key).functions.push({issue,index});
+  });
+  $("deepSweepAttentionList").innerHTML = [...issueGroups.values()].map((group, groupIndex) => `<section class="deep-issue-group" aria-labelledby="deepIssueReason${groupIndex}"><header><h4 id="deepIssueReason${groupIndex}">${esc(group.reason)}</h4><span class="deep-issue-count">${group.functions.length} function${group.functions.length === 1 ? "" : "s"}</span></header>${group.action ? `<p class="deep-issue-action">${esc(group.action)}</p>` : ""}<ul class="deep-issue-functions">${group.functions.map(({issue,index}) => `<li><button type="button" class="deep-issue-link mono" data-deep-attention="${index}" title="${esc(issue.error)}" aria-describedby="deepIssueReason${groupIndex}">${esc(issue.function)}<span aria-hidden="true">↗</span></button></li>`).join("")}</ul></section>`).join("");
+  $("deepSweepAttentionList").querySelectorAll("[data-deep-attention]").forEach(button => {
+    button.onclick = () => openFn(attention[Number(button.dataset.deepAttention)].function);
+  });
+
+  const visible = status.has_activity ?? (status.state === "running" || !!status.completed || !!status.errors
+    || !!status.improvements?.length || !!status.recipe_wins?.length || !!status.measurements?.length);
+  $("deepSweepBar").hidden = !visible;
+  setDeepRunVisibility(status.state === "running");
+  if (!visible) {
+    $("deepSweepLog").textContent = "";
+    $("deepActivity").replaceChildren();
+  }
+
+  const scrollPositions = [...$("deepSweepRecipes").querySelectorAll(".compiler-table")].map(table => [table.scrollTop, table.scrollLeft]);
+  const detailsOpen = new Map([...$("deepSweepRecipes").querySelectorAll("details")].map((d,i) => [d.dataset?.performanceFamily || d.dataset?.kind || i,d.open]));
+  renderRewritePerformance(status);
+  $("deepSweepRecipes").querySelectorAll("details").forEach((detail, i) => { detail.open = !!detailsOpen.get(detail.dataset?.performanceFamily || detail.dataset?.kind || i); });
+  $("deepSweepRecipes").querySelectorAll(".compiler-table").forEach((table, i) => {
+    const position = scrollPositions[i];
+    if (position) [table.scrollTop, table.scrollLeft] = position;
+  });
+  $("deepSweepMatched").textContent = (status.improvements || []).filter(r => r.new_score === 0).length.toLocaleString();
+  $("deepSweepImproved").textContent = (status.improved || (status.improvements || []).length || 0).toLocaleString();
+}
+function renderDeepImprovementTable(status, resultHost) {
+  const scrollPositions = [...resultHost.querySelectorAll(".compiler-table")].map(t => [t.scrollTop, t.scrollLeft]);
+  const resultDetailsOpen = new Map([...resultHost.querySelectorAll("details[data-result-detail]")].map(d => [d.dataset.resultDetail, d.open]));
+  const wins = status.recipe_wins || [];
+  const histories = new Map();
+  for (const win of wins) {
+    if (!histories.has(win.function)) histories.set(win.function, []);
+    histories.get(win.function).push(win);
+  }
+  const merged = (status.improvements || []).map(row => {
+    const history = (histories.get(row.function) || []).sort((a,b) => b.created_at - a.created_at);
+    return {...row, match_gain: parseFloat(row.new_percent_text) - parseFloat(row.starting_percent_text), history, created_at: history[0]?.created_at || 0,
+      rewrite: history.map(w => (w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " ")).join("; ")};
+  });
+  if (resultHost.dataset.slug !== S.slug) {
+    resultHost.dataset.slug = S.slug; resultHost.dataset.sortKey = "match_gain"; resultHost.dataset.sortDirection = "desc";
+  }
+  const sortKey = resultHost.dataset.sortKey || "match_gain", descending = resultHost.dataset.sortDirection !== "asc";
+  const value = (row, key) => key === "difference" ? row.starting_score - row.new_score
+    : key === "starting_percent_text" || key === "new_percent_text" ? parseFloat(row[key]) : row[key];
+  const rows = merged.sort((a,b) => {
+    const x = value(a, sortKey), y = value(b, sortKey);
+    const comparison = typeof x === "string" ? x.localeCompare(String(y)) : (Number.isFinite(x) ? x : -Infinity) - (Number.isFinite(y) ? y : -Infinity);
+    return (descending ? -comparison : comparison) || a.function.localeCompare(b.function);
+  });
+  const columns = [["function", "Function"], ["new_percent_text", "Match before → now"], ["match_gain", "Improvement"]];
+  const headings = columns.map(([key,label]) => `<th scope="col" aria-sort="${sortKey === key ? descending ? "descending" : "ascending" : "none"}"><button class="table-sort" type="button" data-deep-sort="${key}">${label}${sortKey === key ? descending ? " ↓" : " ↑" : ""}</button></th>`).join("");
+  const time = stamp => `<time datetime="${esc(new Date(stamp * 1000).toISOString())}">${esc(new Date(stamp * 1000).toLocaleString())}</time>`;
+  resultHost.innerHTML = '<div class="deep-sweep-results">' + (rows.length || status.improved ? `<p><b>${status.improved || rows.length} functions improved</b><span class="small muted"> · saved results</span></p>` : "")
+    + (rows.length ? `<div class="compiler-table"><table><thead><tr>${headings}<th scope="col">Details</th></tr></thead><tbody>${rows.map((r, i) => {
+      const gain = Number.isFinite(r.match_gain) ? `${r.match_gain > 0 ? "+" : ""}${r.match_gain > 0 && r.match_gain < 0.1 ? "<0.1" : Number(r.match_gain.toFixed(1))} points` : "—";
+      return `<tr><td><button type="button" class="ghost small-btn mono" data-deep-result="${i}">${esc(r.function)}</button></td><td class="deep-match-change">${esc(r.starting_percent_text || "—")} <span class="muted">→</span> <b>${esc(r.new_percent_text || "—")}</b></td><td class="deep-match-gain">${esc(gain)}</td><td><details class="deep-result-detail" data-result-detail="${esc(r.function)}"><summary>Scores & rewrites</summary><p>Score: ${esc(r.starting_score)} → <b>${esc(r.new_score)}</b><br>${esc(r.starting_score - r.new_score)} lower</p>${r.created_at ? `<p>Latest improvement<br>${time(r.created_at)}</p>` : ""}${r.history.length ? `<p>${r.history.length} verified improvement${r.history.length === 1 ? "" : "s"}</p>${r.history.map(w => `<p>${time(w.created_at)} · ${esc(w.previous_score)} → ${esc(w.new_score)}<br>${esc((w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " "))}</p>`).join("")}` : ""}</details></td></tr>`;
+    }).join("")}</tbody></table></div><details class="deep-result-help"><summary>About these results</summary><p>Saved across runs and restarts. Each function shows its first recorded match percentage and best deep-permuter result. Improvement is measured in percentage points. Lower scores are better. Rewrite details cover the latest 50 improvements; older evidence stays stored locally.</p></details>` : '<p class="deep-metric-empty">No improvements yet. Verified results will appear here.</p>') + "</div>";
+  resultHost.querySelectorAll(".compiler-table").forEach((t,i) => { if (scrollPositions[i]) [t.scrollTop,t.scrollLeft] = scrollPositions[i]; });
+  resultHost.querySelectorAll("details[data-result-detail]").forEach(d => { d.open = !!resultDetailsOpen.get(d.dataset.resultDetail); });
+  resultHost.querySelectorAll("[data-deep-sort]").forEach(button => { button.onclick = () => {
+    const key = button.dataset.deepSort;
+    resultHost.dataset.sortDirection = key === sortKey ? descending ? "asc" : "desc" : key === "function" ? "asc" : "desc";
+    resultHost.dataset.sortKey = key;
+    renderDeepImprovementTable(status, resultHost);
+  }; });
+  resultHost.querySelectorAll("[data-deep-result]").forEach(button => {
+    button.onclick = () => { closeDialog(); openFn(rows[Number(button.dataset.deepResult)].function); };
+  });
+}
+function setDeepRunVisibility(running) {
+  $("deepSweepSettings").hidden = running;
+  for (const id of ["deepActivitySection", "deepSweepLogSection"]) $(id).hidden = !running;
+}
+function renderDeepQueueState(status) {
+  deepSweepSnapshot = status;
+  renderDeepMetricDrawer();
+  const running = status.state === "running", left = status.queue_left || 0;
+  setDeepRunVisibility(running);
+  // A previous job's error must never contradict the current live state.
+  $("deepSweepStatus").textContent = "";
+  $("deepSweepStatus").hidden = true;
+  const error = running ? "" : (status.error || "").replace(/^(?:Deep pass stopped:\s*)+/i, "");
+  const stopped = status.state === "cancelled" || /^Deep pass stopped(?:[.!]|$)/i.test(error);
+  const rotated = status.queue_rotated || 0, blocked = status.queue_blocked || 0, waiting = status.awaiting_source || 0;
+  const active = running ? (status.progress?.workers || []).length : 0;
+  const preparation = status.progress?.preparation;
+  const preparing = running && preparation && !preparation.done;
+  $("deepSweepPreparation").hidden = !preparing;
+  if (preparing) {
+    const checked = preparation.checked || 0, count = preparation.total || 0;
+    $("deepSweepPreparationText").textContent = `Checking candidates: ${checked.toLocaleString()} / ${count.toLocaleString()} · ${count ? Math.floor(100 * checked / count) : 0}% · ${preparation.eligible || 0} eligible so far`;
+    $("deepSweepPreparationBar").max = Math.max(1, count);
+    $("deepSweepPreparationBar").value = checked;
+  }
+  const done = status.queue_done || 0, total = done + left + blocked;
+  $("deepSweepQueueState").dataset.state = running ? "running" : stopped ? "stopped" : error ? "error" : "idle";
+  $("deepSweepQueueTitle").textContent = running ? active ? `Running — searching ${active} function${active === 1 ? "" : "s"}` : status.progress?.phase === "waiting for host claims or scored C" ? "Running — waiting for available functions" : preparing ? "Running — checking candidates" : "Running — preparing the next search"
+    : stopped ? "Search stopped" : error ? "Search needs attention" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
+    : blocked ? "Paused — remaining functions need attention" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
+  $("deepSweepQueueReason").textContent = running
+    ? preparing ? active ? "Searching while preparing the queue. More candidates are checked as workers become free." : "Checking saved candidates and previous passes. Searches start as soon as work is ready."
+    : !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Improvements are verified and saved as they happen."
+    : stopped ? "Your improvements and completed searches are saved." : error ? error : left ? `${rotated ? `${rotated} paused early without further progress. ` : ""}Continue gives remaining functions a fresh search; completed turns stay saved.`
+    : blocked ? "Open the reasons below, fix the affected functions, then run again."
+    : waiting ? `${waiting} functions need saved C with a measured score before they can be searched.`
+    : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.";
+  $("deepSweepStart").hidden = running;
+  $("deepSweepStart").textContent = left && status.has_activity ? "Continue search" : status.has_activity ? "Run again" : "Start search";
+  $("deepSweepStart").disabled = false;
+  $("deepSweepStop").hidden = !running;
+  if (!running) { $("deepSweepStop").disabled = false; $("deepSweepStop").textContent = "Stop"; }
+  $("deepSweepReset").disabled = running;
+  $("deepSweepActive").textContent = active.toLocaleString();
+  $("deepSweepDone").textContent = done.toLocaleString();
+  $("deepSweepLeft").textContent = left.toLocaleString();
+  for (const [id, count] of [["Paused", rotated], ["Blocked", blocked], ["Waiting", waiting]]) {
+    $("deepSweep" + id).textContent = count.toLocaleString();
+    $("deepSweep" + id + "Group").hidden = !count;
+  }
+  $("deepSweepRunChecked").textContent = status.progress?.functions_tested != null
+    ? `${running && status.loop ? `Pass ${status.progress.cycle || 1} · looping` : running ? "This run" : "Last run"}: ${status.progress.functions_tested.toLocaleString()} functions checked` : "";
+  $("deepSweepBar").max = Math.max(1, total);
+  $("deepSweepBar").value = done;
+  $("deepSweepProgressText").textContent = total ? `${done.toLocaleString()} of ${total.toLocaleString()} functions completed · ${Math.floor(100 * done / total)}%` : "";
+}
+
+async function renderDeepSweep() {
+  const slug = S.slug;
+  if (!slug) return;
+  const panel = $("deepSweepPanel");
+  if (panel.dataset.slug !== slug) {
+    if (deepSweepFollowing) deepSweepFollowing.finish();
+    deepSweepFollowing = null;
+    panel.dataset.slug = slug;
+    deepSweepProjectVersion++;
+    deepSweepSnapshot = null;
+    deepMetricRows = [];
+    renderDeepMetricDrawer();
+    delete panel.dataset.loadedSlug;
+    for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = true;
+    $("deepActivity").replaceChildren();
+    $("deepSweepAttention").hidden = true;
+    $("deepSweepAttentionList").replaceChildren();
+    $("deepSweepLog").replaceChildren();
+    renderDeepQueueState({});
+    $("deepSweepQueueTitle").textContent = "Loading search status…";
+    $("deepSweepStatus").textContent = "";
+    $("deepSweepStart").disabled = false;
+    $("deepSweepQueueReason").textContent = "Checking saved search progress. You can start now; the server will check whether a search is already running.";
+    $("deepSweepStatusRetry").hidden = false;
+    $("deepSweepStop").hidden = true;
+    $("deepSweepStop").disabled = false; $("deepSweepStop").textContent = "Stop";
+    $("deepSweepStart").hidden = false;
+    $("deepSweepActive").textContent = "0";
+    $("deepSweepRecipes").replaceChildren();
+    for (const id of ["deepSweepDone", "deepSweepLeft", "deepSweepWaiting"]) $(id).textContent = "0";
+    $("deepSweepBar").value = 0;
+    $("deepSweepProgressText").textContent = "";
+    $("deepSweepLeft").textContent = "—";
+  }
+  const version = deepSweepProjectVersion;
+  if (panel.dataset.resetting === slug || panel.dataset.statusLoading === slug) return;
+  panel.dataset.statusLoading = slug;
+  $("deepSweepStatusRetry").disabled = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const status = await api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`, {signal:controller.signal});
+    if (S.slug !== slug || version !== deepSweepProjectVersion || panel.dataset.resetting === slug) return;
+    if (panel.dataset.loadedSlug !== slug) {
+      panel.dataset.loadedSlug = slug;
+      $("deepSweepMinutes").value = status.minutes;
+      $("deepSweepVariants").value = status.max_variants;
+      $("deepSweepProfiles").value = status.compiler_profiles || 1;
+      $("deepSweepThreads").value = status.threads || "";
+      $("deepSweepRepeat").checked = false;
+      $("deepSweepLoop").checked = !!status.loop;
+    }
+    $("deepSweepStatusRetry").hidden = true;
+    renderDeepSweepResults(status);
+    renderDeepQueueState(status);
+    renderDeepActivity(status.state === "running" ? status.progress || {} : {...(status.progress || {}), workers:[]});
+    $("deepSweepThreads").placeholder = status.threads_default ? `auto (${status.threads_default})` : "auto";
+    if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
+  } catch (error) {
+    if (S.slug === slug && version === deepSweepProjectVersion) {
+      $("deepSweepQueueTitle").textContent = "Search status unavailable";
+      $("deepSweepQueueReason").textContent = controller.signal.aborted
+        ? "The status check took longer than 15 seconds. Retry status, or start a search; the server will check whether one is already running."
+        : `Could not load search status: ${error.message}. Retry status, or try Start search to get the server’s current result.`;
+      $("deepSweepStatusRetry").hidden = false;
+      if (!deepSweepFollowing) { $("deepSweepStart").hidden = false; $("deepSweepStart").disabled = false; }
+    }
+  } finally {
+    clearTimeout(timeout);
+    if (panel.dataset.statusLoading === slug) { delete panel.dataset.statusLoading; $("deepSweepStatusRetry").disabled = false; }
+  }
+}
+$("deepSweepStatusRetry").onclick = () => renderDeepSweep();
+async function followDeepSweep(slug, job) {
+  if (deepSweepFollowing) deepSweepFollowing.finish();
+  for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = false;
+  const host = $("deepSweepLog"), log = document.createElement("pre");
+  host.textContent = ""; host.append(log);
+  $("deepSweepStart").hidden = true;
+  $("deepSweepStop").hidden = false;
+  $("deepSweepReset").disabled = true;
+  const done = beginWork(log, "Deep permutation pass", [], "Deep pass finished");
+  let finished = false;
+  const following = {job, finish: () => { if (!finished) { finished = true; done(); } }};
+  deepSweepFollowing = following;
+  renderDeepQueueState({...deepSweepSnapshot, state:"running"});
+  let lastResults = 0, refreshing = false;
+  try {
+    await followJob(job, log, (_, state) => {
+      const progress = state.progress || {};
+      if (S.slug !== slug || deepSweepFollowing !== following) return;
+      renderDeepActivity((state.state || deepSweepSnapshot?.state) !== "running" ? {...progress, workers:[]} : progress);
+      if (!refreshing && Date.now() - lastResults >= 2000) {
+        refreshing = true; lastResults = Date.now();
+        api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`).then(status => {
+          if (S.slug === slug && deepSweepFollowing === following) {
+            renderDeepSweepResults(status);
+            renderDeepQueueState(status);
+          }
+        }).catch(() => {}).finally(() => { refreshing = false; });
+      }
+      if (deepSweepSnapshot?.state === "running") {
+        renderDeepQueueState({...deepSweepSnapshot, state:state.state || "running", progress});
+      }
+    }, () => S.slug === slug && deepSweepFollowing === following);
+  } catch (error) { if (S.slug === slug && deepSweepFollowing === following) showJobError(log, error.message); }
+  finally {
+    following.finish();
+    if (deepSweepFollowing === following) {
+      deepSweepFollowing = null;
+      if (S.slug === slug) { setDeepRunVisibility(false); renderDeepSweep(); }
+    }
+  }
+}
+$("deepSweepBlockedGroup").onclick = () => openDeepMetric("attention");
+$("deepSweepMetricMatched").onclick = () => openDeepMetric("matched");
+$("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
+$("deepSweepMetricActive").onclick = () => openDeepMetric("active");
+$("deepSweepStart").onclick = async () => {
+  const slug = S.slug, log = $("deepSweepLog");
+  setDeepRunVisibility(true);
+  const done = beginWork(log, "Starting deep pass", [$("deepSweepStart")], "Deep pass started");
+  let job = null;
+  const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
+  try {
+    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0}});
+    job = result.job;
+    if (S.slug === slug) renderDeepQueueState(result);
+  } catch (error) {
+    showJobError(log, error.message);
+    if (S.slug === slug) {
+      setDeepRunVisibility(false);
+      $("deepSweepQueueTitle").textContent = "Search could not start";
+      $("deepSweepQueueReason").textContent = error.message;
+      $("deepSweepStatusRetry").hidden = false;
+    }
+  }
+  finally { done(); }
+  if (job && S.slug === slug) { $("deepSweepStop").hidden = false; followDeepSweep(slug, job); }
+};
+$("deepSweepStop").onclick = async () => {
+  const button = $("deepSweepStop"); button.disabled = true; button.textContent = "Stopping…";
+  try { await api("/api/permuter/pass", {method:"POST", body:{slug:S.slug, action:"stop"}}); }
+  catch (error) { button.disabled = false; button.textContent = "Stop"; showJobError($("deepSweepLog"), error.message); }
+};
+
+$("deepSweepReset").onclick = async () => {
+  const button = $("deepSweepReset"), panel = $("deepSweepPanel");
+  if (button.disabled || panel.dataset.resetting) return;
+  if (!confirm("Reset this project’s deep permuter totals and visible improvement lists? Saved code, matches, completed passes and rewrite evidence are kept. Stop active deep searches first.")) return;
+  const slug = S.slug, log = $("deepSweepStatus");
+  log.hidden = false;
+  panel.dataset.resetting = slug;
+  deepSweepProjectVersion++; // Discard status requests that started before this reset.
+  const previousLabel = button.innerHTML;
+  button.innerHTML = '<span class="spin-dot" aria-hidden="true"></span> Resetting…';
+  button.setAttribute("aria-busy", "true");
+  const done = beginWork(log, "Resetting deep permuter metrics", [button, $("deepSweepStart")], "Metrics reset");
+  try {
+    const status = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"reset-metrics"}});
+    if (S.slug === slug) { renderDeepSweepResults(status); renderDeepQueueState(status); renderDeepActivity({}); }
+  } catch (error) { showJobError(log, error.message); }
+  finally {
+    done();
+    delete panel.dataset.resetting;
+    button.innerHTML = previousLabel;
+    button.removeAttribute("aria-busy");
+  }
+};
+
+
+// Repository sync is an explicit, cancellable build. Ordinary progress autosave stays independent.
+let repositorySyncJob = null;
+$("repositorySyncStop").onclick = async () => {
+  try { if (repositorySyncJob) await api("/api/job/cancel", {method:"POST", body:{id:repositorySyncJob}}); }
+  catch (error) { showJobError($("repositorySyncLog"), error.message); }
+};
+async function syncRepository(commitPush = false) {
+  const log = $("repositorySyncLog"), button = $("repositorySyncGo"), stop = $("repositorySyncStop");
+  const finish = beginWork(log, "Verifying repository progress", [button, $("repositoryCommitGo")], "Repository sync finished.");
+  showJobError(log, "");
+  try {
+    const {job} = await api("/api/repository-sync", {method:"POST", body:{slug:S.slug, folder:$("repositoryFolder").value.trim(), commit_push:commitPush}});
+    repositorySyncJob = job; stop.hidden = false;
+    const result = await followJob(job, log);
+    log.textContent += result.mode === "progress"
+      ? `\nSaved progress: ${result.matched} matches and ${result.best} best drafts. No standalone rebuild was run.\n${result.commit ? "Newer helper edits remain local." : result.changes || "No Git changes."}`
+      : `\n${result.verified_build ? "Full rebuilt image verified." : "No source additions; no full rebuild was needed."}\n${result.accepted.length} functions synced; ${result.skipped.length} could not be integrated.\n${result.changes || "No Git changes."}`;
+    if (result.commit) log.textContent += `\nCommit: ${result.commit}\n${result.pushed ? "Pushed to " + result.upstream : result.push_error || "Saved locally."}`;
+    for (const item of result.skipped) log.textContent += `\n${item.function}: ${item.reason}`;
+    if (result.commit_url && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/[a-f0-9]+$/.test(result.commit_url)) {
+      const link = document.createElement("a"); link.href = result.commit_url;
+      link.textContent = "View commit"; link.target = "_blank"; link.rel = "noopener noreferrer";
+      log.append(document.createTextNode("\n"), link);
+    }
+  } catch (error) { showJobError(log, error.message); }
+  finally { repositorySyncJob = null; stop.hidden = true; finish(); }
+}
+$("repositorySyncGo").onclick = () => syncRepository();
+$("repositoryCommitGo").onclick = () => syncRepository(true);
+
+
+$("sourcePrepReviewsRefresh").onclick = async () => {
+  const panel = $("sourcePrepReviews"), button = $("sourcePrepReviewsRefresh"), slug = S.slug;
+  const finish = beginWork(panel, "Loading prepared profile evidence", [button], "Evidence loaded.");
+  try {
+    const {reviews} = await api("/api/source-preparation", {method:"POST", body:{slug, action:"reviews"}});
+    panel.innerHTML = (reviews.some(r => r.reviewable) ? `<button data-prepared-batch>Fresh check & apply up to 20 exact bundles</button><div data-prepared-batch-log></div>` : "") + (reviews.length ? reviews.map((r, i) => `<div class="card"><strong>${esc(r.function)}</strong> · ${esc(r.toolchain || "")} ${esc(r.flags.join(" "))}<p>${r.exact ? "Exact when tested" : `Score ${r.score ?? "unavailable"}`} · ${esc(r.category)}</p>${r.source ? `<details><summary>Prepared C and private header</summary><pre>${esc(r.source)}</pre><pre>${esc(r.header)}</pre></details>` : ""}${r.diagnostic ? `<pre>${esc(r.diagnostic)}</pre>` : ""}${r.reviewable ? `<button data-prepared-review="${i}">Fresh check & apply source, header & flags</button>` : "<span class=muted>Run preparation again if inputs changed.</span>"}<div data-prepared-log></div></div>`).join("") : "No prepared profile evidence yet. Run a preparation pass first.");
+    panel.onclick = async (event) => {
+      if (event.target.closest("[data-prepared-batch]") && S.slug === slug) {
+        const batch = panel.querySelector("[data-prepared-batch]"), log = panel.querySelector("[data-prepared-batch-log]");
+        const done = beginWork(log, "Rechecking exact bundles", [...panel.querySelectorAll("button")], "Bundle checks complete.");
+        try {
+          const {job} = await api("/api/source-preparation", {method:"POST", body:{slug, action:"recheck-exact", limit:20}});
+          await followJob(job, log); batch.hidden = true; refreshMap();
+        } catch (error) { showJobError(log, error.message); } finally { done(); }
+        return;
+      }
+      const apply = event.target.closest("[data-prepared-review]");
+      if (!apply || S.slug !== slug) return;
+      const row = reviews[Number(apply.dataset.preparedReview)], log = apply.parentElement.querySelector("[data-prepared-log]");
+      const done = beginWork(log, "Rechecking complete prepared bundle", [apply], "Bundle rechecked.");
+      try {
+        const {job} = await api("/api/source-preparation", {method:"POST", body:{slug, action:"recheck-review", id:row.id}});
+        await followJob(job, log); apply.hidden = true; refreshMap();
+      } catch (error) { showJobError(log, error.message); } finally { done(); }
+    };
+  } catch (error) { showJobError(panel, error.message); } finally { finish(); }
+};
+
+
+$("sourcePrepAnalysisRefresh").onclick = async () => {
+  const slug = S.slug, button = $("sourcePrepAnalysisRefresh"), log = $("sourcePrepAnalysisLog");
+  const finish = beginWork(log, "Loading source leads and measured results", [button], "Source evidence loaded.");
+  try {
+    const data = await api("/api/source-preparation", {method:"POST", body:{slug, action:"analysis"}});
+    if (S.slug !== slug) return;
+    const panel = $("sourcePrepAnalysis");
+    panel.innerHTML = `<p class="muted">${esc(data.scope)}</p><div class="compiler-table"><table><thead><tr><th>Family / profile</th><th>Tested</th><th>Improved</th><th>Exact trials (functions)</th><th>Trial time</th></tr></thead><tbody>${data.families.map(r => `<tr><td>${esc(r.family)}<br>${esc(JSON.stringify(r.profile))}</td><td>${r.tested}</td><td>${r.improved}</td><td>${r.matched}</td><td>${(r.elapsed_ms/1000).toFixed(1)}s</td></tr>`).join("")}</tbody></table></div><p>Leads are ranked by compiled call, field-offset and control-flow agreement. These scores do not establish identity. An exact byte verdict still decides matching.</p>` + data.leads.map((r, i) => `<details class="card"><summary>${esc(r.function)} · ${esc(r.lead.symbol || "prepared context")} · support ${r.comparison.support}/100 · ${r.rejected ? "rejected" : r.exact ? "exact trial" : `score ${r.score ?? "unavailable"}`}</summary><p>${esc(r.lead.file || "")} · ${esc(r.family)} · ${esc(JSON.stringify(r.profile))}</p><p>${esc(r.comparison.note)}</p><pre>${esc(JSON.stringify({baseline_score:r.baseline,trial_score:r.score,target:r.comparison.target,candidate:r.comparison.candidate,missing_calls:r.comparison.missing_calls,extra_calls:r.comparison.extra_calls,source_parameters:r.comparison.source_parameters,source_alternatives:r.lead.alternatives,context_from:r.lead.context_from,shared_types:r.lead.shared_types,shared_calls:r.lead.shared_calls,incoming_entry:r.comparison.entry,next_steps:r.comparison.next_steps},null,2))}</pre><p class="muted">Incoming register/stack slots are ABI locations, not a count of C parameters. Check wide arguments, aggregates and original callers.</p><pre>${esc(r.comparison.rows.map(row => row.join(" | ")).join("\n"))}</pre>${r.error ? `<pre>${esc(r.error)}</pre>` : ""}${r.rejected ? `<p>Rejected lead: ${esc(r.rejected)}</p>` : `<label>Reason to reject this source lead<input data-lead-reason placeholder="Explain the contradictory evidence"></label><button data-reject-lead="${i}" class="ghost">Retain as rejected lead</button>`}<div data-lead-log></div></details>`).join("");
+    panel.onclick = async (event) => {
+      const reject = event.target.closest("[data-reject-lead]");
+      if (!reject || S.slug !== slug) return;
+      const card = reject.parentElement, reason = card.querySelector("[data-lead-reason]").value.trim(), output = card.querySelector("[data-lead-log]");
+      if (!reason) { output.textContent = "Give the contradictory evidence first."; return; }
+      const done = beginWork(output, "Saving rejected source lead", [reject], "Rejection retained.");
+      try {
+        await api("/api/source-preparation", {method:"POST",body:{slug,action:"reject-lead",id:data.leads[Number(reject.dataset.rejectLead)].id,reason}});
+        output.textContent = `Rejected lead retained: ${reason}`; reject.hidden = true;
+      } catch (error) { showJobError(output,error.message); } finally { done(); }
+    };
+  } catch (error) { showJobError(log,error.message); } finally { finish(); }
+};
+
+
+$("sourcePairTry").onclick = async () => {
+  const slug = S.slug, button = $("sourcePairTry"), log = $("sourcePairLog");
+  const functionName = $("sourcePairFunction").value.trim();
+  const body = {slug, action:"try-pair", function:functionName, source:$("sourcePairBody").value, header:$("sourcePairHeader").value};
+  const flags = $("sourcePairFlags").value.trim();
+  const finish = beginWork(log, "Checking separate source and header", [button], "Pair checked.");
+  try {
+    if (flags) {
+      const fn = await api(`/api/function?slug=${encodeURIComponent(slug)}&name=${encodeURIComponent(functionName)}`);
+      body.settings = {toolchain:fn.compiler_profile.toolchain, flags:flags.split(/\s+/)};
+    }
+    const {job} = await api("/api/source-preparation", {method:"POST", body});
+    const result = await followJob(job, log);
+    log.textContent += `\n${result.matched ? "Exact bundle saved." : `Score ${result.score}; working candidate unchanged.`}`;
+    if (S.slug === slug) refreshMap();
+  } catch (error) { showJobError(log, error.message); } finally { finish(); }
+};
+
+
+$("codeAuditBtn").onclick = async () => {
+  const button=$("codeAuditBtn"), log=$("codeAuditLog"), slug=S.slug;
+  const finish=beginWork(log,"Auditing unanalysed code",[button]);
+  try {
+    const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
+    const result=await followJob(job,log);
+    if (S.slug!==slug) return;
+    renderCodeAudit(result);
+  } catch(e) {showJobError(log,e.message);} finally {finish();button.disabled=false;}
+};
+
+
+async function sourceQueueProgress() {
+  const data = await api("/api/source-preparation", {method:"POST",body:{slug:S.slug,action:"queue-status"}});
+  const items = data.items || [], done = items.filter(r => !["pending","running"].includes(r.state)).length;
+  $("sourceQueueResults").innerHTML = `<p>${esc(data.state || "Not started")} · ${done}/${items.length} checked · ${items.filter(r => r.matched && !r.already_matched).length} matched</p><progress value="${done}" max="${Math.max(1,items.length)}"></progress>` + items.map(r => `<div class="card"><strong>${esc(r.function)}</strong> · ${esc(r.state)}${r.starting_score != null ? ` · score ${esc(r.starting_score)} → ${esc(r.new_score ?? "—")}` : ""}${r.error ? `<p>${esc(r.error)}</p>` : ""}</div>`).join("");
+  return data;
+}
+$("sourceQueueRefresh").onclick = async () => {
+  const done = beginWork($("sourceQueueLog"), "Loading saved source queue", [$("sourceQueueRefresh")], "Saved progress loaded.");
+  try { await sourceQueueProgress(); } catch(error) { showJobError($("sourceQueueLog"),error.message); } finally { done(); }
+};
+$("sourceQueueStart").onclick = async () => {
+  const log = $("sourceQueueLog"), slug = S.slug;
+  const done = beginWork(log, "Recovering local source", [$("sourceQueueStart")], "Source queue finished.");
+  try {
+    const data = await api("/api/source-preparation", {method:"POST",body:{slug,action:"queue-start",include_assembly:$("sourceQueueAssembly").checked}});
+    await sourceQueueProgress();
+    if (data.job) await followJob(data.job, log);
+    if (S.slug === slug) { await sourceQueueProgress(); refreshMap(); }
+  } catch(error) { showJobError(log,error.message); } finally { done(); }
+};
+$("sourceQueueStop").onclick = async () => {
+  const done = beginWork($("sourceQueueLog"), "Pausing source queue", [$("sourceQueueStop")], "Pause requested; current check will finish.");
+  try { await api("/api/source-preparation", {method:"POST",body:{slug:S.slug,action:"queue-stop"}}); await sourceQueueProgress(); }
+  catch(error) { showJobError($("sourceQueueLog"),error.message); } finally { done(); }
+};
+
+$("sourceAssemblyScan").onclick = async () => {
+  const log=$("sourceAssemblyLog"), button=$("sourceAssemblyScan");
+  const finish=beginWork(log,"Reading assembly labels",[button],"Scan finished.");
+  try {
+    const result=await api("/api/source-preparation",{method:"POST",body:{slug:S.slug,action:"assembly-scan"}});
+    log.textContent=result.candidates.length ? result.candidates.map(c=>`${c.function} = ${c.symbol} @ ${c.file} — unverified`).join("\n") : "No known source assembly labels found. Save source settings first.";
+  } catch(error) { showJobError(log,error.message); } finally { finish(); }
+};
+$("sourceAssemblyRun").onclick = async () => {
+  const log=$("sourceAssemblyLog"), button=$("sourceAssemblyRun");
+  const finish=beginWork(log,"Verifying supplied assembly",[button],"Assembly pass finished.");
+  try { const result=await api("/api/source-preparation",{method:"POST",body:{slug:S.slug,action:"assembly-run"}}); await followJob(result.job,log); await refreshMap(true); }
+  catch(error) { showJobError(log,error.message); } finally { finish(); }
+};
+
+
+function renderSuggestionBatchProgress(body, p, complete = false) {
+  const total = p.total || 0, checked = p.done || 0;
+  body.querySelector('[data-batch-status]').textContent = complete ? (total ? 'Compiler suggestions checked' : 'No waiting compiler suggestions') : 'Checking compiler suggestions';
+  body.querySelector('[data-batch-checked]').textContent = `${checked} / ${total}`;
+  body.querySelector('[data-batch-applied]').textContent = p.applied || 0;
+  body.querySelector('[data-batch-skipped]').textContent = p.skipped || 0;
+  const bar = body.querySelector('[data-batch-bar]');
+  bar.max = total || 1; bar.value = total ? checked : complete ? 1 : 0;
+  const current = p.current || {};
+  const parts = [p.suggestion != null ? `Suggestion #${p.suggestion}` : '', p.compiler, current.phase,
+    current.total > 0 ? `${current.done || 0} / ${current.total}` : '', current.function].filter(Boolean);
+  body.querySelector('[data-batch-current]').textContent = complete
+    ? (p.skipped ? 'Applied changes are saved. Expand skipped suggestions to see what needs attention.' : 'All applied changes are verified and saved.')
+    : parts.join(' · ') || 'Preparing verification…';
+}
+
+async function acceptWaitingSuggestions(button) {
+  const slug=S.slug;
+  const body=dialog('Accept waiting compiler suggestions', `<p class="small muted">Verify and apply waiting suggestions. Existing matches stay protected.</p>
+    <section class="compiler-progress suggestion-batch-progress" aria-label="Applying compiler suggestions">
+      <div class="compiler-progress-heading"><b data-batch-status role="status">Preparing suggestions…</b><span class="small muted" data-batch-current role="status"></span></div>
+      <dl class="compiler-progress-stats"><div><dt>Checked</dt><dd data-batch-checked>—</dd></div><div><dt>Applied</dt><dd class="ok" data-batch-applied>0</dd></div><div><dt>Skipped</dt><dd data-batch-skipped>0</dd></div></dl>
+      <progress class="deep-sweep-bar" data-batch-bar max="1" aria-label="Compiler suggestions checked"></progress>
+    </section>
+    <p class="err-msg" data-batch-error role="alert" hidden></p><div data-batch-results></div>
+    <details class="collapsible-box"><summary>Technical log</summary><div class="collapsible-box-body"><pre class="joblog" data-batch-log></pre></div></details>`);
+  const log=body.querySelector('[data-batch-log]');
+  const done=beginWork(log,'Checking and applying suggestions',[button],'');
+  // The visible card owns progress; the shared worker still owns cleanup and error handling.
+  if(log._workBar)log._workBar.hidden=true;
+  if(log._workStatus)log._workStatus.hidden=true;
+  log._errorBox=body.querySelector('[data-batch-error]');
+  try {
+    const {job}=await api('/api/suggestion',{method:'POST',body:{slug,action:'apply-all',background:true}});
+    const result=await followJob(job,log,(_lines,state)=>{
+      if(state.progress?.phase==='Applying waiting suggestions')renderSuggestionBatchProgress(body,state.progress);
+    });
+    if(!result)return;
+    const results=result.results || [];
+    renderSuggestionBatchProgress(body,{total:results.length,done:results.length,applied:result.applied,skipped:result.skipped},true);
+    const skipped=results.filter(r=>!r.applied);
+    body.querySelector('[data-batch-results]').innerHTML=skipped.length ? `<details class="collapsible-box"><summary>${skipped.length} skipped suggestions — view reasons</summary><div class="collapsible-box-body">${skipped.map(r=>`<div><b class="small">Suggestion #${esc(r.id)}</b><p class="small muted">${esc(r.reason)}</p></div>`).join('')}</div></details>` : '';
+    if(S.slug===slug){S.ov=result.overview;renderStats(S.ov);renderProjectSettings();}
+  }catch(error){
+    body.querySelector('[data-batch-status]').textContent='Could not finish applying suggestions';
+    body.querySelector('[data-batch-current]').textContent='Completed changes are saved. Review the error before retrying.';
+    showJobError(log,error.message);
+  }finally{done();}
+}
+
+async function dismissWaitingSuggestions(button) {
+  const slug = S.slug, host = $("compilerWaiting");
+  if (host.dataset.dismissing) return;
+  const ids = compilerSuggestions(S.ov).map(s => s.id);
+  const log = host.querySelector('[data-inbox-status]');
+  host.dataset.dismissing = slug;
+  const label = button.textContent;
+  const done = beginWork(log, 'Dismissing suggestions', [...host.querySelectorAll('button')], '');
+  button.textContent = 'Dismissing…';
+  let failed = false;
+  try {
+    const result = await api('/api/suggestion', {method:'POST', body:{slug, action:'dismiss-all', ids}});
+    if (S.slug === slug) { S.ov = result.overview; renderStats(S.ov); }
+    toast(`${result.dismissed} suggestions dismissed.`);
+  } catch (error) { failed = true; showJobError(log, error.message); }
+  finally {
+    done(); button.textContent = label; delete host.dataset.dismissing;
+    // Preserve visible errors until retry; successful dismissal refreshes the inbox.
+    if (S.slug === slug && !failed) renderCompilerWaiting(S.ov);
+  }
+}

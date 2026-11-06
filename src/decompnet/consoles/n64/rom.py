@@ -107,6 +107,45 @@ def copy_z64_file(src: Path, dest: Path) -> None:
             tmp.unlink(missing_ok=True)
 
 
+@dataclass(frozen=True)
+class RomFileHashes:
+    source_sha1: str
+    byte_order: str | None
+    normalized_sha1: str | None
+    conversion: str
+
+    def describe(self) -> str:
+        order = {"z64": "big endian (.z64)", "v64": "16-bit byte-swapped (.v64)",
+                 "n64": "little endian (.n64)"}.get(self.byte_order, "not recognized as a raw N64 ROM")
+        lines = [f"Supplied file SHA-1: {self.source_sha1}", f"Detected byte order: {order}",
+                 f"Big-endian conversion: {self.conversion}"]
+        if self.normalized_sha1:
+            lines.append(f"Big-endian (.z64) SHA-1: {self.normalized_sha1}")
+        if not self.byte_order:
+            lines.append("Select an extracted .z64, .v64 or .n64 cartridge image if this file is an archive or container.")
+        return "\n".join(lines)
+
+
+def file_hashes(path: Path, source_sha1: str | None = None) -> RomFileHashes:
+    """Describe both the supplied bytes and the normalization actually checked, without changing the file."""
+    if source_sha1 is None:
+        with path.open("rb") as stream:
+            source_sha1 = hashlib.file_digest(stream, "sha1").hexdigest()
+    with path.open("rb") as stream:
+        fmt = MAGIC.get(stream.read(4))
+    if fmt is None:
+        return RomFileHashes(source_sha1, None, None, "not attempted; the N64 header was not recognized")
+    if fmt == "z64" and path.stat().st_size % 4 == 0:
+        return RomFileHashes(source_sha1, fmt, source_sha1, "not needed; the supplied image is already big endian")
+    try:
+        normalized = z64_file_sha1(path)
+    except RomError as e:
+        return RomFileHashes(source_sha1, fmt, None, f"failed: {e}")
+    conversion = ("not needed; the supplied image is already big endian" if fmt == "z64"
+                  else f"attempted from .{fmt} to big endian (.z64)")
+    return RomFileHashes(source_sha1, fmt, normalized[0] if normalized else None, conversion)
+
+
 def _text(raw: bytes) -> str:
     for enc in ("ascii", "shift_jis"):
         try:

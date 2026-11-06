@@ -372,8 +372,7 @@ An agent is one of two sorts:
    | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. |
    | `launch_command(argv)` | Adjust the command used to start the program when its installer uses a shim. |
    | `stdin(prompt)` | What goes in on stdin: the prompt, as the agent reads it. |
-   | `prompt_file(workdir, prompt)` | The prompt as a file, for a CLI with no stdin prompt (zcode's `--attach`); None means stdin. |
-   | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. |
+   | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. A protocol program (zcode) also says ("stdin", line) — the app writes the line to its stdin — and ("stop", line) when the work is done, ending a process that wouldn't exit on its own. |
    | `clean_stderr(line)` | A line of its stderr worth showing, or "" for noise. |
    | `fatal(error)` | Whether an error means every try would fail the same way: the helper pauses instead. |
    | `models(path, run)`, `read_models(lines)` | The models to offer in the launcher. |

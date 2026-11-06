@@ -41,6 +41,7 @@ class Insn:
     mnemonic: str
     operands: str
     text: str  # normalized "mnemonic operands" with reloc targets symbolized
+    encoding: bytes = b""  # relocation-masked bytes; aliases can hide different machine instructions
 
 
 def percent_text(p: float | None) -> str:
@@ -84,7 +85,7 @@ def disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
             ops = _symbolize(ins, ops, rel.offset - address, target, fn.arch)
         elif ins is not None and ins.id and ins.group(capstone.CS_GRP_JUMP) and _NUM.match(ops.strip()):
             ops = f".L{int(ops, 16):x}"  # intra-function branch: keep it position-relative
-        out.append(Insn(address, mnemonic, ops, f"{mnemonic} {ops}".strip()))
+        out.append(Insn(address, mnemonic, ops, f"{mnemonic} {ops}".strip(), code[address:address + size]))
     return out
 
 
@@ -99,7 +100,10 @@ def _mips_reloc_names(relocs) -> dict[int, str]:
     out: dict[int, str] = {}
     for k, r in enumerate(relocs):
         if r.type == 4:  # R_MIPS_26
-            out[r.offset] = r.symbol
+            # REL jump addends are instruction words, not bytes. Keeping the symbol alone hid
+            # jumps to different labels within the same function even though the exact judge failed.
+            off = r.addend << 2
+            out[r.offset] = f"{r.symbol}{f'{off:+#x}' if off else ''}"
         elif r.type in (5, 6):  # R_MIPS_HI16 / R_MIPS_LO16
             if r.type == 5:
                 pair = next((x for x in relocs[k + 1:] if x.type == 6 and x.symbol == r.symbol), None)
@@ -174,7 +178,8 @@ class DiffResult:
         """Compact side-by-side diff: a count of each kind of mismatch, then only mismatches with a little context.
         Long runs of missing or extra instructions are shortened (a half-written function would otherwise spend
         every row on code that isn't there yet), so each compile costs the agent little context."""
-        return render_rows(self.rows, context, max_rows)
+        from .diff_summary import text
+        return text(self.rows)+"\n"+render_rows(self.rows, context, max_rows)
 
 
 def first_mismatch(rows: list[tuple[str, str, str]]) -> tuple[int, int, tuple[str, str, str] | None]:
@@ -274,7 +279,13 @@ def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
             for a, b in zip(t_ins[a0:a1], c_ins[b0:b1]):
                 pen, mark = _classify(a, b)
                 score += pen
-                rows.append((mark, a.text, b.text))
+                if not bytes_match and a.text == b.text and a.encoding != b.encoding:
+                    # e.g. 32-bit addu and 64-bit daddu both disassemble as "move".
+                    # Keep the existing score; make the strict judge's byte disagreement visible.
+                    rows.append(("|", f"{a.text} [bytes {a.encoding.hex()}]",
+                                 f"{b.text} [bytes {b.encoding.hex()}]"))
+                else:
+                    rows.append((mark, a.text, b.text))
             continue
         ta, cb = t_ins[a0:a1], c_ins[b0:b1]
         for k in range(max(len(ta), len(cb))):

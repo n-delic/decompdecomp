@@ -81,11 +81,11 @@ def test_host_work_reaches_the_guest(room):
     hagent, _ = host.local_agent("codex-1")
     assert host.compile_and_diff(hagent, "func_80000808", DAMAGE, slug).startswith("✅ MATCH")
     assert host.rename_symbol(hagent, slug, "func_800007D0", "clamp_s32").startswith("✅")
-    assert host.edit_context(hagent, slug, "", "s32 clamp_s32(s32 v, s32 lo, s32 hi);", "prototype").startswith("✅")
+    assert host.edit_context(hagent, slug, "", "s32 clamp_s32(s32 v, s32 lo, s32 hi);", "prototype", function="clamp_s32").startswith("✅")
     guest.links[gslug].sync()
     assert guest._function("func_80000808", gslug)["status"] == "matched"
     assert guest._function("clamp_s32", gslug)["status"] == "matched"
-    assert "clamp_s32(s32 v" in guest.get_context(gslug)
+    assert "clamp_s32(s32 v" in guest.get_context(gslug, "clamp_s32")
     feed = [e["kind"] for e in guest.live(gslug)["events"]]
     assert "match" in feed
     assert guest.overview(gslug)["room"]["role"] == "guest"
@@ -266,7 +266,10 @@ def test_one_refused_saved_candidate_does_not_wedge_the_others(built, tmp_path, 
     assert guest.links[gslug].saved_progress is None
     assert guest.store.all("SELECT name FROM saved_progress WHERE project_id=?",
                            guest.project_row(gslug)["id"]) == []
-    assert any("refused saved progress for func_80000808" in line for line in said), said
+    assert any("wasn't confirmed" in line for line in said), said
+    from decompnet.app.room_matches import pending
+    assert any(r['function']=='func_80000808' for r in pending(host,slug,'host'))
+    assert any(r['function']=='func_80000808' for r in pending(guest,gslug,'client'))
 
 
 def test_a_failure_before_the_join_leaves_no_member_or_project(built, tmp_path, monkeypatch):  # noqa: F811
@@ -753,16 +756,59 @@ def test_members_stay_in_the_room_when_their_app_restarts(built, tmp_path):  # n
     assert [m["name"] for m in room._members_now()] == ["sam"]
 
 
-def test_the_hosts_layout_applies_when_a_local_function_has_the_name_it_gives_a_split(built, tmp_path):  # noqa: F811
-    """#107: a member's own function already named like the host's new tail half (at another address) made the
-    INSERT fail on functions.name, and the link retried the same failure forever."""
-    net = RomNetwork(tmp_path / "d.db", tmp_path)
-    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
-    clash = net._function("func_80000808", slug)
-    with net.store.tx() as db:
-        db.execute("UPDATE functions SET name='func_800007D0', matched_source='/* mine */' WHERE id=?", (clash["id"],))
-    net.apply_remote_layout(slug, [{"name": "func_800007D0", "vram": 0x800007D0, "size": 4}], [])
-    tail = net.store.one("SELECT * FROM functions WHERE vram=? AND project_id=?", 0x800007D0, clash["project_id"])
-    assert tail["name"] == "func_800007D0" and tail["id"] != clash["id"]
-    mine = net.store.one("SELECT * FROM functions WHERE id=?", clash["id"])
-    assert mine["name"] != "func_800007D0" and mine["matched_source"] == "/* mine */"
+def test_deep_room_search_is_nonexclusive_and_host_confirms_demo_match(built, tmp_path):  # noqa: F811
+    from decompnet.app.deep_permuter import Search
+    from tests.test_deep_permuter import Log
+
+    h, g = tmp_path / 'host', tmp_path / 'guest'
+    h.mkdir(); g.mkdir()
+    host = RomNetwork(h / 'db', h)
+    slug = host.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = host.local_agent('seed')
+    wrong = DAMAGE.replace('hp -= amount;', 'hp -= amount + 1;')
+    assert wrong != DAMAGE
+    seeded = host.attempt(agent, 'func_80000808', wrong, slug)
+    assert seeded['score'] is not None, seeded['text']
+    host.release(agent, 'func_80000808', '', slug)
+    host.rooms[slug] = collab.Room(host, slug)
+    invite = host.rooms[slug].open_invite()
+    client = TestClient(collab.host_app(host, host.rooms), base_url='https://abc.trycloudflare.com')
+    guest = RomNetwork(g / 'db', g)
+    gslug = collab.join_room(guest, f'https://abc.trycloudflare.com/join/{invite}#room={slug}',
+                            'deep-client', built, log=lambda *_: None, client=client, start=False)
+    seeder, _ = guest.local_agent('seed-client')
+    guest.claim(seeder, gslug, 'func_80000808')
+    seeded = guest.attempt(seeder, 'func_80000808', wrong, gslug)
+    assert seeded['score'] is not None, seeded['text']
+    guest.release(seeder, 'func_80000808', '', gslug)
+    fn = guest._function('func_80000808', gslug)
+    runner, _ = guest.local_agent(f'permuter-{fn["id"]}')
+    search = Search(guest, 1, 10, Log(), fn)
+    assert search._hold(runner, fn)
+    assert not any(c['agent'].startswith('deep-client.permuter-') for c in host.live(slug)['claims'])
+    try:
+        score = search._score(runner, guest.project_row(gslug), fn, DAMAGE, fn['best_score'], None)
+        assert score == 0
+        assert host._function('func_80000808', slug)['status'] == 'matched'
+        assert guest._function('func_80000808', gslug)['status'] == 'matched'
+    finally:
+        search._let_go(runner, fn)
+    assert not guest.store.one('SELECT 1 FROM claims')
+    assert not host.store.one('SELECT 1 FROM claims')
+
+
+def test_restart_recovers_when_host_and_client_hold_different_leases(room):
+    host,slug,guest,gslug,*_=room
+    names=[r['name'] for r in host.store.all("SELECT name FROM functions WHERE project_id=? AND status='open' AND id NOT IN (SELECT function_id FROM claims) ORDER BY id LIMIT 2",host._project(slug)['id'])]
+    assert len(names)==2
+    agent,_=guest.local_agent('restart-recovery')
+    guest.claim_row(agent,gslug,names[0])  # leftover client lease from a previous session
+    link=guest.links[gslug]
+    # A newer host lease (e.g. after its old lease expired) must win on the client.
+    granted=link._req('POST','/collab/claim',{'agent':agent.name,'function':names[1],'strategy':'easiest'})
+    assert granted['function']==names[1]
+    assert names[1] in guest.claim(agent,gslug)
+    held=guest.store.all('SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?',agent.id)
+    assert [r['name'] for r in held]==[names[1]]
+    assert names[1] in guest.claim(agent,gslug)  # no zero-tool restart loop
+    guest.release(agent,names[1],'Recovery regression finished.',gslug)

@@ -4,7 +4,20 @@ without a word, and finding out why meant guessing."""
 import logging
 import threading
 
+import pytest
+
 from decompnet.app.support import file_log
+
+
+@pytest.fixture(autouse=True)
+def isolated_server_loggers(monkeypatch):
+    # Other server tests legitimately configure uvicorn's terminal handlers. Start from the
+    # app's intended logger state rather than inheriting a different test's Config instance.
+    for name in ('uvicorn','uvicorn.error'):
+        logger=logging.getLogger(name)
+        monkeypatch.setattr(logger,'handlers',[])
+        monkeypatch.setattr(logger,'propagate',True)
+        monkeypatch.setattr(logger,'disabled',False)
 
 
 def test_the_log_holds_debug_messages_other_libraries_and_crashes_in_threads(tmp_path):

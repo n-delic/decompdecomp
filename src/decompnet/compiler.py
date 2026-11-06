@@ -7,6 +7,8 @@ every match is produced here, on the coordinator, with the project's pinned tool
 from __future__ import annotations
 
 import contextvars
+import hashlib
+import importlib
 import os
 import re
 import shutil
@@ -20,14 +22,40 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, stop_process_tree
 
-from . import linuxvm, wsl
+from . import limits, linuxvm, wsl
 
 MAX_SOURCE_BYTES = 64 * 1024
 # Per-compile resource caps (address space, CPU seconds, output file size) and a global
 # concurrency cap, so a hostile submission can't take the host down with it.
 LIMITS = ["--as=2147483648", "--cpu=30", "--fsize=67108864"]
 _SLOTS = threading.BoundedSemaphore(max(2, (os.cpu_count() or 4) - 1))
+# Background jobs cannot occupy the last compiler slot needed by an interactive request.
+_BACKGROUND_SLOTS = threading.BoundedSemaphore(max(1, max(2, (os.cpu_count() or 4) - 1) - 1))
+_SCHEDULING = threading.local()
+_ARTIFACT_SINK = contextvars.ContextVar("compiler_artifact_sink", default=None)
 _CANCEL_CHECK = contextvars.ContextVar("compiler_cancel_check", default=None)
+
+
+def background_thread():
+    _SCHEDULING.background = True
+
+
+@contextmanager
+def _slot():
+    acquired = []
+    gates = ([_BACKGROUND_SLOTS] if getattr(_SCHEDULING, 'background', False) else []) + [_SLOTS]
+    try:
+        for gate in gates:
+            while not gate.acquire(timeout=0.1):
+                if check := _CANCEL_CHECK.get():
+                    check()
+            acquired.append(gate)
+        if check := _CANCEL_CHECK.get():
+            check()
+        yield
+    finally:
+        for gate in reversed(acquired):
+            gate.release()
 
 
 @contextmanager
@@ -38,6 +66,16 @@ def cancellable(check):
         yield
     finally:
         _CANCEL_CHECK.reset(token)
+
+
+@contextmanager
+def capture_artifacts(sink):
+    """Opt-in diagnostic reader, invoked before the private compile directory is removed."""
+    token = _ARTIFACT_SINK.set(sink)
+    try:
+        yield
+    finally:
+        _ARTIFACT_SINK.reset(token)
 
 _COMMENTS_AND_STRINGS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
 _FORBIDDEN = [
@@ -78,9 +116,13 @@ class CompilerConfig:
     include_dirs: tuple[str, ...] = ()  # absolute paths of extra (static) header dirs
     runtime32: str | None = None  # 32-bit x86 C runtime for old i386 compiler binaries (see toolchains)
     wsl: bool = False  # a Linux toolchain on Windows: runs inside WSL 2, `cmd` holds WSL paths (see wsl.py)
+    intrinsics: str = ""  # module selected by the pinned toolchain, never by submitted source
     prelude: str = ""  # the toolchain's prelude (Toolchain.prelude)
     cplusplus: bool = False  # it compiles C++ too: what doesn't compile as C is tried as C++ (Toolchain.cplusplus)
-    linux_vm: bool = False  # isolated local macOS Linux compiler jobs
+    linux_vm: bool = False  # Linux-only compiler on macOS, isolated local VM jobs
+    assembly_preprocess: tuple[str, ...] = ()
+    assembly_compile: tuple[str, ...] = ()
+    identity: tuple | None = None  # coordinator's project/function/target snapshot; enables in-flight sharing
 
 
 @dataclass
@@ -89,6 +131,7 @@ class CompileResult:
     obj: bytes | None
     log: str
     language: str = "c"  # "c++" when it compiled only as C++ (see compile_source)
+    effective_settings: dict | None = None
 
 
 def _sandbox_mode(cfg: CompilerConfig) -> str:
@@ -146,26 +189,51 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     # in the work folder, never in the app's own: KMC GCC's assembler (binutils 2.6) can't read its input when the
     # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
     check = _CANCEL_CHECK.get()
-    if check is None:
-        return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW)
+    timeout = min(timeout, limits.compiler_time_limit())
     proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
+                            start_new_session=os.name != "nt")
+    from . import compiler_processes
+    compiler_processes.track(proc.pid)
     started = time.monotonic()
     try:
-        while True:
-            check()
-            try:
-                stdout, stderr = proc.communicate(timeout=0.1)
-                return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
-                if time.monotonic() - started > timeout:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                    raise subprocess.TimeoutExpired(proc.args, timeout, output=stdout, stderr=stderr)
+        with limits.CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
+            while True:
+                if check:
+                    check()
+                try:
+                    stdout, stderr = proc.communicate(timeout=0.1)
+                    if watchdog.timed_out:
+                        raise subprocess.TimeoutExpired(proc.args, timeout)
+                    if watchdog.exceeded:
+                        return subprocess.CompletedProcess(proc.args, 1, stdout, stderr + "\n" + watchdog.message())
+                    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - started > timeout:
+                        raise subprocess.TimeoutExpired(proc.args, timeout)
     except BaseException:
+        if os.name != "nt":
+            import signal
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         stop_process_tree(proc)
         raise
+    finally:
+        # A driver may exit before its children. Always reap its isolated group, not just the driver PID.
+        if os.name != "nt":
+            import signal
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        # communicate closes these on success, but cancellation can happen first.
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                stream.close()
+        compiler_processes.untrack(proc.pid)
+
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,
@@ -175,6 +243,20 @@ def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 30
     lets old 32-bit compilers work on a copy in WSL's own file system, which they need (see wsl.run)."""
     return _exec(cfg, Path(work), argv, timeout, cwd=Path(work),
                  **({} if outputs is None else {"inputs": inputs, "outputs": outputs}))
+
+
+@contextmanager
+def _workspace(prefix):
+    """Keep compiler scratch on an explicitly selected app data drive, not a full OS drive."""
+    parent = os.environ.get('DECOMP_COMPILER_TMPDIR')
+    if not parent and (home := os.environ.get('DECOMP_HOME')):
+        parent = str(Path(home).expanduser() / '.decomp' / 'compiler-tmp')
+    if parent:
+        parent = Path(parent).expanduser().resolve()
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Never silently fall back to another drive when the selected location is unavailable.
+    with tempfile.TemporaryDirectory(prefix=prefix, dir=parent or None) as temporary:
+        yield temporary
 
 
 def compile_source(cfg: CompilerConfig, context_header: str, source: str, trusted: bool = False) -> CompileResult:
@@ -187,7 +269,7 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         except SourceRejected as e:
             return CompileResult(False, None, f"rejected: {e}")
 
-    with tempfile.TemporaryDirectory(prefix="decompnet-") as tmp:
+    with _workspace("decompnet-") as tmp:
         work = Path(tmp)
         inc = work / "include"
         inc.mkdir()
@@ -201,13 +283,37 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         # LF on every platform: to the old GCCs a backslash before CRLF doesn't continue a line ("stray '\' in program")
         (inc / "context.h").write_text(context_header, encoding="utf-8", newline="\n")
         root = _root(cfg, work)
-        result = _compile_as(cfg, work, root, source, "c")
-        # C++ for what doesn't compile as C (a class's method, new, templates): C stays C, so what matched as C
-        # still compiles exactly as it did (GTA San Andreas is C++; 1,222 of its functions matched as C)
-        if not result.ok and cfg.cplusplus and not result.log.startswith("compiler timed out"):
-            cpp = _compile_as(cfg, work, root, source, "cpp")
-            if cpp.ok or _CPP.search(source):
-                return cpp
+        def build():
+            result = _compile_as(cfg, work, root, source, "c")
+            # C++ for what doesn't compile as C (a class's method, new, templates): C stays C, so what matched as C
+            # still compiles exactly as it did (GTA San Andreas is C++; 1,222 of its functions matched as C)
+            if not result.ok and cfg.cplusplus and not result.log.startswith("compiler timed out") and "Compiler or build process exceeded" not in result.log:
+                cpp = _compile_as(cfg, work, root, source, "cpp")
+                if cpp.ok or _CPP.search(source):
+                    result = cpp
+            return result
+        # Capture the actual staged headers, configuration and environment, never a guessed source-only key.
+        # Explicit cancellation and artifact readers need their own process/private directory.
+        share = cfg.identity is not None and _ARTIFACT_SINK.get() is None and _CANCEL_CHECK.get() is None
+        staged = [(str(path.relative_to(inc)).encode(), path.read_bytes()) for path in sorted(inc.rglob('*')) if path.is_file()] if share else []
+        intrinsic = importlib.import_module(cfg.intrinsics).header().encode() if share and cfg.intrinsics else b''
+        inputs = [source.encode(), cfg.prelude.encode(), intrinsic, *(part for entry in staged for part in entry)]
+        if share and not any(word in part for part in inputs for word in (b'__TIME__',b'__DATE__',b'__TIMESTAMP__')):
+            from .compile_sharing import run as shared_compile
+            digest = hashlib.sha256(repr((cfg, sorted(os.environ.items()))).encode())
+            for part in inputs:
+                digest.update(len(part).to_bytes(8,'little'))
+                digest.update(part)
+            # Mutable custom tool executables cannot reuse a running invocation after replacement.
+            for arg in cfg.cmd:
+                if os.path.isabs(arg) and Path(arg).is_file():
+                    st = Path(arg).stat()
+                    digest.update(repr((arg, st.st_size, st.st_mtime_ns)).encode())
+            result = shared_compile(digest.digest(), build)
+        else:
+            result = build()
+        if sink := _ARTIFACT_SINK.get():
+            sink(work)
         return result
 
 
@@ -216,25 +322,17 @@ _CPP = re.compile(r"::|\bclass\b|\btemplate\b|\bnew\b|\bdelete\b|\bvirtual\b|\bo
 
 def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: str) -> CompileResult:
     name = f"func.{ext}"
-    (work / name).write_text(cfg.prelude + f'#include "context.h"\n#line 1 "{name}"\n' + source + "\n",
+    intrinsics = importlib.import_module(cfg.intrinsics).header() if cfg.intrinsics else ""
+    (work / name).write_text(cfg.prelude + intrinsics + f'#include "context.h"\n#line 1 "{name}"\n' + source + "\n",
                              encoding="utf-8", newline="\n")
     subst = {"{src}": f"{root}/{name}", "{obj}": f"{root}/func.o", "{include}": f"{root}/include"}
     argv = [subst.get(a, a) for a in cfg.cmd]
     argv = [a.replace("{include}", subst["{include}"]) for a in argv]
     (work / "func.o").unlink(missing_ok=True)
     try:
-        # A restore must also be cancellable while other jobs occupy every compiler slot.
-        check = _CANCEL_CHECK.get()
-        while not _SLOTS.acquire(timeout=0.1):
-            if check:
-                check()
-        try:
-            if check:
-                check()
+        with _slot():
             proc = _exec(cfg, work, argv, cfg.timeout,
                          **({"outputs": ["func.o"], "stage": root} if _sandbox_mode(cfg) in ("wsl", "linux-vm") else {}))
-        finally:
-            _SLOTS.release()
     except subprocess.TimeoutExpired:
         return CompileResult(False, None, f"compiler timed out after {cfg.timeout}s")
     log = (proc.stdout + proc.stderr).replace(root + "/", "")
@@ -242,3 +340,45 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     if proc.returncode != 0 or not obj.exists():
         return CompileResult(False, None, log[-4000:] or f"compiler exited with {proc.returncode}")
     return CompileResult(True, obj.read_bytes(), log[-2000:], "c++" if ext == "cpp" else "c")
+
+
+def compile_assembly(cfg: CompilerConfig, prelude: str, source: str) -> CompileResult:
+    """Preprocess supplied assembly with the pinned driver, then assemble it under the normal limits.
+
+    References must already be flattened from authorized roots. No assembler file
+    directives may read arbitrary files or inject a binary as purported source.
+    This result never passes through the C match/promotion path.
+    """
+    text=prelude+'\n'+source
+    try:
+        check_source(text)
+        if re.search(r'(?im)(?:^\s*#\s*include\b|\.(?:include|incbin)\b)',text):
+            raise SourceRejected('Flatten includes from the selected source roots before assembly verification.')
+    except SourceRejected as error:return CompileResult(False,None,'rejected: '+str(error))
+    with _workspace('decompnet-assembly-') as tmp:
+        work=Path(tmp);root=_root(cfg,work)
+        (work/'input.c').write_text(text,encoding='utf-8',newline='\n')
+        def argv(src,obj,preprocess=False):
+            subst={'{src}':root+'/'+src,'{obj}':root+'/'+obj,'{include}':root}
+            explicit=cfg.assembly_preprocess if preprocess else cfg.assembly_compile
+            args=[a.replace('{include}',root) if a not in subst else subst[a] for a in explicit or cfg.cmd]
+            if preprocess and not explicit:
+                if Path(args[0]).name in ('sh','bash','cmd.exe') or '-c' not in args:raise SourceRejected('Assembly verification needs a compiler driver with a -c command.')
+                args[args.index('-c')]='-E'
+            return args
+        try:
+            for src,obj,pp in [('input.c','func.s',True),('func.s','func.o',False)]:
+                if not pp and re.search(r'(?i)\.(?:include|incbin)\b',_COMMENTS_AND_STRINGS.sub(' ',(work/src).read_text())):
+                    raise SourceRejected('Preprocessed assembly must not include files or binary data.')
+                args=argv(src,obj,pp)
+                with _slot():
+                    proc=_exec(cfg,work,args,cfg.timeout,**({'inputs':[src],'outputs':[obj],'stage':root} if _sandbox_mode(cfg) in ('wsl','linux-vm') else {}))
+                log=(proc.stdout+proc.stderr).replace(root+'/','')
+                # IDO writes -E output to stdout even with -o; GCC writes the file.
+                if pp and proc.returncode==0 and not (work/obj).is_file() and proc.stdout:
+                    if len(proc.stdout.encode())>16*1024*1024:return CompileResult(False,None,'Preprocessed assembly exceeds the verification limit.')
+                    (work/obj).write_text(proc.stdout,encoding='utf-8',newline='\n')
+                if proc.returncode or not (work/obj).is_file():return CompileResult(False,None,log or 'Compiler driver did not produce '+obj)
+                if (work/obj).stat().st_size>16*1024*1024:return CompileResult(False,None,'Assembly output exceeds the verification limit.')
+        except (subprocess.TimeoutExpired,SourceRejected) as error:return CompileResult(False,None,str(error))
+        return CompileResult(True,(work/'func.o').read_bytes(),log,language='assembly')

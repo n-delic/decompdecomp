@@ -20,6 +20,7 @@ from ..agents import kind_id
 from ..agents.api import API_PRESETS, endpoint_entry
 from ..network import NetworkError
 from ..rom import RomError
+from . import workers
 from .agents import PER_SESSION
 
 MAX_DISC = 16 * 1024 * 1024 * 1024  # dual-layer DVD and then some
@@ -31,6 +32,18 @@ DETAILS_CHARS, TRACE_CHARS = 6000, 4000  # what a failed job keeps of a tool's o
 JOB_ID_CHARS = 12
 MIN_CONTEXT_TOKENS = 2048  # an endpoint's context is at least this: the work prompt alone needs about that
 MAX_SESSIONS = 32  # helpers on one endpoint at once, at most
+
+
+def recent_log(path, *, lines=30, chars=6000):
+    """A bounded local diagnostic tail; never read a growing log in its entirety."""
+    if path is None:return ''
+    try:
+        with Path(path).open('rb') as stream:
+            stream.seek(0,2)
+            size=stream.tell();stream.seek(max(0,size-65536))
+            tail=stream.read(65536).decode('utf-8',errors='replace')
+        return '\n'.join(tail.splitlines()[-lines:])[-chars:]
+    except OSError:return ''
 
 
 def file_log(path: Path) -> logging.Logger:
@@ -96,15 +109,36 @@ class Jobs:
     def __init__(self, log_path: Path | None = None):
         self.jobs: dict[str, dict] = {}
         self.cancel_events: dict[str, threading.Event] = {}
-        self._lock = threading.Lock()
+        self.foreground_events: dict[str, threading.Event] = {}
+        self._lock = threading.RLock()  # Some routes reserve a job under this lock before start().
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
-    def start(self, kind: str, fn) -> str:
-        jid = uuid.uuid4().hex[:JOB_ID_CHARS]
-        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
-        cancel = self.cancel_events[jid] = threading.Event()
-        self.jobs[jid] = job
+    def active(self, kinds):
+        """Small server-owned snapshot for a returning panel; never include large logs/results."""
+        with self._lock:
+            job=next((j for j in reversed(self.jobs.values())
+                      if j['kind'] in kinds and j['state']=='running'),None)
+            if job is None:return None
+            return {key:job[key] for key in ('id','kind','state','progress') if key in job}
+
+    def check_start(self) -> None:
+        """Reject work before receiving a large upload when a source update is taking over."""
+        with self._lock:
+            if getattr(self, 'source_update_pending', False):
+                raise ValueError('A source update is queued. Wait for restart or cancel it before starting another job.')
+
+    def start(self, kind: str, fn, *, foreground=True, cancel_message="Opening the saved project was cancelled.") -> str:
+        """Start a user job immediately; automatic callers opt into background scheduling."""
+        with self._lock:
+            self.check_start()
+            jid = uuid.uuid4().hex[:JOB_ID_CHARS]
+            job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+            interactive=self.foreground_events[jid]=threading.Event()
+            if foreground:interactive.set()
+            job["foreground"]=foreground
+            cancel = self.cancel_events[jid] = threading.Event()
+            self.jobs[jid] = job
         logger = self.logger
         logger.info("job %s %s started", kind, jid)
 
@@ -115,13 +149,25 @@ class Jobs:
 
         def check_cancel() -> None:
             if cancel.is_set():
-                raise RuntimeError("opening the saved project was cancelled")
+                raise RuntimeError(cancel_message)
 
+        def progress(value: dict) -> None:
+            check_cancel()
+            # Replace the snapshot so polling never sees a partially updated set of counters.
+            job["progress"] = dict(value)
+
+        log.progress = progress
         log.check_cancel = check_cancel
+        log.cancel_event = cancel
 
         def run():
+            job["thread_id"] = threading.get_native_id()
             try:
-                result = fn(log)
+                from ..compiler import background_thread
+                if not interactive.is_set():background_thread()
+                from . import maintenance
+                with maintenance.foreground(interactive):
+                    result = fn(log)
                 with self._lock:
                     check_cancel()
                     job["result"] = result
@@ -129,7 +175,7 @@ class Jobs:
                 logger.info("job %s %s done in %.0fs", kind, jid, time.time() - job["t"])
             except BaseException as e:  # noqa: BLE001  a job must end, whatever went wrong
                 if cancel.is_set():
-                    job["error"] = "Opening the saved project was cancelled."
+                    job["error"] = cancel_message
                     job["state"] = "cancelled"
                     logger.info("job %s %s cancelled", kind, jid)
                     return
@@ -138,12 +184,28 @@ class Jobs:
                 elif not isinstance(e, (NetworkError, RomError, ValueError)):
                     job["trace"] = traceback.format_exc()[-TRACE_CHARS:]
                 job["error"] = job_error(e, self.log_path)
-                job["state"] = "error"  # last: whoever sees the state sees the rest
                 logger.error("job %s %s failed: %s\n%s", kind, jid, job["error"], traceback.format_exc())
+                tail=recent_log(self.log_path)
+                details=job.get('trace','')
+                if details and details.strip() not in tail:
+                    job['log'].extend(['Failure details:',*details.splitlines()])
+                if tail:job['log'].extend(['Recent application log:',*tail.splitlines()])
+                job['state']='error'  # Publish only after diagnostic lines are ready for the UI.
                 if isinstance(e, (KeyboardInterrupt, SystemExit)):
                     raise
         threading.Thread(target=run, daemon=True, name=f"job-{kind}").start()
         return jid
+
+    def promote(self, jid: str) -> bool:
+        """A deliberate action wakes an existing automatic job without duplicating it."""
+        with self._lock:
+            job=self.jobs.get(jid)
+            if not job or job['state']!='running':return False
+            if not job.get('foreground'):
+                job['log'].append('User requested this action; starting without background maintenance delays.')
+            job['foreground']=True
+            self.foreground_events[jid].set()
+            return True
 
     def cancel(self, jid: str) -> bool:
         with self._lock:
@@ -241,6 +303,20 @@ class Settings:
         eps = [masked(e) for e in self.endpoints()]
         return {"endpoints": eps, "api": eps[0] if eps else {},
                 "per_session": self.data.get("per_session", PER_SESSION), "last_project": self.data.get("last_project"),
+                "agent_local_enabled":bool(self.data.get('agent_local_enabled',False)),
+                "agent_local_trials":self.data.get('agent_local_trials',2),
+                "agent_local_seconds":self.data.get('agent_local_seconds',5),
+                "reuse_auto": self.data.get("reuse_auto", True), "reuse_seconds": self.data.get("reuse_seconds", 120),
+                "reuse_attempts": self.data.get("reuse_attempts", 128),
+                "permuter_max_insns": self.data.get("permuter_max_insns", 400),
+                "permuter_seconds": self.data.get("permuter_seconds", 60),
+                "permuter_max_turns": self.data.get("permuter_max_turns", 4),
+                "maintenance_cpu_percent": self.data.get("maintenance_cpu_percent", 0),
+                "worker_threads": self.data.get("worker_threads", 0), "worker_threads_default": workers.default_workers(),
+                "iterative_enabled": self.data.get("iterative_enabled", False),
+                "iterative_seconds": self.data.get("iterative_seconds", 120),
+                "iterative_attempts": self.data.get("iterative_attempts", 128),
+                "iterative_threads": self.data.get("iterative_threads", 0),
                 "autopilot": self.data.get("autopilot", True), "budget_usd": self.data.get("budget_usd") or 0,
                 "auto_update": bool(self.data.get("auto_update")), "check_updates": self.data.get("check_updates", True) is not False,
                 "auto_compiler": bool(self.data.get("auto_compiler")),

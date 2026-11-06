@@ -28,8 +28,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/n-delic/decompdecomp"
-Source = "https://github.com/n-delic/decompdecomp"
+Homepage = "https://github.com/RetroReversing/decompdecomp"
+Source = "https://github.com/RetroReversing/decompdecomp"
 
 [project.scripts]
 decomp = "decompnet.app.cli:main"

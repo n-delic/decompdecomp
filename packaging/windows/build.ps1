@@ -44,6 +44,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "uv pip install of locked runtime dependencies failed with exit code $LASTEXITCODE" }
     uv pip install --python (Join-Path $bundlePython 'python.exe') --target $packages --no-deps $wheel
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed with exit code $LASTEXITCODE" }
+    & (Join-Path $bundlePython 'python.exe') (Join-Path $repoRoot 'packaging/stamp_build.py') $repoRoot $packages
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stamp package build identity.' }
     Copy-Item -LiteralPath (Get-Command uv).Source -Destination (Join-Path $app 'uv.exe') -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'src/decompnet/app/static/favicon.ico') -Destination (Join-Path $app 'decompdecomp.ico') -Force
 

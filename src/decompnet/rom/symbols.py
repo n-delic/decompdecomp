@@ -16,8 +16,10 @@ from dataclasses import dataclass
 # an automatic name says its address. splat writes one below 0x10000000 without leading zeros (an N64 segment's data:
 # D_B0069D8 is 0x0B0069D8): such a name didn't resolve, and 255 functions of an N64 game that load one couldn't match
 # (a number in their C is lui+ori, the game's symbol lui+addiu)
-AUTO_NAME = re.compile(r"^(?:func|D|B|jtbl|L|RO|STR|FLT|DBL|bss|data|sub|gUnknown|unk|off|dword|word|byte|loc)_([0-9A-Fa-f]{1,8})$")
+AUTO_NAME = re.compile(r"^(?:func|D|B|jtbl|L|RO|STR|FLT|DBL|bss|data|sub|gUnknown|unk|off|dword|word|byte|loc)_([0-9A-Fa-f]{1,8})(?:_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3}))?$")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
+# GAS/compiler-local labels are metadata, never C function names or source-file paths.
+ASM_LOCAL = re.compile(r"^\.L[A-Za-z0-9_.$]+$")
 
 
 @dataclass
@@ -34,15 +36,15 @@ class SymbolTable:
         self.by_addr: dict[int, Symbol] = {}
         self.starts: list[int] = []  # every symbol's address, sorted (for bisect)
         for s in symbols or []:
-            self.add(s, reindex=False)
+            self.add(s, reindex=False, alias=True)
         self.reindex_symbols()
 
     def reindex_symbols(self) -> None:
         self.starts = sorted(self.by_addr)
 
-    def add(self, sym: Symbol, reindex: bool = True) -> None:
+    def add(self, sym: Symbol, reindex: bool = True, *, alias: bool = False) -> None:
         old = self.by_addr.get(sym.address)
-        if old is not None and old.name != sym.name:
+        if old is not None and old.name != sym.name and not alias:
             self.by_name.pop(old.name, None)
         self.by_name[sym.name] = sym
         self.by_addr[sym.address] = sym

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import threading
 import time
 
@@ -33,32 +34,72 @@ def register(app: App) -> None:
             return bad
         if request.method == "POST":
             data = await body(request)
+            if runtime.job['state'] in ACTIVE:
+                return fail(ValueError('Cancel the queued source restart before changing app updates.'))
+            if data.get('action') == 'source':
+                try:
+                    source = await call(updater.set_source, str(data.get('repo') or ''), str(data.get('branch') or 'main'))
+                    return JSONResponse({'current': source})
+                except ValueError as e:
+                    return fail(e)
             try:  # {"channel", "branch"}: get decompdecomp from there from now on (Settings)
                 await call(lambda: updater.apply(str(data.get("channel") or ""), str(data.get("branch") or "")))
             except ValueError as e:
                 return fail(e)
         refresh = request.query_params.get("refresh") == "1"
         if not refresh and not checking():  # the user turned checks off: only "Check now" asks
-            return JSONResponse({"disabled": True, "available": False, "current": updates.installed(),
+            return JSONResponse({"disabled": True, "available": False, "current": await call(updates.installed),
                                  "job": updater.job})
         return JSONResponse(await call(lambda: updater.status(refresh)))
+
+    @mcp.custom_route("/api/update/checkout", methods=["GET", "POST"])
+    async def api_checkout(request: Request) -> Response:
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        try:
+            if request.method == 'POST':
+                data = await body(request)
+                return JSONResponse(await call(updater.checkout.start, str(data.get('path') or '')))
+            return JSONResponse(await call(updater.checkout.status))
+        except ValueError as e:
+            return fail(e)
+
+    from ..source_runtime import ACTIVE, Runtime
+    runtime = Runtime(app)
+
+    @mcp.custom_route("/api/update/runtime", methods=["GET", "POST"])
+    async def api_runtime(request: Request) -> Response:
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        try:
+            if request.method == "POST":
+                data = await body(request)
+                if data.get('action') == 'automatic':
+                    return JSONResponse(await call(runtime.configure, data.get('enabled')))
+                if data.get('action') == 'cancel':
+                    return JSONResponse(await call(runtime.stop))
+                return JSONResponse(await call(runtime.start, str(data.get('path') or ''), str(data.get('data_mode') or '')))
+            return JSONResponse(await call(runtime.status))
+        except (ValueError,OSError) as error:
+            return fail(error)
 
     def checking() -> bool:
         return settings.data.get("check_updates", True) is not False and os.environ.get("DECOMP_UPDATES") != "off"
 
     def watch_updates() -> None:
-        """Check now and then; with "install updates automatically" on, install one while no helper is working."""
+        """Check now and then; prepare automatic source updates without holding workers; packaged installs wait for idle."""
         time.sleep(FIRST_CHECK_SECONDS)
         while True:
             if not checking():
                 time.sleep(CHECK_EVERY_SECONDS)
                 continue
             try:
+                runtime.check()
                 st = updater.status()
                 busy = any(s.state in ("starting", "working") for s in manager.sessions.values())
-                if st.get("available") and st.get("can_apply") and settings.data.get("auto_update") and not busy:
+                if st.get("available") and st.get("can_apply") and settings.data.get("auto_update") and not busy and runtime.job["state"] not in ACTIVE:
                     updater.apply()
-            except (ValueError, OSError):
+            except (ValueError, OSError, subprocess.SubprocessError):
                 pass
             time.sleep(CHECK_EVERY_SECONDS)
 
@@ -76,7 +117,20 @@ def register(app: App) -> None:
         if (bad := guard(request, write=request.method == "POST")):
             return bad
         if request.method == "GET":
-            return JSONResponse({"helpers": len(manager.running()), "busy": app.busy(), "tray": window.IN_TRAY})
+            def closing_snapshot():
+                running = set(manager.running())
+                projects = {p['slug']: p['name'] for p in app.net.store.all('SELECT slug,name FROM projects')}
+                workers = [{'id': s.id, 'name': s.agent_name or s.label, 'project': projects.get(s.slug, s.slug),
+                            'slug': s.slug, 'state': s.state, 'why': s.why or ''}
+                           for s in list(manager.sessions.values()) if s.id in running]
+                with app.jobs._lock:
+                    tasks = [{'name': j['kind'], 'phase': (j.get('progress') or {}).get('phase', ''),
+                              'function': (j.get('progress') or {}).get('function', '')}
+                             for j in app.jobs.jobs.values() if j['state'] == 'running']
+                return JSONResponse({"helpers": len(workers), "workers": workers, "tasks": tasks,
+                                     "busy": app.busy(), "tray": window.IN_TRAY})
+            return await call(closing_snapshot)
+
         if (await body(request)).get("keep"):
             await call(window.close_app)
             return JSONResponse({"ok": True})

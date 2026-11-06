@@ -199,6 +199,7 @@ def test_the_project_list_and_page_count_from_indexes_not_every_functions_row(tm
     and seconds when the rows weren't in memory). Every query they make on functions and events reads an index alone."""
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     tiny_game(net)
+    net.overview("game")  # Cold diagnostics decode target boundaries once; repeated polls use the snapshot.
     asked = []
     read = net.store._read
     monkeypatch.setattr(net.store, "_read", lambda sql, args, single: asked.append((sql, args)) or read(sql, args, single))
@@ -206,8 +207,11 @@ def test_the_project_list_and_page_count_from_indexes_not_every_functions_row(tm
     net.overview("game")
     net.map_signature("game")
     plans = {sql: [row[3] for row in net.store.conn.execute(f"EXPLAIN QUERY PLAN {sql}", args)]
-             for sql, args in asked if " functions" in sql or " events" in sql}
-    assert len(plans) >= 5
+             for sql, args in asked if (" functions" in sql or " events" in sql)
+             and not sql.startswith("SELECT a.outcome")
+             and "json_type(meta,'$.verified_assembly')" not in sql}  # donor detail reads names, not just counts
+    assert plans  # Warm diagnostics, summary totals and map revisions no longer scan functions.
+    assert not any("target" in sql and "FROM functions" in sql for sql, _ in asked)
     for sql, plan in plans.items():
         steps = [step for step in plan if " functions" in step or " events" in step or " f " in step]
         assert steps and all("COVERING INDEX" in step for step in steps), (f"SQLite {sqlite3.sqlite_version}", sql, plan)
@@ -266,8 +270,25 @@ def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_pat
     marks = lambda s: {r["name"]: (r["aside_mark"], r["gone_mark"]) for r in s.all("SELECT * FROM functions")}  # noqa: E731
     assert marks(store) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
     # a database from before the marks: its functions get theirs when it opens
+    for row in store.conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'view_%' OR name LIKE 'read_%')").fetchall():
+        store.conn.execute(f'DROP TRIGGER {row[0]}')
+    store.conn.execute('DROP TABLE project_totals')
+    store.conn.execute('DROP INDEX idx_functions_deep_ready')
     store.conn.executescript("DROP TRIGGER functions_marks_insert; DROP TRIGGER functions_marks_update; "
                              "DROP INDEX idx_functions_tally; ALTER TABLE functions DROP COLUMN aside_mark; "
                              "ALTER TABLE functions DROP COLUMN gone_mark")
     store.conn.close()
     assert marks(Store(tmp_path / "app.db")) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
+
+
+def test_live_feed_returns_recorded_score_change_without_source_payloads(tmp_path):
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    proj = tiny_game(net)
+    fid = net.store.one('SELECT id FROM functions WHERE project_id=? LIMIT 1', proj['id'])['id']
+    agent, _ = net.local_agent('helper')
+    with net.store.tx() as db:
+        db.execute('INSERT INTO attempts(function_id,agent_id,score,score_before,score_improved,compiled,source,created_at) VALUES(?,?,?,?,?,?,?,?)',
+                   (fid,agent.id,95,100,1,1,'private source',time.time()))
+    attempt = net.live('game')['attempts'][0]
+    assert attempt['score_before'] == 100 and attempt['score'] == 95 and attempt['score_improved'] == 1
+    assert 'source' not in attempt

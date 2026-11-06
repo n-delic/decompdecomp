@@ -58,6 +58,7 @@ FATAL = ("Unsupported reasoning effort", "does not support reasoning effort", "I
 
 class Zcode(Agent):
     id = "zcode"
+    aliases = ("zcode-cli",)  # saved helpers from the fork's duplicate CLI entry
     name = "ZCode CLI"
     command = "zcode"
     vendor = "Z.ai"

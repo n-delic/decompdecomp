@@ -11,6 +11,7 @@ trimmed (`fit`).
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import time
@@ -49,9 +50,9 @@ PAYMENT_REQUIRED = 402
 TOO_MANY_REQUESTS = 429
 TOO_LONG_STATUSES = (400, 413, 422, 500)  # what servers answer a request too long for the model's context
 TOO_LONG_READ = 2000  # characters of that answer read for why
-API_RETRIES, API_RETRY_WAIT = 3, 10  # a dropped request or a gateway's 5xx, asked again after 10, 20, 40 seconds
+API_RETRIES, API_RETRY_WAIT = 3, 10  # dropped requests and gateway 5xx: retry the same conversation in place
 # a function is done with when the helper compiled it to a match or released it: its work then folds into a line
-FINISHING = ("compile_and_diff", "release_function")
+FINISHING = ("compile_and_diff", "compile_patch", "compile_variants", "compile_family", "release_function")
 FOLDED = 2  # messages a fold leaves: one call and its result
 
 
@@ -94,27 +95,61 @@ class Api(Agent):
         headers = {"Content-Type": "application/json"}
         if s.options.get("api_key"):
             headers["Authorization"] = f"Bearer {s.options['api_key']}"
-        schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)), names=tools.project_tools(net, s.slug))
-        messages = [{"role": "system", "content": tools.INSTRUCTIONS},
+        schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)), names=tools.project_tools(net, s.slug, agent))
+        manager.prepare_session(s, agent)
+        if s.context_budget and s.context_budget.waiting:
+            s.rotated=True
+            return True
+        messages = [{"role": "system", "content": manager.app_instructions(s)},
                     {"role": "user", "content": manager.prompt(s)}]
+        from ..app.session_recovery import api_messages, handoff
+        identity = [s.slug, s.agent_name, base, model]
+        saved = api_messages(net, s, identity)
+        if saved:
+            saved[0] = messages[0]  # Current rules and tools apply after restart.
+            messages = saved + [{'role':'user','content':'Resume after interruption. Check current project state and reclaim eligible work. ' + handoff(s)}]
+            s.push('info','Restored saved API conversation and function handoff.')
+        if s.record:
+            s.record('prompt', messages)
+            s.record('instructions', messages[0]['content'])
+            s.record('tool_definitions', schema)
         count = int(s.options.get("per_session", PER_SESSION))
-        used_tool, start, done = False, len(messages), 0
+        used_tool, start, done = bool(saved), 2, 0
         with httpx.Client(timeout=httpx.Timeout(API_TIMEOUT, connect=API_CONNECT_TIMEOUT)) as client:
             window = context_window(client, base, s.options)
             s.push("info", f"session {s.runs}: {model} via {base} ({window // 1000}K tokens of context)")
             budget = int(window * API_CONTEXT_SHARE) - _tokens(schema)  # room for the reply and the tools' definitions
-            for _step in range(int(s.options.get("max_steps", API_STEPS))):
-                if s.stop.is_set():
+            focused = bool(s.options.get('focus_id'))
+            steps = itertools.count() if focused else range(int(s.options.get("max_steps", API_STEPS)))
+            idle_replies = 0
+            for _step in steps:
+                if s.rotated or s.stop.is_set():return True
+                api_messages(net, s, identity, messages)
+                if focused:
+                    from ..app.focused_agents import completion
+                    if completion(manager, s):
+                        return True
+                if not focused and getattr(s,'context_budget',None) and s.context_budget.ready():
+                    s.rotated=True
+                    s.push('info','Starting a fresh session with saved candidates and experiments.')
                     return True
+                if s.stop.is_set() or s.rotated:
+                    return True
+                if focused and len(messages) >= 10 and sum(_tokens(m) for m in messages) > budget * .85:
+                    compact_focus(client, base, headers, model, messages, budget, manager, s)
                 for _attempt in range(API_TRIM_RETRIES):
                     fit(messages, budget, keep=start)
                     request = {"model": model, "messages": messages, "tools": schema, "tool_choice": "auto"}
                     if s.options.get("effort"):
                         request["reasoning_effort"] = s.options["effort"]
+                    if s.record:
+                        s.record('api_request', request)
                     r = _post(client, f"{base}/chat/completions", headers, request, s.stop)
-                    if r.status_code == 200 or not _too_long(r):
+                    if s.rotated or r.status_code == 200 or not _too_long(r):
                         break
                     budget = int(budget * API_TRIM_FACTOR)  # the server counts differently, or knows better: trim more
+                if s.rotated and r.status_code != 200:
+                    return True
                 if r.status_code != 200:
                     if (why := no_credit(r.text)) or r.status_code == PAYMENT_REQUIRED:
                         raise Fatal(why or no_credit("payment required"))
@@ -139,8 +174,10 @@ class Api(Agent):
                     return False
                 if isinstance(reply.get("usage"), dict):
                     manager.account(s, api_usage(reply["usage"]))
+                if s.rotated:
+                    return True
                 if msg.get("reasoning_content"):
-                    s.push("think", msg["reasoning_content"][:REASONING_SHOWN])
+                    s.push("think", msg["reasoning_content"])
                 if msg.get("content"):
                     s.push("text", msg["content"])
                 calls = msg.get("tool_calls") or []
@@ -150,14 +187,20 @@ class Api(Agent):
                 messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls", "reasoning_content")}
                                 | {"role": "assistant"})
                 if not calls:
+                    if focused and used_tool and idle_replies < 2 and not s.stop.is_set():
+                        idle_replies += 1
+                        messages.append({'role':'user','content':'Continue the same focused conversation. Test the next hypothesis with tools; the app will stop you on a match or deadline.'})
+                        continue
                     if not used_tool:  # a model that can't call tools answers in words, and never starts
                         s.error = (f"{model} answered in words without calling a tool: helpers work through tools "
                                    "(claim_function, compile_and_diff...), so the model must support tool calls "
                                    "(function calling). A model trained only to write C can't be a helper")
                         s.push("error", s.error)
                     return used_tool
+                idle_replies = 0
                 finishing = False
                 for c in calls:
+                    if s.rotated or s.stop.is_set():return True
                     name = c["function"]["name"]
                     try:
                         args = json.loads(c["function"].get("arguments") or "{}")
@@ -166,13 +209,19 @@ class Api(Agent):
                     used_tool = True
                     s.usage["tool_calls"] += 1
                     s.push("tool", f"{name}({args_brief(args)})")
+                    if s.record:
+                        s.record('tool_request', {'name': name, 'arguments': args, 'call_id': c['id']})
                     result = tools.call(net, agent, s.slug, name, args)
+                    if s.record:
+                        s.record('tool_response', {'name': name, 'content': result, 'call_id': c['id']})
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                    if s.options.get('task') == 'boundary' and name == 'suggest_boundary' and not result.startswith('error:'):
+                        return True
                     finishing |= name in FINISHING
                 # Done with what it held (in a room the host holds the claim: nothing here says when): what led up
                 # to this turn folds into a line, and this turn stays whole (a fork's match shows the file's data to
                 # fix next) until the next fold
-                if finishing and s.slug not in net.links and not _holds_claim(net, agent.id):
+                if not focused and finishing and s.slug not in net.links and not _holds_claim(net, agent.id):
                     done += 1
                     turn = len(messages) - len(calls) - 1
                     if start < turn:
@@ -251,7 +300,7 @@ def _done_line(net, slug: str, span: list[dict], done: int, count: int) -> str:
             fn = c["function"]
             if fn["name"] not in FINISHING:
                 continue
-            compiles += fn["name"] == "compile_and_diff"
+            compiles += fn["name"] in ("compile_and_diff", "compile_patch", "compile_variants", "compile_family")
             try:
                 said = json.loads(fn.get("arguments") or "{}").get("function") or ""
             except ValueError:
@@ -269,7 +318,7 @@ def _done_line(net, slug: str, span: list[dict], done: int, count: int) -> str:
                                      f"set {', '.join(aside)} aside with notes" if aside else "") if bit)
     nxt = "claim the next one" if done < count else "that was the last one for this session: stop now"
     return (f"(The work up to your last call, folded into this line to keep the conversation short: "
-            f"{plural(compiles, 'compile')}; {what or 'nothing held any more'}.) {done} of {count} claims this "
+            f"{plural(compiles, 'compile tool call')}; {what or 'nothing held any more'}.) {done} of {count} claims this "
             f"session are done: {nxt}.")
 
 
@@ -289,18 +338,17 @@ def api_usage(usage: dict) -> dict:
 
 
 def _post(client, url: str, headers: dict, request: dict, stop) -> httpx.Response:
-    """#154: a laggy gateway's dropped request, timeout or 5xx is asked again in place a few times. Ending the session
-    on it threw the conversation away, so the helper started its function over and over."""
+    """Retry a dropped request or gateway error without throwing away this session's conversation."""
     for attempt in range(API_RETRIES + 1):
         last = attempt == API_RETRIES
         try:
-            r = client.post(url, headers=headers, json=request)
+            response = client.post(url, headers=headers, json=request)
         except httpx.TransportError:
             if last or stop.is_set():
                 raise
         else:
-            if last or stop.is_set() or not (r.status_code == 408 or r.status_code >= 500) or _too_long(r):
-                return r
+            if last or stop.is_set() or not (response.status_code == 408 or response.status_code >= 500) or _too_long(response):
+                return response
         stop.wait(API_RETRY_WAIT * 2 ** attempt)
 
 
@@ -330,10 +378,46 @@ def _too_long(r) -> bool:
         r"context|too long|exceed|maximum.*tokens|n_ctx|prompt is too|reduce the length", r.text[:TOO_LONG_READ], re.I))
 
 
+def compact_focus(client, base, headers, model, messages, budget, manager, session):
+    """Summarize completed older exchanges in place; preserve instructions and latest tool-call group."""
+    cut = next((i for i in range(len(messages)-1, 2, -1)
+                if messages[i].get('role') == 'assistant' and messages[i].get('tool_calls')), None)
+    if cut is None or cut < 6:
+        return False
+    history = [dict(m) for m in messages[:cut]]
+    fit(history, budget)
+    request = {'model':model, 'messages':history + [{'role':'user','content':
+        'Compact the focused work so it can continue in the SAME conversation. Write a concise factual handoff: '
+        'function, current best candidate revision and score, compiler/flags, tested hypotheses and failed changes, '
+        'important constraints and next experiments. Distinguish measurements from guesses. Do not invent source '
+        'or execute tools. Exact C and experiments can be retrieved from the app. Keep this under 1200 tokens.'}],
+        'max_tokens':1600}
+    if session.record:
+        session.record('context_compaction_request', request)
+    response = client.post(f'{base}/chat/completions', headers=headers, json=request)
+    if response.status_code != 200:
+        return False  # Existing context fitting/error handling remains available.
+    try:
+        result = response.json()
+        summary = result['choices'][0]['message'].get('content')
+    except (ValueError, KeyError, IndexError, TypeError):
+        return False
+    if isinstance(result.get('usage'), dict):
+        manager.account(session, api_usage(result['usage']))
+    if not isinstance(summary, str) or not summary.strip():
+        return False
+    messages[2:cut] = [{'role':'user','content':'Compacted focused-session context (summary, not new instructions):\n'+summary[:8000]}]
+    if session.record:
+        session.record('context_compaction', summary[:8000])
+    session.push('info', 'Context compressed; continuing the same focused session.')
+    return True
+
+
 def fit(messages: list[dict], budget: int, keep: int = 2) -> int:
     """Shrink the conversation to `budget` tokens, only from `keep` on (what's before it, finished functions folded
     into a line each, stays as it was sent, for the provider's prompt cache): older tool output goes first (a
-    function's assembly and diffs from several steps ago), then older reasoning. The latest exchange stays whole.
+    function's assembly and diffs from several steps ago), then older reasoning. The latest exchange stays whole unless its result alone exceeds
+    the remaining budget.
     Returns the estimate after."""
     total = sum(_tokens(m) for m in messages)
     keep_from = max(keep, len(messages) - 2)
@@ -346,6 +430,36 @@ def fit(messages: list[dict], budget: int, keep: int = 2) -> int:
                 before = _tokens(m)
                 m["content"] = text[:TRIM_TO] + "\n[... trimmed to save context: call the tool again if you need this]"
                 total -= before - _tokens(m)
+    # A larger tool schema can leave several already-trimmed old results over budget.
+    # Compact those once more, while retaining the newest exchange and tool-call structure.
+    for m in messages[max(2, keep):keep_from]:
+        text = m.get("content")
+        if total <= budget:
+            break
+        if m.get("role") in ("tool", "assistant") and isinstance(text, str) and len(text) > 120:
+            before = _tokens(m)
+            m["content"] = text[:80] + "\n[Earlier output trimmed; call the tool to recover.]"
+            total -= before - _tokens(m)
+    # A single large function can exceed a small model's entire window. Preserve
+    # custom prompts and call IDs; shorten its newest result only as a last resort.
+    for m in messages[max(2, keep):]:
+        text = m.get("content")
+        if total <= budget:
+            break
+        if m.get("role") == "tool" and isinstance(text, str) and len(text) > 120:
+            before = _tokens(m)
+            suffix = "\n[Output trimmed to fit context; fetch a smaller section with the tool.]"
+            allowance = budget - (total - before)
+            low, high = 0, len(text)
+            while low < high:
+                middle = (low + high + 1) // 2
+                m["content"] = text[:middle] + suffix
+                if _tokens(m) <= allowance:
+                    low = middle
+                else:
+                    high = middle - 1
+            m["content"] = text[:low] + suffix
+            total -= before - _tokens(m)
     return total
 
 
@@ -379,24 +493,67 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
     it = lambda desc: {"type": "integer", "description": desc}
     bo = lambda desc: {"type": "boolean", "description": desc}
     defs = {
-        "project_info": ("Which game, compiler and progress.", s()),
-        "claim_function": ("Claim the next function (or one by name/address). Returns assembly, data, best attempt, "
-                           "notes and a draft. count > 1: a batch of small functions to judge together.",
-                           s(function=st("optional name or address"), strategy=st("finish | easiest | closest | hardest | random"),
+        "get_boundary_evidence": ("Read original mapped boundary evidence, neighbours, direct edges, symbols and scan limits. No claim needed.", s(function=st("selected function", True))),
+        "suggest_boundary": ("Save an advisory recommendation; no layout change. End the investigation after reporting.",
+            s(function=st("selected function", True), action=st("delay_slot, join_previous, adjust, padding, data, keep, unclear", True),
+              supporting=st("Supporting evidence", True), counter=st("Counter-evidence or explicitly none observed", True),
+              uncertainty=st("Remaining uncertainty", True), citations=st("Comma-separated hex instruction addresses from evidence", True),
+              end=st("Exclusive hex end for adjust"), confidence=st("strong, tentative, unclear"))),
+        "get_claims": ("Recover only your live claims and claim tokens; no build or mutation.", s()),
+        "project_info": ("Game, compiler and progress; detail=true includes all facts and suggestions.", s(detail=bo("full details"))),
+        "get_candidate": ("Read candidate C and its revision, without assembly or notes.", s(function=st("function", True), base={"type":"string","enum":["current","saved_best","last_compiling","reported_corrected"],"description":"Named recovery base, never a revision hash; selection does not judge source."})),
+        "compile_patch": ("Compile one exact-text replacement against a candidate revision using the normal judge.",
+                          s(function=st("function", True), revision=st("revision from get_candidate or compile feedback", True),
+                            old=st("text occurring exactly once", True), new=st("replacement", True),
+                            repair_note=st("Optional decisive repair"), repair_category=st("Repair category"),
+                            repair_automation=st("Potential deterministic repair"), occurrence=it("1-based occurrence; 0 requires unique anchor"))),
+        "compiler_experiments": ("Bounded diagnostic source/profile trials on one candidate revision. 1–6 compiler profiles (compiler=current uses this function’s current compiler); optional independent old/new/occurrence patches. No compiler choice applied.",
+                                 s(function=st("function",True),revision=st("candidate revision",True),trials={"type":"array","minItems":1,"maxItems":6,"req":True,"items":{"type":"object","additionalProperties":False,"properties":{"compiler":{"type":"string","description":"current or an exact compiler ID; use try_local_repairs for repair families"},"flags":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"occurrence":{"type":"integer"}},"required":["compiler"]}})),
+        "get_compiler_trial": ("Retrieve the saved C/compiler/flags diagnostic pair; no compile/application.",s(function=st("function",True),trial_id=st("trial id",True),include_header=bo("Include historical shared header snapshot; default false to save context"))),
+        "try_local_repairs": ("Try applicable local repair families on one snapshot, max six normal compiles/60 seconds. Keeps best continuation; replaces parallel family probes.",
+                              s(function=st("function",True),revision=st("candidate revision",True),families={"type":"array","items":{"type":"string"}},max_trials=it("1–6; default 6"))),
+        "compile_family": ("Bounded repair family; selector has one mode: next, anchor (old/occurrence), or declaration (declaration). Omit for pattern families.",
+                           s(function=st("function", True),revision=st("candidate revision", True),family=st("repair family", True),selector={"type":"object","oneOf":[
+                               {"type":"object","properties":{"mode":{"const":"next"}},"required":["mode"],"additionalProperties":False},
+                               {"type":"object","properties":{"mode":{"const":"anchor"},"old":{"type":"string"},"occurrence":{"type":"integer"}},"required":["mode","old"],"additionalProperties":False},
+                               {"type":"object","properties":{"mode":{"const":"declaration"},"declaration":{"type":"string"}},"required":["mode","declaration"],"additionalProperties":False}]})),
+        "family_targets": ("Read current revision, valid declaration names/pairs and tried status; expression optionally lists literal occurrences. No compile.",
+                           s(function=st("function", True), family=st("declaration_order | signedness | casts"), expression=st("literal expression to locate"))),
+        "compile_variants": ("Try up to six independent old/new patches against one revision; normal judge and limits. Reports the selected best candidate revision; baseline retained when nothing improves.",
+                             s(function=st("function", True), revision=st("candidate revision", True),
+                               patches={"type": "array", "minItems": 1, "maxItems": 6, "req": True,
+                                        "items": {"type": "object", "properties": {"old": {"type": "string"}, "new": {"type": "string"}, "occurrence": {"type": "integer", "minimum": 0}}, "required": ["old", "new"]}})),
+        "get_assembly": ("Read target assembly: focus=mismatch or a callee symbol/short anchor for a bounded region; omit focus to page.",
+                         s(function=st("function", True), start=it("zero-based line"), limit=it("up to 200 lines"), focus=st("mismatch:N, body, symbol or short assembly anchor"))),
+        "claim_function": ("Reserve the next function or batch and return saved candidate C. No diagnostic build or draft during claiming. "
+                           "Use get_assembly/get_function(section=brief) for supporting evidence and get_claims to recover leases.",
+                           s(function=st("optional name or address"), strategy=st("no_compiling_c | finish | easiest | least_tried | oldest_checked | untried | closest | hardest | random"),
                              count=it("up to 6 small functions at once"))),
-        "get_function": ("Show any function by name or address.", s(function=st("name or address", True))),
-        "compile_and_diff": ("Compile C for the function, link it at its address and diff against the ROM. "
+        "get_function": ("Show any function by name or address.", s(function=st("name or address", True), section=st("summary (default) | brief | all | history | candidate | experiment | quality | notes | declarations | compiler | layouts"), start=it("Character offset for supporting sections"), limit=it("Page characters, default 6000, maximum 12000; complete editable C is not truncated"))),
+        "compile_and_diff": ("Whole-function rewrite: small edits should use compile_patch. Compile, link and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
-                             s(function=st("function name, or several: a, b, c", True), source=st("C source", True))),
-        "last_diff": ("Every differing row of your last compile_and_diff of a function (its result cuts long diffs). "
-                      "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"))),
+                             s(function=st("function name, or several: a, b, c", True), source=st("C source", True),
+                             repair_note=st("Optional one-sentence decisive change, single function only; saved only if it matches"),
+                             repair_category=st("types | casts | constants | addresses | signatures | layout | temporaries | expression_order | control_flow | compiler_settings | other"),
+                             repair_automation=st("How a deterministic repair could make this change"))),
+        "report_candidate_issue": ("Report a saved-C concern; no score or match changes.",
+                                   s(function=st("function",True),revision=st("affected revision",True),
+                                     issue=st("uninitialized|loop_mutation|wrong_store|wrong_value|other",True),
+                                     reason=st("10–600 characters",True),alternative_revision=st("compiled alternative"))),
+        "report_repair": ("Annotate your captured verified match for human review, without enabling a rule.",
+                          s(function=st("Function you matched", True), change=st("Decisive change; do not guess", True),
+                            category=st("Repair category (same as compile_and_diff)"),
+                            automation=st("How a deterministic rule could make it"))),
+        "last_diff": ("A page of rows from your last compile diff; start is zero-based and limit is at most 200. "
+                      "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"), start=it("zero-based row"), limit=it("up to 200 rows"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
                              "on (before that it answers once with what to try; call again to release anyway).",
-                             s(function=st("function", True), notes=st("what you tried, what is left", True),
-                               not_c=bo("true when you're sure no C makes its code (hand-written assembly); say why in notes"),
-                               needs=st("optional: another function this one needs done first (a callee or inlined "
-                                        "helper): it then goes first and is handed to you"))),
-        "get_context": ("The shared header included in every compile.", s()),
+                             s(claim_token=st("Always pass the current claim token from the claim, continuation state or get_candidate on the first release and retries; stale tokens cannot release a newer claim"), function=st("function", True), notes=st("what you tried, what is left", True),
+                               not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
+                               move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
+                               next_experiment={"type":"object","description":"Optional untested exact patch. Anchor/revision are validated; retrieve with get_function(section=experiment).", "properties":{key:{"type":"string"} for key in ('revision','old','new','title')}, "required":["revision","old","new"],"additionalProperties":False},
+                               needs=st("Optional direct callee in original assembly; obeys pauses and allows one pivot per unchanged input. Explain inline/header concerns in notes."))),
+        "get_context": ("The header used by function; omit only for one held claim or a single-header project.", s(function=st("Function whose per-file header is needed"))),
         "edit_context": ("Replace `old` (exactly once) with `new` in the shared header, or append when old is empty.",
                          s(old=st("text to replace, or empty", True), new=st("replacement", True),
                            message=st("why", True))),
@@ -410,6 +567,11 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                             s(function=st("function", True), end=st("where it really ends: an address (PC: or +offset)",
                                                                      True),
                               reason=st("what follows and how you can tell", True))),
+        "report_data_region": ("Report an entire suspected data region for user review, not a matching verdict. Claim a representative function; its unit and original image scope the overlay. The user may pause new claims. Use this when the whole entry is data, rather than report_boundary.",
+                               s(function=st("claimed representative function", True), start=st("hex address", True),
+                                 end=st("exclusive hex end address", True), reason=st("byte evidence for review", True))),
+        "resolve_addresses": ("Read-only batch lookup of symbols and hex addresses: function entry, function interior, data, ambiguous or unknown. Returns canonical owner names and offsets. Supply context_function for overlays; never guesses a new entry or changes names/status.",
+                              s(queries={"type":"array","items":{"type":"string","minLength":1,"maxLength":200},"minItems":1,"maxItems":20,"req":True}, context_function=st("canonical function in the intended original image"))),
         "read_data": ("Hex dump of the original's data at an address or symbol.", s(what=st("address or symbol", True),
                                                                                     length=it("bytes, up to 512"))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "
@@ -419,9 +581,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                          "pointer reaches; where else it flows; the type matched code already uses.",
                          s(function=st("function", True), argument=st("arg0-arg3, this (PC), return, or a global; "
                                                                        "+0x14 follows the pointer at 0x14"))),
-        "redraft": ("m2c's draft of a function made again with your declarations (a struct, a prototype) added to "
+        "redraft": ("Requires nonempty actual C declarations in context; inspect existing C with get_function(section=candidate). m2c's draft made again with your declarations (a struct, a prototype) added to "
                     "the shared header's, which they replace where they declare the same names. Recorded nowhere.",
-                    s(function=st("function", True), context=st("C declarations", True))),
+                    s(function=st("function", True), context={"type":"string", "minLength":1, "description":"Actual C struct/prototype/extern declarations; not an empty refresh", "req":True})),
         "compiler_map": ("Which compiler built each part of the game, where it differs from today's. survey=true starts "
                          "the judge's survey of other compilers in the background; check_ranges=true looks at the "
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
@@ -435,9 +597,10 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),
-        "share_knowledge": ("Propose something every agent on this game should know, or back proposal #N "
-                            "(supports=N). It counts once two different models agree. Not for compiler questions.",
-                            s(text=st("what every agent should know"), supports=it("a proposal's number to back"))),
+        "share_knowledge": ("Propose evidence-backed reusable discoveries now; do not wait for a second model before proposing. Reusable matching tips for the game/compiler across functions. NOT function-specific notes: use release_function(notes=...) or add_note(function=...). "
+                            "Back independently verified tips with supports=N. The user can accept one proposal; automatic acceptance needs two models. "
+                            "Compiler identity/profile changes use compiler_map, try_compiler/search_flags or suggest.",
+                            s(evidence=st("Concrete function examples and scores; keep text as the reusable rule. Evidence is not put in every agent prompt."), text=st("reusable matching technique, not a function-specific note"), supports=it("a proposal's number to back"))),
         "suggest": ("Suggest a setup change for the user (another compiler or flags), with evidence.",
                     s(text=st("what and why", True), compiler=st("toolchain id"), flags=st("flags"),
                       function=st("a function whose best attempt should match with it: checked now"),

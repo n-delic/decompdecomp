@@ -67,6 +67,7 @@ def install_launcher() -> str:
         resources = bundle / "Resources"
         executable.parent.mkdir(parents=True, exist_ok=True)
         resources.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(Path(__file__).with_name("static") / "icon.icns", resources / "decompdecomp.icns")
         # Finder doesn't read the user's shell profile. Preserve this interpreter and discover uv explicitly.
         executable.write_text("#!/bin/sh\nexport PATH=" + shlex.quote(os.environ.get("PATH", "/usr/bin:/bin"))
                               + "\nexec " + shlex.quote(sys.executable)
@@ -75,7 +76,8 @@ def install_launcher() -> str:
         with (bundle / "Info.plist").open("wb") as stream:
             plistlib.dump({"CFBundleName": "decompdecomp", "CFBundleDisplayName": "decompdecomp",
                           "CFBundleIdentifier": "com.ndelic.decompdecomp", "CFBundlePackageType": "APPL",
-                          "CFBundleExecutable": "decompdecomp", "LSMinimumSystemVersion": "12.0",
+                          "CFBundleExecutable": "decompdecomp", "CFBundleIconFile": "decompdecomp.icns",
+                          "LSMinimumSystemVersion": "12.0",
                           "NSHighResolutionCapable": True}, stream)
         return f"added decompdecomp to Finder ({bundle.parent})"
     if sys.platform == "win32":

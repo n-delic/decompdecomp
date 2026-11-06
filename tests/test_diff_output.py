@@ -74,3 +74,35 @@ def test_the_diff_shows_the_value_of_the_float_the_target_loads():
     mips = _Console({})
     mips.arch = "mips"
     assert with_constant_values(rows, mips, None) == rows
+
+
+def test_identical_move_aliases_reveal_different_machine_encodings():
+    from decompnet.elfobj import FunctionObj
+
+    target = FunctionObj('probe', 'mips', True, bytes.fromhex('0080802103e0000800000000'), [])
+    candidate = FunctionObj('probe', 'mips', True, bytes.fromhex('0080802d03e0000800000000'), [])
+    result = scoring.diff(target, candidate)
+    assert not result.bytes_match and result.score == 1
+    text = result.render()
+    assert 'move $s0, $a0' in text and '[bytes 00808021]' in text and '[bytes 0080802d]' in text
+    assert any(marker == '|' for marker, _, _ in result.rows)
+
+
+def test_relocation_fields_do_not_create_false_encoding_differences():
+    from decompnet.elfobj import FunctionObj, Reloc
+
+    target = FunctionObj('probe', 'mips', True, bytes.fromhex('0c00123400000000'), [Reloc(0, 4, 'callee', 0)])
+    candidate = FunctionObj('probe', 'mips', True, bytes.fromhex('0c00000000000000'), [Reloc(0, 4, 'callee', 0)])
+    result = scoring.diff(target, candidate)
+    assert result.bytes_match and result.score == 0
+    assert '[bytes ' not in result.render()
+
+
+def test_same_text_x86_encodings_are_visible_too():
+    from decompnet.elfobj import FunctionObj
+
+    target = FunctionObj('probe', 'x86', False, bytes.fromhex('89c0c3'), [])
+    candidate = FunctionObj('probe', 'x86', False, bytes.fromhex('8bc0c3'), [])
+    result = scoring.diff(target, candidate)
+    assert not result.bytes_match and result.score == 1
+    assert '[bytes 89c0]' in result.render() and '[bytes 8bc0]' in result.render()

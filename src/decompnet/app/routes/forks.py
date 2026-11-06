@@ -7,10 +7,14 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from ... import hostenv
+from ...forks.local import MAX_REPOSITORIES
 from ...network import NetworkError
+from .. import setup_fix
 from ..support import MAX_DISC
 from . import App
 
@@ -44,6 +48,35 @@ def register(app: App) -> None:
             return {"slug": slug}
         return JSONResponse({"job": jobs.start("fork", work)})
 
+    @mcp.custom_route("/api/fork/local/scan", methods=["POST"])
+    async def api_local_scan(request: Request) -> Response:
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        folder = str(data.get("folder") or "").strip()
+        if not folder:
+            return fail(ValueError("Choose a folder to scan."))
+        def work(log):
+            log("Looking for checked-out repositories…")
+            result = net.forks.scan_local(hostenv.local_path(folder))
+            log(f"Found {len(result['projects'])} repositories.")
+            return result
+        return JSONResponse({"job": jobs.start("local-scan", work)})
+
+    @mcp.custom_route("/api/fork/local/import", methods=["POST"])
+    async def api_local_import(request: Request) -> Response:
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        paths = data.get("paths")
+        folder = str(data.get("folder") or "").strip()
+        if not folder or not isinstance(paths, list) or not paths or len(paths) > MAX_REPOSITORIES or any(
+                not isinstance(path, str) or not path.strip() for path in paths):
+            return fail(ValueError("Choose the folder and at least one repository from its scan."))
+        def work(log):
+            return net.forks.import_local(hostenv.local_path(folder), paths, copies=data.get("copies") is not False, log=log)
+        return JSONResponse({"job": jobs.start("local-import", work)})
+
     def fork_of(slug: str):
         if not net.fork_slug(slug):
             raise NetworkError(f"{slug} isn't a fork")
@@ -59,20 +92,20 @@ def register(app: App) -> None:
         if q.get("confirmed") != "1":
             return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
         try:
-            proj = fork_of(slug)
+            proj = await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         tmp = Path(proj["root"]) / ".decomp-wtf" / f"upload-{uuid.uuid4().hex[:8]}.tmp"
-        tmp.parent.mkdir(parents=True, exist_ok=True)
+        await app.call(lambda: tmp.parent.mkdir(parents=True, exist_ok=True))
         size = 0
-        with open(tmp, "wb") as f:
+        async with await anyio.open_file(tmp, "wb") as f:
             async for chunk in request.stream():
                 size += len(chunk)
                 if size > MAX_DISC:
-                    f.close()
-                    tmp.unlink(missing_ok=True)
+                    await f.aclose()
+                    await app.call(lambda: tmp.unlink(missing_ok=True))
                     return fail(ValueError("that file is larger than any game disc"))
-                f.write(chunk)
+                await f.write(chunk)
         name = Path(q.get("name") or "game.iso").name
 
         def work(log):
@@ -80,7 +113,10 @@ def register(app: App) -> None:
                 res = net.forks.setup(slug, tmp, name, log=log, move=True)
             finally:
                 tmp.unlink(missing_ok=True)
-            autopilot(slug)
+            active = res.get("slug", slug)
+            settings.data["last_project"] = active
+            settings.save()
+            autopilot(active)
             return res
         return JSONResponse({"job": jobs.start("fork-setup", work)})
 
@@ -91,7 +127,7 @@ def register(app: App) -> None:
         data = await body(request)
         slug = str(data.get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         def work(log):
@@ -109,7 +145,7 @@ def register(app: App) -> None:
         data = await body(request)
         slug = str(data.get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         path = str(data.get("path") or "").strip().strip('"')
@@ -117,12 +153,15 @@ def register(app: App) -> None:
             if not data.get("confirmed"):
                 return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
             src = Path(path).expanduser()
-            if not src.is_file():
+            if not await app.call(lambda: src.is_file()):
                 return fail(ValueError(f"no file at {src}"))
 
         def work(log):
             res = net.forks.setup(slug, src, src.name, log=log) if path else net.forks.setup(slug, None, log=log)
-            autopilot(slug)
+            active = res.get("slug", slug)
+            settings.data["last_project"] = active
+            settings.save()
+            autopilot(active)
             return res
         return JSONResponse({"job": jobs.start("fork-setup", work)})
 
@@ -134,10 +173,29 @@ def register(app: App) -> None:
             return bad
         slug = str((await body(request)).get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         return JSONResponse({"job": jobs.start("fork-check", lambda log: net.forks.check(slug, log=log, build=True))})
+
+    @mcp.custom_route("/api/fork/fix-setup", methods=["GET", "POST"])
+    async def api_fork_fix_setup(request: Request) -> Response:
+        """A coding CLI, in a terminal in the project folder, to get a failed hand-built project to build."""
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        if request.method == "GET":
+            return JSONResponse({"agents": await call(setup_fix.choices)})
+        data = await body(request)
+        kind, slug = str(data.get("agent") or ""), str(data.get("slug", ""))
+        try:
+            proj = await app.read(fork_of, slug)
+            if not any(a["id"] == kind and a["installed"] for a in await call(setup_fix.choices)):
+                raise NetworkError("Choose an installed coding CLI.")
+            folder = Path(proj["root"])
+        except (NetworkError, ValueError) as e:
+            return fail(e)
+        return JSONResponse({"job": jobs.start("fix-setup", lambda log: setup_fix.launch(
+            app.home, folder, str(data.get("error") or ""), kind, log))})
 
     @mcp.custom_route("/api/fork/rom-check", methods=["POST"])
     async def api_fork_rom_check(request: Request) -> Response:
@@ -146,7 +204,7 @@ def register(app: App) -> None:
             return bad
         slug = str((await body(request)).get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         return JSONResponse({"job": jobs.start("rom-check", lambda log: net.forks.check_rom(slug, log=log))})
@@ -158,7 +216,7 @@ def register(app: App) -> None:
             return bad
         slug = str((await body(request)).get("slug", ""))
         try:
-            fork_of(slug)
+            await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
         return JSONResponse({"job": jobs.start("fork-start-files", lambda log: net.forks.start_files(slug, log=log))})

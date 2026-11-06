@@ -97,3 +97,38 @@ def test_yaz0():
     # "abcabcabc": three literals, then a back-reference 3 back, 6 long (0x40 >> 4 = 4, + 2)
     data = b"Yaz0" + (9).to_bytes(4, "big") + bytes(8) + bytes([0b11100000]) + b"abc" + bytes([0x40, 0x02])
     assert yaz0(data) == b"abcabcabc"
+
+
+def test_discovered_code_preserves_the_original_explicit_bss_extent(tmp_path, monkeypatch):
+    import yaml
+    from splat.scripts.split import initialize_segments
+    from splat.util import options
+
+    from decompnet.consoles.n64 import code
+    from decompnet.rom.export import _segments
+
+    # The original main range includes data and code later split into their own segments. Its explicit BSS
+    # still starts after all that ROM-backed memory, not after the first newly discovered code segment.
+    config = {"name": "synthetic", "options": {"platform": "n64", "basename": "synthetic",
+              "base_path": str(tmp_path), "target_path": "rom.z64", "compiler": "GCC"}, "segments": [
+        {"name": "main", "type": "code", "start": 0, "vram": 0x80000400, "bss_size": 0x80,
+         "subsegments": [[0, "asm"], [0x40, "data"], {"type": "bss", "vram": 0x80001400}]},
+        {"type": "bin", "start": 0x1000}, [0x2000]]}
+    path = tmp_path / "synthetic.yaml"
+    path.write_text(yaml.safe_dump(config, sort_keys=False))
+    (tmp_path / "rom.z64").write_bytes(bytes(0x2000))
+    monkeypatch.setattr(code, "unpack_code", lambda _: [])
+    monkeypatch.setattr(code, "find_segments", lambda *_: [(0x200, 0x400, 0x80000600)])
+    code.add_segments(path, tmp_path, "rom.z64", log=lambda _: None)
+    changed = yaml.safe_load(path.read_text())
+    options.initialize(changed, [path])
+    main = initialize_segments(changed["segments"])[0]
+    bss = next(s for s in main.subsegments if s.type == "bss")
+    assert (main.rom_end, main.vram_end) == (0x200, 0x80001480)
+    assert (bss.vram_start, bss.vram_end) == (0x80001400, 0x80001480)
+    exported = _segments(changed)[0]
+    assert exported["bss_size"] == 0x80
+    assert changed["segments"][0]["bss_size"] == 0xE80  # export does not mutate splat's parent extent
+    # Repeating discovery must not grow the BSS a second time.
+    code.add_segments(path, tmp_path, "rom.z64", log=lambda _: None)
+    assert yaml.safe_load(path.read_text())["segments"][0]["bss_size"] == 0xE80
