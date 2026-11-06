@@ -32,7 +32,7 @@ from concurrent.futures import wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, scoring, seeds, toolchains
+from .. import call_scheduling, consoles, scoring, seeds, toolchains
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
@@ -269,9 +269,16 @@ class Permuter:
             start_src = best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
             deadline = time.monotonic() + SECONDS
+            # Helper definitions are accepted by the ROM judge. Project-mode attempt()
+            # accepts only the target definition; agents must add helpers with edit_file
+            # there, under its existing rollback checks (see ROADMAP).
+            probes = call_scheduling.variants(start_src, fn["name"],
+                                              self.net._context(proj["id"], fn["unit"])["header"]) if not fork else []
             batches = misses = 0
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
-                if gen is not None:
+                if probes:
+                    batch, probes = probes, []
+                elif gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
                     # turn: from the best alone, rewrites piled on rewrites and got stuck on one of nine near misses of
                     # the demo ROM (at 45); taking turns, every one matched within 12 s
