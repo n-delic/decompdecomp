@@ -106,8 +106,14 @@ function renderSteering(ov) {
   $("saveTitle").textContent = ov.kind === "fork" ? "Save the closest attempts" : "Save your progress";
   $("saveAbout").hidden = ov.kind === "fork";
   $("saveAboutFork").hidden = ov.kind !== "fork";
-  $("repositorySync").hidden = ov.kind === "fork";
-  if (ov.kind !== "fork") loadRepositoryFolder(S.slug);
+  $("repositorySync").hidden = false;
+  $("repositoryAutoCommitGroup").hidden = ov.kind === "fork";
+  $("repositorySyncActions").hidden = ov.kind === "fork";
+  $("repositorySyncHelp").hidden = ov.kind === "fork";
+  $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Sync your verified matches";
+  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Commit your saved progress, or copy matching C into a rebuildable export checkout.";
+  loadRepositoryFolder(S.slug);
+  refreshRepositoryPush();
   renderRepositoryAutoCommit(ov.auto_commit);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
@@ -141,7 +147,7 @@ function renderRepositoryAutoCommit(state = {}) {
 }
 $("repositoryAutoCommitDetails").onclick = () => {
   const state = repositoryAutoCommitState;
-  dialog("Pending match commits", `<p>Each match uses its agent’s notes, or a short “Match &lt;function&gt;” message when notes are absent.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}<br><span class="small muted">${esc(item.error || "Waiting for the next autosave check.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
+  dialog("Pending match commits", `<p>Each match uses its agent’s notes, or a short “Match &lt;function&gt;” message when notes are absent.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}${item.agent || item.method ? `<br><span class="small muted">${esc([item.agent, item.method].filter(Boolean).join(" · "))}</span>` : ""}<br><span class="small muted">${esc(item.error || "Waiting for the next autosave check.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
 };
 $("repositoryAutoCommit").onchange = async () => {
   const field = $("repositoryAutoCommit"), slug = S.slug, enabled = field.checked;
@@ -180,6 +186,7 @@ function loadRepositoryFolder(slug) {
     const progress = field.value.trim() === field.dataset.progressFolder;
     setMode(progress);
     hint.textContent = progress ? "App-saved progress can be committed; newer helper edits stay local." : defaultHint;
+    refreshRepositoryPush(true);
   };
   api(`/api/repository-sync?slug=${encodeURIComponent(slug)}`).then(result => {
     if (S.slug !== slug || field.dataset.slug !== slug) return;
@@ -188,6 +195,7 @@ function loadRepositoryFolder(slug) {
       field.dataset.progressFolder = result.mode === "progress" ? field.value : "";
       setMode(result.mode === "progress");
       hint.textContent = result.message || defaultHint;
+      refreshRepositoryPush(true);
     }
   }).catch(() => {});
 }

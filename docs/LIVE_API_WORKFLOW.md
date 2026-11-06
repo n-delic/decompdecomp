@@ -248,3 +248,16 @@ also use this path when applied, even if their neighbour check is waiting or was
 Those old checks have no historical private header, so their saved C must verify against
 the current header before publication. Already-matched functions are not overwritten.
 A completed single-function check is labelled separately from a confirmed broader range.
+
+## Review and push existing commits
+
+In project Settings, the Git repository card shows an unpushed count based on local
+origin refs. Open the count to review commit messages, including the agent/method
+credited by automatic match commits and compact repair-example summaries when available.
+Repair-example numbers refer to local records; source, assembly and full archives
+are not copied into commit messages.
+
+**Push commits to origin** refreshes origin, checks for divergence, then sends the
+existing commits from the current branch. It does not commit or stage working files.
+New commits created after the push begins remain for the next push. Imported build
+projects can use the same push-only control for their existing source commits.

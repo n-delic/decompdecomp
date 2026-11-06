@@ -2698,3 +2698,26 @@ def test_foreground_routes_do_not_wait_for_saved_recheck_publication(app, tmp_pa
         assert net.progress.rechecking[slug] is active
     finally:
         net.progress.rechecking.pop(slug, None)
+
+
+def test_push_route_requires_write_header_and_does_not_sync_progress(app, monkeypatch):
+    from decompnet.app import repository_push
+    client, net, _ = app
+    calls = []
+    monkeypatch.setattr(repository_push, 'status', lambda net, slug, folder: {'unpushed':3, 'destination':'origin/main'})
+    def push(net, slug, folder, log):
+        calls.append((slug, folder))
+        return {'pushed':True}
+    monkeypatch.setattr(repository_push, 'run', push)
+    monkeypatch.setattr(net.progress, 'sync', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('Push must not sync or commit progress')))
+    assert client.get('/api/repository-push?slug=game&folder=/repo').json()['unpushed'] == 3
+    assert client.post('/api/repository-push', json={'slug':'game','folder':'/repo'}).status_code == 403
+    response = client.post('/api/repository-push', headers={'X-Decomp':'1'}, json={'slug':'game','folder':'/repo'})
+    assert response.status_code == 200
+    job = response.json()['job']
+    for _ in range(50):
+        result = client.get('/api/job?id='+job).json()
+        if result['state'] in ('done','error'):break
+        time.sleep(.01)
+    assert result['state'] == 'done' and result['result']['pushed']
+    assert calls == [('game','/repo')]
