@@ -52,13 +52,10 @@ def unsafe_temporary(parent, candidate, name, header=""):
         declarations.append(decl)
     if not declarations or re.search(r"\bfor\s*\([^;]*;\s*;", part.body):
         return False
-    flow = local_flow.analyze(candidate, name, declarations=declarations)
+    flow = local_flow.analyze(_without_type_only_records(candidate, part, macros), name,
+                              declarations=declarations)
     if not flow or flow.entry is None:
         return False
-    names = flow.names
-    pointers = {decl['name'] for decl in declarations if '*' in decl['type']}
-    from .permuter_macro_effects import transparent_macros
-    opaque_macros = macros - transparent_macros(combined, names)
     # The native walk commonly wraps a single statement in do {...} while (0).
     # Prune only its literal-zero back edge; other constant controls receive no verdict.
     one_shot_conditions = set()
@@ -71,6 +68,49 @@ def unsafe_temporary(parent, candidate, name, header=""):
                 if node.start == opening+1 and node.end == stop-1:
                     node.successors = {n for n in node.successors if not body <= flow.nodes[n].start < end}
                     one_shot_conditions.add(index)
+    # Unsupported writes to one temporary must not hide a separate unsafe capture.
+    # Reuse the bounded CFG, but keep each binding's initialization verdict independent.
+    return any(_unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_conditions)
+               for decl in declarations)
+
+
+def _without_type_only_records(candidate, part, macros):
+    """Hide only inert record typedefs from the statement CFG, preserving every offset.
+
+    The CFG deliberately rejects braced expressions. Literal-sized scalar fields in a local
+    typedef are not executable statements; VLA bounds, macros and other declarations stay opaque.
+    This is private to the initialization guard, not permission for lifetime repairs to move code.
+    """
+    scalar = rf'(?:{INTEGER}|float|double|f32|f64)'
+    field = rf'{scalar}\s+{IDENT}(?:\s*\[\s*{NUMBER}\s*\])?\s*;'
+    result = list(candidate)
+    for hit in re.finditer(r'\btypedef\s+struct(?:\s+'+IDENT+r')?\s*{', part.body):
+        start = part.opening+1+hit.start()
+        opening = part.opening+1+hit.end()-1
+        stop = close(part.clean, opening, '{', '}')
+        if not stop:
+            continue
+        tail = re.match(r'\s*('+IDENT+r')\s*;', part.clean[stop:])
+        if not tail:
+            continue
+        end = stop+tail.end()
+        fields = part.clean[opening+1:stop-1]
+        if (not re.fullmatch(rf'(?:\s*{field})+\s*', fields)
+                or set(re.findall(IDENT, part.clean[start:end])) & macros):
+            continue
+        # The final semicolon becomes an empty statement. All declaration/read positions survive.
+        for index in range(start, end-1):
+            if result[index] != '\n':
+                result[index] = ' '
+    return ''.join(result)
+
+
+def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_conditions):
+    names = {decl['name']}
+    declarations = [decl]
+    pointers = names if '*' in decl['type'] else set()
+    from .permuter_macro_effects import transparent_macros
+    opaque_macros = macros - transparent_macros(combined, names)
     transfers = []
     for index, node in enumerate(flow.nodes):
         text = part.clean[node.start:node.end]
@@ -85,7 +125,7 @@ def unsafe_temporary(parent, candidate, name, header=""):
         # Expression sequencing, embedded writes and macro-like calls are beyond this guard.
         if names & set(re.findall(IDENT, text)) and re.search(r'\?|&&|\|\||\b(?:sizeof|_Alignof|typeof|__typeof__)\b|\b[A-Z_][A-Z_0-9]*\s*\(', text):
             return False
-        uses = set(node.uses)
+        uses = set(node.uses) & names
         generates, kills = set(), set()
         contained = [d for d in declarations if node.start <= d.start() and d.end() <= node.end]
         for decl in contained:

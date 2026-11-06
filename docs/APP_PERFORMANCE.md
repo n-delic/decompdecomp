@@ -182,3 +182,21 @@ uninitialized pointer captures that had reached compilation. Two manually
 confirmed bad captures are rejected; the reviewed valid field-address capture
 remains allowed. This is evidence for that run, not a general match-rate or
 performance estimate. Generated game sources and replay artifacts stay private.
+
+
+## Keep native initialization verdicts independent
+
+An unsupported embedded assignment to one introduced temporary no longer cancels
+analysis of another binding. The guard shares one bounded control-flow graph and
+computes a separate must-initialization verdict for each eligible integer/pointer.
+A local record typedef containing only scalar fields and literal array bounds is
+ignored as a type declaration, with offsets preserved. It does not add executable
+reads. Complex fields, macro-expanded declarations, variable bounds and aggregate
+initializers remain opaque; the shared lifetime-repair parser is unchanged.
+
+A private replay of 640 retained candidate sources previously gave no verdict for
+all of them because of a local matrix typedef. The revised guard rejects 18 possible
+uninitialized captures, including the reviewed pointer assigned only in an earlier
+possibly empty loop. Original and layout-restored baseline sources remain allowed.
+These are skipped unsafe compilations, not new exact matches or a measured runtime
+speedup. Floating temporaries and semantic equivalence remain outside this guard.

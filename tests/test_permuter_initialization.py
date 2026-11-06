@@ -212,3 +212,46 @@ def test_generator_checks_bad_temporary_despite_unrelated_header_alias(tmp_path)
         gen.close()
     assert result == [good]
     assert result[0].lineage == ['perm_temp_for_expr']
+
+
+def test_each_temporary_has_an_independent_initialization_verdict():
+    candidate = ('int f(int condition) { int opaque; int *pointer; '
+                 'use((opaque=condition)); if(condition) pointer=base; return *pointer; }')
+    assert unsafe_temporary(PARENT, candidate, 'f')
+    assert not unsafe_temporary(PARENT, candidate.replace('if(condition) pointer=base;',
+                                                        'pointer=base;'), 'f')
+
+
+def test_type_only_local_record_does_not_hide_a_conditional_pointer_capture():
+    candidate = ('int f(int condition) { int opaque; int *pointer; '
+                 'typedef struct { short rotation[9]; short alignment; int translation[3]; } Matrix; '
+                 'Matrix matrix; use(&matrix); use((opaque=condition)); '
+                 'while(condition) { pointer=base; condition--; } return *pointer; }')
+    assert unsafe_temporary(PARENT, candidate, 'f')
+    assert not unsafe_temporary(PARENT, candidate.replace('int *pointer;', 'int *pointer=base;'), 'f')
+
+
+@pytest.mark.parametrize('record', [
+    'typedef struct { int temp; int values[3]; } Record;',
+    'typedef struct Named { int temp; } Record;',
+])
+def test_record_field_spelling_is_not_a_read_of_the_temporary(record):
+    candidate = 'int f(int condition) { int temp; '+record+' temp=condition; return temp; }'
+    assert not unsafe_temporary(PARENT, candidate, 'f')
+    # A same-spelled field retains the existing conservative shadowing exclusion.
+    assert not unsafe_temporary(PARENT, candidate.replace('temp=condition;', ''), 'f')
+
+
+@pytest.mark.parametrize('record,header', [
+    ('typedef struct { int values[bound()]; } Record;', ''),
+    ('typedef struct { int values[condition]; } Record;', ''),
+    ('typedef struct { int (*callback)(void); } Record;', ''),
+    ('typedef struct { struct Nested { int value; } item; } Record;', ''),
+    ('typedef struct { int value : 3; } Record;', ''),
+    ('typedef struct { int value; } Record;', '#define value hidden_effect()'),
+    ('typedef struct { int value; } Record;', '#define Record hidden_effect()'),
+    ('struct Record { int value; } record = {side_effect()};', ''),
+])
+def test_complex_or_macro_record_declarations_keep_no_verdict(record, header):
+    candidate = 'int f(int condition) { int temp; '+record+' return temp; }'
+    assert not unsafe_temporary(PARENT, candidate, 'f', header)

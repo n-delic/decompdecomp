@@ -2875,3 +2875,9 @@ need independent evidence before receiving this specific GNU C repair.
   pointers to known integer/void types. A pointer assigned only inside a conditional
   cannot be treated as initialized after that conditional; a pointee write does not
   initialize the pointer. Ambiguous bindings still receive no verdict.
+
+
+- Done: native initialization checks retain independent verdicts for introduced
+  integer/pointer bindings and look through inert local scalar-record typedefs.
+  Unsupported writes to one binding no longer hide a separate uninitialized read;
+  complex declarations and unsupported semantics still receive no verdict.
