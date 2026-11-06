@@ -140,7 +140,7 @@ def test_focused_creation_records_worker_without_saved_file_sync(tmp_path,quiet,
     assert not net.progress.viewing
 
 
-def test_focused_worker_skips_matching_waits_but_syncs_before_work(tmp_path,quiet,monkeypatch):  # noqa: F811
+def test_focused_worker_skips_matching_waits_and_inline_sync(tmp_path,quiet,monkeypatch):  # noqa: F811
     net=_game(tmp_path)
     manager=agents.Manager(net,tmp_path,URL)
     sid=manager.start('codex','game',options={'focus_function':'f0','focus_minutes':15})[0]
@@ -149,12 +149,16 @@ def test_focused_worker_skips_matching_waits_but_syncs_before_work(tmp_path,quie
         def wait(self,*args):pytest.fail('Focused worker waited for unrelated matching preparation')
     manager._prep['game']=Waiting()
     monkeypatch.setattr(net.twins,'jobs',{'game':SimpleNamespace(ordered=Waiting())})
-    class Synced(Exception):pass
     def sync(*args,**kwargs):
-        assert not net.progress.viewing
-        raise Synced()
+        pytest.fail('Focused startup restored saved files inline')
     monkeypatch.setattr(net.progress,'sync',sync)
-    with pytest.raises(Synced):manager._run_work(manager.sessions[sid])
+    class Ready(Exception):pass
+    def run(*args, **kwargs):
+        assert net.progress.viewing
+        raise Ready()
+    monkeypatch.setattr(manager, '_left', run)
+    with pytest.raises(Ready):manager._run_work(manager.sessions[sid])
+    assert not net.progress.viewing
 
 
 
