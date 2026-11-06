@@ -1,13 +1,14 @@
 /* Existing commits only: polling reads local refs; the explicit push refreshes origin first. */
 let repositoryPushKey = "", repositoryPushState = null, repositoryPushChecked = 0;
 let repositoryPushRequest = 0, repositoryPushPending = false, repositoryPushBusy = false, repositoryPushJob = null;
+let repositoryPushFollowing = null;
 function currentRepositoryPushKey() { return `${S.slug || ""}\n${(typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot)}`; }
 function renderRepositoryPush(state) {
   repositoryPushState = state;
   const status = $("repositoryPushState"), details = $("repositoryUnpushedDetails");
   details.hidden = !state?.commits?.length;
   details.textContent = `${state?.unpushed || 0} unpushed commit${state?.unpushed === 1 ? "" : "s"}`;
-  status.textContent = state ? `${state.destination} · ${state.new_branch ? "Branch may be new on origin. " : ""}${state.behind ? `${state.behind} remote commits ahead; pull or merge first.` : state.unpushed ? "Ready to push committed changes." : "No unpushed commits since the last fetch."}` : "Choose a linked Git checkout to see unpushed commits.";
+  status.textContent = state?.job ? state.progress?.phase || "Push queued or running; reconnecting…" : state ? `${state.destination} · ${state.new_branch ? "Branch may be new on origin. " : ""}${state.behind ? `${state.behind} remote commits ahead; pull or merge first.` : state.unpushed ? "Ready to push committed changes." : "No unpushed commits since the last fetch."}` : "Choose a linked Git checkout to see unpushed commits.";
   $("repositoryPushBasis").textContent = state?.basis || "";
   $("repositoryPushGo").disabled = repositoryPushBusy || !state?.can_push;
 }
@@ -15,6 +16,10 @@ async function refreshRepositoryPush(force = false) {
   if (!S.slug || S.tab !== "settings") return;
   const key = currentRepositoryPushKey();
   if (key !== repositoryPushKey) {
+    if (repositoryPushFollowing) {
+      repositoryPushFollowing.finish(); repositoryPushFollowing = null;
+    }
+    repositoryPushBusy = false; repositoryPushJob = null;
     repositoryPushKey = key; repositoryPushChecked = 0; repositoryPushPending = false;
     const log = $("repositoryPushLog"); log.textContent = ""; log.hidden = true;
     if (log._workStatus) log._workStatus.hidden = true;
@@ -22,12 +27,15 @@ async function refreshRepositoryPush(force = false) {
     $("repositoryPushStop").hidden = true;
     renderRepositoryPush(null);
   }
-  if (!(typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot) || repositoryPushPending || repositoryPushBusy || (!force && Date.now() - repositoryPushChecked < 10000)) return;
+  if (repositoryPushPending || repositoryPushBusy || (!force && Date.now() - repositoryPushChecked < 10000)) return;
   const request = ++repositoryPushRequest;
   repositoryPushPending = true;
   try {
     const state = await api(`/api/repository-push?slug=${encodeURIComponent(S.slug)}&folder=${encodeURIComponent((typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot))}`);
-    if (key === currentRepositoryPushKey() && request === repositoryPushRequest) renderRepositoryPush(state);
+    if (key === currentRepositoryPushKey() && request === repositoryPushRequest) {
+      renderRepositoryPush(state);
+      if (state.job) followRepositoryPush(key, state.job);
+    }
   } catch (error) {
     if (key === currentRepositoryPushKey() && request === repositoryPushRequest) {
       renderRepositoryPush(null); $("repositoryPushState").textContent = error.message;
@@ -47,29 +55,53 @@ $("repositoryPushStop").onclick = async () => {
   try { if (repositoryPushJob) await api("/api/job/cancel", {method:"POST", body:{id:repositoryPushJob}}); }
   catch (error) { showJobError($("repositoryPushLog"), error.message); }
 };
-$("repositoryPushGo").onclick = async () => {
-  if (repositoryPushBusy || !repositoryPushState?.can_push) return;
-  const key = currentRepositoryPushKey(), slug = S.slug, folder = (typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot);
+async function followRepositoryPush(key, existingJob = null, payload = null) {
+  if (repositoryPushFollowing?.key === key) return;
   const log = $("repositoryPushLog"), stop = $("repositoryPushStop");
-  const active = () => key === currentRepositoryPushKey();
-  repositoryPushBusy = true;
+  const following = {key, job:existingJob};
+  const active = () => repositoryPushFollowing === following && key === currentRepositoryPushKey();
+  repositoryPushFollowing = following; repositoryPushBusy = true;
   if (log._workStatus) log._workStatus.hidden = false;
-  const finish = beginWork(log, "Pushing existing commits to origin", [$("repositoryPushGo")], "Commits pushed to origin.");
+  const done = beginWork(log, existingJob ? "Following push to origin" : "Queuing push to origin", [$("repositoryPushGo")], "Commits pushed to origin.");
+  let finished = false;
+  following.finish = () => { if (!finished) { finished = true; done(); } };
   showJobError(log, ""); log.hidden = false;
   try {
-    const {job} = await api("/api/repository-push", {method:"POST", body:{slug, folder}});
-    repositoryPushJob = job; if (active()) stop.hidden = false;
-    const result = await followJob(job, null, (lines, snapshot) => {
-      if (active()) { log.textContent = lines.join("\n"); updateWorkProgress(log, snapshot.progress); }
-    });
-    if (active()) renderRepositoryPush(result.status);
-  } catch (error) { if (active()) showJobError(log, error.message); }
-  finally {
-    repositoryPushJob = null; repositoryPushBusy = false; stop.hidden = true; finish();
-    if (active()) { renderRepositoryPush(repositoryPushState); repositoryPushChecked = 0; }
-    else { renderRepositoryPush(null); repositoryPushChecked = 0; }
-    refreshRepositoryPush(true);
+    if (!following.job) ({job:following.job} = await api("/api/repository-push", {method:"POST", body:payload}));
+    if (!active()) return;
+    repositoryPushJob = following.job; stop.hidden = false;
+    const result = await followJob(following.job, null, (lines, snapshot) => {
+      if (active()) {
+        log.textContent = lines.join("\n"); updateWorkProgress(log, snapshot.progress);
+        $("repositoryPushState").textContent = snapshot.progress?.phase || "Push to origin is running";
+      }
+    }, active);
+    if (active() && result) renderRepositoryPush(result.status);
+  } catch (error) {
+    if (active()) {
+      if (repositoryPushState?.job) repositoryPushState = null;
+      following.error = error.message; showJobError(log, error.message);
+    }
   }
+  finally {
+    following.finish();
+    if (repositoryPushFollowing === following) {
+      repositoryPushFollowing = null; repositoryPushJob = null; repositoryPushBusy = false;
+      stop.hidden = true; repositoryPushChecked = 0;
+      if (key === currentRepositoryPushKey()) {
+        renderRepositoryPush(repositoryPushState);
+        if (following.error) $("repositoryPushState").textContent = following.error;
+      }
+      refreshRepositoryPush(true);
+    }
+  }
+}
+$("repositoryPushGo").onclick = async () => {
+  if (repositoryPushBusy || !repositoryPushState?.can_push) return;
+  const key = currentRepositoryPushKey(), slug = S.slug;
+  const folder = typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot;
+  repositoryPushRequest++; repositoryPushPending = false;
+  return followRepositoryPush(key, null, {slug, folder});
 };
 setInterval(() => refreshRepositoryPush(), 10000);
 

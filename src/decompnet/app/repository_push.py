@@ -58,16 +58,22 @@ def status(net, slug, folder=''):
 
 
 def run(net, slug, folder, log, *, validate=None):
-    if not repository_sync._LOCK.acquire(blocking=False):
-        raise NetworkError('Another repository operation is running. Wait for it to finish, then push again.')
-    try:
-        root = checkout(net, slug, folder)
-        branch, ref = destination(root)
+    from .repository_push_queue import turn
+    root = checkout(net, slug, folder)
+    branch, ref = destination(root)
+    url = git(root, 'remote', 'get-url', 'origin')
+    def check():
+        getattr(log, 'check_cancel', lambda: None)()
+        if validate:validate(root, branch, ref, url)
+    progress = getattr(log, 'progress', lambda value: None)
+    with turn(log, check):
+        if checkout(net, slug, folder) != root or destination(root) != (branch, ref) or git(root, 'remote', 'get-url', 'origin') != url:
+            raise NetworkError('The checkout, branch or origin changed while this push was queued. Review the destination and push again.')
         head = git(root, 'rev-parse', 'HEAD')
         url = git(root, 'remote', 'get-url', 'origin')
         if validate:validate(root, branch, ref, url)
-        check = getattr(log, 'check_cancel', lambda: None)
         check()
+        progress({'phase':'Checking origin before pushing existing commits', 'queued':False})
         log('Checking origin before pushing existing commits…')
         git(root, 'fetch', '--no-tags', '--', 'origin',
             error='Could not fetch origin. Check the remote and your Git credentials, then retry.')
@@ -82,6 +88,7 @@ def run(net, slug, folder, log, *, validate=None):
             raise NetworkError('The branch or origin changed while checking it. Review the checkout before pushing again.')
         git(root, 'merge-base', '--is-ancestor', head, git(root, 'rev-parse', 'HEAD'),
             error='Branch history changed while checking origin. Review the checkout before pushing again.')
+        progress({'phase':'Pushing existing commits to origin', 'queued':False})
         log('Pushing commit '+head[:12]+' to origin/'+ref.removeprefix('refs/heads/')+'…')
         if validate:validate(root, branch, ref, url)
         check()
@@ -92,5 +99,3 @@ def run(net, slug, folder, log, *, validate=None):
         log('Pushed existing commits to origin. Uncommitted files were left untouched.')
         return {'pushed':True, 'commit':head, 'destination':'origin/'+ref.removeprefix('refs/heads/'),
                 'status':describe(root, branch, ref)}
-    finally:
-        repository_sync._LOCK.release()

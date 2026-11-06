@@ -1651,6 +1651,14 @@ frame only after the loading cover is removed. Late map responses cannot replace
 Compiler-colour analysis is requested when you select the Compiler map, keeping it off the default
 Progress view's loading path.
 
+### Queued pushes
+
+**Push commits to origin** waits if a repository sync, checkpoint or setup action is already running.
+Its progress shows **Queued** and the number of earlier push requests. Push starts automatically when
+it reaches the front and the repository is free. **Stop** removes a waiting request without touching
+origin; reopening Settings reconnects to that same job. Repeated clicks reuse the existing push.
+The checkout, branch and origin are checked again before pushing, so a changed destination requires review.
+
 ### Commit verified progress from Settings
 
 For ROM projects with a decompdecomp export, open **Settings → Sync to Git repository**,
