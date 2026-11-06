@@ -2843,3 +2843,18 @@ def test_push_is_queued_behind_sync_deduplicated_and_discoverable(app, monkeypat
         assert snapshot['state'] == 'cancelled' and not pushed
     finally:
         release.set()
+
+
+def test_score_commit_preferences_require_write_guard_and_default_to_ten(app, monkeypatch):
+    from decompnet.app import score_commits
+    client, net, _ = app
+    calls = []
+    def configure(net, slug, enabled, threshold, folder):
+        calls.append((slug, enabled, threshold, folder))
+        return {'enabled':enabled, 'threshold':threshold}
+    monkeypatch.setattr(score_commits, 'configure', configure)
+    data = {'slug':'game', 'enabled':True, 'folder':'/repo'}
+    assert client.post('/api/repository-score-commits', json=data).status_code == 403
+    response = client.post('/api/repository-score-commits', json=data, headers={'X-Decomp':'1'})
+    assert response.status_code == 200 and response.json()['threshold'] == 10
+    assert calls == [('game', True, 10, '/repo')]

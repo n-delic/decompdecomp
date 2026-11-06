@@ -108,6 +108,7 @@ function renderSteering(ov) {
   $("saveAboutFork").hidden = ov.kind !== "fork";
   $("repositorySync").hidden = false;
   $("repositoryAutoCommitGroup").hidden = ov.kind === "fork";
+  $("repositoryScoreCommitGroup").hidden = ov.kind === "fork";
   $("repositorySyncActions").hidden = ov.kind === "fork";
   $("repositorySyncHelp").hidden = ov.kind === "fork";
   $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Version history and sharing";
@@ -116,6 +117,7 @@ function renderSteering(ov) {
   if (typeof refreshRepositorySetup === "function") refreshRepositorySetup();
   refreshRepositoryPush();
   renderRepositoryAutoCommit(ov.auto_commit);
+  if (typeof renderRepositoryScoreCommits === "function") renderRepositoryScoreCommits(ov.score_commits);
   if (typeof renderRepositoryAutoPush === "function") renderRepositoryAutoPush(ov.auto_push);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
