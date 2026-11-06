@@ -2433,7 +2433,7 @@ class ForkEngine:
         db.execute("UPDATE functions SET status='matched', best_score=0, matched_at=?, matched_agent_id=?, "
                    "matched_source=COALESCE(?, matched_source, best_source) WHERE id=?",
                    (time.time(), agent.id if agent else None, source, r["id"]))
-        db.execute("DELETE FROM claims WHERE function_id=?", (r["id"],))
+        self.net._release_matched_claim(db,r["id"],agent.id if agent else None)
         self.net._event(db, proj["id"], agent.id if agent else None, "match", r["name"])
         self.net.on_match(proj, r["id"], agent)
 

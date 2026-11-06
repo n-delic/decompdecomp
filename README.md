@@ -1861,3 +1861,12 @@ problems and do not consume a candidate repair attempt. This does not relocate S
 sort files or imported projects' own build-system scratch files.
 
 Room submissions leave the active verification queue when every profile in their current search has failed. Their source and diagnostics remain archived; a new source/header submission creates new evidence. Partial searches and temporary claim/input failures remain pending.
+
+### Applying a verified match while an agent is working
+
+**Test all non-matches → Recheck & apply** can save an exact match even when an agent
+has claimed the function. The final check still verifies the source against the current
+target, header and compiler inputs. Only a saved exact match releases the old claim.
+The displaced CLI conversation restarts with another eligible function; API helpers discard
+obsolete tool calls at the next response or tool boundary. Workers that already moved to
+another function keep running. Failed checks keep their claims and saved work.

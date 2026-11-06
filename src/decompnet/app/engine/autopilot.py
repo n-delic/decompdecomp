@@ -141,24 +141,41 @@ class AutopilotMixin:
         if any(c["status"] in ("checking", "waiting") for c in self.cfg(proj).get("range_checks", [])):
             self.rangechecks.recheck(proj["slug"])  # a neighbour of a suggested range may have spoken
 
-    def try_quietly(self, agent, proj, fn, source: str, before_record=None) -> dict:
-        """Judge one candidate for a function nobody holds (autopilot's tries): held only while it compiles,
-        recorded as an attempt like any other. {"matched", "score"}."""
+    def try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
+        """Judge a scoped candidate. Exact-only rechecks may supersede a claim after an exact save;
+        ordinary autopilot attempts acquire their own short claim. {"matched", "score"}."""
         with self.progress.judging(proj["slug"]) if hasattr(self, "progress") else nullcontext():
-            return AutopilotMixin._try_quietly(self, agent, proj, fn, source, **({'before_record': before_record} if before_record is not None else {}))
+            return AutopilotMixin._try_quietly(self, agent, proj, fn, source, **({'before_record': before_record} if before_record is not None else {}), exact_only=exact_only)
 
-    def _try_quietly(self, agent, proj, fn, source: str, before_record=None) -> dict:
+    def _try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
         from ..boundary_repairs import blocked
         if fn["id"] in blocked(self,proj):raise NetworkError("Review this function boundary before starting a local search.")
         fn = self.store.one("SELECT * FROM functions WHERE id=?", fn["id"])
         if fn is None or fn["status"] != "open":
             raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")
-        now = time.time()
-        with self.store.tx() as db:
-            self._expire_claims(db)
-            if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
-                raise NetworkError(f"{fn['name']} is claimed")
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
+        if exact_only:
+            from ..source_preparation import inputs
+            # The frozen source being judged remains valid if an agent saves a newer draft.
+            # Target, boundaries, headers, symbols and compiler inputs must still be identical.
+            def signature(project, function):
+                return (inputs(self,project,{**dict(function),'best_source':None}),
+                        tuple(function[k] for k in ('meta','rom_offset','n_insns')),
+                        project['arch'],project['big_endian'])
+            expected = signature(proj,fn)
+            def validate():
+                latest=self.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+                current=self.store.one('SELECT * FROM projects WHERE id=?',proj['id'])
+                if (latest is None or latest['status']!='open' or current is None
+                        or signature(current,latest)!=expected):
+                    raise NetworkError('Function or build inputs changed during exact verification. Recheck the match.')
+                if before_record is not None:before_record()
+        else:
+            now = time.time()
+            with self.store.tx() as db:
+                self._expire_claims(db)
+                if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
+                    raise NetworkError(f"{fn['name']} is claimed")
+                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
         try:
             ctx = self._context(proj["id"], fn["unit"])
             result = self._compile(proj, ctx["header"], source, fn)
@@ -170,8 +187,11 @@ class AutopilotMixin:
             d = scoring.diff(self._target_obj(fn, proj), cand)
             if verdict is not None:
                 d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+            if exact_only and not d.bytes_match:
+                return {"matched":False,"score":d.score}
             self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
-                         effective_settings=getattr(result, 'effective_settings', None), before_record=before_record)
+                         effective_settings=getattr(result, 'effective_settings', None),
+                         before_record=validate if exact_only else before_record)
             from ...source_lines import mismatches
             from ..repair_localisation import bind
             locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
@@ -181,8 +201,9 @@ class AutopilotMixin:
                     "candidate_target": cand.code.hex(),
                     "candidate_relocs": json.dumps([(r.offset, r.type, 0) for r in cand.relocs])}
         finally:
-            with self.store.tx() as db:
-                db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
+            if not exact_only:
+                with self.store.tx() as db:
+                    db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
 
     def _autopilot_one(self, agent, proj, fid: int) -> str:
         """match | near | far | fail | skip, for one function's draft. A draft autopilot already judged with the same

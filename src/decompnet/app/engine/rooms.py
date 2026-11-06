@@ -115,7 +115,7 @@ class RoomMixin:
                 return
             db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, matched_at=?, "
                        "best_score=0, best_source=? WHERE id=?", (source, aid, time.time(), source, row["id"]))
-            db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+            self._release_matched_claim(db,row["id"],aid)
 
     def apply_remote_match_named(self, slug: str, name: str, agent_name: str) -> None:
         """A git project's room: who matched a function (the code itself arrives with the host's commits)."""
@@ -131,7 +131,7 @@ class RoomMixin:
                            (aid, time.time(), row["id"]))
             elif row["matched_agent_id"] is None:
                 db.execute("UPDATE functions SET matched_agent_id=? WHERE id=?", (aid, row["id"]))
-            db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+            self._release_matched_claim(db,row["id"],aid)
 
     def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
         proj = self._project(slug)

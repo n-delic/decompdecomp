@@ -1482,3 +1482,85 @@ def test_retry_paused_without_existing_runner_does_not_issue_credentials(tmp_pat
     assert manager.retry_paused(session.id)=={'resumed':0}
     row=net.store.one('SELECT id,token_hash FROM agents WHERE name=?',session.agent_name)
     assert seen[0].id==row['id'] and row['token_hash'].startswith('attribution:')
+
+
+def test_external_match_rotates_only_displaced_matching_worker(tmp_path,quiet,monkeypatch):
+    net=_game(tmp_path,functions=2)
+    manager=agents.Manager(net,tmp_path,URL)
+    owner,_=net.local_agent('displaced')
+    worker=agents.Session('1','codex','Worker','game','displaced',{'resume_functions':['f0'],'resume_conversation':'old'},state='working')
+    other=agents.Session('2','codex','Other','game','other',{},state='working')
+    polish=agents.Session('3','codex','Polish','game','displaced',{'task':'readable'},state='working')
+    worker.proc=object();ended=[]
+    monkeypatch.setattr(agents,'_terminate',lambda proc:ended.append(proc))
+    manager.sessions={s.id:s for s in (worker,other,polish)}
+    pid=net.store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='matched' WHERE name='f0'")
+    manager.matched_elsewhere(owner.id,'f0',pid)
+    assert worker.rotated and not worker.stop.is_set()
+    assert not other.rotated and not polish.rotated
+    assert ended==[worker.proc]
+    assert not worker.options.get('resume_functions') and not worker.options.get('resume_conversation')
+    assert 'Claim a different' in worker.continuation_note
+    assert net.claim_row(owner,'game',None)['name']=='f1'
+
+
+def test_external_match_does_not_rotate_worker_already_on_another_function(tmp_path,quiet):
+    net=_game(tmp_path,functions=2)
+    manager=agents.Manager(net,tmp_path,URL)
+    owner,_=net.local_agent('displaced')
+    s=agents.Session('1','codex','Worker','game','displaced',{},state='working')
+    manager.sessions={s.id:s}
+    pid=net.store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    net.claim_row(owner,'game','f1')
+    manager.matched_elsewhere(owner.id,'f0',pid)
+    assert not s.rotated
+
+
+def test_api_external_match_discards_obsolete_tools_but_accounts_response(tmp_path,monkeypatch):
+    import httpx
+
+    _no_agent_settings(monkeypatch)
+    net=_game(tmp_path,functions=2)
+    manager=agents.Manager(net,tmp_path,URL)
+    manager.prompt=lambda s:'task'
+    manager.prepare_session=lambda *a,**kw:None
+    s=manager._record('game','api','api-m-1','API',{'base_url':'http://mock/v1','model':'m','context_tokens':32768})
+    s.state='working'
+    owner,_=net.local_agent(s.agent_name)
+    net.claim_row(owner,'game','f0')
+    pid=net.store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched' WHERE name='f0'")
+            db.execute('DELETE FROM claims WHERE agent_id=?',(owner.id,))
+        manager.matched_elsewhere(owner.id,'f0',pid)
+        return httpx.Response(200,json={'choices':[{'message':{'role':'assistant','tool_calls':[
+            {'id':'old','type':'function','function':{'name':'compile_and_diff','arguments':'{}'}}]}}],
+            'usage':{'prompt_tokens':100,'completion_tokens':5}})
+    real=httpx.Client
+    monkeypatch.setattr(httpx,'Client',lambda **kw:real(transport=httpx.MockTransport(handler),**kw))
+    monkeypatch.setattr(agents.tools,'call',lambda *args:pytest.fail('Obsolete tool must not run'))
+    assert kinds.get('api').run(manager,s,owner)
+    assert s.rotated and len(calls)==1
+    assert s.usage['tokens']==105
+
+
+@pytest.mark.parametrize('path',['room','unit'])
+def test_remote_and_imported_unit_matches_handoff_displaced_worker(tmp_path,quiet,monkeypatch,path):
+    net=_game(tmp_path,functions=2)
+    manager=agents.Manager(net,tmp_path,URL)
+    owner,_=net.local_agent('displaced')
+    s=agents.Session('1','codex','Worker','game','displaced',{},state='working')
+    manager.sessions={s.id:s}
+    net.claim_row(owner,'game','f0')
+    monkeypatch.setattr(net,'on_match',lambda *args:None)
+    if path=='room':net.apply_remote_match_named('game','f0','remote-solver')
+    else:
+        proj=net._project('game');row=net._function('f0','game')
+        with net.store.tx() as db:net.forks._matched(db,proj,row,None,None)
+    assert net._function('f0','game')['status']=='matched'
+    assert not net.store.one('SELECT 1 FROM claims WHERE agent_id=?',owner.id)
+    assert s.rotated and net.claim_row(owner,'game',None)['name']=='f1'

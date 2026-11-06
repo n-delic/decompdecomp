@@ -166,15 +166,19 @@ def test_apply_rejects_stale_source_and_overlay_addresses(net, monkeypatch):
     assert 'overlay' in result['failures'][0]['reason']
 
 
-def test_apply_refuses_active_claims(net, monkeypatch):
+def test_apply_rechecks_active_claims(net, monkeypatch):
     agent, _ = net.local_agent('test-worker')
     fn = net._function('f3', 'game')
     import time
     with net.store.tx() as db:
         db.execute('INSERT INTO claims(function_id,agent_id,expires_at) VALUES(?,?,?)', (fn['id'],agent.id,time.time()+3600))
-    monkeypatch.setattr(net, '_judge_with', lambda *args:pytest.fail('busy functions must be skipped'))
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(True,NS(score=0),''))
+    calls=[]
+    monkeypatch.setattr(net,'apply_function_compiler',lambda *args:calls.append(args) or {'newly_matched':True})
     result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
-    assert result['failed'] == 1 and 'agent is working' in result['failures'][0]['reason']
+    assert result['passed']==1 and calls==[]
+    assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
+    assert net._function('f3','game')['status']=='matched'
 
 
 def test_apply_never_changes_untested_neighbours(net, monkeypatch):
@@ -219,7 +223,7 @@ def test_safe_range_isolates_overlapping_extent_and_preserves_other_match(net, m
         verified.extend(fn['name'] for fn in only)
         return [(fn['name'], 'different bytes') for fn in only if fn['name'] == 'neighbor']
     monkeypatch.setattr(net, 'regression_test', regression)
-    def save(agent, proj, fn, source):
+    def save(agent, proj, fn, source, **options):
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=?", (source, fn['id']))
     monkeypatch.setattr(net, 'try_quietly', save)
@@ -275,7 +279,7 @@ def test_bulk_apply_scopes_same_address_overlays_by_rom_location(net, monkeypatc
     def regression(proj, agent, only, **kwargs):
         return [(fn['name'],'different bytes') for fn in only if fn['name']=='other_overlay']
     monkeypatch.setattr(net,'regression_test',regression)
-    def save(agent, proj, fn, source):
+    def save(agent, proj, fn, source, **options):
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=?",(source,fn['id']))
     monkeypatch.setattr(net,'try_quietly',save)
@@ -391,14 +395,16 @@ def test_failed_batch_record_rolls_back_settings_matches_and_notifications(net,m
     assert not notifications
 
 
-def test_claim_acquired_during_check_is_preserved_and_candidate_skipped(net,monkeypatch):
+def test_claim_acquired_during_check_is_redirected_after_exact_commit(net,monkeypatch):
     import time
     worker,_=net.local_agent('other-worker')
     def judge(proj,fn,*args):
         with net.store.tx() as db:db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],worker.id,time.time(),time.time()+3600))
         return True,NS(score=0),''
     monkeypatch.setattr(net,'_judge_with',judge)
+    notifications=[]
+    monkeypatch.setattr(net,'on_external_match',lambda *args:notifications.append((args,net._function('f3','game')['status'])),raising=False)
     result=trial.apply_matches(net,'game',PROFILE,['f3'])
-    assert result['failed']==1 and result['passed']==0
-    assert net.store.one('SELECT agent_id FROM claims')['agent_id']==worker.id
-    assert not net.store.all('SELECT * FROM attempts')
+    assert result['failed']==0 and result['passed']==1
+    assert not net.store.one('SELECT agent_id FROM claims')
+    assert notifications[0][0][0]==worker.id and notifications[0][1]=='matched'

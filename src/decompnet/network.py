@@ -10,6 +10,7 @@ from __future__ import annotations
 import collections
 import hashlib
 import json
+import logging
 import re
 import secrets
 import threading
@@ -1761,7 +1762,7 @@ class Network:
                 db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, "
                            "matched_at=?, best_score=0, best_source=? WHERE id=?",
                            (source, agent.id, now, source, fn["id"]))
-                db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
+                self._release_matched_claim(db,fn['id'],agent.id)
                 self._event(db, fn["project_id"], agent.id, "match", fn["name"])
             db.execute('UPDATE attempts SET score_before=?,score_improved=? WHERE id=?',
                        (current['best_score'], int(bool(improved or (matched and not stale and current['status'] != 'matched'))), attempt))
@@ -1777,6 +1778,19 @@ class Network:
             self.store.after_commit(lambda: self.on_match(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
         elif improved:
             self.on_improvement(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
+
+    def _release_matched_claim(self, db, function_id, matching_agent_id=None):
+        """The saved match owns the function; notify its displaced worker only after commit."""
+        owner=db.execute('SELECT c.agent_id,f.name,f.project_id FROM claims c JOIN functions f ON f.id=c.function_id '
+                         'WHERE c.function_id=?',(function_id,)).fetchone()
+        if owner and owner['agent_id']!=matching_agent_id and (notify:=getattr(self,'on_external_match',None)):
+            def handoff():
+                try:notify(owner['agent_id'],owner['name'],owner['project_id'])
+                except Exception:
+                    # Worker notification must never turn a committed match into a failed save.
+                    logging.getLogger('decompdecomp').exception('Could not redirect worker after an external match')
+            self.store.after_commit(handoff)
+        db.execute('DELETE FROM claims WHERE function_id=?',(function_id,))
 
     def on_improvement(self, proj, function_id: int) -> None:
         """A better unfinished candidate was saved; subclasses may schedule bounded reuse."""

@@ -77,8 +77,6 @@ def parallel(items,check,cancel):
 
 def eligible(net,proj,fn,identities):
     if fn['status']!='open':raise NetworkError('No longer unmatched; skipped.')
-    if net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):
-        raise NetworkError('An agent is working on this function; retry after it releases the claim.')
     siblings=[row for row in identities if row['vram']==fn['vram']]
     if len(siblings)!=1 and (fn['rom_offset'] is None or any(r['id']!=fn['id'] and r['rom_offset']==fn['rom_offset'] for r in siblings)):
         raise NetworkError('Shares an overlay address without a unique ROM location; identify its original overlay before applying.')
@@ -129,7 +127,7 @@ def apply(net,slug,selected,names,log,receipt=None):
         cancel()
         agent,_=net.local_agent('autopilot')
         # Match the usual record lock order: project lock before SQLite writer. All candidates
-        # are revalidated before publishing settings; claims cannot appear inside this transaction.
+        # are revalidated before publishing settings; exact publication releases displaced claims through the normal recorder.
         with net.progress._project_lock(slug),net.progress.view(),net.store.tx() as db:
             net.progress.local.judging=(slug,net.progress.revisions.get(slug,0))
             current=net._project(slug);current_env=environment(net,current,selected)

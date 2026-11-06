@@ -3,7 +3,7 @@
 - Done: compiler-profile match application verifies up to eight candidates concurrently, reuses
   short-lived server-owned exact verdicts only for unchanged function inputs, and publishes
   settings/matches in one guarded transaction. Unrelated agent progress no longer invalidates
-  every passing candidate; claimed, changed and ambiguous overlay entries are skipped.
+  every passing candidate; changed and ambiguous overlay entries are skipped. Exact matches release claims and redirect displaced workers.
 
 - Done: SQLite writer acquisition releases the process-local mutex between short busy
   waits, retaining the configured timeout and never replaying transaction bodies.
@@ -2861,3 +2861,8 @@ need independent evidence before receiving this specific GNU C repair.
   known32-bit C profile (C++ reference calls need a different proof) and uses
   a visible byte load, rejects unsafe/unknown bindings and introduces no storage,
   reads or assignments. A private unmatched witness improved1848 to1733, not exact.
+
+- Done: applying verified compiler-profile matches no longer skips claimed ROM functions.
+  Exact-only rechecks retain input validation, release the displaced claim only on commit,
+  and rotate its managed matching worker onto eligible work. CLI conversations are ended;
+  API conversations switch at the next response/tool boundary without replaying obsolete calls.
