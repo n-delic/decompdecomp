@@ -1,7 +1,7 @@
 /* Existing commits only: polling reads local refs; the explicit push refreshes origin first. */
 let repositoryPushKey = "", repositoryPushState = null, repositoryPushChecked = 0;
 let repositoryPushRequest = 0, repositoryPushPending = false, repositoryPushBusy = false, repositoryPushJob = null;
-function currentRepositoryPushKey() { return `${S.slug || ""}\n${$("repositoryFolder").value.trim()}`; }
+function currentRepositoryPushKey() { return `${S.slug || ""}\n${(typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot)}`; }
 function renderRepositoryPush(state) {
   repositoryPushState = state;
   const status = $("repositoryPushState"), details = $("repositoryUnpushedDetails");
@@ -22,11 +22,11 @@ async function refreshRepositoryPush(force = false) {
     $("repositoryPushStop").hidden = true;
     renderRepositoryPush(null);
   }
-  if (!$("repositoryFolder").value.trim() || repositoryPushPending || repositoryPushBusy || (!force && Date.now() - repositoryPushChecked < 10000)) return;
+  if (!(typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot) || repositoryPushPending || repositoryPushBusy || (!force && Date.now() - repositoryPushChecked < 10000)) return;
   const request = ++repositoryPushRequest;
   repositoryPushPending = true;
   try {
-    const state = await api(`/api/repository-push?slug=${encodeURIComponent(S.slug)}&folder=${encodeURIComponent($("repositoryFolder").value.trim())}`);
+    const state = await api(`/api/repository-push?slug=${encodeURIComponent(S.slug)}&folder=${encodeURIComponent((typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot))}`);
     if (key === currentRepositoryPushKey() && request === repositoryPushRequest) renderRepositoryPush(state);
   } catch (error) {
     if (key === currentRepositoryPushKey() && request === repositoryPushRequest) {
@@ -49,7 +49,7 @@ $("repositoryPushStop").onclick = async () => {
 };
 $("repositoryPushGo").onclick = async () => {
   if (repositoryPushBusy || !repositoryPushState?.can_push) return;
-  const key = currentRepositoryPushKey(), slug = S.slug, folder = $("repositoryFolder").value.trim();
+  const key = currentRepositoryPushKey(), slug = S.slug, folder = (typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot);
   const log = $("repositoryPushLog"), stop = $("repositoryPushStop");
   const active = () => key === currentRepositoryPushKey();
   repositoryPushBusy = true;

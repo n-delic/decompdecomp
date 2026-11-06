@@ -110,9 +110,10 @@ function renderSteering(ov) {
   $("repositoryAutoCommitGroup").hidden = ov.kind === "fork";
   $("repositorySyncActions").hidden = ov.kind === "fork";
   $("repositorySyncHelp").hidden = ov.kind === "fork";
-  $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Sync your verified matches";
-  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Commit your saved progress, or copy matching C into a rebuildable export checkout.";
+  $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Version history and sharing";
+  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Keep local progress commits, automatically commit new matches, and push them when ready.";
   loadRepositoryFolder(S.slug);
+  if (typeof refreshRepositorySetup === "function") refreshRepositorySetup();
   refreshRepositoryPush();
   renderRepositoryAutoCommit(ov.auto_commit);
   renderKnowledge();
@@ -154,7 +155,7 @@ $("repositoryAutoCommit").onchange = async () => {
   repositoryAutoCommitBusy = true;
   const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [field], "Automatic commit preference saved.");
   try {
-    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:$("repositoryFolder").value.trim()}});
+    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:(typeof repositorySaveRoot === "undefined" ? "" : repositorySaveRoot) || $("repositoryFolder").value.trim()}});
     if (S.slug === slug) {
       repositoryAutoCommitBusy = false;
       if (S.ov) S.ov.auto_commit = state;
@@ -1063,14 +1064,27 @@ $("recheckBtn").onclick = async () => {
 };
 
 $("saveGo").onclick = async () => {
-  $("saveGo").disabled = true;
+  const slug = S.slug, log = $("saveLog");
+  const finish = beginWork(log, "Saving progress", [$("saveGo")], "Progress saved.");
+  showJobError(log, "");
   try {
-    const r = await api("/api/save", { method: "POST", body: { slug: S.slug, folder: $("saveFolder").value.trim() || undefined } });
+    const r = await api("/api/save", { method: "POST", body: { slug, folder: $("saveFolder").value.trim() || undefined } });
+    if (S.slug !== slug) return;
+    S.ov.save_folder = r.folder;
+    if (typeof refreshRepositorySetup === "function") { repositorySetupSlug = ""; refreshRepositorySetup(); }
     $("saveState").textContent = `saved ${clock(Date.now() / 1000).slice(0, 5)}`;
     $("saveLog").hidden = false;
     $("saveLog").textContent = S.ov.kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
       : `Saved to ${r.folder}: ${plural(r.matched || 0, "matched function")}, ${plural(r.best || 0, "best attempt")}.`;
-  } catch (e) { toast(esc(e.message), "err"); } finally { $("saveGo").disabled = false; }
+  } catch (e) { if (S.slug === slug) showJobError(log, e.message); }
+  finally {
+    finish();
+    if (S.slug !== slug) {
+      log.hidden = true;
+      if (log._workStatus) log._workStatus.hidden = true;
+      if (log._workBar) log._workBar.hidden = true;
+    }
+  }
 };
 
 /* ------------------------------------------------------------------ the compiler, as one answer
