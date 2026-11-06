@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from decompnet import match_bundle
 from tests.test_claims import _game
 
@@ -91,3 +93,19 @@ def test_imported_history_cannot_claim_a_new_regression(tmp_path):
         db.execute('UPDATE verified_matches SET details=?',(json.dumps(detail),))
     agent,_=net.local_agent('test');net._record(fn,agent,20,source,1)
     assert match_bundle.status(net,fn)['regression'] is None
+
+
+@pytest.mark.parametrize('score', [0, 7, None])
+def test_scratch_rechecks_warn_only_when_the_saved_exact_source_fails(tmp_path, score):
+    net,source=setup_bundle(tmp_path);fn=net._function('f','game')
+    original=dict(net.store.one('SELECT * FROM verified_matches WHERE function_id=?',fn['id']))
+    owner=fn['matched_agent_id'];matched_at=fn['matched_at']
+    agent,_=net.local_agent('scratch')
+    # Scratch and polishing checks deliberately do not award a second match.
+    net._record(fn,agent,score,source,1,matched=False)
+    current=net._function('f','game');report=match_bundle.status(net,current)
+    assert bool(report['regression']) == (score != 0)
+    assert net.store.one("SELECT COUNT(*) n FROM events WHERE kind='regression'")['n']==int(score != 0)
+    assert current['status']=='matched' and current['matched_source']==source
+    assert current['matched_agent_id']==owner and current['matched_at']==matched_at
+    assert dict(net.store.one('SELECT * FROM verified_matches WHERE function_id=?',fn['id']))==original

@@ -155,6 +155,10 @@ ALERT_SCHEMA = '''CREATE TABLE IF NOT EXISTS verification_regressions(
 
 def failed_recheck(db, fn, attempt_id, source, score):
     """Only a new judge result for the captured exact source can raise an alarm, never a random variant."""
+    # Scratch and polishing attempts with score zero still passed the judge, even though
+    # _record's matched flag is false to avoid awarding another match or replacing its owner.
+    if score == 0:
+        return False
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='verified_matches'").fetchone():
         return False
     row = db.execute('SELECT details,source FROM verified_matches WHERE function_id=?',(fn['id'],)).fetchone()

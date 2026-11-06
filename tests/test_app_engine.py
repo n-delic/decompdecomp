@@ -295,3 +295,19 @@ def test_function_detail_defers_optional_name_search(net, monkeypatch):
     assert detail['cross_game_hints'] == []
     with pytest.raises(AssertionError, match='Optional similarity search'):
         net.function_detail('demo-quest-64', fn['name'])
+
+
+def test_an_exact_scratch_recheck_keeps_credit_without_a_regression(built, tmp_path):  # noqa: F811
+    from decompnet import match_bundle
+
+    net=RomNetwork(tmp_path/'scratch.db',tmp_path)
+    slug=net.import_rom(built,confirmed=True,log=lambda *_:None)
+    owner,_=net.local_agent('owner');scratch,_=net.local_agent('scratch')
+    net.split_function(owner,slug,'func_800007C4','0x800007D0')
+    assert net.attempt(owner,'func_800007D0',CLAMP,slug)['matched']
+    result=net.attempt(scratch,'func_800007D0',CLAMP,slug)
+    assert 'scratch' in result['text'] and result['score']==0 and not result['matched']
+    fn=net._function('func_800007D0',slug)
+    assert fn['status']=='matched' and fn['matched_agent_id']==owner.id
+    assert match_bundle.status(net,fn)['regression'] is None
+    assert not net.store.one("SELECT 1 FROM events WHERE kind='regression'")
