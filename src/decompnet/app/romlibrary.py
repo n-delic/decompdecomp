@@ -1,4 +1,4 @@
-"""Read-only, recursive hash lookup for imported projects. No filename guesses or archive extraction."""
+"""Read-only, bounded hash lookup for games used by imported public projects."""
 
 from __future__ import annotations
 
@@ -17,20 +17,19 @@ MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_SECONDS = 30
 ARCHIVES = {'.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz'}
 # Windows ctime is creation time and may not change after a same-size overwrite.
-# Windows stat timestamps can remain unchanged after a same-size overwrite (ctime is creation time).
-# Rehash there rather than offering a stale ROM match. POSIX inode-change timestamps invalidate the cache.
-CACHE_HASHES = os.name != "nt"
+CACHE_HASHES = os.name != 'nt'
 
 
 @lru_cache(maxsize=10000)
 def _hash(path: str, size: int, mtime: int, ctime: int, platform: str) -> str:
-    if platform == "raw":
-        with Path(path).open("rb") as stream:
-            return hashlib.file_digest(stream, "sha1").hexdigest()
+    if platform == 'raw':
+        with Path(path).open('rb') as stream:
+            return hashlib.file_digest(stream, 'sha1').hexdigest()
     return consoles.get(platform).library_sha1(Path(path))
 
 
 def fingerprint(path: Path, platform: str) -> str | None:
+    """Hash a stable regular file using its console's game identity when available."""
     try:
         stat = path.stat()
         if not path.is_file():
@@ -53,7 +52,7 @@ def _candidate(path: Path, platform: str) -> int:
         size = path.stat().st_size
         if not 0 < size <= MAX_FILE_BYTES:
             return 0
-        if platform and platform != "raw":
+        if platform:
             if not consoles.get(platform).library_candidate(path, size):
                 return 0
         else:
@@ -70,35 +69,36 @@ def _candidate(path: Path, platform: str) -> int:
 
 
 def find(project, needs: dict, folder: str, log=print) -> dict:
-    versions = {str(v.get('sha1', '')).lower(): v.get('version')
-                for v in needs.get('rom_versions', [])}
-    expected = {str(v.get('sha1', '')).lower() for v in needs.get('rom_versions', [])}
-    expected.add(str(needs.get('sha1') or '').lower())
-    expected = {v for v in expected if re.fullmatch('[0-9a-f]{40}', v)}
+    """Find a supported game version within fixed file, byte and time budgets."""
+    expected = {str(v['sha1']).lower(): str(v['version']) for v in needs.get('rom_versions', [])
+                if isinstance(v, dict) and re.fullmatch('[0-9a-fA-F]{40}', str(v.get('sha1', '')))
+                and isinstance(v.get('version'), str)}
+    default = str(needs.get('sha1') or '').lower()
+    if re.fullmatch('[0-9a-f]{40}', default):
+        expected.setdefault(default, None)
     if not expected:
-        return {'path': None, 'reason': 'This project does not declare an expected ROM SHA-1.'}
+        return {'path': None, 'reason': 'This project does not declare an expected game SHA-1.'}
     platform = project.detect_platform()
     local = project.root / needs['path'] if needs.get('path') else None
-    local_digest = fingerprint(local, platform) if local else None
-    if local and local_digest in expected:
-        result = {'path': str(local), 'in_project': fingerprint(local, 'raw') == str(needs.get('sha1') or '').lower()}
-        if local_digest in versions:
-            result['version'] = versions[local_digest]
-            result['in_project'] = result['in_project'] and result['version'] == needs.get('version', result['version'])
-        return result
+    # Retry setup without copying only when the file already has the exact bytes the project expects.
+    if local and (digest := fingerprint(local, platform)) in expected:
+        # Another edition or byte order still needs placement/conversion before setup.
+        return {'path': str(local), 'in_project': fingerprint(local, 'raw') == default,
+                'version': expected[digest]}
     if not folder:
-        return {'path': None, 'reason': 'Set a ROM library folder in Settings to find your game automatically.'}
+        return {'path': None, 'reason': 'Set a ROM library folder in Settings to find your game.'}
     root = Path(folder).expanduser()
     if not root.is_dir():
         return {'path': None, 'reason': 'The ROM library folder is unavailable. Check its path in Settings.'}
+
     log('Searching the ROM library and its subfolders for the expected SHA-1…')
-    count = 0
-    skipped = 0
-    hashed = 0
+    count = skipped = hashed = 0
     started = time.monotonic()
+
     def inaccessible(error):
         nonlocal skipped
         skipped += 1
+
     for parent, dirs, files in os.walk(root, followlinks=False, onerror=inaccessible):
         dirs[:] = sorted(d for d in dirs if not (Path(parent, d).is_symlink() or os.path.isjunction(Path(parent, d))))
         for name in sorted(files):
@@ -106,7 +106,7 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
                 return {'path': None, 'scanned': count, 'skipped': skipped,
                         'reason': f'Search stopped after {count} files and {hashed} bytes. Choose the file manually '
                                   'or use a smaller ROM library folder.'}
-            path = Path(parent) / name
+            path = Path(parent, name)
             size = _candidate(path, platform)
             if not size:
                 skipped += 1
@@ -116,15 +116,12 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
                         'reason': 'Search reached its 2 GiB read limit. Choose the file manually or use a smaller folder.'}
             count += 1
             hashed += size
-            digest = fingerprint(path, platform)
-            if digest in expected:
+            if (digest := fingerprint(path, platform)) in expected:
                 log(f'Found a matching game: {path}')
-                result = {'path': str(path), 'in_project': False, 'scanned': count, 'skipped': skipped}
-                if digest in versions:
-                    result['version'] = versions[digest]
-                return result
+                return {'path': str(path), 'in_project': False, 'version': expected[digest],
+                        'scanned': count, 'skipped': skipped}
             if count % 100 == 0:
                 log(f'Checked {count} files…')
     return {'path': None, 'scanned': count, 'skipped': skipped,
-            'reason': f'No matching ROM found in {count} files. {skipped} folders could not be read. '
+            'reason': f'No matching game found in {count} files. {skipped} files or folders were skipped. '
                       'Choose a file manually if it is archived or outside this folder.'}
