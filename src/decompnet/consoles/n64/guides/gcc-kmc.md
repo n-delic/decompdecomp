@@ -1013,3 +1013,12 @@ from the destination pseudo. One controlled case removed 30 register differences
 `unsigned_shift_staging` repair tries this for proven ordinary unsigned-int locals;
 do not apply it to signed shifts, volatile/escaped objects or guessed-width types.
 Do not add padding to compensate for a remaining stack-frame difference.
+
+A real named component index can change combine/allocation even when its value
+is the literal1 or2. `component_index_capture` tries bounded macro-load/array-read
+pairs with initialization dominance; it does not add dummy uses. A controlled
+coordinate interpolator improves357 to277 automatically, then177 using the existing
+statement-boundary proposal. It remains nonexact. Initializing the local earlier
+at entry regressed1202, so do not treat all equivalent constant captures as the
+same optimizer input. Preserve signed negative-even coordinate semantics and
+actual array/whole-object bounds; do not silently substitute unsigned arithmetic.

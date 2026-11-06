@@ -2795,3 +2795,9 @@ need independent evidence before receiving this specific GNU C repair.
   are preserved; ambiguous, small, disabled-library and colliding names stay out.
   A read-only real indexed project finds four exact identities among34 assembly
   routines (three still generated names). This is naming evidence, not matching C.
+
+- Done: bounded `component_index_capture` through shared agent/local/deep/iterative
+  repair generation, with C32 invocation guards, expression-macro checks and CFG
+  initialization dominance. A copied N64 draft improves357 to277; combining the
+  existing debug-boundary repair gives177, not exact. External PROJECT builds still
+  require complete invocation evidence before enabling this guarded family.

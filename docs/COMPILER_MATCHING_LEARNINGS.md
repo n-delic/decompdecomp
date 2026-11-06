@@ -4864,3 +4864,32 @@ int locals, valid literal shifts and nonzero tags; it preserves statement order,
 rejects ambiguous bindings/macros and uses the unchanged destination judge. Its
 C32 invocation requirement has the same external-command coverage limitation as
 `promoted_entry_local`.
+
+### Captured component index and combine copies (KMC GCC 2.7.2)
+
+Under `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a corrected signed-coordinate
+interpolator's native `perm_temp_for_expr` candidate improves357 to177 by binding
+an actual component index1 and consuming it in one coordinate-load macro and a
+later local-array read. Target and candidate now have476 bytes; register choices
+and a32-byte versus8-byte frame still differ. This is not an exact match.
+
+The parent independently reproduces177. One ablation that removes the local and
+substitutes its two literal uses while preserving generated formatting scores397
+and484 bytes, isolating a real contribution beyond pretty printing. Moving its
+initialization to function entry regresses1202: capture timing matters. A generated
+bounded shared `component_index_capture` proposal preserves original formatting
+and improves357 to277. Combining it with the **existing** statement-boundary
+proposal reproduces177. No new dummy operation, guard or target edit is involved.
+
+Earlier RTL locates the residual move in combine after signed offset/2 and scale
+back simplification. The24-byte frame in that earlier357 input is local storage,
+not an outgoing-call area; its exact extra allocation cause remains unproven.
+Do not claim the captured constant proves the allocator's entire frame decision.
+The analogous other-region/interval source also gives177, but its caller/output
+storage contracts require a separate joint audit before live acceptance.
+
+The deterministic family requires proven direct C32 scope, visible expression-only
+macros, real matching macro/array RHS indices1/2 and CFG dominance of the new
+initialization. It excludes hidden scope/control/type/line observers, preserves
+literal int type and creates only a genuinely consumed local. The same external
+PROJECT invocation-evidence coverage gap as promoted-entry repairs remains.
