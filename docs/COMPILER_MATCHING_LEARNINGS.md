@@ -5115,3 +5115,42 @@ selected C functions, including the separately validated FCSR accessor; all
 preserved. The copied normal prepared-source path also promoted this retained
 leaf while preserving the other 2,072 source hashes and profiles. These counts
 are private validation states, not claims of live deployment or adoption.
+
+
+## Read CP0 Status as architectural I/O, not a constant
+
+A retained SDK leaf reads CP0 register 12, returns its unsigned low word and
+has an empty return slot. The fixed `__builtin_mips_read_status()` operation
+exposes that architectural read to registered GNU MIPS backends. Source chooses
+no CP0 selector, opcode or GPR; GCC allocates the result and emits the return.
+The template contains only `mfc0 %0,$12`, with volatile and a memory clobber.
+
+A private linked GCC 2.7.2 KMC replay using
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` was raw exact in ordinary and `-da` builds.
+The actual initialization caller reads the word, ORs bit 29 (CU1), then passes
+it to the existing Status writer. Correcting its read prototype from signed
+to unsigned preserves exact linked bytes, including the earlier independently
+validated unsigned FCSR declaration. This source uses a hardware intrinsic; it
+does not prove the original handwritten SDK accessor was ordinary C.
+
+The primary [NEC VR4300 manual, section 6.3.5, pp. 165–166](https://hack64.net/docs/VR43XX.pdf#page=165)
+defines Status as processor mode, interrupt and diagnostic state; bit 29 is CU1.
+[MFC0, p. 469](https://hack64.net/docs/VR43XX.pdf#page=469) transfers the CP0
+word and sign-extends it in 64-bit mode. The returned C value here is the unsigned
+32-bit word. CP0 access can trap outside kernel mode when disabled. The volatile
+read remains observable even when discarded; its memory clobber is not CPU
+serialization, an interrupt lock, a Status write hazard sequence or a general
+ordering barrier for register-only expressions. Validation covers a standalone
+accessor, not arbitrary inlining into control-register changes.
+
+The shared seed recognizes only the complete contiguous three-word encoded
+Status-read ABI leaf and rejects other selectors, writes, nonempty slots,
+different output/return registers and unsupported backends. It proposes source
+for the unchanged compiler/link judge; it never reopens assembly automatically.
+
+The private full cartridge rebuilt 12,582,912 bytes exactly with 2,074 selected
+C functions, including the previously verified FCSR and Count accessors. All
+2,073 prior profiles and the other 2,072 selected objects remained unchanged.
+The normal copied prepared-source path promoted this leaf while preserving
+all 2,073 other selected source hashes and effective profiles. These are copied
+validation counts, not a claim of live adoption.

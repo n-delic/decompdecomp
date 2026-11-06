@@ -337,7 +337,10 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     `strict`: a context m2c can't read raises DraftError instead of drafting without it."""
     from .arch.mips_count import candidate as count_candidate
     from .arch.mips_fcsr import candidate as fcsr_candidate
+    from .arch.mips_status import candidate as status_candidate
     if source := fcsr_candidate(asm_text,name,toolchain_id):
+        return source
+    if source := status_candidate(asm_text,name,toolchain_id):
         return source
     if source := count_candidate(asm_text,name,toolchain_id):
         return source

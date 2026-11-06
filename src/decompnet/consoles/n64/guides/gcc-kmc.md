@@ -1133,3 +1133,14 @@ registers or instructions. A private ordinary/`-da` GCC 2.7.2 KMC replay with
 original handwritten-assembly provenance and use normal exact verification.
 Count wraps at 32 bits; access may trap outside privileged operation. This is
 not a CPU serialization primitive or a general register-expression barrier.
+
+
+### CP0 Status read accessors
+
+For a complete standalone `mfc0 v0,$12; jr ra; nop` leaf, registered GNU MIPS
+backends can draft `unsigned int f(void) { return __builtin_mips_read_status(); }`.
+This fixed architectural I/O preserves the read, including when discarded. It
+does not expose arbitrary assembly or selectors, and is not a CPU fence, Status
+writer or interrupt lock. Keep unsigned 32-bit caller declarations coherent and
+verify them normally. Preserve original handwritten-assembly provenance; a
+matching intrinsic-backed source does not show the SDK was written in portable C.

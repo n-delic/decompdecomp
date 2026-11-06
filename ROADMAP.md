@@ -2913,3 +2913,7 @@ need independent evidence before receiving this specific GNU C repair.
   Shared ROM/project machine drafting uses the same generator where encoded
   assembly is available. Retained assembly still requires explicit normal
   verification and approval; the seed does not change its classification.
+
+- Done: registered GNU MIPS fixed CP0 Status read with a bounded complete-leaf
+  seed, ordinary/diagnostic regression checks and no automatic assembly reopening.
+  Other backends and arbitrary CP0/control-register hazard sequences remain unsupported.
