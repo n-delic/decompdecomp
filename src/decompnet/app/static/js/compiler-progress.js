@@ -22,6 +22,14 @@ function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
     set('profile','Reading current project inputs. Saved-file synchronization continues separately.');
     return;
   }
+  if (progress?.phase === 'applying' && !result) {
+    set('queue', `Rechecking and applying settings for ${progress.function}`);
+    box.querySelector('[data-queue-bar]').removeAttribute('value');
+    set('current', progress.function);
+    set('tested', progress.stage);
+    set('profile', 'Verifying current inputs and saving the selected compiler profile.');
+    return;
+  }
   if (progress?.phase === 'eligibility' && !result) {
     const checked = progress.checked || 0, total = progress.scan_total || 0;
     const percent = total ? Math.round(100 * checked / total) : 0;
@@ -33,7 +41,7 @@ function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
     return;
   }
   const total = tally?.total, completed = result ? result.tried : (progress?.completed || 0);
-  set("queue", total == null ? (progress?.function ? `${completed} functions done · discovering remaining functions…` : "Preparing comparison…") : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} queued for another run` : ""}`);
+  set("queue", total == null ? (progress?.function ? `${completed} functions done · comparing ready functions (total pending)` : "Preparing comparison…") : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} queued for another run` : ""}`);
   const queueBar = box.querySelector("[data-queue-bar]");
   queueBar.max = total || 1;
   if(total==null)queueBar.removeAttribute('value');else queueBar.value=completed || 0;

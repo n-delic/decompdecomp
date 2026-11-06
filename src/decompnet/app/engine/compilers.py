@@ -400,7 +400,8 @@ class CompilerMixin:
                         full=batch
                     else:
                         loaded={r['id']:r for r in self.store.all(
-                            'SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
+                            'SELECT id,name,unit,vram,rom_offset,status,best_score,best_source,matched_source,meta,target,relocs '
+                            'FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
                             proj['id'],json.dumps([r['id'] for r in batch]))}
                         full=[loaded[r['id']] for r in batch if r['id'] in loaded]
                     pending=[]
@@ -431,6 +432,11 @@ class CompilerMixin:
             if n >= limit:
                 if all_installed:continue  # Count deferred work after the first results.
                 break
+            if all_installed and not function:
+                # Assembly and seeds are needed only for work actually selected to compile.
+                fn = self.store.one('SELECT * FROM functions WHERE project_id=? AND id=?', proj['id'], fn['id'])
+                if fn is None or fn['status'] in ('matched', 'asm'):
+                    continue
             source = self._comparison_source(fn)
             if not source:
                 continue
@@ -440,7 +446,8 @@ class CompilerMixin:
             if not candidates:
                 skipped += 1
                 continue
-            input_digest = planned_digests.get(fn["id"])
+            input_digest = (self._comparison_digest(proj, fn, source, candidates, shared)
+                            if all_installed else planned_digests.get(fn["id"]))
             digest = hashlib.sha1(json.dumps([source, candidates]).encode()).hexdigest()[:16]
             if tried.get(str(fn["vram"])) == digest:
                 continue
@@ -507,6 +514,8 @@ class CompilerMixin:
                 applied = False
                 apply_error = ""
                 if auto_apply and best_profile and (improved or matches):
+                    report({**progress, 'phase':'applying', 'stage':'Rechecking and applying best settings'})
+                    log(f"{fn['name']}: rechecking and applying best settings.")
                     check_cancel()
                     try:
                         current = self._function(fn["name"], slug)

@@ -3059,3 +3059,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
   streamed eligibility/content batches and visible timed preparation preserve comparison reuse.
 
 - Done: shutdown and restart preparation report flushed terminal stages, per-project final-save activity, failures and periodic elapsed-time updates; closing just the window explicitly says when background work continues.
+
+- Compiler comparison discovery reads only source and fingerprint inputs; assembly and seeds load only for selected compilations. Auto-apply has an explicit progress stage instead of appearing to discover remaining functions.
