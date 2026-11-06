@@ -267,6 +267,10 @@ class Agent:
         """One line of the agent's stderr as worth showing, or "" for noise: the last ones say why a session failed."""
         return line.strip()
 
+    def startup_failure(self, text: str) -> str | None:
+        """A CLI startup failure that stops before a model turn, or None for ordinary errors."""
+        return None
+
     def fatal(self, error: str) -> bool:
         """Whether an error it said is one every try would meet the same way (Antigravity refusing decompdecomp's
         tools): the helper pauses with it, instead of starting again."""

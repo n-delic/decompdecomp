@@ -1839,7 +1839,8 @@ class Manager:
 
         def drain_err():
             for line in proc.stderr:
-                if (text := k.clean_stderr(line)) and (not errors or errors[-1] != text):
+                text=k.clean_stderr(line).replace(token,'[redacted]')
+                if text and (not errors or errors[-1] != text):
                     errors.append(text)
         threading.Thread(target=feed_prompt, daemon=True).start()
         stderr_thread = threading.Thread(target=drain_err, daemon=True)
@@ -1891,6 +1892,11 @@ class Manager:
             s.push('info','Saved CLI conversation is unavailable. Continuing with saved function handoff and current project state.')
             return False
 
+        if code != 0 and not saw_tool and (startup := k.startup_failure('\n'.join([*errors,last_error]))):
+            message=startup.replace(token,'[redacted]')
+            s.push('error',message)
+            raise ToolConnectionUnavailable(message+' Retrying the required connection before starting another model turn.')
+
         refused = refused or next((text for text in errors if k.fatal(text)), "")
         if refused:
             raise Fatal(refused + " Review the agent settings and resolve this error before restarting.")  # every retry would meet it the same way
@@ -1928,6 +1934,7 @@ class Manager:
         if (agent.id, s.slug) in pending and not s.limited and not s.auth_failed:
             s.tool_handshake_failures += 1
             message = 'CLI tool handshake was not completed: the server preflight passed, but this agent never successfully called project_info. No new function was handed over.'
+            if errors:message += ' CLI startup diagnostics: '+ ' · '.join(list(errors)[-3:])[-600:]
             if s.tool_handshake_failures <= 1:
                 raise ToolConnectionUnavailable(message+' Reconnecting once; this requires another model request.')
             raise Fatal(message+' Automatic retries paused after two attempts. Review the CLI MCP startup diagnostics.')
