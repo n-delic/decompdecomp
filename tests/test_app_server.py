@@ -2774,3 +2774,12 @@ def test_close_window_keep_working_explains_background_state_in_terminal(app,mon
     response=client.post('/api/close',json={'keep':True},headers={'X-Decomp':'1'})
     assert response.status_code==200 and closed==[True]
     assert 'keep working in the background' in capsys.readouterr().err
+
+
+def test_tools_catalog_exposes_wibo_on_mac(app, monkeypatch):
+    client, net, manager = app
+    monkeypatch.setattr(toolchains, 'current_platform', lambda:'macos-arm64')
+    rows = client.get('/api/state').json()['toolchains']
+    row = next(t for t in rows if t['id'] == 'wibo')
+    assert row['supported'] and row['kind'] == 'tool'
+    assert 'Windows' in row['use'] and 'macOS' in row['use']

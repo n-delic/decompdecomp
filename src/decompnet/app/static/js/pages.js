@@ -130,9 +130,10 @@ function renderTools() {
     <p class="small">${vm.ready ? "✓ Ready" : esc(vm.why)}</p>
     <button class="ghost small-btn" id="prepareLinuxVm" type="button">${vm.ready ? "Check Linux runner" : "Prepare Linux runner"}</button></div>` : "";
   if ($("prepareLinuxVm")) $("prepareLinuxVm").onclick = prepareLinuxVm;
-  $("toolGrid").innerHTML = vmCard + rows.map((t) => `<div class="tool-card ${t.installed ? "ok" : ""}">
+  $("toolGrid").innerHTML = vmCard + rows.map((t) => `<div class="tool-card ${t.installed && !(t.missing_dependencies || []).length ? "ok" : ""}">
       <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}${t.linux_vm ? `<span class="chip-s">Linux VM</span>` : ""}</div>
       <p class="muted small">${esc(t.use)}</p>
+      ${(t.missing_dependencies || []).length ? `<p class="small warn-text">Required tools missing: ${t.missing_dependencies.map(d => esc(d.name)).join(", ")}. Install them to use this compiler.</p>` : ""}
       ${(t.copies || []).map((c) => `<div class="row copy"><span class="grow copy-text"><span class="ok-mark">✓ ${esc(c.build || "your copy")}</span>`
         + `${c.verified ? `<span class="muted small">${esc(c.verified)}</span>` : ""}`
         // (the folder's last parts: a full path is long; it's on hover)
@@ -140,6 +141,7 @@ function renderTools() {
         + `<button class="ghost small-btn" data-remove="${esc(t.id)}" data-folder="${esc(c.folder)}" type="button">Remove</button></div>`).join("")}
       <div class="row">${!t.supported ? `<span class="muted small">not available for this computer</span>`
         : t.local ? `<span class="grow"></span><button class="ghost small-btn" data-local="${esc(t.id)}" type="button">${t.installed ? "Add a copy" : "Choose your folder"}</button>`
+        : t.installed && (t.missing_dependencies || []).length ? `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}" type="button">Install missing tools</button>`
         : t.installed ? `<span class="ok-mark">✓ installed</span>${t.linux_vm || t.wsl ? `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}" data-force="1" type="button">Reinstall</button>` : ""}`
         : `${t.changed ? `<span class="muted small grow">changed since you installed it</span>` : ""}`
           + `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}"`
