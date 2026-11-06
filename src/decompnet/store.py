@@ -557,28 +557,37 @@ class Store:
     def tx(self, *, wait=None):
         """Serialized transaction; optional cancellable waiting retries only lock acquisition.
 
-        Never replay a transaction body. Nested transactions still join the enclosing one.
+        Ordinary acquisition uses its configured busy timeout in short attempts, releasing
+        the local mutex between external-writer waits. Never replay a transaction body.
+        Nested transactions still join the enclosing one.
         """
         from .request_timing import timed_lock
         callbacks = []
+        deadline = None
         while True:
             busy=False
             with timed_lock(self.lock,'write_lock_wait'):
                 if getattr(self._local, "in_tx", False):
                     yield self.conn
                     return
-                timeout=None
-                if wait is not None:
-                    cursor=self.conn.execute('PRAGMA busy_timeout')
-                    timeout=cursor.fetchone()[0];cursor.close()
-                    self.conn.execute('PRAGMA busy_timeout=100').close()
+                cursor=self.conn.execute('PRAGMA busy_timeout')
+                timeout=cursor.fetchone()[0];cursor.close()
+                if wait is None and deadline is None:
+                    deadline=time.monotonic()+timeout/1000
+                # Another process (including the permuter child) can own SQLite's
+                # writer. Do not pin our local writer mutex for the full busy timeout.
+                interval=100 if wait is not None else min(timeout,100,max(0,int((deadline-time.monotonic())*1000)))
+                self.conn.execute(f'PRAGMA busy_timeout={interval}').close()
                 try:
                     self.conn.execute("BEGIN IMMEDIATE")
                 except sqlite3.OperationalError as error:
-                    if wait is None or (getattr(error,'sqlite_errorcode',0) & 255) not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+                    code=getattr(error,'sqlite_errorcode',0) & 255
+                    if code not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+                    if wait is None and (code!=sqlite3.SQLITE_BUSY or time.monotonic()>=deadline):raise
                     busy=True
+                    busy_error=error
                 finally:
-                    if timeout is not None:self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
+                    self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
                 if not busy:
                     self._local.in_tx = True
                     self._local.after_commit = []
@@ -594,8 +603,15 @@ class Store:
                     callbacks, self._local.after_commit = self._local.after_commit, []
             if not busy:break
             # No transaction or process-local writer lock is held while reporting/cancelling.
-            wait()
-            time.sleep(.05)
+            if wait is not None:
+                wait()
+                delay=.05
+            else:
+                remaining=deadline-time.monotonic()
+                if remaining<=0:
+                    raise busy_error
+                delay=min(.05,remaining)
+            time.sleep(delay)
         for callback in callbacks:
             callback()
 

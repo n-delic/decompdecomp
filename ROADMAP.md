@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: SQLite writer acquisition releases the process-local mutex between short busy
+  waits, retaining the configured timeout and never replaying transaction bodies.
+  Other processes can still cause timeouts; this removes a local queue amplification.
+
 - Done: a progress file disappearing during enumeration/stat/read restarts the entire
   read-only capture, up to three attempts. Partial captures are discarded; persistent
   failures, permissions, links, conflicts and ordinary exact verification remain guarded.

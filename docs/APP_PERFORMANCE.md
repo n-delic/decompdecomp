@@ -148,3 +148,17 @@ Persistent disappearance propagates its last error. Permission failures, symboli
 links, non-regular files and conflict markers still fail. This covers a reproducible
 read race; it does not prove the cause of every historical missing-file failure or
 resolve the separately observed database/project-lock contention.
+
+### SQLite writer acquisition
+
+The app and its intended permuter child can contend for the same WAL database.
+Ordinary `Store.tx` acquisition now waits for SQLite in at most 100 ms slices and
+releases its local writer mutex between attempts. The configured busy timeout is
+one deadline from the first acquisition attempt; zero remains immediate. The
+original timeout is restored before running the body and after failed acquisition.
+
+Only `BEGIN IMMEDIATE` acquisition is retried. Transaction bodies, commits and
+callbacks are never replayed. Nested transactions and explicit cancellable
+maintenance waits retain their existing behavior. This removes one local queue
+amplification; it does not eliminate external contention, long transactions or
+project synchronization waits. Controlled contention tests are not a live-app benchmark.
