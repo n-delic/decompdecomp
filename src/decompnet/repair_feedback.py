@@ -94,6 +94,8 @@ class RepairFeedback:
         with self.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
+            from .repair_corpus import SCHEMA as corpus_schema
+            db.execute(corpus_schema)
             from .payload_storage import install as install_payloads
             install_payloads(db,'repair_examples')
             from .large_text_storage import install as install_large
@@ -195,9 +197,13 @@ class RepairFeedback:
                               'ORDER BY id DESC LIMIT 1', (fn['id'], agent_id)).fetchone()
             if last and _same_recheck(json.loads(last['evidence']), evidence):
                 return
+        from .repair_corpus import AUTOMATIC, retain
+        if not retain(db,evidence,old_source,source,time.time()):
+            return
         # Retain deterministic successes for regression analysis without proposing the installed
         # rule as new work. Agent explanations still cannot mark their own hypotheses implemented.
-        automated = (evidence.get('provenance') or {}).get('kind') in ('deterministic draft repair','automatic agent local pass')
+        attribution=evidence.get('provenance') or {}
+        automated = attribution.get('kind') in AUTOMATIC and bool(attribution.get('family'))
         captured = db.execute('INSERT INTO repair_examples(project_id,function_id,attempt_id,before_attempt_id,agent_id,created_at,evidence,status,review_note) '
                    'VALUES(?,?,?,?,?,?,?,?,?)', (fn['project_id'], fn['id'], attempt_id, before['id'] if before else None,
                                              agent_id, time.time(), json.dumps(evidence), 'implemented' if automated else 'new',
