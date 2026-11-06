@@ -422,6 +422,7 @@ Every accepted candidate must compile and link to the destination's exact bytes.
 Settings lets you disable automatic reuse and adjust its time and compile limits (defaults: two minutes and
 128 attempts). A whole automatic wave shares one budget, including exact transfers. Manual autopilot keeps its
 existing exact-transfer phase, then shares the additional budget between templates, libraries and similarity repairs.
+Clicking Run again starts dedicated Autopilot workers immediately, bypassing the background CPU queue. If an automatic pass is already running or queued, the click promotes that pass without duplicating it. Automatic runs retain background pacing.
 The last search reports verified bytes, attempts and bytes per minute of elapsed time, not CPU time.
 
 In Settings, optionally enable **deeper iterative repairs** after normal autopilot. This experimental phase is

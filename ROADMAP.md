@@ -3044,3 +3044,5 @@ ABI analysis and automatic source/profile selection remain planned.
   imported project checkouts share the push-only path. Full repair archives stay local.
 
 - Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.
+
+- Done: explicit Autopilot runs bypass the background CPU lane using dedicated coordinator and compile threads. Clicking during an automatic run promotes its existing reusable-code pass rather than queuing or duplicating it; automatic runs retain background pacing.
