@@ -1415,7 +1415,8 @@ class Progress:
             # Publish only its affected files, guarded against an editor's newer disk contents.
             foreground_names = recheck.functions if recheck is not None else set()
             foreground_files = {name: text for name, text in rendered.items()
-                                if name.startswith(('src/', 'best/')) and name.split('/', 1)[1][:-2] in foreground_names
+                                if ((name.startswith(('src/', 'best/')) and name.split('/', 1)[1][:-2] in foreground_names)
+                                    or (name.startswith('include/') and recheck is not None and recheck.foreground))
                                 and text != disk.get(name)}
             if promoted or demoted or (recheck is not None and recheck.foreground):
                 obsolete = {"best/"+name[4:]: disk["best/"+name[4:]] for name in promoted}

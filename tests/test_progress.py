@@ -1988,12 +1988,15 @@ def test_notes_written_during_recheck_are_published_even_without_source_changes(
             with net.progress.foreground():
                 net.add_note(agent, 'game', 'Fresh foreground notes', 'g')
                 net.progress.foreground_changed('game', 'g')
+                with net.store.tx() as db:
+                    db.execute("UPDATE context_versions SET header='/* foreground context */' WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
                 assert not net.progress.sync('game', force=True)
         finally:
             compilation.set_result(None)
         assert background.result(timeout=5)
     saved = json.loads((folder/saves.MANIFEST).read_text())
     assert any(note['text'] == 'Fresh foreground notes' for note in saved['notes'])
+    assert any('foreground context' in path.read_text() for path in (folder/'include').glob('*.h'))
     assert not net.progress.sync('game', force=True)
 
 
