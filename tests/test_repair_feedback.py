@@ -331,7 +331,7 @@ def test_autopilot_capture_uses_actual_compile_settings_instead_of_project_snaps
     if path!='quiet_transfer':
         family={'machine_draft':'raw_m2c','machine_refined':'refined_m2c','machine_buffer':'stack_array','machine_buffer_indexed':'stack_array_indexed','machine_local_context':'local_context_m2c'}[path]
         assert detail['evidence']['provenance']=={'kind':'machine draft','family':family}
-        assert detail['status']=='new'
+        assert detail['status']=='implemented'
     assert settings['compiler']==effective['compiler']
     assert settings['effective_command']==effective['effective_command']
     assert settings['settings_source']=='compile invocation snapshot'
