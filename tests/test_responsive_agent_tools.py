@@ -24,6 +24,7 @@ def test_compact_project_info_never_loads_overview_or_imported_tree(tmp_path,mon
     with net.store.tx() as db:
         db.execute("UPDATE projects SET config=?",(json.dumps({'kind':'fork','platform':'pc'}),))
     assert 'set by the project build' in tools.project_info(net,'game')
+    assert 'set by the project build' in tools._project_info(net,'game',detail=False)
 
 
 def test_claim_receipt_defers_drafting_builds_and_supporting_analysis(tmp_path,monkeypatch):

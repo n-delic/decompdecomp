@@ -309,10 +309,10 @@ def _compact_project_info(net, slug):
 
 
 def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
-    if net.fork_slug(slug):
-        return net.forks.info(slug)
     if not detail:
         return _compact_project_info(net,slug)
+    if net.fork_slug(slug):
+        return net.forks.info(slug)
     ov = net.overview(slug)
     pct = 100 * ov["matched_bytes"] / (ov["bytes"] or 1)
     ranges = "".join(f"\n  0x{r['start']:X}-0x{r['end']:X}: {r['name']} {' '.join(r['flags'])}" for r in ov["compiler_ranges"]) if detail else ""
