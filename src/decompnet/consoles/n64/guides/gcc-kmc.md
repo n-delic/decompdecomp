@@ -1189,3 +1189,21 @@ be an omitted scalar or pointer return, even without a final register-copy
 instruction. The app can supply a caller-backed m2c hypothesis when no shared
 prototype exists; it does not infer the pointer type or edit existing headers.
 An arbitrary scratch register difference alone still cannot justify an intrinsic.
+
+### Conditional tail dispatchers and compiler capability
+
+A leaf consisting of a conditional branch and two direct `j` instructions can
+forward all incoming arguments and the downstream return value without naming
+them in assembly. A test of `a2` may test the high word of a second 64-bit
+argument; it does not establish a three-argument 32-bit interface. Inspect both
+callees and a consuming caller before choosing the C signature.
+
+KMC GCC 2.7.2's tail-recursion optimization requires the current function itself;
+its ordinary external-call patterns emit `jal` and clobber `ra`. Source variants
+cannot enable missing general sibling-call lowering. In one controlled unsigned
+64-bit forwarding case, registered GCC 4.4 defaults produced the exact six-word
+leaf, including both relocations, with ordinary/`-da` parity. This is an explicit
+modern-compiler reconstruction, not evidence of historical retail GCC 4.4 use.
+Use a function-scoped profile, preserve neighboring selections, and run the full
+cartridge gate. Do not substitute a generic assembly tail-jump macro or infer
+64-bit arithmetic merely from this small control-flow shape.

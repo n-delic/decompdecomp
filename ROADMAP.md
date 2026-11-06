@@ -2960,3 +2960,10 @@ need independent evidence before receiving this specific GNU C repair.
 - Planned: expose equivalent direct-caller consumption evidence for imported
   projects where no caller graph is currently available. Keep inference disabled
   there until such evidence exists; do not infer a return type from a scratch load.
+
+Implemented: bounded MIPS conditional tail-dispatch advice in agent contract briefs,
+including assembly review without saved C, for ROM and project modes when raw target
+bytes/address are available. It asks for caller/callee ABI and compiler sibling-call
+capability before variants, without changing signatures, profiles or classification.
+Other processors have no reader for this instruction pattern; generalized tail-dispatch
+ABI analysis and automatic source/profile selection remain planned.
