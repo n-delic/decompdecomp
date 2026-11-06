@@ -93,7 +93,7 @@ def enqueue(net, proj, function_id, *, restored=False):
 def scoped_snapshot(net, proj, root, job, output):
     """Advance only one function in the committed manifest, retaining its exact context and evidence."""
     head = repository_git.git(root, 'rev-parse', 'HEAD')
-    files, _, current = repository_progress.snapshot(net, proj['slug'], root, output)
+    files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, allow_unrelated_edits=True)
     folder = saves.default_folder(net, proj['slug']).resolve()
     prefix = folder.relative_to(root).as_posix()
     prefix = '' if prefix == '.' else prefix + '/'

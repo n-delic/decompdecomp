@@ -142,8 +142,8 @@ def test_other_agent_notes_are_not_used_and_unrelated_edits_are_not_committed(au
     (root/'private.rom').write_bytes(b'homemade private input')
     net.add_note(agent, 'game', 'Winning agent’s notes', 'f')
     match_commits.process(net, 'game')
-    assert 'private.rom' in match_commits.status(net, net.project_row('game'))['error']
-    assert git(root, 'rev-parse', 'HEAD') == before
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    assert git(root, 'rev-parse', 'HEAD') != before
     assert 'private.rom' not in git(root, 'ls-files')
 
 
@@ -262,3 +262,22 @@ def test_new_saved_contributions_use_the_contributing_agents_notes(automatic, mo
     # Rechecking an existing saved match must not enqueue it again.
     net.progress.sync('game', force=True)
     assert net.store.one("SELECT COUNT(*) n FROM auto_match_commits")['n'] == 1
+
+
+def test_auto_commit_leaves_unrelated_tracked_edits_and_deleted_drafts_uncommitted(automatic):
+    net, root, _, _ = automatic
+    (root/'review.txt').write_text('original review')
+    (root/'best/retired.c').write_text('old unrelated draft')
+    git(root, 'add', 'review.txt', 'best/retired.c')
+    git(root, 'commit', '-qm', 'unrelated baseline')
+    (root/'review.txt').write_text('unfinished user review')
+    (root/'best/retired.c').unlink()
+    enable(automatic)
+    match(automatic, note='Exact function notes')
+    match_commits.process(net, 'game')
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    assert git(root, 'show', 'HEAD:review.txt') == 'original review'
+    assert git(root, 'show', 'HEAD:best/retired.c') == 'old unrelated draft'
+    assert (root/'review.txt').read_text() == 'unfinished user review'
+    assert not (root/'best/retired.c').exists()
+    assert {'src/f.c', 'best/f.c'} <= set(git(root, 'show', '--format=', '--name-only', 'HEAD').splitlines())
