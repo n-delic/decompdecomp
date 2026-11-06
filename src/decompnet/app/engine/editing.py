@@ -9,7 +9,7 @@ import re
 import time
 
 from ... import arch
-from ...network import Agent, NetworkError
+from ...network import NOT_C_AGENTS, NOT_C_MODELS, Agent, NetworkError, model_of
 from ...rom.symbols import IDENT, Symbol, SymbolTable
 from .common import _ADDRESS
 
@@ -90,9 +90,12 @@ class EditMixin:
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
-            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL "
-                       "WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
-                                      console.function_asm(head), fn["id"]))
+            head_meta = json.loads(fn["meta"] or "{}")
+            head_meta.pop("joins", None)  # the head's extent changed: any pending join votes for it are now void
+            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
+                       "meta=? WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                                             console.function_asm(head), json.dumps(head_meta) if head_meta else None,
+                                             fn["id"]))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
@@ -148,6 +151,136 @@ class EditMixin:
         self._update_cfg(slug, change)
         return (f"Reported: {fn['name']} ends at 0x{addr:08X} ({fn['size'] - off} bytes after it set aside if the user "
                 f"approves). Until then it stays as it is; release it or work on with its current size.")
+
+    def join_functions(self, agent: Agent, project: str | None, function: str, with_function: str, reason: str) -> str:
+        """An agent says two adjacent symbols are one function the analysis cut: a piece with no prologue that uses
+        registers set before it, an epilogue alone, a switch whose cases are in the next symbol. Once NOT_C_AGENTS
+        agents of NOT_C_MODELS models say it of the same pair, the later symbol is joined into the earlier and it is
+        one function again (the tails' attempts and notes kept, reopened to match). A fork rebuilds to check a join
+        (ForkEngine.propose_join); a ROM has no rebuild, so agreement stands behind it and matching the joined
+        function proves it. Undo a wrong join by splitting it again."""
+        if (fork := self.fork_slug(project)):
+            return self.forks.propose_join(agent, fork, function, with_function, reason)
+        self._rom_only(project, "join_functions")
+        if self._link(project) is not None:
+            raise NetworkError("in a team room the host's project decides where functions begin and end: "
+                               "tell the host (add_note)")
+        reason = " ".join(reason.split())[:600]
+        if not reason:
+            raise NetworkError("say what shows they're one function (no prologue and it uses registers set before "
+                               "it, an epilogue alone, a switch whose cases are in the next symbol)")
+        a, b = self._function(function, project), self._function(with_function, project)
+        if a["id"] == b["id"]:
+            raise NetworkError("name two different functions")
+        proj = self._project(project)
+        console = self.console(proj)
+        if arch.BOUNDARIES not in console.features:
+            raise NetworkError(f"joining functions isn't supported for {console.name} yet (ROADMAP.md)")
+        for f in (a, b):
+            if f["status"] == "matched" or f["matched_source"]:
+                raise NetworkError(f"{f['name']} is matched: a join would change it, so it can't be one")
+        first, last = sorted((a, b), key=lambda f: (f["vram"] if f["vram"] is not None else 0, f["id"]))
+        if first["vram"] is None or not first["size"] or last["vram"] < first["vram"] + first["size"]:
+            nxt = (first["vram"] or 0) + (first["size"] or 0)
+            raise NetworkError(f"{last['name']} isn't after {first['name']} (which ends at 0x{nxt:08X}): "
+                               "name them in order, the earlier one first")
+        # A join is within one function, so the two pieces must be one contiguous run. rom_offset identifies which
+        # overlay *instance* a piece belongs to; vram+unit does not, because overlays alias the same vram — and even
+        # the same source unit — across different ROM copies. So when rom_offset is known, require the pieces to
+        # advance in rom_offset exactly as in vram (same instance, truly adjacent) and select by rom_offset range;
+        # that excludes an aliased sibling at the same address whether it differs in unit or shares it.
+        rom_known = first["rom_offset"] is not None and last["rom_offset"] is not None
+        rom_contiguous = rom_known and last["rom_offset"] - first["rom_offset"] == last["vram"] - first["vram"]
+        if rom_known:
+            if not rom_contiguous:
+                raise NetworkError(f"{first['name']} and {last['name']} aren't one contiguous run in the ROM "
+                                   "(different overlays or ROM copies of the same address); a join is within one function")
+            between = self.store.one("SELECT 1 FROM functions WHERE project_id=? AND rom_offset>? AND rom_offset<?",
+                                     proj["id"], first["rom_offset"], last["rom_offset"])
+        else:
+            if first["unit"] != last["unit"]:
+                raise NetworkError(f"{first['name']} and {last['name']} are in different units; a join is within one")
+            between = self.store.one("SELECT 1 FROM functions WHERE project_id=? AND unit=? AND vram>? AND vram<?",
+                                     proj["id"], first["unit"], first["vram"], last["vram"])
+        if between:
+            raise NetworkError(f"{last['name']} isn't the next function after {first['name']}: a join is to the "
+                               "very next symbol; join the nearer pair first for a longer run")
+        key = f"{first['name']}+{last['name']}"
+        refused = (self.cfg(proj).get("joins_refused") or {}).get(key)
+        if refused:
+            return (f"Joining {first['name']} and {last['name']} was tried and refused: {refused}. "
+                    "Work on them as they are.")
+        with self.store.tx() as db:
+            meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (first["id"],)).fetchone()["meta"] or "{}")
+            said = meta.setdefault("joins", {}).setdefault(key, {})
+            said[agent.name] = {"model": model_of(agent.name), "why": reason[:2000], "t": time.time()}
+            db.execute("UPDATE functions SET meta=? WHERE id=?", (json.dumps(meta), first["id"]))
+            self._event(db, proj["id"], agent.id, "merge", f"{first['name']} + {last['name']}: {reason[:200]}")
+        models = {v["model"] for v in said.values()}
+        if len(said) < NOT_C_AGENTS or len(models) < NOT_C_MODELS:
+            return (f"Your report is counted ({len(said)} of {NOT_C_AGENTS} agents, {len(models)} of {NOT_C_MODELS} "
+                    f"models): {first['name']} and {last['name']} are joined once enough agree. Meanwhile, claim "
+                    "another function.")
+        return self._apply_join(proj, first, last, agent, sorted(said))
+
+    def _apply_join(self, proj, first, last, agent: Agent, said: list[str]) -> str:
+        console = self.console(proj)
+        pid = proj["id"]
+        start, end = first["vram"], last["vram"] + last["size"]
+        if first["rom_offset"] is not None and last["rom_offset"] is not None:
+            # select this overlay instance's own ROM run; aliased copies share the vram window but not the ROM range
+            rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND rom_offset>=? AND rom_offset<? "
+                                  "ORDER BY rom_offset, id", pid, first["rom_offset"],
+                                  last["rom_offset"] + last["size"])
+        else:
+            rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? AND unit=? "
+                                  "ORDER BY vram, id", pid, start, end, first["unit"])
+        if len(rows) < 2 or rows[0]["id"] != first["id"]:
+            raise NetworkError("the functions between them changed; look again and report the pair afresh")
+        tails = rows[1:]
+        if any(t["status"] == "matched" or t["matched_source"] for t in tails):
+            raise NetworkError("a function between them now matches; look again and report the pair afresh")
+        key = f"{first['name']}+{last['name']}"
+        try:
+            joined = console.join_saved_functions(rows, start, end, lambda address, n: self.reader(proj)(address, n))
+        except ValueError:
+            why = "the bytes between them aren't one run of code (a real gap sits between them)"
+            self._update_cfg(proj["slug"], lambda c: c.setdefault("joins_refused", {}).update({key: why}))
+            return f"{len(said)} agents agreed, but {first['name']} and {last['name']} couldn't be joined: {why}."
+        target = self._make_target(proj, joined, self.symbols(pid))
+        with self.store.tx() as db:
+            db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,best_score=NULL,"
+                       "best_source=NULL,status='open',attempts=attempts+? WHERE id=?",
+                       (joined.size, console.function_insns(joined), target.code, json.dumps(target.to_json()),
+                        console.function_asm(joined), sum(t["attempts"] or 0 for t in tails), first["id"]))
+            for tail in tails:
+                db.execute("UPDATE attempts SET function_id=? WHERE function_id=?", (first["id"], tail["id"]))
+                db.execute("UPDATE OR IGNORE twin_misses SET function_id=? WHERE function_id=?", (first["id"], tail["id"]))
+                db.execute("DELETE FROM twin_misses WHERE function_id=?", (tail["id"],))
+                db.execute("DELETE FROM claims WHERE function_id=?", (tail["id"],))
+                db.execute("DELETE FROM waits WHERE function_id=? OR needs_id=?", (tail["id"], tail["id"]))
+                db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (first["id"], tail["id"]))
+                db.execute("DELETE FROM functions WHERE id=?", (tail["id"],))
+                db.execute("DELETE FROM symbols WHERE project_id=? AND name=? AND address=? AND kind='func'",
+                           (pid, tail["name"], tail["vram"]))
+            db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=? AND kind='func'",
+                       (joined.size, pid, first["name"]))
+            self._event(db, pid, agent.id, "merge", f"{first['name']} + {', '.join(t['name'] for t in tails)}: joined")
+        self._syms.pop(pid, None)
+        if hasattr(self, "_xrefs"):
+            self._xrefs.pop(pid, None)
+        if hasattr(self, "_ops"):
+            self._ops.pop(pid, None)
+        try:   # a decompdecomp "joined" note, so a later check-again (not_c_from_notes) discounts the pieces'
+            self.add_note(self.local_agent("decompdecomp")[0], proj["slug"],  # old no-C notes, not set it aside
+                          f"Agents ({', '.join(said)}) found the analysis cut this; the pieces are joined into "
+                          "one function now, whatever older notes say.", first["name"])
+        except NetworkError:
+            pass
+        tail_names = ", ".join(t["name"] for t in tails)
+        return (f"✅ joined: {tail_names} {'is' if len(tails) == 1 else 'are'} part of {first['name']} now "
+                f"({console.function_insns(joined)} instructions, {joined.size} bytes). Continue with "
+                f"{first['name']} (get_function shows its assembly).")
 
     def resolve_boundary(self, slug: str, rid: int, apply: bool) -> None:
         """The user's answer to a boundary report: cut the function there (the rest set aside as not code) or dismiss."""

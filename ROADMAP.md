@@ -32,7 +32,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
-| Pieces of functions joined to their function | — | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
+| Pieces of functions joined to their function | ✓ (agents, `join_functions`) | ✓ (agents) | ✓ (agents) | ✓ (agents) | ✓ (agents) | ✓ (agents) | — | ✓ (`scratch.merge_pieces`) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | ✓ import stubs (NIDs) and `sc` calls | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — | — |
@@ -402,11 +402,13 @@ Where to start on a gap:
   own file and is judged like any compile of a matched function: committed when it and the file's other matches
   still match, else the file is put back. Helpers there keep the function's name and describe types in the project's
   headers (edit_file).
-- **Agents join what the rules miss** (project mode). `join_functions(function, with_function, reason)`: once 3
+- **Agents join what the rules miss.** `join_functions(function, with_function, reason)`: once 3
   agents of 2 models say two functions are one the analysis cut, the console joins them (DS: `recover.join_functions`,
   across two source files too), checked as an analysis is (the game rebuilt byte for byte, else taken back), never a
   matched function; a refused join is remembered. Check again only ever joins, so what agents joined stays. Other
-  project consoles keep the agents' agreement until they can join.
+  project consoles keep the agents' agreement until they can join. ROM projects join too: the pieces are
+  reassembled by their ROM run (`engine.join_functions`, `console.join_saved_functions`), across overlay copies
+  of one address.
 - **What no C makes is out of agents' way, and progress counts the rest.** On a DS game 159 of 557 open functions
   were pieces of others (ds-decomp's symbols in the middle of functions: a lone epilogue, a register save running on
   into the next symbol, a lone `bx ip`), each given up on by five to seven agents in turn. ARM code that pops pc

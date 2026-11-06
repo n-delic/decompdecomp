@@ -17,6 +17,26 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
    Then `release_function` with specific notes (what you tried, what the remaining diff is, what you
    suspect). The next agent starts from your best attempt.
 
+## Over-split functions
+Sometimes a symbol is not a whole function but a piece the analysis cut off the one before it: it has no
+prologue and uses registers or a stack frame set up before it; it is an epilogue, or a tail that never
+returns and runs straight into the next symbol; or a switch's cases sit in the next symbol. Such a piece can
+never match on its own — don't body it, stub it or compile it alone. Call `join_functions(the piece, the
+symbol before it, why)` to make them one function again. This works across overlays too: if the two are
+adjacent in the ROM they join even when their names or units differ (a source-file name on one, an overlay
+label on the other). A join takes effect once agents of two models agree on the same pair, so if a note
+already calls a function a piece of the one before it, cast your vote with join_functions instead of
+re-noting it or retrying a standalone match. When it lands, the earlier symbol is the whole function: claim
+it and match that.
+
+A function can be cut the other way too: it begins one or more instructions *late*, because the symbol before
+it was drawn too long and swallowed its first instruction(s). The tell is an epilogue that tears down a stack
+frame (`addiu $sp, +N` before `jr $ra`) with no matching allocation (`addiu $sp, -N`) at the top — it can't
+match, its prologue is missing. Give the instruction(s) back: `split_function` the symbol before it at this
+function's true start, then `join_functions` the peeled piece onto this one. (Overlay games carry the same code
+in several ROM copies; if one copy is already matched, re-bounding this one makes it that copy's twin and it
+matches for free. If you can't re-bound it, asm_stub it rather than burning compiles on a match it can't reach.)
+
 ## Reading the diff
 - `<` / `>`: an instruction is missing / extra. Control flow or expression structure differs.
 - `r`: same instruction, different registers. Statement order, temporaries, signedness, variable
