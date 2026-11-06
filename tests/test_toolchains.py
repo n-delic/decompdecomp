@@ -274,7 +274,7 @@ def test_ghidra_runs_on_the_computers_jdk_of_21_or_newer_and_never_a_runtime_alo
 
     monkeypatch.setenv("PATH", str(_java(tc_root / "java", version, javac=javac)))
     monkeypatch.delenv("JAVA_HOME", raising=False)
-    monkeypatch.setattr(toolchains, "installed", lambda tid, linux=None: {"id": tid} if tid == "ghidra" else None)
+    monkeypatch.setattr(toolchains, "installed", lambda tid, *args, **kw: {"id": tid} if tid == "ghidra" else None)
     env = ghidra._env()
     if own:
         assert ghidra.java_home() is None and ghidra.available()  # (the pinned JDK isn't installed, nor needed)

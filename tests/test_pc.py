@@ -2653,8 +2653,12 @@ def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tm
     installed, ensure, ensured = toolchains.installed, toolchains.ensure, []
     monkeypatch.setattr(ghidra, "available", lambda: False)
     monkeypatch.setattr(ghidra, "java_home", lambda: None)
-    monkeypatch.setattr(toolchains, "installed", lambda tid, linux=None: None if tid == "ghidra" else installed(tid, linux))
-    monkeypatch.setattr(toolchains, "ensure", lambda tid, log=print: ensured.append(tid) if tid == "ghidra" else ensure(tid, log))
+    # (each passes on whatever else it's given: installed() also takes vm= (#197), and the project's indexing thread
+    # calls it so; a stand-in that didn't take it raised there, and pytest only warned)
+    monkeypatch.setattr(toolchains, "installed",
+                        lambda tid, *args, **kw: None if tid == "ghidra" else installed(tid, *args, **kw))
+    monkeypatch.setattr(toolchains, "ensure",
+                        lambda tid, *args, **kw: ensured.append(tid) if tid == "ghidra" else ensure(tid, *args, **kw))
     said = net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)
     assert ensured == ["ghidra"]
     assert said["said"] == "4 functions (it had 3), 2 of them new or with another extent; its 1 matched functions kept"
