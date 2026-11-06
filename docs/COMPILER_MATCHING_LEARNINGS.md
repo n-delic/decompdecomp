@@ -5041,3 +5041,37 @@ narrowing without checking its actual argument preparation. Four scale arguments
 needed same-offset floating field reads, not numeric int-to-float conversions.
 Direct-call and literal-reference audits do not prove all dynamic indirect uses
 or every reconstructed object's memory model.
+
+### Fixed architectural FCSR exchange, not arithmetic C
+
+A four-instruction control-register accessor could not be expressed by arithmetic
+C: identity drafts omitted both hardware operations. The registered GNU MIPS
+compatibility template now offers `__builtin_mips_exchange_fcsr(value)`. It reads
+the old FCSR word and writes the supplied unsigned 32-bit word, preserving real
+rounding, condition and exception-state effects. It can trap; it is not const,
+pure, interrupt-atomic, or a general barrier for floating-point C expressions.
+
+A controlled private linked replay with GCC 2.7.2 KMC, `-G0 -mips3 -mgp32 -mfp32
+-O2 -g3`, was exact in ordinary and `-da` builds. The compiler chose both GPRs
+and emitted the return sequence itself. An early-clobber output prevents the
+read from destroying the incoming write value. No submitted assembly, manual
+NOP, fixed GPR or target-byte substitution was needed. A coherent unsigned
+prototype in the existing caller also retained ordinary/diagnostic exactness.
+This is intrinsic-backed architectural source, not evidence the original
+implementation was ordinary C. Independent private full-cartridge validation then
+passed all 12,582,912 bytes with 2,072 selected C functions. The actual copied
+project normal prepared-source path also advanced assembly to matched while
+preserving the other 2,071 source hashes and profiles across promotion. These
+are private validation results; live installation/adoption is a separate step.
+
+`seeds.generate_from_asm` recognizes only the complete contiguous encoded ABI
+leaf (read FCSR to the result register, write the argument to FCSR, return with
+an empty delay slot), for registered compatible GNU MIPS toolchains. It emits a
+high-level source hypothesis; normal compilation and linked verification still
+decide acceptance. It does not automatically reopen assembly classifications.
+Preserve handwritten-assembly provenance when approving an exact prepared bundle.
+
+Primary instruction semantics: [NEC VR4300 User's Manual, pp. 571–572](https://hack64.net/docs/VR43XX.pdf#page=571).
+A volatile memory clobber alone does not constrain unrelated register-only FP
+arithmetic. Keep this operation in standalone control accessors unless stronger
+compiler-specific ordering is separately established.

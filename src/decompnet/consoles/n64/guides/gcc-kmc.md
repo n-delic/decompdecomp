@@ -1111,3 +1111,14 @@ initializers can change scheduling; casts at existing accesses may preserve it.
 For an actual floating scale argument loaded through an integer field view, fix
 the field/read type, not by numerically converting the loaded integer. Recheck
 all affected callers and the cartridge before accepting a coordinated correction.
+
+### Floating-point control/status accessors
+
+Ordinary arithmetic C cannot read or replace FCSR. Registered GNU MIPS
+compilers provide `__builtin_mips_exchange_fcsr(value)`: write a full unsigned
+32-bit control/status word and return the old word. This is a fixed hardware
+intrinsic, not source-supplied assembly. It can raise hardware exceptions.
+Use it in standalone control accessors; it is not a general ordering barrier
+for surrounding floating-point expressions. The machine drafter recognizes a
+bounded encoded exchange leaf, but only a normal exact prepared-source check
+can reconsider a function retained as assembly. Keep that provenance explicit.

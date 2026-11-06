@@ -2903,3 +2903,8 @@ need independent evidence before receiving this specific GNU C repair.
 - Done: Codex CLI sessions explicitly enable and require the app MCP transport with a
   bounded startup timeout, including focused resumes. Required-transport startup failures
   show redacted CLI diagnostics and use connection backoff before a model turn starts.
+
+- Done: registered GNU MIPS fixed FCSR exchange intrinsic and bounded machine
+  leaf seed. ROM/project machine drafting shares the source generator; imported
+  projects must expose encoded assembly to that generator. Exact prepared source
+  approval remains required for retained assembly; no automatic reclassification.
