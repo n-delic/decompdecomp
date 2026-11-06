@@ -12,7 +12,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .. import __version__, agents, consoles
-from ..network import Agent, NetworkError
+from ..network import CLAIM_ORDERS, Agent, NetworkError
 from .engine import RomNetwork
 
 # The guides every console shares (app/guide/); each console's own are in its package (consoles/<id>/guides/)
@@ -237,6 +237,9 @@ def project_info(net: RomNetwork, slug: str) -> str:
             + (f"; {s['check']}" if s["check"] else "") + "]" for s in open_)
     if not net.fork_slug(slug) and (known := net.knowledge.for_prompt(slug)):
         text += "\n" + known + "\n"
+    if (order := net.claim_order(slug)):
+        text += (f"\nThe project's owner chose the order helpers take functions in: {CLAIM_ORDERS[order]}. "
+                 "claim_function without a function follows it; name a function to get that one.\n")
     return text + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
 
 
@@ -435,7 +438,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         Args:
             function: optional name or address (0x80001234) of a specific function
             strategy: finish (forks' default: the files closest to being linked first), easiest (fewest
-                instructions; ROM projects' default), closest (nearly matched already), hardest, random
+                instructions; ROM projects' default), closest (nearly matched already), hardest, untried
+                (functions nobody has compiled yet, then the smallest), random. If the project's owner
+                chose an order helpers take first, claiming without a function follows theirs, whatever
+                you pass here; a function you name still comes.
             count: up to 6: small functions come as a batch (neighbours in one file) to write together and
                 judge in one compile_and_diff; a big one comes alone
         """

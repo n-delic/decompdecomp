@@ -107,6 +107,13 @@ Where to start on a gap:
 
 ## Recently done
 
+- **The project's owner chooses which functions helpers take first (#205).** Beside the instructions, a project's
+  Agents tab picks Default (the helper's own choice), Smallest first, Largest first, Closest to matching first (the
+  near misses), or Not yet tried first (a first pass over every function nobody compiled, then the smallest). The
+  server applies it to claims without a function, so a helper's own `strategy` can't override it; a function asked
+  for by name still comes, and the release, waiting and model-routing rules stay ahead of it. ROM and project mode
+  alike, rooms through their host, and saves and progress folders keep the choice.
+
 - **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
   it, said as the closest). A game of a version the packs don't have builds with the nearest by year, and the import

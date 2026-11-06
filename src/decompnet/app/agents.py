@@ -1102,6 +1102,9 @@ class Manager:
             text += f"\n{known}\n"
         if (wish := self.net.instructions(s.slug)):
             text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
+        if (order := self.net.claim_order(s.slug)):
+            text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
+                     "claim_function without a function follows it; one you name still comes.\n")
         return text
 
     def _prompt(self, s: Session) -> str:
