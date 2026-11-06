@@ -268,6 +268,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
     taken = split.code_ranges(config)
     found = find_segments(rom, taken, tuple(s.rom_end for s in split.segments_from_config(config))) if taken else []
+    from .boot_mapping import recover
+
+    recover(config, rom, found, log)
     if not found:
         return original
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))

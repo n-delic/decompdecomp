@@ -150,3 +150,24 @@ instructions from the declared entry, merges by intersection, and stops at unkno
 indirect jumps. Unsupported instructions deliberately lose facts. This is scalar
 32-bit MIPS evidence shared by the ROM consoles using this audit, not a general
 interprocedural pointer analysis or an object-project audit.
+
+
+## Boot-address code swallowing the main program
+
+N64 imports also check splat's simple `main` range immediately after the boot entry.
+A returning TLB setup can run at the boot address while the compiled code following
+it uses a later mapping. Without separating them, the disassembler can file hundreds
+of routines as one assembly function containing the boot stub's COP0 instructions.
+
+Recovery requires an established mapping from another code segment, at least eight
+distinct direct-call targets at stack-frame starts, and four times the support of
+any competing mapping. The first called entry must start with a frame immediately
+after the stub's return/delay slot, within the first 4 KiB after the boot entry.
+Earlier frames, explicit data/BSS layouts and overlapping RAM mappings prevent the
+change. This is a bounded import correction, not a general TLB emulator or proof of
+complete function discovery. Only the startup prefix keeps its boot address; the
+remaining bytes keep their ROM offsets and are split at the supported load address.
+
+Existing projects are not rewritten in the background. A reviewed reimport uses the
+ordinary saved-layout and exact-match preservation rules. Back up the project first;
+new detection alone does not prove that every old manual boundary should be replaced.
