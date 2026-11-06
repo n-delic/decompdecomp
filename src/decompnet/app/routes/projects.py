@@ -609,7 +609,7 @@ def register(app: App) -> None:
         if data.get("action") == "stop":
             net.stop_autopilot(slug)
         else:
-            net.start_autopilot(slug)
+            net.start_autopilot(slug,foreground=True)
         return net.overview(slug)
 
     def p_cross_run(slug, request, data):

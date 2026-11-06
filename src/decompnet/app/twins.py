@@ -267,7 +267,13 @@ class Job:
     cross_matched: int = 0
     started_at: float = field(default_factory=time.time)
     stop: threading.Event = field(default_factory=threading.Event)
+    foreground: threading.Event = field(default_factory=threading.Event)
     ordered: threading.Event = field(default_factory=threading.Event)  # assembly set aside, claim order stored
+
+    def promote(self):
+        self.foreground.set()
+        if self.progress.get('phase')=='Waiting for background CPU':
+            self.progress={'phase':'Starting user-requested reusable-code search'}
 
 
 def _ar_members(data: bytes) -> list[bytes]:
@@ -525,6 +531,13 @@ class Twins:
         if (job := self.jobs.get(slug)) is not None and job.state == "running":
             job.stop.set()
 
+    def promote(self, slug):
+        """A deliberate click releases this project's existing pass from background pacing."""
+        with self._lock:
+            job=self.jobs.get(slug)
+            if job is not None and job.state=='running':
+                job.promote()
+
     def refresh(self, slug: str) -> Job | None:
         """Bring a project's twins up to date in the background (see full_pass). Runs when agents start."""
         with self._lock:
@@ -539,7 +552,7 @@ class Twins:
             from . import maintenance, workers
             workers.lower_priority()
             try:
-                with maintenance.slot(job.stop) as ready:
+                with maintenance.foreground(job.foreground), maintenance.slot(job.stop) as ready:
                     if not ready:
                         job.state = "done"
                         job.ordered.set()
@@ -553,25 +566,28 @@ class Twins:
         threading.Thread(target=work, daemon=True, name=f"twins-{slug}").start()
         return job
 
-    def full_pass(self, slug: str, job: Job | None = None) -> Job:
+    def full_pass(self, slug: str, job: Job | None = None, *, foreground=False, foreground_event=None) -> Job:
         """Hand-written assembly set aside, the claim order (agents claim in it from the start, not after the pass),
         matched code tried on every unmatched twin, the claim order again. One at a time per project: while one runs
         (agents started it, say), a second call waits for it."""
+        from . import maintenance
+        foreground=foreground or maintenance.is_foreground()
         with self._lock:
             running = self.jobs.get(slug)
             if running is not None and running.state == "running" and running is not job:
                 job, mine = running, False
             else:
                 job, mine = job or Job(), True
+                if foreground_event is not None:job.foreground=foreground_event
                 self.jobs[slug] = job
+            if foreground or (foreground_event is not None and foreground_event.is_set()):job.promote()
         if not mine:
             while job.state == "running":
                 time.sleep(1)
             return job
         # Deduplicate before taking the global lane: waiting for an existing queued
         # pass while holding that lane would prevent its owner from ever starting.
-        from . import maintenance
-        with maintenance.slot(job.stop) as ready:
+        with maintenance.foreground(job.foreground), maintenance.slot(job.stop) as ready:
             if not ready:
                 job.state = "done"
                 job.ordered.set()
@@ -1294,7 +1310,9 @@ class Twins:
                         active[pair[1]] = fn['name'] if fn else str(pair[1])
                         publish()
                     try:
-                        outcome = self.try_pair(agent, proj, *pair)
+                        from . import maintenance
+                        with maintenance.foreground(job.foreground):
+                            outcome = self.try_pair(agent, proj, *pair)
                     except Exception as e:  # one odd function must not stop the rest
                         log.info("twins: %s failed: %s", pair, e)
                         outcome = "skip"
