@@ -30,10 +30,14 @@ def result(asm, caller='', name=''):
                 last=None if previous in flow.CALLS else (i,op,regs)
         elif op not in flow.STORES|{'jr','nop','mtc1','dmtc1','ctc1'}:
             last=None  # an unknown instruction may clobber an implicit result register
-    # A final explicit copy of a live word is stronger than an arbitrary scratch left in v0.
-    if returns!=1 or not last or last[1] not in {'move','addu','or'}:return None
-    regs=last[2]
-    if len(regs)<2 or regs[1] in {'zero','ra','sp','v0'} or (len(regs)==3 and regs[2]!='zero'):return None
+    # A load can also supply the result, but may merely leave a scratch in v0.
+    # Expose it for caller lookup, never as a caller-free source rewrite witness.
+    if returns!=1 or not last:return None
+    loaded=last[1]=='lw'
+    if not loaded:
+        if last[1] not in {'move','addu','or'}:return None
+        regs=last[2]
+        if len(regs)<2 or regs[1] in {'zero','ra','sp','v0'} or (len(regs)==3 and regs[2]!='zero'):return None
     consumed=False
     if caller and name:
         rows=instructions(caller)
@@ -49,7 +53,9 @@ def result(asm, caller='', name=''):
                 elif op in flow.STORES|{'mtc1'}:
                     if 'v0' in r:consumed=True;break
                 elif op!='nop':break
-    return dict(bits=32,register='v0',caller_consumes=consumed)
+    proof=dict(bits=32,register='v0',caller_consumes=consumed)
+    if loaded:proof['requires_caller']=True
+    return proof
 
 
 def stack_call_store(asm):

@@ -2920,3 +2920,9 @@ need independent evidence before receiving this specific GNU C repair.
 - Done: fixed registered GNU MIPS CP0 Compare write and bounded complete-leaf
   machine seed. Ordinary linked judging remains unchanged; handwritten provenance
   and timer-interrupt clearing semantics remain explicit.
+
+- Done: caller-backed MIPS loaded-word return evidence reaches ROM machine-draft
+  context and advisory hints. A load alone never enables return rewrite candidates.
+- Planned: expose equivalent direct-caller consumption evidence for imported
+  projects where no caller graph is currently available. Keep inference disabled
+  there until such evidence exists; do not infer a return type from a scratch load.

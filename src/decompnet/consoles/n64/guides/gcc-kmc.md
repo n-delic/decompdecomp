@@ -1163,3 +1163,10 @@ is not a hardware hazard barrier. No Status-write intrinsic is currently provide
 The manual separately warns about an immediate jump after setting ITS. A narrowly
 specified return-spacing operation is an untested lead, distinct from a general
 Status completion barrier; do not infer its contract from the target alone.
+
+For a void SDK draft that leaves a loaded word in the return register, inspect
+actual direct callers before allocation searches. A consumed loaded value can
+be an omitted scalar or pointer return, even without a final register-copy
+instruction. The app can supply a caller-backed m2c hypothesis when no shared
+prototype exists; it does not infer the pointer type or edit existing headers.
+An arbitrary scratch register difference alone still cannot justify an intrinsic.

@@ -18,7 +18,7 @@ def witness(asm, arch, caller='', name=''):
 
 def variants(source, name, header='', arch=None, asm=''):
     part=view(source,name);proof=witness(asm,arch)
-    if not part or not proof or proof['bits']!=32:return []
+    if not part or not proof or proof['bits']!=32 or proof.get('requires_caller'):return []
     part.end=close(part.clean,part.opening,'{','}') or part.end
     start,_=find(source,name)
     signature=re.fullmatch(r'\s*(?:static\s+)?(?P<type>void)\s+'+re.escape(name)+r'\s*\([^;{}]*\)\s*',part.clean[start:part.opening])
@@ -49,6 +49,12 @@ def variants(source, name, header='', arch=None, asm=''):
 
 def hint(source, name, asm, arch, caller=''):
     proof=witness(asm,arch,caller,name)
+    if proof and proof.get('requires_caller'):
+        if not proof['caller_consumes']:return ''
+        if re.search(r'\bvoid\s+'+re.escape(name)+r'\s*\(',_blank(source)):
+            return ('Return-contract hypothesis: target leaves a loaded word in its return register and a caller consumes it. '
+                    'The draft says void. Review the loaded value\'s scalar or pointer type and return contract before '
+                    'allocation permutations; shared prototypes were not changed.')
     if proof and re.search(r'\bvoid\s+'+re.escape(name)+r'\s*\(',_blank(source)):
         return ('Return-contract hypothesis: target preserves a word result in its return register'
                 +(' and a caller consumes it' if proof['caller_consumes'] else '')
