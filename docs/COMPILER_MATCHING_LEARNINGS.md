@@ -5269,3 +5269,16 @@ draft, with the shared header unchanged. This is an ABI hypothesis, not a new
 exact match: prior KMC candidates still differed in scratch register allocation,
 and bounded IDO 5.3/7.1 controls also failed to match. Do not implement a fixed
 list intrinsic that merely selects the target's arbitrary scratch register.
+
+### Interrupt-disable read/modify/write is not a scratch-register template
+
+A standalone kernel Status accessor that clears IE and returns the previous IE bit
+was tested with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` using the registered
+Status-read and Status-write return-spacing intrinsics. Ordinary and `-da` builds
+agreed: 28 bytes, but not the original 32-byte handwritten routine. GCC selected
+v0/v1 and extracted the returned bit in the return delay slot; the original used
+t0/t1 and assembler-reserved at, extracted earlier, and retained another NOP.
+The callers justify the old-IE value, not these scratch registers or additional
+spacing. Do not generalize the known Status-write branch-spacing primitive into
+an interrupt-disable completion guarantee, or add fixed GPRs/padding to reproduce
+this residual. This is a bounded negative experiment, not a new source match.
