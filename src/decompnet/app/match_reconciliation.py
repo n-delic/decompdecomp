@@ -12,7 +12,6 @@ from .. import candidate_scope, compiler, match_bundle
 from ..network import NetworkError
 from . import function_names, source_preparation
 
-MAX_BANK = 4096
 SCHEMA = "CREATE TABLE IF NOT EXISTS reconcile_visits(function_id INTEGER PRIMARY KEY,scope TEXT,cursor INTEGER,visited REAL)"
 
 
@@ -20,7 +19,7 @@ def bank(net, proj):
     """Recorded exact source/header inputs in this project, including now-open donors."""
     if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return []
     rows=net.store.all('SELECT v.details,v.source,v.header,f.name,f.meta,f.vram FROM verified_matches v '
-                       'JOIN functions f ON f.id=v.function_id WHERE f.project_id=? ORDER BY v.attempt_id DESC LIMIT ?',proj['id'],MAX_BANK)
+                       'JOIN functions f ON f.id=v.function_id WHERE f.project_id=? ORDER BY v.attempt_id DESC',proj['id'])
     out={}
     for row in rows:
         try:proof=json.loads(row['details'])
@@ -75,8 +74,9 @@ def validate(net, slug, seconds, attempts):
     proj=net.project_row(slug)
     if not net.is_rom(proj) or net.fork_slug(slug) or slug in net.links:
         raise NetworkError('Saved-match recovery currently needs a local ROM project. Imported builds own their source/header history.')
-    if type(seconds)!=int or not 1<=seconds<=600 or type(attempts)!=int or not 1<=attempts<=1024:
-        raise ValueError('Choose 1–600 seconds and 1–1024 compiler attempts.')
+    if ((seconds is not None and (type(seconds)!=int or not 1<=seconds<=600))
+            or (attempts is not None and (type(attempts)!=int or not 1<=attempts<=1024))):
+        raise ValueError('Leave limits blank to recover all, or choose 1–600 seconds and 1–1024 compiler attempts.')
     return proj
 
 
@@ -102,7 +102,11 @@ def run(net, slug, seconds, attempts, log):
     """Overlap bounded compiles; synchronize and publish once per small recovery group."""
     from . import workers
     proj=validate(net,slug,seconds,attempts)
-    stop=getattr(log,'cancel_event',threading.Event());started=time.monotonic();deadline=started+seconds
+    stop=getattr(log,'cancel_event',threading.Event());started=time.monotonic()
+    # Missing limits mean a finite pass over every available historical candidate,
+    # never repeated searches after the queue is exhausted. Stop remains cooperative.
+    deadline=started+seconds if seconds is not None else float('inf')
+    compile_limit=attempts if attempts is not None else float('inf')
     abandoned=threading.Event()
     result=dict(matched=0,attempts=0,skipped=0,resumable=True)
     rows=[];completed=0;tried=set();done=set()
@@ -131,7 +135,7 @@ def run(net, slug, seconds, attempts, log):
                 yield candidate_index,source,header,origin,key
     # Use independent low-priority compiler threads: shared background workers can be
     # waiting for our project lock. The compiler's global slots still cap subprocesses.
-    width=max(1,min(8,workers.WORKERS,attempts))
+    width=max(1,min(8,workers.WORKERS,compile_limit))
     executor=ThreadPoolExecutor(width,thread_name_prefix='saved-recovery',initializer=workers.lower_priority)
     agent=None
     try:
@@ -143,12 +147,12 @@ def run(net, slug, seconds, attempts, log):
             rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
             rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
         entries=deque(rows)
-        while entries and result['attempts']<attempts:
+        while entries and result['attempts']<compile_limit:
             checkpoint()
             group=[]
             # Functions without history need neither compiler work nor an expensive
             # forced progress-folder synchronization. Rebuild selected pools after pulling.
-            while len(group)<min(width,attempts-result['attempts']):
+            while len(group)<min(width,compile_limit-result['attempts']):
                 if not entries:break
                 row=entries.popleft()
                 checkpoint()

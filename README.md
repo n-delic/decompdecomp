@@ -1453,8 +1453,9 @@ naming provenance survive when their complete targets are unchanged.
 **Local repairs:** use the Deep permutation pass to try targeted repairs on saved C,
 followed by random rewrites. The separate near-match pass is no longer shown.
 **Recover saved matches**, below Autopilot, rechecks historical successful C/header
-combinations against the current project. Its time and compile limits apply to the
-whole recovery run; every recovered match must pass fresh verification. Recovery synchronizes before compiling, ignores save-only revision changes, and waits cancellably for database writers. Busy derived twins indexing is refreshed on its next use without losing the committed match. No AI tokens
+combinations against the current project. By default it checks all available saved candidates until the queue is exhausted or you select **Stop**.
+Optional time and compile limits are under **Optional recovery limits**; leave either blank for no limit.
+Every limit applies to the whole recovery run; every recovered match must pass fresh verification. Recovery synchronizes before compiling, ignores save-only revision changes, and waits cancellably for database writers. Busy derived twins indexing is refreshed on its next use without losing the committed match. No AI tokens
 are used.
 Metadata-only synchronization reads function status in one batch and skips already imported history.
 New historical evidence is hash-checked in short cancellable batches; it never counts as
@@ -1464,6 +1465,10 @@ Recovery compiles up to eight functions concurrently, within the background work
 then verifies and records them serially. Each small group synchronizes saved files once;
 functions without historical candidates skip that work. Candidate alternatives run in later
 groups so the project lock is released between groups. Live throughput reflects this run.
+Use recovery when previously verified functions reopen after header, compiler or layout
+changes, an interrupted restore, or compatible function renames/unit changes. It reuses
+earlier successful C and headers; functions with no successful history need other matching
+work. Functions claimed by agents are skipped and can be retried after those claims end.
 
 ROM code audits also show possible function-pointer references and unowned bytes inside
 mapped segments. These are review leads. N64 reimport can recover narrowly proven

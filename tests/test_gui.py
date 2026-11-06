@@ -547,7 +547,8 @@ def test_maintenance_tools_use_shared_disclosure_cards():
     for panel_id, action_id in [('machineDraftPanel', 'regenerateMachineDrafts'),
                                 ('savedMatchRecoveryPanel', 'recoverSavedMatches')]:
         start = html.index(f'<details class="panel settings-disclosure" id="{panel_id}">')
-        card = html[start:html.index('</details>', start)]
+        next_card = html.find('<details class="panel settings-disclosure"', start+1)
+        card = html[start:next_card if next_card >= 0 else len(html)]
         assert '<summary class="panel-head"><h2>' in card
         assert 'disclosure-context' in card
         assert 'class="pad maintenance-body"' in card
@@ -557,6 +558,11 @@ def test_maintenance_tools_use_shared_disclosure_cards():
         assert ' open' not in card.split('>', 1)[0]
     assert '<label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds"' in html
     assert '<label class="field"><span>Compile limit</span><input id="savedMatchAttempts"' in html
+    assert '<details class="transfer-advanced" id="savedMatchLimits">' in html
+    for field in ('savedMatchSeconds', 'savedMatchAttempts'):
+        input_tag = html[html.index(f'<input id="{field}"'):].split('>', 1)[0]
+        assert 'value=' not in input_tag and 'placeholder="No limit"' in input_tag
+    assert '>Recover all saved matches</button>' in html
 
 
 def test_database_cleanup_preview_save_progress_stop_and_error_controls():

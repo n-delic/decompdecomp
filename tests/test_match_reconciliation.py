@@ -277,7 +277,7 @@ def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(
         db.execute("UPDATE functions SET status='open',matched_source=NULL,best_source=NULL,best_score=NULL")
     net.progress.sync('game',force=True)
     log=lambda *args:None
-    result=recovery.run(net,'game',30,4,log)
+    result=recovery.run(net,'game',None,None,log)
     assert result['matched']==count and net._function('empty_return','game')['status']=='matched'
     assert net.store.one('SELECT via FROM attempts ORDER BY id DESC LIMIT 1')['via']=='saved-match-reconciliation'
     assert not net.store.one('SELECT 1 FROM claims')
@@ -444,7 +444,7 @@ def test_cancelling_parallel_wave_discards_results_and_releases_every_claim(monk
         try:compiler._CANCEL_CHECK.get()()
         finally:ended.set()
     net._compile = cancelled
-    result = recovery.run(net, 'game', 30, 2, log)
+    result = recovery.run(net, 'game', None, None, log)
     assert ended.wait(5)
     assert result['matched'] == 0 and result['attempts'] == 2
     assert not net.store.one("SELECT 1 FROM functions WHERE status='matched'")
@@ -465,3 +465,59 @@ def test_deadline_rejects_finished_compile_before_promoting(monkeypatch):
     assert result['matched'] == 0
     assert net.store.one('SELECT status FROM functions')['status'] == 'open'
     assert not net.store.one('SELECT 1 FROM claims')
+
+
+@pytest.mark.parametrize('seconds,attempts', [(None,None), (None,1), (1,None), (600,1024)])
+def test_optional_limits_validate_independently(monkeypatch, seconds, attempts):
+    net, _ = setup(monkeypatch)
+    assert recovery.validate(net, 'game', seconds, attempts)['id'] == 1
+
+
+@pytest.mark.parametrize('seconds,attempts', [(0,None), (601,None), (True,None), ('30',None),
+                                           (None,0), (None,1025), (None,False), (None,1.5)])
+def test_explicit_invalid_limits_are_rejected(monkeypatch, seconds, attempts):
+    net, _ = setup(monkeypatch)
+    with pytest.raises(ValueError, match='Leave limits blank'):
+        recovery.validate(net, 'game', seconds, attempts)
+
+
+def test_unlimited_pass_exhausts_candidates_beyond_previous_defaults(monkeypatch):
+    net, log = setup(monkeypatch)
+    add_functions(net, 130)
+    now = [0.0]
+    monkeypatch.setattr(recovery.time, 'monotonic', lambda: now[0])
+    compile = net._compile
+    def advancing(*args):
+        now[0] += 10
+        return compile(*args)
+    net._compile = advancing
+    result = recovery.run(net, 'game', None, None, log)
+    assert result['matched'] == result['attempts'] == 130
+    assert result['seconds'] > 600
+    assert not net.store.one("SELECT 1 FROM functions WHERE status='open'")
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_unlimited_pass_stops_after_each_failed_candidate_once(monkeypatch):
+    net, log = setup(monkeypatch)
+    monkeypatch.setattr(recovery, 'candidates', lambda *a: [('first','','old'), ('second','','old')])
+    seen = []
+    net._compile = lambda p,h,s,f: seen.append(s) or SimpleNamespace(ok=False)
+    result = recovery.run(net, 'game', None, None, log)
+    assert result['attempts'] == 2 and result['matched'] == 0
+    assert seen == ['first','second']
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_history_bank_includes_old_matches_beyond_former_global_cap(monkeypatch):
+    net, proj, _ = prepared_net()
+    add_functions(net, 4100)
+    source = 'void f(void) {}'
+    detail = dict(verdict='exact', source_sha256=match_bundle.digest(source), vram=4096)
+    with net.store.tx() as db:
+        db.execute(match_bundle.SCHEMA)
+        db.execute('INSERT INTO verified_matches SELECT id,id,?,?,? FROM functions',
+                   (json.dumps(detail),source,''))
+    records = recovery.bank(net, proj)
+    assert len(records[4096]) == 4100
+    assert records[4096][-1][0]['name'] == 'f'

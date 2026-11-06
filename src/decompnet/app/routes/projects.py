@@ -538,7 +538,7 @@ def register(app: App) -> None:
 
     def p_reconcile_matches(slug, request, data):
         from .. import match_reconciliation
-        seconds,attempts=data.get('seconds',120),data.get('attempts',128)
+        seconds,attempts=data.get('seconds'),data.get('attempts')
         match_reconciliation.validate(net,slug,seconds,attempts)
         active=getattr(net,'_finish_near_jobs',{})
         net._finish_near_jobs=active

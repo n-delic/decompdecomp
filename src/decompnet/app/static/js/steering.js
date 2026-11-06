@@ -325,15 +325,21 @@ function renderSavedMatchRecovery(ov) {
   const stop = $("savedMatchStop"), log = $("savedMatchLog");
   $("savedMatchRecoveryPanel").hidden = ov.kind === "fork";
   const recover = $("recoverSavedMatches");
+  const limits = [$("savedMatchSeconds"), $("savedMatchAttempts")];
+  const updateLabel = () => { recover.textContent = limits.some(input => input.value.trim() !== "")
+    ? "Recover saved matches" : "Recover all saved matches"; };
+  limits.forEach(input => { input.oninput = updateLabel; });
+  updateLabel();
   const start = async (route, label) => {
     const slug = S.slug;
-    const finish = beginWork(log, label, [recover], "Match pass finished");
+    const finish = beginWork(log, label, [recover, ...limits], "Saved-match recovery ended");
     log.hidden = false;
     $("savedMatchSummary").textContent = "Preparing saved-match recovery…";
     stop.hidden = false; stop.disabled = true;
     try {
       const result = await api(route, {method: "POST", body: {slug,
-        seconds: Number($("savedMatchSeconds").value), attempts: Number($("savedMatchAttempts").value)}});
+        seconds: $("savedMatchSeconds").value.trim() === "" ? null : Number($("savedMatchSeconds").value),
+        attempts: $("savedMatchAttempts").value.trim() === "" ? null : Number($("savedMatchAttempts").value)}});
       stop.disabled = false;
       stop.onclick = async () => {
         try { await api("/api/job/cancel", {method: "POST", body: {id: result.job}}); }

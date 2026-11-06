@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: saved-match recovery defaults to checking all available candidates, with Stop
+  available throughout. Independent optional time and compile limits are collapsed by
+  default, and older historical matches are no longer hidden by a global record cap.
+
 - Done: saved-match recovery overlaps up to eight bounded compiler jobs, respects background
   worker and compile limits, skips forced synchronization for functions without candidates,
   and publishes each small group once. Fresh exact judgments and commits remain serial;

@@ -312,13 +312,16 @@
         <summary class="panel-head"><h2>Recover saved matches <span class="disclosure-context">— Recheck earlier successes</span></h2></summary>
         <div class="pad maintenance-body">
           <p class="maintenance-intro">Restore lost matches by testing previously successful C and headers against this project.</p>
-          <p class="muted small">Use when matches disappear after project changes. Only code that passes verification again counts as matched.</p>
+          <p class="muted small">Use after matches reopen following header, compiler or layout changes, or an interrupted restore. Only code that passes verification again counts as matched.</p>
+          <p class="muted small">Checks all available saved candidates unless you select Stop. Functions claimed by agents are skipped.</p>
+          <details class="transfer-advanced" id="savedMatchLimits"><summary>Optional recovery limits</summary>
+          <p class="muted small" id="savedMatchLimitsHelp">Leave either limit blank for no limit. A time limit can be 1–600 seconds; a compile limit can be 1–1,024.</p>
           <div class="maintenance-limits">
-            <label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds" type="number" min="1" max="600" value="120"></label>
-            <label class="field"><span>Compile limit</span><input id="savedMatchAttempts" type="number" min="1" max="1024" value="128"></label>
+            <label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds" type="number" min="1" max="600" placeholder="No limit" aria-describedby="savedMatchLimitsHelp"></label>
+            <label class="field"><span>Compile limit</span><input id="savedMatchAttempts" type="number" min="1" max="1024" placeholder="No limit" aria-describedby="savedMatchLimitsHelp"></label>
           </div>
-          <p class="muted small">Stops at either limit or when saved candidates run out.</p>
-          <div class="maintenance-actions"><button id="recoverSavedMatches" class="primary" type="button">Recover saved matches</button><button id="savedMatchStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
+          </details>
+          <div class="maintenance-actions"><button id="recoverSavedMatches" class="primary" type="button">Recover all saved matches</button><button id="savedMatchStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
           <p id="savedMatchSummary" class="small" role="status"></p>
           <pre id="savedMatchLog" class="joblog" hidden></pre>
         </div>
