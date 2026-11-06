@@ -38,7 +38,9 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
-                    if request.method == "GET":
+                    if request.method == "GET" or request.url.path == "/api/permuter/pass":
+                        # Deep-pass controls schedule local workers; the workers synchronize before judging.
+                        # Starting/stopping or reading their status must not wait for a project sync.
                         # A restored project's byte checks can take minutes. Show the saved database
                         # while they run; mutations and the judge retain their synchronization gate.
                         with net.progress.view():

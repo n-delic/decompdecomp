@@ -735,3 +735,56 @@ def test_old_host_outage_errors_are_retryable_not_attention(sweep):
     obj.recover_room_transport('game')
     row=net.store.one('SELECT state,error FROM deep_permutation_passes WHERE function_id=?',fn['id'])
     assert row['state']=='pending' and row['error']==''
+
+
+def test_room_status_is_read_only_even_with_old_transport_errors_and_a_writer(sweep,monkeypatch):
+    import sqlite3
+    obj,net,_,_=sweep
+    cfg=obj.config('game');proj=net.project_row('game')
+    for name,state in [('f0','error'),('f1','rotated')]:
+        fn=net._function(name,'game')
+        obj.record(fn,deep_sweep.signature(net,proj,fn,cfg['minutes'],cfg['max_variants']),state,
+                   cfg['minutes'],cfg['max_variants'],error="the room's host isn't reachable right now")
+    def forbidden(*args,**kwargs):pytest.fail('local status must not contact the host or synchronize progress')
+    net.links['game']=SimpleNamespace(_req=forbidden)
+    monkeypatch.setattr(net.progress,'sync',forbidden)
+    # A different process is writing. WAL snapshot reads must still work without repairing passes.
+    net.store.conn.execute('PRAGMA busy_timeout=100')
+    writer=sqlite3.connect(net.store.path)
+    writer.execute('BEGIN IMMEDIATE')
+    try:
+        with net.progress.view():status=obj.status('game')
+    finally:
+        writer.rollback();writer.close()
+    assert status['queue_left']==2 and status['queue_blocked']==0 and status['attention']==[]
+    assert [r['state'] for r in net.store.all('SELECT state FROM deep_permutation_passes ORDER BY function_id')]==['error','rotated']
+    # Actual search recovery remains durable and only runs when work is requested.
+    monkeypatch.undo()
+    obj.recover_room_transport('game')
+    assert {r['state'] for r in net.store.all('SELECT state FROM deep_permutation_passes')}=={'pending'}
+
+
+def test_status_scope_queries_skip_unneeded_archived_source(sweep,monkeypatch):
+    obj,net,_,_=sweep
+    obj.run('game',1,10,Log())
+    reads=[];original=net.store.all
+    def read(sql,*args):
+        if 'JOIN deep_permutation_passes' in sql:
+            reads.append(sql)
+        return original(sql,*args)
+    monkeypatch.setattr(net.store,'all',read)
+    obj.status('game')
+    assert reads and all('f.*' not in sql and 'matched_source' not in sql for sql in reads)
+
+
+def test_compact_status_preserves_entry_specific_compiler_scope(sweep):
+    obj,net,_,_=sweep
+    cfg=obj.config('game')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET rom_offset=4096 WHERE name='f0'")
+        project=json.loads(db.execute("SELECT config FROM projects WHERE slug='game'").fetchone()['config'])
+        project['function_compilers']={'4096:2147487744':{'vram':0x80001000,'toolchain':'gcc-2.8.1','flags':['-O1']}}
+        db.execute("UPDATE projects SET config=? WHERE slug='game'",(json.dumps(project),))
+    proj=net.project_row('game');fn=net._function('f0','game')
+    obj.record(fn,deep_sweep.signature(net,proj,fn,cfg['minutes'],cfg['max_variants']),'completed',cfg['minutes'],cfg['max_variants'])
+    assert obj.status('game')['queue_done']==1
