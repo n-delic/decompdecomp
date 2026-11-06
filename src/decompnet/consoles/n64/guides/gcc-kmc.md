@@ -1122,3 +1122,14 @@ Use it in standalone control accessors; it is not a general ordering barrier
 for surrounding floating-point expressions. The machine drafter recognizes a
 bounded encoded exchange leaf, but only a normal exact prepared-source check
 can reconsider a function retained as assembly. Keep that provenance explicit.
+
+### Fixed CP0 timer reads
+
+A standalone SDK Count accessor is hardware I/O, not arithmetic C. For registered
+GNU MIPS compilers use `unsigned int f(void) { return __builtin_mips_read_count(); }`.
+The fixed compiler template reads only CP0 Count ($9); it cannot select arbitrary
+registers or instructions. A private ordinary/`-da` GCC 2.7.2 KMC replay with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` reproduced the complete 12-byte leaf. Keep the
+original handwritten-assembly provenance and use normal exact verification.
+Count wraps at 32 bits; access may trap outside privileged operation. This is
+not a CPU serialization primitive or a general register-expression barrier.

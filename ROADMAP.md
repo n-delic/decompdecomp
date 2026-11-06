@@ -2908,3 +2908,8 @@ need independent evidence before receiving this specific GNU C repair.
   leaf seed. ROM/project machine drafting shares the source generator; imported
   projects must expose encoded assembly to that generator. Exact prepared source
   approval remains required for retained assembly; no automatic reclassification.
+
+- Done: registered GNU MIPS fixed CP0 Count read and bounded complete-leaf seed.
+  Shared ROM/project machine drafting uses the same generator where encoded
+  assembly is available. Retained assembly still requires explicit normal
+  verification and approval; the seed does not change its classification.

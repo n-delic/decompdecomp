@@ -5075,3 +5075,43 @@ Primary instruction semantics: [NEC VR4300 User's Manual, pp. 571–572](https:/
 A volatile memory clobber alone does not constrain unrelated register-only FP
 arithmetic. Keep this operation in standalone control accessors unless stronger
 compiler-specific ordering is separately established.
+
+## Standalone CP0 Count reads need a real hardware intrinsic
+
+A retained three-instruction SDK leaf reads CP0 register 9 into the result,
+returns and has an empty delay slot. Ordinary C cannot express this timer read;
+machine drafts must not replace it with an identity or constant. Registered GNU
+MIPS backends now provide the fixed `__builtin_mips_read_count()` operation.
+The caller supplies no selector, opcode or register. GCC allocates the output
+and constructs the return itself; the template contains only `mfc0 %0,$9`.
+
+The private linked GCC 2.7.2 KMC replay with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+was raw exact in both ordinary and `-da` builds. Five existing SDK callers make
+six direct calls. Four already use unsigned 32-bit prototypes; correcting the
+fifth caller's signed prototype preserved its exact linked bytes in both builds.
+This is intrinsic-backed architectural source, not evidence the SDK was written
+in ordinary C. Keep its original assembly provenance when approving adoption.
+
+The shared seed accepts only the complete contiguous encoded Count-read ABI
+leaf. It rejects other CP0 registers, writes, different return/output registers,
+nonempty delay slots and unknown toolchains. This is a high-level hypothesis
+subject to the ordinary judge, not a bypass or automatic assembly reopening.
+
+Count wraps at 32 bits and runs at half PClock on VR4300. CP0 is always usable
+in kernel mode, but may trap outside it when disabled. A volatile memory clobber
+keeps the read observable; it is not a CPU serialization operation or a general
+barrier for register-only C expressions. Primary hardware semantics:
+[NEC VR4300 User's Manual, sections 6.3.3 and 6.3.5, pp. 164–166](https://hack64.net/docs/VR43XX.pdf#page=164).
+The current validation is a standalone 32-bit accessor. MFC0 sign-extends its
+32-bit result in 64-bit CPU mode; that does not change the unsigned low word
+returned here. The manual's CP0 bypass interlock (section 4.6.9, p. 113) addresses
+an exception updating CP0 before a subsequent read; it does not establish a
+general timer-read serialization guarantee. No extra NOP or hazard padding was
+introduced to manufacture a match. MFC0 semantics: [manual p. 469](https://hack64.net/docs/VR43XX.pdf#page=469).
+
+The independent copied cartridge rebuilt all 12,582,912 bytes exactly with 2,073
+selected C functions, including the separately validated FCSR accessor; all
+2,072 prior effective profiles and the other 2,071 selected objects were
+preserved. The copied normal prepared-source path also promoted this retained
+leaf while preserving the other 2,072 source hashes and profiles. These counts
+are private validation states, not claims of live deployment or adoption.
