@@ -70,6 +70,10 @@ async function loadDatabaseStorage() {
   const size=n=>`${(Number(n)/1048576).toLocaleString(undefined,{maximumFractionDigits:1})} MiB`;
   $('databaseStorageSize').textContent=`— ${size(data.stored_bytes)} shared content`;
   $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of shared text stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database.`;
+  $('repairEvidenceEnabled').checked=data.repair_evidence.enabled;
+  $('repairEvidenceAutomatic').value=data.repair_evidence.automatic_limit;
+  $('repairEvidenceManual').value=data.repair_evidence.manual_limit;
+  updateRepairEvidenceFields();
   $('databaseStorageDays').value=data.retention.days;
   $('databaseStorageAutomatic').checked=data.retention.automatic;
 }
@@ -94,3 +98,16 @@ $('databaseStorageStop').onclick=async()=>{
 };
 
 $('databaseStorageCompact').onclick=()=>{$('headerStoragePanel').open=true;$('headerStorageCompact').click();};
+
+function updateRepairEvidenceFields(){
+  for(const id of ['repairEvidenceAutomatic','repairEvidenceManual'])$(id).disabled=!$('repairEvidenceEnabled').checked;
+}
+$('repairEvidenceEnabled').onchange=updateRepairEvidenceFields;
+$('repairEvidenceSave').onclick=async()=>{
+  const log=$('repairEvidenceLog');
+  const done=beginWork(log,'Saving repair evidence settings',[$('repairEvidenceSave'),$('repairEvidenceEnabled'),$('repairEvidenceAutomatic'),$('repairEvidenceManual')],'Repair evidence settings saved');
+  try{
+    await api('/api/database-storage',{method:'POST',body:{action:'save-repair-evidence',enabled:$('repairEvidenceEnabled').checked,automatic_limit:Number($('repairEvidenceAutomatic').value),manual_limit:Number($('repairEvidenceManual').value)}});
+  }catch(error){showJobError(log,error.message);}
+  finally{done();updateRepairEvidenceFields();}
+};

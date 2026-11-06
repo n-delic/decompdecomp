@@ -9,6 +9,7 @@ KEY='database-source-retention'
 
 
 def stats(net):
+    from ..repair_corpus import read_options
     store=net.store
     page=store.one('PRAGMA page_size')[0]
     count=store.one('PRAGMA page_count')[0]
@@ -16,6 +17,7 @@ def stats(net):
     blobs=store.one('SELECT COUNT(*) contents,COALESCE(SUM(raw_bytes),0) logical_bytes,COALESCE(SUM(length(payload)),0) stored_bytes FROM text_payloads')
     row=store.one('SELECT value FROM settings WHERE key=?',KEY)
     return {**dict(blobs),'allocated_bytes':page*count,'free_bytes':page*free,
+            'repair_evidence':read_options(store),
             'retention':json.loads(row['value']) if row else {'days':90,'automatic':False},
             'history_plan':[r['detail'] for r in store.all('EXPLAIN QUERY PLAN SELECT id,score,compiled,created_at FROM main.attempts WHERE function_id=? AND id<? ORDER BY id DESC LIMIT 101',0,9223372036854775807)]}
 

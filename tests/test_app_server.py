@@ -2594,3 +2594,21 @@ def test_deep_pass_controls_do_not_wait_for_progress_sync(app,monkeypatch):
     for action in ('start','stop'):
         response=client.post('/api/permuter/pass',json={'slug':'example','action':action},headers={'X-Decomp':'1'})
         assert response.status_code==200 and response.json()=={'job':'local-search'}
+
+
+def test_repair_evidence_settings_routes_validate_and_persist(app):
+    client,net,*_=app
+    from decompnet.repair_corpus import DEFAULTS, read_options
+    headers={'X-Decomp':'1'}
+    chosen=dict(enabled=False,automatic_limit=0,manual_limit=12)
+    action=dict(action='save-repair-evidence',**chosen)
+    assert client.post('/api/database-storage',json=action).status_code==403
+    for bad in ({'enabled':'yes'},{'automatic_limit':-1},{'manual_limit':1001}):
+        assert client.post('/api/database-storage',json={**action,**bad},headers=headers).status_code==400
+    try:
+        response=client.post('/api/database-storage',json=action,headers=headers)
+        assert response.status_code==200 and response.json()['repair_evidence']==chosen
+        assert client.get('/api/database-storage').json()['repair_evidence']==chosen
+        assert read_options(net.store)==chosen
+    finally:
+        client.post('/api/database-storage',json=dict(action='save-repair-evidence',**DEFAULTS),headers=headers)
