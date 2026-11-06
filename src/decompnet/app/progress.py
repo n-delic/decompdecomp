@@ -634,6 +634,59 @@ class Progress:
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
 
+    def prune_matched_drafts(self, slug: str) -> int:
+        """Remove acknowledged drafts only while their verified selected C is still present unchanged."""
+        with self._project_lock(slug):
+            proj = self.net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+            if not self.net.is_rom(proj):
+                return 0  # PROJECT mode's selected sources belong to its own build tree.
+            baseline = self._baseline(proj['id'])
+            if baseline is None:
+                return 0
+            names = [row['name'] for row in self.net.store.all("SELECT name FROM functions WHERE project_id=? "
+                     "AND status='matched'", proj['id'])
+                     if f"best/{row['name']}.c" in baseline.disk.files]
+            if not names:
+                return 0  # Normal autosaves must not inflate every matched source or scan the tree.
+            folder = saves.default_folder(self.net, slug)
+            saves._check_save_paths(folder, chosen=True)
+            removed = 0
+            for name in names:
+                row = self.net.store.one('SELECT name,status,matched_source FROM functions WHERE project_id=? AND name=?',
+                                         proj['id'], name)
+                if row['status'] != 'matched' or not row['matched_source']:
+                    continue
+                source, draft = f"src/{name}.c", f"best/{name}.c"
+                src, best = folder/source, folder/draft
+                if not src.is_file() or not best.is_file():
+                    continue
+                selected, text = src.read_text(encoding='utf-8'), best.read_text(encoding='utf-8')
+                if (selected != saves._source_text(row['matched_source'])
+                        or _hash(selected) != baseline.disk.files.get(source)
+                        or _hash(text) != baseline.disk.files[draft]):
+                    continue
+                current = self.net.store.one('SELECT status,matched_source FROM functions WHERE project_id=? AND name=?',
+                                             proj['id'], row['name'])
+                if current['status'] != 'matched' or current['matched_source'] != row['matched_source']:
+                    continue
+                if not saves._publish(folder, {source: selected}, {draft: text},
+                                      expected={source: selected, draft: text}, chosen=True):
+                    continue
+                changes = {draft: None}
+                with self.net.store.tx() as db:
+                    self._write_side_changes(db, proj['id'], 'disk', changes, baseline.disk)
+                    self._write_side_changes(db, proj['id'], 'projected', changes, baseline.projected)
+                baseline.disk.files.pop(draft, None)
+                baseline.projected.files.pop(draft, None)
+                self.disk.get(slug, {}).pop(draft, None)
+                self.projected.get(slug, {}).pop(draft, None)
+                self.published.setdefault(slug, set()).add(draft)
+                removed += 1
+            if removed:
+                self.signatures.pop(slug, None)
+                self.stamps.pop(slug, None)
+            return removed
+
     def forget(self, slug: str, project_id: int) -> None:
         """Drop in-memory state with the database row so a later project can safely reuse its slug or ID."""
         with self._project_lock(slug):
@@ -849,6 +902,8 @@ class Progress:
                     cached_signature = self.signatures.get(slug)
                     self._activity(slug, phase="Comparing saved files")
                     result = self._sync(slug, logger)
+                    if rom and result:
+                        self.prune_matched_drafts(slug)
                     self.checked[slug] = time.monotonic()
                     self.sync_changes[slug] = self.net.store.conn.total_changes
                     if rom:
@@ -964,12 +1019,14 @@ class Progress:
                    if baseline.projected.files.get(name) != _hash(text)}
         if full:
             removed = {name: None for name in baseline.projected.files if name not in files}
+            redundant = {"best/"+name[4:] for name in files if name.startswith("src/")}
+            removed.update({name: None for name in redundant if name in baseline.disk.files and name not in files})
         else:
             possible = {f"src/{name}.c" for name in names} | {f"best/{name}.c" for name in names}
             if flags.headers:
                 possible |= {name for name in baseline.projected.files if name.startswith("include/")}
             removed = {name: None for name in possible
-                       if name in baseline.projected.files and name not in files}
+                       if name in baseline.disk.files and name not in files}
         expected = {}
         for name in set(changes) | set(removed):
             path = folder / name

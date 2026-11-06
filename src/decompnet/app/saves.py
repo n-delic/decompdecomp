@@ -113,6 +113,7 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             _remember_revision(net, slug, json.loads(files[MANIFEST]))
         else:
             net.progress.sync(slug, force=True)
+            net.progress.prune_matched_drafts(slug)
             manifest_path = target / MANIFEST
             manifest_before = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
             files, result = _render(net, slug, target)
