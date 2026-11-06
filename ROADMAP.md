@@ -2971,3 +2971,5 @@ bytes/address are available. It asks for caller/callee ABI and compiler sibling-
 capability before variants, without changing signatures, profiles or classification.
 Other processors have no reader for this instruction pattern; generalized tail-dispatch
 ABI analysis and automatic source/profile selection remain planned.
+
+- Done: deep-permuter status polls read local snapshots without repairing pass records or synchronizing progress. Room transport failures remain retryable; recovery runs in the search worker. Start/stop controls schedule local work without a saved-progress verification gate. Scope summaries batch context and omit unrelated archived source.

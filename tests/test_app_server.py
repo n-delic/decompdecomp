@@ -2576,3 +2576,21 @@ def test_match_library_detail_and_name_routes(app,monkeypatch):
     assert reply.json()=={'name':'new_name'}
     assert calls==[(7,'new_name')]
     assert client.get('/api/match-library?id=invalid').status_code==400
+
+
+def test_deep_pass_controls_do_not_wait_for_progress_sync(app,monkeypatch):
+    client,net,_=app
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES('example','Example','mips','','{}')")
+    def blocked(*args,**kwargs):pytest.fail('deep-pass controls must not synchronize the project')
+    monkeypatch.setattr(net.progress,'sync',blocked)
+    def snapshot(slug,*args):
+        assert net.progress.viewing
+        net.project_row(slug)
+        return {'job':'local-search'}
+    for method in ('start','stop','status'):
+        monkeypatch.setattr(net.deep_sweeps,method,snapshot)
+    assert client.get('/api/permuter/pass?slug=example').json()=={'job':'local-search'}
+    for action in ('start','stop'):
+        response=client.post('/api/permuter/pass',json={'slug':'example','action':action},headers={'X-Decomp':'1'})
+        assert response.status_code==200 and response.json()=={'job':'local-search'}

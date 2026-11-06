@@ -13,6 +13,9 @@ from .deep_activity import Activity
 
 POLL_SECONDS = 15
 QUEUE_CACHE_SECONDS = 10
+# Scope checks need candidate inputs, never archived matched source or unrelated function metadata.
+SCOPE_COLUMNS = ",".join("f."+name for name in ("id","project_id","name","status","best_source","best_score",
+    "unit","vram","rom_offset","asm","seed","relocs","target"))
 SCHEMA = '''CREATE TABLE IF NOT EXISTS deep_permutation_passes(
  function_id INTEGER PRIMARY KEY, scope TEXT NOT NULL, state TEXT NOT NULL,
  minutes INTEGER NOT NULL, max_variants INTEGER NOT NULL, completed_at REAL,
@@ -31,7 +34,7 @@ def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=N
     # completed passes resumable; users can explicitly repeat them to try the new search recipes.
     if fn['status'] == 'open' and fn['best_score'] == 0:
         inputs += ('reverify-zero-v1',)
-    elif fn['best_source'] and not net.fork_slug(proj['slug']):
+    elif fn['best_source'] and not (shared['fork'] if shared is not None and 'fork' in shared else net.fork_slug(proj['slug'])):
         from .prototype_alignment import prepare
         from .prototype_alignment import variants as align
         ctx = candidate_scope.context(net, proj, fn['unit'], shared)
@@ -199,15 +202,18 @@ class Sweeps:
     def _attention(self, proj):
         """Only failures that still block this build's unchanged, eligible candidates."""
         rows = self.net.store.all(
-            'SELECT f.*,d.scope AS pass_scope,d.error AS pass_error,d.minutes AS pass_minutes, '
+            f'SELECT {SCOPE_COLUMNS},d.scope AS pass_scope,d.error AS pass_error,d.minutes AS pass_minutes, '
             'd.max_variants AS pass_variants FROM functions f '
             'JOIN deep_permutation_passes d ON d.function_id=f.id '
             f"WHERE f.project_id=? AND f.status='open' AND f.{IN_BUILD} AND d.state='error'",
             proj['id'])
+        from .deep_room import unavailable
         issues = []
-        shared = {'contexts': {}}
+        shared = candidate_scope.batch_context(self.net, proj)
         profiles = self.config(proj['slug']).get('compiler_profiles', 1)
         for fn in rows:
+            if unavailable(fn['pass_error']):
+                continue
             if not fn['best_source'] or fn['best_score'] is None:
                 continue
             if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants'], profiles, shared):
@@ -239,7 +245,8 @@ class Sweeps:
             with self.lock:self.queue_cache.clear()
 
     def status(self, slug):
-        self.recover_room_transport(slug)
+        # A status poll must never queue behind a writer to repair old pass records.
+        # The search worker performs recovery; until then transport errors and rotations are retryable.
         proj = self.net.project_row(slug)
         counts = self.net.store.one("SELECT COUNT(*) total, SUM(best_source IS NOT NULL AND best_score IS NOT NULL) ready "
                                     f"FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])
@@ -256,12 +263,17 @@ class Sweeps:
         with self.lock:
             current = dict(self.active.get(slug, {}))
         def count_queue():
-            shared = {'contexts': {}}
+            shared = candidate_scope.batch_context(self.net, proj)
             done_open = done_matched = rotated = blocked = 0
-            rows = self.net.store.all("""SELECT f.*,d.scope AS pass_scope,d.minutes AS pass_minutes,
+            rows = self.net.store.all(f"""SELECT {SCOPE_COLUMNS},d.error AS pass_error,d.scope AS pass_scope,d.minutes AS pass_minutes,
                 d.max_variants AS pass_variants,d.state AS pass_state FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
-                WHERE f.project_id=? AND f.gone_mark IS NULL AND f.status IN ('open','matched')""", proj['id'])
+                WHERE f.project_id=? AND f.gone_mark IS NULL AND f.status IN ('open','matched')
+                AND d.state IN ('completed','error') AND f.best_source IS NOT NULL AND f.best_score IS NOT NULL
+                AND d.minutes=? AND d.max_variants=?""", proj['id'], cfg['minutes'], cfg['max_variants'])
+            from .deep_room import unavailable
             for row in rows:
+                if row['pass_state'] == 'error' and unavailable(row['pass_error']):
+                    continue
                 if (row['best_source'] and row['best_score'] is not None
                         and row['pass_minutes'] == cfg['minutes'] and row['pass_variants'] == cfg['max_variants']
                         and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles', 1), shared)):
@@ -271,7 +283,6 @@ class Sweeps:
                         else:
                             done_matched += 1
                     elif row['status'] == 'open':
-                        rotated += int(row['pass_state'] == 'rotated')
                         blocked += int(row['pass_state'] == 'error')
             return done_open, done_matched, rotated, blocked
         done_open, done_matched, rotated, blocked = self.net.store.read_cache.get(
@@ -296,7 +307,6 @@ class Sweeps:
         if not isinstance(loop, bool):
             raise NetworkError('Loop indefinitely must be true or false.')
         deep_profiles.validate(compiler_profiles)
-        self.recover_room_transport(slug)
         if compiler_profiles > 1 and self.net.fork_slug(slug):
             raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
         if (isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 120 or
