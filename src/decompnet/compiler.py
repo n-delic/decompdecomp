@@ -189,6 +189,13 @@ def _wrap(cfg: CompilerConfig, work: Path, argv: list[str]) -> list[str]:
 
 
 def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd: Path | None = None, **stage):
+    # Driver internals are opaque; do not pretend its assembler time is separable.
+    mode = _sandbox_mode(cfg)
+    with compile_timing.phase('driver_' + (mode if mode in ('linux-vm', 'wsl') else 'native')):
+        return _exec_driver(cfg, work, argv, timeout, cwd, **stage)
+
+
+def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd: Path | None = None, **stage):
     """`stage`: in WSL, run on a copy in WSL's own file system (wsl.run's outputs, inputs and stage)."""
     if _sandbox_mode(cfg) == "linux-vm":
         check = _CANCEL_CHECK.get()
@@ -203,9 +210,12 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
     check = _CANCEL_CHECK.get()
     timeout = min(timeout, limits.compiler_time_limit())
-    proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
-                            start_new_session=os.name != "nt")
+    with compile_timing.phase('runtime_setup'):
+        wrapped = _wrap(cfg, work, argv)
+    with compile_timing.phase('process_launch'):
+        proc = subprocess.Popen(wrapped, cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
+                                start_new_session=os.name != "nt")
     from . import compiler_processes
     compiler_processes.track(proc.pid)
     started = time.monotonic()
@@ -433,7 +443,7 @@ def compile_assembly(cfg: CompilerConfig, prelude: str, source: str) -> CompileR
                 if not pp and re.search(r'(?i)\.(?:include|incbin)\b',_COMMENTS_AND_STRINGS.sub(' ',(work/src).read_text())):
                     raise SourceRejected('Preprocessed assembly must not include files or binary data.')
                 args=argv(src,obj,pp)
-                with _slot():
+                with _slot(), compile_timing.phase('assembly_preprocess' if pp else 'assembly_execute'):
                     proc=_exec(cfg,work,args,cfg.timeout,**({'inputs':[src],'outputs':[obj],'stage':root} if _sandbox_mode(cfg) in ('wsl','linux-vm') else {}))
                 log=(proc.stdout+proc.stderr).replace(root+'/','')
                 # IDO writes -E output to stdout even with -o; GCC writes the file.

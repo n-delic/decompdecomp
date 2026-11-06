@@ -157,7 +157,7 @@ def main() -> int:
     for line in sys.stdin:
         if line.strip():
             for answer in variants(json.loads(line)):
-                print(json.dumps(answer))
+                print(json.dumps(answer), flush=True)
             print(json.dumps({"done": True}), flush=True)
     return 0
 

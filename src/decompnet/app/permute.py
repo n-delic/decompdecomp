@@ -94,6 +94,10 @@ class TracedVariant(str):
         return value
 
 
+class GenerationStopped(Exception):
+    """The current generation stream no longer has a search budget."""
+
+
 class Generator:
     """The generator (permuter_gen.py) for one turn, in decomp-permuter's environment. It stays up for the turn, so
     it parses the header once per C it starts from: that takes a second for a header of 300 KB (debug symbols give a
@@ -104,15 +108,79 @@ class Generator:
                                      stderr=subprocess.DEVNULL,
                                      creationflags=NO_WINDOW | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0))
         # Windows select() accepts sockets only. A reader thread also gives pipe reads a deadline there.
-        self._lines = queue.Queue()
-        threading.Thread(target=self._read, daemon=True, name="permuter-output").start()
+        self._closed = threading.Event()
+        self._lines = queue.Queue(maxsize=32)
+        self._reader = threading.Thread(target=self._read, daemon=True, name="permuter-output")
+        self._reader.start()
 
     def _read(self) -> None:
         try:
             for line in self.proc.stdout:
-                self._lines.put(line)
+                if not self._put_line(line):break
         finally:
-            self._lines.put(_EOF)
+            self._put_line(_EOF)
+
+    def _put_line(self, line):
+        while not self._closed.is_set():
+            try:
+                self._lines.put(line, timeout=0.1)
+                return True
+            except queue.Full:
+                pass
+        return False
+
+    def chunks(self, job, check):
+        """Read small chunks while the existing generator process writes the rest.
+
+        Closing an obsolete stream kills its generator rather than mixing replies
+        from two parents. The next round starts a new generator when needed.
+        """
+        done = False
+        self.empty = True
+        self.failed = False
+        try:
+            self.proc.stdin.write(json.dumps(job).encode() + b"\n")
+            self.proc.stdin.flush()
+            deadline = time.monotonic() + GENERATOR_SECONDS
+            chunk = []
+            failed = False
+            while True:
+                check()
+                try:line = self._lines.get(timeout=0.1)
+                except queue.Empty:
+                    if time.monotonic() >= deadline:
+                        self.failed = True
+                        return
+                    continue
+                if line is _EOF:
+                    self.failed = True
+                    return
+                try:out = json.loads(line)
+                except ValueError:continue
+                if not isinstance(out, dict):continue
+                if 'done' in out:
+                    done = True
+                    if chunk:yield chunk
+                    return
+                if 'error' in out:
+                    failed = self.failed = True
+                    log.info("permuter: the generator could not read %s", job['function'])
+                elif not failed and isinstance(out.get('variant'), str):
+                    from .permuter_initialization import unsafe_temporary
+                    if unsafe_temporary(job['source'], out['variant'], job['function'], job.get('header', '')):continue
+                    chunk.append(TracedVariant(out['variant'], out['lineage'])
+                                 if isinstance(out.get('lineage'), list) else out['variant'])
+                    self.empty = False
+                    if len(chunk) >= 8:
+                        yield chunk
+                        chunk = []
+                        # Compiler time is not a generator timeout.
+                        deadline = time.monotonic() + GENERATOR_SECONDS
+        except OSError:
+            self.failed = True
+            return
+        finally:
+            if not done:self.close()
 
     def batch(self, job: dict) -> list[str] | None:
         """Variants of a function's C (the job's fields: permuter_gen.py), or None when the generator can't read
@@ -158,9 +226,14 @@ class Generator:
             return None
 
     def close(self) -> None:
+        self._closed.set()
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait()
+        self._reader.join(timeout=0.5)
+        if not self._reader.is_alive():
+            self.proc.stdin.close()
+            self.proc.stdout.close()
 
 
 @dataclass
@@ -544,9 +617,18 @@ class Permuter:
                         boosts = adaptive_repairs.boosts(self.net, proj, fn, rows, permuter_focus.boosts(rows))
                     # Alternate upstream defaults with focused weights: preserve an exploratory lane when
                     # the advisory mismatch category is incomplete or points at the wrong repair.
-                    batch = gen.batch({"header": header, "source": base, "function": fn["name"], "family": family,
-                                       "seed": rng.randrange(MAX_SEED), "count": BATCH, "weight_boosts": boosts if batches % 2 == 0 else {},
-                                       "trace": True})
+                    job = {"header": header, "source": base, "function": fn["name"], "family": family,
+                           "seed": rng.randrange(MAX_SEED), "count": BATCH, "weight_boosts": boosts if batches % 2 == 0 else {},
+                           "trace": True}
+                    if hasattr(gen, 'chunks'):
+                        if gen._closed.is_set():gen = Generator()
+                        def check_generation(fn=fn):
+                            random_safety.checkpoint(self.net, fn)
+                            if st.stop.is_set() or time.monotonic() >= deadline:
+                                raise GenerationStopped()
+                        batch = self._stream_variants(gen.chunks(job, check_generation), agent, proj, fn, fork)
+                    else:
+                        batch = gen.batch(job)
                     if batch is None:  # C it can't read: the simple rewrites can still try
                         gen.close()
                         gen = None
@@ -598,11 +680,27 @@ class Permuter:
                         break  # discard siblings generated from an obsolete parent after every improvement
                     if score <= cur or rng.random() < 0.02:  # mostly downhill, now and then sideways off a plateau
                         cur, cur_src = score, cand
+                if hasattr(batch, 'close'):batch.close()
+                if gen is not None and getattr(gen, 'failed', False):
+                    gen.close();gen = None
+                elif gen is not None and getattr(gen, 'empty', False):break
+        except GenerationStopped:
+            pass
         finally:
             if gen is not None:
                 gen.close()
             st.holding(fn["name"], False)
             self._let_go(agent, fn)
+
+    def _stream_variants(self, chunks, agent, proj, fn, fork):
+        try:
+            for chunk in chunks:
+                if hasattr(self, '_prime_trials'):
+                    self._prime_trials(agent, proj, fn,
+                                       [m2cfix.static_helpers(cand) for cand in chunk], fork)
+                yield from chunk
+        finally:
+            chunks.close()
 
     def _repair_flags(self, agent, proj, fn, st, deadline):
         """Two cached compiler-flag probes per pass on close ROM misses; persist only an exact function range.

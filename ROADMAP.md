@@ -3080,3 +3080,8 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Compile throughput: scoped per-worker header/workspace and successful-object reuse, prepared target/disassembly state, lean permutation scoring with full winner diagnostics, numeric phase timings and an installed-toolchain concurrency benchmark. See docs/compile-performance.md.
 
 - Candidate overhead: share per-trial ROM fingerprints and ELF/symbol readers, batch bounded miss-only bookkeeping with read-your-writes, throttle routine progress while publishing winners immediately, and skip repeated eligible ROM candidates before persistent lookup. See docs/candidate-overhead.md.
+
+### Search pipeline throughput
+
+- Done: stream random variants in bounded chunks while compilation runs; batch deep-search miss lookups for captured ROM inputs; reuse bounded advisory comparisons of identical machine output; identify driver environment, launch and explicit assembly-stage timings.
+- Planned: batch imported/custom-build trial preparation once external dependency revisions can be checked without repeating filesystem scans. These builds retain the ordinary fresh dependency checks and per-candidate lookups meanwhile; streaming and advisory comparison reuse still apply where their shared pipeline is used.
