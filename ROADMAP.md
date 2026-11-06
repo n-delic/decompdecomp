@@ -2,6 +2,13 @@
 
 - Done: compiler surveys and installed/used-profile comparisons process all eligible functions in one stoppable run; finished comparisons remain saved for resuming after Stop.
 
+- In progress: independent operational databases per project. Core function/header,
+  attempt, note and configuration paths now select storage explicitly, with real
+  two-database concurrency and rollback tests. Production still uses the legacy
+  file. Remaining service conversion, cross-project reads and automatic recoverable
+  migration are tracked in [Project database isolation](docs/project-databases.md).
+  The existing shared repair corpus and match library keep their locations.
+
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored
   before adding new source boundaries; explicit data, indirect guesses and ambiguous

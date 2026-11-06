@@ -184,7 +184,7 @@ class Core(Network):
         if project_id in self._sym_override:
             return self._sym_override[project_id]
         if project_id not in self._syms:
-            rows = self.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", project_id)
+            rows = self.project_store(project_id).all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", project_id)
             self._syms[project_id] = SymbolTable([Symbol(r["name"], r["address"], r["size"], r["kind"]) for r in rows])
         return self._syms[project_id]
 
@@ -202,7 +202,7 @@ class Core(Network):
         if function is not None:
             offset = function["rom_offset"] if "rom_offset" in function.keys() else None
             if offset is None:
-                row = self.store.one("SELECT rom_offset FROM functions WHERE project_id=? AND name=?",
+                row = self.project_store(proj["id"]).one("SELECT rom_offset FROM functions WHERE project_id=? AND name=?",
                                      proj["id"], function["name"])
                 offset = row["rom_offset"] if row else None
         owner = next((s for s in segs if offset is not None and s.rom_start <= offset < s.rom_end), None)
@@ -230,7 +230,7 @@ class Core(Network):
         m = _ADDRESS.match(name.strip()) if name else None
         if m:
             proj = self._project(project)
-            row = self.store.one("SELECT * FROM functions WHERE project_id=? AND vram=?", proj["id"], int(m.group(1), 16))
+            row = self.project_store(proj["id"]).one("SELECT * FROM functions WHERE project_id=? AND vram=?", proj["id"], int(m.group(1), 16))
             if row is not None:
                 return row
         try:
@@ -257,7 +257,7 @@ class Core(Network):
         sym = name.strip().strip("`'\"").split("@", 1)[0].split("(", 1)[0].strip()
         if len(sym) < 3:
             return []
-        rows = self.store.all("SELECT name FROM functions WHERE project_id=? AND (name LIKE ? OR name LIKE ?) LIMIT 4000",
+        rows = self.project_store(proj["id"]).all("SELECT name FROM functions WHERE project_id=? AND (name LIKE ? OR name LIKE ?) LIMIT 4000",
                               proj["id"], f"%{sym[-6:]}%", f"{sym[:4]}%")
         names = [r["name"] for r in rows]
         return difflib.get_close_matches(sym, names, n=n, cutoff=0.6) or [x for x in names if sym in x][:n]
@@ -281,14 +281,14 @@ class Core(Network):
         # with its return type and convention (`bool __cdecl InitFog(...)`, `public: float __thiscall
         # CDriver::CalcSpeed(float)`): agents sent those and got "no function" back
         like = sym.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        rows = self.store.all(
+        rows = self.project_store(proj["id"]).all(
             "SELECT * FROM functions WHERE project_id=? AND (name=? OR substr(name,1,?)=? "
             "OR json_extract(meta,'$.symbol')=? OR json_extract(meta,'$.real')=? "  # (a PC game's: rename_symbol)
             "OR substr(json_extract(meta,'$.demangled'),1,?)=? "
             "OR json_extract(meta,'$.demangled') LIKE ? ESCAPE '\\') ORDER BY name",
             proj["id"], sym, len(sym) + 1, sym + "@", sym, sym, len(sym) + 1, sym + "(", f"% {like}(%")
         if not rows and "::" not in sym and len(sym) >= 4:  # a method by its own name: Class::sym
-            rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND json_extract(meta,'$.demangled') "
+            rows = self.project_store(proj["id"]).all("SELECT * FROM functions WHERE project_id=? AND json_extract(meta,'$.demangled') "
                                   "LIKE ? ESCAPE '\\' ORDER BY name", proj["id"], f"%::{like}(%")
         if unit:
             rows = ([r for r in rows if r["unit"] == unit] or [r for r in rows if r["unit"].endswith(unit)]
@@ -325,7 +325,7 @@ class Core(Network):
     def _update_cfg(self, slug: str, change) -> dict:
         """Change a project's config in one transaction (change(cfg) edits it in place)."""
         proj = self._project(slug)
-        with self.store.tx() as db:
+        with self.project_store(proj["id"]).tx() as db:
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             change(cfg)
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
