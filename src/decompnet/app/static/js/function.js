@@ -379,8 +379,7 @@ async function refreshFn(first) {
       }
     }
 
-    $("fnFocusPanel").hidden = d.status !== "open";
-    $("fnFocusAgent").onclick = () => openFocusedAgent(slug, d.name);
+    renderFunctionFocusedAgents(d, slug);
     if (d.deep_job && !deepPermuterTarget) followFunctionDeep(d.deep_job);
     $("fnDeepPanel").hidden = !deepPermuterBusy && (d.status !== "open" || d.best == null);
     $("fnWorkPanel").hidden = $("fnFocusPanel").hidden && $("fnDeepPanel").hidden;

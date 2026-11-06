@@ -54,6 +54,7 @@ function openFocusedAgent(slug, name) {
       status.textContent = `${minutes}-minute limit · Saved files and the tool connection are checked before work. Follow its live status in the Agents tab.`;
       start.hidden = true;
       stop.hidden = false;
+      poll(false).catch(() => {});
       stop.onclick = async () => {
         const done = beginWork(get('[data-focus-progress]'),'Stopping focused agent',[stop]);
         try { await api('/api/agents/stop',{method:'POST',body:{id}}); get('[data-focus-heading]').textContent='Agent stopped'; status.textContent='Saved improvements are retained.'; stop.hidden=true; start.hidden=false; [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled=false; }); }
@@ -63,4 +64,79 @@ function openFocusedAgent(slug, name) {
     } catch (error) { get('[data-focus-heading]').textContent = 'Creation stopped'; status.textContent = error.message; showJobError(get('[data-focus-progress]'),error.message); }
     finally { clearInterval(timer); finish(); if (start.hidden) [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled = true; }); }
   };
+}
+
+
+const focusedAgentActions = new Set();
+function focusedRunsForFunction(slug, detail) {
+  return (S.sessions || []).filter(s => s.slug === slug && (s.focus_id != null && detail.id != null
+    ? Number(s.focus_id) === Number(detail.id) : s.focus_function === detail.name));
+}
+
+function renderFunctionFocusedAgents(detail, slug) {
+  if (slug !== S.slug || S.fn !== detail.name) return;
+  const running = s => ['starting','working','waiting'].includes(s.state);
+  const runs = focusedRunsForFunction(slug, detail).sort((a,b) => Number(running(b))-Number(running(a)) || (b.started_at || 0)-(a.started_at || 0));
+  const active = runs.filter(running);
+  const panel = $('fnFocusPanel'), host = $('fnFocusedSessions'), setup = $('fnFocusAgent');
+  panel.hidden = detail.status !== 'open' && !runs.length;
+  const target = `${slug}:${detail.id ?? detail.name}`;
+  if (panel.dataset.focusTarget !== target) {
+    const log = $('fnFocusLog');
+    for (const key of ['_workBar','_workStatus','_errorBox']) {
+      log[key]?.remove(); log[key] = null;
+    }
+    log.textContent = '';
+  }
+  if (runs.length && (panel.dataset.focusTarget !== target || panel.dataset.hadRuns !== 'yes')) panel.open = true;
+  panel.dataset.focusTarget = target;
+  panel.dataset.hadRuns = runs.length ? 'yes' : 'no';
+  $('fnFocusContext').textContent = runs.length ? `· ${active.length ? `${active.length} active` : `${runs.length} saved`}` : '';
+  $('fnFocusIntro').hidden = !!runs.length;
+  setup.hidden = !!active.length || detail.status !== 'open';
+  $('fnFocusSetup').hidden = setup.hidden;
+  setup.textContent = runs.length ? 'Set up another agent' : 'Set up focused agent';
+  setup.className = runs.length ? 'ghost small-btn' : 'primary small-btn';
+  setup.onclick = () => openFocusedAgent(slug, detail.name);
+  setHtml(host, runs.map(s => {
+    const live = running(s), pending = focusedAgentActions.has(`${slug}:${s.id}`);
+    const state = {starting:'Starting',working:'Working',waiting:'Waiting',paused:'Paused',stopped:'Stopped',failed:'Needs attention'}[s.state] || s.state;
+    const seconds = s.focus_until ? Math.max(0, Math.ceil(s.focus_until - Date.now()/1000)) : null;
+    const time = live && seconds != null ? seconds ? `${Math.ceil(seconds/60)} min left` : 'Time limit reached' : s.focus_minutes ? `${s.focus_minutes}-minute limit` : '';
+    return `<article class="function-focus-run">
+      <div class="function-focus-heading"><strong>${esc(s.label || s.agent || s.kind_name || 'Focused agent')}</strong><span class="function-focus-state${live ? ' active' : ''}">${esc(state)}</span></div>
+      <p class="small muted">${[s.kind_name || s.kind, s.model || 'Default model', time].filter(Boolean).map(esc).join(' · ')}</p>
+      ${s.why || s.error ? `<p class="small function-focus-reason">${esc(s.why || s.error)}</p>` : ''}
+      <div class="row"><button class="ghost small-btn" type="button" data-focus-view="${esc(s.id)}">View agent &amp; log</button>${live || detail.status === 'open' ? `<button class="${live ? 'ghost' : 'primary'} small-btn" type="button" data-focus-action="${esc(s.id)}"${pending ? ' disabled' : ''}>${pending ? live ? 'Stopping…' : 'Starting…' : live ? 'Stop agent' : 'Start again'}</button>` : ''}</div>
+    </article>`;
+  }).join(''));
+  host.onclick = async event => {
+    const view = event.target.closest('[data-focus-view]');
+    if (view) {
+      S.logFor = view.dataset.focusView; hideDrawer('drawer');
+      location.hash = `#/p/${encodeURIComponent(slug)}/agents`;
+      renderSessions(S.sessions || []); renderLog();
+      return;
+    }
+    const button = event.target.closest('[data-focus-action]');
+    if (!button) return;
+    const session = focusedRunsForFunction(slug, detail).find(s => s.id === button.dataset.focusAction);
+    const key = `${slug}:${button.dataset.focusAction}`;
+    if (!session || focusedAgentActions.has(key)) return;
+    focusedAgentActions.add(key);
+    const previousLabel = button.textContent;
+    const stop = running(session), log = $('fnFocusLog');
+    if (log._errorBox) log._errorBox.hidden = true;
+    const done = beginWork(log, stop ? 'Stopping focused agent' : 'Starting focused agent', [button], '');
+    button.textContent = stop ? 'Stopping…' : 'Starting…';
+    try {
+      await api(`/api/agents/${stop ? 'stop' : 'restart'}`, {method:'POST',body:{id:session.id}});
+      await poll(false);
+    } catch (error) { if (S.slug === slug && S.fn === detail.name) showJobError(log,error.message); }
+    finally {
+      done(); button.textContent = previousLabel; focusedAgentActions.delete(key);
+      if (S.slug === slug && S.fn === detail.name) renderFunctionFocusedAgents(detail,slug);
+    }
+  };
+  $('fnWorkPanel').hidden = panel.hidden && $('fnDeepPanel').hidden;
 }

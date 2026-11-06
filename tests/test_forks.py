@@ -311,6 +311,7 @@ def test_read_and_search(fork):
 def test_function_detail(fork):
     net, slug, agent = fork
     d = net.function_detail(slug, "clamp_s32")
+    assert d["id"] == net._function("clamp_s32", slug)["id"]
     assert d["status"] == "matched" and "slt" in d["asm"] and "clamp_s32" in d["source"]
 
 

@@ -593,3 +593,10 @@ def test_compiler_profile_drawer_uses_scope_and_one_progress_display():
         pytest.skip('needs node to run GUI scripts')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_profile_test.js'))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_function_drawer_shows_existing_focused_agents_and_live_controls():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_focus.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
