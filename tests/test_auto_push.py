@@ -191,3 +191,15 @@ def test_two_verified_matches_are_committed_cleaned_and_then_pushed(automatic):
     assert git(remote, 'rev-parse', 'HEAD') == git(root, 'rev-parse', 'HEAD')
     assert git(remote, 'log', '-2', '--format=%s').splitlines() == ['Preserve load order', 'Preserve signed comparison']
     assert not (root/'best/f.c').exists() and not (root/'best/g.c').exists()
+
+
+def test_git_preferences_and_background_push_never_sync_or_rejudge_progress(progress, monkeypatch):
+    net, root, remote = progress
+    head = commit(root)
+    def no_sync(*args, **kwargs):raise AssertionError('Local Git preferences must not recheck saved code')
+    monkeypatch.setattr(net.progress, 'sync', no_sync)
+    auto_push.configure(net, 'game', True, 1, str(root))
+    auto_push.process(net, 'game')
+    assert git(remote, 'rev-parse', 'HEAD') == head
+    proj = net.store.one("SELECT * FROM projects WHERE slug='game'")
+    assert auto_push.status(net, proj)['last_push'] == head

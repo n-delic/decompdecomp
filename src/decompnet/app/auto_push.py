@@ -1,4 +1,5 @@
 """Opt-in threshold pushes, bound to the origin and branch the user enabled."""
+import json
 import time
 import uuid
 
@@ -10,6 +11,17 @@ def status(net, proj):
     cfg = net.cfg(proj).get('auto_push', {})
     return {key: cfg.get(key, default) for key, default in
             (('enabled', False), ('threshold', 10), ('error', ''), ('last_push', ''), ('phase', ''))}
+
+
+def _change(net, slug, change):
+    # These are local Git preferences, not game settings. _update_cfg synchronizes
+    # saved code and can launch a recheck; a network retry must never cause that.
+    with net.store.tx() as db:
+        row = db.execute('SELECT id,config FROM projects WHERE slug=?', (slug,)).fetchone()
+        if row is None:raise NetworkError('This project is no longer open. Refresh the project list.')
+        cfg = json.loads(row['config'])
+        change(cfg)
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), row['id']))
 
 
 def configure(net, slug, enabled, threshold=10, folder=''):
@@ -28,7 +40,7 @@ def configure(net, slug, enabled, threshold=10, folder=''):
         previous = net.cfg(proj).get('auto_push', {})
         if previous.get('enabled') and any(previous.get(key) != settings[key] for key in ('folder', 'branch', 'ref', 'origin')):
             raise NetworkError('The branch or origin changed. Disable and re-enable automatic pushing for the intended destination.')
-    net._update_cfg(slug, lambda cfg: cfg.update(auto_push=settings))
+    _change(net, slug, lambda cfg: cfg.update(auto_push=settings))
     return status(net, net.store.one('SELECT * FROM projects WHERE slug=?', slug))
 
 
@@ -43,7 +55,7 @@ def process(net, slug, log=lambda message: None, check_cancel=lambda: None):
         def apply(cfg):
             current = cfg.get('auto_push', {})
             if current.get('token') == token:current.update(values)
-        net._update_cfg(slug, apply)
+        _change(net, slug, apply)
     def validate(root=None, branch=None, ref=None, url=None):
         check_cancel()
         fresh = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
