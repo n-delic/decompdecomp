@@ -788,3 +788,27 @@ def test_compact_status_preserves_entry_specific_compiler_scope(sweep):
     proj=net.project_row('game');fn=net._function('f0','game')
     obj.record(fn,deep_sweep.signature(net,proj,fn,cfg['minutes'],cfg['max_variants']),'completed',cfg['minutes'],cfg['max_variants'])
     assert obj.status('game')['queue_done']==1
+
+
+def test_function_threads_are_persisted_and_dispatched(sweep, monkeypatch):
+    obj, net, calls, path = sweep
+    obj.save('game', {'threads':2, 'threads_per_function':3, 'compiler_profiles':1, 'minutes':1, 'max_variants':10})
+    seen = []
+    def search(net, slug, name, minutes, variants, log, **kwargs):
+        seen.append(kwargs)
+        return {'tested':2, 'matched':False, 'reason':'Time limit reached', 'best_score':50}
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    result = obj.run('game', 1, 10, Log(), threads=2)
+    assert result['functions_tested'] == 2
+    assert seen == [{'compiler_profiles':1, 'threads_per_function':3}]*2
+    assert obj.status('game')['threads_per_function'] == 3
+    reopened = Sweeps(net, Jobs())
+    assert reopened.config('game')['threads_per_function'] == 3
+
+
+@pytest.mark.parametrize('value', [0, True, 257, '2'])
+def test_invalid_function_threads_do_not_start_or_save(sweep, value):
+    obj, net, calls, path = sweep
+    with pytest.raises(NetworkError, match='threads per function'):
+        obj.start('game', threads_per_function=value)
+    assert not obj.active and obj.config('game')['threads_per_function'] == 1

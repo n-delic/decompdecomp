@@ -526,7 +526,8 @@
           <details class="deep-advanced"><summary>Advanced settings</summary><div class="deep-advanced-fields">
             <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
             <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
-            <label class="field"><span>Parallel threads</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
+            <label class="field"><span>Functions at a time</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
+            <label class="field"><span>Threads per function</span><input id="deepSweepFunctionThreads" type="number" min="1" max="256" value="1"><small>Search independent candidate paths in parallel. The time and candidate limits apply to the whole function. Total workers = functions × threads per function.</small></label>
             <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label>
             <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
           </div></details>
@@ -943,6 +944,7 @@
             <label class="field"><span>Time limit · minutes</span><input id="fnDeepMinutes" type="number" min="1" max="120" value="30"></label>
             <label class="field"><span>Compile limit</span><input id="fnDeepVariants" type="number" min="1" max="1000000" value="100000"></label>
             <label class="field"><span>Compiler profiles per candidate</span><input id="fnDeepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
+            <label class="field"><span>Threads per function</span><input id="fnDeepThreads" type="number" min="1" max="256" value="1"><small>Parallel candidate paths share this function’s time and candidate limits.</small></label>
             <div class="deep-actions"><button class="primary small-btn" id="fnDeepRun" type="button">Run deep permuter</button>
             <button class="ghost small-btn" id="fnDeepStop" type="button" hidden>Stop</button></div>
           </div>

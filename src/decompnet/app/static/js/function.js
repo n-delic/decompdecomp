@@ -975,7 +975,7 @@ async function followFunctionDeep(job = null) {
   $("fnDeepWork").append(log._workStatus);
   $("fnDeepWork").append(bar);
   try {
-    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants, compiler_profiles:Number($("fnDeepProfiles").value) } }));
+    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants, compiler_profiles:Number($("fnDeepProfiles").value), threads_per_function:Number($("fnDeepThreads").value) } }));
     if (active()) { deepPermuterJob = job; stop.disabled = false; }
     const result = await followJob(job, null, (lines, state) => {
       if (!active()) return;

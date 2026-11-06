@@ -1116,6 +1116,12 @@ reach it. No AI tokens are used by these searches.
 
 For a longer search of one function, open its drawer and expand **Deep permuter · this function**.
 Choose a time limit and maximum candidate compiles, then select **Run deep permuter**.
+**Threads per function** runs independent candidate paths concurrently; targeted repairs are divided
+between workers and random paths use different seeds. The project pass also has **Functions at a time**
+(the former Parallel threads setting). For example, 2 functions × 4 threads uses up to 8 search workers.
+Each function has one common deadline and its compile allowance is divided between its workers,
+including baselines and diagnostics. A verified match stops the other paths. Imported builds retain
+their existing build locks, so build-system serialization can limit the speedup.
 For local ROM projects, **Compiler profiles per candidate** selects how many profiles each local/random
 C variant is tried against: **1** uses the project default; **2** adds the distinct alternative used by
 the most matched functions. Higher counts add further profiles in that order, including differences in
