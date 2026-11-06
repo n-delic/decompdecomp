@@ -3048,3 +3048,5 @@ ABI analysis and automatic source/profile selection remain planned.
 - Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.
 
 Portable-save Git setup shares the Save location panel. Create repository adds Git metadata and an allowlist `.gitignore`; Commit saved progress creates the initial local checkpoint without unrelated files. A remembered backup is adopted for ongoing progress only after its contents agree with the current save. Imported projects can add origin and push their source checkout; creating source checkouts and per-unit automatic commits remains planned.
+
+- Done: explicit Autopilot runs bypass the background CPU lane using dedicated coordinator and compile threads. Clicking during an automatic run promotes its existing reusable-code pass rather than queuing or duplicating it; automatic runs retain background pacing.

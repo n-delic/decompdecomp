@@ -149,7 +149,7 @@ def test_autopilot_matches_machine_drafts_for_free(net):
     import time
 
     before = net.overview("demo-quest-64")["matched"]
-    net.start_autopilot("demo-quest-64")
+    net.start_autopilot("demo-quest-64",foreground=True)
     # Initial drafts now include bounded compiler recovery; keep checking full completion.
     for _ in range(1800):
         if net.autopilot_status("demo-quest-64")["state"] != "running":
