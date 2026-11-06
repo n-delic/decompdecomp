@@ -272,7 +272,7 @@ def _merge_manifest(old, new, current, key: str = ""):
             if key == "notes" and isinstance(item, dict):
                 return (item.get("function"), item.get("text"), item.get("by", ""))
             if isinstance(item, dict):
-                return item.get("vram") if key == "set_aside" else item.get("name")
+                return (item.get("name"),item.get("vram")) if key == "set_aside" else item.get("name")
             return None
 
         old_items = {identity(item): item for item in old if identity(item) is not None}
@@ -304,7 +304,7 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
 
     identities = {"layout": lambda item: item.get("name"), "symbols": lambda item: item.get("name"),
                   "notes": lambda item: (item.get("function"), item.get("text"), item.get("by", "")),
-                  "knowledge": lambda item: item, "set_aside": lambda item: item.get("vram")}
+                  "knowledge": lambda item: item, "set_aside": lambda item: (item.get("name"),item.get("vram"))}
     for key, identity in identities.items():
         current = manifest.get(key) or []
         known = {identity(item) for item in current}
@@ -353,7 +353,11 @@ def affected_functions(old, new, changed, rows):
     """Scope known per-function build inputs; unknown shared linking/layout changes require a full check."""
     from ..project import compiler_for
 
-    if any(old.get(key) != new.get(key) for key in ('symbols', 'set_aside')):
+    # Symbol order and verdict notes do not alter linked bytes. Only actual symbol
+    # changes are shared inputs; an assembly decision belongs to its own function.
+    def symbols(data):
+        return sorted(json.dumps(entry,sort_keys=True) for entry in data.get('symbols', []))
+    if symbols(old) != symbols(new):
         return None
     def layout(data):
         return {f['name']: (f['vram'], f['size']) for f in data.get('layout', [])}
@@ -365,7 +369,13 @@ def affected_functions(old, new, changed, rows):
         return None
     if bool(old.get('compiler')) != bool(new.get('compiler')):
         return None
-    affected = set()
+    def assembly(data):
+        return {(entry['name'],entry['vram']): entry.get('asm_code')
+                for entry in data.get('set_aside', [])}
+    previous_assembly, current_assembly = assembly(old), assembly(new)
+    affected = {name for name,address in previous_assembly.keys() | current_assembly.keys()
+                if ((name,address) in previous_assembly) != ((name,address) in current_assembly)
+                or previous_assembly.get((name,address)) != current_assembly.get((name,address))}
     for row in rows:
         name, unit = row['name'], row['unit'] or ''
         previous = old_headers.get(unit, old_headers.get(''))

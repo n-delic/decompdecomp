@@ -1817,3 +1817,57 @@ def test_progress_retry_rechecks_links_instead_of_following_replacement(tmp_path
     with pytest.raises(NetworkError,match='symbolic link'):
         _read(folder)
     assert calls == [1] and outside.read_text() == 'private target'
+
+
+def test_set_aside_verdict_updates_preserve_unrelated_matches(project):
+    net,folder,judged=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good f',best_source='good f',best_score=0 WHERE name='f'")
+    net.progress.sync('game',force=True)
+    judged.clear()
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    data['set_aside']=[{'name':'g','vram':4100,'not_c':{'model':{'model':'model','why':'assembly','t':1}}}]
+    for entry in data['layout']:
+        if entry['name']=='g':entry['status']='asm'
+    (folder/saves.MANIFEST).write_text(json.dumps(data))
+    net.progress.sync('game',force=True)
+    assert net._function('f','game')['status']=='matched'
+    assert net._function('g','game')['status']=='asm'
+    assert judged==[]
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    data['set_aside'][0]['not_c']['model']['why']='more evidence for the same verdict'
+    (folder/saves.MANIFEST).write_text(json.dumps(data))
+    net.progress.sync('game',force=True)
+    assert judged==[] and net._function('f','game')['status']=='matched'
+    assert not net.progress.sync('game',force=True)
+    net.progress=Progress(net)
+    assert not net.progress.sync('game',force=True)
+    assert judged==[]
+
+
+def test_saved_verdict_notes_and_list_order_are_not_shared_linking_inputs():
+    from copy import deepcopy
+
+    from decompnet.app.progress import affected_functions
+    old={'layout':[{'name':'a','vram':4,'size':4},{'name':'b','vram':4,'size':4}],
+         'symbols':[{'name':'a','address':4},{'name':'b','address':4}],
+         'set_aside':[{'name':'a','vram':4,'not_c':{'why':'old'}},{'name':'b','vram':4,'asm_code':'jr ra'}]}
+    rows=[{'name':name,'vram':4,'unit':''} for name in ('a','b')]
+    new=deepcopy(old);new['symbols'].reverse();new['set_aside'].reverse()
+    new['set_aside'][1]['not_c']={'why':'updated','t':2}
+    assert affected_functions(old,new,set(),rows)==set()
+    new['set_aside'][0]['asm_code']='changed assembly'
+    assert affected_functions(old,new,set(),rows)=={'b'}
+    new['layout'][0]['size']=8
+    assert affected_functions(old,new,set(),rows) is None
+
+
+def test_merging_set_aside_records_keeps_same_address_overlays_separate():
+    from copy import deepcopy
+
+    from decompnet.app.progress import _merge_manifest
+    old={'set_aside':[{'name':'a','vram':4,'asm_code':'first'}, {'name':'b','vram':4,'asm_code':'second'}]}
+    new=deepcopy(old);new['set_aside'][0]['asm_code']='updated first'
+    current=deepcopy(old);current['set_aside'][1]['asm_code']='updated second'
+    merged=_merge_manifest(old,new,current)
+    assert {entry['name']:entry['asm_code'] for entry in merged['set_aside']}=={'a':'updated first','b':'updated second'}

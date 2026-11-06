@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import re
+import sqlite3
 import threading
 import time
 from collections import defaultdict
@@ -859,7 +860,15 @@ class Twins:
         if not self.net.is_rom(proj):
             return
         with self._index_lock:
-            self._index_function(proj, fid)
+            try:
+                self._index_function(proj, fid)
+            except sqlite3.OperationalError as error:
+                if getattr(error,'sqlite_errorcode',0) & 255 not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):
+                    raise
+                # The exact match already committed. This derived index is rebuilt by
+                # index_project before its next use; contention must not report a lost match.
+                self._index_stamps.pop(proj['id'],None)
+                log.info('twins: index refresh deferred for %s while the database is busy',proj['slug'])
 
     def clear_index(self, project_id: int) -> None:
         """An import replaced the function layout; discard signatures before they can be suggested."""

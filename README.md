@@ -1167,7 +1167,7 @@ and never falls back to previously checked functions. Existing claims stay held.
 
 ### Background verification and stuck compilers
 
-Saved-progress verification runs one project at a time. The sidebar and read-only project views show the current database while checks continue; the verification banner shows completed/total functions and lets you pause or resume. Pausing preserves the saved files and prevents project edits or judging from bypassing unfinished verification.
+Saved-progress verification runs one project at a time. Verdict notes and list ordering do not restart full checks; changes to set-aside functions are scoped to those functions. Actual shared symbol or layout changes still require full verification. The sidebar and read-only project views show the current database while checks continue; the verification banner shows completed/total functions and lets you pause or resume. Pausing preserves the saved files and prevents project edits or judging from bypassing unfinished verification.
 
 Native compiler commands have a wall-time ceiling of 300 seconds (or their shorter command timeout). Set `DECOMP_COMPILER_TIMEOUT_SECONDS` before starting the app to change that ceiling. Imported builds also enforce their build timeout while waiting for output, including silent compilers. Timeout and cancellation stop the compiler tree; on macOS and Linux the app also stops remaining members of its isolated process group when a driver exits. On startup, recorded orphan groups are cleaned up only when process birth identities match and their previous app owner is gone. The tracker samples active groups once per second; unrecorded processes are never killed by startup cleanup. Windows uses tree termination during a run; startup orphan-group cleanup is currently POSIX-only.
 
@@ -1454,7 +1454,7 @@ naming provenance survive when their complete targets are unchanged.
 followed by random rewrites. The separate near-match pass is no longer shown.
 **Recover saved matches**, below Autopilot, rechecks historical successful C/header
 combinations against the current project. Its time and compile limits apply to the
-whole recovery run; every recovered match must pass fresh verification. No AI tokens
+whole recovery run; every recovered match must pass fresh verification. Recovery synchronizes before compiling, ignores save-only revision changes, and waits cancellably for database writers. Busy derived twins indexing is refreshed on its next use without losing the committed match. No AI tokens
 are used.
 
 ROM code audits also show possible function-pointer references and unowned bytes inside

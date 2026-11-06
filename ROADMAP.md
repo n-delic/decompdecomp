@@ -9,6 +9,8 @@
   use the stated date and timezone, including near-year rollover. Invalid or distant
   dates retain conservative fallback waiting; no provider request bypasses a limit.
 
+- Done: saved verdict metadata no longer restarts full-project verification; assembly decisions are scoped to their functions and overlay records retain distinct identities. Saved-match recovery freezes inputs after synchronization, ignores autosave-only metadata, waits cancellably for writers, and retains committed matches when derived indexing is busy.
+
 - Done: SQLite writer acquisition releases the process-local mutex between short busy
   waits, retaining the configured timeout and never replaying transaction bodies.
   Other processes can still cause timeouts; this removes a local queue amplification.

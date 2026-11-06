@@ -1,10 +1,12 @@
 """Rejudge historical exact C across project renames/units; never infer progress from an old score."""
 import hashlib
 import json
+import sqlite3
 import threading
 import time
+from contextlib import nullcontext
 
-from .. import candidate_scope, match_bundle
+from .. import candidate_scope, compiler, match_bundle
 from ..network import NetworkError
 from . import function_names, source_preparation
 
@@ -70,59 +72,99 @@ def validate(net, slug, seconds, attempts):
     return proj
 
 
+class _Stopped(NetworkError):
+    """Cooperative cancellation/deadline while waiting for a writer or compiling a candidate."""
+
+
+def _release(net, agent, fn, log):
+    deadline = time.monotonic()+5
+    def check():
+        if time.monotonic() >= deadline:
+            raise _Stopped('The database is still busy; this short recovery claim will expire normally.')
+    try:
+        with net.store.tx(wait=check) as db:
+            db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(fn['id'],agent.id))
+    except _Stopped as error:
+        log(fn['name']+': '+str(error))
+
+
 def run(net, slug, seconds, attempts, log):
+    """Rejudge frozen candidates without synchronizing new inputs between compile and promotion."""
     proj=validate(net,slug,seconds,attempts)
     stop=getattr(log,'cancel_event',threading.Event());deadline=time.monotonic()+seconds
     result=dict(matched=0,attempts=0,skipped=0,resumable=True)
-    records=bank(net,proj);agent,_=net.local_agent('autopilot')
-    with net.store.tx() as db:db.execute(SCHEMA)
-    visits={r['function_id']:r for r in net.store.all('SELECT * FROM reconcile_visits')}
-    rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
-    rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
+    rows=[];completed=0
+    def checkpoint():
+        if stop.is_set():raise _Stopped('Saved-match recovery stopped; completed matches are retained.')
+        if time.monotonic()>=deadline:raise _Stopped('Saved-match recovery reached its time limit; run it again to continue.')
     def stopped():return stop.is_set() or time.monotonic()>=deadline or result['attempts']>=attempts
-    for index,row in enumerate(rows):
-        if stopped():break
-        if hasattr(log,'progress'):log.progress(dict(result,phase='Rechecking saved matches',completed=index,total=len(rows)))
-        pool=candidates(net,proj,row,records)
-        pool_scope=hashlib.sha256(repr((candidate_scope.key(net,proj,row),pool)).encode()).hexdigest()
-        prior=visits.get(row['id']);cursor=prior['cursor'] if prior and prior['scope']==pool_scope else 0
-        ordered=list(enumerate(pool));ordered=ordered[cursor:]+ordered[:cursor]
-        for candidate_index,(source,header,origin) in ordered:
+    records=bank(net,proj);agent,_=net.local_agent('autopilot')
+    try:
+        with net.store.tx(wait=checkpoint) as db:db.execute(SCHEMA)
+        visits={r['function_id']:r for r in net.store.all('SELECT * FROM reconcile_visits')}
+        rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
+        rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
+        for index,row in enumerate(rows):
             if stopped():break
-            proj=net.project_row(slug);fn=net.store.one('SELECT * FROM functions WHERE id=?',row['id'])
-            if not fn or fn['status']!='open':break
-            scope=candidate_scope.key(net,proj,fn)
-            key='reconcile-v1:'+hashlib.sha256(repr((scope,source,header)).encode()).hexdigest()
-            if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
-            if not net.permuter._hold(agent,fn,count_turn=False,seconds=60):result['skipped']+=1;break
-            try:
-                expected=source_preparation.inputs(net,proj,fn)
-                result['attempts']+=1
-                built=net._compile(proj,header,source,fn)
-                with net.store.tx() as db:
-                    db.execute('INSERT OR REPLACE INTO reconcile_visits VALUES(?,?,?,?)',(fn['id'],pool_scope,(candidate_index+1)%max(1,len(pool)),time.time()))
-                verdict=False
-                if built.ok:
-                    candidate,exact,_=net._evaluate(fn,proj,built.obj)
-                    verdict=candidate is not None and exact is True
-                if verdict:
-                    if stop.is_set() or time.monotonic()>=deadline:break  # no adoption after cancellation/deadline
-                    # Record under the same claim and atomically validate the complete frozen state.
-                    net._record(fn,agent,0,source,0,matched=True,via='saved-match-reconciliation',
-                                effective_settings=getattr(built,'effective_settings',None),
-                                prepared_header=header,prepared_inputs=expected,restoring_exact=True)
-                    result['matched']+=1;log('Recovered '+fn['name']+' from '+origin+'.');break
-                # Never cache tool/resource failures as permanent evidence.
-                if built.ok and source_preparation.inputs(net,net.project_row(slug),net.store.one('SELECT * FROM functions WHERE id=?',fn['id']))==expected:
-                    with net.store.tx() as db:
-                        db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                                   (fn['id'],key,'miss',origin,json.dumps({'matched':False})))
-            except NetworkError as error:
-                result['skipped']+=1;log(fn['name']+': '+str(error))
-            finally:
-                with net.store.tx() as db:db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(fn['id'],agent.id))
+            if hasattr(log,'progress'):log.progress(dict(result,phase='Rechecking saved matches',completed=index,total=len(rows)))
+            # Pull before taking a claim/snapshot. The normal judge then prevents _record
+            # from importing a new header midway through this freshly compiled candidate.
+            with net.progress.judging(slug) if hasattr(net,'progress') else nullcontext():
+                checkpoint()
+                proj=net.project_row(slug);row=net.store.one('SELECT * FROM functions WHERE id=?',row['id'])
+                if not row or row['status']!='open':continue
+                pool=candidates(net,proj,row,records)
+                pool_scope=hashlib.sha256(repr((candidate_scope.key(net,proj,row),pool)).encode()).hexdigest()
+                prior=visits.get(row['id']);cursor=prior['cursor'] if prior and prior['scope']==pool_scope else 0
+                ordered=list(enumerate(pool));ordered=ordered[cursor:]+ordered[:cursor]
+                for candidate_index,(source,header,origin) in ordered:
+                    if stopped():break
+                    proj=net.project_row(slug);fn=net.store.one('SELECT * FROM functions WHERE id=?',row['id'])
+                    if not fn or fn['status']!='open':break
+                    scope=candidate_scope.key(net,proj,fn)
+                    key='reconcile-v1:'+hashlib.sha256(repr((scope,source,header)).encode()).hexdigest()
+                    if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
+                    with net.store.tx(wait=checkpoint):
+                        held=net.permuter._hold(agent,fn,count_turn=False,seconds=60)
+                    if not held:result['skipped']+=1;break
+                    try:
+                        expected=source_preparation.inputs(net,proj,fn)
+                        result['attempts']+=1
+                        with compiler.cancellable(checkpoint):
+                            built=net._compile(proj,header,source,fn)
+                        with net.store.tx(wait=checkpoint) as db:
+                            db.execute('INSERT OR REPLACE INTO reconcile_visits VALUES(?,?,?,?)',(fn['id'],pool_scope,(candidate_index+1)%max(1,len(pool)),time.time()))
+                        verdict=False
+                        if built.ok:
+                            candidate,exact,_=net._evaluate(fn,proj,built.obj)
+                            verdict=candidate is not None and exact is True
+                        if verdict:
+                            checkpoint()
+                            # Wait only for acquisition, never replay a judge or a transaction body.
+                            net._record(fn,agent,0,source,0,matched=True,via='saved-match-reconciliation',
+                                        effective_settings=getattr(built,'effective_settings',None),
+                                        prepared_header=header,prepared_inputs=expected,restoring_exact=True,
+                                        before_record=checkpoint,write_wait=checkpoint)
+                            result['matched']+=1;log('Recovered '+fn['name']+' from '+origin+'.');break
+                        if built.ok and source_preparation.inputs(net,net.project_row(slug),net.store.one('SELECT * FROM functions WHERE id=?',fn['id']))==expected:
+                            with net.store.tx(wait=checkpoint) as db:
+                                db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+                                           (fn['id'],key,'miss',origin,json.dumps({'matched':False})))
+                    except _Stopped:
+                        raise
+                    except NetworkError as error:
+                        result['skipped']+=1;log(fn['name']+': '+str(error))
+                    except sqlite3.OperationalError as error:
+                        if getattr(error,'sqlite_errorcode',0) & 255 not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+                        result['skipped']+=1
+                        log(fn['name']+': database busy; saved evidence is retained for the next recovery pass.')
+                    finally:
+                        _release(net,agent,fn,log)
+            completed=index+1
+    except _Stopped as error:
+        log(str(error))
     result['seconds']=max(0,seconds-(deadline-time.monotonic()))
     result['matches_per_minute']=result['matched']*60/max(.001,result['seconds'])
-    if hasattr(log,'progress'):log.progress(dict(result,completed=index+1 if rows else 0,total=len(rows)))
+    if hasattr(log,'progress'):log.progress(dict(result,completed=completed,total=len(rows)))
     log(f"Saved-match recovery: {result['matched']} matches from {result['attempts']} compiles.")
     return result
