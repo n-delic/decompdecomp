@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from .candidate_work import current, remember
 from .forks.project import ForkError
 from .project import compiler_for
 
@@ -135,4 +136,11 @@ def state(net,proj,fn,shared=None):
 
 
 def key(net,proj,fn,shared=None):
-    return hashlib.sha256(repr(state(net,proj,fn,shared)).encode()).hexdigest()
+    def build():return hashlib.sha256(repr(state(net,proj,fn,shared)).encode()).hexdigest()
+    # Imported build files can change without a database revision: always inspect those files.
+    if current() is None:return build()
+    if shared is not None or getattr(net, 'fork_slug', lambda _: None)(proj['slug']):return build()
+    if not hasattr(net.store, 'read_version'):return build()
+    token = (id(net), net.store.read_version('inputs', proj['id']),
+             hashlib.sha256(repr((dict(proj), dict(fn))).encode()).digest())
+    return remember(('candidate-scope', token), build)

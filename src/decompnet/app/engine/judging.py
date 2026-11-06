@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from pathlib import Path
 
 from ... import compile_sessions, compile_timing, consoles, scoring
+from ...candidate_work import trial
 from ...network import MACHINE_AGENTS, Agent, Network, NetworkError, stall_line
 from ...release_receipts import operation as release_operation
 from ...request_timing import build as timed_build
@@ -522,6 +523,7 @@ class JudgeMixin:
         return self.cfg(self._project(slug)).get("spend")
 
     @timed_build
+    @trial
     def _judge_with(self, proj, fn, toolchain: str, flags: list[str], source: str):
         """(matched, diff or None, log) for C built with this compiler and flags, judged like an attempt, recording
         nothing."""

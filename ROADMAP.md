@@ -3066,3 +3066,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Compiler comparison discovery reads only source and fingerprint inputs; assembly and seeds load only for selected compilations. Auto-apply has an explicit progress stage instead of appearing to discover remaining functions.
 
 - Compile throughput: scoped per-worker header/workspace and successful-object reuse, prepared target/disassembly state, lean permutation scoring with full winner diagnostics, numeric phase timings and an installed-toolchain concurrency benchmark. See docs/compile-performance.md.
+
+- Candidate overhead: share per-trial ROM fingerprints and ELF/symbol readers, batch bounded miss-only bookkeeping with read-your-writes, throttle routine progress while publishing winners immediately, and skip repeated eligible ROM candidates before persistent lookup. See docs/candidate-overhead.md.

@@ -13,6 +13,7 @@ from contextlib import nullcontext
 from itertools import chain
 
 from ... import m2cfix, scoring, seeds, toolchains
+from ...candidate_work import trial
 from ...network import Agent, NetworkError
 from ...project import compiler_for, unknown_compiler_message
 from ...repair_feedback import trial as repair_trial
@@ -154,6 +155,7 @@ class AutopilotMixin:
         if any(c["status"] in ("checking", "waiting") for c in self.cfg(proj).get("range_checks", [])):
             self.rangechecks.recheck(proj["slug"])  # a neighbour of a suggested range may have spoken
 
+    @trial
     def try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
         """Judge a scoped candidate. Exact-only rechecks may supersede a claim after an exact save;
         ordinary autopilot attempts acquire their own short claim. {"matched", "score"}."""

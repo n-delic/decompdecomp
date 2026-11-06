@@ -673,8 +673,14 @@ def family_targets(net, agent, slug, function, family='declaration_order', expre
 
 def target_scope(net, fn, revision):
     from .. import candidate_scope, claim_stalls
-    proj=net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
-    return hashlib.sha256(repr((revision,candidate_scope.key(net,proj,fn),claim_stalls.repair_rules())).encode()).hexdigest()
+    from ..candidate_work import current, remember
+    def load():return net.store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+    if current() is not None and hasattr(net.store, 'read_version'):
+        version = net.store.read_version('inputs', fn['project_id'])
+        proj = remember(('scope-project', id(net), fn['project_id'], version), load)
+    else:proj = load()
+    rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
+    return hashlib.sha256(repr((revision,candidate_scope.key(net,proj,fn),rules)).encode()).hexdigest()
 
 
 def target_tried(net, fn, revision, family, old, scope=None):

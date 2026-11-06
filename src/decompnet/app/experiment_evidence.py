@@ -10,6 +10,7 @@ import time
 from itertools import accumulate
 
 from ..repair_feedback import current_trial
+from . import trial_bookkeeping
 
 MIN_TRIALS = 8
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_input_effects(
@@ -62,18 +63,19 @@ def record(net, fn, key, family, before, after, baseline, score, prior_output, m
     changes = edits(before, after)
     improved = score is not None and score < baseline
     same = prior_output is not None and prior_output == measured_output
-    with net.store.tx() as db:
-        db.execute('''INSERT INTO repair_input_effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-          ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+1,
-          no_edit=no_edit+excluded.no_edit,same_output=same_output+excluded.same_output,
-          worse=worse+excluded.worse,failed=failed+excluded.failed,improved=improved+excluded.improved,
-          elapsed_ms=elapsed_ms+excluded.elapsed_ms,last_edits=excluded.last_edits,updated_at=excluded.updated_at''',
-                   (fn['id'],key,family,1,int(not changes),int(bool(changes) and same),
-                    int(score is not None and score > baseline),int(bool(changes) and score is None),
-                    int(improved),max(0,round(elapsed_ms)),json.dumps(changes),time.time()))
+    trial_bookkeeping.submit(net.store, [(
+        """INSERT INTO repair_input_effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+1,
+        no_edit=no_edit+excluded.no_edit,same_output=same_output+excluded.same_output,
+        worse=worse+excluded.worse,failed=failed+excluded.failed,improved=improved+excluded.improved,
+        elapsed_ms=elapsed_ms+excluded.elapsed_ms,last_edits=excluded.last_edits,updated_at=excluded.updated_at""",
+        (fn['id'],key,family,1,int(not changes),int(bool(changes) and same),
+         int(score is not None and score > baseline),int(bool(changes) and score is None),
+         int(improved),max(0,round(elapsed_ms)),json.dumps(changes),time.time()))], immediate=improved)
 
 
 def factors(net, proj, fn):
+    trial_bookkeeping.flush(net.store)
     prepare(net)
     key = scope(net,proj,fn)
     rows = net.store.all('SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?',fn['id'],key)
@@ -90,6 +92,7 @@ def factors(net, proj, fn):
 
 
 def listing(net):
+    trial_bookkeeping.flush(net.store)
     prepare(net)
     return [dict(row) for row in net.store.all('''SELECT family,SUM(attempted) attempted,SUM(no_edit) no_edit,
       SUM(same_output) same_output,SUM(worse) worse,SUM(failed) failed,SUM(improved) improved,
