@@ -644,7 +644,7 @@ class Progress:
             if baseline is None:
                 return 0
             names = [row['name'] for row in self.net.store.all("SELECT name FROM functions WHERE project_id=? "
-                     "AND status='matched' AND matched_source IS NOT NULL", proj['id'])
+                     "AND status='matched'", proj['id'])
                      if f"best/{row['name']}.c" in baseline.disk.files]
             if not names:
                 return 0  # Normal autosaves must not inflate every matched source or scan the tree.
