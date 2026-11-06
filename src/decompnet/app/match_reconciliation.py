@@ -4,6 +4,8 @@ import json
 import sqlite3
 import threading
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 
 from .. import candidate_scope, compiler, match_bundle
@@ -82,95 +84,161 @@ class _Stopped(NetworkError):
     """Cooperative cancellation/deadline while waiting for a writer or compiling a candidate."""
 
 
-def _release(net, agent, fn, log):
+def _release(net, agent, functions, log):
+    if not functions:return
     deadline = time.monotonic()+5
     def check():
         if time.monotonic() >= deadline:
             raise _Stopped('The database is still busy; this short recovery claim will expire normally.')
     try:
         with net.store.tx(wait=check) as db:
-            db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(fn['id'],agent.id))
+            db.executemany('DELETE FROM claims WHERE function_id=? AND agent_id=?',
+                           [(fn['id'],agent.id) for fn in functions])
     except _Stopped as error:
-        log(fn['name']+': '+str(error))
+        log(str(error))
 
 
 def run(net, slug, seconds, attempts, log):
-    """Rejudge frozen candidates without synchronizing new inputs between compile and promotion."""
+    """Overlap bounded compiles; synchronize and publish once per small recovery group."""
+    from . import workers
     proj=validate(net,slug,seconds,attempts)
-    stop=getattr(log,'cancel_event',threading.Event());deadline=time.monotonic()+seconds
+    stop=getattr(log,'cancel_event',threading.Event());started=time.monotonic();deadline=started+seconds
+    abandoned=threading.Event()
     result=dict(matched=0,attempts=0,skipped=0,resumable=True)
-    rows=[];completed=0
+    rows=[];completed=0;tried=set();done=set()
     def checkpoint():
-        if stop.is_set():raise _Stopped('Saved-match recovery stopped; completed matches are retained.')
+        if stop.is_set() or abandoned.is_set():raise _Stopped('Saved-match recovery stopped; completed matches are retained.')
         if time.monotonic()>=deadline:raise _Stopped('Saved-match recovery reached its time limit; run it again to continue.')
-    def stopped():return stop.is_set() or time.monotonic()>=deadline or result['attempts']>=attempts
-    records=bank(net,proj);agent,_=net.local_agent('autopilot')
+    def publish():
+        elapsed=time.monotonic()-started
+        result['seconds']=elapsed
+        result['matches_per_minute']=result['matched']*60/max(.001,elapsed)
+        if hasattr(log,'progress'):log.progress(dict(result,phase='Rechecking saved matches',completed=completed,total=len(rows)))
+    def judging():
+        return net.progress.judging(slug) if hasattr(net,'progress') else nullcontext()
+    def batch():
+        method=getattr(getattr(net,'progress',None),'batch',None)
+        return method(slug) if method else nullcontext()
+    def compile_one(proj, header, source, fn):
+        with compiler.cancellable(checkpoint):
+            checkpoint()
+            return net._compile(proj,header,source,fn)
+    def remaining(ordered, fn, proj):
+        scope=candidate_scope.key(net,proj,fn)
+        for candidate_index,(source,header,origin) in ordered:
+            key='reconcile-v1:'+hashlib.sha256(repr((scope,source,header)).encode()).hexdigest()
+            if (fn['id'],key) not in tried and not net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):
+                yield candidate_index,source,header,origin,key
+    # Use independent low-priority compiler threads: shared background workers can be
+    # waiting for our project lock. The compiler's global slots still cap subprocesses.
+    width=max(1,min(8,workers.WORKERS,attempts))
+    executor=ThreadPoolExecutor(width,thread_name_prefix='saved-recovery',initializer=workers.lower_priority)
+    agent=None
     try:
-        with net.store.tx(wait=checkpoint) as db:db.execute(SCHEMA)
-        visits={r['function_id']:r for r in net.store.all('SELECT * FROM reconcile_visits')}
-        rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
-        rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
-        for index,row in enumerate(rows):
-            if stopped():break
-            if hasattr(log,'progress'):log.progress(dict(result,phase='Rechecking saved matches',completed=index,total=len(rows)))
-            # Pull before taking a claim/snapshot. The normal judge then prevents _record
-            # from importing a new header midway through this freshly compiled candidate.
-            with net.progress.judging(slug) if hasattr(net,'progress') else nullcontext():
+        with judging():
+            checkpoint()
+            proj=net.project_row(slug);records=bank(net,proj);agent,_=net.local_agent('autopilot')
+            with net.store.tx(wait=checkpoint) as db:db.execute(SCHEMA)
+            visits={r['function_id']:r for r in net.store.all('SELECT * FROM reconcile_visits')}
+            rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
+            rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
+        entries=deque(rows)
+        while entries and result['attempts']<attempts:
+            checkpoint()
+            group=[]
+            # Functions without history need neither compiler work nor an expensive
+            # forced progress-folder synchronization. Rebuild selected pools after pulling.
+            while len(group)<min(width,attempts-result['attempts']):
+                if not entries:break
+                row=entries.popleft()
                 checkpoint()
-                proj=net.project_row(slug);row=net.store.one('SELECT * FROM functions WHERE id=?',row['id'])
-                if not row or row['status']!='open':continue
-                pool=candidates(net,proj,row,records)
-                pool_scope=hashlib.sha256(repr((candidate_scope.key(net,proj,row),pool)).encode()).hexdigest()
-                prior=visits.get(row['id']);cursor=prior['cursor'] if prior and prior['scope']==pool_scope else 0
-                ordered=list(enumerate(pool));ordered=ordered[cursor:]+ordered[:cursor]
-                for candidate_index,(source,header,origin) in ordered:
-                    if stopped():break
-                    proj=net.project_row(slug);fn=net.store.one('SELECT * FROM functions WHERE id=?',row['id'])
-                    if not fn or fn['status']!='open':break
-                    scope=candidate_scope.key(net,proj,fn)
-                    key='reconcile-v1:'+hashlib.sha256(repr((scope,source,header)).encode()).hexdigest()
-                    if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
-                    with net.store.tx(wait=checkpoint):
-                        held=net.permuter._hold(agent,fn,count_turn=False,seconds=60)
-                    if not held:result['skipped']+=1;break
-                    try:
-                        expected=source_preparation.inputs(net,proj,fn)
+                current_proj=net.project_row(slug)
+                pool=candidates(net,current_proj,row,records)
+                if pool and next(remaining(enumerate(pool),row,current_proj),None) is not None:group.append(row)
+                else:done.add(row['id']);completed=len(done)
+                if len(done)%64==0:publish()
+            if not group:continue
+            jobs=[]
+            # This bounded group defers autosaves only until at most eight first
+            # candidates finish, rather than holding a project lock for the whole pass.
+            with batch(), judging():
+                try:
+                    for row in group:
+                        checkpoint()
+                        proj=net.project_row(slug);fn=net.store.one('SELECT * FROM functions WHERE id=?',row['id'])
+                        if not fn or fn['status']!='open':
+                            done.add(row['id']);completed=len(done);continue
+                        pool=candidates(net,proj,fn,records)
+                        pool_scope=hashlib.sha256(repr((candidate_scope.key(net,proj,fn),pool)).encode()).hexdigest()
+                        prior=visits.get(fn['id']);cursor=prior['cursor'] if prior and prior['scope']==pool_scope else 0
+                        ordered=list(enumerate(pool));ordered=ordered[cursor:]+ordered[:cursor]
+                        choices=iter(remaining(ordered,fn,proj));first=next(choices,None)
+                        if first is None:
+                            done.add(fn['id']);completed=len(done);continue
+                        with net.store.tx(wait=checkpoint):held=net.permuter._hold(agent,fn,count_turn=False,seconds=60)
+                        if not held:
+                            result['skipped']+=1;done.add(fn['id']);completed=len(done);continue
+                        job=dict(fn=fn,proj=proj,first=first,pool_scope=pool_scope,pool_size=len(pool),future=None)
+                        jobs.append(job)  # cleanup owns the claim even if snapshot/submission fails
+                        job['expected']=source_preparation.inputs(net,proj,fn)
                         result['attempts']+=1
-                        with compiler.cancellable(checkpoint):
-                            built=net._compile(proj,header,source,fn)
-                        with net.store.tx(wait=checkpoint) as db:
-                            db.execute('INSERT OR REPLACE INTO reconcile_visits VALUES(?,?,?,?)',(fn['id'],pool_scope,(candidate_index+1)%max(1,len(pool)),time.time()))
-                        verdict=False
-                        if built.ok:
-                            candidate,exact,_=net._evaluate(fn,proj,built.obj)
-                            verdict=candidate is not None and exact is True
-                        if verdict:
+                        job['future']=executor.submit(compile_one,dict(proj),first[2],first[1],dict(fn))
+                    publish()
+                    for job in jobs:
+                        fn=job['fn'];proj=job['proj'];choice=job['first'];future=job['future']
+                        try:
                             checkpoint()
-                            # Wait only for acquisition, never replay a judge or a transaction body.
-                            net._record(fn,agent,0,source,0,matched=True,via='saved-match-reconciliation',
-                                        effective_settings=getattr(built,'effective_settings',None),
-                                        prepared_header=header,prepared_inputs=expected,restoring_exact=True,
-                                        before_record=checkpoint,write_wait=checkpoint)
-                            result['matched']+=1;log('Recovered '+fn['name']+' from '+origin+'.');break
-                        if built.ok and source_preparation.inputs(net,net.project_row(slug),net.store.one('SELECT * FROM functions WHERE id=?',fn['id']))==expected:
+                            candidate_index,source,header,origin,key=choice
+                            built=future.result()
+                            checkpoint()
+                            tried.add((fn['id'],key))
                             with net.store.tx(wait=checkpoint) as db:
-                                db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                                           (fn['id'],key,'miss',origin,json.dumps({'matched':False})))
-                    except _Stopped:
-                        raise
-                    except NetworkError as error:
-                        result['skipped']+=1;log(fn['name']+': '+str(error))
-                    except sqlite3.OperationalError as error:
-                        if getattr(error,'sqlite_errorcode',0) & 255 not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
-                        result['skipped']+=1
-                        log(fn['name']+': database busy; saved evidence is retained for the next recovery pass.')
-                    finally:
-                        _release(net,agent,fn,log)
-            completed=index+1
+                                db.execute('INSERT OR REPLACE INTO reconcile_visits VALUES(?,?,?,?)',
+                                           (fn['id'],job['pool_scope'],(candidate_index+1)%max(1,job['pool_size']),time.time()))
+                            verdict=False
+                            if built.ok:
+                                candidate,exact,_=net._evaluate(fn,proj,built.obj)
+                                verdict=candidate is not None and exact is True
+                            if verdict:
+                                checkpoint()
+                                net._record(fn,agent,0,source,0,matched=True,via='saved-match-reconciliation',
+                                            effective_settings=getattr(built,'effective_settings',None),
+                                            prepared_header=header,prepared_inputs=job['expected'],restoring_exact=True,
+                                            before_record=checkpoint,write_wait=checkpoint)
+                                result['matched']+=1;log('Recovered '+fn['name']+' from '+origin+'.')
+                                done.add(fn['id'])
+                            else:
+                                current=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+                                if (not current or current['status']!='open' or
+                                        source_preparation.inputs(net,net.project_row(slug),current)!=job['expected']):
+                                    done.add(fn['id'])
+                                else:
+                                    if built.ok:
+                                        with net.store.tx(wait=checkpoint) as db:
+                                            db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+                                                       (fn['id'],key,'miss',origin,json.dumps({'matched':False})))
+                                    # Rotate to the next coherent candidate on the next small
+                                    # group, releasing the project lock and publishing first.
+                                    entries.append(current)
+                        except _Stopped:raise
+                        except NetworkError as error:
+                            result['skipped']+=1;done.add(fn['id']);log(fn['name']+': '+str(error))
+                        except sqlite3.OperationalError as error:
+                            if getattr(error,'sqlite_errorcode',0) & 255 not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+                            result['skipped']+=1;done.add(fn['id'])
+                            log(fn['name']+': database busy; saved evidence is retained for the next recovery pass.')
+                        finally:
+                            completed=len(done)
+                            publish()
+                finally:
+                    for job in jobs:
+                        if job['future'] is not None:job['future'].cancel()
+                    _release(net,agent,[job['fn'] for job in jobs],log)
     except _Stopped as error:
         log(str(error))
-    result['seconds']=max(0,seconds-(deadline-time.monotonic()))
-    result['matches_per_minute']=result['matched']*60/max(.001,result['seconds'])
-    if hasattr(log,'progress'):log.progress(dict(result,completed=completed,total=len(rows)))
+    finally:
+        abandoned.set()
+        executor.shutdown(wait=False,cancel_futures=True)
+    publish()
     log(f"Saved-match recovery: {result['matched']} matches from {result['attempts']} compiles.")
     return result

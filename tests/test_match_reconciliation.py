@@ -238,19 +238,20 @@ def test_cancelling_recovery_while_waiting_for_a_writer_keeps_work_and_releases_
     assert not net.store.one('SELECT 1 FROM claims')
 
 
-def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(tmp_path,monkeypatch):
+@pytest.mark.parametrize("count", [1, 4])
+def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(tmp_path,monkeypatch,count):
     from decompnet import toolchains
     from decompnet.app.engine import RomNetwork
     from decompnet.app.engine.common import BASE_HEADER
     if toolchains.installed('gcc-2.7.2-kmc') is None:
         pytest.skip('needs the pinned period MIPS compiler')
     target=bytes.fromhex('03e0000800000000')
-    (tmp_path/'probe.z64').write_bytes(target)
+    (tmp_path/'probe.z64').write_bytes(target*count)
     net=RomNetwork(tmp_path/'app.db',tmp_path)
     cfg={'kind':'rom','platform':'n64','big_endian':True,'gp':0,
          'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-G0','-mips3','-mgp32','-mfp32','-O2']},
          'rom':{'file':'probe.z64','sha1':'homemade-empty-return'},
-         'segments':[{'name':'code','rom_start':0,'rom_end':8,'vram':0x80001000}]}
+         'segments':[{'name':'code','rom_start':0,'rom_end':8*count,'vram':0x80001000}]}
     with net.store.tx() as db:
         pid=db.execute('INSERT INTO projects(slug,name,root,arch,big_endian,config) VALUES(?,?,?,?,?,?)',
                        ('game','Empty demo',str(tmp_path),'mips',1,json.dumps(cfg))).lastrowid
@@ -260,14 +261,24 @@ def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(
         db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(pid,'empty_return',0x80001000,8,'func'))
     monkeypatch.setattr(net,'on_match',lambda *args:None)
     agent,_=net.local_agent('autopilot')
-    assert net.attempt(agent,'empty_return','void empty_return(void) {}','game')['matched']
+    for index in range(1, count):
+        name=f'empty_return_{index}'
+        with net.store.tx() as db:
+            db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm) '
+                       'SELECT project_id,?,vram+?,rom_offset+?,size,n_insns,target,relocs,asm FROM functions WHERE id=?',
+                       (name, index*8, index*8, fid))
+            db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',
+                       (pid,name,0x80001000+index*8,8,'func'))
+    for index in range(count):
+        name='empty_return' if index == 0 else f'empty_return_{index}'
+        assert net.attempt(agent,name,f'void {name}(void) {{}}','game')['matched']
     net.progress.sync('game',force=True)
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET status='open',matched_source=NULL,best_source=NULL,best_score=NULL WHERE id=?",(fid,))
+        db.execute("UPDATE functions SET status='open',matched_source=NULL,best_source=NULL,best_score=NULL")
     net.progress.sync('game',force=True)
     log=lambda *args:None
     result=recovery.run(net,'game',30,4,log)
-    assert result['matched']==1 and net._function('empty_return','game')['status']=='matched'
+    assert result['matched']==count and net._function('empty_return','game')['status']=='matched'
     assert net.store.one('SELECT via FROM attempts ORDER BY id DESC LIMIT 1')['via']=='saved-match-reconciliation'
     assert not net.store.one('SELECT 1 FROM claims')
 
@@ -291,3 +302,166 @@ def test_recovery_bank_indexes_addresses_without_losing_overlay_identity(monkeyp
     # A different overlay can share an address, but its different target still rejects the donor.
     changed = dict(fn, target=b'different overlay')
     assert recovery.candidates(net, proj, changed, indexed) == recovery.candidates(net, proj, changed, [])
+
+
+def add_functions(net, count):
+    with net.store.tx() as db:
+        for index in range(1, count):
+            db.execute('INSERT INTO functions(project_id,name,unit,vram,size,n_insns,target,relocs,meta) '
+                       'SELECT project_id,?,unit,vram+?,size,n_insns,target,relocs,meta FROM functions WHERE id=1',
+                       (f'f{index}', index*16))
+
+
+def test_compiles_overlap_but_exact_judgments_and_records_stay_on_coordinator(monkeypatch):
+    from contextlib import contextmanager
+
+    from decompnet.app import workers
+    net, log = setup(monkeypatch)
+    add_functions(net, 4)
+    monkeypatch.setattr(workers, 'WORKERS', 2)
+    monkeypatch.setattr(workers, 'pool', lambda: pytest.fail('shared workers may wait for our project lock'))
+    barrier = threading.Barrier(2)
+    coordinator = threading.get_ident()
+    compilers, judges, records, syncs, publications = [], [], [], [], []
+    compile, evaluate, record = net._compile, net._evaluate, net._record
+    @contextmanager
+    def judging(slug):
+        syncs.append(slug)
+        yield
+    @contextmanager
+    def batch(slug):
+        publications.append(slug)
+        yield
+    net.progress = SimpleNamespace(judging=judging, batch=batch)
+    def parallel(*args):
+        compilers.append(threading.get_ident())
+        barrier.wait(5)
+        return compile(*args)
+    def serial_judge(*args):
+        judges.append(threading.get_ident())
+        return evaluate(*args)
+    def serial_record(*args, **kwargs):
+        records.append(threading.get_ident())
+        return record(*args, **kwargs)
+    net._compile, net._evaluate, net._record = parallel, serial_judge, serial_record
+    updates = []
+    log.progress = lambda p: updates.append(p)
+    result = recovery.run(net, 'game', 30, 4, log)
+    assert result['matched'] == result['attempts'] == 4
+    assert coordinator not in compilers and len(set(compilers)) == 2
+    assert judges == records == [coordinator]*4
+    assert len(syncs) == 3 and len(publications) == 2
+    assert any(p['matched'] and p['matches_per_minute'] > 0 for p in updates)
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_no_history_functions_do_not_force_progress_sync_or_candidate_scope(monkeypatch):
+    from contextlib import contextmanager
+    net, log = setup(monkeypatch)
+    add_functions(net, 100)
+    monkeypatch.setattr(recovery, 'candidates', lambda *a: [])
+    monkeypatch.setattr(recovery.candidate_scope, 'key', lambda *a: pytest.fail('empty pool needs no scope'))
+    syncs = []
+    @contextmanager
+    def judging(slug):
+        syncs.append(slug)
+        yield
+    net.progress = SimpleNamespace(judging=judging)
+    result = recovery.run(net, 'game', 30, 20, log)
+    assert result['attempts'] == result['matched'] == 0
+    assert len(syncs) == 1
+
+
+def test_compile_budget_bounds_submission_and_all_reserved_results_are_judged(monkeypatch):
+    from decompnet.app import workers
+    net, log = setup(monkeypatch)
+    add_functions(net, 10)
+    monkeypatch.setattr(workers, 'WORKERS', 8)
+    called = []
+    compile = net._compile
+    def count(*args):
+        called.append(args[-1]['id'])
+        return compile(*args)
+    net._compile = count
+    result = recovery.run(net, 'game', 30, 3, log)
+    assert result['attempts'] == result['matched'] == len(called) == 3
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_later_candidate_releases_batch_and_keeps_fresh_snapshot(monkeypatch):
+    from contextlib import contextmanager
+    net, log = setup(monkeypatch)
+    monkeypatch.setattr(recovery, 'candidates', lambda *a: [('first','','old'),('second','','old')])
+    seen, batches = [], []
+    compile = net._compile
+    def different(*args):
+        seen.append(args[2])
+        return SimpleNamespace(ok=False) if args[2] == 'first' else compile(*args)
+    @contextmanager
+    def batch(slug):
+        batches.append(slug)
+        yield
+    @contextmanager
+    def judging(slug): yield
+    net.progress = SimpleNamespace(batch=batch, judging=judging)
+    net._compile = different
+    result = recovery.run(net, 'game', 30, 4, log)
+    assert result['matched'] == 1 and seen == ['first','second']
+    assert len(batches) == 2
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_parallel_results_reject_function_changed_after_submission(monkeypatch):
+    from decompnet.app import workers
+    net, log = setup(monkeypatch)
+    add_functions(net, 2)
+    monkeypatch.setattr(workers, 'WORKERS', 2)
+    barrier = threading.Barrier(2)
+    compile = net._compile
+    def changed(*args):
+        if args[-1]['id'] == 2:
+            with net.store.tx() as db:db.execute("UPDATE functions SET best_source='concurrent edit' WHERE id=2")
+        barrier.wait(5)
+        return compile(*args)
+    net._compile = changed
+    result = recovery.run(net, 'game', 30, 2, log)
+    assert result['matched'] == 1
+    assert net.store.one('SELECT status FROM functions WHERE id=2')['status'] == 'open'
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_cancelling_parallel_wave_discards_results_and_releases_every_claim(monkeypatch):
+    from decompnet import compiler
+    from decompnet.app import workers
+    net, log = setup(monkeypatch)
+    add_functions(net, 2)
+    monkeypatch.setattr(workers, 'WORKERS', 2)
+    barrier = threading.Barrier(2)
+    ended = threading.Event()
+    def cancelled(*args):
+        barrier.wait(5)
+        log.cancel_event.set()
+        try:compiler._CANCEL_CHECK.get()()
+        finally:ended.set()
+    net._compile = cancelled
+    result = recovery.run(net, 'game', 30, 2, log)
+    assert ended.wait(5)
+    assert result['matched'] == 0 and result['attempts'] == 2
+    assert not net.store.one("SELECT 1 FROM functions WHERE status='matched'")
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_deadline_rejects_finished_compile_before_promoting(monkeypatch):
+    net, log = setup(monkeypatch)
+    now = [0.0]
+    monkeypatch.setattr(recovery.time, 'monotonic', lambda: now[0])
+    compile = net._compile
+    def late(*args):
+        built = compile(*args)
+        now[0] = 2
+        return built
+    net._compile = late
+    result = recovery.run(net, 'game', 1, 1, log)
+    assert result['matched'] == 0
+    assert net.store.one('SELECT status FROM functions')['status'] == 'open'
+    assert not net.store.one('SELECT 1 FROM claims')

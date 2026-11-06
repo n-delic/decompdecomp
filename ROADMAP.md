@@ -1,5 +1,11 @@
 # Roadmap
 
+- Done: saved-match recovery overlaps up to eight bounded compiler jobs, respects background
+  worker and compile limits, skips forced synchronization for functions without candidates,
+  and publishes each small group once. Fresh exact judgments and commits remain serial;
+  cancellation discards pending results, releases group claims and preserves completed work.
+  Candidate alternatives release the project lock between groups; throughput updates live.
+
 - Done: app and permuter SQLite writers share OS-backed admission before BEGIN, including
   schema initialization, match-library writes and maintenance. Waiting leaves readers and
   the local connection mutex free; optional bookkeeping stays nonblocking, cancellation and

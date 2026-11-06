@@ -1460,6 +1460,10 @@ Metadata-only synchronization reads function status in one batch and skips alrea
 New historical evidence is hash-checked in short cancellable batches; it never counts as
 a match until the ordinary judge verifies it. Recovery looks up donors by address, including
 separate target checks for overlays that share an address.
+Recovery compiles up to eight functions concurrently, within the background worker setting,
+then verifies and records them serially. Each small group synchronizes saved files once;
+functions without historical candidates skip that work. Candidate alternatives run in later
+groups so the project lock is released between groups. Live throughput reflects this run.
 
 ROM code audits also show possible function-pointer references and unowned bytes inside
 mapped segments. These are review leads. N64 reimport can recover narrowly proven
