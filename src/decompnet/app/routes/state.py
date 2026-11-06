@@ -13,7 +13,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ... import __version__, consoles, hostenv, toolchains
+from ... import __version__, consoles, hostenv, linuxvm, toolchains
 from ...agents.api import API_PRESETS
 from ...forks.project import SCOPES
 from ...network import NetworkError
@@ -47,6 +47,7 @@ def register(app: App) -> None:
         return {"version": __version__, "build": build_id, "install": updates.installed(), "dev": edition.DEV,
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
+                "linux_vm": ({"ready": linuxvm.status()[0], "why": linuxvm.status()[1]} if linuxvm.wanted() else None),
                 "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "bridges_removed": [] if settings.data.get("bridges_removed_seen") else cleanup.report(home),
                 "api_presets": API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
@@ -76,8 +77,14 @@ def register(app: App) -> None:
                 out.append(net.summary(p["slug"]) | {"working": running.get(p["slug"], 0)})
             except Exception as e:  # noqa: BLE001
                 jobs.logger.warning("project %s can't be read: %s", p["slug"], e, exc_info=not isinstance(e, NetworkError))
-                out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
-                            "broken": job_error(e, jobs.log_path)})
+                progress_error = net.progress.errors.get(p["slug"])
+                if progress_error:
+                    out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
+                                "kind": "rom", "platform_short": "?", "functions": 0, "matched": 0,
+                                "progress_error": progress_error})
+                else:
+                    out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
+                                "broken": job_error(e, jobs.log_path)})
         return out
 
     @mcp.custom_route("/api/projects", methods=["GET"])
@@ -153,6 +160,12 @@ def register(app: App) -> None:
         q = request.query_params
         toolchain = q.get("toolchain") or None
         scope = q.get("scope") or None  # what the project covers, where its console sets library code aside
+        try:  # the answers to the console's import_options (JSON, an object of strings)
+            options = json.loads(q.get("options") or "{}")
+            if not isinstance(options, dict) or not all(isinstance(v, str) for v in options.values()):
+                raise ValueError
+        except ValueError:
+            return fail(ValueError("options must be a JSON object of strings"))
         # every compiler of the game's console first (the proprietary ones with `accept`), so its test tries them all
         all_compilers, accept = q.get("all_compilers") == "1", q.get("accept") == "1"
         if scope not in (None, *SCOPES):
@@ -196,7 +209,8 @@ def register(app: App) -> None:
 
         def work(log):
             try:
-                slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log, scope=scope)
+                slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log, scope=scope,
+                                     options=options)
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)

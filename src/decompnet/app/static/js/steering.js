@@ -354,6 +354,7 @@ async function exportNow() {
 async function renderProjectSettings() {
   const ov = S.ov;
   if (!ov) return;
+  renderSaveLocation(ov);
   const fork = ov.kind === "fork";
   $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
@@ -365,7 +366,7 @@ async function renderProjectSettings() {
     : "Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.";
   if (!$("compilerPanel").hidden) {
     if (!S.st) await loadState();
-    fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform);
+    fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform, fork ? ov.compilers : null);
     $("setFlags").value = ov.compiler.flags.join(" ");
     $("autoAdjust").checked = !!ov.auto_compiler;
     $("setRanges").value = "";
@@ -507,7 +508,7 @@ $("reimportBtn").onclick = async () => {
   }
 };
 
-/* Save your progress (app/saves.py): the app saves by itself every few minutes into the project's progress folder;
+/* Save your progress (app/saves.py): progress/ stays authoritative and follows local work and git contributions;
    this saves now, or to a folder of the user's choice (a USB stick, a git checkout). */
 $("recheckBtn").onclick = async () => {
   const b = $("recheckBtn");
@@ -521,15 +522,30 @@ $("recheckBtn").onclick = async () => {
   } catch (e) { toast(esc(e.message), "err"); } finally { b.disabled = false; b.textContent = "Check again"; }
 };
 
+function renderSaveLocation(ov) {
+  const input = $("saveFolder");
+  if (input.dataset.slug === ov.slug) return;
+  input.dataset.slug = ov.slug;
+  input.value = ov.save_folder || "";
+  $("saveState").textContent = "";
+  $("saveLog").textContent = "";
+  $("saveLog").hidden = true;
+}
+
 $("saveGo").onclick = async () => {
-  $("saveGo").disabled = true;
+  const slug = S.slug, kind = S.ov.kind, input = $("saveFolder"), log = $("saveLog");
+  const finish = beginWork(log, "Saving project", [$("saveGo")], "Project save finished.");
+  showJobError(log, "");
   try {
-    const r = await api("/api/save", { method: "POST", body: { slug: S.slug, folder: $("saveFolder").value.trim() || undefined } });
+    const r = await api("/api/save", { method: "POST", body: { slug, folder: input.value.trim() || undefined } });
+    if (slug !== S.slug) return;
+    S.ov.save_folder = r.folder;
+    input.value = r.folder;
     $("saveState").textContent = `saved ${clock(Date.now() / 1000).slice(0, 5)}`;
-    $("saveLog").hidden = false;
-    $("saveLog").textContent = S.ov.kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
+    log.hidden = false;
+    log.textContent = kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
       : `Saved to ${r.folder}: ${plural(r.matched || 0, "matched function")}, ${plural(r.best || 0, "best attempt")}.`;
-  } catch (e) { toast(esc(e.message), "err"); } finally { $("saveGo").disabled = false; }
+  } catch (e) { if (slug === S.slug) showJobError(log, e.message); } finally { finish(); }
 };
 
 /* ------------------------------------------------------------------ the compiler, as one answer

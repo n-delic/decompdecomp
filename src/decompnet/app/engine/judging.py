@@ -4,40 +4,38 @@
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from pathlib import Path
 
-from ... import scoring
+from ... import consoles, scoring
 from ...network import MACHINE_AGENTS, WAITING, Agent, Network, NetworkError, stall_line
-from ...rom import match, split
 from ...rom.symbols import SymbolTable
 from .common import _AUTO_TOKEN, BATCH_INSNS
 
 
 class JudgeMixin:
-    def _rom_target(self, fn) -> match.RomTarget:
+    def _rom_target(self, fn):
         cfg = self.cfg(self.store.one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
-        return match.RomTarget(fn["name"], fn["vram"], fn["target"], match.RomTarget.relocs_from_json(json.loads(fn["relocs"])),
-                               cfg.get("big_endian", True), cfg.get("gp", 0))
+        return consoles.of(cfg).target_from_row(fn, cfg)
 
-    def _make_target(self, proj, rf: split.RomFunction, syms: SymbolTable) -> match.RomTarget:
+    def _make_target(self, proj, rf, syms: SymbolTable):
         cfg = self.cfg(proj)
-        return match.target_from_split(rf, syms.resolve, cfg.get("big_endian", True), cfg.get("gp", 0))
+        return self.console(proj).target_from_split(rf, syms.resolve, cfg.get("big_endian", True), cfg.get("gp", 0))
 
     def _target_obj(self, fn, proj):
         if not self.is_rom(proj):
             obj = super()._target_obj(fn, proj)
         else:
-            obj = match.canonical_target(self._rom_target(fn), self.symbols(proj["id"]))
+            obj = self.console(proj).target_object(fn, self.cfg(proj), self.symbols(proj["id"]))
         obj.cpu = self.console(proj).cpu_variant  # the diff reads a PSP's VFPU with its own reader (arch/)
         return obj
 
     def _evaluate(self, fn, proj, obj: bytes):
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
-        res = match.link(obj, fn["name"], self._rom_target(fn), self.symbols(proj["id"]), self.reader(proj))
+        console = self.console(proj)
+        res = console.link_function(obj, fn["name"], self._rom_target(fn), self.symbols(proj["id"]), self.reader(proj))
         return res.candidate, res.exact if res.candidate is not None else None, res.problems
 
     def rename_tokens(self, proj, text: str) -> str:
@@ -136,6 +134,22 @@ class JudgeMixin:
             time.sleep(0.2)
 
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
+        fn = self._function(function, project)
+        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        with self.progress.judging(slug):
+            return self._attempt(agent, function, source, project)
+
+    def _record(self, fn, *args, **kwargs):
+        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        with self.progress._project_lock(slug):
+            # attempt()'s judging block already read progress just before this record; a second full read here made
+            # every compile check the folder twice before and once after.
+            if not self.progress.applying and not getattr(self.progress.local, "judging", None):
+                self.progress.sync(slug, force=True)
+            self.progress.check_result()
+            return super()._record(fn, *args, **kwargs)
+
+    def _attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         self._yield_autopilot(function, project)
         if (fork := self.fork_slug(project)):
             return self.forks.attempt(agent, fork, function, source)

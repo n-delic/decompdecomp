@@ -39,8 +39,6 @@ site/node_modules/
 .wrangler/
 site/public/dl/*.whl
 
-# Downloaded by projects/zlib-n64/prepare.py
-projects/zlib-n64/original/
 
 # The retired hosted network's server scripts (kept locally only)
 deploy/

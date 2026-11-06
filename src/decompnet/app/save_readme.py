@@ -8,7 +8,7 @@ import re
 from collections import Counter
 from html import escape
 
-from ..network import IN_BUILD, SET_ASIDE
+from ..network import IN_BUILD, SET_ASIDE, NetworkError
 
 CARD = "decompdecomp-progress.svg"
 MAP_COLUMNS = 80
@@ -46,6 +46,13 @@ def update(net, proj, folder, initial, best, details=None):
                 f"- **Completion:** {counts['matched']:,} / {total:,} functions ({pct:.1f}%). "
                 f"{counts['aside']:,} set aside, excluded from completion.")
     path = folder / "README.md"
+    image = folder / CARD
+    for target in (path, image):
+        # A save, a sync or an autosave writes these; a link here would write outside the progress folder.
+        if target.is_symlink():
+            raise NetworkError("Progress paths cannot use symbolic links. Replace the link and try again.")
+        if target.exists() and target.is_dir():
+            raise NetworkError("The save folder contains a path with the wrong type. Move it and try again.")
     # Preserve CRLF, Unicode, and every byte outside our blocks when adopting an existing README.
     text = path.read_bytes().decode("utf-8") if path.exists() else initial
     newline = "\r\n" if "\r\n" in text else "\n"
@@ -67,7 +74,6 @@ def update(net, proj, folder, initial, best, details=None):
     if not path.exists() or path.read_bytes() != encoded:
         path.write_bytes(encoded)
     svg = _card(states, counts, total, pct, net.cfg(proj).get("platform") or "")
-    image = folder / CARD
     if not image.exists() or image.read_text(encoding="utf-8") != svg:
         image.write_text(svg, encoding="utf-8")
 

@@ -15,7 +15,7 @@ from pathlib import Path
 from ... import consoles, scoring, seeds, toolchains
 from ...network import NetworkError
 from ...project import compiler_for
-from ...rom import Picked, RomError, match, split
+from ...rom import Picked, RomError, split
 from ...rom.symbols import AUTO_NAME, Symbol, SymbolTable
 from .common import BASE_HEADER, GP_NOTE, data_preview, slugify
 
@@ -29,19 +29,47 @@ DEBUG_TYPES_FILE = "debug_types.h"
 HEADER_CHECK = "int decomp_header_check;"  # a source that needs nothing but the header to compile
 
 
+def pair_old_functions(rows, functions) -> dict:
+    """The old function each new one continues, by the new one's name. By address first (see above), and a game's
+    overlay can put a second function at an address the main code has one at: each old function pairs once, the one
+    with the same name first. Paired by address alone the second twin was left unpaired, and its name (held by the
+    old twin that the first took) was inserted again: UNIQUE constraint failed."""
+    by_vram: dict = {}
+    for r in rows:
+        if r["vram"] is not None:
+            by_vram.setdefault(r["vram"], []).append(r)
+    by_name = {r["name"]: r for r in rows}
+    paired_ids: set = set()
+    paired: dict = {}
+    for fn in functions:
+        here = [r for r in by_vram.get(fn.vram, ()) if r["id"] not in paired_ids]
+        old = next((r for r in here if r["name"] == fn.name), None) or (here[0] if here else None)
+        if old is None:
+            old = by_name.get(fn.name)
+            if old is not None and old["id"] in paired_ids:
+                old = None
+        if old is not None:
+            paired[fn.name] = old
+            paired_ids.add(old["id"])
+    return paired
+
+
 class ImportMixin:
     def import_rom(self, data: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
-                   confirmed: bool = False, name: str = "", log=print, scope: str | None = None) -> str:
+                   confirmed: bool = False, name: str = "", log=print, scope: str | None = None,
+                   options: dict | None = None) -> str:
         """Import a game the user owns (ROM bytes, or a file such as a disc image): split it, store every function
         as a target. Returns the slug. `scope`: what the project covers, where its console sets library code aside
-        ("game", the default, or "program": forks/project.py SCOPES)."""
+        ("game", the default, or "program": forks/project.py SCOPES). `options`: answers to the console's
+        import_options."""
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
         if isinstance(data, Path) and data.is_dir():  # a game that is a folder (a PC game: its .exe and DLLs)
             data = consoles.game_in(data)
             log(f"the game's program in that folder: {data.name}")
         console = consoles.identify(data)
-        return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope)
+        return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope,
+                                   options=options)
 
     def saved_file(self, data: bytes | Path, name: str) -> Path:
         """A game sent as bytes, saved to a file first (PROJECT mode's tools read files); a file stays where it is."""
@@ -58,6 +86,11 @@ class ImportMixin:
         """ROM mode: split the program `console` read from the user's file, store every function as a target."""
         if reimport_slug is None:
             return self._import_split(console, picked, toolchain=toolchain, flags=flags, log=log)
+        with self.progress.rebuilding(reimport_slug):
+            return self._reimport_split(console, picked, toolchain=toolchain, flags=flags, log=log,
+                                        reimport_slug=reimport_slug)
+
+    def _reimport_split(self, console, picked, *, toolchain, flags, log, reimport_slug):
         proj = self._project(reimport_slug)
         cfg = json.loads(proj["config"])
         if cfg.get("kind") != "rom" or self.console(proj).id != console.id:
@@ -110,15 +143,15 @@ class ImportMixin:
         if debug is not None:
             log(debug.summary())
         try:
-            res = split.split_rom(workdir, picked.filename, console, picked, log=log,
-                                  symbols=debug.symbol_addrs() if debug is not None and debug.named else None)
+            res = console.split_game(workdir, picked, log=log,
+                                     symbols=debug.symbol_addrs() if debug is not None and debug.named else None)
         except RomError:
             if debug is None or not debug.named:
                 raise
             # the game's own names are a help, never the reason an import fails: split as if it had none
             log("splat refused the game's own names: splitting without them")
             shutil.rmtree(workdir / "asm", ignore_errors=True)
-            res = split.split_rom(workdir, picked.filename, console, picked, log=log)
+            res = console.split_game(workdir, picked, log=log)
         if reimport is not None and not res.functions:
             raise NetworkError("the selected game produced no functions; the existing project was left unchanged")
         if reimport is not None:
@@ -128,6 +161,8 @@ class ImportMixin:
 
         chosen = bool(toolchain or flags or reimport is not None)  # a reimport keeps the project's compiler
         toolchain = toolchain or console.default_compiler(info, res.compiler)
+        if info.get("compiler_why") and not chosen:
+            log(f"Compiler {toolchain}: {info['compiler_why']}")
         cfg = {
             "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
             "rom": {**info, "file": res.image or picked.filename, "program": picked.filename},
@@ -148,6 +183,7 @@ class ImportMixin:
             cfg.pop("export", None)
             cfg.pop("autopilot", None)
             cfg.pop("kernel_calls_named", None)
+            cfg.pop("system_calls_named", None)
         header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if consoles.small_gp(cfg) else "")
         header += self._debug_types(debug, cfg, workdir, log)
         symbols = SymbolTable()
@@ -205,13 +241,7 @@ class ImportMixin:
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
                     # by address first: a function renamed since (rename_symbol, polishing) has its old name nowhere
                     # in the new split, and paired by name it lost its matched C
-                    by_vram = {r["vram"]: r for r in rows if r["vram"] is not None}
-                    by_name = {r["name"]: r for r in rows}
-                    old_functions = {}
-                    for fn in res.functions:
-                        old = by_vram.get(fn.vram) or by_name.get(fn.name)
-                        if old is not None and old["id"] not in {o["id"] for o in old_functions.values()}:
-                            old_functions[fn.name] = old
+                    old_functions = pair_old_functions(rows, res.functions)
                     paired = {o["id"] for o in old_functions.values()}
                     gone = {r["name"]: r for r in rows if r["id"] not in paired}
                     # the names agents gave (functions and data), by address: matched C calls them by those names
@@ -240,36 +270,42 @@ class ImportMixin:
                 preserved = 0
                 for fn in res.functions:
                     check_cancel()
-                    target = match.target_from_split(fn, symbols.resolve, picked.big_endian, res.gp)
+                    target = console.target_from_split(fn, symbols.resolve, picked.big_endian, res.gp)
                     relocs = json.dumps(target.to_json())
                     known = debug.functions.get(fn.vram) if debug is not None else None
                     unit = debug.units.get(fn.vram, fn.segment) if debug is not None else fn.segment
                     old = old_functions.get(fn.name)
                     same_target = (old is not None and old["target"] == target.code
                                    and json.loads(old["relocs"] or "[]") == target.to_json())
-                    asm = self._asm_source(fn)
-                    meta = json.dumps({"debug": known}) if known else None
+                    asm = console.function_asm(fn)
+                    meta_data = dict(console.function_meta(fn))
+                    if known:
+                        meta_data["debug"] = known
+                    meta = json.dumps(meta_data) if meta_data else None
+                    n_insns = console.function_insns(fn)
+                    status = console.function_status(fn)
                     if old is None:
                         db.execute(
-                            "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,meta) "
-                            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (pid, fn.name, fn.size, len(fn.lines), target.code, relocs, asm, None, unit, fn.vram,
-                             fn.rom, meta))
+                            "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,meta,status) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (pid, fn.name, fn.size, n_insns, target.code, relocs, asm, None, unit, fn.vram,
+                             fn.rom, meta, status))
                     elif same_target:
                         db.execute(
                             "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,unit=?,vram=?,rom_offset=?,meta=? "
                             "WHERE id=?",
-                            (fn.size, len(fn.lines), target.code, relocs, asm, unit, fn.vram, fn.rom, meta, old["id"]))
+                            (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, old["id"]))
                         preserved += old["status"] == "matched" and bool(old["matched_source"])
                     else:
                         for table in ("claims", "attempts", "twin_misses"):
                             db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
                         db.execute(
                             "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,unit=?,vram=?,"
-                            "rom_offset=?,meta=?,status='open',best_score=NULL,best_source=NULL,best_agent_id=NULL,"
+                            "rom_offset=?,meta=?,status=?,best_score=NULL,best_source=NULL,best_agent_id=NULL,"
                             "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,attempts=0,abandons=0,"
                             "fingerprint=NULL,boost=0,readable=0,permuted=0,seed_key=NULL WHERE id=?",
-                            (fn.size, len(fn.lines), target.code, relocs, asm, unit, fn.vram, fn.rom, meta, old["id"]))
+                            (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, status,
+                             old["id"]))
                 previews = {r[1]: r[4] for r in data_rows}
                 for addr, name in old_names.items():
                     s = symbols.by_addr.get(addr)
@@ -415,24 +451,10 @@ class ImportMixin:
 
     @staticmethod
     def _asm_source(fn: split.RomFunction) -> str:
-        out = [f"glabel {fn.name}"]
-        for ln in fn.lines:
-            if ln.vram in fn.labels and ln.vram != fn.vram:
-                out.append(f".L{ln.vram:08X}:")
-            out.append(f"/* {ln.rom:X} {ln.vram:08X} {ln.word:08X} */  {ln.mnemonic:<10} {ln.operands}".rstrip())
-        out.append(f"endlabel {fn.name}")
-        return "\n".join(out)
+        """The assembly of a function, as every ROM project stores it (a console's own form: Console.function_asm)."""
+        return split.function_asm(fn)
 
     @staticmethod
     def _parse_asm(name: str, text: str, segment: str) -> split.RomFunction:
-        lines, labels = [], set()
-        for raw in text.splitlines():
-            m = split._INSN.match(raw)
-            if m:
-                rom, vram, word, mnem, ops = m.groups()
-                lines.append(split.AsmLine(int(rom, 16), int(vram, 16), int(word, 16), mnem, ops))
-                continue
-            m = split._LABEL.match(raw)
-            if m:
-                labels.add(int(m.group(1).lstrip(".L"), 16))
-        return split.RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, Path(), labels)
+        """A function from its stored assembly (a console's own form: Console.parse_function)."""
+        return split.function_from_text(name, text, segment)

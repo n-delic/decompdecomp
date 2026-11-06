@@ -11,7 +11,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS%20Intel%20%2F%20Apple%20Silicon-15140f?style=flat-square">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-15140f?style=flat-square">
   <a href="https://discord.gg/hhEm3zZagB"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
-  <img alt="Agents: Claude Code, Codex, opencode, Antigravity, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20API%20models-157a49?style=flat-square">
+  <img alt="Agents: Claude Code, Codex, Cursor, Kimi, opencode, Antigravity, ZCode, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Cursor%20%C2%B7%20Kimi%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
 
 decompdecomp is an app that decompiles games you own. AI agents write C or C++ for each function of the game. The
@@ -29,10 +29,29 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
   stand-in for a model that hands in the demo's own C; the app compiles and judges every function for real.</sub>
 </p>
 
+## ROM library for imported projects
+
+In **Settings → ROM library**, choose a folder containing your extracted game files. On an imported project's setup
+page, click **Search ROM library**. When the project declares an expected SHA-1, decompdecomp searches that folder
+and its subfolders and fills in a verified match. N64 projects recognize `.z64`, `.v64`, and `.n64` byte orders
+regardless of filename. Confirm ownership and click **Use path** to continue. The search does not unpack archives,
+move files, or start a build. It stops after 5,000 files, 2 GiB read or 30 seconds; use a smaller folder or choose
+the file manually if it stops. Clear the folder setting to disable searches. If a verified game is already in the
+project, **Retry setup** reuses it.
+
+For supported versioned N64 Splat projects, the search checks every original ROM hash declared by the build's
+versioned configs, or the original cartridge hashes listed in a decompressed-image project's README. It reports the
+matching version; setup puts the ROM at that version's path and passes `VERSION=…` to Make. A byte-swapped ROM already
+at the destination is converted before setup instead of being treated as ready.
+
+This works for public projects whose declared SHA-1 is the original file's hash. dtk and configure projects do not
+declare a game SHA-1 in their setup metadata yet, so select their game files manually. PlayStation splat projects
+often hash an extracted file rather than the whole disc; a library of disc images will not match that hash.
+
 ## Install
 
-decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with one command. The installer also gets
-the free compilers and keeps decompdecomp up to date:
+decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with
+one command. The installer also gets the free compilers and keeps decompdecomp up to date:
 
 ```
 curl -fsSL https://decomp.ndelic.com/install.sh | bash
@@ -62,8 +81,8 @@ decomp shortcut
 decomp
 ```
 
-The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
-brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp` folder.
+The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp`
+folder.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
@@ -79,7 +98,15 @@ and the pinned public Clang 5.0.2 available in Compilers & tools. No Sony SDK or
 
 ### macOS (Intel and Apple Silicon)
 
-Install the current source branch, or clone the repository and install the checkout:
+For an app you can put in `/Applications`, download `macos_arm64` (Apple Silicon) or
+`macos_x86_64` (Intel) from the [releases](https://github.com/n-delic/decompdecomp/releases).
+Unzip it, move `decompdecomp.app` to Applications, and open it from Finder. The app includes
+Python and its dependencies. It is not signed or notarized, so macOS may ask you to approve its
+first launch in Privacy & Security. Install the free compilers and tools from Setup, and replace
+the app with a later release to update it.
+
+Alternatively, install the current source branch or a local checkout:
+
 
 ```sh
 curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main
@@ -91,11 +118,12 @@ bash site/public/install.sh
 
 The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets the free tools, and creates
 `~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp`;
-toolchains live in `~/Library/Application Support/decompnet/toolchains`. Intel Macs also need Xcode Command Line
-Tools (`xcode-select --install`) to build the pinned modern MIPS binutils on their first N64 export; upstream only
-publishes those tools for Apple Silicon. Finder launches preserve the PATH
+toolchains live in `~/Library/Application Support/decompnet/toolchains`. Xcode Command Line Tools
+(`xcode-select --install`) are needed on Intel Macs for N64's MIPS binutils, and on both Mac architectures to
+build PS1 GCC 2.6.3 from pinned source on first use. The other PS1 compilers' ready-made binaries are for Linux and
+Windows (through WSL 2); 2.7.2, 2.7.2 CDK and 2.8.1 also have pinned Apple Silicon builds. Finder launches preserve the PATH
 from installation so your installed Node and helper CLIs remain available; rerun `decomp shortcut` after
-changing their locations. This is a source install; there is no signed DMG or macOS release bundle yet.
+changing their locations. This source install uses an external uv installation.
 
 **Apple Silicon:** the app, WebKit window and modern tools run natively. The pinned N64 KMC-compatible
 GCC 2.7.2 and binutils 2.6 archives contain Intel programs, so install Apple's Rosetta runtime before setup:
@@ -110,10 +138,13 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | Mac capability | Availability |
 | --- | --- |
 | N64 ROM import, compile, match and export | KMC GCC via Rosetta on Apple Silicon; directly on Intel |
+| PS1 GCC 2.5.7 to 2.95.2 and EGCS 2.91.66, with maspsx | GCC 2.7.2, 2.7.2 CDK and 2.8.1 run natively on Apple Silicon; GCC 2.6.3 builds from pinned source on both Mac architectures; the others are Linux/Windows (WSL) builds |
 | Native window, file/folder pickers and export downloads | Cocoa and system WKWebView, no GTK or X11 |
 | m2c, decomp-permuter and objdiff | Pinned Mac/Python builds |
 | Other consoles and public decomp projects | Only where their pinned compiler/tool builds support this Mac |
-| Linux-only PS1/PS2 period compilers | Unavailable on macOS; use a supported Linux host |
+| PS2 Sony EE-GCC 2.9, 2.96 and 3.2 | Optional local Linux runner ([setup](docs/linux-compiler-vm.md)) |
+| PS2 SN Systems EE-GCC 2.95.2/2.95.3 and CodeWarrior 2.3.3/3.0.1 | Pinned Windows compilers through wibo; CodeWarrior requires license acceptance |
+| Linux-only PS1 period compilers | Use a supported Linux host |
 | Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
 
 For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`.
@@ -131,13 +162,18 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
    Demo Quest 64. For an N64, PlayStation or PlayStation 2 game, the app offers to install all of that console's
    compilers first. Then it tests which one built the game. Tick the box only if you accept the proprietary ones.
 2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
-   Codex, opencode and Antigravity CLI. Run several, and different models: they work on different functions at the
-   same time.
+   Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI and ZCode CLI. Run several, and different models: they work on different
+   functions at the same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
    the easy ones for free, before any agent starts.
 4. **Export** (in the project's header). You get a decomp project that builds your game again, byte for byte.
 
 You can also continue a community decomp: paste the address of its repository and pick your own copy of its game.
+
+To decompile with friends, open a project's **Decompile together** panel to host a room, or choose **Join a team's
+room** from **New project**. If you've already imported that exact game, joining also shares your saved matches that
+the host hasn't matched yet; the host verifies each one. For ROM projects, better unfinished attempts are shared too
+when both projects use the same compiler settings. Everyone needs their own copy of the game.
 
 When you close the window while agents work, decompdecomp asks you: stop them and quit, or keep them working.
 **Quit** ends the app and everything it started.
@@ -182,9 +218,14 @@ What changed on the way:
 ## Moving to another computer
 
 decompdecomp saves the work on each N64, PlayStation and PlayStation 2 project as plain files in the project's `progress/`
-folder, every few minutes: matched C, best attempts, headers, names, notes and settings. It never contains the game,
-so you can keep it in a git repository. GameCube, Wii and PC projects and community decomps are git repositories
-already: push them.
+folder as work changes: matched C, best attempts, headers, names, notes and settings. It never contains the game,
+so you can keep it in a git repository. You can edit these files or pull another contributor's changes into
+`progress/`; decompdecomp reads them on the next project action and checks the saved functions again. GameCube, Wii
+and PC projects and community decomps are git repositories already: push them.
+
+In **Settings**, **Save now** remembers its last successful destination for each project and restores it when
+you open that project again. A project opened from a saved folder starts with that folder selected. Saving a
+backup elsewhere keeps the project's automatic progress folder in place. Clear the field to save there again.
 
 The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer. Copy the hidden
 `.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a
@@ -218,18 +259,27 @@ game's code is its rights holder's: keep it to yourself.
 | Nintendo 64 | Recommended |
 | PlayStation (PS1) | Beta |
 | PlayStation 2 | Beta |
+| PlayStation 3 | Beta (from your decrypted EBOOT.ELF; the free ps3dev GCC, or your own SDK's compiler) |
 | PlayStation 4 (decrypted ELF, Linux x86-64) | Beta |
 | PSP | Beta |
 | GameCube, Wii | Beta |
 | Windows PC games | Beta |
 | Nintendo DS | Beta |
-| Game Boy Advance, 3DS, Switch, Xbox, Xbox 360 | Community decomps only |
+| Game Boy Advance | Beta |
+| Original Xbox | Beta (from your default.xbe, .xiso or Redump .iso; needs Visual C++ 7.0/7.1 and Ghidra; wine for games built with link-time code generation; your own XDK, optional, sets its library code aside) |
+| 3DS, Switch, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
-[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes
-from beta to recommended.
+[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes from beta to
+recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
+
+Visual C++ 2017 (which builds PC games of 2015 and newer) runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install
+yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple
+Silicon): the app says so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the
+packs don't have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder
+(it's read where it is, never copied).
 
 ## Questions people ask
 
@@ -305,9 +355,7 @@ decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf) by
 [Sam Wolfs (@i12bp8)](https://github.com/i12bp8), who made it up to version 0.10.6 and then archived it. Thank you,
 Sam. decompdecomp is not related to decomp.wtf, and its author does not endorse it.
 
-decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo and the decompals
-compilers. The
-[guide](docs/GUIDE.md#built-on) lists them.
+decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals compilers. The [guide](docs/GUIDE.md#built-on) lists them.
 
 ## License
 

@@ -39,8 +39,26 @@ def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, mo
     result = saves._apply(net, "game", tmp_path, manifest, lambda *_: None)
     agent, _ = net.local_agent(author)
     assert result == {"matched": 0, "best": 1, "lost": []}
-    assert judged == [(agent.id, "f", "void f(void) {}", "game")]
+    assert judged == [(net.local_agent("progress-judge")[0].id, "f", "void f(void) {}", "game")]
     assert net.store.one("SELECT agent_id FROM notes WHERE text=?", "Try an unsigned comparison.")["agent_id"] == agent.id
+
+
+def test_restoring_leaves_out_ranges_whose_compiler_isnt_known(tmp_path, monkeypatch):
+    """#118: a save written where a project used a compiler decompdecomp doesn't have carried its address ranges
+    back unchecked, and every function in one then failed to compile with the registry's "unknown toolchain" error."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')", (str(tmp_path),))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    log = []
+    manifest = {"compiler_ranges": [
+        {"start": 0x80000000, "end": 0x80001000, "toolchain": "msvcxx-x86_64", "flags": ["/O2"]},
+        {"start": 0x80001000, "end": 0x80002000, "toolchain": "gcc-2.7.2-kmc", "flags": ["-O2"]},
+    ]}
+    saves._apply(net, "game", tmp_path, manifest, log.append)
+    cfg = json.loads(net.store.one("SELECT config FROM projects WHERE slug='game'")["config"])
+    assert [r["toolchain"] for r in cfg["compiler_ranges"]] == ["gcc-2.7.2-kmc"]
+    assert any("msvcxx-x86_64" in line and "0x80000000-0x80001000" in line for line in log)
 
 
 @pytest.fixture
@@ -89,6 +107,83 @@ def test_a_saved_project_comes_back_on_another_computer(worked, tmp_path):
     assert fresh.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0  # nothing left claimed
 
 
+def test_a_new_restore_adopts_saved_settings_over_fresh_import_defaults(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "workspace")
+    root = tmp_path / "workspace" / "game"
+    root.mkdir(parents=True)
+    save = tmp_path / "save"
+    (save / "include").mkdir(parents=True)
+    (save / saves.MANIFEST).write_text(json.dumps({
+        "format": saves.FORMAT, "title": "Game", "platform": "n64", "game": {"sha1": "demo"},
+        "headers": {"": "common.h"}, "layout": [{"name": "f", "vram": 4096, "size": 4}],
+        "functions": {}, "instructions": "instructions from saved project", "knowledge": [], "notes": [],
+    }), encoding="utf-8")
+    (save / "include/common.h").write_text("/* saved header */\n", encoding="utf-8")
+    monkeypatch.setattr(saves.consoles, "identify",
+                        lambda _: type("Console", (), {"read_game": lambda *args: type(
+                            "Picked", (), {"info": {"sha1": "demo"}})()})())
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+
+    def import_game(*_args, **_kwargs):
+        config = {"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"},
+                  "instructions": "fresh import defaults"}
+        with net.store.tx() as db:
+            pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                             (str(root), json.dumps(config))).lastrowid
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                       "VALUES(?,1,'',0,'')", (pid,))
+            db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                       "VALUES(?,'f',4096,4,1,'open','')", (pid,))
+        return "game"
+
+    monkeypatch.setattr(net, "import_rom", import_game)
+    result = saves.restore(net, str(save), tmp_path / "own-game.bin", log=lambda *_: None)
+    assert result == {"matched": 0, "best": 0, "lost": [], "slug": "game"}
+    assert net.instructions("game") == "instructions from saved project"
+
+
+def test_a_restore_that_cannot_judge_leaves_no_half_imported_project(tmp_path, monkeypatch):
+    """#101 review: importing and splitting happen before the save is applied; a failed restore (a known compiler
+    that isn't installed here) must not leave the imported project and its folder behind."""
+    from types import SimpleNamespace
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "workspace")
+    save = tmp_path / "save"
+    (save / "src").mkdir(parents=True)
+    (save / "include").mkdir()
+    (save / "src/f.c").write_text("void f(void) {}\n", encoding="utf-8")
+    (save / "include/common.h").write_text("/* saved header */\n", encoding="utf-8")
+    (save / saves.MANIFEST).write_text(json.dumps({
+        "format": saves.FORMAT, "title": "Game", "platform": "n64", "game": {"sha1": "demo"},
+        "headers": {"": "common.h"}, "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": []},
+        "layout": [{"name": "f", "vram": 4096, "size": 4}],
+        "functions": {"f": {"vram": 4096, "matched_by": ""}}, "knowledge": [], "notes": [],
+    }), encoding="utf-8")
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: SimpleNamespace(
+        read_game=lambda *_: SimpleNamespace(info={"sha1": "demo"})))
+    root = tmp_path / "workspace" / "game"
+
+    def import_game(*_args, **_kwargs):
+        root.mkdir(parents=True)
+        with net.store.tx() as db:
+            pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                             (str(root), json.dumps({"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}}))).lastrowid
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')",
+                       (pid,))
+            db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                       "VALUES(?,'f',4096,4,1,'open','')", (pid,))
+        return "game"
+
+    monkeypatch.setattr(net, "import_rom", import_game)
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    monkeypatch.setattr("decompnet.app.progress.toolchains.installed", lambda _: None)
+    with pytest.raises(NetworkError, match="gcc-2.7.2-kmc"):
+        saves.restore(net, str(save), tmp_path / "own-game", log=lambda *_: None)
+    assert net.store.all("SELECT slug FROM projects") == []
+    assert not root.exists()
+    assert (save / saves.MANIFEST).exists()  # the user's saved folder is untouched
+
+
 def test_a_save_restores_only_onto_the_same_game(worked, tmp_path):
     net, slug, _ = worked
     saves.save(net, slug, tmp_path / "save")
@@ -106,10 +201,55 @@ def test_a_save_restores_only_onto_the_same_game(worked, tmp_path):
         saves.restore(net, str(tmp_path / "save"), ROM, log=lambda *_: None)
 
 
+def test_restoring_does_not_replace_newer_work_in_an_already_imported_game(worked, tmp_path, monkeypatch):
+    net, slug, _ = worked
+    saves.save(net, slug, tmp_path / "save")
+    before = net.store.one("SELECT matched_source FROM functions WHERE name='clamp_s32'")["matched_source"]
+    monkeypatch.setattr(net, "import_rom", lambda *args, **kwargs: pytest.fail("imported into existing project"))
+    with pytest.raises(NetworkError, match="already open"):
+        saves.restore(net, str(tmp_path / "save"), ROM, log=lambda *_: None)
+    assert net.store.one("SELECT matched_source FROM functions WHERE name='clamp_s32'")["matched_source"] == before
+
+
+def test_saving_to_a_chosen_folder_prunes_only_files_from_its_previous_manifest(worked, tmp_path):
+    net, slug, _ = worked
+    folder = tmp_path / "chosen-save"
+    saves.save(net, slug, folder)
+    source = folder / "src/clamp_s32.c"
+    unrelated = folder / "src/contributor-notes.txt"
+    unrelated.write_text("keep this")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL,matched_agent_id=NULL,matched_at=NULL "
+                   "WHERE name='clamp_s32'")
+    saves.save(net, slug, folder)
+    assert not source.exists()
+    assert unrelated.read_text() == "keep this"
+
+
+def test_publish_rejects_symlink_paths_before_writing(tmp_path):
+    root = tmp_path / "save"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    try:
+        (root / "src").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlinks are unavailable: {error}")
+    with pytest.raises(NetworkError, match="symbolic links"):
+        saves._publish(root, {"src/f.c": "code"})
+    assert not (outside / "f.c").exists()
+
+
 def test_autosave_saves_what_changed_only(worked):
     net, slug, _ = worked
+    project_id = net._project(slug)["id"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new attempt',best_score=10 WHERE id="
+                   "(SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns DESC LIMIT 1)",
+                   (project_id,))
     auto = saves.Autosave(net)
     assert auto.run_once() == [slug] and auto.run_once() == []
+    assert any((saves.default_folder(net, slug) / "best").glob("*.c"))
     assert (saves.default_folder(net, slug) / saves.MANIFEST).exists()
 
 
@@ -119,8 +259,11 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     old_home, new_home = tmp_path / "old" / "Decomp", tmp_path / "new" / "Decomp"
     (old_home / "game").mkdir(parents=True)
     net = RomNetwork(old_home / "decomp.db", old_home)
+    old_root = old_home / "game"
     with net.store.tx() as db:
-        db.execute("INSERT INTO projects(slug, name, root, config) VALUES('game', 'Game', ?, '{}')", (str(old_home / "game"),))
+        db.execute("INSERT INTO projects(slug, name, root, config) VALUES('game', 'Game', ?, ?)",
+                   (str(old_root), json.dumps({"progress_folder": str(old_root / "progress"),
+                                               "save_folder": str(old_root / "exports")})))
     # Moving the folder is an offline operation; Windows won't remove open database files.
     reader = getattr(net.store._local, "conn", None)
     if reader is not None:
@@ -130,6 +273,39 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     shutil.rmtree(tmp_path / "old")
     moved = RomNetwork(new_home / "decomp.db", new_home)
     assert moved.project_row("game")["root"] == str(new_home / "game")
+    with moved.store.tx() as db:
+        old_root = str(old_home / "game")
+        db.execute("UPDATE projects SET root=?,config=? WHERE slug='game'",
+                   (old_root, json.dumps({"progress_folder": str(old_home / "game" / "progress"),
+                                          "save_folder": str(old_home / "game" / "exports")})))
+    assert moved.find_moved_projects() == ["game"]
+    cfg = moved.cfg(moved.project_row("game"))
+    assert cfg["progress_folder"] == str(new_home / "game" / "progress")
+    assert cfg["save_folder"] == str(new_home / "game" / "exports")
+    assert saves.default_folder(moved, "game") == new_home / "game" / "progress"
+
+
+def test_restoring_an_old_manifest_preserves_why_a_function_was_set_aside(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')",
+                         (str(tmp_path),)).lastrowid
+        function_id = db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,meta) "
+                                 "VALUES(?,'f',4096,4,1,'open','',?)",
+                                 (pid, json.dumps({"keep": "this metadata"}))).lastrowid
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    saves._apply(net, "game", tmp_path, {
+        "layout": [{"name": "f", "vram": 4096, "size": 4}],
+        "set_aside": [{"name": "f", "vram": 4096, "asm_code": "agents set it aside",
+                       "not_c": {"alex": {"model": "claude", "why": "no C expression matches", "t": 1.0}}}],
+        "functions": {},
+    }, lambda *_: None)
+    row = net.store.one("SELECT status,meta FROM functions WHERE id=?", function_id)
+    assert row["status"] == "asm"
+    assert json.loads(row["meta"]) == {
+        "keep": "this metadata", "asm_code": "agents set it aside",
+        "not_c": {"alex": {"model": "claude", "why": "no C expression matches", "t": 1.0}},
+    }
 
 
 def test_a_project_mode_games_save_writes_its_closest_attempts(tmp_path):

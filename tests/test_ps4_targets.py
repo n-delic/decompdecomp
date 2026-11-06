@@ -245,6 +245,7 @@ def test_console_detection_and_draft_types_are_integrated(tmp_path):
 
 
 def test_compiler_comes_only_from_the_pinned_registry(monkeypatch, tmp_path):
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: toolchains.LINUX)
     monkeypatch.setattr(toolchains, 'installed', lambda *a, **kw: None)
     assert scratch.clang_path() is None
     spec = toolchains.get('clang-5.0.2')
@@ -298,6 +299,7 @@ def test_got_relaxation_uses_internal_target_names_and_preserves_imports(tmp_pat
     assert refs(source.read_bytes()) == [(3, 2, 'D_00002000', -4), (10, 9, 'imported', -4)]
 
 
+@pytest.mark.skipif(toolchains.current_platform() != toolchains.LINUX, reason="PS4 builds need the Linux x86-64 app")
 def test_stock_ps4_target_uses_a_global_guard_without_a_compiler_patch(tmp_path):
     compiler = scratch.clang_path()
     if compiler is None:
@@ -316,6 +318,7 @@ def test_stock_ps4_target_uses_a_global_guard_without_a_compiler_patch(tmp_path)
     assert '__stack_chk_guard' in relocations and '__stack_chk_fail' in relocations
 
 
+@pytest.mark.skipif(toolchains.current_platform() != toolchains.LINUX, reason="PS4 builds need the Linux x86-64 app")
 def test_import_build_and_match_work_in_a_directory_with_spaces(tmp_path):
     compiler = scratch.clang_path()
     if compiler is None or toolchains.installed('objdiff-cli') is None:
@@ -442,3 +445,70 @@ def test_stock_ghidra_finds_functions_without_a_sidecar(tmp_path, sce_type):
     functions = scratch.ghidra_functions(game, scratch.read_elf(bytes(data)))
     assert any(row['entry'] == 0x1000 for row in functions)
     assert game.read_bytes() == data
+
+
+@pytest.mark.parametrize('ranges', [['bad'], [['x', '10']], [[0]], [[0, 1, 2]], None,
+                                  [[-1, 1]], [[2, 1]], [[0, 21]]])
+def test_bad_map_ranges_have_an_actionable_import_error(tmp_path, ranges):
+    from decompnet.forks.project import ForkError
+
+    (tmp_path / 'functions.jsonl').write_text(json.dumps({'a': '0', 'end': '10', 'ranges': ranges})+'\n')
+    with pytest.raises(ForkError, match='invalid function body ranges.*offsets inside'):
+        scratch.map_functions(tmp_path / 'eboot.elf', image(b'\xc3'*20, 0).text)
+
+
+@pytest.mark.parametrize('name', ['game.functions.jsonl', 'GAME.FUNCTIONS.JSONL', 'FUNCTIONS.JSONL'])
+def test_a_dropped_map_with_a_different_stem_is_used(tmp_path, name):
+    (tmp_path / name).write_text(json.dumps({'a': '0', 'end': '1'})+'\n')
+    found = scratch.map_functions(tmp_path / 'eboot.elf', image(b'\xc3'*20, 0).text)
+    assert found[0]['entry'] == 0 and found[0]['end'] == 1
+
+
+def test_ambiguous_sidecars_require_an_explicit_map_name(tmp_path):
+    from decompnet.forks.project import ForkError
+
+    for name in ['one', 'two']:
+        (tmp_path / f'{name}.functions.jsonl').write_text(json.dumps({'a': '0', 'end': '1'})+'\n')
+    with pytest.raises(ForkError, match='more than one function map'):
+        scratch.map_functions(tmp_path / 'eboot.elf', image(b'\xc3'*20, 0).text)
+    (tmp_path / 'functions.jsonl').write_text(json.dumps({'a': '1', 'end': '2'})+'\n')
+    assert scratch.map_functions(tmp_path / 'eboot.elf', image(b'\xc3'*20, 0).text)[0]['entry'] == 1
+
+
+@pytest.mark.parametrize('host', ['windows-x86_64', 'macos-x86_64', 'macos-arm64', 'linux-aarch64'])
+def test_unsupported_hosts_are_told_to_use_the_linux_app_before_resolving_a_compiler(monkeypatch, host):
+    from decompnet import consoles
+    from decompnet.forks.project import ForkError
+
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: host)
+    monkeypatch.setattr(toolchains, 'binary', lambda *_: pytest.fail('must not resolve a compiler on this host'))
+    monkeypatch.setattr(toolchains.wsl, 'wanted', lambda: host.startswith('windows'))
+    tc = toolchains.get('clang-5.0.2')
+    assert not tc.supported and not tc.via_wsl and not tc.via_vm
+    assert not any(t == 'clang-5.0.2' for t in consoles.get('ps4').installable_compilers())
+    with pytest.raises(toolchains.ToolchainError, match='native host build.*Linux x86-64'):
+        toolchains.install('clang-5.0.2', linux=True, vm=True, log=lambda *_: None)
+    assert 'Linux app' in consoles.get('ps4').describe()['import_error']
+    for get_compiler in [scratch.clang_path, consoles.get('ps4').tool_args]:
+        with pytest.raises(ForkError, match='Linux app.*WSL 2'):
+            get_compiler()
+
+
+def test_ps4_compiler_pack_is_free_and_native_on_linux(monkeypatch):
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: toolchains.LINUX)
+    tc = toolchains.get('clang-5.0.2')
+    assert tc.supported and not tc.proprietary and tc.platform == 'PS4'
+
+
+def test_original_addresses_are_read_from_the_import_config(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet import consoles
+
+    conf = tmp_path / 'config/demo/functions.json'
+    conf.parent.mkdir(parents=True)
+    conf.write_text(json.dumps({'units': {'first': [{'name': 'a', 'addr': 0x1003}],
+                                        'second': [{'name': 'a', 'addr': 0x2001}]}}))
+    fp = SimpleNamespace(root=tmp_path, manifest={'version': 'demo'})
+    assert consoles.get('ps4').function_addresses(fp) == {('first', 'a'): 0x1003, ('second', 'a'): 0x2001}
+    assert consoles.get('pc').function_addresses(fp) == {}

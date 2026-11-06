@@ -12,11 +12,13 @@ CPU: the R3000A, MIPS I, little-endian. Things that look odd at first:
   (`s32 D_8001B278;`): the compiler then treats them as small data. With `extern` it builds the full address and
   the function won't match. Arrays and structs bigger than the limit are never `$gp`-relative.
 
-Compilers: PSY-Q's GCC (2.6.3 for 1995-1996 games, 2.7.2 for most, 2.8.1 for late ones), with Sony's assembler
-ASPSX. The project builds each function the way the community's PS1 decomps do: GCC, then maspsx (which does what
-ASPSX did: the `nop`s it put after loads, its division checks, how it expanded `li`), then GNU as. Versions differ in
-register allocation and scheduling: if right-looking C never matches, try_compiler(function, "gcc-2.6.3-psx") or
-"gcc-2.8.1-psx" tests another without recording anything, and suggest(...) the one that matches.
+Compilers: PSY-Q's GCC and EGCS, with Sony's assembler ASPSX. Early games used GCC 2.5.7 or 2.6.0; most used
+GCC 2.7.2 (PSY-Q 4.0-4.1, or the 2.7.2 CDK build); later ones used GCC 2.8.0 (PSY-Q 4.3) or 2.8.1 (PSY-Q 4.4);
+the last used EGCS 2.91.66 (PSY-Q 4.5) or GCC 2.95.2 (PSY-Q 4.6). The project builds each function the way the
+community's PS1 decomps do: GCC, then maspsx (which does what ASPSX did: the `nop`s it put after loads, its
+division checks, how it expanded `li`), then GNU as. Versions differ in register allocation and scheduling: if
+right-looking C never matches, try_compiler(function, "gcc-2.5.7-psx") or "gcc-2.95.2-psx" tests another without
+recording anything, and suggest(...) the one that matches.
 
 Libraries: PSY-Q's libgte, libgpu, libgs, libspu, libcd, libetc, libapi and libc were linked as prebuilt objects
 with the game. Their functions are worth naming (rename_symbol) from what they do, and worth matching only when the

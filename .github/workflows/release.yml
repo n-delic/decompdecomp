@@ -73,3 +73,30 @@ jobs:
           } else {
             gh release create $env:TAG $installer --generate-notes --latest
           }
+
+  macos:
+    needs: linux
+    strategy:
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: astral-sh/setup-uv@v10.3.0
+      - name: the version in the tag is the version in the code
+        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)" = "$TAG"
+      - name: build and smoke test the macOS app
+        run: packaging/macos/build.sh
+      - name: attach the app to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*macos*.zip --clobber
+          else
+            gh release create "$TAG" dist/*macos*.zip --generate-notes --latest
+          fi

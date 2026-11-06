@@ -13,7 +13,8 @@ and resources) is your copy's: only the code is decompiled so far, and the progr
 game has, which is what lets it come out identical (a linker would have to place every object, library and resource
 exactly as the original's did). The game's own DLLs (functions.json's "modules") are rebuilt the same way, each from
 its own source files and against its own copy: at the address the project gives it, then moved back to its own by its
-base relocations. Writes build/<version>/<program>.exe (and each DLL where it is in orig/) and rebuild.json (which
+base relocations. Writes build/<version>/<program>.exe (and each DLL where it is in orig/; an Xbox game's default.xbe
+beside it, out of the program decompdecomp made of it) and rebuild.json (which
 functions came from C); exits with 1 when a program isn't your copy byte for byte. Standard library only. Made by
 decompdecomp.
 """
@@ -27,6 +28,7 @@ from pathlib import Path
 
 DIR32, REL32 = 0x06, 0x14
 FUNCTION = 0x20  # a symbol's type when it's a function
+XBE_MARK = 0x28  # where an Xbox game's view says where its XBE is (decompdecomp's consoles/xbox/scratch.py pe_view)
 PADDING = b"\x90\xcc"  # what pads a function (Visual C++ 6's nops) or aligns the next one (the linker's int3)
 DATA_SYMBOL = re.compile(r"_D_([0-9A-F]{8})")
 # symbols the C runtime defines as numbers, not places: __except_list is the thread's exception handler chain, fs:[0],
@@ -269,6 +271,9 @@ def _rebuild_program(info: dict, root: Path, build: Path, folder: str, path: str
     if base is not None:  # back at its own address, as your copy is
         out = bytearray(delink.rebase(bytes(out), struct.unpack_from("<I", original, _image_base_at(original))[0]))
     output.write_bytes(out)
+    if out[XBE_MARK:XBE_MARK + 4] == b"XBEH":  # an Xbox game's program, made a Windows one: the XBE is inside it
+        at, size = struct.unpack_from("<II", out, XBE_MARK + 4)
+        output.with_name("default.xbe").write_bytes(out[at:at + size])
     return {"identical": not differ and out == original, "c": sorted(c),
             "differ": differ, "functions": len(placed), "bytes": sum(n for _, n, _ in placed), "size": len(out),
             "output": output.relative_to(root).as_posix()}

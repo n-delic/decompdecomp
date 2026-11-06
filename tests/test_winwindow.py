@@ -49,7 +49,7 @@ def test_windows_window_keeps_system_styles_and_installs_chrome_before_showing(m
             return self
 
     view = SimpleNamespace(events=SimpleNamespace(before_show=Event(), closing=Event()),
-                           native=SimpleNamespace(webview=SimpleNamespace(NavigationStarting=Event())))
+                           native=SimpleNamespace(webview=SimpleNamespace(NavigationStarting=Event(), CoreWebView2InitializationCompleted=Event())))
     calls = []
     bridge = SimpleNamespace(create_window=lambda *args, **kwargs: calls.append(kwargs) or view, settings={})
     monkeypatch.setitem(sys.modules, "webview", bridge)
@@ -182,3 +182,16 @@ def test_hidden_webview2_window_loads_and_respects_close():
         proc.stdin.close()
         proc.stdout.close()
     assert proc.returncode == 0, output
+
+
+def test_a_dead_webview2_process_is_logged_and_the_renderer_reloaded(native_module, monkeypatch, caplog):
+    """#154: the window went black and the log said nothing."""
+    reloads, exits = [], []
+    monkeypatch.setattr(native_module.os, "_exit", exits.append)
+    sender = SimpleNamespace(Reload=lambda: reloads.append(1))
+    with caplog.at_level("WARNING", logger="decompdecomp"):
+        native_module.process_failed(sender, SimpleNamespace(ProcessFailedKind="RenderProcessExited", Reason="OutOfMemory"))
+        native_module.process_failed(sender, SimpleNamespace(ProcessFailedKind="GpuProcessExited"))
+    assert reloads == [1] and not exits and "OutOfMemory" in caplog.text and "GpuProcessExited" in caplog.text
+    native_module.process_failed(sender, SimpleNamespace(ProcessFailedKind="BrowserProcessExited"))
+    assert exits == [1]

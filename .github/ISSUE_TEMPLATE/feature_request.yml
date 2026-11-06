@@ -12,6 +12,7 @@ body:
         - N64
         - PS1
         - PS2
+        - PSP
         - GameCube
         - Wii
         - Windows PC
@@ -26,6 +27,7 @@ body:
       options:
         - Linux
         - Windows
+        - macOS
   - type: textarea
     id: problem
     attributes:

@@ -12,9 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet import hostenv, toolchains
+from decompnet import hostenv, linuxvm, toolchains
 from decompnet.app import agents as app_agents
-from decompnet.app import launcher, macwindow, picker, window
+from decompnet.app import launcher, macwindow, picker, updates, window
 
 
 @pytest.mark.parametrize("url,kind", [
@@ -63,11 +63,13 @@ def test_mac_finds_detached_helpers_even_with_spaces_in_home(tmp_path):
 
 @pytest.mark.parametrize("cpu", ["x86_64", "arm64"])
 def test_mac_hosts_use_pinned_tools(cpu, monkeypatch):
+    monkeypatch.setattr(linuxvm, "wanted", lambda: True)
     monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-" + cpu)
     monkeypatch.setattr(toolchains.wsl, "wanted", lambda: False)
     assert toolchains.unsupported_cpu() is None
     assert toolchains.get("gcc-2.7.2-kmc").supported
-    assert not toolchains.get("ee-gcc-2.96").supported
+    assert toolchains.get("ee-gcc-2.96").supported
+    assert toolchains.get("ee-gcc-2.96").via_vm
     assert all(p["sha256"] and p.get("rosetta") for p in toolchains.get("gcc-2.7.2-kmc").parts_for())
 
 
@@ -105,6 +107,16 @@ def test_finder_launcher_preserves_interpreter_and_helper_path(monkeypatch, tmp_
     lines = script.read_text().splitlines()
     assert shlex.split(lines[1]) == ["export", "PATH=" + os.environ["PATH"]]
     assert shlex.split(lines[2]) == ["exec", sys.executable, "-m", "decompnet.app.cli", "$@"]
+
+
+def test_packaged_mac_app_keeps_its_own_bundle(monkeypatch, tmp_path):
+    monkeypatch.setattr(launcher.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+    monkeypatch.setattr(launcher.edition, "DEV", False)
+    monkeypatch.setenv("DECOMP_PACKAGE", "macos")
+    assert "already available" in launcher.install_launcher()
+    assert not (tmp_path / "Applications").exists()
+    assert updates.can_apply() == (False, "this decompdecomp was installed as a macOS app: download the new one from https://github.com/n-delic/decompdecomp/releases")
 
 
 def test_mac_chooser_uses_the_apps_python_and_cancellation_is_empty(monkeypatch):
@@ -237,3 +249,68 @@ def test_demo_prerequisites_distinguish_path_tools_from_unavailable_compilers(mo
     assert test_consoles._missing(demo) == []
     demo.demo_tools = ("ee-gcc-2.96",)
     assert test_consoles._missing(demo) == ["ee-gcc-2.96"]
+
+
+@pytest.mark.parametrize("tid", ["gcc-2.7.2-psx", "gcc-2.7.2-cdk-psx", "gcc-2.8.1-psx"])
+def test_ps1_mac_archives_are_native_arm64_only(tid, monkeypatch):
+    """The published PS1 Mac archives are arm64, so never offer them to Intel Macs or Linux hosts."""
+    monkeypatch.setattr(toolchains.wsl, "wanted", lambda: False)
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-arm64")
+    tc = toolchains.get(tid)
+    assert tc.supported and not tc.proprietary and toolchains.runtime_error(tid) is None
+    parts = tc.parts_for()
+    assert len(parts) == 1 and parts[0]["platforms"] == ["macos-arm64"]
+    assert parts[0]["url"].endswith("-macos.tar.gz")
+    assert len(parts[0]["sha256"]) == 64 and not parts[0].get("rosetta")
+    for dep in tc.requires:
+        assert toolchains.get(dep).supported
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-x86_64")
+    assert not tc.supported
+    assert toolchains.get("maspsx").supported  # its Python source works on either Mac architecture
+    assert tc.parts_for("linux-x86_64")[0]["url"].endswith(("-psx.tar.gz", "-cdk.tar.gz"))
+
+
+@pytest.mark.parametrize("cpu", ["arm64", "x86_64"])
+def test_early_ps1_compiler_builds_natively_on_macs(cpu, monkeypatch):
+    monkeypatch.setattr(toolchains.wsl, "wanted", lambda: False)
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-" + cpu)
+    tc = toolchains.get("gcc-2.6.3-psx")
+    assert tc.supported and not tc.proprietary
+    parts = tc.parts_for()
+    assert len(parts) == 1 and parts[0]["build"] == "psx-gcc-2.6.3"
+    assert all(len(parts[0][key]) == 64 for key in ("sha256", "patches_sha256", "config_guess_sha256", "config_sub_sha256"))
+    assert tc.parts_for("linux-x86_64")[0]["url"].endswith("gcc-2.6.3-psx.tar.gz")
+
+
+@pytest.mark.parametrize("host,expected", [("darwin", "/Applications/Compiler App/python3.12"), ("linux", "python3")])
+def test_ps1_assembler_uses_app_python_on_mac_only(host, expected, tmp_path, monkeypatch):
+    from decompnet import project
+
+    monkeypatch.setattr(project.sys, "platform", host)
+    monkeypatch.setattr(project.sys, "executable", "/Applications/Compiler App/python3.12")
+    monkeypatch.setattr(toolchains.Toolchain, "via_wsl", property(lambda _: False))
+    monkeypatch.setattr(toolchains, "runtime_dirs", lambda _: (tmp_path / "gcc", tmp_path / "mas", tmp_path / "bin"))
+    cfg = project.compiler_config(tmp_path, {"compiler": {"toolchain": "gcc-2.7.2-psx"}})
+    assert cfg.cmd[10] == expected
+    assert '"$py" -E -s "$mas/maspsx.py"' in cfg.cmd[2]
+    assert "{python}" not in " ".join(cfg.cmd)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="native macOS PS1 compilers")
+@pytest.mark.parametrize("tid", ["gcc-2.6.3-psx", "gcc-2.7.2-psx", "gcc-2.8.1-psx"])
+def test_native_ps1_compiler_produces_little_endian_mips(tid, tmp_path):
+    from io import BytesIO
+
+    from elftools.elf.elffile import ELFFile
+
+    from decompnet.compiler import compile_source
+    from decompnet.project import compiler_config
+
+    if any(toolchains.installed(t) is None for t in (tid, "maspsx", "binutils-mips")):
+        pytest.skip("needs the pinned PS1 compiler, maspsx and MIPS binutils")
+    cfg = compiler_config(tmp_path, {"compiler": {"toolchain": tid}})
+    result = compile_source(cfg, "", "int add(int a, int b) { return a+b; }\nint divide(int a, int b) { return a/b; }")
+    assert result.ok, result.log
+    elf = ELFFile(BytesIO(result.obj))
+    assert elf["e_machine"] == "EM_MIPS" and elf.little_endian
+    assert elf.get_section_by_name(".text").data()

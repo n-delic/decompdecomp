@@ -265,3 +265,35 @@ def test_a_method_of_a_known_class_is_drafted_as_cplusplus(net, monkeypatch):
     assert f"{label}::{fn['name']}(s32 arg1)" in shown and "virtual function 0" in shown and "s32 unk4;" in shown
     header[base] = b"\x80\x00\x10\x00\x80\x00\x10\x04"  # a C table of functions: no zero in its first two words
     assert net._draft_shown(dict(fn) | {"seed": draft}, proj) == draft
+
+
+@needs_demo
+def test_a_rooms_first_sync_comes_before_its_drafts(built, tmp_path, monkeypatch):  # noqa: F811
+    """The names and matches of the host's work are what drafts are made from. Drafting while they arrived fought
+    the sync for the database: names went in 5 times slower, and each draft was made again after."""
+    class Syncing:
+        state = "syncing"
+
+        def status(self):
+            return {"state": self.state}
+
+    made = []
+    monkeypatch.setattr(drafts, "POLL_SECONDS", 0.2)
+    monkeypatch.setattr(seeds, "available", lambda: True)
+    monkeypatch.setattr(seeds, "generate_from_asm", lambda asm, name, *a, **k: made.append(name) or f"void {name}(void) {{\n}}")
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    assert net.import_rom(built, confirmed=True, log=lambda *_: None) == SLUG
+    net.links[SLUG] = link = Syncing()
+    net.drafter.start(SLUG)
+    try:
+        time.sleep(1.0)
+        assert not made, "no draft while the room is still bringing the host's work"
+        link.state = "connected"
+        for _ in range(100):
+            if made:
+                break
+            time.sleep(0.1)
+        assert made, "drafts start once the room has caught up"
+    finally:
+        net.drafter.stop(SLUG)
+        net.links.pop(SLUG, None)

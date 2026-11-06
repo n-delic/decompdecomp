@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from .. import agents as kinds
-from .. import hostenv
+from .. import hostenv, wine
 from ..network import NetworkError
 from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
@@ -52,7 +52,17 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         """Quit means quit: the window, every helper with everything it started, then the server."""
         window.close_app()
         manager.shutdown()
+        flush_progress()
+        wine.stop()  # (its wine server would otherwise stay up to 10 minutes after the last compile)
         os._exit(0)
+
+    def flush_progress() -> None:
+        """Try every final save and leave a clear log entry when the user's progress folder is blocked."""
+        try:
+            for slug, error in net.progress.flush().items():
+                jobs.logger.error("could not save %s before exit: %s", slug, error)
+        except Exception:  # shutdown must continue even if the progress store itself is damaged
+            jobs.logger.exception("could not flush progress before exit")
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
     if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
@@ -86,18 +96,22 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             except Exception:  # never stands between the user and the app
                 jobs.logger.exception("%s's console work at start failed", row["slug"])
     threading.Thread(target=consoles_start, daemon=True, name="consoles-start").start()
-    saves.Autosave(net).start()  # each ROM project's work as plain files in its progress/ folder (app/saves.py)
+    saves.Autosave(net).start()  # follow work and contributions in each ROM project's authoritative progress folder
 
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
-        endpoint was removed since)."""
+        endpoint was removed since). A model it was started on stays: the endpoint's default would record its costs
+        against another model."""
         if not kinds.get(kind).uses_endpoints:
             return options
         saved = settings.endpoint(str(options.get("endpoint") or "")) if options.get("endpoint") else (
             next((e for e in settings.endpoints() if e["base_url"] == options.get("base_url")), None))
         if saved is None and options.get("endpoint"):
             return None
-        return options | (session_options(saved) if saved is not None else {})
+        now = options | (session_options(saved) if saved is not None else {})
+        if options.get("picked_model"):
+            now["model"] = str(options["picked_model"])
+        return now
     manager.options_now = options_now
     manager.resume()  # helpers that were working when the app last stopped carry on (their records say which)
 
@@ -145,6 +159,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
         manager.shutdown()
+        flush_progress()
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use

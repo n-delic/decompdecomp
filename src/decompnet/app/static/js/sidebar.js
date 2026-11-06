@@ -9,11 +9,19 @@ function markNav() {
   document.querySelectorAll(".nav [data-route]").forEach((a) => a.classList.toggle("on", a.dataset.route === route));
   document.querySelectorAll(".nav-proj").forEach((a) => a.classList.toggle("on", a.dataset.slug === S.slug && route === "project"));
 }
-async function loadNav() {
+/* One ask at a time: when the list took longer than 5 s (11 s with two projects whose game file was gone), the
+   timer's asks piled up and kept the app's workers busy. One asked for meanwhile (a project renamed) goes after it. */
+let navLoading = false, navAgain = false;
+async function loadNav(timer = false) {
   if (document.hidden && S.projects.length) return;  // the window is minimised: nobody sees the list
+  if (navLoading) { navAgain = navAgain || !timer; return; }
+  navLoading = true;
   try { S.projects = await api("/api/projects"); } catch (e) {
     if (!S.projects?.length) $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
     return;
+  } finally {
+    navLoading = false;
+    if (navAgain) { navAgain = false; loadNav(); }
   }
   renderNav();
 }
@@ -37,15 +45,15 @@ function renderNav() {
     if (p.broken) return `<a class="nav-proj broken" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.broken)}">
       <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
       <span class="np-meta"><span>can't be opened: hover for why</span></span></a>`;
-    return `<a class="nav-proj" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.title)}">
+    return `<a class="nav-proj" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.progress_error || p.title)}">
       <span class="np-top"><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span><span class="np-name">${esc(p.title)}</span>${state}${p.room ? `<span class="np-room" title="${p.room === "host" ? "you share this project" : "in a team room"}">●●</span>` : ""}</span>
-      <span class="np-meta"><span>${esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
+      <span class="np-meta"><span>${p.progress_error ? "progress needs attention" : esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
       <span class="np-bar"><i data-w="${pct.toFixed(2)}"></i></span></a>`;
   }).join("");
   setWidths(box);
   markNav();
 }
-setInterval(loadNav, 5000);
+setInterval(() => loadNav(true), 5000);
 function openNav() { document.body.classList.add("nav-open"); $("navShade").hidden = false; }
 function closeNav() { document.body.classList.remove("nav-open"); $("navShade").hidden = true; }
 $("navOpen").onclick = openNav;

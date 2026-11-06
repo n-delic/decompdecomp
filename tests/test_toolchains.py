@@ -5,10 +5,30 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tomllib
+from pathlib import Path
 
 import pytest
 
 from decompnet import limits, toolchains
+
+# Archives _extract opens with a third-party module rather than the standard library.
+_EXTERNAL_EXTRACTORS = {".zst": "zstandard"}
+
+
+def _marker_environment(platform_name: str) -> dict[str, str]:
+    system = platform_name.split("-", 1)[0]
+    return {
+        "linux": {"sys_platform": "linux", "platform_system": "Linux", "os_name": "posix"},
+        "macos": {"sys_platform": "darwin", "platform_system": "Darwin", "os_name": "posix"},
+        "windows": {"sys_platform": "win32", "platform_system": "Windows", "os_name": "nt"},
+        "wsl": {"sys_platform": "win32", "platform_system": "Windows", "os_name": "nt"},
+    }[system]
+
+
+def _marker_allows(marker: str, platform_name: str) -> bool:
+    """Whether a marker in pyproject.toml applies on `platform_name` (our markers are simple sys_platform ones)."""
+    return not marker.strip() or bool(eval(marker, {"__builtins__": {}}, _marker_environment(platform_name)))
 
 
 @pytest.fixture
@@ -26,6 +46,48 @@ def test_registry_is_pinned_and_labelled():
             assert all(p["sha256"] for p in tc.parts) or tc.commit, tc.id
     assert reg["ido-7.1"].proprietary and not reg["gcc-2.7.2-kmc"].proprietary
     assert reg["ee-gcc-2.96"].requires == ["runtime-i386"]
+
+
+@pytest.mark.parametrize("tid", ["ido-7.1", "ido-5.3"])
+def test_windows_ido_brings_the_msys_runtime_its_executables_import(tid):
+    """#130: ido-static-recomp's Windows builds are MSYS2 programs: cc.exe and its siblings import msys-2.0.dll,
+    which the release archive doesn't ship, so every compile failed with "msys-2.0.dll was not found". The pinned
+    MSYS2 runtime package puts the DLL beside cc.exe."""
+    parts = toolchains.get(tid).parts_for("windows-x86_64")
+    runtime = [p for p in parts if p.get("keep", {}).get("usr/bin/msys-2.0.dll") == "msys-2.0.dll"]
+    assert len(runtime) == 1
+    part = runtime[0]
+    assert part["platforms"] == ["windows-x86_64"] and "into" not in part
+    assert part["url"].startswith("https://repo.msys2.org/msys/x86_64/msys2-runtime-")
+    assert part["url"].endswith("-x86_64.pkg.tar.zst") and len(part["sha256"]) == 64
+    assert part["mkdir"] == ["tmp", "var/tmp"]  # its /tmp and /var/tmp, under the root the DLL makes
+
+
+def test_every_platform_that_unpacks_an_external_archive_form_has_its_extractor():
+    """#130: Windows IDO's MSYS2 runtime is a .pkg.tar.zst, and _extract imports zstandard for .zst. zstandard was a
+    Linux-only dependency, so the install broke on Windows, the only platform that downloads that part. Every
+    platform a part's archive form is for must have the module its extractor imports."""
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    markers = {}
+    for requirement in pyproject["project"]["dependencies"]:
+        spec, _, marker = requirement.partition(";")
+        markers[spec.strip().split(">")[0].split("[")[0]] = marker
+    for suffix, dependency in _EXTERNAL_EXTRACTORS.items():
+        platforms = {platform for tc in toolchains.registry().values() for part in tc.parts
+                     if part["url"].endswith(suffix)
+                     for platform in part.get("platforms", [toolchains.current_platform()])}
+        for platform in platforms:
+            assert _marker_allows(markers[dependency], platform), \
+                f"{dependency} is needed on {platform} to unpack a {suffix} part"
+
+
+def test_an_unknown_toolchain_id_is_known_to_be_missing():
+    """#118: a project from another tool names a compiler decompdecomp doesn't have. Opening or listing the project
+    asks the registry whether it has the id (known), instead of get() raising at it."""
+    assert toolchains.known("gcc-2.7.2-kmc") and toolchains.known("m2c")
+    assert not toolchains.known("msvcxx-x86_64")
+    with pytest.raises(toolchains.ToolchainError, match="unknown toolchain"):
+        toolchains.get("msvcxx-x86_64")
 
 
 def test_proprietary_toolchains_need_explicit_acceptance(tc_root):
@@ -81,6 +143,16 @@ def test_install_records_a_manifest(tc_root, monkeypatch):
     m = json.loads((toolchains.path("fake") / toolchains.MANIFEST).read_text())
     assert m["parts"][0]["sha256"] == digest and (toolchains.path("fake") / "cc").exists()
     assert toolchains.require("fake") == toolchains.path("fake")
+
+
+def test_a_part_creates_the_folders_its_programs_temp_files_need(tc_root, monkeypatch):
+    """#130: an MSYS2 program's /tmp and /var/tmp are folders under its own root (beside msys-2.0.dll). Windows
+    IDO's cc.exe writes its temporary files there, so the runtime part creates them at install time."""
+    _fake(monkeypatch, tc_root, sha=None)
+    toolchains.registry()["fake"].parts[0]["mkdir"] = ["tmp", "var/tmp"]
+    toolchains.install("fake", log=lambda *_: None)
+    assert (toolchains.path("fake") / "tmp").is_dir()
+    assert (toolchains.path("fake") / "var" / "tmp").is_dir()
 
 
 def test_a_folder_of_scripts_gets_an_environment_for_what_it_imports(tc_root, monkeypatch):
@@ -315,3 +387,162 @@ def test_a_process_killed_at_the_cap_stops_its_command_unless_it_copes():
     stopped = subprocess.run(limits.capped([sys.executable, "-c", parent], cap), capture_output=True, text=True,
                              timeout=60)
     assert stopped.returncode != 0 and "carried on" not in stopped.stdout
+
+
+def _archive(tc_root, name: str, files: dict[str, str]) -> tuple[str, str]:
+    """A local .tar.gz of `files` ({path in it: text}): its file:// address and sha256."""
+    archive = tc_root / f"{name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        for inside, text in files.items():
+            src = tc_root / "files" / name / inside
+            src.parent.mkdir(parents=True, exist_ok=True)
+            src.write_text(text)
+            t.add(src, arcname=inside)
+    return archive.as_uri(), hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def _pack_and_sdk(monkeypatch, tc_root) -> dict:
+    """A compiler pack of two versions that names an SDK of its own in `headers`, as msvc2015 does."""
+    url, sha = _archive(tc_root, "pack", {"bin/cl.exe": "cl", "include/sal.h": "the compiler's"})
+    sdk_url, sdk_sha = _archive(tc_root, "sdk", {"um/windows.h": "windows", "shared/sal.h": "the SDK's"})
+    reg = {"sdk": toolchains.Toolchain(id="sdk", name="SDK", license="proprietary", source="test", parts=[
+               {"url": sdk_url, "sha256": sdk_sha, "keep": {"um": "Include", "shared": "Include"}}]),
+           "pack": toolchains.Toolchain(id="pack", name="Pack", license="proprietary", source="test", headers=["sdk"],
+                                        parts=[{"url": url, "sha256": sha, "keep": {"bin": "Bin", "include": "Include"},
+                                                "into": version} for version in ("1.0", "1.0-x64")])}
+    monkeypatch.setattr(toolchains, "registry", lambda: reg)
+    return reg
+
+
+def test_a_pack_installs_the_sdk_it_names_once_and_each_version_says_where_it_is(tc_root, monkeypatch):
+    """A Windows SDK is a toolchain of its own that packs name in `headers`: installed first, once, and each of the
+    pack's versions says where its headers are, relative to the version's folder (the toolchains' folder can move),
+    searched after the compiler's own Include. Without the SDK the pack isn't installed: it can't build."""
+    reg = _pack_and_sdk(monkeypatch, tc_root)
+    assert reg["pack"].requires == ["sdk"]
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)
+    sdk = toolchains.path("sdk")
+    assert (sdk / "Include" / "windows.h").exists() and toolchains.installed("sdk")["license_accepted"]
+    for version in ("1.0", "1.0-x64"):
+        folder = toolchains.path("pack") / version
+        assert (folder / toolchains.INCLUDES).read_text() == "../../sdk/Include\n"
+        assert (folder / "Include" / "sal.h").read_text() == "the compiler's"  # (the SDK's isn't merged in)
+        assert (folder / "../../sdk/Include/windows.h").resolve() == (sdk / "Include" / "windows.h").resolve()
+    shutil.rmtree(sdk)
+    assert toolchains.installed("pack") is None
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)  # (only the SDK comes back)
+    assert toolchains.installed("pack") is not None and toolchains.installed("sdk") is not None
+
+
+def test_an_install_from_an_entry_that_changed_is_offered_again(tc_root, monkeypatch):
+    """When a pack's entry changes (here: where an archive's folders go), its install isn't the pack any more: it
+    counts as not installed, Compilers & tools says it changed, and installing it again takes the archives already
+    downloaded. A change to its name or description doesn't count."""
+    reg = _pack_and_sdk(monkeypatch, tc_root)
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)
+    m = toolchains.installed("pack")
+    assert m["fingerprint"] == toolchains.fingerprint(reg["pack"])
+    reg["pack"].description = "said another way"
+    assert toolchains.installed("pack") is not None
+    reg["pack"].parts[1]["keep"] = {"bin": "Bin", "include": "Include", "bin/cl.exe": "Bin/cl64.exe"}
+    assert toolchains.installed("pack") is None
+    assert {r["id"]: r["changed"] for r in toolchains.status()} == {"pack": True, "sdk": False}
+    monkeypatch.setattr(toolchains, "_download", lambda *a: pytest.fail("downloaded again"))
+    with pytest.raises(toolchains.ToolchainError, match="--accept-license"):
+        toolchains.install("pack", log=lambda *_: None)  # (proprietary: installing again is accepting again)
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)
+    assert (toolchains.path("pack") / "1.0-x64" / "Bin" / "cl64.exe").exists() and toolchains.installed("pack")
+    assert not any(r["changed"] for r in toolchains.status())
+
+
+def test_an_existing_windows_ido_install_is_offered_again_for_the_runtime(tc_root, monkeypatch):
+    """#130: a Windows install from the old entry has only the release archive, so it has no msys-2.0.dll. The entry
+    now has the runtime part: installed() sees the change, and Compilers & tools offers Install again."""
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "windows-x86_64")
+    tc = toolchains.get("ido-7.1")
+    old = [{"url": p["url"], "sha256": p["sha256"]} for p in tc.parts_for()
+           if p.get("keep", {}).get("usr/bin/msys-2.0.dll") != "msys-2.0.dll"]
+    folder = toolchains.path(tc.id)
+    folder.mkdir(parents=True)
+    (folder / toolchains.MANIFEST).write_text(json.dumps({"id": tc.id, "parts": old, "commit": None, "wsl": False}))
+    assert toolchains.installed(tc.id) is None
+    assert {r["id"]: r["changed"] for r in toolchains.status()}[tc.id] is True
+
+
+def test_an_install_made_before_fingerprints_is_judged_by_its_archives(tc_root):
+    """Installs made before manifests had a fingerprint record their archives: one whose archives are still the
+    entry's is current (and is given the fingerprint), so updating decompdecomp reinstalls nothing that didn't change;
+    one with an archive the entry no longer has isn't. Checked for every toolchain the registry has."""
+    for tc in toolchains.registry().values():
+        for linux in (False, True):
+            parts = tc.linux_parts() if linux else tc.parts_for()
+            if not parts:
+                continue
+            pinned = [{"url": p["url"], "sha256": p.get("sha256") or "f" * 64} for p in parts]
+            pinned += [{"url": p[k], "sha256": p[k.removesuffix("_url") + "_sha256"]}
+                       for p in parts for k in p if k.endswith("_url")]
+            folder = toolchains.path(tc.id, linux)
+            folder.mkdir(parents=True, exist_ok=True)
+            manifest = {"id": tc.id, "parts": pinned, "commit": tc.commit or None, "wsl": linux}
+            (folder / toolchains.MANIFEST).write_text(json.dumps(manifest))
+            assert not toolchains.changed(tc.id, manifest, folder), tc.id
+            assert json.loads((folder / toolchains.MANIFEST).read_text())["fingerprint"] == \
+                toolchains.fingerprint(tc, linux), tc.id
+            assert toolchains.changed(tc.id, {**manifest, "parts": [*pinned, {"url": "https://x/old.tar.gz",
+                                                                            "sha256": "0" * 64}]}), tc.id
+    sdk = toolchains.get("msvc2015")  # an install from before the SDK was a toolchain of its own: install it again
+    old = [{"url": url, "sha256": "0" * 64} for url in ("https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/"
+           "archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz", sdk.parts[0]["url"])]
+    assert toolchains.changed("msvc2015", {"parts": old, "commit": None, "wsl": False})
+
+
+def test_a_manifest_is_never_seen_half_written(tc_root, monkeypatch):
+    """installed() can add the fingerprint to an older manifest while /api/state and builds read it: it's written to
+    a file beside it and moved over it in one step, so a reader finds the old one or the new one, and nothing else
+    is left in the folder."""
+    tc = toolchains.get("wibo")
+    folder = toolchains.path("wibo")
+    folder.mkdir(parents=True)
+    parts = [{"url": p["url"], "sha256": p["sha256"]} for p in tc.parts_for()]
+    (folder / toolchains.MANIFEST).write_text(json.dumps({"id": "wibo", "parts": parts, "commit": None, "wsl": False}))
+    moved = []
+    real = os.replace
+    name = os.path.basename
+    monkeypatch.setattr(toolchains.os, "replace", lambda a, b: (moved.append((name(a), name(b))), real(a, b)))
+    assert toolchains.installed("wibo") is not None
+    assert moved and moved[0][1] == toolchains.MANIFEST and moved[0][0] != toolchains.MANIFEST
+    assert json.loads((folder / toolchains.MANIFEST).read_text())["fingerprint"] == toolchains.fingerprint(tc, False)
+    assert sorted(f.name for f in folder.iterdir()) == [toolchains.MANIFEST]
+
+
+def test_threads_that_all_need_a_free_tool_install_it_once(tc_root, monkeypatch):
+    """When an update changed objdiff's entry, a project's indexing threads each found it not installed and each
+    started downloading it into the same file, and each then found the others' bytes in it (checksum mismatch):
+    one install at a time, and the others find it installed."""
+    import threading
+    import time
+
+    _fake(monkeypatch, tc_root, sha=None)
+    downloads, real = [], toolchains._download
+
+    def slow(url, dest, log):
+        downloads.append(url)
+        time.sleep(0.2)  # (long enough for every thread to ask before the first is done)
+        real(url, dest, log)
+
+    monkeypatch.setattr(toolchains, "_download", slow)
+    errors = []
+
+    def need():
+        try:
+            toolchains.ensure("fake", log=lambda *_: None)
+        except Exception as error:  # noqa: BLE001 (any of them is the failure)
+            errors.append(error)
+
+    threads = [threading.Thread(target=need) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(downloads) == 1 and toolchains.installed("fake") is not None
+    assert not list((toolchains.root() / ".downloads").glob("*.part"))  # (written beside it, then moved whole)

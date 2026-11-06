@@ -9,65 +9,82 @@ a gap to close, each with its item here (CONTRIBUTING.md, "Every console gets ev
 
 Want to work on one? Open an issue first, so two people don't build the same thing. CONTRIBUTING.md has the rest.
 
+PS2 compiler packs now run on macOS: Sony EE-GCC 2.9/2.96/3.2 through an optional
+local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Intel
+Mac and retail-game verification remain planned; Apple Silicon checks use the
+homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
 start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
 folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
 
-| Feature | N64 | PS1 | PS2 | PSP | PS4 | GameCube · Wii | Windows PC | DS | Public decomps |
-| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| Status | recommended | beta | beta | beta | beta | beta | beta | beta | the project's own |
-| Start from your own copy | ✓ | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ decrypted ELF | ✓ | ✓ | ✓ | fork by address |
-| Judge | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff | objdiff |
-| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | ✓ | ✓ Ghidra | — | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | ✓ | — | — | ✓ Ghidra's | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
-| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
-| Pieces of functions joined to their function | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
-| Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | — | ✓ import thunks | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (agents agree, the rebuild checks) | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | the project's build | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | the project's build | the project's build | per source file (/Oy-, /O1, /Ob1) | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | ✓ | — | — | ✓ per source file, Rich header | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | ✓ | — | — | ✓ over source files | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (named by RTTI where the program has it) | — | — |
-| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
-| Twins across your games | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (between PC projects) | — | — |
-| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ functions | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
-| Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (Ghidra again, the newest rules) | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | ✓ | — | the project | the project (`ninja rebuild`) | the project | the project |
-| Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | N64 | PS1 | PS2 | PS3 | PS4 | PSP | GBA | GameCube · Wii | Windows PC | Xbox | DS | Public decomps |
+| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Status | recommended | beta | beta | beta | beta | beta | beta | beta | beta | beta | beta | the project's own |
+| Start from your own copy | ✓ | ✓ | ✓ | ✓ decrypted EBOOT.ELF | ✓ decrypted ELF | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ ROM | ✓ | ✓ | ✓ default.xbe, .xiso or Redump .iso | ✓ | fork by address |
+| Judge | link · compare | link · compare | link · compare | link · compare | objdiff | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff | objdiff |
+| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ Ghidra | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — | by architecture |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | ✓ as PC | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | ✓ (RTTI, vtables) | — | — |
+| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | — | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
+| Source splitting (`split_file`) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | by project |
+| Pieces of functions joined to their function | — | — | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
+| Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | ✓ import stubs (NIDs) and `sc` calls | — | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
+| Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | — | ✓ | ✓ | — | ✓ your Visual C++ | ✓ your XDK | — | the project's own build |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | — | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | per source file (`try_compiler`, Settings) | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | the project's build | per source file (/Oy-, /O1, /Ob1) | per source file | the project's build | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ over source files | ✓ | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ (named by RTTI where the program has it) | ✓ (RTTI where the program has it) | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | ✓ | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | names (types and prototypes: —) | — | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — (an XBE has none) | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ (between PC projects) | ✓ (as PC's; not run on two Xbox games yet) | — | — |
+| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ functions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
+| Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
+| Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | ✓ | — | — |
+| Rebuildable export | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
+| Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Public project build prerequisite hints | — | — | — | — | — | — | — | — | — | — | — | ✓ (observed missing cross tools; Make-specific checks) |
+| Verified objdiff references for public Splat projects | — | — | — | — | — | — | — | — | — | — | — | ✓ N64 and PS1 simple code splits; — overlays and nested builds |
+| Find a game in a local library by declared SHA-1 | — | — | — | — | — | — | — | — | — | — | — | ✓ N64, including supported original ROM versions and byte orders; exact-file splat; — dtk, configure and whole-disc PS |
+| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
-- **PS4**: initial Linux x86-64 support imports decrypted ELF programs and judges functions with strict objdiff. Encrypted SELF/PKG, PRX modules, whole-game relinking/export, compiler switching, source splitting and function-piece joining remain open. The public compiler needs no Sony SDK; fixed imported-global bindings must be configured per game.
+- **PS4**: Linux x86-64 imports decrypted ELF and judges with strict objdiff. The checked rows are covered by the demo conformance tests. Other rows stay “—” until exercised through the real PS4 engine: twins, permuting, polishing, saves/README cards, rooms, shared knowledge, Check again and verdicts need console-specific validation. Autopilot, header-aware drafts, compiler switching/surveys, source splitting, piece joining, class/structure recovery, reimport and whole-game export remain implementation gaps. Encrypted SELF/PKG and PRX modules are unsupported.
+- **Public project build prerequisite hints** run in `ForkProject.run` for public checkouts. The other columns
+  describe starting a game from scratch and do not use public-project setup.
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
   mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). x86
   has its reader (`arch/x86_fields.py`): PC classes and struct layouts come from it (`Console.classes`,
   `Console.structs`); a PowerPC reader would give GameCube and Wii the same through those parts.
+- **Xbox** shares the Windows PC column's code (`consoles/xbox/` only makes the program); a gap there is usually
+  a PC gap.
 - **Windows PC**: autopilot's Ghidra drafts compile, but rarely match beyond the tiny shapes exact drafts cover:
   Ghidra drafts a delinked object without its callees' prototypes, so a method call loses `this` and a callee's
   arguments are guessed (a draft fed the project's headers, through a Ghidra script that applies them, is the next
-  step). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
-  Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
-  (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
-  would need the mangled signature in "names". A game's own DLLs come along when its folder or .exe is given by
-  path; a dropped .exe comes alone (a browser doesn't hand over the folder), a project made before can't take its
-  DLLs in yet (Reimport analyses the programs a project has), a project restored or cloned asks only for the .exe (`ForkProject.needs` names
-  one file: the DLLs go in `orig/` by hand, as its README says), and a game whose .exe can't start (Visual C++
-  2017 and newer) can't start from its DLLs either.
+  step). Games built with Visual C++ 6.0 to 2010 and 2017 can match; 2015's and 2019 and newer's build with 2017's,
+  2012-2013's with 2010's: Newer Windows games, below, is the plan for their own compilers and 64-bit. A class's
+  constructors are one real name (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be
+  written as a constructor: names.py would need the mangled signature in "names". A game's own DLLs come along when
+  its folder or .exe is given by path; a dropped .exe comes alone (a browser doesn't hand over the folder), a project
+  made before can't take its DLLs in yet (Reimport analyses the programs a project has), a project restored or cloned
+  asks only for the .exe (`ForkProject.needs` names one file: the DLLs go in `orig/` by hand, as its README says),
+  and a game whose .exe can't start (64-bit, mostly /GL, protected) can't start from its DLLs either. Visual C++ 2017
+  inlines a file's small functions into their callers, defined before them or after: a project's file that holds two
+  of the original's (about 4 KiB of functions each) needs `split_file` where the second starts before its callers
+  match (the guide says so).
 - **Windows PC debug symbols** (`consoles/pc/debuginfo.py`): Ghidra's function boundaries stay Ghidra's, though a
   PDB gives each function's size; CodeView embedded in the program (NB09, NB11: Visual C++ 4-5 with /PDB:NONE) and
   Visual C++ 4's 16-bit type records aren't read; a class's methods aren't written into its struct (C++ calls a
@@ -92,6 +109,55 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
+  gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
+  it, said as the closest). A game of a version the packs don't have builds with the nearest by year, and the import
+  says so: 2015's with 2017's (the same toolset's next version), 2019 and newer with 2017's, with a line that their
+  compilers' own code can't match until they come, 2012-2013 with 2010 SP1 as before. A 32-bit game never builds
+  with or is offered the 64-bit compiler (a compiler's target): not in the import's list of compilers, which refuses one for
+  another processor, nor in Settings, try_compiler "all", suggest or the agents' project info. The drop zone offers the
+  pack the import will ask for from the server's table, so a new pack needs nothing in its script. Demo Quest built by
+  2017 and linked by its own linker under wine (`projects/demo-pc/build.py 14.16`) imports with every function,
+  rebuilds byte for byte, and all of it matches from its C but the hand-written `_ftol` (split where `game.c` starts: 2017
+  inlines a file's functions into each other). What 2017 showed, fixed for every game: code before the first function
+  Ghidra found (a function inlined everywhere, first in `.text`) is a function too; a `catch (...) {}` block (only `mov
+  eax, <where to go on>; ret`) is joined to its function; from 2015 on, the int3 after a call that never returns is the
+  function's own; 2017's exception handlers that check the function's /GS cookie first are set aside as stubs; a game
+  that imports its C runtime from DLLs (vcruntime140, the Universal CRT) builds with /MD, so the runtime's calls go
+  through its imports; and a split moves a PC program's functions with their rows (they were added anew, their names
+  ending in `'`). A project made before gets the handlers and the catch blocks at its next start (analysis step 7); the
+  leading function and the int3 are read from Ghidra's list, so they reach it by Reimport. Which packs run through wine
+  is each pack's own (toolchains.toml's `wine`, given to the build as `$DECOMPNET_WINE_PACKS` beside wine itself), not a
+  version number, so a 2012-2013 pack can run under either. Visual Studio 2017's release defaults (/GS, /Gy, SSE2,
+  thread-safe statics) are what the project's flags give 2017's compiler (a test checks each).
+
+- **Your own compiler on every ROM console.** N64, PS1, PS2, PSP and GBA games can be built with your own copy of
+  a compiler they use, a build no pack has (an EE-GCC, a CodeWarrior PS2, an SNC, a PSP GCC, a KMC GCC, an IDO, an
+  agbcc): Setup, Compilers & tools, "Your own PS2 compiler" (one per console, in its group), given the folder it's
+  in, laid out as the pack's is (`kits/owncompiler.py`). It runs exactly as the pack does (the pack's command, wibo,
+  the PS1's maspsx and assembler) from your folder, which is never copied; its compiler id starts with the pack's, so
+  each console’s flags treat it as that compiler. Checked on the N64, PS1, PS2 and GBA demos (a copy of each one's
+  pack imported, matched and refused wrong C) and, per pack, byte for byte against the pack's own object
+  (`tests/test_kits.py`); PSP's packs weren't on the machine it was checked on. GameCube, Wii and DS: see "Your
+  own compiler for GameCube, Wii and DS".
+
+- **Visual C++ 2017 for Windows PC, through wine.** The `msvc2015` pack (proprietary, installed after the user
+  accepts it, 220 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used
+  with (10.0.17763), from ojdkbuild's copies of the Build Tools, pinned by sha256. The SDK's headers are a toolchain
+  of their own (`winsdk-10.0.17763`) that the pack names, so a later pack that uses the same SDK shares one copy
+  (each version's folder says where it is: `includes.txt`). An install made from a toolchain's earlier entry (other
+  archives, or its files laid out another way) counts as not installed, and Compilers & tools offers to install
+  it again from the archives already downloaded; installs made before installs recorded their entry are judged by
+  the archives they record. Two compilers, chosen per file in Settings or tried by try_compiler: `MSVC/14.16` (32-bit)
+  and `MSVC/14.16-x64` (64-bit, the 32-bit host's program database DLLs beside it, so it runs by itself). wibo can't
+  run them (under a patched wibo a hello world exited 99 and `#include <windows.h>` failed without a word), so on
+  Linux and macOS they run through wine, which the user installs; the pack says how before downloading (`wine.py`).
+  The app keeps its own prefix beside its toolchains and a wine server for it between compiles (0.2 s a compile instead
+  of 2.7 s; it leaves ten minutes after the last one, or when the app quits). A build finds wine when a 2017 file builds
+  (the app's build steps say where: `Console.build_env`), so a project configured before wine or the pack was
+  installed builds one as soon as they are, and no older configure.py is given an argument it doesn't know. The build
+  passes every path as `Z:\...`, and wine's output goes through a file: the services the first wine program starts
+  outlive it and, given the build's pipe, held the build open for as long as the server ran. The older packs stay on wibo.
 - **PSP.** A UMD image (read in place, also as a CSO) or the game's program, with its title and product code from
   PARAM.SFO. A PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its
   import stubs are set aside and get the system functions' names (`sceIoOpen`) from the open-source PSP SDK's NID
@@ -128,19 +194,19 @@ Where to start on a gap:
   the files that keep frames with /Oy- (`config/<version>/file_flags.json`, `scratch.frame_flags`); projects made
   before get it when the app starts, but for files with matched code. `search_flags` tries a file's flags (/Oy-, /O1,
   /Ob1) and keeps what matches, as `try_compiler` keeps a compiler.
-- **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in DLLs
-  of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by path,
-  a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):
-  each is a program of the project, its source files in `src/auto/<its name>/`, its functions named from its
-  export table (functions.json's "names"), built with the Visual C++ its own Rich header names (the compiler per
-  source file), its calls into other programs through its import table. DLLs are relocatable and many prefer
-  0x10000000: the first keeps its address, a later one that would overlap is moved by its base relocations, as
-  Windows moves it (delink.py does the same at build time), so func_/D_<address> stay names no two programs share.
-  `ninja rebuild` and the rebuild check put each DLL back together against that DLL, and the import's other steps
-  (thunks by its own import table, its debug symbols, classes, Reimport) read each program. Left out, each with why in the
-  import's log: the C runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins,
-  ones the import can't start, and ones built a year or more after the program (mods). `consoles/pc/scratch.py`
-  (find_modules), `Console.program_in` (a game that is a folder).
+- **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in
+  DLLs of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by
+  path, a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):
+  each is a program of the project, its source files in `src/auto/<its name>/`, its functions named from its export
+  table (functions.json's "names"), built with the Visual C++ its own Rich header names (the compiler per source file),
+  its calls into other programs through its import table. DLLs are relocatable and many prefer 0x10000000: the first
+  keeps its address, a later one that would overlap is moved by its base relocations, as Windows moves it (`delink.py`
+  does the same at build time), so `func_/D_<address>` stay names no two programs share. `ninja rebuild` and the
+  rebuild check put each DLL back together against that DLL, and the import's other steps (thunks by its own import
+  table, its debug symbols, classes, Reimport) read each program. Left out, each with why in the import's log: the C
+  runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins, ones the import
+  can't start, and ones built a year or more after the program (mods). `consoles/pc/scratch.py` (find_modules),
+  `Console.program_in` (a game that is a folder).
 - **A Windows PC project rebuilds the whole game.** A PC project compiled each function and compared it with the one
   cut out of the user's .exe, but nothing put the program back together: its export was "—". `ninja rebuild`
   (tools/rebuild.py, standard library only) writes the whole .exe again, every function at its address from what
@@ -243,9 +309,9 @@ Where to start on a gap:
   the game's own code (the Rich header's compilers, the build its linker shares; without a Rich header, the linker's
   version), how many files were built with whole-program optimisation (/GL), 32 or 64-bit, and the DRM or packer
   its sections show (SteamStub, SecuROM, SafeDisc, StarForce, Themida, VMProtect, Enigma, Denuvo, UPX), only named,
-  never removed. 64-bit programs, Visual C++ 2017 and newer (out of scope for now), mostly-/GL games and wrapped ones
-  aren't started, each with what it means; 2005 to 2015 games import, told they can't match until their compilers
-  come.
+  never removed. 64-bit programs, mostly-/GL games and wrapped ones aren't started, each with what it means (games
+  built with Visual C++ 2017 and newer were too, until they built with 2017's: see above); a game of a version the
+  packs don't have imports with the nearest they do, told what can't match until its compiler comes.
 - **C++ classes on Windows PC, by their own names.** A program built with `/GR` keeps each polymorphic class's
   name (`.?AVClassName@@`) next to its vtable, through the RTTI Complete Object Locator. decompdecomp reads it:
   `get_class` lists the classes (templates and nested names written as C++), each with its vtable, virtual functions,
@@ -294,6 +360,9 @@ Where to start on a gap:
   step at a time (the manifest's `analysis`): the repairs, the stubs set aside, then the pieces joined, never a
   stub; each step that changes code is kept only when the code still rebuilds byte for byte (on that game: 23
   tables, 390 functions, 179 pieces). Agents' `join_functions` works on PC too.
+- **Save destinations belong to each project.** Settings restores the project's last successful manual save
+  destination when it opens again, in ROM and project mode. A restored ROM project starts with its linked save
+  folder selected. Paths stay local, failed saves keep the old choice, and a backup does not move autosave.
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.
@@ -355,14 +424,15 @@ Where to start on a gap:
   set-aside code out. **Check again** (About this project) looks at a project with what the running version knows;
   it also runs before helpers start, once after each update.
 - **PlayStation (PS1) games from your own copy** (beta): a disc image (BIN, ISO or CHD; SYSTEM.CNF says which
-  program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.6.3,
-  2.7.2 or 2.8.1, then maspsx, which does what Sony's assembler ASPSX did, then GNU as; the import tries the three on
-  the game's code. BIOS call stubs and GTE code are set aside as assembly. The demo game matches function by function
-  and rebuilds byte for byte; no real game is tested from start to end yet. A disc whose boot program is a loader
-  gives the program it loads (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a
-  loader that is mostly a picture: 1 function found), .text is where the code's returns and frames are (137).
-  Overlays inside an archive file (a game's areas, each with its code, one after another) are found too
-  (`overlays.embedded`): on one PS1 game, 77 overlays in a 68 MB file, 26,483 functions besides the program's 2,398.
+  program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.5.7,
+  2.6.0, 2.6.3, 2.7.2 (or its CDK build), 2.8.0, 2.8.1, EGCS 2.91.66 or GCC 2.95.2, then maspsx, which does what
+  Sony's assembler ASPSX did, then GNU as; the import tries them on the game’s code. BIOS call stubs and GTE
+  code are set aside as assembly. The demo game matches function by function and rebuilds byte for byte; no real
+  game is tested from start to end yet. A disc whose boot program is a loader gives the program it loads
+  (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a loader that is mostly a
+  picture: 1 function found), .text is where the code's returns and frames are (137). Overlays inside an archive file (a
+  game's areas, each with its code, one after another) are found too (`overlays.embedded`): on one PS1 game, 77
+  overlays in a 68 MB file, 26,483 functions besides the program's 2,398.
 - **Nintendo DS games from your own copy again** (beta, #23): a ds-decomp project for the ROM, as in 1.0.2, now with
   all 24 CodeWarrior for DS versions and a version per source file (`config/<version>/arm9/file_compilers.json`, as
   DS decomps keep it). `try_compiler` switches a function's file to another version, or tries them `"all"`, and
@@ -411,6 +481,9 @@ Where to start on a gap:
 - **Room presence during slow syncs.** A separate heartbeat keeps members online while importing the host's work
   or rebuilding a source project. Sync failures and recovery are logged, and syncing continues automatically
   after a temporary connection failure. Applies to ROM and project rooms on every console.
+- **Bring saved ROM progress into a room.** When joining with a game already imported, saved matches the host has
+  not matched yet are submitted for the host to verify. Better unfinished attempts are shared when both projects
+  use the same compiler settings; functions whose layout or name differs are skipped.
 - **A standalone app.** Its own window (GTK and WebKitGTK) and a tray icon, so closing the window doesn't stop
   helper agents; **Quit** ends everything the app started. Only helpers the app starts work on projects: the old
   `decomp mcp` bridge is gone, and the first start removes its registrations from your agents. A development copy is
@@ -445,12 +518,17 @@ Where to start on a gap:
 - **PS2 kernel calls named**: the stubs (`addiu v1, N; syscall; jr ra`) get the kernel call's name: 154 in GTA San
   Andreas, 129 in Ridge Racer V.
 - **Consoles as packages**: one folder per console (`consoles/<id>/`), a template and a conformance test. PS1 and
-  GBA are public decomps only now; the git history keeps their code.
+  GBA were public decomps only after the rewrite; PS1 has its package, and GBA's is back with its header check,
+  its demo, its splitter, its judge and its export.
 - **macOS app**: a native Cocoa/WKWebView window with the private window user agent,
   native open/save panels, downloads, Edit/Reload/Quit menus and the page's close confirmation. A uv source
   installer creates a Finder app in `~/Applications`. Intel and Apple Silicon CI exercise portable regressions
   and the hidden native window. KMC GCC/binutils require Rosetta on Apple Silicon; unavailable Linux-only
-  compilers remain unavailable. Mac workers use per-thread QoS so they don't lower the whole app's priority.
+  compilers remain unavailable. PS1 GCC 2.6.3 builds natively from pinned source on Intel and Apple Silicon Macs
+  with Xcode Command Line Tools; GCC 2.7.2, 2.7.2 CDK and 2.8.1 use pinned native Apple Silicon builds with maspsx;
+  the other PS1 GCCs and EGCS 2.91.66 need Linux, or Windows through WSL 2. The
+  assembler helper uses the app's Python rather than Apple's older system Python. Mac workers use per-thread QoS
+  so they don't lower the whole app's priority.
 - **Linux packages**: a `.deb`, an `.rpm` and an AppImage with their own Python, built for each release.
 - **Windows native app**: a WebView2 window, Start menu and desktop shortcuts, and a native tray icon.
   A custom native caption follows the app's theme, with Windows resizing, snapping and drag-to-restore. Scrollbars
@@ -486,11 +564,85 @@ Where to start on a gap:
 
 ## Next
 
-### Newer Windows games (Visual C++ 2012 to 2015)
+### Your own compiler for GameCube, Wii and DS
 
-PC projects build with Visual C++ 6.0 to 2010 (phases B and C are done: Recently done). The import already tells a
-newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Games built with Visual C++ 2017
-and newer are out of scope for now.
+Their projects (dtk-template, ds-decomp) take CodeWarrior by version from the community's compilers archive, which
+holds every build known, so no game has needed one of its own yet. When one does: the project's build gets a
+compilers folder of the user's beside the archive's (dtk-template's configure.py reads one), and the console lists
+its versions (`Console.kit_compilers`), as Windows PC does for Visual C++ through `--own`.
+
+### PlayStation 3 from your own copy
+
+ROM mode, as the PS2 and PSP: you give decompdecomp the game's program decrypted (EBOOT.ELF: a SELF is refused, it
+never decrypts anything), it splits it (the module descriptor's functions first, then calls and prologues), and the
+judge links each candidate at its address and compares what each instruction refers to (`arch/ppc64.py`: TOC slots,
+function descriptors, the call-site TOC restore). Its imports are named from their NIDs and its kernel calls from
+their numbers (PSL1GHT's lists, MIT), and their stubs set aside. It builds with the free ps3dev GCC (the demo) or your
+own SDK's compiler (the `ps3sdk` kit: the game's `.comment` stamp picks the copy). Every feature of the table ran on
+its demo (`projects/demo-ps3`), and a decrypted retail game (22,482 functions, SDK 2.5.0) imported whole: its module
+descriptor (Sony's 8-byte pairs), its import stubs (all 194 named), its nameless sections and its SDK read as they
+are, and its functions matched through the judge with Sony's GCC rebuilt from its GPL source (SDK 2.5.0, the
+game's own), a getter of a global among them: that game reached its globals through GCC's minimal TOC (r30), which
+the import reads off the code and builds with (`-mminimal-toc`), and its linker didn't narrow any TOC load. What's left:
+
+- **The period compiler without an SDK.** `packaging/ps3-gcc/` rebuilds Sony's `ppu-lv2-gcc` (SDK 1.9.0, 2.5.0, 2.7.0) from
+  the GPL parts of its published source; its `toolchains.toml` entries wait for it to be published.
+- **Drafts.** m2c has no PPC64 target: a ROM-mode Ghidra draft (as PC's) would give PS3 drafts, autopilot's draft
+  phase and `redraft`.
+- **The processor's readers.** `arch/ppc64.py` has no field accesses (`guess_struct`), class reader (`get_class`),
+  piece rule or compiler map yet; the unstripped program's DWARF types and prototypes aren't read either.
+- **Later:** the rebuildable export, PRX modules, SPU programs.
+
+### Xbox: what's next
+
+The original Xbox is a beta PROJECT-mode console: decompdecomp reads your default.xbe (or an .xiso / Redump .iso),
+makes it a Windows program at the same addresses, and from there it is the PC path (Ghidra, COFF objects, objdiff,
+`ninja rebuild`, which writes your default.xbe back byte for byte). With your own XDK set up in Setup (a kit:
+`kits/`), its library code in .text is set aside and a game of an early XDK builds with that XDK's own Visual C++.
+Three retail games imported and rebuilt byte for byte (thousands of functions each). All three were built with
+link-time code generation (/GL, /LTCG), as most Xbox games were: the import tells it from the program (or the import
+dialog says), units build in harness mode (`tools/ltcg.py`: the unit, a driver calling its functions as the game's
+call sites do, and stand-ins, linked /LTCG by the compiler's own linker through wine), briefs show each function's
+convention, `standins_for` writes a starting harness, and a register-convention function of a retail game matched
+through its driver.
+Briefs also say when a function is a member function (its `this` in any register) and of which struct, and an
+attempt whose function got another convention than the original's says which registers differ. What's next is real
+games: a whole one rebuilt from C, then the console's status can say recommended.
+
+### Game Boy Advance from your own copy
+
+ROM mode, as 1.0.2 had it: luvdis (MIT) finds the functions, agbcc (pret's GCC 2.95 rebuild) compiles the C, the
+ARM/Thumb judge links each candidate at its address and compares the bytes, and the export rebuilds the cartridge.
+The console, its header check, its demo, the luvdis splitter, the ARM/Thumb judge, editing and the export are back
+(`consoles/gba/`, `projects/demo-gba`): the demo imports, all 123 functions are found after splitting/adding the
+merged ones, 107 of the 114 with C match through the engine, and the export rebuilds it byte for byte with 71
+functions as C. What's left:
+
+- **Compilers and ranges.** agbcc's release also has `old_agbcc` and `agbcc_arm`, but the console lists only `agbcc`:
+  selecting them per file and the compiler map/range checks/suggestions (`try_compiler`, `search_flags`) are MIPS
+  only. GBA games built with another of the three need them.
+- **Free matches.** ARM/Thumb look-alikes and twins, and the permuter's GBA weights (`agbcc` now maps to GCC's
+  weights, but it wasn't run here); twins across games need the per-function Thumb mode too.
+- **Code readers.** C++ classes (`get_class`), struct layouts (`guess_struct`, no `Arch.field_accesses` for ARM) and
+  the game's own debug symbols aren't GBA readers yet.
+- **Pieces.** The analyzer finds pieces (`arch.arm.piece`), but ROM projects have no join tool; `report_boundary` and
+  saved-layout joining work at 2-byte boundaries.
+- **Tidy** a source file is project mode only; a GBA ROM project's C is the database's.
+
+Only agbcc's free tools are needed; the BIOS, Nintendo's SDK and the cartridge logo never are (the demo's logo is
+blank).
+
+### Newer Windows games (Visual C++ 2012, 2013, 2015 and 2019+; 64-bit)
+
+PC projects build with Visual C++ 6.0 to 2010 and 2017 (phases B and C are done, and 2017's games: Recently done). The
+import already tells a newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Visual C++ 2017's
+compilers are installed (`msvc2015`, Recently done), build 2015's and newer's games (the nearest the packs have), and can
+be chosen per file. A game built with a Visual C++ no pack has (2012, 2013, 2019, 2022, or another build of a packed
+version) builds with your own copy of it when you have one: the `visualcpp` kit (`kits/`), set up in Setup from your Visual
+Studio's VC folder, matched to the game's Rich header by build (2015 and newer through wine); without one it builds
+with the nearest pack's compiler, which little of matches until decompdecomp has that version. A new version also joins
+a pack (2015's Update 3 is to join `msvc2015`, beside 2017) or comes in one of its own (`msvc2019`...: a `[msvcYYYY]` entry
+naming its SDK in `headers`), and goes into `RICH_BUILDS`, so its games build with their own compiler instead of the nearest.
 
 - **What 2005-2010 still lacks.** The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules
   tested again (a game rebuilt with 2010 tools: 6,583 stubs found; a 2005 game built without C++ exceptions: none).
@@ -498,11 +650,19 @@ and newer are out of scope for now.
   may need RTM (decomp.me's `msvc8.0`). wibo 1.2.0 doesn't run these compilers' linkers (`lstrcmpiW`, added to wibo
   after it), which only the demo's build needs. On a Windows computer the pack is untested: there the compilers need
   their C runtime (msvcr80, msvcr90 through side-by-side manifests, msvcr100), which wibo has built in.
-- **D, 2012-2013, then 2015.** The same, per generation: SSE2 float code by default from 2012, and one toolset for
-  2015's updates.
+- **D, 2012-2013, then 2015, then 2019 and newer.** The same, per generation: SSE2 float code by default from 2012,
+  and one toolset for 2015's updates (Update 3 brought the new SSA optimizer). Until then 2015's games build with
+  2017's 14.16, 2019 and newer's too, 2012-2013's with 2010 SP1. A game linking the C runtime from DLLs builds with
+  /MD from 2015 on; older games doing so (msvcrt.dll, msvcr71...) don't yet. /MD is the whole project's, from the
+  program: a DLL of the game's built the other way (/MT where the program has /MD, or the reverse) builds as the
+  program does, and its calls into the C runtime may not match; the import says which. Giving each program its
+  own needs per-file flags that a file keeps through split_file (it keeps its compiler, but not its flags: /Oy- is
+  lost the same way).
 - **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's
   object says nothing about the program's bytes. Find out whether some functions can be judged by compiling their
   file with /GL and linking it with /LTCG against stubs; until then a mostly-/GL game isn't started.
+- **Visual C++ 2017 on Windows, and /Zi under wine.** On a Windows computer the 2017 pack is untested. Under wine,
+  /Zi with /FS fails (C1902: no mspdbsrv), which no project's build uses.
 - **F, 64-bit.** Read PE32+ programs and delink their relocations (nearly all relative), with the x64 calling
   convention. A 64-bit program lists every function's start and end in its exception directory (`.pdata`), so
   functions come from the program, not Ghidra's guess. Done when a 64-bit demo, then a real game, imports and
@@ -514,10 +674,9 @@ carry them, so the user imports a decrypted copy (PPSSPP can save one). A pinned
 from Setup, like a compiler, would let a UMD image import as it is, and its encrypted modules with it (left out
 now). Also: a module's own $gp isn't the judge's (one per project: a module that keeps small data where the main
 program doesn't gets its own flags, but its $gp-relative data is named from the main program's $gp), its imported
-variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, SN's pspsnc is tested on the demo only (no SN-built game was at hand: the
-readable one is CodeWarrior's, the others encrypted), and the 2.4.1 CodeWarrior some games were built with isn't
-archived (3.0.1 matches small functions;
-bigger ones unverified).
+variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, SN's pspsnc is tested on the demo only (no
+SN-built game was at hand: the readable one is CodeWarrior's, the others encrypted), and the 2.4.1 CodeWarrior some
+games were built with isn’t archived (3.0.1 matches small functions; bigger ones unverified).
 
 ### PSP drafts: the Allegrex's own instructions
 m2c has no Allegrex target: the EE's reads PSP code, and knows `seb`, `seh` and `madd` but not `min`, `max`, `ext` or
@@ -637,6 +796,6 @@ The answer goes here: build it, build part of it, or not, and why.
   could tidy it, still matching.
 - **Polish in the drafts.** Methods of known classes are drafted as `Class::method` in the brief; the polishing pass
   doesn't use them yet.
-- A Flatpak on the GNOME runtime.
-- macOS signed/notarized distribution and a menu bar tray icon.
-- macOS memory, CPU and file-size caps for compiler processes (Linux currently uses systemd scopes).
+- **A Flatpak** on the GNOME runtime.
+- **macOS signed/notarized** distribution and a menu bar tray icon.
+- **macOS memory, CPU and file-size caps** for compiler processes (Linux currently uses systemd scopes).

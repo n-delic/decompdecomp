@@ -84,6 +84,23 @@ def register(app: App) -> None:
             return res
         return JSONResponse({"job": jobs.start("fork-setup", work)})
 
+    @mcp.custom_route("/api/fork/find-rom", methods=["POST"])
+    async def api_fork_find_rom(request: Request) -> Response:
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        slug = str(data.get("slug", ""))
+        try:
+            fork_of(slug)
+        except NetworkError as e:
+            return fail(e)
+        def work(log):
+            from ..romlibrary import find
+
+            _, project, _ = net.forks.get(slug)
+            return find(project, net.forks.needs(slug), str(settings.data.get("rom_library") or ""), log)
+        return JSONResponse({"job": jobs.start("find-rom", work)})
+
     @mcp.custom_route("/api/fork/setup", methods=["POST"])
     async def api_fork_setup(request: Request) -> Response:
         """Set up with a game file already on this computer (`path`), or with none (`path` empty: run the build)."""

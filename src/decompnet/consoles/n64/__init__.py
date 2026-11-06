@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...rom import Picked
+from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
 
 
@@ -29,6 +29,7 @@ class Nintendo64(Console):
         Compiler("ido-7.1", "IDO 7.1", "most later first-party N64 games", guess="IDO"),
         Compiler("ido-5.3", "IDO 5.3", "early N64 games (1996-97)"),
     )
+    kits = ("own-n64",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("mips",)
     m2c = "mips-gcc"
     ram = (0x80000400, 0x80800000)  # KSEG0 above the exception vectors, up to the Expansion Pak's 8 MiB
@@ -36,6 +37,7 @@ class Nintendo64(Console):
     demo_tools = ("gcc-2.7.2-kmc", "binutils-mips", "ld.lld", "llvm-objcopy")
     own_features = frozenset({EXPORT})
     as_flags = ("-EB", "-march=vr4300", "-mabi=32")
+    reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
     image_ext = ".z64"
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n'
 
@@ -43,6 +45,78 @@ class Nintendo64(Console):
         from .rom import MAGIC
 
         return head[:4] in MAGIC
+
+    def identity(self, path: Path) -> str | None:
+        from .rom import z64_file_sha1
+
+        try:
+            result = z64_file_sha1(path)
+        except RomError:  # an incomplete cartridge is not an N64 game identity
+            return None
+        return result[0] if result else None
+
+    def library_candidate(self, path: Path, size: int) -> bool:
+        """Skip files outside cartridge sizes and without an N64 magic before hashing."""
+        from .rom import MAGIC, MAX_SIZE, MIN_SIZE
+
+        if not MIN_SIZE <= size <= MAX_SIZE or size % 4:
+            return False
+        with path.open('rb') as stream:
+            return stream.read(4) in MAGIC
+
+    def fork_game_versions(self, project) -> dict[str, str]:
+        from .fork_versions import original_roms
+
+        return original_roms(project.root)
+
+    def fork_game_need(self, project, version: str | None) -> dict | None:
+        originals = self.fork_game_versions(project)
+        if not originals:
+            return None
+        selected = version if version in originals else self.default_fork_game_version(project)
+        return {"what": f"your original game ROM (baserom.{selected}.z64)",
+                "path": f"baserom.{selected}.z64", "sha1": originals[selected], "auto": True,
+                "rom_versions": [{"version": v, "sha1": digest} for v, digest in originals.items()],
+                "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order. "
+                        "Its normalized SHA-1 selects the build version."}
+
+    def default_fork_game_version(self, project) -> str | None:
+        from .fork_versions import default_version
+
+        return default_version(project.root, self.fork_game_versions(project))
+
+    def match_fork_game_version(self, project, game: Path, log=print) -> str | None:
+        from .fork_versions import match
+
+        return match(game, self.fork_game_versions(project), log)
+
+    def fork_game_help(self, target: str, sha1: str | None) -> str | None:
+        if not target.lower().endswith(".z64"):
+            return None
+        check = ("Its normalized SHA-1 must match this project's hash."
+                 if sha1 else "The project's build still checks that it is the right game.")
+        return ("Supply your N64 ROM in .z64, .v64 or .n64 byte order. decompdecomp saves a .z64 copy for the "
+                f"project. {check}")
+
+    def prepare_fork_game(self, src: Path, dest: Path, sha1: str | None, *, move: bool = False) -> bool:
+        from .rom import copy_z64_file, z64_file_sha1
+
+        if dest.suffix.lower() != ".z64":
+            return False
+        normalized = z64_file_sha1(src)
+        if normalized is None:
+            return False
+        digest, byte_order = normalized
+        if sha1 and digest != sha1:
+            raise RomError("that file isn't the version this project decompiles (its sha1 doesn't match the "
+                           "project's); check the README for the exact version")
+        if byte_order == "z64":
+            return False  # the ordinary path checks its hash and can hard-link it
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        copy_z64_file(src, dest)
+        if move and src.resolve() != dest.resolve():
+            src.unlink()
+        return True
 
     def read_game(self, file, name: str = "") -> Picked:
         from .rom import read_info

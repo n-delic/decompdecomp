@@ -11,6 +11,8 @@ currently runs on Linux x86-64; Windows users can run the Linux app in WSL 2.
 ## Import and build
 
 An adjacent `eboot.functions.jsonl` or `functions.jsonl` can supply functions.
+A single `*.functions.jsonl` with another name is accepted too. If there is more
+than one, name the intended map after the program or `functions.jsonl`.
 Each line has `a` and `end`: hexadecimal offsets relative to the first executable
 segment, with `end` exclusive. Optional `ranges` lists body intervals as numeric
 offsets relative to that segment. `n` is an optional C identifier. Invalid or duplicate names use `func_<address>` instead. Body address
@@ -72,5 +74,6 @@ copies; it affects the whole function and is unsuitable for floating-point code.
 This is beta, with strict per-function objdiff matching. It does not relink a
 complete runnable game or export a verified rebuild. Compiler switching, source
 splits, joining function pieces, automatic compiler surveys and class/structure
-recovery need further work. Symbol renaming, data inspection, drafts, twins,
-permuting and shared project workflows use the normal console interfaces.
+recovery need further work. Import, matching, drafts and matched-function renaming
+are checked on the demo through the normal app interfaces. The roadmap marks
+other shared features as pending until they are exercised on PS4.

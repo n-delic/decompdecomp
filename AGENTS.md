@@ -46,30 +46,40 @@ Testing a change must not touch it:
 - Don't restart, update or quit the user's app, and don't change its projects, without asking.
 
 Compilers and tools (objdiff, dtk, wibo, Ghidra, m2c, decomp-permuter, period compilers) are pinned with checksums
-in `src/decompnet/toolchains.toml` and installed by `src/decompnet/toolchains.py`, never taken from PATH. splat is a
-Python dependency in `pyproject.toml`. Proprietary
-compilers are only installed after the user accepts that in Setup; don't add code that fetches them silently.
+in `src/decompnet/toolchains.toml` and installed by `src/decompnet/toolchains.py`, never taken from PATH. The one
+exception is wine (`src/decompnet/wine.py`), which runs the compilers wibo can't (Visual C++ 2017) on Linux and macOS:
+it's a whole Windows runtime that the user's system installs and keeps updated, with no build the app could pin for
+every distribution and Mac, so it comes from `$DECOMPNET_WINE`, the PATH or the places wine.py lists, and only the
+packs marked `wine = true` use it. The compilers it runs are pinned like the rest. The other exception is the kits
+users bring (`src/decompnet/kits/`, a connector like `consoles/` and `agents/`): proprietary SDKs and the compilers
+that only came in them (the Xbox XDK and its early Visual C++ builds), which nobody may publish, so nothing can pin
+them. The user points Setup at their own copy; decompdecomp records the folder and reads it there, never copies or
+downloads it, and checks its files against the SHA-256 of the builds it knows (`Kit.known`). A console takes a kit
+by naming it (`Console.kits`); the user may give several copies of one kit (two XDKs, a Visual C++ 6.0 and a 2008), and
+a console picks the copy whose build is the game's; nothing outside `kits/` and that console names one
+(`tests/test_kits.py`). splat is a Python dependency in `pyproject.toml`. Proprietary compilers are only installed
+after the user accepts that in Setup; don't add code that fetches them silently.
 
 ## Consoles, and the two ways a game is decompiled
 
 Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps1/`, `ps2/`, `gc_wii/`
 (GameCube and Wii), `pc/` (Windows games), `nds/` (Nintendo DS). Its `__init__.py` makes the console (its facts and
-parts) and its docstring lists its files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part, one line each) and the
-list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine: `self.console(proj)`) and never
-compares console names: a console-specific `if` outside `consoles/` is a bug. What depends only on the processor
-(relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/` (`mips.py`, `ppc.py`,
-`x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
+parts) and its docstring lists its files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part,
+one line each) and the list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine:
+`self.console(proj)`) and never compares console names: a console-specific `if` outside `consoles/` is a bug. What
+depends only on the processor (relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/`
+(`mips.py`, `ppc.py`, `x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
 
 1. **ROM mode** (N64, PS1, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
    code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
-   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they share). Exported as a
-   rebuildable tree by `rom/export*.py`.
-2. **PROJECT mode** (GameCube/Wii/PC/DS started from scratch, and public decomps forked by repository address): a
+   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they
+   share). Exported as a rebuildable tree by `rom/export*.py`.
+3. **PROJECT mode** (GameCube/Wii/PC/DS started from scratch, and public decomps forked by repository address): a
    community-shaped project on disk with an `objdiff.json`; objdiff judges each unit. The console makes the project
    (`consoles/gc_wii/scratch.py`: dtk-template; `consoles/pc/scratch.py`: Ghidra finds functions, decompdecomp
    delinks them into COFF objects itself, from `consoles/pc/project_template/`; `consoles/nds/scratch.py`: ds-decomp,
-   with a CodeWarrior version per source file that `try_compiler` switches, `Console.file_compiler`). `forks/project.py` detects and
-   builds projects, `app/forkengine.py` drives them. Fork-mode helpers that read objects with pyelftools must
+   with a CodeWarrior version per source file that `try_compiler` switches, `Console.file_compiler`). `forks/project.py`
+   detects and builds projects, `app/forkengine.py` drives them. Fork-mode helpers that read objects with pyelftools must
    tolerate COFF (PC, Xbox): treat an `ELFError` as "no verdict".
 
 **One pipeline, every console.** A feature is built for every console it can reach, ROM mode and project mode
@@ -105,8 +115,8 @@ only, never copied into the repo. A break gets fixed in the shared code with a t
 and a ROADMAP.md item. Say in the pull request which features you ran and how.
 
 Reviewing a change (a pull request, an agent's branch): check the same list. Does the change reach every console and
-mode it can, does a new or changed console have each feature or a "—" with its ROADMAP item, and does the table
-still say what's true? A gap nobody wrote down is a finding.
+mode it can, does a new or changed console have each feature or a "—" with its ROADMAP item, and do the table and
+the site's cards still say what's true? A gap nobody wrote down is a finding.
 
 Improving a console, adding a console (copy `consoles/template/`, fill in the connector's parts, add a demo game,
 pass `tests/test_consoles.py`, add a ROADMAP.md column) and adding a compiler to a console: CONTRIBUTING.md,
@@ -115,31 +125,32 @@ pass `tests/test_consoles.py`, add a ROADMAP.md column) and adding a compiler to
 ## Agents
 
 The helper agents the app starts work the same way. Each agent is a module in `src/decompnet/agents/`: `claude.py`
-(Claude Code), `codex.py`, `antigravity.py` (Antigravity CLI), `opencode.py`, and `api.py` (the API helper: the
-app's own loop for any OpenAI-compatible API). `agents/__init__.py` is the connector: the `Agent` class (every fact
-and part, one line each) and the list of agents. What's the same for every agent (starting, restarting, waiting out
-usage limits, the records, ending their processes) is in `app/agents.py`. The rest of the app asks
-`agents.get(kind)` and never compares agent names: an agent-specific `if` outside `agents/` is a bug
-(`tests/test_agent_kinds.py` checks it, the GUI too: it gets facts like `uses_endpoints` from the server). Adding an
-agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`): CONTRIBUTING.md,
-"Adding an agent".
+(Claude Code), `codex.py`, `antigravity.py` (Antigravity CLI), `opencode.py`, `cursor.py`, `kimi.py`, `zcode.py` (ZCode CLI), and `api.py`
+(the API helper: the app's own loop for any OpenAI-compatible API). `agents/__init__.py` is the connector: the
+`Agent` class (every fact and part, one line each) and the list of agents. What's the same for every agent
+(starting, restarting, waiting out usage limits, the records, ending their processes) is in `app/agents.py`. The
+rest of the app asks `agents.get(kind)` and never compares agent names: an agent-specific `if` outside `agents/` is
+a bug (`tests/test_agent_kinds.py` checks it, the GUI too: it gets facts like `uses_endpoints` from the server).
+Adding an agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`):
+CONTRIBUTING.md, "Adding an agent".
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
 from the vtables constructors store, MIPS and x86, named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`
-tool and the class lines of `get_function`),
-`structs.py` (struct layouts from the loads and stores through pointers, read by the processor's
-`Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct` tool and the brief's lines, `app/engine/layouts.py`),
-`compilermap.py` (which compiler built each part of a MIPS game; the judge's survey is `engine.survey_compilers`;
-`app/rangecheck.py` tests a suggested range on its neighbours before it applies), `app/tools.py` (the MCP
-tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`
-+ `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses system GTK/WebKitGTK, macOS uses
-Cocoa/WebKit through the app's Python; the page answers only a window with the secret in its user agent; Linux and
-Windows have a tray icon; tests set `DECOMP_WINDOW=0` and
-`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a
-project restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn,
-shared once two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter),
-`structs.py` (struct layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order; `js/base.js` says which is which).
+tool and the class lines of `get_function`), `structs.py` (struct layouts from the loads and stores through pointers, read by
+the processor’s `Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct`
+tool and the brief’s lines, `app/engine/layouts.py`), `compilermap.py` (which compiler built each part of a MIPS game; the
+judge's survey is `engine.survey_compilers`; `app/rangecheck.py` tests a suggested range on its neighbours before it
+applies), `app/tools.py` (the MCP tools helpers get and their prompt; MCP is only the app's private wiring to the CLI
+helpers it starts), `app/window.py` + `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses
+system GTK/WebKitGTK, macOS uses Cocoa/WebKit through the app's Python; the page answers only a window with the
+secret in its user agent; Linux and Windows have a tray icon; tests set `DECOMP_WINDOW=0` and `DECOMP_TRAY=0`),
+`app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a project
+restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn, shared once
+two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter), `structs.py` (struct
+layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through
+`guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order;
+`js/base.js` says which is which).
 
 ## Conventions
 
@@ -148,7 +159,8 @@ linting). In short:
 
 - Match the surrounding code: plain-English docstrings and comments that say *why*, often citing the issue or the
   case that motivated a rule ("#22: ..."). Describe a game by its kind, never by its title ("a PS2 game with 3,000
-  functions"), in code, tests, commits and PRs alike; older comments that name one stay until touched. No new dependencies for a few lines; capstone, pyelftools, httpx are there.
+  functions"), in code, tests, commits and PRs alike; older comments that name one stay until touched. No new
+  dependencies for a few lines; capstone, pyelftools, httpx are there.
 - Heavy external tools run through `limits.capped(...)` (memory cap) with a timeout.
 - A window, dialog or panel that shows progress text or logs while doing work also shows a progress bar. Reuse
   `beginWork`, `followJob` and `showJobError` in `app/static/js/base.js` and the shared `.workbar` styling; start
@@ -158,10 +170,11 @@ linting). In short:
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.
 - `uv run ruff check src tests projects` passes (CI runs it). No formatter: don't run `ruff format`.
-- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); a pull request from any other branch fails `.github/workflows/labels.yml`,
-  and the prefix labels it. An issue you open (`gh issue create`) gets `--label` for its kind (`bug`, `enhancement`,
-  `documentation`, `question`) and for each console (`n64`, `psx`, `ps2`, `gc`, `wii`, `pc`, `ds`, `new-console`) and
-  system (`linux`, `windows`) it's about: `gh label list` has them all.
+- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`,
+  `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); a pull request from any other branch fails
+  `.github/workflows/labels.yml`, and the prefix labels it. An issue you open (`gh issue create`) gets `--label`
+  for its kind (`bug`, `enhancement`, `documentation`, `question`) and for each console (`n64`, `psx`, `ps2`, `gc`, `wii`,
+  `pc`, `ds`, `new-console`) and system (`linux`, `windows`) it's about: `gh label list` has them all.
 - Releases bump the version in four places together: `pyproject.toml`, `src/decompnet/__init__.py`,
   `site/public/install.sh`, `uv.lock`; `packaging/release.sh X.Y.Z "what users get"` does that, commits, tags and
   pushes (a tag pushed before the bump fails release.yml's version check). Commit subjects read
@@ -174,6 +187,9 @@ linting). In short:
   update themselves; the Windows copy updates its bundled packages in place.
 - What's planned is in ROADMAP.md, with a table of which feature works on which platform: when a feature ships or
   reaches another platform, update the table and move its item to done.
+- A change that adds or changes a console's support, or how decompdecomp is installed or downloaded, also updates
+  `site/public/index.html` (the console's card and picker entry, the install section) in the same pull request;
+  reviewing a change checks it, like the ROADMAP table.
 
 ## Never
 

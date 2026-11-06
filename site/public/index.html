@@ -71,10 +71,14 @@
     <label><input type="radio" name="platform" value="gc"><span>GameCube</span></label>
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
     <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
-    <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
+    <label title="EE-GCC and CodeWarrior also run on macOS"><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
+    <label><input type="radio" name="platform" value="ps3"><span>PlayStation 3</span></label>
+    <label><input type="radio" name="platform" value="ps4"><span>PlayStation 4</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
+    <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
+    <label><input type="radio" name="platform" value="gba"><span>Game Boy Advance</span></label>
   </fieldset>
   <output class="answer js-only" id="answer" for="platform" aria-live="polite" hidden></output>
 
@@ -84,7 +88,7 @@
       <ol class="stations">
         <li><small>Your file</small><b>ROM</b><span>.z64, .n64 or .v64</span></li>
         <li><small>Split by</small><b>splat</b><span>with spimdisasm; finds code loaded later, and compressed code</span></li>
-        <li><small>Built by</small><b>KMC GCC 2.7.2</b><span>or IDO 5.3 / 7.1, the game's own compiler</span></li>
+        <li><small>Built by</small><b>KMC GCC 2.7.2</b><span>or IDO 5.3 / 7.1, the game's own compiler; another build from your own copy</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
       </ol>
@@ -114,7 +118,7 @@
       <ol class="stations">
         <li><small>Your file</small><b>Disc or PS-X EXE</b><span>BIN, ISO or CHD; the game's main program and its overlays</span></li>
         <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
-        <li><small>Built by</small><b>PSY-Q's GCC</b><span>2.6.3, 2.7.2 or 2.8.1, through maspsx for Sony's assembler; C</span></li>
+        <li><small>Built by</small><b>PSY-Q's GCC</b><span>2.5.7 to 2.95.2, EGCS 2.91.66 included, through maspsx for Sony's assembler; another build from your own copy; C</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
       </ol>
@@ -124,9 +128,29 @@
       <ol class="stations">
         <li><small>Your file</small><b>Disc or ELF</b><span>the game's main program</span></li>
         <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
-        <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2, CodeWarrior 2.3.3 / 3.0.1; C and C++; one compiler per address range when a game mixes them</span></li>
+        <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2 (Sony builds use the local Linux runner on Mac), CodeWarrior 2.3.3 / 3.0.1 (also on Mac through wibo with license acceptance); C and C++; one compiler per address range when a game mixes them; another build from your own copy</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="ps3" data-file="EBOOT.ELF">
+      <h3><span class="pl-name">PlayStation 3</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>The program, decrypted</b><span>EBOOT.ELF from your own copy; decompdecomp never decrypts</span></li>
+        <li><small>Split by</small><b>decompdecomp</b><span>the program's own function list first, then its calls; imports named</span></li>
+        <li><small>Built by</small><b>GCC</b><span>the free ps3dev GCC, or your own SDK's compiler; C and C++</span></li>
+        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, every reference checked</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>as C sources</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="ps4" data-file="eboot.elf">
+      <h3><span class="pl-name">PlayStation 4</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>The program, decrypted</b><span>your own eboot.elf; no encrypted SELF, PKG or PRX modules</span></li>
+        <li><small>Split by</small><b>Ghidra or a function map</b><span>drop a functions.jsonl map with the program, or let Ghidra find its functions</span></li>
+        <li><small>Built by</small><b>Public Clang 5.0.2</b><span>free, pinned compiler; Linux x86-64 app only, including inside WSL 2; verify the compiler and flags for your game</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>strict per-function comparison, including relocation identities</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>whole-game relinking and export remain planned; shared features await PS4 validation</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="psp" data-file="game.iso">
@@ -134,7 +158,7 @@
       <ol class="stations">
         <li><small>Your file</small><b>UMD image, ELF or PRX</b><span>an ISO whose program isn't encrypted, or the game's program decrypted (PPSSPP can dump it); its debug symbols, when it has them</span></li>
         <li><small>Split by</small><b>splat</b><span>with spimdisasm; a PRX is first placed where the PSP loads it</span></li>
-        <li><small>Built by</small><b>CodeWarrior or Sony's GCC</b><span>CodeWarrior for PSP 3.0.1, the PSP SDK's GCC 3.3.3, SN's pspsnc; C and C++</span></li>
+        <li><small>Built by</small><b>CodeWarrior or Sony's GCC</b><span>CodeWarrior for PSP 3.0.1, the PSP SDK's GCC 3.3.3, SN's pspsnc; another build from your own copy; C and C++</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
       </ol>
@@ -144,7 +168,17 @@
       <ol class="stations">
         <li><small>Your file</small><b>Program</b><span>a 32-bit x86 .exe</span></li>
         <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe</span></li>
-        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010; C and C++</span></li>
+        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS); any other, from your own copy; C and C++</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="xbox" data-file="default.xbe">
+      <h3><span class="pl-name">Xbox</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>Program or disc</b><span>default.xbe, an .xiso or a Redump .iso</span></li>
+        <li><small>Split by</small><b>Ghidra</b><span>after decompdecomp makes the XBE a Windows program at the same addresses</span></li>
+        <li><small>Built by</small><b>Visual C++ 7.0 / 7.1</b><span>the XDK's compilers; your own XDK optional; C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
       </ol>
@@ -159,10 +193,20 @@
         <li><small>You get</small><b>A ds-decomp project</b><span>that rebuilds your ROM and checks it, byte for byte</span></li>
       </ol>
     </article>
+    <article class="pipeline" data-platform="gba" data-file="game.gba">
+      <h3><span class="pl-name">Game Boy Advance</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>ROM</b><span>.gba</span></li>
+        <li><small>Split by</small><b>luvdis</b><span>plus decompdecomp's own function finder, for Thumb and ARM</span></li>
+        <li><small>Built by</small><b>agbcc</b><span>the community's free GCC-based compiler (GPL), or your own build; C</span></li>
+        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
+        <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
+      </ol>
+    </article>
   </div>
 
   <p class="fineprint">1.0.3 rewrote most of the app, so every platform needs testing again. Try it on a game you own and <a href="https://github.com/n-delic/decompdecomp/issues">tell us how it went</a>.</p>
-  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after you accept them in Setup. Also: 3DS, Switch and Xbox, through a fork of a community decomp repository.</p>
+  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after you accept them in Setup. Also: 3DS, Switch and Xbox 360, through a fork of a community decomp repository.</p>
 </section>
 
 <!-- 3 · the proof -->
@@ -207,7 +251,7 @@ jr      $ra
   <h2 id="yours-h">Yours.</h2>
   <ol class="yours-list">
     <li><b>Your game</b> stays on your computer. No account, no telemetry, nothing uploaded. decompdecomp supplies no games.</li>
-    <li><b>Your agents</b> do the work: any model with an API key, Claude Code, Codex, opencode or Antigravity CLI. The app starts them and restarts them. You pay your own provider.</li>
+    <li><b>Your agents</b> do the work: any model with an API key, Claude Code, Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI or ZCode CLI. The app starts them and restarts them. You pay your own provider.</li>
     <li><b>Your code</b> comes out as a project that builds your game again, byte for byte: the start of a port or a mod.</li>
   </ol>
   <p class="yours-note">The code from a game belongs to its rights holder. Keep it to yourself.</p>
@@ -220,13 +264,17 @@ jr      $ra
     <div class="step">
       <p class="step-n">1 · Install</p>
       <p class="cmd"><code id="cmd-linux">curl -fsSL https://decomp.ndelic.com/install.sh | bash</code><button type="button" class="copy" data-copy-from="cmd-linux">Copy</button></p>
-      <p class="step-note">Linux, or Windows 10 and 11 through WSL 2: run it in your WSL terminal (Ubuntu, for example). It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the releases page.</p>
+      <p class="step-note">Linux: run it in your terminal. It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">releases page</a>.</p>
+      <p class="step-note">Windows 10 and 11: download and open <code>decompdecomp-&lt;version&gt;-windows-x64-setup.exe</code> from the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>. The app opens in a native Windows window, with desktop and Start shortcuts and a tray icon. PS1, PS2 and most N64 games also need WSL 2 for their period compilers: run <code>wsl --install</code> in an administrator PowerShell, restart if asked, then open Ubuntu once. GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't.</p>
+      <p class="step-note">PS4 support needs the Linux x86-64 app and its free Clang 5.0.2 pack. On Windows, install and run the Linux app inside WSL 2; the native Windows and macOS apps cannot build PS4 projects.</p>
       <p class="cmd"><code id="cmd-macos">curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>
-      <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS1/PS2 period compilers need Linux; macOS has no menu bar tray icon yet.</p>
+      <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS2 Sony EE-GCC uses the optional local Linux runner on macOS 13+: install <code>brew install colima docker</code>, then choose Prepare Linux runner in Compilers &amp; tools. SN Systems EE-GCC and CodeWarrior PS2 use wibo; CodeWarrior requires license acceptance in Setup. Linux-only PS1 builds still need Linux; macOS has no menu bar tray icon yet.</p>
+      <p class="step-note">There's also a downloadable macOS app on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>: download macos_arm64 for Apple Silicon or macos_x86_64 for Intel, unzip it, move decompdecomp.app to Applications, and open it from Finder. It isn't signed, so macOS may ask you to approve its first launch in Privacy &amp; Security.</p>
     </div>
     <div class="step">
       <p class="step-n">2 · Open your game</p>
-      <p class="step-note">Pick your own copy of the game in the app, then click <b>Start agents</b>: any model with an API key, Claude Code, Codex, opencode or Antigravity CLI. Run several: they work on different functions at the same time. Or open Demo Quest 64 and watch first.</p>
+      <p class="step-note">Pick your own copy of the game in the app, then click <b>Start agents</b>: any model with an API key, Claude Code, Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI or ZCode CLI. Run several: they work on different functions at the same time. Or open Demo Quest 64 and watch first.</p>
+      <p class="step-note">Continuing a public N64 or PlayStation Splat decomp? For supported simple splits, decompdecomp can create missing objdiff references after checking them byte for byte against your copy.</p>
     </div>
   </div>
 </section>

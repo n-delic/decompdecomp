@@ -59,6 +59,8 @@ def install_launcher() -> str:
     from its checkout."""
     if edition.DEV:
         return "a development copy gets no launcher: run it with `uv run decomp` in the checkout"
+    if sys.platform == "darwin" and os.environ.get("DECOMP_PACKAGE") == "macos":
+        return "the macOS app is already available in Finder"
     if sys.platform == "darwin":
         bundle = Path.home() / "Applications" / "decompdecomp.app" / "Contents"
         executable = bundle / "MacOS" / "decompdecomp"

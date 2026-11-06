@@ -10,7 +10,6 @@ import time
 
 from ... import arch
 from ...network import Agent, NetworkError
-from ...rom import split
 from ...rom.symbols import IDENT, Symbol, SymbolTable
 from .common import _ADDRESS
 
@@ -39,17 +38,47 @@ class EditMixin:
         syms = self.symbols(proj["id"])
         if not IDENT.match(new_name) or new_name in syms.by_name:
             raise NetworkError(f"`{new_name}` is not a free C identifier")
+        console = self.console(proj)
+        inside = fn["vram"] <= addr < fn["vram"] + fn["size"]
+        if not inside and addr % console.instruction_size(fn) == 0:
+            rom, _ = self._rom(proj)
+            following = [r["vram"] for r in self.store.all(
+                "SELECT vram FROM functions WHERE project_id=? AND vram>?", proj["id"], addr)]
+            limit = min(following) if following else fn["vram"] - (fn["rom_offset"] or 0) + len(rom)
+            new = console.function_at(rom, addr, limit, new_name)
+            if new is not None:
+                return self._add_function(proj, fn, new, syms, agent.id, new_name)
         head, tail = self._cut(proj, fn, addr, new_name, syms, agent.id, "split", f"{fn['name']} / {new_name}")
-        return (f"✅ split: {fn['name']} is now {len(head.lines)} instructions; {new_name} at 0x{addr:08X} has "
-                f"{len(tail.lines)}. Continue with {fn['name']} (get_function shows its new assembly).")
+        return (f"✅ split: {fn['name']} is now {console.function_insns(head)} instructions; {new_name} at "
+                f"0x{addr:08X} has {console.function_insns(tail)}. Continue with {fn['name']} "
+                "(get_function shows its new assembly).")
+
+    def _add_function(self, proj, prev, new, syms: SymbolTable, agent_id: int | None, new_name: str) -> str:
+        """Add a function the splitter missed after `prev`; it starts at its own address and mode."""
+        console = self.console(proj)
+        syms.add(Symbol(new_name, new.vram, new.size, "func"))
+        target = self._make_target(proj, new, syms)
+        meta = console.function_meta(new)
+        with self.store.tx() as db:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
+                       "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (proj["id"], new_name, new.size, console.function_insns(new), target.code,
+                        json.dumps(target.to_json()), console.function_asm(new), None, prev["unit"], new.vram, new.rom,
+                        console.function_status(new), json.dumps(meta) if meta else None))
+            db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                       (proj["id"], new_name, new.vram, new.size, "func"))
+            self._event(db, proj["id"], agent_id, "split", f"{prev['name']} / {new_name}")
+        self._xrefs.pop(proj["id"], None)
+        self._ops.pop(proj["id"], None)
+        return f"✅ new function {new_name} at 0x{new.vram:08X}, {new.size} bytes."
 
     def _cut(self, proj, fn, addr: int, new_name: str, syms: SymbolTable, agent_id: int | None, kind: str, detail: str,
              tail_meta: dict | None = None):
         """Cut a MIPS function in two at `addr`: the head keeps its row, the tail becomes `new_name` (status 'asm'
         with `tail_meta` when it isn't code agents should work on). Returns (head, tail)."""
-        rf = self._parse_asm(fn["name"], fn["asm"], fn["unit"])
+        console = self.console(proj)
         try:
-            head, tail = split.split_function(rf, addr, new_name)
+            head, tail = console.split_function(fn, addr, new_name)
         except ValueError as e:
             raise NetworkError(str(e)) from None
         syms.add(Symbol(new_name, addr, tail.size, "func"))
@@ -58,14 +87,17 @@ class EditMixin:
             old.size = head.size
         th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
         with self.store.tx() as db:
+            meta = console.function_meta(tail)
+            if tail_meta:
+                meta.update(tail_meta)
             db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL "
-                       "WHERE id=?", (head.size, len(head.lines), th.code, json.dumps(th.to_json()),
-                                      self._asm_source(head), fn["id"]))
+                       "WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                                      console.function_asm(head), fn["id"]))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                       (proj["id"], new_name, tail.size, len(tail.lines), tt.code, json.dumps(tt.to_json()),
-                        self._asm_source(tail), None, fn["unit"], addr, tail.rom, "asm" if tail_meta else "open",
-                        json.dumps(tail_meta) if tail_meta else None))
+                       (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
+                        console.function_asm(tail), None, fn["unit"], addr, tail.rom,
+                        "asm" if tail_meta else console.function_status(tail), json.dumps(meta) if meta else None))
             db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=?", (head.size, proj["id"], fn["name"]))
             db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                        (proj["id"], new_name, addr, tail.size, "func"))
@@ -85,22 +117,27 @@ class EditMixin:
             raise NetworkError("in a team room the host's project decides where functions end: tell the host (add_note)")
         fn = self._function(function, slug)
         proj = self._project(slug)
-        if arch.BOUNDARIES not in self.console(proj).features:
-            raise NetworkError(f"boundary reports are for MIPS games (N64, PlayStation 2) for now, not {self.console(proj).name}")
+        console = self.console(proj)
+        if arch.BOUNDARIES not in console.features:
+            raise NetworkError(f"boundary reports aren't supported for {console.name} yet (ROADMAP.md)")
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} is matched: its boundaries are proven")
         m = _ADDRESS.match(str(end).strip())
         if not m:
             raise NetworkError("`end` must be an address like 0x80001234: where the function's last instruction ends")
         addr = int(m.group(1), 16)
+        size = console.instruction_size(fn)
         off = addr - fn["vram"]
-        if off <= 0 or off >= fn["size"] or off % 4:
-            raise NetworkError(f"0x{addr:08X} isn't a word inside {fn['name']} (0x{fn['vram']:08X}, {fn['size']} bytes)")
+        if off <= 0 or off >= fn["size"] or off % size:
+            word = "word" if size == 4 else "instruction"
+            raise NetworkError(f"0x{addr:08X} isn't a {word} inside {fn['name']} "
+                               f"(0x{fn['vram']:08X}, {fn['size']} bytes)")
         reason = " ".join(reason.split())[:600]
         if not reason:
             raise NetworkError("say what the bytes after it are (padding, linker leftovers, data) and how you can tell")
         order = "big" if proj["big_endian"] else "little"
-        rest = " ".join(f"{int.from_bytes(fn['target'][at:at + 4], order):08X}" for at in range(off, min(fn["size"], off + 32), 4))
+        rest = " ".join(f"{int.from_bytes(fn['target'][at:at + size], order):0{2 * size}X}"
+                        for at in range(off, min(fn["size"], off + 32), size))
 
         def change(cfg):
             items = cfg.setdefault("boundaries", [])

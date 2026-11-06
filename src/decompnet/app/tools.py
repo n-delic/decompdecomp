@@ -249,7 +249,8 @@ def _project_info(net: RomNetwork, slug: str) -> str:
     return (f"{ov['title']} ({ov['rom']['game_code']}, {ov['rom']['region']})\n"
             f"compiler: {ov['compiler']['name']} {' '.join(ov['compiler']['flags'])}"
             + (f"; these address ranges are built with another:{ranges}" if ranges else "") + "\n"
-            + (f"this platform's compilers (for try_compiler): {', '.join(ov['compilers'])}\n" if len(ov["compilers"]) > 1 else "")
+            + (f"this project's compilers (for try_compiler): {', '.join(ov['compilers'])}\n"
+               if len(ov["compilers"]) > 1 else "")
             + f"progress: {ov['matched']}/{ov['functions']} functions matched ({pct:.1f}% of code), "
             f"{ov['attempts']} compiles so far, context.h v{ov['context_version']}\n"
             f"Next: claim_function(). Guides: guide().")
@@ -334,31 +335,37 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "edit_file": lambda net, agent, slug, path, old, new, message="":
         net.forks.edit_file(agent, _fork(net, slug, "edit_file"), path, old, new, message),
     "file_status": lambda net, agent, slug, path: net.forks.file_status(_fork(net, slug, "file_status"), path),
+    "standins_for": lambda net, agent, slug, what: net.forks.standins_for(agent, _fork(net, slug, "standins_for"), what),
     "split_file": lambda net, agent, slug, path, at, new_name="", data="":
         net.forks.split_file(agent, _fork(net, slug, "split_file"), path, at, new_name, data),
     "join_functions": lambda net, agent, slug, function, with_function, reason:
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "split_function",
-            "redraft",
-            "search_flags"}
-FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done"}
+READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+                       "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
+                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
+
+ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags"}
+FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
+             "standins_for"}
+LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
 
 
-def tool_names(fork: bool, console=None) -> list[str]:
+def tool_names(fork: bool, console=None, ltcg: bool = False) -> list[str]:
     """The tools that make sense for a project: forks and ROM projects share the core loop. A game started from
     scratch in project mode has those of ROM projects its console makes work there too (Console.own_tools: PC's
     redraft and search_flags)."""
     skip = ROM_ONLY - (console.own_tools if console is not None else frozenset()) if fork else FORK_ONLY
-    return [n for n in HANDLERS if n not in skip]
+    return [n for n in HANDLERS if n not in skip and (ltcg or n not in LTCG_ONLY)]
 
 
 def project_tools(net: RomNetwork, slug: str | None) -> list[str]:
     """tool_names for a project (None: no project yet)."""
     fork = bool(slug and net.fork_slug(slug))
     cfg = net.cfg(net._project(slug)) if fork else {}
-    return tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None)
+    manifest = (net.forks.get(slug)[1].manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
+    return tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None, bool(manifest.get("ltcg")))
 
 
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
@@ -372,12 +379,21 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
     return args
 
 
+def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
+    """Every helper sees pulled changes before acting; only tools that write work need a second synchronization."""
+    net.progress.sync(slug, force=True)
+    result = HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
+    if name not in READ_ONLY:
+        net.progress.sync(slug, force=True)
+    return result
+
+
 def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Run one tool for the built-in agent; errors come back as text the model can act on."""
     if name not in HANDLERS:
         return f"error: unknown tool {name!r}"
     try:
-        return HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
+        return _invoke(net, agent, slug, name, args)
     except NetworkError as e:
         return f"error: {e}"
     except TypeError as e:
@@ -399,7 +415,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         except NetworkError as e:
             raise ToolError(str(e)) from None
         try:
-            return await anyio.to_thread.run_sync(lambda: HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args)))
+            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args))
         except NetworkError as e:
             raise ToolError(str(e)) from None
 
@@ -614,7 +630,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
         Args:
             function: the function to judge it against
-            compiler: a toolchain id (project_info lists this platform's); where each source file has its own
+            compiler: a toolchain id (project_info lists this project's); where each source file has its own
                 compiler (DS), "all" tries every one, and the one that matches becomes the file's
             flags: its flags (default: that compiler's defaults for this game)
             source: the C (default: the function's best attempt)
@@ -668,6 +684,17 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         functions still differ, its data next to the original's (with what to fix), why the last link failed.
         A file is linked (the game built from its C) once every function and all its data match."""
         return await run(ctx, "file_status", path=path)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def standins_for(ctx: Context, what: str) -> str:
+        """Games built with link-time code generation (the brief's "Calling convention" section says so): a starting
+        harness for a unit, from the original's references. `what`: a unit, its source file or one of its functions.
+        Returns stand-ins for what the unit's functions call or read elsewhere (with their conventions), a
+        HarnessEntry that calls each function the way its call sites do, and the declarations to put in the unit's
+        source. Write them into harness/<unit>.standins.cpp and harness/<unit>.drv.cpp with edit_file (old=""
+        creates a file), then shape them: the stand-ins must read the registers the original reads and leave the
+        ones its callers keep alive."""
+        return await run(ctx, "standins_for", what=what)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def split_file(ctx: Context, path: str, at: str, new_name: str = "", data: str = "") -> str:

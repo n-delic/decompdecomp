@@ -117,10 +117,39 @@ def _tool(name: str) -> str | None:
     return next((str(d / exe) for d in _tool_dirs() if (d / exe).exists()), None)
 
 
+# #97: a public dtk project hashes the files it was built from, and some of those (a main.dol made from an ELF,
+# a .rel module) aren't on the retail disc. dtk stops at the hash; say what it means and what the user can do.
+_HASH_MISMATCH = re.compile(r"Hash mismatch: expected ([0-9a-fA-F]+)(?:\.{3}|…)?, but was ([0-9a-fA-F]+)", re.I)
+_DTK_OBJECT = re.compile(r"While (?:loading|processing) object '([^']+)'")
+
+
+def _hash_mismatch(tail: str) -> str | None:
+    """What dtk's file hash mismatch means for the user, or None when this failure isn't one."""
+    m = _HASH_MISMATCH.search(tail)
+    if m is None:
+        return None
+    objects = _DTK_OBJECT.findall(tail[:m.start()])  # the file just before the hash: the one dtk was loading
+    if not objects:
+        return None
+    obj, (expected, got) = objects[-1], m.groups()
+    return (f"your copy's {obj} isn't the one this project was built against (the project expects hash "
+            f"{expected[:8]}..., yours is {got[:8]}...). Your dump is likely fine: some projects are set up from "
+            "files that aren't on the retail disc (check the project's README for which file and where it comes "
+            "from). Or start the game from your own copy instead: choose New project → Open a game file.")
+
+
 class ForkProject:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, platform: str = ""):
         self.root = Path(root)
+        self.platform = platform
         (self.root / STATE).mkdir(parents=True, exist_ok=True)
+
+    def _game_consoles(self):
+        """The named console, or each console's file preparation when a public project's platform is unknown."""
+        from .. import consoles
+
+        platform = self.detect_platform()
+        return [consoles.get(platform)] if platform else consoles.startable()
 
     # ------------------------------------------------------------------ what is it
 
@@ -193,6 +222,74 @@ class ForkProject:
                 return p
         return None
 
+    def _splat_yaml_for_version(self, version: str | None) -> Path | None:
+        """Select the Splat config named by Make; never guess from sorted YAML files."""
+        candidates = []
+        for path in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/**/*.yaml")):
+            try:
+                text = path.read_text(errors="replace", encoding="utf-8")
+            except OSError:
+                continue
+            if "segments:" in text and "options:" in text:
+                candidates.append(path)
+        if not version:
+            if len(candidates) > 1:
+                raise ForkError("This project has several Splat configs; select a build version before generating objdiff.")
+            return candidates[0] if candidates else None
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", version):
+            raise ForkError("The selected build version is not a safe Splat version name.")
+        makefile = self.root / "Makefile"
+        if not makefile.is_file():
+            return None
+        make = makefile.read_text(errors="replace", encoding="utf-8")
+        basename = re.search(r"^BASENAME\s*[:?]?=\s*([A-Za-z0-9_-]+)\s*$", make, re.M)
+        paths = []
+        if basename and "config/$(VERSION)/$(BASENAME).$(VERSION).yaml" in make:
+            paths.append(self.root / "config" / version / f"{basename[1]}.{version}.yaml")
+        if basename and "$(BASENAME).$(VERSION).yaml" in make:
+            paths.append(self.root / f"{basename[1]}.{version}.yaml")
+        if "decompressed.$(VERSION).yaml" in make:
+            paths.append(self.root / f"decompressed.{version}.yaml")
+        selected = [p for p in paths if p in candidates]
+        if len(selected) != 1:
+            raise ForkError(f"Could not identify the Splat config Make uses for version {version}.")
+        return selected[0]
+    def detect_platform(self) -> str:
+        """Use the declared platform, or read it from a Splat config without running project code."""
+        if self.platform:
+            return self.platform
+        if value := (self.manifest or {}).get("platform"):
+            return value
+        path = self._splat_yaml()
+        if path is None:
+            return ""
+        import yaml
+
+        try:
+            config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
+            return ""
+        options = config.get("options") if isinstance(config, dict) else None
+        value = options.get("platform") if isinstance(options, dict) else None
+        if not isinstance(value, str):
+            return ""
+        from .. import consoles
+
+        console = consoles.get(value.strip().lower())
+        return console.id if console.id in {c.id for c in consoles.CONSOLES} else ""
+
+    def fork_game_versions(self) -> dict[str, str]:
+        """Original game hashes, when the project's console recognizes versioned public builds."""
+        from .. import consoles
+
+        return consoles.get(self.detect_platform()).fork_game_versions(self)
+
+    def default_game_version(self) -> str | None:
+        """The default build version, when the project's console recognizes its version layout."""
+        from .. import consoles
+
+        return consoles.get(self.detect_platform()).default_fork_game_version(self)
+
     def _inside(self, rel: str) -> str | None:
         """`rel` as a clean path inside the project, or None if it points outside or is a template."""
         if not rel or "__" in rel or "$" in rel or "{" in rel:
@@ -226,6 +323,10 @@ class ForkProject:
                         "sha1": None, "auto": True, "help": "The build checks the game against the project's hashes."}
             return manual
         if kind == "splat":
+            from .. import consoles
+
+            if need := consoles.get(self.detect_platform()).fork_game_need(self, version):
+                return need
             y = self._splat_yaml().read_text(errors="replace", encoding="utf-8")
             target = re.search(r"^\s*target_path:\s*['\"]?([^'\"\n#]+)", y, re.M)
             base = re.search(r"^\s*base_path:\s*['\"]?([^'\"\n#]+)", y, re.M)
@@ -237,10 +338,13 @@ class ForkProject:
             path = self._inside(path) if path else None
             if path is None:
                 return manual
+            digest = sha1.group(1).lower() if sha1 else None
+            help_text = next((hint for console in self._game_consoles()
+                              if (hint := console.fork_game_help(path, digest))), None)
             return {"what": f"your copy of the game ({Path(path).name})", "path": path,
-                    "sha1": sha1.group(1).lower() if sha1 else None, "auto": True,
-                    "help": "Checked against the sha1 in the project's splat config. A PlayStation disc image works "
-                            "too: the file is taken from it."}
+                    "sha1": digest, "auto": True,
+                    "help": help_text or "Checked against the sha1 in the project's splat config. A PlayStation "
+                                         "disc image works too: the file is taken from it."}
         return manual
 
     # ------------------------------------------------------------------ setup
@@ -252,6 +356,26 @@ class ForkProject:
         if not need["path"]:
             raise ForkError("decompdecomp doesn't know where this project expects the game; follow its README")
         src = Path(src)
+        if not need["path"].endswith("/"):
+            from ..rom import RomError
+
+            dest = self.root / need["path"]
+            if src.resolve() == dest.resolve():
+                if not need.get('sha1') or _sha1(src) == need['sha1']:
+                    return dest
+                try:
+                    for console in self._game_consoles():
+                        if console.prepare_fork_game(src, dest, need['sha1'], move=False):
+                            return dest
+                except RomError as error:
+                    raise ForkError(str(error)) from error
+                raise ForkError("the game already in this project does not match its expected SHA-1")
+            try:
+                for console in self._game_consoles():
+                    if console.prepare_fork_game(src, dest, need.get("sha1"), move=move):
+                        return dest
+            except RomError as error:
+                raise ForkError(str(error)) from error
         if need.get("sha1") and _sha1(src) != need["sha1"]:
             inner = self._from_disc(src.read_bytes(), Path(need["path"]).name) if src.stat().st_size < 1 << 30 else None
             if inner is None or hashlib.sha1(inner).hexdigest() != need["sha1"]:
@@ -311,18 +435,26 @@ class ForkProject:
             return [[sys.executable, "configure.py"], [_tool("ninja") or "ninja"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
-            steps = [["make", t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)][:1]
-            return steps + [["make", f"-j{os.cpu_count() or 4}"]]
+            chosen = [f"VERSION={version}"] if version and self.fork_game_versions() else []
+            steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)][:1]
+            return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
         if kind == "objdiff":
             cfg = self.objdiff_config()
             return [[cfg.get("custom_make") or "make", *cfg.get("custom_args", [])]]
         raise ForkError("decompdecomp can't tell how to build this project; follow its README, then refresh")
 
-    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None) -> tuple[bool, str]:
+    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None,
+            platform: str | None = None) -> tuple[bool, str]:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
-        are added to `failed`."""
+        are added to `failed`. `platform`: its console, for a project whose manifest isn't written yet (its import's
+        first build: a game built with Visual C++ 2017 then built without wine's settings)."""
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
+        # what its console's builds need (Console.build_env)
+        if (platform := (self.manifest or {}).get("platform") or platform):
+            from .. import consoles
+
+            env.update(consoles.get(platform).build_env())
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
         executable = sys.executable if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]
@@ -357,7 +489,14 @@ class ForkProject:
         # what failed, not the warnings after it: dsd's hundreds of "[WARN ] No module for relocation" lines came after
         # a compiler's error and pushed it out of the tail agents and the user read
         said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
-        return code == 0, "\n".join(said[-60:])
+        tail = "\n".join(said[-60:])
+        if code:
+            from .buildhelp import explain
+
+            if hints := explain(self.root, executable, "\n".join(out)):
+                log(hints)
+                tail = tail + "\n\n" + hints
+        return code == 0, tail
 
     def unpack_disc(self, version: str | None, log=print) -> int:
         """A dtk project that reads an extracted disc (orig/<version>/sys/main.dol, files/...) instead of the disc
@@ -397,13 +536,40 @@ class ForkProject:
         for cmd in self.setup_commands(version):
             ok, tail = self.run(cmd, log=log)
             if not ok and cmd[0] != "make":  # a Makefile build often fails on purpose until things match
+                mismatch = _hash_mismatch(tail)
+                if mismatch:  # #97: a dtk project built from a file that isn't on the retail disc
+                    raise ForkError(f"{mismatch}\n{tail}")
                 raise ForkError(f"setup step failed: {' '.join(cmd)}\n{tail}")
         if (self.root / "objdiff.json").exists() and self._all_source():
             log("compiling every source file, so objdiff can measure each one (some work in progress may not compile)")
             self.build_all(log=log)
         if not (self.root / "objdiff.json").exists():
+            self.generate_objdiff(version=version, log=log)
+        if not (self.root / "objdiff.json").exists():
             raise ForkError("the project built, but has no objdiff.json, so decompdecomp can't measure matches. "
                             "Some projects generate it with an extra step; check the README.")
+
+    def generate_objdiff(self, version: str | None = None, log=print) -> bool:
+        """Create missing, ROM-verified references for a supported Splat layout."""
+        if (self.root / "objdiff.json").exists():
+            return False
+        path = self._splat_yaml_for_version(version)
+        if path is None:
+            return False
+        import yaml
+        from elftools.common.exceptions import ELFError
+
+        from .. import consoles, toolchains
+
+        try:
+            config = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if not isinstance(config, dict) or not isinstance(config.get("options"), dict):
+                raise ForkError("automatic objdiff setup needs a supported Splat configuration")
+            return consoles.get(config["options"].get("platform")).generate_objdiff(
+                self, path, config, version=version, log=log)
+        except (OSError, ValueError, ELFError, yaml.YAMLError, subprocess.TimeoutExpired,
+                toolchains.ToolchainError) as error:
+            raise ForkError(f"automatic objdiff setup could not finish: {error}. Check the project's setup manually.") from None
 
     def build_problem(self) -> str | None:
         """Why the project's build can't run on this computer as it is, or None: no objdiff.json, or a program the

@@ -14,7 +14,6 @@ from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
 
-from decompnet import toolchains
 from decompnet.consoles.ps4.project_template.tools.compiler_flags import CL_FLAGS
 from decompnet.limits import capped
 
@@ -24,7 +23,11 @@ BUILD = HERE / "build"
 
 def main() -> None:
     """Write build/demo.json and the ELF/map used by console conformance tests."""
-    compiler = toolchains.binary("clang-5.0.2")
+    from decompnet.consoles.ps4.scratch import clang_path
+
+    compiler = clang_path()
+    if compiler is None:
+        raise SystemExit("install the pinned public Clang 5.0.2 in Compilers & tools first")
     linker = compiler.with_name("ld.lld")
     BUILD.mkdir(exist_ok=True)
     obj, game = BUILD / "game.o", BUILD / "demoquest.elf"

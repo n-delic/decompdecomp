@@ -13,7 +13,7 @@ import pytest
 
 from decompnet import agents as kinds
 from decompnet import network, scoring
-from decompnet.agents import antigravity, opencode
+from decompnet.agents import antigravity, opencode, zcode
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 
@@ -67,6 +67,135 @@ def test_opencode_errors_say_what_failed():
     assert kinds.get("antigravity").clean_stderr(agy) == "quota exhausted"
 
 
+def test_zcode_stream_json_is_read():
+    """zcode's --output-format stream-json: reasoning and text in deltas, a tool call, a failed tool result,
+    turn.failed, and the final result whose inputTokens include the cached input and cache writes."""
+    state: dict = {}
+    lines = [
+        {"type": "session.created", "sessionId": "sess_1", "payload": {"mode": "yolo"}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": "The user wants"}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": " to claim."}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_end"}},
+        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "Claiming "}},
+        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "the next one."}},
+        {"type": "model.streaming", "payload": {"kind": "text_end"}},
+        {"type": "model.streaming", "payload": {"kind": "tool_call", "toolName": "mcp__decomp__claim_function",
+                                                "input": {"count": 4}}},
+        {"type": "tool.updated", "payload": {"kind": "result", "result": {"success": False,
+                                                                           "error": "tool exploded"}}},
+        {"type": "turn.failed", "payload": {"error": {"message": "usage limit reached"}}},
+        {"type": "result", "sessionId": "sess_1", "usage": {"inputTokens": 100, "outputTokens": 10,
+                                                            "cacheReadTokens": 40, "cacheWriteTokens": 10,
+                                                            "modelRequestCount": 2}},
+    ]
+    out = [item for line in lines for item in kinds.get("zcode").parse_line(json.dumps(line), state)]
+    assert out == [("think", "The user wants to claim."), ("text", "Claiming the next one."),
+                   ("tool", "claim_function(4)"), ("error", "tool exploded"), ("error", "usage limit reached"),
+                   ("usage", json.dumps({"input": 50, "output": 10, "cache_read": 40, "cache_write": 10,
+                                         "turns": 2}))]
+    assert state["zcode_session"] == "sess_1"
+    assert kinds.get("zcode").parse_line(json.dumps({"type": "session.updated", "payload": {}})) == []
+    assert kinds.get("zcode").clean_stderr("Error: Model access is not configured. Run /login.") == \
+        "Model access is not configured. Run /login."
+    assert kinds.get("zcode").fatal("Unsupported reasoning effort: xhigh")
+
+
+def test_zcode_prompt_reaches_it_by_file_never_as_argv(tmp_path, monkeypatch):
+    """zcode has no stdin prompt: its prompt is a Markdown file the session attaches, so the text is never an
+    argument (and zcode cannot parse it as a slash command). Its settings file names only the app's MCP server."""
+    m = _manager(tmp_path, monkeypatch, "zcode")
+    s = agents.Session("zcode-1", "zcode", "z", "demo", "zcode-1",
+                       {"model": "account:zai-start-plan/GLM-5.3#high"})
+    work = tmp_path / "zcode"
+    work.mkdir()
+    cmd, env, stdin = m._command(s, "tok", work)
+    prompt = m.prompt(s)
+    assert stdin is None  # nothing for stdin: the prompt is in the attached file
+    assert (work / zcode.PROMPT_FILE).read_text(encoding="utf-8") == prompt
+    assert not any(prompt in arg or "line one" in arg for arg in cmd)
+    assert cmd[cmd.index("--attach") + 1] == str(work / zcode.PROMPT_FILE)
+    assert cmd[cmd.index("-p") + 1] == zcode.PROMPT_TEXT
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert cmd[cmd.index("--mode") + 1] == "yolo"
+    denied = set(cmd[cmd.index("--disallowed-tools") + 1].split())
+    assert {"Read", "Write", "Edit", "Bash", "WebFetch", "WebSearch"} <= denied
+    assert cmd[cmd.index("--model") + 1] == "account:zai-start-plan/GLM-5.3"
+    assert cmd[cmd.index("--effort") + 1] == "high"
+    assert not any("tok" in arg for arg in cmd)
+    settings = json.loads((work / zcode.SETTINGS_FILE).read_text(encoding="utf-8"))
+    assert list(settings["mcp"]["servers"]) == [zcode.MCP_SERVER]
+    assert settings["mcp"]["servers"][zcode.MCP_SERVER] == {
+        "type": "http", "url": "http://127.0.0.1:6464/mcp",
+        "headers": {"Authorization": "Bearer tok"}}
+    assert settings["plugins"]["enabled"] is False and settings["skills"]["enabled"] is False
+    assert env["ZCODE_CLI_SETTINGS_FILE"] == str(work / zcode.SETTINGS_FILE)
+
+
+def test_zcode_refuses_a_prompt_it_cannot_attach(tmp_path, monkeypatch):
+    """Past zcode's 25,000-token / 256 KiB attachment caps it stops inlining the prompt and gives the model a
+    path placeholder or a partial view; Read is disallowed, so the helper would work without its instructions.
+    Just under the cap the prompt is written and attached; over it, the session start fails before writing."""
+    under = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS - zcode.TOKEN_CHARS)
+    over = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS + zcode.TOKEN_CHARS)
+    assert zcode.estimated_tokens(under) == zcode.ATTACHMENT_TOKENS - 1
+    assert zcode.estimated_tokens(over) == zcode.ATTACHMENT_TOKENS + 1
+    under_work = tmp_path / "zcode-under"
+    under_work.mkdir()
+    path = zcode.ZCODE.prompt_file(under_work, under)
+    assert path == under_work / zcode.PROMPT_FILE and path.read_text(encoding="utf-8") == under
+    cmd, _ = zcode.ZCODE.session_command("zcode", under_work, "http://127.0.0.1:1/mcp", "tok", "")
+    assert cmd[cmd.index("--attach") + 1] == str(path)
+    over_work = tmp_path / "zcode-over"
+    over_work.mkdir()
+    with pytest.raises(ValueError, match="too long for zcode"):
+        zcode.ZCODE.prompt_file(over_work, over)
+    assert not (over_work / zcode.PROMPT_FILE).exists()
+    # the session start itself raises Fatal with the same sentence, before a process is launched
+    m = _manager(tmp_path, monkeypatch, "zcode")
+    m.prompt = lambda session: over
+    command_work = tmp_path / "zcode-command"
+    command_work.mkdir()
+    with pytest.raises(agents.Fatal, match="too long for zcode"):
+        m._command(agents.Session("zcode-1", "zcode", "z", "demo", "zcode-1", {}), "tok", command_work)
+    assert not any(command_work.iterdir())  # no prompt, no settings: the session start wrote nothing
+
+
+def test_zcode_refuses_a_prompt_over_its_byte_cap(tmp_path, monkeypatch):
+    """The 256 KiB cap is separate from the token cap: zcode would read only a 2000-line partial view."""
+    monkeypatch.setattr(zcode, "ATTACHMENT_TOKENS", 10**9)  # isolate the byte guard
+    work = tmp_path / "zcode-bytes"
+    work.mkdir()
+    with pytest.raises(ValueError, match="too long for zcode"):
+        zcode.ZCODE.prompt_file(work, "x" * (zcode.ATTACHMENT_BYTES + 1))
+    assert not (work / zcode.PROMPT_FILE).exists()
+
+
+def test_an_over_long_zcode_prompt_pauses_without_retrying(tmp_path, monkeypatch):
+    """The guard raises Fatal from _command: the runner pauses with the sentence instead of counting fast failures
+    and starting again."""
+    _no_agent_settings(monkeypatch)
+    fake = tmp_path / "bin" / "zcode"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(agents, "_which", lambda cmd: str(fake))
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    over = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS + zcode.TOKEN_CHARS)
+    m.prompt = lambda s: over
+    s = m._record("game", "zcode", "zcode-1", "zcode-1", {})
+    s.stop = Quick()
+    m._run(s)
+    assert s.state == "paused"
+    assert "too long for zcode" in s.why and "shorten" in s.why
+    assert s.runs == 1 and s.restarts == 0
+    assert s.stop.waits == []  # no backoff wait: Fatal broke the loop
+    rows = net.store.all("SELECT outcome FROM helper_sessions WHERE helper_id=?", s.id)
+    assert [r["outcome"] for r in rows] == ["paused"]
+    assert net.store.one("SELECT state FROM helpers WHERE id=?", s.id)["state"] == "paused"
+    assert any("paused:" in f["text"] and "too long for zcode" in f["text"] for f in s.feed)
+
+
 def test_opencode_2_starts_and_its_quota_error_says_so(tmp_path, monkeypatch):
     """opencode 2.0 takes `--log-level error` only, earlier versions `ERROR` only, and either stops the other at once
     (an `InvalidValue` stack trace, shown with "run opencode auth login" though the user was signed in). The command
@@ -91,9 +220,18 @@ def test_a_used_up_plan_waits_instead_of_stopping():
     assert agents.no_credit("Insufficient Balance") and not agents.LIMIT.search("Insufficient Balance")
 
 
+def test_a_concurrency_limit_is_a_throttle_not_a_plan_limit():
+    """Z.ai's Start Plan takes one request at a time: a second zcode helper, or the ZCode app in use, gets
+    "concurrency limit exceeded". It clears in a minute, so it waits THROTTLE_WAIT, not the plan's 15 minutes."""
+    said = "concurrency limit exceeded"
+    assert agents.THROTTLED.search(said) and not agents.LIMIT.search(said)
+    assert agents.THROTTLED.search("concurrency-limit exceeded") and not agents.LIMIT.search("concurrency-limit exceeded")
+
+
 def _manager(tmp_path, monkeypatch, kind):
     (tmp_path / "bin").mkdir(exist_ok=True)
-    exe = tmp_path / "bin" / {"claude": "claude", "codex": "codex", "antigravity": "agy", "opencode": "opencode"}[kind]
+    exe = tmp_path / "bin" / {"claude": "claude", "codex": "codex", "antigravity": "agy", "opencode": "opencode",
+                              "zcode": "zcode"}[kind]
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
@@ -105,7 +243,8 @@ def _manager(tmp_path, monkeypatch, kind):
 
 def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
     """On Windows, npm installs agents as .cmd scripts: cmd.exe cuts a multi-line argument at its first line break
-    and caps the command line at 8191 characters."""
+    and caps the command line at 8191 characters. zcode has no stdin prompt: its prompt is a file, checked in
+    test_zcode_prompt_reaches_it_by_file_never_as_argv."""
     for kind in ("claude", "codex", "antigravity", "opencode"):
         m = _manager(tmp_path, monkeypatch, kind)
         s = agents.Session(f"{kind}-1", kind, kind, "demo", f"{kind}-1", {"model": "some-model"})
@@ -127,6 +266,47 @@ def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
                                            "headers": {"Authorization": "Bearer tok"}}
 
 
+def test_the_windows_stdin_gate_survives_an_empty_prompt_but_not_a_prompt_file(tmp_path, monkeypatch):
+    """main always wrote (Windows' \\x01 gate +) the prompt, even when it was empty; winhelper.py waits for that gate
+    before starting the CLI. Only an agent that took its prompt by file writes nothing on stdin."""
+    class Stdin:
+        def __init__(self):
+            self.calls: list[str] = []
+            self.closed = False
+
+        def write(self, text):
+            self.calls.append(text)
+
+        def close(self):
+            self.closed = True
+
+    class Proc:
+        def __init__(self):
+            self.stdin = Stdin()
+
+    def written(prompt):
+        proc = Proc()
+        agents._feed_stdin(proc, prompt)
+        return "".join(proc.stdin.calls).encode("utf-8"), proc.stdin.closed
+
+    monkeypatch.setattr(agents.os, "name", "posix")
+    assert written("") == (b"", True)
+    assert written("line one\n") == (b"line one\n", True)
+    assert written(None) == (b"", True)  # a prompt-file agent: no prompt bytes, just close
+    monkeypatch.setattr(agents.os, "name", "nt")
+    assert written("") == (b"\x01", True)
+    assert written("line one\n") == (b"\x01line one\n", True)
+    assert written(None) == (b"\x01", True)  # the Windows gate only; zcode's prompt is in its file
+
+    # an empty prompt for a normal agent is a str (write the gate), not the None sentinel (no stdin)
+    m = _manager(tmp_path, monkeypatch, "claude")
+    m.prompt = lambda s: ""
+    work = tmp_path / "claude-empty"
+    work.mkdir()
+    _, _, stdin = m._command(agents.Session("claude-1", "claude", "c", "demo", "claude-1", {}), "tok", work)
+    assert stdin == ""
+
+
 def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_path, monkeypatch):
     """OpenCode Zen's free models refuse requests whose tools were taken out ("deny"); "ask" keeps them listed and
     `opencode run` rejects every ask. Models of other providers get "deny"."""
@@ -137,7 +317,10 @@ def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_pat
         work = tmp_path / f"oc-{rule}-{model.replace('/', '_')}"
         work.mkdir()
         m._command(s, "tok", work)
-        assert json.loads((work / "opencode.json").read_text())["permission"] == {"edit": rule, "bash": rule, "webfetch": rule}
+        config = json.loads((work / "opencode.json").read_text())
+        assert config["permission"] == {"edit": rule, "bash": rule, "webfetch": rule}
+        # a rejected ask ended the run: a free model's first `rg` ended its session, every session, 20 s in
+        assert config.get("experimental") == ({"continue_loop_on_deny": True} if rule == "ask" else None)
     # its own connection, with its own token, and nothing else: opencode 2's shared service ran the user's own
     # `decomp` server without the session's token, so every helper worked as the user's one chat agent
     for version, standalone in (("opencode v2.0.28", True), ("0.15.4", False)):  # opencode 2's shared service
@@ -236,12 +419,16 @@ def test_claude_offers_each_version_as_well_as_the_latest():
     assert agents.helper_name("claude", "opus", set()) == "claude-opus-1"  # the alias keeps its old record
 
 
-def test_every_helper_with_an_effort_offers_medium_to_max(tmp_path):
+def test_every_helper_with_an_effort_offers_the_levels_its_cli_supports(tmp_path):
     """The launcher offered max for opencode but not xhigh, xhigh for Codex but not max, and neither for the API
-    helper (a local llama.cpp model's template wants xhigh): each one that takes an effort offers all four now."""
+    helper (a local llama.cpp model's template wants xhigh): those offer all four now. zcode's GLM models offer
+    low/high/max only, so offering xhigh there would make every session fail on an unsupported effort."""
     for kind in kinds.AGENTS:
         if kind.takes_effort:
-            assert {"medium", "high", "xhigh", "max"} <= set(kind.describe()["efforts"]), kind.id
+            assert {"low", "high", "max"} <= set(kind.describe()["efforts"]), kind.id
+    for kind in ("claude", "codex", "opencode", "api"):
+        assert {"medium", "xhigh"} <= set(kinds.get(kind).efforts), kind
+    assert kinds.get("zcode").efforts == ("low", "high", "max")
     cmd, _ = kinds.get("codex").session_command("codex", tmp_path, URL, "token", "gpt-5.5#max")
     assert 'model_reasoning_effort="max"' in cmd
 
@@ -326,6 +513,32 @@ def test_helpers_are_records_that_outlive_the_app(tmp_path, quiet):
     assert net.store.one("SELECT COUNT(*) AS n FROM helpers")["n"] == 2
     later.remove(other)
     assert other not in later.sessions and net.store.one("SELECT COUNT(*) AS n FROM helpers")["n"] == 1
+
+
+def test_remove_paused_stops_and_deletes_only_paused_helpers_on_the_project(tmp_path, quiet):
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    paused_ids = [
+        m.start("claude", "game", 1, {"model": "paused-a"})[0],
+        m.start("claude", "game", 1, {"model": "paused-b"})[0],
+    ]
+    (working_id,) = m.start("claude", "game", 1, {"model": "working"})
+    (elsewhere_id,) = m.start("claude", "other", 1, {"model": "paused-elsewhere"})
+    for sid in paused_ids + [elsewhere_id]:
+        m.sessions[sid].state = "paused"
+        m._save(m.sessions[sid])
+    m.sessions[working_id].state = "working"
+    m._save(m.sessions[working_id])
+
+    assert m.remove_paused("game") == 2
+
+    assert all(sid not in m.sessions for sid in paused_ids)
+    assert working_id in m.sessions and m.sessions[working_id].state == "working"
+    assert elsewhere_id in m.sessions and m.sessions[elsewhere_id].state == "paused"
+    rows = net.store.all("SELECT id, state FROM helpers ORDER BY id")
+    assert {str(row["id"]): row["state"] for row in rows} == {
+        working_id: "working", elsewhere_id: "paused",
+    }
 
 
 def test_an_api_helper_starts_again_with_its_endpoints_key(tmp_path, quiet):
@@ -526,7 +739,10 @@ def test_when_a_usage_limit_resets_is_read_from_what_the_agent_said():
     sydney = datetime.fromtimestamp(reset("You've hit your session limit · resets 5am (Australia/Sydney)", now),
                                     ZoneInfo("Australia/Sydney"))
     assert (sydney.hour, sydney.minute) == (5, 0)
-    assert reset("quota resets at 2026-10-18T15:30:00Z", now) == datetime.fromisoformat("2026-10-18T15:30:00+00:00").timestamp()
+    # an ISO time in UTC, two and a half hours after `now` wherever the tests run: 15:30Z was in the past on a computer
+    # whose 13:00 is later than 15:30 UTC (America/New_York: 17:00 UTC), and a reset in the past is none
+    later = (noon + timedelta(hours=2, minutes=30)).astimezone(timezone.utc)
+    assert reset(f"quota resets at {later:%Y-%m-%dT%H:%M:%SZ}", now) == later.timestamp()
     for vague in ("quota exhausted", "resets 3", f"usage limit reached|{int(now) + 365 * 86400}"):
         assert reset(vague, now) is None, vague
 
@@ -711,6 +927,38 @@ def test_the_api_helper_sends_a_thinking_models_reasoning_back(tmp_path, monkeyp
     assert turns[0]["reasoning_content"] == "The smallest function first." and "reasoning_content" not in turns[1]
 
 
+
+def test_the_api_helper_asks_again_after_a_dropped_request_keeping_its_conversation(tmp_path, monkeypatch):
+    """#154: behind a laggy gateway, one 502 or dropped connection ended the session, and the next one started the
+    function over, again and again. They're asked again in place, after a wait, with the same conversation."""
+    import httpx
+
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path, functions=1)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m", "per_session": 1,
+                                                       "context_tokens": 32768})
+    s.stop = Quick()
+    monkeypatch.setattr(agents.tools, "call", lambda net, agent, slug, name, args: "## CLAIMED: game/f0")
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content)["messages"])
+        if len(sent) == 2:
+            return httpx.Response(502, text="Bad Gateway")
+        if len(sent) == 3:
+            raise httpx.ReadTimeout("the gateway took too long")
+        if len(sent) > 4:
+            s.stop.set()
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+            {"id": f"c{len(sent)}", "type": "function", "function": {"name": "claim_function", "arguments": "{}"}}]}}]})
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    m._run(s)
+    assert sent[1] == sent[2] == sent[3] and len(sent[1]) > len(sent[0])
+    assert s.stop.waits[:2] == [10, 20] and s.runs == 1
+
 def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     """The Agents view says what each model cost on a game, to tell which models to run more of: cheapest per match
     first, models that matched nothing last."""
@@ -743,17 +991,107 @@ def test_a_model_spinning_on_a_game_gets_advice_to_weigh_not_an_order(tmp_path, 
                        "matches) VALUES(1, 'game', 'claude', ?, 'a', ?, ?, ?, ?)", (model, at, usd, compiles, matches))
     rows = {r["model"]: r for r in m.costs("game")}
     said = rows["claude-haiku"]["advice"]
+    assert rows["claude-haiku"]["advice_model"] == "claude-haiku"  # the GUI dismisses this model's advice by name
     assert said.startswith("In the last day claude-haiku's helpers here made 5,741 compiles for 10 matches, $13.81 a match")
     assert "claude-opus's needed about 46 compiles a match, $7.67 a match" in said
     assert "may be past what claude-haiku does well: claude-opus could get further, for less" in said
     assert "You might give claude-haiku fewer helpers here." in said
-    assert rows["claude-opus"]["advice"] == ""
+    assert rows["claude-opus"]["advice"] == "" and rows["claude-opus"]["advice_model"] == ""
     # one model alone: no comparison, a stronger one in general; a model that does fine alone: nothing
     alone = agents.spin_advice([{"kind": "claude", "model": "claude-haiku", "usd": 30.0, "compiles": 900, "matches": 0}])
     assert alone[("claude", "claude-haiku")].endswith("for no matches. What's left of this game may be past what "
                                                       "claude-haiku does well: a stronger model could get further.")
     assert agents.spin_advice([{"kind": "api", "model": "m", "usd": 0, "compiles": 900, "matches": 30}]) == {}
     assert agents.spin_advice([{"kind": "api", "model": "m", "usd": 0, "compiles": 150, "matches": 0}]) == {}  # too few
+
+
+def test_polishing_sessions_dont_make_a_model_look_like_its_spinning(tmp_path, quiet):
+    """A model run only to polish an Xbox game was told its 1,282 compiles of a day had made no match: polishing
+    compiles matched code and matches nothing new. Sessions keep their helper's task, those from before it was kept
+    too, and only decompiling ones count for the advice."""
+    import time
+
+    net = _game(tmp_path)
+    now = time.time()
+    with net.store.tx() as db:
+        db.execute(agents.SCHEMA[0])  # helpers
+        db.execute("DROP TABLE IF EXISTS helper_sessions")
+        db.execute(agents.SCHEMA[1].replace(", task TEXT NOT NULL DEFAULT ''", ""))  # before sessions kept their task
+        db.execute("INSERT INTO helpers(id, project, kind, model, name, label, options, state) VALUES "
+                   "(1, 'game', 'claude', 'sonnet', 'claude-sonnet-1', 's', '{\"model\": \"sonnet\", \"task\": \"readable\"}', "
+                   "'stopped'), (2, 'game', 'claude', 'opus', 'claude-opus-1', 'o', '{\"model\": \"opus\"}', 'stopped'), "
+                   "(4, 'game', 'claude', 'haiku', 'claude-haiku-1', 'h', '', 'stopped')")  # options no JSON: none
+        for helper, model, agent, usd, compiles, matches in (
+                (1, "sonnet", "claude-sonnet-1", 20.0, 1282, 0), (2, "opus", "claude-opus-1", 104.4, 650, 10),
+                (4, "haiku", "claude-haiku-1", 1.0, 10, 0)):
+            db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, compiles, "
+                       "matches) VALUES(?, 'game', 'claude', ?, ?, ?, ?, ?, ?)", (helper, model, agent, now - 3600, usd,
+                                                                                  compiles, matches))
+    m = agents.Manager(net, tmp_path, URL)
+    assert {r["model"]: r["task"] for r in net.store.all("SELECT model, task FROM helper_sessions")} == \
+        {"sonnet": "readable", "opus": "", "haiku": ""}
+    rows = {r["model"]: r for r in m.costs("game")}
+    assert rows["sonnet"]["advice"] == "" and rows["sonnet"]["compiles"] == 1282  # still in what it spent
+    # a decompiling helper of the same model, spinning: that one counts
+    with net.store.tx() as db:
+        db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, compiles, matches) "
+                   "VALUES(3, 'game', 'claude', 'sonnet', 'b', ?, 900, 0)", (now - 60,))
+    said = {r["model"]: r for r in m.costs("game")}["sonnet"]["advice"]
+    assert said.startswith("In the last day sonnet's helpers here made 900 compiles for no matches")
+
+
+def test_a_session_says_the_task_its_helper_was_started_with(tmp_path, quiet):
+    """The advice reads the task each session wrote when it began: a polishing helper's sessions say readable, a
+    decompiling helper's say nothing. Every session inserted by hand, a _session_begin that wrote "" passed."""
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    for name, options, task in (("claude-opus-1", {"model": "opus", "task": "readable"}, "readable"),
+                                ("claude-opus-2", {"model": "opus"}, "")):
+        s = m._record("game", "claude", name, "opus", options)
+        row = m._session_begin(s)
+        assert net.store.one("SELECT task FROM helper_sessions WHERE id=?", row)["task"] == task
+    assert [r["task"] for r in net.store.all("SELECT task FROM helper_sessions ORDER BY id")] == ["readable", ""]
+
+
+def test_a_reused_helper_id_doesnt_give_an_old_session_another_helpers_task(tmp_path, quiet):
+    """helpers.id has no AUTOINCREMENT, so a removed helper's id goes to the next helper: matching an old session by
+    id alone made a sonnet session stand as a new polishing helper's, hiding the sonnet helper's spinning. A session
+    matches its helper by id, project and name."""
+    net = _game(tmp_path)
+    now = time.time()
+    with net.store.tx() as db:
+        db.execute(agents.SCHEMA[0])  # helpers
+        db.execute("DROP TABLE IF EXISTS helper_sessions")
+        db.execute(agents.SCHEMA[1].replace(", task TEXT NOT NULL DEFAULT ''", ""))  # before sessions kept their task
+        db.execute("INSERT INTO helpers(id, project, kind, model, name, label, options, state) VALUES "
+                   "(1, 'game', 'claude', 'haiku', 'claude-haiku-1', 'h', '{\"model\": \"haiku\"}', 'stopped'), "
+                   "(2, 'game', 'claude', 'sonnet', 'claude-sonnet-1', 's', '{\"model\": \"sonnet\"}', 'stopped')")
+        db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, compiles, matches) "
+                   "VALUES(2, 'game', 'claude', 'sonnet', 'claude-sonnet-1', ?, 900, 0)", (now - 3600,))
+        db.execute("DELETE FROM helpers WHERE id=2")  # its record is removed
+        rid = db.execute("INSERT INTO helpers(project, kind, model, name, label, options, state) VALUES "
+                         "('game', 'claude', 'opus', 'claude-opus-1', 'o', '{\"model\": \"opus\", \"task\": "
+                         "\"readable\"}', 'stopped')").lastrowid
+        assert rid == 2  # SQLite gives the removed helper's id to the new polishing helper
+    m = agents.Manager(net, tmp_path, URL)
+    assert net.store.one("SELECT task FROM helper_sessions WHERE model='sonnet'")["task"] == ""
+    said = {r["model"]: r for r in m.costs("game")}["sonnet"]["advice"]
+    assert said.startswith("In the last day sonnet's helpers here made 900 compiles for no matches")
+
+
+def test_a_session_whose_helper_is_gone_has_no_task_to_take(tmp_path, quiet):
+    """A session from before tasks were kept whose helper's record was removed has none to take: it stays blank, so
+    it counts as decompiling rather than borrowing another helper's task."""
+    net = _game(tmp_path)
+    now = time.time()
+    with net.store.tx() as db:
+        db.execute(agents.SCHEMA[0])  # helpers
+        db.execute("DROP TABLE IF EXISTS helper_sessions")
+        db.execute(agents.SCHEMA[1].replace(", task TEXT NOT NULL DEFAULT ''", ""))  # before sessions kept their task
+        db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, compiles, matches) "
+                   "VALUES(7, 'game', 'claude', 'sonnet', 'claude-sonnet-1', ?, 900, 0)", (now - 3600,))
+    agents.Manager(net, tmp_path, URL)
+    assert net.store.one("SELECT task FROM helper_sessions")["task"] == ""
 
 
 def test_codex_and_api_helpers_take_an_effort_too(tmp_path, monkeypatch):

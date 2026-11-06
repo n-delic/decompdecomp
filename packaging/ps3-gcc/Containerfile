@@ -1,0 +1,38 @@
+# Sony's PS3 PPU compiler (ppu-lv2-gcc, GCC 4.1.1) built from the GPL sources Sony published, for linux-x86_64.
+# Why a container: GCC 4.1.1 only builds with a compiler of its own era. Debian jessie (GCC 4.9) is the base the
+# public matching projects used. Run it through build.sh, which checks the source archive first.
+# The base is pinned by digest; jessie's apt archive is gone, so apt reads Debian's dated snapshot of it.
+FROM docker.io/library/debian@sha256:23f6c1ca631220b4a17c659e70e4c20092965590b406b1fb02780475680622f4 AS build
+RUN printf '%s\n' \
+    'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20210326T030000Z jessie main' \
+    'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20210326T030000Z jessie/updates main' \
+    > /etc/apt/sources.list \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get install -y --no-install-recommends --force-yes build-essential texinfo flex bison xz-utils file
+ARG GEN
+COPY src.tar.gz /src.tar.gz
+RUN mkdir /src && tar xzf /src.tar.gz -C /src --strip-components=1
+# Sony's script installs under CELLSDK and needs csh; the same steps (binutils, then GCC with its C and C++ front
+# ends) run here directly, with a prefix of our own. CC, not CFLAGS (xgcc would inherit them): -std=gnu89, 4.1-era C is not C99-clean.
+ENV PREFIX=/opt/ppu-lv2-gcc-${GEN} CC="gcc -std=gnu89 -fgnu89-inline -w"
+RUN mkdir /b-bin /b-gcc \
+ && cd /b-bin && /src/binutils/configure --target=ppu-lv2 --prefix=$PREFIX --disable-nls --disable-werror \
+ && make -j"$(nproc)" MAKEINFO=true && make install MAKEINFO=true
+ENV PATH=/opt/ppu-lv2-gcc-${GEN}/bin:$PATH
+RUN cd /b-gcc && /src/gcc/configure --target=ppu-lv2 --prefix=$PREFIX --disable-nls --disable-shared \
+      --disable-libssp --disable-libmudflap --disable-libgomp --enable-languages=c,c++ --without-headers \
+# libgcc and the crt files can't build (Sony's build removes stddef.h and friends, the SDK's own headers stand in
+# for them), and the app compiles to objects and links itself, so -k builds everything else and the test checks it.
+ && (make -k -j"$(nproc)" all-gcc MAKEINFO=true || true) && test -x gcc/cc1 -a -x gcc/cc1plus -a -x gcc/xgcc \
+ && (make -k install-gcc MAKEINFO=true || true) && test -x $PREFIX/bin/ppu-lv2-gcc \
+ && cd /tmp && echo 'int f(int a){return a*3;}' > t.c && ppu-lv2-gcc -O2 -c t.c && file t.o | grep -q 'MSB relocatable, 64-bit PowerPC'
+# The pack: the binaries, the exact source (the GPL asks for it), the licences and a note of how it was made.
+COPY SOURCE.txt /tmp/SOURCE.txt
+RUN D=$PREFIX/share/doc/ppu-lv2-gcc && mkdir -p $D && cd /src \
+ && cp gcc/COPYING gcc/COPYING.LIB $D/ && cp binutils/COPYING $D/COPYING.binutils \
+ && cp /tmp/SOURCE.txt $D/SOURCE.txt && cp /src.tar.gz $D/ps3gcc-source.tar.gz \
+ && rm -rf $PREFIX/man $PREFIX/share/man $PREFIX/share/info \
+ && cd /opt && tar cf - ppu-lv2-gcc-${GEN} | xz -9e > /ppu-lv2-gcc-${GEN}.tar.xz
+FROM scratch AS out
+ARG GEN
+COPY --from=build /ppu-lv2-gcc-${GEN}.tar.xz /

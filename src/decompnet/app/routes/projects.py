@@ -31,7 +31,12 @@ def register(app: App) -> None:
             data = await body(request) if request.method == "POST" else {}
             slug = data.get("slug") or request.query_params.get("slug", "")
             try:
-                return JSONResponse(await call(lambda: fn(slug, request, data)))
+                def perform():
+                    result = fn(slug, request, data)
+                    if request.method == "POST" and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                        net.progress.sync(slug, force=True)
+                    return result
+                return JSONResponse(await call(perform))
             except (NetworkError, ValueError, toolchains.ToolchainError, OSError) as e:
                 return fail(e)
         return handler

@@ -1,6 +1,7 @@
 """The GUI's own logic, run in node against a stand-in for the page (tests/gui_polls.js): no browser needed."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +11,18 @@ import pytest
 
 NODE = shutil.which("node")
 GUI_TIMEOUT_SECONDS = 60
+
+
+def test_the_game_picker_stays_above_existing_project_cards():
+    """Returning users need to see the new game's details without scrolling past their projects."""
+    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    home = html.split('<main id="home"', 1)[1].split('</main>', 1)[0]
+    assert home.index('class="hero"') < home.index('id="recent"')
+    css = (static / "app.css").read_text(encoding="utf-8")
+    for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if "#recent" in selector or ".hero" in selector:
+            assert not re.search(r"(?:^|;)\s*order\s*:", declarations), selector
 
 
 def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome():
@@ -26,12 +39,32 @@ def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_launcher.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
+    """A poll that brought one better score redrew all of a big game's map (28,900 cells), and every frame of the
+    working functions' pulse copied the whole canvas; the project list's asks piled up behind a slow one, and the live
+    poll went on in a minimised window (tests/gui_map.js)."""
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_map.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 @pytest.fixture(scope="module")
 def gui():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
+    from decompnet.consoles import CONSOLES
+
+    env = {**os.environ, "GUI_CONSOLES": json.dumps([c.describe() for c in CONSOLES])}  # (/api/state's)
     out = subprocess.run([NODE, str(Path(__file__).with_name("gui_polls.js"))], capture_output=True, text=True,
-                         timeout=GUI_TIMEOUT_SECONDS, check=True)
+                         timeout=GUI_TIMEOUT_SECONDS, check=True, env=env)
     result = json.loads(out.stdout)
     assert result["errors"] == []
     return result
@@ -41,6 +74,21 @@ def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     nds = gui["checks"]["nds"]
     assert nds["good"] == ["nds", "ADQE", "DEMOQUESTDS"]
     assert nds["broken"] is None and "checksum" in nds["said"]
+    xbox = gui["checks"]["xbox"]
+    assert xbox["good"] == ["xbox", "Xbox program (XBE)"] and xbox["misaligned"] is None
+    assert xbox["iso"] == xbox["dump"] == "xbox" and xbox["plain"] is None and "Xbox 360" in xbox["x360"]
+
+
+def test_a_ps3_program_is_taken_and_its_encrypted_eboot_says_what_to_do(gui):
+    ps3 = gui["checks"]["ps3"]
+    assert ps3["good"] == ["ps3", "ELF program", 0x13000] and ps3["self"] is None
+    assert "SELF" in ps3["said"] and "decrypt your own copy" in ps3["said"] and "EBOOT.ELF" in ps3["said"]
+
+
+def test_a_gba_rom_is_told_by_its_header_as_the_server_tells_it(gui):
+    gba = gui["checks"]["gba"]
+    assert gba["good"] == ["gba", "ADQE", "DEMOQUEST"]
+    assert gba["broken"] is None and "Game Boy Advance" in gba["said"]
 
 
 def test_an_effort_goes_only_to_an_agent_that_offers_it(gui):
@@ -86,6 +134,24 @@ def test_the_autopilots_run_and_its_summary_are_one_notification(gui):
     assert agent == "claude-1 matched func_3" and alone.startswith("Autopilot: 0 of 1")
 
 
+def test_stopped_helpers_claims_do_not_read_as_agents_working(gui):
+    """#99: the permuter claims a function for half an hour and its claim outlives the helper and a restart, so the
+    header still said "1 agent working" with every helper stopped. The app's own workers (the permuter, the
+    autopilot, decompdecomp, and a room host's) aren't agents anyone started; another computer's helper still is."""
+    agents = gui["checks"]["agents"]
+    assert agents["ownOnly"] == agents["nameless"] == 0
+    assert agents["outside"] == 1
+
+
+def test_a_helper_going_between_waiting_and_working_does_not_reorder_the_rows(gui):
+    """#99: with four API helpers on one project the rows jumped every time one went from waiting to working (or
+    back), so following one agent with the eye was impossible. Live helpers keep their name order; only starting or
+    stopping one moves it, and decompiling helpers still come before polishing ones."""
+    agents = gui["checks"]["agents"]
+    assert agents["flipped"] == agents["again"] == ["alpha", "beta"]
+    assert agents["rows"] == ["working-one", "stopped-one", "polishing", "paused-one"]
+
+
 def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui):
     """Searching "ma" listed every function of the segment "main". A ROM's segment counts only when no name or address
     has the text; a fork's source file is shown in the list, so it always counts there."""
@@ -98,6 +164,31 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
     """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
     assert gui["checks"]["themes"] == ["light", "dark", ""]
     assert gui["checks"]["systemThemes"] == ["", "light", "dark", ""]
+
+
+def test_model_advice_is_dismissed_by_model_for_a_day_and_stays_hidden_as_its_counts_move(gui):
+    """#131: the advice box came back on every poll, with every model's paragraph, and pushed the helpers off the
+    screen. Its close button remembers the models it dismissed for that project: their advice stays away while its
+    live counts change, another model's advice still shows, another project has its own dismissals, and after a day
+    the advice may show again."""
+    advice = gui["checks"]["advice"]
+    assert advice["shown"]["hidden"] is False and "100 compiles" in advice["shown"]["text"]
+    assert advice["dismissed"]["hidden"] is True
+    assert list(advice["dismissed"]["stored"]) == ["model-a"]
+    assert isinstance(advice["dismissed"]["stored"]["model-a"], (int, float))
+    assert advice["sameModel"] == {"hidden": True, "text": ""}
+    assert advice["otherProject"]["hidden"] is False and "900 compiles" in advice["otherProject"]["text"]
+    assert advice["otherModel"]["hidden"] is False and "stronger model" in advice["otherModel"]["text"]
+    assert advice["expired"]["hidden"] is False and "900 compiles" in advice["expired"]["text"]
+
+
+def test_an_unknown_compiler_says_the_project_was_made_with_another_tool(gui):
+    """#118: a project from another tool names a compiler decompdecomp doesn't have. The banner called it a compiler
+    with no build for this computer; it says what it is and where to pick one decompdecomp has."""
+    said = gui["checks"]["unknownCompiler"]
+    assert said["hidden"] is False and said["className"] == "notice bad"
+    assert "msvcxx-x86_64 isn't a compiler decompdecomp has" in said["text"] and "another tool" in said["text"]
+    assert "Settings" in said["text"] and "no build for this computer" not in said["text"]
 
 
 def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_its_system_cnf(gui):
@@ -158,10 +249,22 @@ def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui)
     from decompnet.consoles.pc import scratch
 
     packs = gui["checks"]["pcPack"]
-    for head, pack, offered in packs:
+    for head, pack, offered, target in packs:
         built = scratch.describe(bytes.fromhex(head))
         assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
-    assert [p for _, p, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc"]
+        assert target == "x86"  # (a 32-bit program: its import lists 32-bit compilers only, next)
+    assert [p for _, p, _, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc",
+                                        "msvc2015", "msvc2015", "msvc2005", "msvc2015", "msvc2015"]
+
+
+def test_a_pc_game_dropped_before_the_page_loaded_is_offered_its_pack_and_32_bit_compilers(gui):
+    """Review of #138: the drop read a program before the page's state arrived, whose PC table names the pack (pcPack),
+    so a 2017 game dropped early was offered 6.0-7.1's; and the import's dialog listed MSVC/14.16-x64 for a 32-bit
+    program, which can never match it. Run through the page's own pickFile and setupCompilers."""
+    drop = gui["checks"]["pcDrop"]
+    assert drop["pack"] == "msvc2015"
+    assert "MSVC/6.0" in drop["options"] and "MSVC/14.16" in drop["options"], drop
+    assert not any(option.endswith("-x64") for option in drop["options"]), drop
 
 
 def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
@@ -178,5 +281,20 @@ def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
     assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS
 
 
+def test_linux_vm_setup_shows_readiness_and_uses_progress():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
 def test_ps4_decrypted_executables_are_accepted_but_other_elfs_are_not(gui):
     assert gui["checks"]["ps4"] == ["ps4", "ps4", None, None]
+
+
+def test_a_ps4_drop_never_requests_codewarrior_and_explains_host_restrictions(gui):
+    for drop in gui["checks"]["ps4Drop"]["drops"]:
+        assert drop["pack"] == "" and not drop["consent"] and not drop["disabled"]
+        assert "free" in drop["note"] and "Clang 5.0.2" in drop["note"]
+        assert drop["extras"] == ["game.functions.jsonl"]
+    unsupported = gui["checks"]["ps4Drop"]["unsupported"]
+    assert unsupported["disabled"] and not unsupported["consent"] and "WSL 2" in unsupported["note"]

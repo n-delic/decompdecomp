@@ -34,6 +34,26 @@ SCHEMA = (
     """CREATE TABLE IF NOT EXISTS knowledge_support(
       knowledge_id INTEGER NOT NULL, agent_id INTEGER NOT NULL, model TEXT NOT NULL, created_at REAL NOT NULL,
       UNIQUE(knowledge_id, agent_id))""",
+    # a project's accepted knowledge is in its progress folder's manifest (progress.py)
+    """CREATE TRIGGER IF NOT EXISTS progress_dirty_knowledge_insert AFTER INSERT ON knowledge
+    WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+    BEGIN
+      INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+      UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
+    END""",
+    """CREATE TRIGGER IF NOT EXISTS progress_dirty_knowledge_update
+    AFTER UPDATE OF project_id,text,status ON knowledge
+    WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+    BEGIN
+      INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+      UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
+    END""",
+    """CREATE TRIGGER IF NOT EXISTS progress_dirty_knowledge_delete AFTER DELETE ON knowledge
+    WHEN EXISTS (SELECT 1 FROM projects WHERE id=OLD.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+    BEGIN
+      INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(OLD.project_id);
+      UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=OLD.project_id;
+    END""",
 )
 PROPOSED, AGREED, ACCEPTED, REJECTED = "proposed", "agreed", "accepted", "rejected"
 

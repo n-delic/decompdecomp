@@ -72,6 +72,8 @@ _SIGNIN = re.compile(r"auth|log ?in|sign(ed)? ?in|credential|api.?key|unauthori[
 # with 2 per session that was most of what small functions cost.
 PER_SESSION = 8
 MAX_AT_ONCE = 8  # helpers started with one click
+MAX_PER_START = 24  # helpers one start may begin in total, across the models it picks: without it, many models at once
+                    # would launch hundreds (a start used to check only each endpoint's own max_sessions)
 FEED_LINES = 400  # what each helper said and did, kept for its details
 FEED_TEXT = 4000  # characters of one feed line
 LAST_WORDS = 600  # characters of the agent's last message kept on its record
@@ -132,7 +134,7 @@ SCHEMA = (
       output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0,
       cache_write_tokens INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0,
       turns INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, compiles INTEGER NOT NULL DEFAULT 0,
-      matches INTEGER NOT NULL DEFAULT 0)""",
+      matches INTEGER NOT NULL DEFAULT 0, task TEXT NOT NULL DEFAULT '')""",
     "CREATE INDEX IF NOT EXISTS idx_helper_sessions_model ON helper_sessions(project, model)",
 )
 TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")  # what agents report, as `usage` items say it
@@ -148,7 +150,8 @@ SPIN_MATCHES = 3
 
 
 # what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login")
-_SIGNED_OUT = re.compile(r"not logged in|run /login|invalid api key|not authenticated|please (?:log|sign) ?in|"
+_SIGNED_OUT = re.compile(r"not logged in|run /login|run ['\"]?(?:agent|kimi) login|no model configured|"
+                         r"authentication required|invalid api key|not authenticated|please (?:log|sign) ?in|"
                          r"auth(?:entication)? method", re.I)
 # and when its sign-in stopped working (Claude Code, exit code 1 at once, nothing done: "Failed to authenticate: OAuth
 # session expired and could not be refreshed", its message marked "error": "authentication_failed"). Read as a plain
@@ -166,12 +169,13 @@ AUTH_WAIT = 60  # seconds before the first try again, doubling
 _NO_CREDIT = re.compile(r"insufficient[ _](?:balance|credits?|funds|quota)|exceeded your current quota|"
                         r"credit balance is too low|payment required|out of credits?", re.I)
 # and when it's asked too much at once (HTTP 429): it works again in a while
-THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency limit|\b429\b|overloaded", re.I)
+THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency[ _-]?limit|\b429\b|overloaded", re.I)
 # and when a subscription's allowance is used up for now (Claude Code: "usage limit reached", "You've hit your
 # session limit", Codex: "You've hit your usage limit", Antigravity: RESOURCE_EXHAUSTED, OpenCode Go: "quota
 # exceeded"): it resets by itself in hours, so a helper waits for it instead of stopping (a night's run lost most of
 # its helpers that way; Claude Code's "session limit" wording once paused them as five fast failures)
-LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate_)limit (?:reached|exceeded)|"
+LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate_)(?<!concurrency )"
+                    r"(?<!concurrency-)(?<!concurrency_)limit (?:reached|exceeded)|"
                     r"hit your (?:(?!rate\b)[\w-]+ )?limit|quota[ _](?:exceeded|exhausted)|resource[ _]exhausted|"
                     r"out of (?:usage|messages)", re.I)
 # When a limit resets, as agents say it. Claude Code: "usage limit reached|1792140000" (seconds since 1970), or
@@ -263,6 +267,7 @@ def _which(cmd: str) -> str | None:
     if os.name == "nt":
         directories.append(Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "npm")
         directories.append(Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "agy" / "bin")
+        directories.append(Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "cursor-agent")
     for d in directories:
         if os.name == "nt":
             found = shutil.which(cmd, path=str(d))
@@ -296,6 +301,24 @@ def detect(quick: bool = False) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------------- sessions
+
+def _stdin_payload(prompt: str | None) -> str | None:
+    """What to write to a helper's stdin. None means its prompt went in a file (zcode's --attach), so write no
+    prompt text and just close the pipe. On Windows, winhelper.py still needs its \x01 gate before it starts the
+    CLI; that gate is app plumbing, not prompt text, and must arrive even for an empty (or file) prompt."""
+    gate = "\x01" if os.name == "nt" else ""
+    if prompt is None:
+        return gate or None
+    return gate + prompt
+
+
+def _feed_stdin(proc: subprocess.Popen, prompt: str | None) -> None:
+    """Write `_stdin_payload(prompt)` and close the pipe, so the agent sees end of input."""
+    payload = _stdin_payload(prompt)
+    if payload is not None:
+        proc.stdin.write(payload)
+    proc.stdin.close()
+
 
 def _fresh_usage() -> dict:
     return {"usd": 0.0, "tokens": 0, "turns": 0, "tool_calls": 0} | {k: 0 for k in TOKEN_KINDS}
@@ -479,6 +502,18 @@ class Manager:
         with net.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
+            if "task" not in {r[1] for r in db.execute("PRAGMA table_info(helper_sessions)")}:
+                # Sessions from before it was kept take their helper's task now, while its record is there. Ids are
+                # reused (helpers.id has no AUTOINCREMENT), so the helper must also be the session's project and
+                # agent name: by id alone an old session took a new helper's task. A helper switched from polishing
+                # to decompiling counts its polishing as decompiling until it ages out of SPIN_WINDOW. Its options
+                # may not be JSON (an empty value, which _restore reads as no options): json_extract of one stopped
+                # the app from starting, so json_valid guards it.
+                db.execute("ALTER TABLE helper_sessions ADD COLUMN task TEXT NOT NULL DEFAULT ''")
+                db.execute("UPDATE helper_sessions SET task=COALESCE((SELECT CASE WHEN json_valid(h.options) THEN "
+                           "json_extract(h.options, '$.task') END FROM helpers h "
+                           "WHERE h.id=helper_sessions.helper_id AND h.project=helper_sessions.project "
+                           "AND h.name=helper_sessions.agent), '')")
         self._restore()
         self.refresh_detected()
 
@@ -692,18 +727,33 @@ class Manager:
             db.execute("DELETE FROM helpers WHERE id=?", (sid,))
         self.sessions.pop(sid, None)
 
+    def remove_paused(self, slug: str) -> int:
+        """Forget only paused helpers on this project, without removing one restarted meanwhile."""
+        with self._lock:
+            paused = [s.id for s in self.sessions.values() if s.slug == slug and s.state == "paused"]
+            for sid in paused:
+                self.remove(sid)
+        return len(paused)
+
     def costs(self, slug: str) -> list[dict]:
         """What each model's helpers spent on a project and what they matched (helper_sessions): which models to run
         more of. Cheapest per match first; models with no match last. A model spinning in the last SPIN_WINDOW gets
-        `advice` (spin_advice)."""
+        `advice` (spin_advice) and the `advice_model` it is about, from its decompiling sessions only: polishing
+        compiles matched code and matches nothing new, so a model run only to polish an Xbox game was told its 1,282
+        compiles of a day had made no match. The GUI dismisses advice by model (#131): its sentence carries counts that
+        change as helpers work."""
         query = ("SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS "
-                 "matches, SUM(compiles) AS compiles FROM helper_sessions WHERE project=? AND started_at >= ? "
+                 "matches, SUM(compiles) AS compiles FROM helper_sessions WHERE project=? AND started_at >= ? {} "
                  "GROUP BY kind, model")
-        rows = self.net.store.all(query, slug, 0)
-        recent = [dict(r) for r in self.net.store.all(query, slug, time.time() - SPIN_WINDOW)]
+        rows = self.net.store.all(query.format(""), slug, 0)
+        recent = [dict(r) for r in self.net.store.all(query.format("AND task != 'readable'"), slug,
+                                                      time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
-        out = [dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0,
-                          "advice": advice.get((r["kind"], r["model"]), "")} for r in rows]
+        out = []
+        for r in rows:
+            said = advice.get((r["kind"], r["model"]), "")
+            out.append(dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0,
+                                  "advice": said, "advice_model": (r["model"] or r["kind"]) if said else ""})
         # a model without a price (the API helper counts only tokens) isn't free: priced models by dollars a match,
         # then the rest by tokens a match, then those that matched nothing
         return sorted(out, key=lambda r: (r["matches"] == 0, r["usd"] == 0,
@@ -1020,9 +1070,9 @@ class Manager:
     def _session_begin(self, s: Session) -> int:
         s.usage = _fresh_usage()
         with self.net.store.tx() as db:
-            return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at) "
-                              "VALUES(?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
-                                                      s.agent_name, time.time())).lastrowid
+            return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task) "
+                              "VALUES(?,?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
+                                                        s.agent_name, time.time(), s.options.get("task") or "")).lastrowid
 
     def _session_end(self, s: Session, row: int, agent, began: float, outcome: str) -> None:
         """What a session did and spent, on its row: to compare models on cost per match."""
@@ -1071,19 +1121,28 @@ class Manager:
         return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
 
-    def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str]:
-        """The agent's command line, environment and what goes in on stdin (the prompt). Each helper connects only to
-        this app's own MCP server, with its own token."""
+    def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str | None]:
+        """The agent's command line, environment and what goes in on stdin (the prompt; None when its prompt went in
+        a file). Each helper connects only to this app's own MCP server, with its own token."""
         k = agents.get(s.kind)
         exe = _which(k.command)
         if not exe:
             raise RuntimeError(f"{k.name} is not installed")
+        # zcode has no stdin prompt: its session command attaches a file, and this writes the prompt into it. Every
+        # other agent leaves prompt_file at None and keeps getting the prompt on stdin. Written before the command:
+        # a prompt zcode cannot attach fails the session before its settings file exists, and pauses the helper
+        # instead of retrying a prompt only the user can shorten.
+        prompt = self.prompt(s)
+        try:
+            prompt_file = k.prompt_file(workdir, prompt)
+        except ValueError as e:
+            raise Fatal(str(e)) from e
         cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
-        cmd = agents.cli_argv(cmd)
+        cmd = k.launch_command(agents.cli_argv(cmd))
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
-        return cmd, env, k.stdin(self.prompt(s))
+        return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
         k = agents.get(s.kind)
@@ -1119,8 +1178,7 @@ class Manager:
 
         def feed_prompt():
             try:
-                proc.stdin.write(("\x01" if os.name == "nt" else "") + prompt)
-                proc.stdin.close()  # end of input: the agent works on this one prompt, then exits
+                _feed_stdin(proc, prompt)
             except OSError:  # it exited before reading (stderr says why)
                 pass
 

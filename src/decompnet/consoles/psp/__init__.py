@@ -63,6 +63,7 @@ class PlayStationPortable(Console):
                    guess="MWCCPSP" if build == CODEWARRIOR_BUILDS[0] else "")
           for build in CODEWARRIOR_BUILDS),
     )
+    kits = ("own-psp",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("mips", "psp")
     compiler_guide = "psp"
     # m2c has no Allegrex target: the EE's reads its code, with the same EABI (arguments in a0-a3 and t0-t3) and

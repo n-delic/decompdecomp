@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
-from . import toolchains, wsl
+from . import kits, linuxvm, toolchains, wsl
 from .compiler import CompilerConfig
 
 
@@ -18,6 +19,14 @@ def compiler_for(cfg: dict, vram: int | None) -> dict:
     return cfg["compiler"]
 
 
+def unknown_compiler_message(toolchain: str) -> str:
+    """What a project whose config names a compiler decompdecomp doesn't have says wherever it surfaces (compiling,
+    autopilot): what's wrong and the one thing to do about it. The registry's own "known: ..." list named 50 ids and
+    no way out (#118: a project from another tool opened with that error)."""
+    return (f"this project's compiler {toolchain!r} isn't one decompdecomp has: pick a compiler in this project's "
+            "Settings, then try again")
+
+
 def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
     """Build the sandboxed compile command for a project.
 
@@ -25,24 +34,37 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
     see toolchains.toml) plus optional `flags`. With a toolchain, `{tc}` expands to its install directory,
     which is mounted read-only into the sandbox together with any runtime it requires."""
     c = cfg["compiler"]
+    if (own := kits.own_compiler(c.get("toolchain", ""))) is not None and not own.like:
+        return _own_config(root, c, own)
     ro_paths = [str((root / p).resolve()) for p in c.get("ro_paths", [])]
     runtime32 = None
     linux = False
+    vm = False
     prelude, cplusplus = "", False
     if "toolchain" in c:
-        tc = toolchains.get(c["toolchain"])
+        try:
+            tc = toolchains.get(own.like if own else c["toolchain"])  # (a copy of the user's runs as its pack does)
+        except toolchains.ToolchainError:
+            raise toolchains.ToolchainError(unknown_compiler_message(c["toolchain"])) from None
         prelude, cplusplus = tc.prelude, tc.cplusplus
+        vm = tc.via_vm
         linux = tc.via_wsl  # Windows: a Linux toolchain, run inside WSL 2
+        if own and vm:
+            raise toolchains.ToolchainError(
+                f"{tc.name} needs the Linux runner, which cannot read your own compiler kit in place. "
+                "Choose a locally supported compiler or use this kit on Linux.")
         if linux and not (ok := wsl.status())[0]:
             raise toolchains.ToolchainError(f"{tc.name} is a Linux program: on Windows it runs in WSL 2. {ok[1]}")
-        dirs = toolchains.runtime_dirs(tc.id)
+        dirs = ((own.root, *(toolchains.require(d, linux) for d in tc.requires)) if own
+                else toolchains.runtime_dirs(tc.id))
         try:
-            where_tools = wsl.prepare_tools(dirs) if linux else tuple(str(directory) for directory in dirs)
-        except (OSError, subprocess.SubprocessError) as error:
-            raise toolchains.ToolchainError(f"{tc.name} couldn't be prepared in WSL: {error}") from None
+            where_tools = (linuxvm.prepare_tools(dirs) if vm else
+                           wsl.prepare_tools(dirs) if linux else tuple(str(directory) for directory in dirs))
+        except (OSError, subprocess.SubprocessError, linuxvm.VMError) as error:
+            raise toolchains.ToolchainError(f"{tc.name} couldn't prepare its compiler runtime: {error}") from None
         tc_dir = where_tools[0]
         ro_paths += [str(d) for d in dirs]
-        if "runtime-i386" in tc.requires and not linux:  # in WSL its programs bring the runtime themselves
+        if "runtime-i386" in tc.requires and not linux and not vm:  # in WSL its programs bring the runtime themselves
             runtime32 = str(toolchains.require("runtime-i386"))
         flags = c.get("flags", tc.flags)
         if c.get("cmd"):
@@ -51,7 +73,10 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
             base = [x for a in tc.cmd for x in (flags if a == "{flags}" else [a])]
         else:
             base = [*tc.cc, *flags, "-I{include}", "{src}", "-o", "{obj}"]
-        cmd = [a.replace("{tc}", tc_dir) for a in base]
+        # The bundled Mac app owns a supported Python; /usr/bin/python3 may still be 3.9 and cannot run maspsx.
+        # Linux sandboxes and WSL use their own python3, not a host interpreter outside their mounts.
+        python = sys.executable if sys.platform == "darwin" and not vm else "python3"
+        cmd = [a.replace("{tc}", tc_dir).replace("{python}", python) for a in base]
         for dep, where in zip(tc.requires, where_tools[1:]):  # {tc:<id>} is another toolchain this one needs
             cmd = [a.replace(f"{{tc:{dep}}}", where) for a in cmd]
     else:
@@ -65,6 +90,27 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         include_dirs=tuple(str((root / p).resolve()) for p in c.get("include_dirs", [])),
         runtime32=runtime32,
         wsl=linux,
+        linux_vm=vm,
         prelude=prelude,
         cplusplus=cplusplus,
     )
+
+
+def _own_config(root: Path, c: dict, own: kits.OwnCompiler) -> CompilerConfig:
+    """A compiler in the user's own kit copy (kits.OwnCompiler), run where it is: its exe through the runner it needs
+    (wibo for a Windows program off Windows), its copy mounted read-only in the sandbox, the copy's headers searched
+    after the project's own. Nothing is copied. shortcut: GCC-style arguments (-c, -I, -o), which every ROM kit
+    compiler so far takes; a Visual C++ kit in ROM mode would need its own argument style on OwnCompiler."""
+    if own.runner == "wine":
+        raise toolchains.ToolchainError(f"{own.name} needs wine, which ROM-mode compiling doesn't run yet: use a "
+                                        "compiler of that SDK that runs natively or through wibo")
+    runner = []
+    if own.runner == "wibo" and sys.platform != "win32":
+        runner = [str(toolchains.ensure("wibo", log=lambda *_: None) / "wibo")]
+    cmd = [*runner, str(own.exe), *own.args, *c.get("flags", own.flags), *(f"-I{d}" for d in own.includes),
+           "-I{include}", "{src}", "-o", "{obj}"]
+    ro = [str((root / p).resolve()) for p in c.get("ro_paths", [])]
+    ro += [str(own.root or own.exe.parent), *map(str, own.includes), *([str(Path(runner[0]).parent)] if runner else [])]
+    return CompilerConfig(
+        cmd=cmd, timeout=float(c.get("timeout", 15)), sandbox=c.get("sandbox", "auto"), ro_paths=tuple(dict.fromkeys(ro)),
+        include_dirs=tuple(str((root / p).resolve()) for p in c.get("include_dirs", [])))

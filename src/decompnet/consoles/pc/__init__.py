@@ -1,11 +1,17 @@
-"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010, PROJECT mode. Only
-the game is a Windows program: decompdecomp runs on Linux, and so do the compilers (through wibo).
+"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010 and 2017 (2015's and
+newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows program: decompdecomp runs on Linux and
+macOS, and so do the compilers (through wibo; Visual C++ 2017's, which wibo can't run, through wine: wine.py).
+Visual C++ 2017 (its 32-bit and 64-bit compilers) can also be chosen for a source file in Settings; its 64-bit
+compiler is for 64-bit games, which come next (ROADMAP.md, Newer Windows games). The user's own Visual C++ copies
+(kits/visualcpp.py, any number, any version from 2.0 on) build a game whose compiler build the packs don't have:
+its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
+MSVC/own-<version>.
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
   of its own (the target objdiff compares with); which Visual C++ built it comes from the program's Rich header,
-  which also says (with its sections) whether decompdecomp can start it at all: 64-bit, Visual C++ 2017 and newer,
-  mostly whole-program optimised, or wrapped in DRM (scratch.describe). The rebuild check, which is also the
+  which also says (with its sections) whether decompdecomp can start it at all: 64-bit, mostly whole-program
+  optimised, or wrapped in DRM (scratch.describe). The rebuild check, which is also the
   project's export, puts the whole program back together from the project (`ninja rebuild`, check_code): each
   function from its C where that compiles to the game's code, else from those objects. Visual C++'s
   exception-handling stubs are set aside (exception_stubs), and so are the import thunks, named after their imports
@@ -39,7 +45,14 @@ from ...network import NetworkError
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
 MSVC_VERSIONS = ["MSVC/6.0", "MSVC/7.0", "MSVC/7.1",  # the `msvc` pack
-                 "MSVC/8.0", "MSVC/8.0SP1", "MSVC/9.0", "MSVC/9.0SP1", "MSVC/10.0", "MSVC/10.0SP1"]  # `msvc2005`
+                 "MSVC/8.0", "MSVC/8.0SP1", "MSVC/9.0", "MSVC/9.0SP1", "MSVC/10.0", "MSVC/10.0SP1",  # `msvc2005`
+                 "MSVC/14.16", "MSVC/14.16-x64"]  # `msvc2015`: its 32-bit compiler and its 64-bit one
+# what the app calls a version whose number alone doesn't say it: 2017's (Visual Studio's year, and its target)
+MSVC_NAMES = {"14.16": "Visual C++ 14.16 (2017)", "14.16-x64": "Visual C++ 14.16 (2017, 64-bit)"}
+X64_SUFFIX = "-x64"  # a 64-bit compiler's version: the rest are 32-bit x86's (Compiler.target)
+
+
+PE_HEAD_BYTES, X64_MACHINE = 4096, (0x8664).to_bytes(2, "little")  # where a program's headers are; AMD64's machine
 
 
 class WindowsPC(Console):
@@ -51,10 +64,16 @@ class WindowsPC(Console):
     arch = "x86"
     mode = PROJECT
     layout = "Ghidra + objdiff"
-    compilers = tuple(Compiler(v, f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}") for v in MSVC_VERSIONS)
+    compilers = tuple(Compiler(v, MSVC_NAMES.get(v.removeprefix("MSVC/"),
+                                                 f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}"),
+                               target="x64" if v.endswith(X64_SUFFIX) else "x86")
+                      for v in MSVC_VERSIONS)
     packs = (("msvc", "Visual C++ 6.0, 7.0 and 7.1, the compilers of PC games (proprietary)"),
              ("msvc2005", "Visual C++ 2005, 2008 and 2010, the compilers of newer PC games (proprietary, 600 MB)"),
+             ("msvc2015", "Visual C++ 2017, 32- and 64-bit, with its Windows 10 SDK (proprietary, 220 MB; runs "
+                          "through wine on Linux and macOS, which you install)"),
              ("ghidra", "finds a PC game's functions, and drafts for platforms m2c can't read (540 MB, needs Java 21+)"))
+    kits = ("visualcpp",)  # the user's own Visual C++ copies: games built with a build the packs don't have
     guides = ("x86", "cpp")
     compiler_guide = "x86"
     ram = (0x00400000, 0x80000000)  # a 32-bit program's address space above its usual image base
@@ -70,9 +89,37 @@ class WindowsPC(Console):
     # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub; 5 the import thunks
     # functions of their own, named after their imports and set aside (scratch.name_import_thunks); 6 the files whose
     # functions keep an ebp frame built with /Oy- (scratch.set_frame_flags), but for files with matched code: after
-    # the thunks, which keep no frame and would count against their file's. Its build tools have a version of their
-    # own (the manifest's "tools": scratch.tools_version), so each change to them reaches it
-    ANALYSIS = 6
+    # the thunks, which keep no frame and would count against their file's; 7 the stubs and joins again, by the rules
+    # Visual C++ 2017 brought (#138: a handler that checks its function's /GS cookie first is a stub, a `catch (...)
+    # {}` block that only says where to go on is joined to its function: x86.resumes), which games of any version
+    # have. (Two more rules of #138 read where a function starts and ends, the code before the first function
+    # Ghidra found and, from 2015 on, the int3 after a call that never returns: they come from Ghidra's list, so they
+    # reach a project made before them by Reimport.) Its build tools have a version of their own (the manifest's "tools":
+    # scratch.tools_version), so each change to them reaches it
+    ANALYSIS = 7
+
+    def target(self, fp) -> str:
+        """The project's program's processor: x86 (a 32-bit program: every game started so far), or x64."""
+        from .scratch import MACHINE_AT, _pe_header
+
+        manifest = fp.manifest or {}
+        path = fp.root / manifest.get("game", {}).get("path", f"orig/{manifest.get('version')}.exe")
+        try:
+            with open(path, "rb") as f:
+                head = f.read(PE_HEAD_BYTES)
+        except OSError:
+            return "x86"  # (not in the project yet: as every game started so far)
+        at = _pe_header(head)
+        return "x64" if at is not None and head[at + MACHINE_AT:at + MACHINE_AT + 2] == X64_MACHINE else "x86"
+
+    def describe(self) -> dict:
+        """With the pack each Visual C++ version's games build with (by what the Rich header or the linker names; "":
+        none), and where 2015 and newer's builds start, for the drop zone (home.js pcPack): no numbers of its own."""
+        from .scratch import MSVC_DEFAULT, VC14_BUILDS, VISUAL_STUDIO, X86, Build, compiler_pack
+
+        return {**super().describe(), "vc14_builds": [list(b) for b in VC14_BUILDS],
+                "pack_by_version": {"": compiler_pack(MSVC_DEFAULT),
+                                    **{v: compiler_pack(Build(X86, v, None).pack_version) for v in VISUAL_STUDIO}}}
 
     def sniff(self, head: bytes, file) -> bool:
         """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""
@@ -95,7 +142,7 @@ class WindowsPC(Console):
     def create_project(self, root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
         from . import scratch
 
-        return scratch.create(root, game, compiler=compiler, log=log)
+        return scratch.create(root, game, compiler=compiler, log=log, args=self.tool_args())
 
     def game_info(self, game: Path) -> dict:
         from . import scratch
@@ -105,7 +152,20 @@ class WindowsPC(Console):
     def tool_args(self) -> list[str]:
         from . import scratch
 
-        return scratch.tool_args()
+        return scratch.tool_args(self.kits)
+
+    def kit_compilers(self) -> tuple[Compiler, ...]:
+        from ... import kits
+
+        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy") for c in kits.compilers(self.kits))
+
+    def build_env(self) -> dict[str, str]:
+        """Where wine and the app's prefix are, which tools/compile.py reads when a Visual C++ 2015+ file builds: read
+        then, not written into build.ninja, so a project configured before the pack or wine was installed builds such
+        a file as soon as they are, and an older configure.py is never given an argument it doesn't know."""
+        from ... import wine
+
+        return wine.build_env()
 
     def on_start(self, net, slug: str, log=print) -> None:
         """A project made by an older decompdecomp gets what its import has learnt since, one step at a time from the
@@ -159,6 +219,18 @@ class WindowsPC(Console):
             joined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
             n = sum(len(v) for v in joined.values())
             return f"{n} pieces of functions Ghidra cut off are part of the function they belong to again" if n else None
+        rejoined: dict[str, list[str]] = {}
+
+        def newer_rules(fp):
+            n = scratch.mark_exception_stubs(fp.root, version)
+            rejoined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
+            said = [f"{n} more functions are exception-handling code Visual C++ makes from the function they belong to "
+                    "(a handler that checks the function's /GS cookie first): set aside"] if n else []
+            if rejoined:
+                said.append(f"{sum(len(v) for v in rejoined.values())} more pieces of functions Ghidra cut off (a catch "
+                            "block that only says where the function goes on) are part of their function again")
+            return "; ".join(said) or None
+
         def thunks(fp):
             n = scratch.name_import_thunks(fp.root, version, keep=matched())
             return (f"{n} functions are import thunks the linker adds for calls to DLLs' functions: named after the "
@@ -177,18 +249,22 @@ class WindowsPC(Console):
                     if changed else None)
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
         # isn't identical yet too)
-        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False), 5: (thunks, False), 6: (frames, True)}
+        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False), 5: (thunks, False), 6: (frames, True),
+                 7: (newer_rules, False)}
         kept = {}
         for level, (step, fix) in steps.items():
             if manifest.get("analysis", 1) < level:
-                kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
+                if not (level == 7 and 4 in kept):  # (7 is 3 and 4 again, by their rules now: not when they just ran)
+                    kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
                 net.forks.get(slug)[1].update_manifest(analysis=level)  # tried: a step taken back isn't tried again
         if manifest.get("tools") != scratch.tools_version():
             net.forks.reanalyse(slug, tools, paths=("tools",), log=log)
             net.forks.get(slug)[1].update_manifest(tools=scratch.tools_version())  # (tried: not again until they change)
-        if kept.get(4):  # (taken back: nothing was joined)
+        # (a step taken back joined nothing)
+        grew = {**(joined if kept.get(4) else {}), **(rejoined if kept.get(7) else {})}
+        if grew:
             agent, _ = net.local_agent("decompdecomp")
-            for name, took in joined.items():
+            for name, took in grew.items():
                 net.joined(name, slug)
                 try:
                     net.add_note(agent, slug, f"decompdecomp joined {', '.join(took)} to this function: it's the whole "
@@ -249,6 +325,8 @@ class WindowsPC(Console):
         return scratch.cut_function(fp.root, (fp.manifest or {})["version"], symbol, at, keep=keep, why=why)
 
     splits_sources = True  # a source file is a unit of functions.json (scratch.split_unit)
+    # shortcut: a unit's .c renamed .cpp changes no file here (shows after the next change), name src/ if it matters
+    compiler_config = (".decomp.wtf.json", "config/**/*")  # file_compilers.json and functions.json
 
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
         from . import scratch

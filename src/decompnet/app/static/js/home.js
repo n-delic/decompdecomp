@@ -29,7 +29,7 @@ async function showHome() {
   const box = $("projects");
   box.innerHTML = "";
   $("recent").hidden = !projects.length;
-  $("home").classList.toggle("returning", projects.length > 0);  // your projects first once you have some
+  $("home").classList.toggle("returning", projects.length > 0);
   for (const p of projects) {
     const pct = codePct(p);
     const a = document.createElement("a");
@@ -44,8 +44,9 @@ async function showHome() {
     const meta = p.kind === "fork"
       ? `${p.origin === "scratch" ? "from scratch" : "public decomp"}${p.version ? " · " + esc(p.version) : ""}${p.ready ? "" : " · needs setup"}`
       : `${esc(p.rom?.game_code || "")}${p.rom?.region ? " · " + esc(p.rom.region) : ""} · ${esc(p.compiler?.name || "")}`;
+    if (p.progress_error) a.title = p.progress_error;
     a.innerHTML = `<div class="cc-top"><span class="plat">${esc(p.platform_name || "?")}</span><span class="grow"></span><span class="meta">${esc(since(p.last_activity))}</span><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span></div>
-      <div><h4>${esc(p.title)}</h4><p class="meta">${meta}</p></div>
+      <div><h4>${esc(p.title)}</h4><p class="meta ${p.progress_error ? "err-text" : ""}">${p.progress_error ? "Progress needs attention: " + esc(p.progress_error) : meta}</p></div>
       <div class="meter"><i></i></div><p class="meta"><b>${pctNum(pct)}%</b> of code · ${(p.matched || 0).toLocaleString()} / ${cFunctions(p).toLocaleString()} functions</p>`;
     box.append(a);
     requestAnimationFrame(() => { a.querySelector(".meter i").style.width = pct + "%"; });
@@ -112,6 +113,11 @@ function parseRom(buf) {
   };
 }
 
+/* Whether the import offers a compiler for what was dropped: only those for the program's processor (a 32-bit PC
+   game's, never the 64-bit compiler, whose code can't match it; Compiler.target). The import refuses another all the
+   same (scratch.create). */
+const compilerFits = (info, compiler) => !info?.target || !compiler.target || compiler.target === info.target;
+
 /* What the user dropped, from its first bytes (nothing is uploaded until they confirm). */
 const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1, 2 or PSP" }[p] || consoleOf(p)?.name || "");
 /* What installing a console's proprietary compiler pack (its first pack) means, and how its compiler is picked. */
@@ -120,16 +126,32 @@ const CW_PACK = {
     note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
   msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+  msvc2015: { title: "Visual C++ 2017",
+    text: "Install Visual C++ 2017 and its Windows 10 SDK, the compiler PC games of 2015-2019 were built with (about "
+      + "220 MB): this game's program says it builds with it. It's proprietary software, kept by the decomp "
+      + "community: only if you accept that. On Linux and macOS it runs through wine, which you install.",
+    note: "decompdecomp reads which Visual C++ built the game from the program itself (a version it doesn't have yet "
+      + "builds with the nearest it has, and the import says so); you can change it later in tools/configure.py. The "
+      + "functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   msvc2005: { title: "Visual C++ 2005-2010", text: "Install Visual C++ 2005, 2008 and 2010, the compilers PC games of 2005-2012 were built with (about 600 MB): this game's program says it's one of them. It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default. Games mix versions: a file the game built with another one gets it later, when a helper finds the version its functions match with." },
 };
+// a pack not written up above (a newer Visual C++'s): its toolchain's own name and description say what it is
+const cwPack = (id) => CW_PACK[id] || ((tc) => ({ title: tc?.name || id, note: CW_PACK.msvc2015.note,
+  text: `Install ${tc?.name || id}: ${tc?.description || ""} It's proprietary software, kept by the decomp community: `
+    + "only if you accept that." }))((S.st?.toolchains || []).find((t) => t.id === id));
 // the pack the game's program asks for (a PC game's Visual C++: pcPack), else its console's first
-const packOf = (info) => info?.pack || (CW_PACK[consoleOf(info?.platform)?.packs[0]] ? consoleOf(info.platform).packs[0] : "mwcc");
+const packOf = (info) => {
+  const id = info?.pack || consoleOf(info?.platform)?.packs[0];
+  return CW_PACK[id] || (S.st?.toolchains || []).some((t) => t.id === id && t.license === "proprietary") ? id : "";
+};
 
 /* Which Visual C++ pack a 32-bit Windows program needs, from the head bytes the drop has read: scratch.describe in
-   short. A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's. Its Rich header
+   short, and the pack its version builds with the server's (the PC console's pack_by_version, its 2015-and-newer
+   builds' vc14_builds), so a new pack needs nothing here. A game of 2005-2010 was offered the 6.0-7.1 pack, and its
+   import then asked for 2005-2010's. Its Rich header
    counts the files each tool built (product id << 16 | build, XORed with its key): the compiler whose build is also
    the linker's built the game's own code, else the version that built the most files; without a Rich header, the
    linker's version says. (tests/test_pc_debug.py keeps these ids scratch.RICH_COMPILERS' and RICH_LINKERS'.) */
@@ -142,6 +164,7 @@ const RICH_COMPILERS = {  // version -> its compilers' product ids (whole-progra
 const RICH_LINKERS = [0x04, 0x13, 0x1e, 0x20, 0x25, 0x28, 0x3c, 0x3d, 0x47, 0x56, 0x5a, 0x78, 0x91, 0x9d, 0xba, 0xcc,
   0xde, 0xf0, 0x102];
 function pcPack(head, pe) {
+  const pc = consoleOf("pc") || {};
   const word = (at) => new DataView(head.buffer).getUint32(at, true);
   const find = (bytes, from, to, back) => {
     for (let at = back ? to - 4 : from; back ? at >= from : at <= to - 4; at += back ? -1 : 1)
@@ -155,19 +178,28 @@ function pcPack(head, pe) {
     const comp = (word(at) ^ word(end + 4)) >>> 0, count = (word(at + 4) ^ word(end + 4)) >>> 0;
     const product = comp >>> 16, build = comp & 0xffff;
     if (RICH_LINKERS.includes(product)) linkers.add(build);
-    const version = Object.keys(RICH_COMPILERS).find((v) => RICH_COMPILERS[v].some(([lo, hi]) => product >= lo && product < hi));
+    let version = Object.keys(RICH_COMPILERS)
+      .find((v) => RICH_COMPILERS[v].some(([lo, hi]) => product >= lo && product < hi));
+    // 2015 and newer share ids: their builds say which
+    if (version === "14") version = (pc.vc14_builds || []).find(([first]) => build >= first)?.[1] || "14.0";
     if (version) files.set(`${version} ${build}`, (files.get(`${version} ${build}`) || 0) + count);
   }
   const most = (counts) => [...counts].reduce((best, kv) => (kv[1] > best[1] ? kv : best))[0];
   let version;
-  if (!files.size) version = String(head[pe + 24 + 2]);  // the linker's major version: 6, 7, 8, 9, 10...
-  else if ([...files.keys()].some((k) => linkers.has(+k.split(" ")[1]))) version = most([...files].filter(([k]) => linkers.has(+k.split(" ")[1])));
+  if (!files.size) {  // the linker's version: 6.0, 7.10, 8.0, 14.16...
+    const major = head[pe + 24 + 2], minor = head[pe + 24 + 3];
+    version = major === 6 ? "6.0" : major === 7 ? (minor >= 10 ? "7.1" : "7.0")
+      : `${major}.${major === 14 ? Math.floor(minor / 10) : 0}`;
+  }
+  else if ([...files.keys()].some((k) => linkers.has(+k.split(" ")[1])))
+    version = most([...files].filter(([k]) => linkers.has(+k.split(" ")[1]))).split(" ")[0];
   else {
     const byVersion = new Map();
     for (const [k, n] of files) byVersion.set(k.split(" ")[0], (byVersion.get(k.split(" ")[0]) || 0) + n);
     version = most(byVersion);
   }
-  return parseFloat(version) >= 8 ? "msvc2005" : "msvc";  // (newer than 2010: the closest the packs have, 2010)
+  const packs = pc.pack_by_version || {};
+  return packs[version] || packs[""] || "msvc";
 }
 const MB = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KiB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MiB`);
 
@@ -191,6 +223,29 @@ const isPspCiso = (head, magic = "CISO") => head.length >= 8 && String.fromCharC
   && PSP_CISO_HEADER_SIZES.includes(new DataView(head.buffer).getUint32(4, true));
 // a PSP's ELF: a PRX module by its type, or a program whose flags name the Allegrex (a PS2's name the R5900)
 const ELF_TYPE_PSP_PRX = 0xffa0, ELF_MACH_BITS = 0x00ff0000, ELF_MACH_ALLEGREX = 0x00a20000;
+// a GBA cartridge: an ARM `b` at 0, the fixed 0x96 at 0xB2, and the header's complement checksum at 0xBD
+function isGbaHead(head) {
+  if (head.length < 0xc0 || head[0xb2] !== 0x96 || head[3] !== 0xea) return false;
+  let sum = 0x19;
+  for (let i = 0xa0; i < 0xbd; i++) sum += head[i];
+  return ((-sum) & 0xff) === head[0xbd];
+}
+
+/* An original Xbox program (XBE): "XBEH", and a base address on a 4 KiB boundary at 0x104. */
+function isXbe(head, dv) {
+  return head.length >= 0x178 && dv.getUint32(0, true) === 0x48454258 && dv.getUint32(0x104, true) % 0x1000 === 0;
+}
+
+/* An Xbox disc image (XDVDFS): its descriptor is at 64 KiB in an XISO, past the video partition in a full dump. A
+   full dump starts like a DVD video disc, so this is asked before the other disc checks. */
+async function identifyXboxDisc(file) {
+  for (const at of [0x10000, 0x18310000]) {
+    if (file.size < at + 20) continue;
+    if (String.fromCharCode(...new Uint8Array(await file.slice(at, at + 20).arrayBuffer())) === "MICROSOFT*XBOX*MEDIA")
+      return { title: file.name.replace(/\.[^.]*$/, ""), size: file.size, platform: "xbox", order: "Xbox disc image" };
+  }
+  return null;
+}
 
 function identifyHead(head, file) {
   const dv = new DataView(head.buffer);
@@ -200,8 +255,11 @@ function identifyHead(head, file) {
   const base = { title: stem, size: file.size };
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
+  if (isGbaHead(head)) return { ...base, platform: "gba", order: "GBA ROM", code: ascii(0xac, 0xb0), title: ascii(0xa0, 0xac) || stem, entry: dv.getUint32(0, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
-    return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
+    return { ...base, platform: "win32", order: "Windows program (.exe)",
+      entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe), target: "x86" };
+  if (isXbe(head, dv)) return { ...base, platform: "xbox", order: "Xbox program (XBE)" };
   if (head.length >= 64 && text(0, 4) === "\x7fELF" && head[4] === 2 && head[5] === 1
       && [0xfe10, 0xfe04].includes(dv.getUint16(16, true)) && dv.getUint16(18, true) === 62)
     return { ...base, platform: "ps4", order: "decrypted Orbis ELF", entry: Number(dv.getBigUint64(24, true)) };
@@ -217,6 +275,9 @@ function identifyHead(head, file) {
     const prx = dv.getUint16(16, true) === ELF_TYPE_PSP_PRX, psp = prx || (dv.getUint32(36, true) & ELF_MACH_BITS) === ELF_MACH_ALLEGREX;
     return { ...base, platform: psp ? "psp" : "ps2", order: prx ? "PRX module" : "ELF program", entry: dv.getUint32(24, true) };
   }
+  // a PS3's program: a big-endian ELF64 executable for the 64-bit PowerPC (a retail EBOOT.BIN is a SELF: notSupported says so)
+  if (text(0, 4) === "\x7fELF" && head[4] === 2 && head[5] === 2 && head.length >= 0x20 && dv.getUint16(16) === 2 && dv.getUint16(18) === 21)
+    return { ...base, platform: "ps3", order: "ELF program", entry: Number(dv.getBigUint64(24)) };
   if (head.length > 0x60 && dv.getUint32(0x1c) === 0xc2339f3d) return { ...base, platform: "gc", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   if (head.length > 0x60 && dv.getUint32(0x18) === 0x5d1c9ea3) return { ...base, platform: "wii", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   const packed = { "RVZ\x01": "RVZ", "WIA\x01": "WIA", WBFS: "WBFS", CISO: "CISO" }[text(0, 4)] || (dv.getUint32(0, true) === 0xb10bc001 ? "GCZ" : null);
@@ -242,12 +303,15 @@ function notSupported(head, file) {
   if (text(0, 2) === "MZ") {  // (a 32-bit x86 one is identifyHead's): which machine, from its PE header
     const dv = new DataView(head.buffer), pe = head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
     const machine = pe && pe + 6 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
-    if (machine === 0x8664) return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games come after the Visual C++ 2012 to 2015 compilers (see the roadmap, Newer Windows games).";
+    if (machine === 0x8664) {
+      return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games "
+        + "come next (see the roadmap, Newer Windows games).";
+    }
     if (machine) return "That Windows program isn't for a 32-bit x86 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 .exe.";
     return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
   }
   if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
-  if (ext === "gba") return "Game Boy Advance games aren't supported in this version. For those, continue a public decomp.";
+  if (ext === "gba") return "That doesn't look like a Game Boy Advance ROM: its header's branch, fixed 0x96 byte or checksum is wrong. Try a clean dump of your cartridge.";
   if (text(0, 4) === "XEX2" || ext === "xex") return "That's an Xbox 360 program. Xbox 360 games aren't supported yet.";
   if (["nsp", "xci", "nso", "nro", "nca"].includes(ext) || text(0, 4) === "NSO0" || text(0, 4) === "PFS0") return "That's a Nintendo Switch file. Switch games aren't supported yet.";
   if (["sfc", "smc"].includes(ext)) return "That's a Super Nintendo ROM. SNES games were written in assembly, not compiled from C, so there's no C source to match.";
@@ -257,6 +321,7 @@ function notSupported(head, file) {
   if (ext === "apk") return "Android apps aren't supported yet.";
   if (isPspCiso(head, "ZISO") || ext === "zso") return "That's a ZSO image (LZ4-compressed), which decompdecomp can't read yet: decompress it to .iso first (maxcso --decompress does that), then drop the .iso.";
   if (text(0, 4) === "\0PBP" || ext === "pbp") return "That's a PSP EBOOT.PBP, a container: its program (DATA.PSP inside) is encrypted. Drop the game's UMD image (.iso) instead, or extract and decrypt the program first and drop that (.elf or .prx).";
+  if (text(0, 4) === "SCE\0") return "That's a PlayStation 3 SELF (an encrypted EBOOT.BIN). decompdecomp never decrypts games: decrypt your own copy first with your own tools and keys (RPCS3 can do it for a game you installed), then drop the resulting EBOOT.ELF.";
   if (text(0, 4) === "~PSP") return "That's an encrypted PSP program. Decrypt it first and drop the decrypted .elf or .prx, or drop the game's UMD image (.iso).";
   return null;
 }
@@ -266,7 +331,10 @@ const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (
 
 async function pickFile(file, extras = []) {
   const head = new Uint8Array(await file.slice(0, 0x9400).arrayBuffer());
-  let info = identifyHead(head, file), buf = file;
+  // dropped before the page finished loading: the state first, as what the file is needs it (a PC program's pack is
+  // the server's table: pcPack), and so do the compiler lists
+  if (!S.st) await loadState().catch(() => {});
+  let info = await identifyXboxDisc(file).catch(() => null) || identifyHead(head, file), buf = file;
   if (!info) {
     const why = notSupported(head, file);
     if (why || file.size > 64 * 1024 * 1024) return toast(esc(why || NOT_A_GAME), "err");
@@ -278,7 +346,6 @@ async function pickFile(file, extras = []) {
   // Send only the sidecars this console reads beside its uploaded program.
   picked = { buf, info, name: file.name, extras: extras.filter((f) => info.platform === "win32" ? /\.(pdb|map)$/i.test(f.name)
     : info.platform === "ps4" && /(?:^|\.)functions\.jsonl$/i.test(f.name)) };
-  if (!S.st) await loadState().catch(() => {});  // dropped before the page finished loading: the compiler lists
   $("romFile").textContent = file.name;
   $("romTitle").textContent = info.title;
   const p = info.platform;
@@ -312,6 +379,8 @@ function setupCompilers(info) {
   $("allCompilers").hidden = true;
   // where the import recognises library code: the project covers the game's own code, or the whole program
   $("scopeRow").hidden = !con.sets_aside; $("scopePick").value = "game";
+  // the console's own import questions (Console.import_options: Xbox asks about link-time code generation)
+  $("importOptions").innerHTML = (con.import_options || []).map((o) => `<div class="row"><label class="field grow"><span>${esc(o.label)}</span><select data-option="${esc(o.id)}">${o.choices.map((c) => `<option value="${esc(c.value)}">${esc(c.text)}</option>`).join("")}</select></label></div>`).join("");
   if (con.mode === "rom" || p === "playstation") {
     // every compiler of its console first, so the import's test tries them all (a guess from the program can miss)
     const missing = missingCompilers(p), owned = missing.filter((t) => t.license === "proprietary");
@@ -329,12 +398,16 @@ function setupCompilers(info) {
   }
   // a project of the community's kind: the compiler versions its build knows (a compressed GameCube or Wii disc: both)
   const shown = p === "gcwii" ? [consoleOf("gc"), consoleOf("wii")].filter(Boolean) : [con];
-  select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${c.compilers.map((v) => `<option value="${esc(v.id)}" ${v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc") ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</optgroup>`).join("")
+  const chosen = (c, v) => v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc");
+  const options = (c) => c.compilers.filter((v) => compilerFits(info, v))
+    .map((v) => `<option value="${esc(v.id)}" ${chosen(c, v) ? "selected" : ""}>${esc(v.name)}</option>`).join("");
+  select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${options(c)}</optgroup>`).join("")
     + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
   const pack = packOf(info);
   note.hidden = false;
-  note.textContent = CW_PACK[pack].note;
-  $("mwText").textContent = CW_PACK[pack].text;
+  note.textContent = con.import_error || con.import_note || (pack ? cwPack(pack).note : "This project uses its console's compiler. Install it in Compilers & tools before importing.");
+  if (!pack || con.import_error) return;
+  $("mwText").textContent = cwPack(pack).text;
   $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
 }
 
@@ -348,15 +421,19 @@ function missingCompilers(p) {
 
 function updateAnalyse() {
   const needsConsent = !$("mwConsent").hidden;
-  $("analyse").disabled = !$("own").checked || (needsConsent && !$("mwAccept").checked);
+  $("analyse").disabled = !!consoleOf(picked?.info?.platform)?.import_error || !$("own").checked || (needsConsent && !$("mwAccept").checked);
 }
 $("mwAccept").addEventListener("change", updateAnalyse);
 
-function fillCompilers(select, current, platform) {
-  const own = (consoleOf(platform)?.compilers || []).map((c) => c.id);  // the console's compilers
+/* `only`: the project's own (its overview's compilers: a 32-bit PC game's, never a 64-bit compiler). */
+function fillCompilers(select, current, platform, only) {
+  // the console's compilers
+  const own = (consoleOf(platform)?.compilers || []).map((c) => c.id).filter((id) => !only || only.includes(id));
   const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
   if (own.length && !tcs.length) {  // versions of a compiler pack (DS's CodeWarriors), not toolchains of their own
-    select.innerHTML = consoleOf(platform).compilers.map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+    select.innerHTML = consoleOf(platform).compilers.filter((c) => own.includes(c.id))
+      .map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`)
+      .join("");
     return;
   }
   select.innerHTML = tcs.map((t) => {
@@ -428,7 +505,8 @@ $("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
 async function ensureCodeWarrior() {
   if ($("mwConsent").hidden) return;
   const id = packOf(picked?.info);
-  $("busyTitle").textContent = `Installing ${CW_PACK[id].title}…`;
+  if (!id) return;
+  $("busyTitle").textContent = `Installing ${cwPack(id).title}…`;
   const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true } });
   await followJob(job, $("jobLog"));
   await loadState();
@@ -440,14 +518,19 @@ $("analyse").onclick = async () => {
   const title = `Analysing ${picked.info.title}…`;
   if (!$("mwConsent").hidden) {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
-    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info)].title, e, $("jobLog").textContent); return; }
+    try { await ensureCodeWarrior(); } catch (e) {
+      importFailed(cwPack(packOf(picked.info)).title, e, $("jobLog").textContent);
+      return;
+    }
   }
   // the debug files go after the game in the same upload; the server cuts them off and puts them beside it
   const body = new Blob([picked.buf, ...picked.extras]);
   const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
   const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
   const extras = picked.extras.length ? `&extras=${encodeURIComponent(JSON.stringify(picked.extras.map((f) => [f.name, f.size])))}` : "";
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}${extras}`, body, title, picked.name);
+  const chosen = Object.fromEntries([...$("importOptions").querySelectorAll("select[data-option]")].map((s) => [s.dataset.option, s.value]));
+  const options = Object.keys(chosen).length ? `&options=${encodeURIComponent(JSON.stringify(chosen))}` : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${options}${all}${extras}`, body, title, picked.name);
 };
 $("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
 function askPath(why = "") {
@@ -504,10 +587,11 @@ function renderRestore() {
   $("rsCancel").textContent = restoreCancelling ? "Cancelling…" : busy ? "Cancel opening" : "Cancel";
   for (const id of ["rsSource", "rsGame", "rsOwn"]) $(id).disabled = busy;
   $("dialogBody").querySelectorAll("[data-pick]").forEach((b) => { b.disabled = busy; });
-  showJobError($("rsLog"), restoreError || restoreJob?.error || "");
-  // showJobError clears the log when there is no error. Clear first, then paint the latest poll's lines.
+  // Paint the latest poll first so showJobError can append detail absent from the streamed lines.
+  if (!message) showJobError($("rsLog"), "");
   $("rsLog").textContent = restoreStarting ? "Starting saved project…" : (restoreJob?.log || []).join("\n");
   $("rsLog").hidden = !$("rsLog").textContent;
+  if (message) showJobError($("rsLog"), message);
 }
 function openRestore() {
   const running = restoreBusy();

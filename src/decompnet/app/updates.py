@@ -184,7 +184,7 @@ def uv() -> str | None:
 
 def can_apply() -> tuple[bool, str]:
     if (package := os.environ.get("DECOMP_PACKAGE")) and package != "windows":
-        kind = {"appimage": "an AppImage", "rpm": "an .rpm"}.get(package, "a .deb")
+        kind = {"appimage": "an AppImage", "rpm": "an .rpm", "macos": "a macOS app"}.get(package, "a .deb")
         return False, f"this decompdecomp was installed as {kind}: download the new one from https://github.com/{REPO}/releases"
     if edition.DEV:  # installing a release from a checkout would put a second, installed app beside it
         return False, "this is a development copy (a git checkout): update it with git pull"

@@ -5,6 +5,7 @@ decompiled src/), for Demo Quest 64. The test clones it like a repository from d
 builds it and has an agent work through the guarded tools.
 """
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -31,6 +32,55 @@ def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
                           env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                                "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin", "HOME": str(cwd)}).stdout
+
+
+@pytest.mark.parametrize("byte_order,width", [("z64", 1), ("v64", 2), ("n64", 4)])
+def test_splat_setup_accepts_n64_rom_byte_orders(tmp_path, byte_order, width):
+    from decompnet.app.forkroom import game_identity
+    from decompnet.forks.project import ForkError, ForkProject
+
+    original = b"\x80\x37\x12\x40" + bytes(range(256)) * 4097
+    expected = hashlib.sha1(original).hexdigest()
+    (tmp_path / "Makefile").write_text("all:\n\t@true\n")
+    (tmp_path / "game.yaml").write_text(
+        f"options:\n  target_path: baserom.z64\nsha1: '{expected}'\nsegments: []\n")
+    supplied = b"".join(original[i:i + width][::-1] for i in range(0, len(original), width))
+    source = tmp_path / f"my-copy.{byte_order}"
+    source.write_bytes(supplied)
+    assert game_identity(source) == expected  # rooms agree even when members supply different byte orders
+
+    project = ForkProject(tmp_path)
+    assert project.kind() == "splat"
+    assert ".v64 or .n64" in project.needs()["help"]
+    assert project.place_game(source, source.name).read_bytes() == original
+    assert source.read_bytes() == supplied
+    assert not list(tmp_path.glob(".rom-*"))
+
+    wrong = tmp_path / f"other-copy.{byte_order}"
+    wrong.write_bytes(supplied[:-4] + b"\0" * 4)
+    with pytest.raises(ForkError, match="sha1 doesn't match"):
+        project.place_game(wrong, wrong.name)
+
+    incomplete = tmp_path / f"incomplete.{byte_order}"
+    incomplete.write_bytes(supplied[:-1])
+    with pytest.raises(ForkError, match="truncated"):
+        project.place_game(incomplete, incomplete.name)
+
+
+@pytest.mark.parametrize("byte_order,width", [("v64", 2), ("n64", 4)])
+def test_splat_setup_normalizes_without_a_hash_and_removes_converted_upload(tmp_path, byte_order, width):
+    from decompnet.forks.project import ForkProject
+
+    original = b"\x80\x37\x12\x40" + bytes(range(256)) * 8
+    supplied = b"".join(original[i:i + width][::-1] for i in range(0, len(original), width))
+    (tmp_path / "Makefile").write_text("all:\n\t@true\n")
+    (tmp_path / "game.yaml").write_text("options:\n  target_path: baserom.z64\nsegments: []\n")
+    upload = tmp_path / ".decomp-wtf" / "upload.tmp"
+    project = ForkProject(tmp_path)
+    upload.write_bytes(supplied)
+    assert "project's build" in project.needs()["help"]
+    assert project.place_game(upload, upload.name, move=True).read_bytes() == original
+    assert not upload.exists()
 
 
 @pytest.fixture(scope="module")
@@ -400,6 +450,52 @@ def _dtk_project(root: Path, version: str, config: str) -> None:
     (root / "orig" / version).mkdir(parents=True)
 
 
+@pytest.mark.parametrize(("obj", "expected", "got"), [
+    ("main.dol", "9619ba57...", "8fe64b0a..."),
+    ("files/dll/a.rel", "0123456789abcdef0123456789abcdef01234567", "89abcdef0123456789abcdef0123456789abcdef"),
+])
+def test_a_dtk_hash_mismatch_says_the_project_was_built_from_another_copy(tmp_path, monkeypatch, obj, expected, got):
+    """#97: dtk's hash mismatch is correct, but the user's dump is likely fine: some public projects build a main.dol
+    from an ELF or use a .rel module the retail disc doesn't contain. Say that instead of only the ninja output."""
+    from decompnet.forks.project import ForkError, ForkProject
+
+    _dtk_project(tmp_path, "GOWE69", "object: sys/main.dol\nmodules:\n- object: files/dll/a.rel\n")
+    fp = ForkProject(tmp_path)
+    tail = ("[1/2] SPLIT config\\GOWE69\\config.yml\n"
+            "FAILED: [code=1] build/GOWE69/config.json\n"
+            "build\\tools\\dtk.exe dol split config\\GOWE69\\config.yml build\\GOWE69\n"
+            " INFO Loading config\\GOWE69\\config.yml\n"
+            " INFO Loading and analyzing 1 module (using 1 thread)\n"
+            f"Failed: While loading object '{obj}'\n\nCaused by:\n"
+            f"    Hash mismatch: expected {expected}, but was {got}\n"
+            "ninja: error: rebuilding 'build.ninja': subcommand failed")
+    monkeypatch.setattr(fp, "unpack_disc", lambda version, log=print: 0)
+    monkeypatch.setattr(fp, "setup_commands", lambda version=None: [["configure.py"], ["ninja"]])
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print: (False, tail))
+    with pytest.raises(ForkError) as err:
+        fp.setup("GOWE69", log=lambda *_: None)
+    text = str(err.value)
+    assert f"your copy's {obj} isn't the one this project was built against" in text
+    assert f"expects hash {expected[:8]}..." in text and f"yours is {got[:8]}..." in text
+    assert "dump is likely fine" in text and "README" in text
+    assert "your own copy" in text and "New project → Open a game file" in text
+    assert tail in text
+
+
+def test_a_setup_failure_that_isnt_a_dtk_hash_mismatch_keeps_the_plain_message(tmp_path, monkeypatch):
+    from decompnet.forks.project import ForkError, ForkProject
+
+    _dtk_project(tmp_path, "GOWE69", "object: sys/main.dol\n")
+    fp = ForkProject(tmp_path)
+    tail = "configure.py: error: unrecognized arguments: --version GOWE69"
+    monkeypatch.setattr(fp, "unpack_disc", lambda version, log=print: 0)
+    monkeypatch.setattr(fp, "setup_commands", lambda version=None: [["configure.py"], ["ninja"]])
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print: (False, tail))
+    with pytest.raises(ForkError) as err:
+        fp.setup("GOWE69", log=lambda *_: None)
+    assert str(err.value) == f"setup step failed: configure.py\n{tail}"
+
+
 def test_a_project_that_reads_an_extracted_disc_gets_its_files_from_the_disc_image(tmp_path, monkeypatch):
     """Older dtk projects read orig/<version>/sys/main.dol and files/... (the README says "extract the disc with
     Dolphin"); decompdecomp copies exactly those files out of the user's disc image, picking the disc of that version."""
@@ -458,7 +554,7 @@ def test_a_project_made_from_scratch_builds_with_this_computers_tools(tmp_path, 
     (tmp_path / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "win32", "version": "game",
         "setup": [["python", "tools/configure.py", "game", "--msvc", "/elsewhere/msvc"], ["ninja", "prepare"]]}))
-    monkeypatch.setattr(scratch_pe, "tool_args", lambda: ["--msvc", "/here/msvc", "--wibo", "/here/wibo"])
+    monkeypatch.setattr(scratch_pe, "tool_args", lambda kit_ids=(): ["--msvc", "/here/msvc", "--wibo", "/here/wibo"])
     cmds = ForkProject(tmp_path).setup_commands("game")
     assert cmds[0][1:] == ["tools/configure.py", "game", "--msvc", "/here/msvc", "--wibo", "/here/wibo"]
     assert cmds[1] == ["ninja", "prepare"]
@@ -769,3 +865,51 @@ def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     net.forks.sync(slug, log=lambda *_: None)
     functions = net.store.one("SELECT COUNT(*) n FROM functions")["n"]
     assert net.store.conn.total_changes - before < functions
+
+
+def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_changed(tmp_path, monkeypatch):
+    """The overview goes with every live poll (each second): a PC game's 1,300 source files' compilers were read
+    again each time (300-400 ms a poll). They're read again when one of the files they come from changed."""
+    import os
+    import time
+    from types import SimpleNamespace
+
+    from decompnet import consoles
+
+    root = tmp_path / "game"
+    (root / "config" / "v1").mkdir(parents=True)
+    manifest = {"version": "v1", "compiler": "MSVC/7.1"}
+    (root / ".decomp.wtf.json").write_text(json.dumps(manifest))
+    (root / "config/v1/functions.json").write_text(json.dumps({"units": {
+        "a": [{"name": "f", "addr": 0x1000, "size": 16}], "b": [{"name": "g", "addr": 0x2000, "size": 8}]}}))
+    compilers = root / "config/v1/file_compilers.json"
+    compilers.write_text(json.dumps({"src/auto/a.cpp": "6.0"}))
+    fp = SimpleNamespace(root=root, manifest=manifest,
+                         units=lambda: [SimpleNamespace(source=f"src/auto/{u}.cpp") for u in "ab"])
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    pc = consoles.get("pc")
+    asked = []
+    real = type(pc).file_compiler
+    monkeypatch.setattr(type(pc), "file_compiler", lambda self, fp, source: asked.append(source) or real(self, fp, source))
+
+    def aged(seconds):  # (a file changed in the last 2 s isn't trusted: a second write could keep its stamp)
+        for path in root.rglob("*"):
+            os.utime(path, (time.time() - seconds, time.time() - seconds))
+
+    def parts():
+        own, found = net.forks._file_parts(fp, {"platform": "pc"})
+        return own, [(p["file"], p["start"], p["toolchain"]) for p in found]
+
+    aged(60)
+    assert parts() == ("MSVC/7.1", [("src/auto/a.cpp", 0x1000, "MSVC/6.0")])
+    asked.clear()
+    assert parts() == ("MSVC/7.1", [("src/auto/a.cpp", 0x1000, "MSVC/6.0")])
+    assert asked == []  # nothing changed: nothing read again
+    compilers.write_text(json.dumps({"src/auto/b.cpp": "6.0"}))  # try_compiler, or an editor
+    assert parts() == ("MSVC/7.1", [("src/auto/b.cpp", 0x2000, "MSVC/6.0")])
+    assert parts() and len(asked) == 6  # changed just now: read every time until it's 2 s old
+    aged(30)
+    asked.clear()
+    parts()
+    parts()
+    assert len(asked) == 3

@@ -11,8 +11,11 @@
 # Each part lists its host platforms. Windows uses native tools where available, and Linux-only compilers
 # through WSL 2 (wsl.py). A part for wsl-x86_64 replaces the Linux archive there (a .deb Windows can unpack).
 # macOS uses its pinned builds directly; Intel-only parts need Rosetta on Apple Silicon.
+# Windows compilers run natively on Windows and through wibo on Linux and macOS; a pack with `wine = true` (Visual C++
+# 2017, which wibo can't run) goes through wine there instead, which the user installs (wine.py).
 
 [runtime-i386]
+linux_vm = true
 name = "32-bit x86 C runtime (glibc 2.44)"
 kind = "runtime"
 license = "LGPL-2.1-or-later"
@@ -58,20 +61,81 @@ sha256 = "ab21ad5908fb7776a4b0c596cc82f216876e3b5d108c7c7c1f33543b3f3fce4c"
 platforms = ["macos-x86_64", "macos-arm64"]
 rosetta = true
 
+["gcc-2.5.7-psx"]
+name = "GCC 2.5.7 for PlayStation + maspsx (ASPSX 2.08)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.5.7-psx)"
+description = "GCC 2.5.7 with the PlayStation patches, for early PlayStation games (1995); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.08 did, then GNU as. ASPSX 2.08's division check uses tge, a MIPS II instruction, so its assembly is assembled as MIPS II rather than the R3000's MIPS I."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=mips2 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.08", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.5.7-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.5.7-psx.tar.gz"
+sha256 = "0db1fb403c766e51b094354b9a136a6c1f01457aa41ccca28ac457b7cb67d871"
+platforms = ["linux-x86_64"]
+
+["gcc-2.6.0-psx"]
+name = "GCC 2.6.0 for PlayStation + maspsx (ASPSX 2.34)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.6.0-psx)"
+description = "GCC 2.6.0 with the PlayStation patches, the compiler of PSY-Q 3.3 to 3.5 (1995-1996); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.6.0-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.6.0-psx.tar.gz"
+sha256 = "358dac949f0f566af9c6af93bba0d4ac04d56ca9df80c58bd66d81bbb50deceb"
+platforms = ["linux-x86_64"]
+
 ["gcc-2.6.3-psx"]
 name = "GCC 2.6.3 for PlayStation + maspsx (ASPSX 2.34)"
 platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
-source = "decompals/old-gcc 0.17 (gcc-2.6.3-psx)"
-description = "GCC 2.6.3 with the PlayStation patches, the compiler of PSY-Q 3.5 and 3.6 (1995-1996); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
+source = "GNU GCC 2.6.3 (Slackware 2.2.0); PS1 patches from decompals/old-gcc 0.17"
+description = "GCC 2.6.3 with the PlayStation patches, an early PlayStation compiler (1995-1996); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
-cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6; shift 6; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && python3 -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "-I{include}", "{flags}"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
+[["gcc-2.6.3-psx".parts]]
+url = "https://mirrors.slackware.com/slackware/slackware-2.2.0/source/d/gcc/gcc-2.6.3.tar.gz"
+sha256 = "66529b6ced4ccc580ec365809c1abed856d948283deff656801dec14f47d081a"
+platforms = ["macos-arm64", "macos-x86_64"]
+build = "psx-gcc-2.6.3"
+patches_url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+patches_sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+config_guess_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/74af13c174714dd3b9f1ded4b39955f003c16361/config.guess"
+config_guess_sha256 = "7d1e3c79b86de601c3a0457855ab854dffd15163f53c91edac54a7be2e9c931b"
+config_sub_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/6fad101f3063d722e3348d07dc93cf737f8709e4/config.sub"
+config_sub_sha256 = "71b8d73e46e0c31b1dc91ba5306f5ef0af009273b3bb283f31d8dad69666fa9e"
 [["gcc-2.6.3-psx".parts]]
 url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.6.3-psx.tar.gz"
 sha256 = "01e6e8c4933414ea3f8d8e3bc766a1f5fafd4fc0110e0b75d1f691bd791989b1"
 platforms = ["linux-x86_64"]
+
+["gcc-2.7.2-cdk-psx"]
+name = "GCC 2.7.2 CDK for PlayStation + maspsx (ASPSX 2.67)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.7.2-cdk)"
+description = "The 2.7.2 build from Cygnus' PlayStation Developer's Kit (CDK), the compiler of PSY-Q 4.1 (1997); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.67 did, then GNU as. It is not the same build as the 2.7.2 PSY-Q compiler: code generation differs."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.7.2-cdk-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-cdk.tar.gz"
+sha256 = "42bb0df96db11a9b5d2e23d78bdc962791f40046280d3d360da93fe5eef6f0bb"
+platforms = ["linux-x86_64"]
+# Upstream's macOS archive contains arm64 Mach-O programs, not a universal build.
+[["gcc-2.7.2-cdk-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-cdk-macos.tar.gz"
+sha256 = "43fe3df44badd23d57075adc06ab177d980b1e29f0392a5426e89f652c832d1a"
+platforms = ["macos-arm64"]
 
 ["gcc-2.7.2-psx"]
 name = "GCC 2.7.2 for PlayStation + maspsx (ASPSX 2.56)"
@@ -79,13 +143,33 @@ platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.7.2-psx)"
-description = "GCC 2.7.2 with the PlayStation patches, the compiler of PSY-Q 4.0 to 4.3 (1996-1998); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.56 did, then GNU as."
+description = "GCC 2.7.2 with the PlayStation patches, the compiler of PSY-Q 4.0 and 4.1 (1996-1997); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.56 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
-cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6; shift 6; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && python3 -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.56", "{src}", "{obj}", "-I{include}", "{flags}"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.56", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 [["gcc-2.7.2-psx".parts]]
 url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-psx.tar.gz"
 sha256 = "500a459b3485e885a8d302cac23c2a4632f3900e03a09153f6190699fd723571"
+platforms = ["linux-x86_64"]
+# Upstream's macOS archive contains arm64 Mach-O programs, not a universal build.
+[["gcc-2.7.2-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-psx-macos.tar.gz"
+sha256 = "4280894661c9792bc19f5c970c283d35381937fb44e479a91d0c044c95fcd208"
+platforms = ["macos-arm64"]
+
+["gcc-2.8.0-psx"]
+name = "GCC 2.8.0 for PlayStation + maspsx (ASPSX 2.77)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.8.0-psx)"
+description = "GCC 2.8.0 with the PlayStation patches, the compiler of PSY-Q 4.3 (1997-1998); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.77 did, then GNU as."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.77", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.8.0-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.0-psx.tar.gz"
+sha256 = "1a3c956fe8aea5ebdb251749d95de2c84f023530584d7bd663744b5ec24050b7"
 platforms = ["linux-x86_64"]
 
 ["gcc-2.8.1-psx"]
@@ -94,13 +178,48 @@ platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.8.1-psx)"
-description = "GCC 2.8.1 with the PlayStation patches, the compiler of PSY-Q 4.4 and later (1998-2000); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.79 did, then GNU as."
+description = "GCC 2.8.1 with the PlayStation patches, the compiler of PSY-Q 4.4 (1998); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.79 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
-cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6; shift 6; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && python3 -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.79", "{src}", "{obj}", "-I{include}", "{flags}"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.79", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 [["gcc-2.8.1-psx".parts]]
 url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.1-psx.tar.gz"
 sha256 = "f6f6e883942d4d3289d048236c672e71ed410e546aaae8ff655952f1567e1be0"
+platforms = ["linux-x86_64"]
+# Upstream's macOS archive contains arm64 Mach-O programs, not a universal build.
+[["gcc-2.8.1-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.1-psx-macos.tar.gz"
+sha256 = "bab0c6ea1f394573d5aabbdd7b37e36aceeb83c522141d946a87a9f58c199ea0"
+platforms = ["macos-arm64"]
+
+["gcc-2.91.66-psx"]
+name = "EGCS 2.91.66 for PlayStation + maspsx (ASPSX 2.81)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.91.66-psx)"
+description = "EGCS 2.91.66 (EGCS 1.1.2) with the PlayStation patches, the compiler of PSY-Q 4.5 (1999); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.81 did, then GNU as."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.81", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.91.66-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.91.66-psx.tar.gz"
+sha256 = "f773a0a9659fa4ff74313ac4363d939312e8125675cd09ad9f8c1202f587f1fd"
+platforms = ["linux-x86_64"]
+
+["gcc-2.95.2-psx"]
+name = "GCC 2.95.2 for PlayStation + maspsx (ASPSX 2.86)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.95.2-psx)"
+description = "GCC 2.95.2 with the PlayStation patches, the compiler of PSY-Q 4.6 (1999-2000); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.86 did, then GNU as."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.86", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.95.2-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.95.2-psx.tar.gz"
+sha256 = "932ed3669710a82b12570c29c46ff42989b6505b2af10db84d4551d55dfc0b1c"
 platforms = ["linux-x86_64"]
 
 [maspsx]
@@ -113,9 +232,10 @@ description = "Makes GCC's assembly assemble like Sony's PSY-Q assembler (ASPSX)
 url = "https://github.com/mkst/maspsx/archive/e85ecb373828aabea96d7e6400974d4f91ce8c74.tar.gz"
 sha256 = "9f8ea9827b785ae41437befa8ebdceb8c00f3b1e8f3a90c506948e2df1079bde"
 subdir = "maspsx-e85ecb373828aabea96d7e6400974d4f91ce8c74"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-2.96"]
+linux_vm = true
 cplusplus = true
 name = "EE-GCC 2.96"
 platform = "PS2"
@@ -135,6 +255,7 @@ sha256 = "0590d2ca9da8f5903889d66761220d14b47a8d14ba987ca53db84a1650a1fd0a"
 platforms = ["linux-x86_64"]
 
 ["ee-gcc-2.9-991111"]
+linux_vm = true
 cplusplus = true
 name = "EE-GCC 2.9 (991111)"
 platform = "PS2"
@@ -164,7 +285,7 @@ flags = ["-O2", "-G0"]
 [["ee-gcc-2.95.2".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/ee-gcc2.95.2-273a.tar.gz"
 sha256 = "ee9d9a7fccb59aebfa78a5587f6f8059660b91f705acddbc292ad2243c8e562e"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-2.95.3"]
 cplusplus = true
@@ -180,9 +301,10 @@ flags = ["-O2", "-G0"]
 [["ee-gcc-2.95.3".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/ee-gcc2.95.3-136.tar.gz"
 sha256 = "3b6ae6897229ad005aaf1b0afaa1f3cb46e74b4c21a42e01130c07c0c598067f"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-3.2"]
+linux_vm = true
 cplusplus = true
 name = "EE-GCC 3.2 (040921)"
 platform = "PS2"
@@ -212,7 +334,7 @@ flags = ["-O2"]
 [["mwcps2-2.3.3".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/mwcps2-2.3.3-000906.tar.gz"
 sha256 = "c2a4e463f8f7b324350d6bfb26d6daed83f4d5cb46df8b20dcfec8617b22ad5d"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["mwcps2-3.0.1"]
 cplusplus = true
@@ -228,7 +350,7 @@ flags = ["-O2"]
 [["mwcps2-3.0.1".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/mwcps2-3.0.1b145-050209.tar.gz"
 sha256 = "d021f7d02ab63da770c13dc246637276141321ca08221ee2333a7acadf82482b"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 # PlayStation Portable. Every CodeWarrior build below writes the same note into what it compiles ("MW MIPS C Compiler
 # (3.0.0)"): only its code tells them apart. They build at -O3: a PSP game with debug symbols matches there, and -O2
@@ -462,7 +584,7 @@ name = "IDO 7.1 (static recompilation)"
 platform = "N64"
 arch = "mips"
 license = "proprietary"
-source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows)"
+source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows); MSYS2 msys2-runtime 3.6.12 for the Windows build (GPL-3.0-or-later with the Cygwin linking exception)"
 description = "SGI's compiler used by most first-party N64 games. Proprietary: install only if you accept the licensing risk."
 cc = ["{tc}/cc", "-c"]
 flags = ["-O2", "-mips2", "-G", "0", "-non_shared", "-Xcpluscomm", "-Wab,-r4300_mul", "-woff", "649,838,712"]
@@ -478,13 +600,22 @@ platforms = ["macos-x86_64", "macos-arm64"]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-7.1-recomp-windows.tar.gz"
 sha256 = "28487a90a47d2565d8c38235750500f6fbd3479b758e966b529166825804c926"
 platforms = ["windows-x86_64"]
+[["ido-7.1".parts]]
+# #130: the Windows build is an MSYS2 program: every .exe imports msys-2.0.dll, which its release archive doesn't ship.
+# The runtime comes from MSYS2's own package repository (GPL-3.0-or-later, with the Cygwin linking exception) and
+# goes beside cc.exe, where Windows looks for it. Its /tmp and /var/tmp are folders under that root.
+url = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.12-1-x86_64.pkg.tar.zst"
+sha256 = "c0dbaa624e29be6d08cf5c65609dca6c749431109e4572bf446a3ca9b4c4fd7c"
+keep = { "usr/bin/msys-2.0.dll" = "msys-2.0.dll" }
+mkdir = ["tmp", "var/tmp"]
+platforms = ["windows-x86_64"]
 
 ["ido-5.3"]
 name = "IDO 5.3 (static recompilation)"
 platform = "N64"
 arch = "mips"
 license = "proprietary"
-source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows)"
+source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows); MSYS2 msys2-runtime 3.6.12 for the Windows build (GPL-3.0-or-later with the Cygwin linking exception)"
 description = "The earlier SGI compiler used by early N64 titles. Proprietary: install only if you accept the licensing risk."
 cc = ["{tc}/cc", "-c"]
 flags = ["-O2", "-mips2", "-G", "0", "-non_shared", "-Xcpluscomm", "-Wab,-r4300_mul"]
@@ -499,6 +630,15 @@ platforms = ["macos-x86_64", "macos-arm64"]
 [["ido-5.3".parts]]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-5.3-recomp-windows.tar.gz"
 sha256 = "2268f64cab973750e78bdf7aa2ff3cccf78ad1d181507da6faeb61f3d22c2e1e"
+platforms = ["windows-x86_64"]
+[["ido-5.3".parts]]
+# #130: the Windows build is an MSYS2 program: every .exe imports msys-2.0.dll, which its release archive doesn't ship.
+# The runtime comes from MSYS2's own package repository (GPL-3.0-or-later, with the Cygwin linking exception) and
+# goes beside cc.exe, where Windows looks for it. Its /tmp and /var/tmp are folders under that root.
+url = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.12-1-x86_64.pkg.tar.zst"
+sha256 = "c0dbaa624e29be6d08cf5c65609dca6c749431109e4572bf446a3ca9b4c4fd7c"
+keep = { "usr/bin/msys-2.0.dll" = "msys-2.0.dll" }
+mkdir = ["tmp", "var/tmp"]
 platforms = ["windows-x86_64"]
 
 [m2c]
@@ -643,6 +783,7 @@ url = "https://github.com/decompals/wibo/releases/download/1.2.0/wibo-macos"
 sha256 = "2b3000ef6a7a490c24ccd71967735ae0005e218922e51806cca1b8d77fd3cf7c"
 binary = "wibo"
 platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
 
 [gc-wii-binutils]
 name = "GNU binutils for GameCube and Wii"
@@ -783,12 +924,41 @@ sha256 = "5917df26bffc05d4752276a2e0b1edd21bd6e920aabe1992be8a50efc9d10932"
 binary = "dsd.exe"
 platforms = ["windows-x86_64"]
 
+[luvdis]
+name = "Luvdis"
+kind = "tool"
+license = "MIT"
+source = "aarant/luvdis 0.9.0 @ ec3a4e3e (2026-09-07)"
+description = "Game Boy Advance disassembler: finds the functions in a ROM and writes assembly that rebuilds it. Also reads a ROM's header."
+git = "https://github.com/aarant/luvdis"
+commit = "ec3a4e3ee3afe3e9b4a9c7ae8fffc65e1ea2096c"
+# it imports pkg_resources, which setuptools 70 and newer no longer ship
+pip_extra = ["setuptools<70"]
+
+[agbcc]
+name = "agbcc"
+kind = "compiler"
+platform = "Game Boy Advance"
+arch = "arm"
+license = "GPL-2.0"
+source = "pret/agbcc release (2023-09-03)"
+description = "The GCC 2.95-based compiler behind most Game Boy Advance games, as rebuilt by the pret community: agbcc, old_agbcc (early games) and agbcc_arm (ARM code)."
+cc = ["{tc}/bin/agbcc"]
+flags = ["-mthumb-interwork", "-O2"]
+requires = ["arm-gnu"]
+# agbcc only compiles preprocessed C to assembly: preprocess, compile, assemble, like pret's builds
+cmd = ["/bin/sh", "-c", "src=\"$1\"; obj=\"$2\"; inc=\"$3\"; shift 3; \"{tc:arm-gnu}/bin/arm-none-eabi-cpp\" -nostdinc -undef -I \"{tc}/include\" -I \"$inc\" \"$src\" -o \"$obj.i\" && \"{tc}/bin/agbcc\" \"$@\" \"$obj.i\" -o \"$obj.s\" && \"{tc:arm-gnu}/bin/arm-none-eabi-as\" -mcpu=arm7tdmi -o \"$obj\" \"$obj.s\"", "agbcc", "{src}", "{obj}", "{include}", "{flags}"]
+[[agbcc.parts]]
+url = "https://github.com/pret/agbcc/releases/download/release/agbcc.tar.gz"
+sha256 = "bcf0197e3e27d8e08506a142e25fa68ea7f6679a98347a6406804eb3f9ff4d29"
+platforms = ["linux-x86_64"]  # (Windows runs it inside WSL 2; the release has no macOS build)
+
 [arm-gnu]
 name = "Arm GNU Toolchain (arm-none-eabi)"
 kind = "tool"
 license = "GPL-3.0"
 source = "Arm GNU Toolchain 14.3.Rel1 (developer.arm.com)"
-description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code: the DS demo game's start-up code; about 150 MB."
+description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code: the GBA and DS demo games' start-up code; about 150 MB."
 binary_name = "bin/arm-none-eabi-as"
 [[arm-gnu.parts]]
 url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz"
@@ -804,6 +974,32 @@ platforms = ["macos-arm64"]
 url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-mingw-w64-x86_64-arm-none-eabi.zip"
 sha256 = "864c0c8815857d68a1bbba2e5e2782255bb922845c71c97636004a3d74f60986"
 platforms = ["windows-x86_64"]  # the Windows zip has bin/, lib/, ... at its top, no folder around them
+
+["ps3dev-gcc"]
+cplusplus = true
+name = "PS3 GCC 7.2 (ps3dev)"
+platform = "PS3"
+arch = "ppc64"
+license = "GPL-3.0"
+source = "ps3dev/ps3toolchain release nightly-2026-09-12 (GCC 7.2.0 and binutils for the PlayStation 3's PPU)"
+description = "The free PPU compiler of the PlayStation 3 homebrew toolchain (about 150 MB): it makes the usual 64-bit PowerPC program, not Sony's 32-bit-pointer one, so it builds the demo game and homebrew, not retail games."
+cc = ["{tc}/ppu/bin/ppu-gcc", "-c"]
+flags = ["-O2", "-mtraceback=no"]
+[["ps3dev-gcc".parts]]
+url = "https://github.com/ps3dev/ps3toolchain/releases/download/nightly-2026-09-12/ps3dev-linux-X64.tar.gz"
+sha256 = "5c1c252b72dfcedb1859618006015c1184b1e1b79e457693fde9f6f0f7807cba"
+subdir = "ps3dev"
+platforms = ["linux-x86_64"]
+[["ps3dev-gcc".parts]]
+url = "https://github.com/ps3dev/ps3toolchain/releases/download/nightly-2026-09-12/ps3dev-macos-ARM64.tar.gz"
+sha256 = "0e5b028fdadfd521405361565f378e56f4e76cae9e728eea16893642250ed2c8"
+subdir = "ps3dev"
+platforms = ["macos-arm64"]
+[["ps3dev-gcc".parts]]
+url = "https://github.com/ps3dev/ps3toolchain/releases/download/nightly-2026-09-12/ps3dev-macos-X64.tar.gz"
+sha256 = "cf6ec90a9d299643e8a087e387c4de27645767094fa11317ad3a02b976ab8071"
+subdir = "ps3dev"
+platforms = ["macos-x86_64"]
 
 [msvc]
 name = "Microsoft Visual C++ 6.0, 7.0 and 7.1 (PC)"
@@ -825,6 +1021,15 @@ into = "7.0"
 url = "https://github.com/OmniBlade/decomp.me/releases/download/msvcwin9x/msvc7.0.tar.gz"  # holds 7.1 (13.10.3077)
 sha256 = "49eba7f9f72644f6f872a4176baeac544e8b5dfb2be1f47bb4d439b1136ffeac"
 into = "7.1"
+# 7.1's archive has no C runtime: wibo brings its own on Linux and macOS, but on Windows cl.exe needs msvcr71.dll and
+# its compiler passes (c1, c1xx) msvcp71.dll beside them, or Windows stops it with "MSVCR71.dll was not found" (7.0's
+# archive carries its MSVCR70.DLL). Both are 7.1's redistributable DLLs, from the archive mwcc already pins.
+[[msvc.parts]]
+url = "https://files.decomp.dev/compilers_20251118.zip"
+sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
+keep = { "X360/14.00.2110/msvcr71.dll" = "Bin/msvcr71.dll", "X360/14.00.2110/msvcp71.dll" = "Bin/msvcp71.dll" }
+into = "7.1"
+platforms = ["windows-x86_64"]
 
 # Each archive is a whole install: `keep` takes its compiler (Bin) and headers (Include: Visual C++'s and the Windows
 # SDK's in one folder, as the 6.0-7.1 pack has them), so the project's build finds every version the same way.
@@ -885,6 +1090,57 @@ sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
 keep = { "X360/16.00.11886.00/msvcp100.dll" = "Bin/msvcp100.dll" }
 into = "10.0SP1"
 
+# Windows SDKs: the headers Visual C++ 2015 and newer compile Windows programs against, each a toolchain of its own
+# that packs name in `headers`, so packs that use one SDK share one download (and one copy on disk). Its shared, um
+# and ucrt folders merge into one Include; a pack's version folder says where it is (includes.txt) and the build
+# searches it after the compiler's own Include: Visual C++'s sal.h and concurrencysal.h differ from the SDK's and must
+# win (the SDK includes them as <sal.h>, never "sal.h"), as Visual C++'s folder comes first on Visual Studio's include
+# path. Only headers are kept: a decompilation compiles, it doesn't link.
+["winsdk-10.0.17763"]
+name = "Windows 10 SDK 10.0.17763 (headers)"
+kind = "runtime"
+platform = "PC"
+license = "proprietary"
+source = "ojdkbuild's Windows 10 SDK 10.0.17763 (tools_toolchain_sdk10_17763)"
+description = "The Windows headers (windows.h, the C runtime's) that Visual C++ 2017 compiles against, installed with it."
+[["winsdk-10.0.17763".parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz"
+sha256 = "849d009ed6ba802168bf6b57b74b6a7f1b3004d37b2037fc7e5f74c73024fdc7"
+subdir = "tools_toolchain_sdk10_17763-a647d1194cd10afdaa52f8056db239b7598fe1dd"
+keep = { "Include/10.0.17763.0/shared" = "Include", "Include/10.0.17763.0/um" = "Include", "Include/10.0.17763.0/ucrt" = "Include" }
+
+# Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1: Visual Studio 2017 15.9.7), with the Windows 10 SDK it was
+# used with (10.0.17763), from ojdkbuild's copies of the Build Tools (235,092,441 and 309,898,570 bytes). Laid out as
+# msvc2005's: each version a folder with Bin and Include, so the project's build finds it the same way. Two versions:
+# 14.16 is the 32-bit compiler (Hostx86/x86), 14.16-x64 the 64-bit one (Hostx86/x64), which loads the 32-bit host's
+# program database DLLs (mspdb140, mspdbcore; msobj140 for debug information): they're copied beside it, so it runs
+# by itself under wine and on Windows, where Visual Studio's PATH would otherwise hold Hostx86/x86.
+# wibo can't run these compilers, so on Linux and macOS they run through wine (wine.py), which the user installs.
+# Its id says 2015, its name 2017: the packs are named after the first version they hold (`msvc`: 6.0-7.1, `msvc2005`:
+# 2005-2010), and Visual C++ 2015 (Update 3) is to join this pack beside 2017, both run through wine. An install is
+# filed under its id, so the id was chosen before anyone installed the pack; its name says 2015 once 2015 is in it.
+[msvc2015]
+name = "Microsoft Visual C++ 2017 (PC)"
+kind = "compiler-pack"
+platform = "PC"
+license = "proprietary"
+source = "ojdkbuild's Visual Studio 2017 Build Tools 14.16 (tools_toolchain_vs2017bt_1416)"
+description = "Visual C++ 2017 (14.16), the compiler of Windows games of 2017-2019, with its Windows 10 SDK: a 32-bit and a 64-bit compiler. Windows programs, run through wine on Linux and macOS."
+wine = true
+headers = ["winsdk-10.0.17763"]  # the SDK it was used with
+[[msvc2015.parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"  # 19.16.27027.1
+sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"
+subdir = "tools_toolchain_vs2017bt_1416-d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a"
+keep = { "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86" = "Bin", "VC/Tools/MSVC/14.16.27023/include" = "Include" }
+into = "14.16"
+[[msvc2015.parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"
+sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"
+subdir = "tools_toolchain_vs2017bt_1416-d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a"
+keep = { "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x64" = "Bin", "VC/Tools/MSVC/14.16.27023/include" = "Include", "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86/mspdb140.dll" = "Bin/mspdb140.dll", "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86/mspdbcore.dll" = "Bin/mspdbcore.dll", "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86/msobj140.dll" = "Bin/msobj140.dll" }
+into = "14.16-x64"
+
 [sjiswrap]
 name = "sjiswrap"
 kind = "tool"
@@ -908,13 +1164,55 @@ url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 
+# UNPUBLISHED DRAFT (commented out on purpose: the release below doesn't exist yet, so nothing may try to download it).
+# Sony's PS3 PPU compiler, built from the GPL sources Sony published (packaging/ps3-gcc/). To publish:
+#   packaging/ps3-gcc/build.sh 1.9.0 dist && packaging/ps3-gcc/build.sh 2.7.0 dist
+#   gh release create ps3-gcc-1.9.0 dist/ppu-lv2-gcc-1.9.0.tar.xz --title "PS3 ppu-lv2-gcc 1.9.0 (GPL build)" \
+#      --notes "GCC 4.1.1 + binutils 2.17 built from Sony's GPL source; the exact source is inside the archive."
+#   (same for 2.7.0), then sha256sum the uploaded files, fix the sha256 below if the rebuild differs, and uncomment.
+# The archive carries the source it was built from (share/doc/ppu-lv2-gcc/ps3gcc-source.tar.gz) and the GPL texts.
+# No libgcc, crt files or SDK headers: the app compiles to objects and links itself.
+#
+# ["ppu-lv2-gcc-1.9.0"]
+# cplusplus = true
+# name = "PPU GCC 4.1.1 (SDK 1.9.0, CELL 4.1.2.7)"
+# platform = "PS3"
+# arch = "ppc64"
+# license = "GPL-2.0-or-later"
+# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit 8bc057a8fb9e, built by packaging/ps3-gcc"
+# description = "The PS3 SDK's PowerPC compiler, generation 1.9.0 (early PS3 games), rebuilt from its GPL source."
+# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
+# flags = ["-O2"]
+# [["ppu-lv2-gcc-1.9.0".parts]]
+# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-1.9.0/ppu-lv2-gcc-1.9.0.tar.xz"
+# sha256 = "8ad0d07500cdf4e5b2fe3e3dbabf1bce41e6928bd51d1edb3d3e42c51057f53b"
+# subdir = "ppu-lv2-gcc-1.9.0"
+# platforms = ["linux-x86_64"]
+#
+# ["ppu-lv2-gcc-2.7.0"]
+# cplusplus = true
+# name = "PPU GCC 4.1.1 (SDK 2.7.0, $Rev: 3019 $)"
+# platform = "PS3"
+# arch = "ppc64"
+# license = "GPL-2.0-or-later"
+# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit dc6c3b99344, built by packaging/ps3-gcc"
+# description = "The PS3 SDK's PowerPC compiler, generation 2.7.0, rebuilt from its GPL source."
+# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
+# flags = ["-O2"]
+# [["ppu-lv2-gcc-2.7.0".parts]]
+# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-2.7.0/ppu-lv2-gcc-2.7.0.tar.xz"
+# sha256 = "be179831ffde0bc185c68939dd43213d05afd4a502de6f56c8b6e6f5f3fc651c"
+# subdir = "ppu-lv2-gcc-2.7.0"
+# platforms = ["linux-x86_64"]
+
 
 ["clang-5.0.2"]
 name = "Clang 5.0.2 (PS4-era x86-64)"
+native_only = true
 license = "NCSA"
 source = "LLVM 5.0.2 official release, Ubuntu 16.04 x86-64"
-description = "Compiles decrypted PS4 ELF projects with the public PS4 target; no Sony SDK is supplied."
-platform = "ps4"
+description = "Compiles decrypted PS4 ELF projects in the Linux x86-64 app only. On Windows, run the Linux app inside WSL 2. No Sony SDK is supplied."
+platform = "PS4"
 arch = "x86_64"
 binary_name = "clang"
 cc = ["{tc}/bin/clang", "-target", "x86_64-scei-ps4", "-ffreestanding", "-c"]

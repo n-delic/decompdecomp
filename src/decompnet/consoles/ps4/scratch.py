@@ -159,14 +159,24 @@ def read_elf(data: bytes) -> ELF:
     return ELF(data, entry, e_type, segments)
 
 
+def host_error() -> str:
+    """The public compiler and generated builds run only inside the Linux x86-64 app."""
+    from ... import toolchains
+
+    if toolchains.current_platform() == toolchains.LINUX:
+        return ""
+    return ("PS4 projects need the Linux app on x86-64. On Windows, run the Linux app inside WSL 2; "
+            "the Windows and macOS apps cannot build PS4 projects.")
+
+
 def clang_path() -> Path | None:
     """Only the registered, checksum-verified compiler; never a host clang from PATH."""
     from ... import toolchains
 
+    if error := host_error():
+        raise ForkError(error)
     if toolchains.installed("clang-5.0.2") is None:
         return None
-    if sys.platform != "linux":
-        raise ForkError("PS4 builds currently need the Linux app on x86-64; on Windows run it inside WSL 2")
     return toolchains.binary("clang-5.0.2")
 
 
@@ -215,6 +225,12 @@ def map_functions(game: Path, text: Segment, data: bytes | None = None, *, log=p
     With `data`, entries that are only alignment padding are dropped: they are not functions and no C is them."""
     candidates = [game.with_suffix(".functions.jsonl"), game.parent / "functions.jsonl",
                   game.parent / "functions" / "functions.jsonl"]
+    extras = sorted(p for p in game.parent.iterdir() if p.is_file()
+                    and (p.name.lower().endswith(".functions.jsonl") or p.name.lower() == "functions.jsonl"))
+    if not any(p.is_file() for p in candidates):
+        if len(extras) > 1:
+            raise ForkError("more than one function map is beside this program: keep one, or name it functions.jsonl")
+        candidates.extend(extras)
     for candidate in candidates:
         if not candidate.is_file():
             continue
@@ -242,11 +258,18 @@ def map_functions(game: Path, text: Segment, data: bytes | None = None, *, log=p
             if data is not None and is_padding(data[text.offset + start: text.offset + start + size]):
                 padding += 1
                 continue
+            try:
+                ranges = []
+                for a, b in row.get("ranges", []):
+                    lo, hi = (int(v, 16) if isinstance(v, str) else int(v) for v in (a, b))
+                    if lo < 0 or hi <= lo or hi > text.filesz:
+                        raise ValueError("range outside code")
+                    ranges.append([text.va + lo, text.va + hi])
+            except (ValueError, TypeError, OverflowError):
+                raise ForkError(f"{candidate}: invalid function body ranges; use [start, end] offsets inside the executable segment") from None
             out.append({"entry": text.va + start, "end": text.va + start + size,
                         "name": row.get("n") or "", "source": "map",
-                        "ranges": [[text.va + (int(a, 16) if isinstance(a, str) else int(a)),
-                                    text.va + (int(b, 16) if isinstance(b, str) else int(b))]
-                                   for a, b in row.get("ranges", [])]})
+                        "ranges": ranges})
         if padding:
             log(f"the map lists {padding} entries that are only alignment padding: dropped, they are not functions")
         if out:

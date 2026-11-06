@@ -56,8 +56,8 @@ class Example(Agent):
             return [usage_item(input=number(usage, "input_tokens"), output=number(usage, "output_tokens"), turns=1)]
         return []
 
-    # Also, as this agent needs them (each is explained on Agent): read_models, version, stdin, clean_stderr,
-    # fatal, label; an agent built into the app: run.
+    # Also, as this agent needs them (each is explained on Agent): read_models, version, stdin, prompt_file,
+    # clean_stderr, fatal, label; an agent built into the app: run.
 
 
 EXAMPLE = Example()

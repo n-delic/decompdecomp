@@ -27,6 +27,7 @@ const cases = [
   ["project", 'body.querySelector("#rGo").onclick = async () => {', '\n  };', "rLog", "rGo"],
   ["project", 'body.querySelector("#jGo").onclick = async () => {', '\n  };', "jLog", "jGo"],
   ["project", 'async function installToolchain(id, proprietary) {', '\n}\n', "toolLog", null],
+  ["project", '$("fsFind").onclick = async () => {', '\n    };', "fsFindLog", "fsFind"],
   ["steering", '$("romCheck").onclick = async () => {', '\n    };', "sourceCheckLog", "romCheck"],
   ["steering", '$("forkMeasure").onclick = async () => {', '\n    };', "sourceCheckLog", "forkMeasure"],
   ["steering", 'async function exportNow() {', '\n}\n', "expLog", "srcExport"],
@@ -50,7 +51,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
     S: { slug: "test", ov: { kind: "fork" } }, info: {}, box, body: box, n: get("compilerNotice"), log, inst: button,
     b: Object.assign(button, { dataset: { inst: "test" } }), a: { id: "test", name: "Test" }, ROOM_PORT: 6481,
     dialog: () => box, id: "test", proprietary: false, confirm: () => true, Blob, location: {},
-    esc: String, plural: () => "files", toast() {}, loadNav() {}, closeDialog() {}, rerender() {}, check() {},
+    esc: String, plural: () => "files", clock: () => "12:00", toast() {}, loadNav() {}, closeDialog() {}, rerender() {}, check() {},
     fields: () => ({}), joinProblem: () => "", exportOpen: () => true, cmdBox: () => "", wireCopies() {},
     renderHost() {}, renderTools() {}, renderStats() {}, renderSource() {}, renderProjectSettings() {},
     showAgentsPage() {}, loadState: async () => {}, refreshMap: async () => {},
@@ -61,6 +62,10 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
       return start.promise;
     },
   };
+  ctx.setupSlug = "test";
+  ctx.searchToken = Symbol();
+  ctx.box._romSearch = ctx.searchToken;
+  ctx.usingGame = false;
   vm.createContext(ctx);
   const base = read("base");
   vm.runInContext(base.slice(base.indexOf("const JOB_POLL_MS"), base.indexOf("/* The map's still")), ctx);
@@ -73,6 +78,37 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   return { ctx, get, log, button, start, poll, polls: () => polls };
 }
 async function main() {
+  for (const outcome of ["done", "error", "switched"]) {
+    const test = setup("steering", '$("saveGo").onclick = async () => {', '\n};', "saveLog", "saveGo");
+    const { ctx, get, log, button, start } = test;
+    const source = read("steering"), marker = "function renderSaveLocation(ov) {";
+    const offset = source.indexOf(marker);
+    vm.runInContext(source.slice(offset, source.indexOf("\n}", offset) + 2), ctx);
+    ctx.renderSaveLocation({ slug: "first", save_folder: "/saves/first" });
+    assert.equal(get("saveFolder").value, "/saves/first");
+    get("saveFolder").value = "/unsaved-edit";
+    ctx.renderSaveLocation({ slug: "first", save_folder: "/saves/first" });
+    assert.equal(get("saveFolder").value, "/unsaved-edit");
+    ctx.renderSaveLocation({ slug: "test", save_folder: "/saves/test" });
+    assert.equal(get("saveFolder").value, "/saves/test");
+    const running = ctx.run();
+    assert.equal(button.disabled, true);
+    assert.ok(log.bar);
+    if (outcome === "error") start.reject(new Error("Save failed"));
+    else {
+      if (outcome === "switched") {
+        ctx.S.slug = "other";
+        ctx.renderSaveLocation({ slug: "other", save_folder: "/saves/other" });
+      }
+      start.resolve({ folder: "/saved", best: 1 });
+    }
+    await running;
+    assert.equal(button.disabled, false);
+    assert.equal(log.bar.removed, true);
+    if (outcome === "error") assert.match(log.error, /Save failed/);
+    if (outcome === "done") assert.equal(get("saveFolder").value, "/saved");
+    if (outcome === "switched") assert.equal(get("saveFolder").value, "/saves/other");
+  }
   for (const [file, marker, end, logId, buttonId] of cases) {
     for (const outcome of ["start-error", "job-error", "cancelled", "done"]) {
       const test = setup(file, marker, end, logId, buttonId);
@@ -108,12 +144,12 @@ async function main() {
         assert.notEqual(log._workStatus.textContent, "Finished.", marker);
       } else {
         assert.equal(log._workStatus.dataset.state, "error");
-        assert.equal(log._workStatus.textContent, log.error);
+        assert.equal(log._workStatus.textContent, "Stopped");
       }
     }
   }
   // Passive overview refreshes keep a pending check's panel and indicator intact.
-  for (const caseIndex of [0, 6]) {
+  for (const caseIndex of [0, 7]) {
     const test = setup(...cases[caseIndex]);
     const name = caseIndex === 0 ? "renderCompilerNotice" : "renderSource";
     const source = read(caseIndex === 0 ? "project" : "steering");
@@ -169,8 +205,25 @@ async function main() {
   assert.equal(status.dataset.state, "running");
   finish();
   assert.equal(status.textContent, "Retry finished.");
+  // A setup failure keeps one raw log, a concise summary, and a clipboard button.
+  const copyTest = setup(...cases[0]);
+  const raw = "mips-linux-gnu-cpp: missing\nmake: *** Error 127";
+  copyTest.log.textContent = raw;
+  let copied = null;
+  copyTest.ctx.copyText = async (text) => { copied = text; return true; };
+  copyTest.ctx.showJobError(copyTest.log, "setup step failed: make\nMissing preprocessor.\n\nBuild output:\n" + raw);
+  assert.equal(copyTest.log._errorBox.textContent, "setup step failed: make");
+  assert.equal(copyTest.log.textContent.split("mips-linux-gnu-cpp: missing").length - 1, 1);
+  assert.equal(copyTest.log._copyToolbar.children[0].textContent, "Job log");
+  const toolbar = copyTest.log._copyToolbar;
+  await toolbar.children[1].onclick();
+  assert.equal(copied, copyTest.log.textContent);
+  assert.ok(copied.includes("Missing preprocessor."));
+  copyTest.ctx.showJobError(copyTest.log, "");
+  assert.equal(toolbar.hidden, true);
+  assert.equal(copyTest.log.textContent, "");
   // A range-only compiler setting remains immediate and has no progress bar.
-  const range = setup(...cases[9], "0x1000-0x2000");
+  const range = setup(...cases[10], "0x1000-0x2000");
   const running = range.ctx.run();
   assert.equal(range.log.bar, undefined);
   range.start.resolve({}); await running;

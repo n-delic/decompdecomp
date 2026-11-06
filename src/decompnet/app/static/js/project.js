@@ -108,7 +108,7 @@ async function refreshMap(force = true) {
    matches on the map. */
 let pollingGen = -1;
 async function poll() {
-  if (pollingGen === S.gen || !S.slug) return;
+  if (pollingGen === S.gen || !S.slug || (document.hidden && S.primed)) return;  // (minimised: nobody sees it)
   const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
   try {
     const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);
@@ -138,6 +138,7 @@ async function poll() {
     renderNow(live.claims);
     renderStats(live.overview);
     const claimSig = live.claims.map((c) => c.name + "\u0000" + c.agent).join("\n");
+    if (live.cut && !first) mapDirty = true;  // (attempts it didn't send: the map's counts come again)
     if (mapDirty || Date.now() - S.lastMapFetch > MAP_EVERY_MS) await refreshMap(mapDirty);
     else {
       applyClaims();
@@ -154,10 +155,15 @@ async function poll() {
   }
 }
 
+let statsLoading = null;
 async function loadStats() {
   // the overview's charts and the Agents tab's "N matched" per agent both come from these
-  if (!S.slug || (S.tab !== "overview" && S.tab !== "agents")) return;
-  try { S.stats = await api(`/api/stats?slug=${S.slug}`); } catch { return; }
+  if (!S.slug || (S.tab !== "overview" && S.tab !== "agents") || statsLoading === S.slug || document.hidden) return;
+  const slug = statsLoading = S.slug;
+  let stats;
+  try { stats = await api(`/api/stats?slug=${slug}`); } catch { return; } finally { if (statsLoading === slug) statsLoading = null; }
+  if (slug !== S.slug) return;  // (another project opened meanwhile)
+  S.stats = stats;
   if (S.tab === "overview") renderOverview();
   else renderSessions(S.sessions || []);
 }
@@ -166,7 +172,8 @@ async function loadStats() {
 function workingAgents() {
   const running = S.sessions.filter((s) => ["starting", "working", "waiting"].includes(s.state));
   const own = new Set(S.sessions.map((s) => s.agent));
-  const outside = [...new Set(S.claims.filter((c) => !own.has(c.agent) && c.agent !== AUTO).map((c) => c.agent))];
+  const outside = [...new Set(S.claims.filter((c) => c.agent && !own.has(c.agent)
+    && !APP_WORKERS.has(c.agent.replace(/^@/, ""))).map((c) => c.agent))];
   return { running, outside, n: running.length + outside.length };
 }
 
@@ -336,6 +343,13 @@ function renderCompilerNotice(ov) {
   const missing = ov.compiler.missing || [];
   if (ov.kind === "fork" || (ov.compiler.installed && (!missing.length || ov.matched))) { n.hidden = true; return; }
   n.hidden = false;
+  // #118: the project came from another tool and names a compiler decompdecomp doesn't have: it opens, and says so
+  // here instead of pretending the compiler has no build for this computer
+  if (ov.compiler.known === false) {
+    n.className = "notice bad";
+    setHtml(n, `<span><b>${esc(ov.compiler.name)}</b> isn't a compiler decompdecomp has (this project was made with another tool). Pick one in this project's Settings.</span>`);
+    return;
+  }
   if (!ov.compiler.supported) {
     n.className = "notice bad";
     n.innerHTML = ov.compiler.why
@@ -662,7 +676,9 @@ async function installAllCompilers(owned) {
 }
 
 async function installToolchain(id, proprietary) {
-  if (proprietary && !confirm("This downloads a proprietary compiler, kept by the decomp community. Install it only if you accept that. Continue?")) return;
+  const tc = (S.st?.toolchains || []).find((t) => t.id === id);  // (each names where it comes from: its source)
+  const what = `${tc ? tc.name : "a compiler"}, proprietary software${tc?.source ? `, from ${tc.source}` : ""}`;
+  if (proprietary && !confirm(`This downloads ${what}. Install it only if you accept that. Continue?`)) return;
   const body = dialog("Install compiler or tool", `<pre class="joblog tall" id="toolLog"></pre>`);
   const log = body.querySelector("#toolLog");
   const finish = beginWork(log, "Installing compiler or tool", [], "Compiler or tool installed.");
@@ -771,12 +787,16 @@ async function renderForkSetup() {
   let n;
   try { n = await api(`/api/fork/needs?slug=${S.slug}`); } catch (e) { box.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
   const kinds = { manifest: "decompdecomp manifest", dtk: "dtk-template (configure.py + ninja)", configure: "configure.py + ninja", splat: "splat + make", objdiff: "objdiff project", custom: "its own setup" };
-  const facts = `<dl class="facts one">${[["Repository", (S.ov.repo_url || "").replace(/^https?:\/\//, "") || "made by decompdecomp"], ["Layout", kinds[n.kind] || n.kind], ["Version", n.version || "—"], ["Game goes to", n.path || "see the README"]]
+  const versions = Array.isArray(n.rom_versions) ? n.rom_versions.filter((v) => /^[0-9a-f]{40}$/i.test(v.sha1 || "")) : [];
+  const facts = `<dl class="facts one">${[["Repository", (S.ov.repo_url || "").replace(/^https?:\/\//, "") || "made by decompdecomp"], ["Layout", kinds[n.kind] || n.kind], ["Version", n.version || "—"], ["Game goes to", n.path || "see the README"],
+    ...versions.map((v) => [`Original ROM SHA-1 (${v.version})`, v.sha1])]
     .map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
     <div class="row"><button class="ghost small-btn" id="fsFolder" type="button">Open project folder</button></div>`;
+  let usingGame = false;
   const run = async (start) => {
+    usingGame = true;
     showJobError($("fsLog"), "");
-    const work = box.querySelector(".workbar");
+    const work = box.querySelector('[aria-label="Building project"]');
     if (work) work.hidden = false;
     box.querySelectorAll("button, input").forEach((b) => { b.disabled = true; });
     try {
@@ -791,6 +811,7 @@ async function renderForkSetup() {
       showJobError($("fsLog"), e.message);
       box.querySelectorAll("button, input").forEach((b) => { b.disabled = false; });
       if ($("fsOwn")) $("fsGo").disabled = !$("fsOwn").checked;
+      usingGame = false;
     }
   };
   if (n.auto) {
@@ -801,6 +822,7 @@ async function renderForkSetup() {
         <label class="check"><input type="checkbox" id="fsOwn"><span>This is my own copy of this game, obtained legally (for example, dumped from my console). The results stay with me for my own use.</span></label>
         <div class="row"><button class="primary" id="fsGo" type="button" disabled>Choose the game file…</button>
           <span class="muted small">or</span><input id="fsPath" class="mono grow" placeholder="paste its path on this computer"><button class="ghost" id="fsPathGo" type="button">Use path</button></div>
+        <div class="row"><button class="ghost small-btn" id="fsFind" type="button">Search ROM library</button><p class="muted small" id="fsFound"></p></div><pre class="joblog" id="fsFindLog" hidden></pre>
         <div class="workbar" role="progressbar" aria-label="Building project" hidden><i></i></div>
         <pre class="joblog tall" id="fsLog" hidden></pre>
         <p class="muted small">Then decompdecomp runs the project's setup and build, which can download the project's own tools and take a few minutes. Put the game in place yourself? <button class="link-btn" id="fsBuild" type="button">Just build</button></p>
@@ -822,6 +844,25 @@ async function renderForkSetup() {
     };
     $("fsPathGo").onclick = usePath;
     $("fsBuild").onclick = () => run(() => api("/api/fork/setup", { method: "POST", body: { slug: S.slug } }));
+    const setupSlug = S.slug, searchToken = Symbol();
+    box._romSearch = searchToken;
+    $("fsFind").onclick = async () => {
+      const logEl = $("fsFindLog"), statusEl = $("fsFound"), input = $("fsPath");
+      const finish = beginWork(logEl, "Looking for your ROM", [$("fsFind")], "ROM search finished.");
+      try {
+        const { job } = await api("/api/fork/find-rom", { method: "POST", body: { slug: setupSlug } });
+        const found = await followJob(job, logEl);
+        if (S.slug !== setupSlug || box._romSearch !== searchToken || usingGame) return;
+        if (found.path) {
+          if (found.in_project) input.value = "";
+          else if (!input.value.trim()) input.value = found.path;
+          statusEl.textContent = found.in_project ? "Your verified ROM is already in the project. Retry setup without choosing it again." : `Found the ${found.version ? found.version + " version" : "expected version"} by SHA-1. Confirm ownership above, then click Use path.`;
+          if (found.in_project) { $("fsBuild").textContent = "Retry setup"; $("fsBuild").className = "primary"; }
+        } else statusEl.textContent = found.reason || "No matching ROM found.";
+      } catch (e) {
+        if (S.slug === setupSlug && box._romSearch === searchToken) showJobError(logEl, e.message);
+      } finally { finish(); }
+    };
   } else {
     box.innerHTML = `<div class="fs-main">
         <p class="eyebrow">Last step</p>

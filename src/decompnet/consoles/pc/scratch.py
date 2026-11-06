@@ -18,10 +18,11 @@ does the delinking itself:
 
 The project (tools/configure.py, tools/delink.py) cuts the functions out of the user's copy into COFF objects at
 build time, one per source file (src/auto/text_<address>.cpp, about 4 KiB of functions each), and compiles src/ with
-MSVC through wibo. A program built without relocations (most games before 2005) has every address fixed, which is
-what this reads. `ninja rebuild` (tools/rebuild.py) puts the whole .exe back together from the project, each function
-at its address from its C where that compiles to the game's code, else from the delinked objects, the rest your
-copy's, and compares it with the user's copy: the project's rebuild check (check_code) and its export.
+MSVC through wibo (Visual C++ 2017 through wine). A program built without relocations (most games before 2005) has
+every address fixed, which is what this reads. `ninja rebuild` (tools/rebuild.py) puts the whole .exe back together
+from the project, each function at its address from its C where that compiles to the game's code, else from the
+delinked objects, the rest your copy's, and compares it with the user's copy: the project's rebuild check (check_code)
+and its export.
 The game's own DLLs are analysed the same way, each a program of the project (find_modules), rebuilt against its
 own copy.
 """
@@ -45,7 +46,7 @@ from capstone import x86
 
 from decompnet.hostenv import NO_WINDOW
 
-from ... import toolchains
+from ... import kits, toolchains
 from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
 from . import debuginfo
@@ -77,7 +78,7 @@ RICH_COMPILERS = (
 )
 # Visual C++ 2015 to 2026 share their tools' ids: the first build of each (comp_id.txt)
 VC14_BUILDS = ((35503, "14.5"), (30401, "14.3"), (27508, "14.2"), (25017, "14.1"), (0, "14.0"))
-VISUAL_STUDIO = {"6.0": "6.0", "7.0": ".NET 2002", "7.1": ".NET 2003", "8.0": "2005", "9.0": "2008", "10.0": "2010",
+VISUAL_STUDIO = {"2.0": "2.0", "4.0": "4.0", "4.1": "4.1", "4.2": "4.2", "5.0": "5.0", "6.0": "6.0", "7.0": ".NET 2002", "7.1": ".NET 2003", "8.0": "2005", "9.0": "2008", "10.0": "2010",
                  "11.0": "2012", "12.0": "2013", "14.0": "2015", "14.1": "2017", "14.2": "2019", "14.3": "2022",
                  "14.4": "2022", "14.5": "2026"}
 # the release each common build is (comp_id.txt), so the import says "2008 SP1": each update generates other code
@@ -89,11 +90,17 @@ RELEASES = {("6.0", 8447): "SP3", ("6.0", 8799): "SP4", ("6.0", 8966): "SP5", ("
             ("14.0", 23918): "Update 2", ("14.0", 24210): "Update 3", ("14.0", 24215): "Update 3.1"}
 # The compiler packs' Visual C++ (consoles/pc MSVC_VERSIONS) by the version and build the Rich header names: each update
 # generates other code, so a game builds with its own build's. 2005's RTM and SP1 are both build 50727 (the Rich
-# header keeps no more of the version), so an import takes SP1; RTM ("8.0") is chosen by file, with try_compiler. From each compiler's own banner (cl.exe)
+# header keeps no more of the version), so an import takes SP1; RTM ("8.0") is chosen by file, with try_compiler.
+# 2017's 64-bit compiler (14.16-x64) is never a game's: 64-bit games aren't started yet. From each compiler's own
+# banner (cl.exe)
 RICH_BUILDS = {("6.0", 8168): "6.0", ("7.0", 9466): "7.0", ("7.1", 3077): "7.1", ("8.0", 50727): "8.0SP1",
-               ("9.0", 21022): "9.0", ("9.0", 30729): "9.0SP1", ("10.0", 30319): "10.0", ("10.0", 40219): "10.0SP1"}
-MSVC_PACKS = ("msvc", "msvc2005")  # toolchains.toml: 6.0-7.1, 2005-2010; each version in a folder of its pack
-LAST_IN_SCOPE = (14, 0)  # Visual C++ 2015: games built with 2017 and newer are out of decompdecomp's scope for now
+               ("9.0", 21022): "9.0", ("9.0", 30729): "9.0SP1", ("10.0", 30319): "10.0", ("10.0", 40219): "10.0SP1",
+               ("14.1", 27027): "14.16"}
+# toolchains.toml's packs, each named after its first version: 6.0-7.1, 2005-2010, and 2017 (msvc2015: 2015 is to
+# join it); each version in a folder of its pack
+MSVC_PACKS = ("msvc", "msvc2005", "msvc2015")
+FIRST_YEAR = 1998  # Visual C++ 6.0's, whose name (VISUAL_STUDIO) has no year
+KIT = "visualcpp"  # the kit PC games take: the user's own Visual C++ copies
 LINKER_VERSION_AT = 2  # in the optional header: the linker's major and minor version, a byte each
 # DRM and packers, by the sections they add to a program, as Detect It Easy's rules find them (github.com/horsicq/
 # Detect-It-Easy, db/PE) and Steamless finds Steam's (github.com/atom0s/Steamless: a ".bind" section)
@@ -113,6 +120,11 @@ RICH_LINKERS = {0x04, 0x13, 0x1E, 0x20, 0x25, 0x28, 0x3C, 0x3D, 0x47, 0x56, 0x5A
                 0xF0, 0x102}
 MAIN_BUILD_SHARE = 10  # without the linker's build: the newest build that compiled a tenth of the files or more
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# the C runtime as a DLL (/MD): a program importing from one was compiled with its headers' dllimport declarations
+# (`call [__imp__strncpy]`). 2015 on: vcruntime140 and the Universal CRT (ucrtbase, through api-ms-win-crt-*)
+C_RUNTIME_DLL = re.compile(r"(msvcrt|msvc[rp]\d*(_\w+)?|vcruntime\d+(_\d+)?|ucrtbase|api-ms-win-crt-[\w-]+)\.dll", re.I)
+NORETURN_TRAP_FROM = (14, 0)  # Visual C++ 2015 on puts an int3 after a call that never returns, in the function
+DLL_RUNTIME_FROM = (14, 0)  # the games built with /MD when they import their C runtime: 2015 on (older ones: later)
 
 
 @dataclass
@@ -134,6 +146,7 @@ class PE:
     timestamp: int
     sections: list[Section]
     imports: dict[int, str] = field(default_factory=dict)  # import address table slot -> "Sleep"
+    dlls: list[str] = field(default_factory=list)  # the DLLs it imports from, as it names them ("KERNEL32.dll")
 
     def section_at(self, addr: int) -> Section | None:
         return next((s for s in self.sections if s.va <= addr < s.va + max(s.vsize, s.size)), None)
@@ -157,8 +170,9 @@ PE_HEADER_BYTES = 0x18  # "PE\0\0" and the COFF header
 MACHINE_AT, SECTION_COUNT_AT, TIMESTAMP_AT, OPTIONAL_HEADER_SIZE_AT = 4, 6, 8, 20  # in the COFF header, from "PE\0\0"
 OPTIONAL_HEADER_AT = PE_HEADER_BYTES
 MACHINE_I386, PE32_MAGIC = 0x14C, 0x10B
+X64_MACHINE = 0x8664  # AMD64: a 64-bit program's (MACHINES)
 X86 = "32-bit x86"
-MACHINES = {MACHINE_I386: X86, 0x8664: "64-bit (x64)", 0xAA64: "64-bit ARM", 0x1C0: "ARM", 0x1C4: "ARM",
+MACHINES = {MACHINE_I386: X86, X64_MACHINE: "64-bit (x64)", 0xAA64: "64-bit ARM", 0x1C0: "ARM", 0x1C4: "ARM",
             0x200: "Itanium"}
 ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT, IMPORTS_AT = 16, 28, 56, 104  # in the optional header
 SECTION_HEADER_BYTES, SECTION_FLAGS_AT = 40, 36
@@ -192,6 +206,7 @@ EH_STUB_GAP = 4  # functions without the shape the run of stubs may hold in a ro
 # .text$yd after .text$x) has at least this many, so a few pieces cut off near the end of the main body never pass
 EH_STUB_FOLLOWED_RUN = 64
 EH_STUB_BYTES = 32  # how much of a function's start its shape is read from (an array funclet's pushes and lea)
+EH_HANDLER_BYTES = 48  # a 2017 handler's: a cookie check (17 bytes) or two before its mov and jmp (10)
 # import thunks: a call to a DLL's function declared without __declspec(dllimport) goes to a `jmp dword ptr
 # [__imp__Name]` the linker adds from the import library, 6 bytes each, in runs. Ghidra marks them thunks and analyse
 # left them out, so their bytes became one function with the code before them (on a Visual C++ 6.0 game, 8 thunks,
@@ -254,6 +269,7 @@ def _imports(pe: PE, opt: int) -> dict[int, str]:
             break
         lookup, _, _, name_rva, iat = struct.unpack("<IIIII", desc)
         dll = pe.read(pe.image_base + name_rva, DLL_NAME_BYTES).split(b"\0", 1)[0].decode("latin-1")
+        pe.dlls.append(dll)
         lookup = lookup or iat
         for k in range(MAX_IMPORTS_PER_DLL):
             entry = pe.read(pe.image_base + lookup + 4 * k, 4)
@@ -302,6 +318,7 @@ class Build:
     whole_program: int = 0  # compiled files built for link-time code generation (/GL)
     compiled: int = 0  # every compiled file the Rich header counts
     wrapper: str | None = None  # the DRM or packer it's recognised by
+    own: kits.OwnCompiler | None = None  # the user's own Visual C++ that builds it, when the packs' don't (own_copy)
 
     @property
     def compiler(self) -> str:
@@ -319,22 +336,29 @@ class Build:
         return self.wrapper in PACKER_SECTIONS.values()
 
     @property
-    def out_of_scope(self) -> bool:
-        return self.version is not None and _version_key(self.version) > LAST_IN_SCOPE
-
-    @property
     def newer_than_pack(self) -> bool:
         return self.version is not None and \
             _version_key(self.version) > max(_version_key(version) for version, _ in RICH_BUILDS)
 
     @property
+    def stand_in(self) -> tuple[str, int] | None:
+        """The packs' Visual C++ (a RICH_BUILDS key) that builds a game whose version they don't have: the nearest by
+        year (2015's with 2017's, 2013's with 2010 SP1); None: they have its version, or it names none."""
+        if self.version is None or any(version == self.version for version, _ in RICH_BUILDS):
+            return None
+        return _nearest(self.version)
+
+    @property
     def pack_version(self) -> str:
         """The compiler packs' Visual C++ to build with: the program's own build, or the closest build of its version
-        (the newest, when only its linker's version names it), or the closest the packs have."""
+        (the newest, when only its linker's version names it), or the nearest version the packs have (stand_in). The
+        user's own copy of the build, when the packs have none of it."""
+        if self.own is not None:
+            return self.own.version
         same = [(build, name) for (version, build), name in RICH_BUILDS.items() if version == self.version]
         if same:
             return min(same, key=lambda b: abs(b[0] - self.build) if self.build else -b[0])[1]
-        return _pack()[-1] if self.newer_than_pack else MSVC_DEFAULT
+        return RICH_BUILDS[self.stand_in] if self.stand_in else MSVC_DEFAULT
 
     @property
     def exact(self) -> bool:
@@ -354,16 +378,13 @@ class Build:
         out = []
         if self.machine != X86:
             out.append(f"it's a {self.machine} program, and decompdecomp starts PC games from 32-bit x86 ones for now "
-                       "(64-bit games come after Visual C++ 2012 to 2015: ROADMAP.md, Newer Windows games)")
+                       "(64-bit games come next: ROADMAP.md, Newer Windows games)")
         if self.packed:
             out.append(f"it's compressed with {self.wrapper}, so its code only appears when it runs, and decompdecomp "
                        "reads a program as it is on disk")
         elif self.wrapper:
             out.append(f"it's wrapped in {self.wrapper}, DRM that encrypts or hides its code: decompdecomp never removes "
                        "or gets around protection, so it works only on programs without it, such as a DRM-free release")
-        if self.out_of_scope:
-            out.append(f"it was built with {self.compiler}, and decompdecomp's PC games stop at Visual C++ 2015: games "
-                       "built with 2017 and newer are out of its scope for now")
         # a game that is mostly LTCG is refused rather than left to agents for weeks (most of it can't match); a few
         # such files (a library built with /GL) only cost their own functions, which cannot_match says
         if self.whole_program * 2 > self.compiled > 0:
@@ -375,9 +396,23 @@ class Build:
     def cannot_match(self) -> list[str]:
         """Why a program decompdecomp does start can't match (all of it, or some): none, it can."""
         out = []
-        if self.newer_than_pack:
-            out.append(f"it was built with {self.compiler}, and decompdecomp has Visual C++ 6.0 to 2010 so far: "
-                       "2012 to 2015 come next (ROADMAP.md, Newer Windows games), so nothing matches until then")
+        # before 6.0 only the user's own copy builds it (no pack has one: its own word); 2015 builds with 2017's
+        # without a word here: the same toolset's next version, much of its code the same (the import's log names
+        # the compiler it builds with all the same); the user's own copy builds its own build exactly, so none of
+        # this is news then
+        if self.version is not None and self.own is None and _version_key(self.version) < (6, 0):
+            out.append(f"it was built with {self.compiler}, which the compiler packs don't have: nothing matches until "
+                       f"you set up your own Visual C++ {self.version} copy in Setup (the Visual C++ kit)")
+        elif self.own is None and (near := self.stand_in):
+            year, theirs = VISUAL_STUDIO[self.version], Build(X86, *near).compiler
+            if self.newer_than_pack:
+                out.append(f"it was built with {self.compiler}, newer than any decompdecomp has: it builds with "
+                           f"{theirs}, and what {year}'s compiler generates differently won't match until decompdecomp "
+                           "has it (ROADMAP.md, Newer Windows games)")
+            elif _version_key(self.version)[0] != _version_key(near[0])[0]:
+                out.append(f"it was built with {self.compiler}, and decompdecomp has no Visual C++ {year} yet: it "
+                           f"builds with {theirs}, the nearest it has, so little of it matches until {year}'s comes "
+                           "(ROADMAP.md, Newer Windows games)")
         if self.whole_program:
             out.append(f"{self.whole_program} of its {self.compiled} compiled files were built with whole-program "
                        "optimisation (/GL): their functions can't match")
@@ -388,6 +423,44 @@ def _pack() -> list[str]:
     from . import MSVC_VERSIONS
 
     return [v.removeprefix("MSVC/") for v in MSVC_VERSIONS]
+
+
+def _year(version: str) -> int:
+    return int(m.group()) if (m := re.search(r"\d{4}", VISUAL_STUDIO[version])) else FIRST_YEAR
+
+
+def _nearest(version: str) -> tuple[str, int]:
+    """The RICH_BUILDS key nearest a Visual C++ by year (a tie: the newer), its newest build."""
+    return min(RICH_BUILDS, key=lambda vb: (abs(_year(vb[0]) - _year(version)), -_year(vb[0]), -vb[1]))
+
+
+def rich_version(build: str) -> tuple[str, int]:
+    """The Rich header's version and build number of a compiler's c2.dll file version, which is cl.exe's (Visual C++
+    6.0's is 12.0.8168, .NET 2003's 13.10.3077, 2008's 15.0.30729, 2017's 19.16.27023): ("6.0", 8168), ("7.1", 3077),
+    ("9.0", 30729), ("14.1", 27023), 2015 and newer by their build as the Rich header's are (VC14_BUILDS)."""
+    major, minor, number = (int(part) for part in build.split(".")[:3])
+    if major >= 19:
+        return next(v for first, v in VC14_BUILDS if number >= first), number
+    if major == 13:
+        return ("7.1" if minor else "7.0"), number
+    if major == 9:  # Visual C++ 2.x (32-bit); 1.x (cl 8, 16-bit) has none
+        return "2.0", number
+    if major == 10:  # 4.0, 4.1, 4.2: cl 10.00, 10.10, 10.20
+        return f"4.{min(minor // 10, 2)}", number
+    return ("5.0" if major == 11 else f"{major - 6}.0"), number
+
+
+def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None:
+    """The user's own Visual C++ that should build a game the packs have no exact build for: the copy of its build,
+    else the nearest build of the same version (Visual Studio's, "9.0"); none: they have no copy of that version.
+    A game that names only its linker's version (number None) takes the newest copy of it."""
+    if version is None or (version, number) in RICH_BUILDS:
+        return None
+    same = [(rich_version(c.build)[1], c) for c in kits.compilers((KIT,)) if c.build
+            and rich_version(c.build)[0] == version]
+    if not same:
+        return None
+    return (min(same, key=lambda nc: (abs(nc[0] - number), -nc[0])) if number else max(same, key=lambda nc: nc[0]))[1]
 
 
 def is_windows_program(head: bytes) -> bool:
@@ -425,7 +498,9 @@ def describe(data: bytes) -> Build:
         number = max(k[1] for k in files if k[0] == version and files[k] * MAIN_BUILD_SHARE >= by_version[version])
     else:  # no Rich header (stripped, or a store's signature in its place): the linker's version names the toolset
         major, minor = data[at + OPTIONAL_HEADER_AT + LINKER_VERSION_AT:at + OPTIONAL_HEADER_AT + LINKER_VERSION_AT + 2]
-        version = {6: "6.0", 7: "7.1" if minor >= 10 else "7.0"}.get(major, f"{major}.{minor // 10 if major == 14 else 0}")
+        # (Visual C++ 2.x's linker is 2.5x, 4.x's 3.0 to 4.2, 5.0's 5.0; a Rich header began with 6.0's tools)
+        version = {2: "2.0", 3: "4.0", 4: f"4.{min(minor // 10, 2)}", 5: "5.0", 6: "6.0",
+                   7: "7.1" if minor >= 10 else "7.0"}.get(major, f"{major}.{minor // 10 if major == 14 else 0}")
         version, number = (version if version in VISUAL_STUDIO else None), None
     first = at + OPTIONAL_HEADER_AT + opt_size
     names = [data[first + SECTION_HEADER_BYTES * i:first + SECTION_HEADER_BYTES * i + 8].rstrip(b"\0").decode("latin-1")
@@ -436,7 +511,7 @@ def describe(data: bytes) -> Build:
             len({n for n in names if DENUVO_SECTION.fullmatch(n)}) >= DENUVO_MIN_NAMES:
         wrapper = "Denuvo"
     return Build(MACHINES.get(machine_id, f"machine type {machine_id:#x}"), version, number, whole,
-                 sum(files.values()), wrapper)
+                 sum(files.values()), wrapper, own_copy(version, number))
 
 
 def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
@@ -452,9 +527,9 @@ def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
                 files[version, number] = files.get((version, number), 0) + n
     out = []
     for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
-        built = Build(X86, version, number)
+        built = Build(X86, version, number, own=own_copy(version, number))
         try:
-            installed = toolchains.installed(compiler_pack(built.pack_version)) is not None
+            installed = built.own is not None or toolchains.installed(compiler_pack(built.pack_version)) is not None
         except ForkError:
             installed = False
         out.append((f"MSVC/{built.pack_version}", n, built.compiler, installed))
@@ -470,16 +545,27 @@ def game_info(path: Path) -> dict:
     pe = read_pe(data)
     stem = re.sub(r"[^a-z0-9]+", "", path.stem.lower()) or "game"
     version = built.pack_version
+    exact = built.exact  # (the packs' very build, or a copy of the user's own of it)
     if built.version is None:
         why = "the program doesn't say which Visual C++ built it; 6.0 built most games of its time"
     elif built.exact:
         why = f"it was built with {built.compiler}"
+    elif built.own is not None:  # a build of the user's own: the very one, or the nearest of that Visual C++
+        same = rich_version(built.own.build)[1] == built.build
+        exact = same
+        why = (f"it was built with {built.compiler}; your newest copy of it, {built.own.name}, builds it" if not built.build
+               else f"it was built with {built.compiler}; {built.own.name} builds it" if same else
+               f"it was built with {built.compiler}; the nearest of your copies is {built.own.name}")
+    elif _version_key(built.version) < (6, 0):  # Visual C++ 2.x to 5.0: no pack, only the user's own copy (#137)
+        why = (f"it was built with {built.compiler}, and no compiler pack has that Visual C++: set up your own Visual "
+               f"C++ {built.version} copy in Setup (Visual C++, your own copy); until then the closest the packs have is")
     else:  # another update of its version (the packs have the common ones), or a version they don't have yet
         why = f"it was built with {built.compiler}; the closest the compiler packs have is"
     return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
             "timestamp": pe.timestamp, "compiler": version, "compiler_why": why, "summary": built.summary(),
-            "cannot_match": built.cannot_match()}
-
+            "cannot_match": built.cannot_match(), "exact": exact,
+            "modern_eh": built.own is not None and _version_key(built.version) >= (8, 0),
+            "target": "x64" if built.machine == MACHINES[X64_MACHINE] else "x86"}
 
 # ---------------------------------------------------------------------------------------------------- the game's DLLs
 # Many games keep much of their code in DLLs of their own beside the .exe (#12: a 2010 racing game's .exe is small;
@@ -782,6 +868,8 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
     """Every function's extent, name and relocations, from Ghidra's function list."""
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
+    built = describe(pe.data)
+    traps = built.version is not None and _version_key(built.version) >= NORETURN_TRAP_FROM
     rows: dict[int, dict] = {}
     for r in found:
         s = pe.section_at(r["entry"])
@@ -789,6 +877,12 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
                 pe.offset(r["entry"]) is None:
             continue  # (a thunk to one of the program's own functions: part of the code it's in, as Ghidra found it)
         rows[r["entry"]] = r if not r.get("thunk") else {**r, "end": r["entry"] + THUNK_BYTES}
+    for sec in pe.sections:  # code before the first function of a section is looked for as gaps after one are
+        first = min((s for s in rows if sec.va <= s < sec.va + sec.size), default=None)
+        if sec.code and first is not None and (rest := pe.read(sec.va, first - sec.va).lstrip(b"\x90\xcc\x00")):
+            if rest.strip(b"\x90\xcc\x00"):
+                missed = first - len(rest)
+                rows[missed] = _missed(md, missed, rest)
     starts = sorted(rows)
     i = 0
     extents: dict[int, tuple[int, int, list[int]]] = {}  # start -> (code end, end, jump table entries)
@@ -798,19 +892,16 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
         limit = min(starts[i + 1] if i + 1 < len(starts) else sec.va + sec.size, sec.va + sec.size)
         code_end = max(start + 1, min(rows[start].get("end", limit), limit))
         code_end, end, entries = _tables(md, pe, start, code_end, limit)
+        if traps and end == code_end < limit and pe.read(end, 1) == b"\xcc" and \
+                [i.mnemonic for i in _disasm(md, pe.read(start, code_end - start), start)][-1:] == ["call"]:
+            # (a call can end a function only if it never returns: the int3 after it is the compiler's, not padding)
+            code_end = end = end + 1
         gap = pe.read(end, limit - end)
         rest = gap.lstrip(b"\x90").lstrip(b"\xcc\x00")
         if rest and not rest.strip(b"\x90\xcc\x00") == b"":
             # code nobody calls directly (callbacks, vtables) that Ghidra didn't make a function: one of its own
             missed = limit - len(rest)
-            # less the padding after it, but not its last instruction's zeros (a `ret 8` ends with one)
-            body = len(rest.rstrip(b"\x90\xcc\x00"))
-            # or up to the int3s Visual C++ 2005 and later pad each function of a file with: what follows them is
-            # another function (inlined everywhere, so nothing calls it: Ghidra missed several in a row there)
-            body = next((i.address + i.size for i in _disasm(md, rest, 0) if i.address + i.size >= body or (
-                i.mnemonic in ("ret", "jmp") and rest[i.address + i.size:i.address + i.size + 1] == b"\xcc")), body)
-            rows[missed] = {"entry": missed, "end": missed + body, "name": "",
-                            "source": "DEFAULT", "purge": 0, "convention": "__cdecl"}
+            rows[missed] = _missed(md, missed, rest)
             starts.insert(i + 1, missed)
             limit = missed
             gap = pe.read(end, limit - end)
@@ -831,6 +922,17 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
 
     return [Function(start, extents[start][1] - start, names[start], _relocations(md, pe, start, *extents[start], names))
             for start in starts]
+
+
+def _missed(md, at: int, rest: bytes) -> dict:
+    """A function Ghidra didn't make at `at`, whose code is `rest` up to the next function: to the padding after it,
+    but not its last instruction's zeros (a `ret 8` ends with one), or up to the int3s Visual C++ 2005 and later pad
+    each function of a file with: what follows them is another function (inlined everywhere, so nothing calls it:
+    Ghidra missed several in a row there)."""
+    body = len(rest.rstrip(b"\x90\xcc\x00"))
+    body = next((i.address + i.size for i in _disasm(md, rest, 0) if i.address + i.size >= body or (
+        i.mnemonic in ("ret", "jmp") and rest[i.address + i.size:i.address + i.size + 1] == b"\xcc")), body)
+    return {"entry": at, "end": at + body, "name": "", "source": "DEFAULT", "purge": 0, "convention": "__cdecl"}
 
 
 def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[int],
@@ -921,10 +1023,13 @@ def merge_pieces(pe: PE, functions: list[Function], keep: set[str] = frozenset()
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
     names = {f.addr: f.name for f in functions}
-    reached: dict[str, set[str]] = {}  # name -> the functions whose code calls it or holds its address
+    # name -> the functions whose code calls it, jumps to it or holds its address: a jump counts too, as a linker
+    # that shares one tail between functions (link-time code generation: on an Xbox game, two functions jumped into
+    # a "piece") leaves the other's jump naming a symbol the join took away
+    reached: dict[str, set[str]] = {}
     for f in functions:
-        for off, kind, name, _ in f.relocs:
-            if name is not None and (kind == DIR32 or pe.read(f.addr + off - 1, 1) == bytes([CALL])):
+        for _, _, name, _ in f.relocs:
+            if name is not None:
                 reached.setdefault(name, set()).add(f.name)
     home: dict[str, str] = {}  # a piece -> the function it was joined to
 
@@ -939,7 +1044,8 @@ def merge_pieces(pe: PE, functions: list[Function], keep: set[str] = frozenset()
         # (its own code may call it, a `__finally` block, or hold its address, where a catch block goes on)
         if owner.name in keep or part.name in keep or {now(n) for n in reached.get(part.name, ())} - {owner.name} \
                 or not _ends_at(md, before, owner.size) or _reads_from(md, before, owner.addr, part.addr) or \
-                not x86_arch.piece(before, pe.read(part.addr, part.size)) or \
+                not (x86_arch.piece(before, code := pe.read(part.addr, part.size)) or
+                     x86_arch.resumes(code, part.addr, owner.addr, part.addr + part.size)) or \
                 owner.unit != part.unit and (sum(f.unit == part.unit for f in out) < 2 or
                                              (movable is not None and not movable(part))):
             k += 1
@@ -980,7 +1086,10 @@ def eh_stub(md, code: bytes, addr: int) -> str | None:
     jmp __CxxFrameHandler`; Ghidra merges a few into one function at times), "funclet" (it runs in its parent's frame:
     it uses [ebp±N] before it sets up a frame, calls anything or leaves, as `lea ecx, [ebp-N]; jmp <destructor>`, or
     destroys a global: `mov ecx, <global>; jmp <destructor>`), or None. A real function that builds its frame through
-    __EH_prolog (`mov eax, <handler>; call __EH_prolog`) calls before it uses ebp: not a stub."""
+    __EH_prolog (`mov eax, <handler>; call __EH_prolog`) calls before it uses ebp: not a stub. Visual C++ 2017's
+    handlers check the function's /GS cookie first (_checked_handler)."""
+    if _checked_handler(list(_disasm(md, code[:EH_HANDLER_BYTES], addr))):
+        return "handler"
     ins = list(_disasm(md, code[:EH_STUB_BYTES], addr))
     if len(ins) >= 2 and ins[0].id == x86.X86_INS_MOV and ins[1].id == x86.X86_INS_JMP \
             and ins[0].operands[1].type == x86.X86_OP_IMM and ins[0].operands[0].reg in (x86.X86_REG_EAX, x86.X86_REG_ECX):
@@ -997,6 +1106,18 @@ def eh_stub(md, code: bytes, addr: int) -> str | None:
     return None
 
 
+def _checked_handler(ins: list) -> bool:
+    """A handler that checks its function's /GS cookie first, as Visual C++ 2017's do (`mov edx, [esp+8]; lea eax,
+    [edx+N]; mov ecx, [edx-M]; xor ecx, eax; call @__security_check_cookie@4; mov eax, <FuncInfo>; jmp
+    ___CxxFrameHandler3`): its frame from the handler's own arguments, never from ebp."""
+    first = ins[0].operands if ins else ()
+    return len(first) == 2 and ins[0].id == x86.X86_INS_MOV and first[0].type == x86.X86_OP_REG and \
+        first[0].reg == x86.X86_REG_EDX and first[1].type == x86.X86_OP_MEM and \
+        first[1].mem.base == x86.X86_REG_ESP and first[1].mem.disp == 8 and \
+        any(a.id == x86.X86_INS_MOV and a.operands[0].type == x86.X86_OP_REG and a.operands[0].reg == x86.X86_REG_EAX
+            and a.operands[1].type == x86.X86_OP_IMM and b.id == x86.X86_INS_JMP for a, b in zip(ins, ins[1:]))
+
+
 def exception_stubs(pe: PE, functions: list[tuple[int, int]]) -> set[int]:
     """The addresses of the exception-handling stubs among the functions ((address, size)): those with a stub's shape
     (eh_stub) in the last run of them in a code section, where the linker puts .text$x, and only when the run has a
@@ -1010,7 +1131,7 @@ def exception_stubs(pe: PE, functions: list[tuple[int, int]]) -> set[int]:
     for sec in (s for s in pe.sections if s.code):
         run, kinds, gap, after = [], set(), 0, 0
         for addr, size in sorted(((a, n) for a, n in functions if sec.va <= a < sec.va + sec.size), reverse=True):
-            kind = eh_stub(md, pe.read(addr, min(size, EH_STUB_BYTES)), addr)
+            kind = eh_stub(md, pe.read(addr, min(size, EH_HANDLER_BYTES)), addr)
             if kind is not None:
                 run.append(addr)
                 kinds.add(kind)
@@ -1660,6 +1781,54 @@ def set_frame_flags(root: Path, version: str, keep: set[str] = frozenset()) -> i
 # ---------------------------------------------------------------------------------------------------- the project
 
 
+def configure_settings(text: str, compiler: str, pe: PE, log=print, modules: list[Module] = (),
+                       ehsc: bool | None = None, cl_flags: list[str] | None = None) -> str:
+    """tools/configure.py's settings for the game (its `text`, the template's): the Visual C++ it builds with, and the
+    flags that version and the program need: /EHsc for /GX from 2005 on (saying /GX warns on every file), and /MD
+    for a program built with /MD (builds_md: then the C runtime's headers declare its functions as imports, `call
+    [__imp__strncpy]`, as the game's code calls them). The flags are the whole project's, the game's own DLLs'
+    files too: one of `modules` built the other way is told, as its calls into the C runtime may not match. A console
+    with flags of its own (`cl_flags`: an Xbox game's /GL and /LTCG) has them replace CL_FLAGS, and `ehsc` says what
+    /GX becomes when the compiler isn't one of the packs' (a kit's own-..., whose pack isn't asked)."""
+    text = text.replace(f'MSVC_VERSION = "{MSVC_DEFAULT}"', f'MSVC_VERSION = "{compiler}"')
+    if cl_flags is not None:
+        text = re.sub(r"^CL_FLAGS = \[[^\]]*\].*$", f"CL_FLAGS = {json.dumps(cl_flags)}", text, count=1, flags=re.M)
+    else:
+        if ehsc is None:
+            ehsc = compiler_pack(compiler) != "msvc"
+        if ehsc:
+            text = text.replace('"/GX"]  # /GX:', '"/EHsc"]  # /EHsc (/GX before 2005):')
+        md = builds_md(pe, compiler)
+        if md:
+            text = text.replace('"/EHsc"]  # /EHsc', '"/EHsc", "/MD"]  # /MD: its C runtime is a DLL, as the program '
+                                'imports it; /EHsc')
+            log(f"it imports its C runtime from {', '.join(dll_runtime(pe))}: it builds with /MD, so the C runtime's "
+                "headers declare their functions as imports")
+        for m in modules:
+            if builds_md(m.pe, m.built.pack_version) != md:
+                how = f"from {', '.join(dll_runtime(m.pe))} (/MD)" if not md else "built in (/MT)"
+                log(f"{m.rel} takes its C runtime {how}, unlike the program: its files build {'with' if md else 'without'}"
+                    " /MD all the same (a project's flags are the whole game's), so its calls into the C runtime may not "
+                    "match (ROADMAP.md, Newer Windows games)")
+    return text
+
+
+def builds_md(pe: PE, compiler: str) -> bool:
+    """Whether a program's files build with /MD: it imports its C runtime from DLLs (dll_runtime), and it builds
+    with Visual C++ 2015 or newer, a pack's or the user's own (DLL_RUNTIME_FROM: older ones' runtimes, msvcrt and
+    msvcr71, aren't yet)."""
+    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)", compiler or ""):  # (a copy's: its cl.exe's, "own-19.29.30137")
+        version = rich_version(own.group(1))[0]
+    else:
+        version = m.group() if (m := re.match(r"\d+\.\d+", compiler or "")) else None
+    return bool(dll_runtime(pe)) and version is not None and _version_key(version) >= DLL_RUNTIME_FROM
+
+
+def dll_runtime(pe: PE) -> list[str]:
+    """The DLLs of the C runtime the program imports from (C_RUNTIME_DLL): none, it has its own copy (/MT)."""
+    return [dll for dll in pe.dlls if C_RUNTIME_DLL.fullmatch(dll)]
+
+
 def compiler_pack(version: str) -> str:
     """The pack a Visual C++ comes in (the `into` of its part in toolchains.toml)."""
     pack = next((p for p in MSVC_PACKS if any(part.get("into") == version for part in toolchains.get(p).parts)), None)
@@ -1670,7 +1839,7 @@ def compiler_pack(version: str) -> str:
 
 # the lines of tools/configure.py a project keeps when its tools are brought up to date: what create (and the
 # Settings panel, set_own_compiler) wrote for the game, and the flags its README says the user may change
-KEPT_SETTINGS = (r'^MSVC_VERSION = "[^"]*"', r"^CL_FLAGS = \[[^\]]*\]")
+KEPT_SETTINGS = (r'^MSVC_VERSION = "[^"]*"', r"^CL_FLAGS = \[[^\]]*\]", r"^LTCG = (?:True|False)")
 
 
 def tools_version() -> str:
@@ -1707,9 +1876,12 @@ def write_tools(root: Path, version: str) -> list[str]:
     return changed
 
 
-def tool_args() -> list[str]:
+def tool_args(kit_ids=()) -> list[str]:
     """configure.py arguments pointing at decompdecomp's pinned tools: every installed compiler pack, 6.0-7.1's
-    last, as an older project's configure.py keeps only the last --msvc (its projects build with 6.0 to 7.1)."""
+    last, as an older project's configure.py keeps only the last --msvc (its projects build with 6.0 to 7.1), and
+    the compilers in the user's copies of the kits `kit_ids` (the console's Console.kits: --own).
+    Nothing about wine: a 2017 file finds it when it builds (WindowsPC.build_env), so no configure.py, older or
+    new, is given an argument it doesn't know."""
     packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None]
     if not packs:
         raise ForkError("PC games are built with Microsoft Visual C++, which is proprietary: install it in Setup "
@@ -1718,7 +1890,18 @@ def tool_args() -> list[str]:
     if toolchains.get("wibo").supported and sys.platform != "win32":
         toolchains.ensure("wibo", log=lambda *_: None)
         args += ["--wibo", str(toolchains.binary("wibo"))]
-    return args
+    return [*args, *own_compiler_args(kits.compilers(kit_ids))]
+
+
+def own_compiler_args(compilers) -> list[str]:
+    """configure.py's arguments for compilers of the user's own (kits.OwnCompiler: a kit's, not a pack's)."""
+    return [arg for c in compilers for arg in ("--own", ",".join([f"{c.version}={c.runner or 'none'}", str(c.exe),
+                                                                  *map(str, c.includes)]))]
+
+
+def own_versions(args: list[str]) -> set[str]:
+    """The versions configure.py arguments name compilers of the user's own for (own_compiler_args)."""
+    return {args[i + 1].split("=", 1)[0] for i, a in enumerate(args[:-1]) if a == "--own"}
 
 
 TYPES_H = """/* Basic types for this decompilation (32-bit x86, Visual C++, written in C++). Agents add structs, classes and
@@ -1800,11 +1983,11 @@ def debug_of(root: Path, version: str, symbol: str) -> dict | None:
     return known.get(m.group(0)[:5] + m.group(0)[5:].upper()) if m else None
 
 
-def _header_compiles(root: Path, version: str, unit: str, log) -> bool:
+def _header_compiles(root: Path, version: str, unit: str, log, platform: str = "pc") -> bool:
     """Whether a source file that includes common.h, with the game's types, builds: a header that doesn't would fail
-    every attempt in every file."""
+    every attempt in every file. `platform`: the project's console (at create, before its manifest says)."""
     obj = (Path("build") / version / _source(root, unit)).with_suffix(".obj").as_posix()
-    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS)[0]
+    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS, platform=platform)[0]
 
 
 _PROGRAMS: dict[tuple, list[PE]] = {}  # (paths, mtimes) -> the parsed programs, for data_bytes
@@ -1963,29 +2146,56 @@ def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
              "source": "DEFAULT"} for r in ghidra.functions(module)]
 
 
-def _run(cmd: list[str], root: Path, what: str, log) -> None:
-    ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS)
+def _run(cmd: list[str], root: Path, what: str, log, platform: str = "pc") -> None:
+    """A step of the import's, before the project's manifest names its console (`platform`: what its builds need,
+    Console.build_env: an Xbox game's link-time code generation runs Visual C++'s linker through wine)."""
+    ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS, platform=platform)
     if not ok:
         raise ForkError(f"{what} failed:\n{tail[-ERROR_TAIL:]}")
 
 
-def create(root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
-    """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game."""
+def create(root: Path, game: Path, *, compiler: str | None = None, log=print, info: dict | None = None,
+           platform: str = "pc", what: str = "your copy of the game's program (.exe)",
+           cl_flags: list[str] | None = None, game_step: str = "", args: list[str] | None = None, plan=None) -> dict:
+    """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game. Another
+    console whose games are x86 programs in another format gives the program as a PE (`game`) and says what it is
+    (`info`, as game_info's; `platform`, `what`), its compiler flags (`cl_flags`), how the README's reader gets the
+    program into orig/ (`game_step`) and its configure.py arguments (`args`, with its kits' compilers:
+    own_compiler_args): consoles/xbox/. `plan(pe, functions)`, called once the functions are found:
+    {"cl_flags": ..., "prepare": fn(root, groups), "manifest": {...}}, the console's choices that depend on what the
+    program turned out to be (an Xbox game built with link-time code generation, forks/ltcg.py): other flags,
+    files and settings before the first build, and keys for the manifest."""
     from ...forks import ghidra
 
-    info = game_info(game)
+    info = info or game_info(game)
     version = info["id"]
     compiler = (compiler or f"MSVC/{info['compiler']}").removeprefix("MSVC/")
+    from . import X64_SUFFIX, WindowsPC
+
+    target = info.get("target", "x86")  # (another console's info may not say: its programs are 32-bit x86 ones)
+    if (theirs := "x64" if compiler.endswith(X64_SUFFIX) else "x86") != target:
+        # (review of #138: the import's list offered MSVC/14.16-x64 for a 32-bit game, whose project then built x64
+        # objects that can never match its code)
+        raise ForkError(f"Visual C++ {compiler} makes {theirs} code, and this game is an {target} program: none of "
+                        f"its functions could match. Choose a compiler for {target} (or let decompdecomp pick from "
+                        "the program)")
     log(f"the program: {info['summary']}")
     for why in info["cannot_match"]:
         log(f"what can't match: {why}")
+    own = compiler in own_versions(args or ())  # (a compiler of the user's own: in a kit, not a pack)
     if not info["cannot_match"]:
-        log(f"it can match: decompdecomp builds with Visual C++ {compiler}")
-    pack = compiler_pack(compiler)
-    if not (toolchains.path(pack) / compiler).is_dir():
+        # (a console that doesn't track "exact" (consoles/xbox: always its own compiler) gets the plain word; a
+        # copy of the user's own that's another build of the game's version says so whole in compiler_why)
+        log(f"it can match: decompdecomp builds with Visual C++ {compiler}" if info.get("exact", True) else
+            f"much of it can match: {info['compiler_why']}" + ("" if own else f" Visual C++ {compiler}"))
+    pack = "msvc" if own else compiler_pack(compiler)
+    # (installed() is None too when a pack's headers aren't installed, or toolchains.toml changed it: install again)
+    if not own and (toolchains.installed(pack) is None or not (toolchains.path(pack) / compiler).is_dir()):
         raise ForkError(f"this game builds with Visual C++ {compiler}, which comes in {toolchains.get(pack).name}: "
                         "install it in Setup (Compilers & tools) if you accept its licence, then try again")
-    args = tool_args()
+    if not own and (problem := toolchains.runtime_error(pack)):  # (2017's runs through wine off Windows)
+        raise ForkError(f"this game builds with Visual C++ {compiler}, which needs what this computer lacks: {problem}")
+    args = args or tool_args()
     if not ghidra.available():
         if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
             log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
@@ -2010,6 +2220,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         log(f"{debug.source}: {debug.info.summary()}")
     groups = _program_units(pe, found, log, debug.info.units if debug is not None else None)
     log(f"{sum(map(len, groups.values()))} functions; {info['compiler_why']}: Visual C++ {compiler}")
+    plan = plan(pe, [f for fns in groups.values() for f in fns]) if plan is not None else {}
+    cl_flags = plan.get("cl_flags", cl_flags)
     pes, own = {"": pe}, {}
     debugs = [debug.info] if debug is not None else []
     real = debug_names(debug.info, [f for fns in groups.values() for f in fns]) if debug is not None else {}
@@ -2048,7 +2260,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
                 named += key.startswith("func_")
         version_of = m.built.pack_version
         if version_of != compiler:  # a DLL built by another Visual C++ than the program builds with its own
-            if (toolchains.path(compiler_pack(version_of)) / version_of).is_dir():
+            if version_of in own_versions(args) or (toolchains.path(compiler_pack(version_of)) / version_of).is_dir():
                 own.update({f"src/auto/{u}.cpp": version_of for u in made})
             else:
                 log(f"{m.rel} was built with {m.built.compiler}: its files build with Visual C++ {compiler} until "
@@ -2069,10 +2281,9 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     (root / "include").mkdir()
     (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
     cfg = root / "tools" / "configure.py"
-    text = cfg.read_text(encoding="utf-8").replace(f'MSVC_VERSION = "{MSVC_DEFAULT}"', f'MSVC_VERSION = "{compiler}"')
-    if pack != "msvc":  # /GX is /EHsc from 2005 on, and saying /GX warns on every file
-        text = text.replace('"/GX"]  # /GX:', '"/EHsc"]  # /EHsc (/GX before 2005):')
-    cfg.write_text(text, encoding="utf-8")
+    cfg.write_text(configure_settings(cfg.read_text(encoding="utf-8"), compiler, pe, log=log, modules=modules,
+                                      ehsc=pack != "msvc" or info.get("modern_eh"), cl_flags=cl_flags),
+                   encoding="utf-8")
     conf = root / "config" / version
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({
@@ -2110,26 +2321,29 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
                  f"0x{fns[0].addr:08X} to 0x{fns[-1].addr + fns[-1].size:08X}, found by Ghidra")
         src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from {where}. */\n"
                        "#include \"common.h\"\n", encoding="utf-8")
+    if plan.get("prepare") is not None:
+        plan["prepare"](root, groups)
     log(f"{len(groups)} source files for agents to write into"
         + (f" (each DLL's in src/auto/<its name>/: {', '.join(m.name for m in modules)})" if modules else ""))
 
-    _run([sys.executable, "tools/configure.py", version, *args], root, "the first build", log)
-    if (root / "include" / DEBUG_TYPES).exists() and not _header_compiles(root, version, next(iter(groups)), log):
+    _run([sys.executable, "tools/configure.py", version, *args], root, "the first build", log, platform)
+    if (root / "include" / DEBUG_TYPES).exists() and \
+            not _header_compiles(root, version, next(iter(groups)), log, platform):
         log(f"the game's types don't compile with Visual C++ {compiler} as written: they're in include/{DEBUG_TYPES} "
             "for agents to fix, and common.h doesn't include it yet")
         (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
-    _run(["ninja", "prepare"], root, "the first build", log)
+    _run(["ninja", "prepare"], root, "the first build", log, platform)
     if not (root / "objdiff.json").exists():
         raise ForkError("the first build finished without writing objdiff.json")
     rebuild = check_code(root, version, log=log)
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
-        "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
-        "analysis": 6,  # (WindowsPC.ANALYSIS: nothing to repair, stubs set aside, pieces joined, thunks named, frames read)
+        "created": "from scratch", "platform": platform, "version": version, "compiler": f"MSVC/{compiler}",
+        "analysis": WindowsPC.ANALYSIS,  # (all of it: nothing to repair, stubs set aside, pieces joined, thunks named...)
         "tools": tools_version(),
-        "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
+        "game": {"what": what, "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
-        "rebuild": rebuild,
+        "rebuild": rebuild, **plan.get("manifest", {}),
     }, indent=2), encoding="utf-8")
     (root / ".gitignore").write_text("# made from your copy of the game, or by the build\norig/\nbuild/\nbuild.ninja\n"
                                      ".ninja_*\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
@@ -2138,8 +2352,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp): the game's functions, found by Ghidra, are cut out of your
 copy of its program and compared with what `src/` compiles to, function by function, with objdiff.
 
-1. Put your own copy of the game's program here as `orig/{version}.exe` (never commit it).
-2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`.
+1. {game_step or f"Put your own copy of the game's program here as `orig/{version}.exe`"} (never commit it).
+2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`. A file built with
+   Visual C++ 2017 on Linux or macOS runs it through wine: set `DECOMPNET_WINE` (or have wine on the PATH) and
+   `DECOMPNET_WINE_PREFIX` (a wine prefix of its own) first.
 3. Decompiled code goes in `src/`; `objdiff.json` shows each function's progress in [objdiff](https://github.com/encounter/objdiff).
 4. `ninja rebuild` puts the whole program back together in `build/{version}/{version}.exe`, each function from its C
    where that compiles to the game's code (else from your copy's), and says whether it's your copy, byte for byte.
@@ -2160,5 +2376,5 @@ one) is moved by its base relocations at build time, as Windows moves it.
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",
                      f"Start the {info['title']} decompilation (decompdecomp, Ghidra)"]):
             subprocess.run(cmd, cwd=root, capture_output=True, creationflags=NO_WINDOW)
-    return {"platform": "pc", "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
+    return {"platform": platform, "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
             "sources": len(groups), "sha1": info["sha1"]}

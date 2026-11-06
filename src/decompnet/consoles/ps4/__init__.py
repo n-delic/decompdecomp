@@ -40,6 +40,14 @@ class PS4(Console):
     demo_tools = ("clang-5.0.2", "objdiff-cli")
     compiler_family = ""  # decomp-permuter has no clang weights; use its supported base set
 
+    import_note = "PS4 uses the free, pinned Clang 5.0.2 compiler. Install it in Compilers & tools before importing. No proprietary compiler is needed."
+
+    @property
+    def import_error(self) -> str:
+        from .scratch import host_error
+
+        return host_error()
+
     def sniff(self, head: bytes, file) -> bool:
         """An x86-64 ELF, of one of Sony's executable types (an eboot.elf, not a library)."""
         return (len(head) >= 64 and head[:4] == b"\x7fELF" and head[4] == 2 and head[5] == 1
@@ -82,6 +90,17 @@ class PS4(Console):
         from . import scratch
 
         return scratch.rename(fp, version, old, new)
+
+    def function_addresses(self, fp) -> dict[tuple[str, str], int]:
+        """Keep standard relocatable targets; original addresses live in the import config (#119)."""
+        import json
+
+        version = (fp.manifest or {}).get("version")
+        if not version:
+            return {}
+        path = fp.root / "config" / version / "functions.json"
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        return {(unit, fn["name"]): fn["addr"] for unit, functions in cfg["units"].items() for fn in functions}
 
     def read_data(self, fp, name: str, length: int) -> str | None:
         from . import scratch
