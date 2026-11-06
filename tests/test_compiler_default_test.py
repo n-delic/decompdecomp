@@ -408,3 +408,29 @@ def test_claim_acquired_during_check_is_redirected_after_exact_commit(net,monkey
     assert result['failed']==0 and result['passed']==1
     assert not net.store.one('SELECT agent_id FROM claims')
     assert notifications[0][0][0]==worker.id and notifications[0][1]=='matched'
+
+
+@pytest.mark.parametrize('receipt',[None,'forged',{'untrusted':'proof'}])
+def test_client_cannot_supply_an_exact_verdict(net,monkeypatch,receipt):
+    seen=[]
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(seen.append(1) or False,NS(score=1),''))
+    before=net._project('game')['config']
+    result=trial.apply_matches(net,'game',PROFILE,['f3'],receipt=receipt)
+    assert seen==[1] and result['failed']==1 and result['passed']==0
+    assert net._project('game')['config']==before
+    assert not net.store.all('SELECT * FROM attempts')
+
+
+def test_cancelled_parallel_checks_do_not_publish_settings_or_matches(net,monkeypatch):
+    import threading
+    stopped=threading.Event();before=net._project('game')['config']
+    def judge(*args):stopped.set();return True,NS(score=0),''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    def log(line):pass
+    def cancel():
+        if stopped.is_set():raise RuntimeError('cancelled')
+    log.check_cancel=cancel
+    with pytest.raises(RuntimeError,match='cancelled'):
+        trial.apply_matches(net,'game',PROFILE,['f3'],log)
+    assert net._project('game')['config']==before
+    assert not net.store.all('SELECT * FROM attempts')
