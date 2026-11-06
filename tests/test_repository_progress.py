@@ -307,7 +307,7 @@ def test_recovered_source_is_rejudged_before_the_snapshot_is_captured(progress, 
     assert ('matched_by' in manifest['functions']['f']) == matched
 
 
-def test_acknowledged_draft_alongside_a_match_is_committed(progress):
+def test_acknowledged_draft_alongside_a_match_is_removed(progress):
     net, root, remote = progress
     draft = root/'best/f.c'
     draft.parent.mkdir(exist_ok=True)
@@ -318,7 +318,8 @@ def test_acknowledged_draft_alongside_a_match_is_committed(progress):
     net.progress.signatures['game'] = net.progress._signature(root)
     result = repository_sync.run(net, 'game', root, commit_push=True)
     assert result['pushed']
-    assert git(remote, 'show', 'HEAD:best/f.c') == draft.read_text().strip()
+    assert not draft.exists()
+    assert 'best/f.c' not in git(remote, 'ls-tree', '-r', '--name-only', 'HEAD')
     assert git(remote, 'show', 'HEAD:src/f.c') == 'void f(void) { return; }'
     assert 'matched_by' in json.loads(git(remote, 'show', 'HEAD:decompdecomp.json'))['functions']['f']
     assert git(root, 'status', '--porcelain') == ''
@@ -343,7 +344,59 @@ def test_unacknowledged_draft_changes_are_preserved(progress, monkeypatch):
         (root/'best/f.c').write_text('concurrent draft\n')
         return result
     monkeypatch.setattr(saves, '_read_owned', edited)
-    with pytest.raises(NetworkError, match='draft changed while capturing'):
+    with pytest.raises(NetworkError, match='Retired progress files'):
         repository_sync.run(net, 'game', root, commit_push=True)
     assert (root/'best/f.c').read_text() == 'concurrent draft\n'
     assert git(root, 'log', '-1', '--format=%s') == 'initial progress'
+
+
+def test_tracked_redundant_draft_is_deleted_in_the_commit(progress):
+    net, root, remote = progress
+    from decompnet.app.progress import _Snapshot
+    draft = root/'best/f.c'
+    draft.parent.mkdir(exist_ok=True)
+    draft.write_text('old draft\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'old duplicate draft')
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    net.progress._baseline(pid).disk.files.update(_Snapshot.of({'best/f.c': draft.read_text()}).files)
+    net.progress.signatures['game'] = net.progress._signature(root)
+    result = repository_sync.run(net, 'game', root, commit_push=True)
+    assert result['pushed'] and not draft.exists()
+    assert 'best/f.c' not in git(remote, 'ls-tree', '-r', '--name-only', 'HEAD')
+
+
+@pytest.mark.parametrize('change', ['draft', 'source', 'unmatched'])
+def test_draft_cleanup_preserves_unverified_or_edited_work(progress, change):
+    net, root, _ = progress
+    from decompnet.app.progress import _Snapshot
+    draft = root/'best/f.c'
+    draft.parent.mkdir(exist_ok=True)
+    draft.write_text('old draft\n')
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    net.progress._baseline(pid).disk.files.update(_Snapshot.of({'best/f.c': draft.read_text()}).files)
+    if change == 'draft':draft.write_text('new edit\n')
+    elif change == 'source':(root/'src/f.c').write_text('new selected source\n')
+    else:
+        with net.store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE project_id=?", (pid,))
+    assert net.progress.prune_matched_drafts('game') == 0
+    assert draft.exists()
+
+
+@pytest.mark.parametrize('action', ['save', 'match'])
+def test_saving_or_publishing_a_match_removes_its_acknowledged_old_draft(progress, action):
+    net, root, _ = progress
+    from decompnet.app.progress import _Snapshot
+    draft = root/'best/f.c'
+    draft.parent.mkdir(exist_ok=True)
+    draft.write_text('old draft\n')
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    net.progress._baseline(pid).disk.files.update(_Snapshot.of({'best/f.c': draft.read_text()}).files)
+    net.progress.signatures['game'] = net.progress._signature(root)
+    if action == 'save':saves.save(net, 'game')
+    else:
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET matched_source='void f(void) { /* new match */ }' WHERE project_id=?", (pid,))
+        net.progress.sync('game', force=True)
+    assert not draft.exists()
+    assert (root/'src/f.c').is_file()

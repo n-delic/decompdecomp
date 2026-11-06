@@ -2519,8 +2519,9 @@ Automatic evidence checks and room services remain read-only here and use their 
   progress/Git integration is covered with homemade projects and local bare remotes.
   Recovery captures avoid implicit synchronization after reading files; rechecked
   matches rejected by the judge move to best drafts before their save is acknowledged.
-  Commits also retain acknowledged best drafts alongside matched sources, and dirty
-  checkout errors list only unrelated blocking paths rather than all autosaved work.
+  Saving, committing and successful progress synchronization remove acknowledged best
+  drafts once verified selected C is present unchanged. Edited drafts and unmatched work
+  are preserved. Dirty checkout errors list only unrelated blocking paths.
 
 The background-work thread table explains registered thread roles, shows native IDs and sorts
 by measured CPU, name or purpose. macOS uses proc_pidinfo(PROC_PIDTHREADID64INFO); Linux
