@@ -42,6 +42,7 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -659,12 +660,14 @@ class Export:
 
 
 def run(cmd: list[str], what: str, env: dict | None = None) -> str:
-    try:
-        res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=3600, env=env,
-                             stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        sys.exit(f"{what} took over an hour")
-    text = (res.stdout + res.stderr).strip()
+    # its output to a file, not a pipe: wine's services keep a pipe open as long as the server runs (tools/compile.py)
+    with tempfile.TemporaryFile() as said:
+        try:
+            res = subprocess.run(cmd, stdout=said, stderr=said, timeout=3600, env=env, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            sys.exit(f"{what} took over an hour")
+        said.seek(0)
+        text = said.read().decode("utf-8", "replace").strip()
     if res.returncode:
         sys.exit(f"{what} failed:\n{subprocess.list2cmdline(cmd)}\n{text[-3000:]}")
     return text
@@ -747,6 +750,7 @@ def main() -> None:
         import compile as compiler_runner  # (tools/compile.py: how wine is found and started)
 
         wine, env = compiler_runner.wine_setup()
+        compiler_runner.keep_wine_server(wine, env)  # (one server for the link and imagebld)
         wrap = [wine]
     a.out.mkdir(parents=True, exist_ok=True)
     for old in a.out.glob("*.obj"):

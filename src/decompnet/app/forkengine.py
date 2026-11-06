@@ -28,7 +28,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import arch, classes, consoles, similarity, structs, toolchains
-from ..forks import convention, csource, datadiff, drafts, dtksplits, ghidra, methods, objdiff, standins, unresolved
+from ..forks import (
+    convention,
+    csource,
+    datadiff,
+    drafts,
+    dtksplits,
+    ghidra,
+    ltcg,
+    methods,
+    objdiff,
+    standins,
+    unresolved,
+)
 from ..forks.objdiff import MappingConflict, ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject, project_macro
 from ..hostenv import NO_WINDOW
@@ -59,7 +71,6 @@ def _path_glob(glob: str) -> str:
     return re.sub(r"\*\*(?=[^/])", "**/*", glob)
 
 
-_HARNESS_ENTRY = re.compile(r'^[ \t]*extern[ \t]+"C"[^\n;]*\bHarnessEntry[ \t]*\(', re.M)  # tools/ltcg.py's ENTRY
 _CHEAT = re.compile(r"\b(__asm__|__asm|asm|_asm)\b|INCLUDE_ASM|GLOBAL_ASM|INCLUDE_RODATA|\.incbin|#\s*include\s*[\"<][^\">]*\.(s|S|asm|bin|inc\.c)[\">]")
 
 
@@ -722,9 +733,10 @@ class ForkEngine:
 
     def _build_units(self, proj, fp: ForkProject, units: list) -> list[tuple[bool, str]]:
         with self._build_locks[proj["id"]]:  # (and nothing changes the build's files meanwhile)
-            results = fp.build_units(units)
+            results = fp.build_units(units)  # (an exception in the place of a unit whose own build raised: its alone)
+            said = [r for r in results if not isinstance(r, BaseException)]
             if (fp.manifest or {}).get("created") == "from scratch" and \
-                    any(not ok and "unknown target" in log for ok, log in results):
+                    any(not ok and "unknown target" in log for ok, log in said):
                 # the build has no rule for it: configure stopped (a driver it can't read, say). Say why
                 why = ""
                 for cmd in (fp.manifest or {}).get("setup", [])[:1]:
@@ -733,7 +745,8 @@ class ForkEngine:
                     if not done:
                         why = "\nconfigure (tools/configure.py) failed, so the build has no rule for this unit:\n" + \
                             out[-2000:]
-                results = [(ok, log + why if not ok and "unknown target" in log else log) for ok, log in results]
+                results = [r if isinstance(r, BaseException) else
+                           (r[0], r[1] + why if not r[0] and "unknown target" in r[1] else r[1]) for r in results]
             return results
 
     def _build_all(self, proj, fp: ForkProject, failed: list[str] | None = None) -> tuple[bool, str]:
@@ -2357,7 +2370,7 @@ class ForkEngine:
 
     def _find(self, text: str, names: list[str]):
         for n in names:
-            span = csource.find(text, n)
+            span = csource.find(text, n, names)
             if span:
                 return n, span
         return None, None
@@ -2365,11 +2378,12 @@ class ForkEngine:
     @classmethod
     def _seen_beside(cls, fp: ForkProject, text: str, span: tuple[int, int], hit: str,
                      names: list[str]) -> tuple[int, int] | None:
-        """The definition the build sees after one an `#if` hides at `span`, or None: found by `hit`, then by the
-        function's other `names`. Only one at file scope counts: a call in another function's body followed by a
-        block reads as a definition (`y = f(x) * 2.0;` then `if (y) {`), and taken for it, that function was cut from
-        the call on and the try put inside it."""
-        for look in dict.fromkeys([hit, *names]):
+        """The definition the build sees after one an `#if` hides at `span`, or None: found by `hit`, by the name the
+        hidden one gives it (a function found by its `// FUNCTION:` annotation: the annotation is before both, and
+        looked for past the hidden one, it wasn't found), then by the function's other `names`. Only one at file scope
+        counts: a call in another function's body followed by a block reads as a definition (`y = f(x) * 2.0;` then
+        `if (y) {`), and taken for it, that function was cut from the call on and the try put inside it."""
+        for look in dict.fromkeys(n for n in (hit, csource.defined_name(text, span), *names) if n):
             at = span
             while (later := csource.find(text[at[1]:], look)) is not None:
                 at = (at[1] + later[0], at[1] + later[1])
@@ -2797,11 +2811,15 @@ class ForkEngine:
             return []
         try:
             prog = convention.load(fp.root, manifest)
-            addr = prog.find(meta.get("symbol") or fn["name"])
-            if addr is None:
-                return []
-            found = convention.evidence(prog, addr)
         except (OSError, KeyError, ValueError, ForkError):
+            return []
+        try:
+            addr = prog.find(meta.get("symbol") or fn["name"])
+            found = convention.evidence(prog, addr) if addr is not None else []
+        except Exception:  # a heuristic: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("reading the function's convention failed")
+            return []
+        if not found:  # (no call site says anything: no section that lists no registers)
             return []
         try:
             objs = methods.recover(prog, True)
@@ -2814,13 +2832,7 @@ class ForkEngine:
                             f"so it looks like a member function of {g.keyword} {g.name} (below); declare it as one "
                             f"and the linker still passes `this` there")
         unit = fn["unit"] if "unit" in fn.keys() else None
-        driver = fp.root / "harness" / f"{unit}.drv.cpp" if unit else None
-        try:
-            harnessed = driver is not None and bool(_HARNESS_ENTRY.search(driver.read_text(errors="replace",
-                                                                                         encoding="utf-8")))
-        except OSError:
-            harnessed = False
-        if harnessed:  # agents released these unworked, taking the convention for a reason a compile can't match
+        if unit and ltcg.has_entry(fp.root, unit):  # agents released these unworked, taking the convention for a reason a compile can't match
             mode = [f"- Your compile already goes through the harness: {unit} is built with /GL and linked with "
                     f"/LTCG with harness/{unit}.drv.cpp, whose calls make the linker pick these registers. Write the "
                     "function as ordinary C/C++ (a normal member function for `this`, normal parameters) and "

@@ -125,11 +125,6 @@ def unit_parts(src: Path, listing: dict[str, list[Path]] | None = None) -> list[
     return sorted(p for p in found if p != src)
 
 
-def is_part(path: Path, units) -> bool:
-    """Whether `path` is a part of one of `units` (src/auto/<unit>.<part>.cpp): built only into its unit's link."""
-    return path.parent == Path("src") / "auto" and "." in path.stem and path.stem.split(".")[0] in units
-
-
 def unit_sources(src: Path, listing: dict[str, list[Path]] | None = None) -> list[Path]:
     """A unit's own source files in link order: as the source's `// LINK-ORDER:` line names them (the last such line;
     files it leaves out follow in name order), else the source first, then its parts in name order."""
@@ -275,9 +270,9 @@ def write_rules(n, *, units: list[str], source_of, build: Path, config: Path, co
 
 
 def _run(cmd: list[str], env: dict | None = None) -> None:
-    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=env)
-    if res.returncode:
-        sys.exit(f"{subprocess.list2cmdline(cmd)} failed:\n{res.stdout}{res.stderr}")
+    code, text = compiler_runner.run_to_text(cmd, env, timeout=LINK_SECONDS)  # (to a file: wine's services, above)
+    if code:
+        sys.exit(f"{subprocess.list2cmdline(cmd)} failed:\n{text}")
 
 
 def support(out: Path, cl: str, lib: str, wibo: str) -> None:

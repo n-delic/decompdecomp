@@ -77,19 +77,38 @@ def _past(clean: str, brace: int) -> int:
     return k
 
 
-def definition(text: str, clean: str, pos: int, bound: int, name: str | None = None) -> str | None:
+def definition(text: str, clean: str, pos: int, bound: int, names: tuple[str, ...] | list[str] = ()) -> str | None:
     """The first line of the annotated function's definition in text[pos:bound], up to its "(" (a declaration, a type
-    or a brace initialiser before it is skipped), or None. Of the definitions there: the one the original's name for
-    the address (`name`, functions.json's: `?G@@YAXXZ`) is of, when it says; else the first that isn't inline, else
-    the first, as the app's csource finds it. An inline helper before the function (`static inline int Tail(...)`)
-    was judged as the function, with no problem said; and an annotated `inline void G()` is G, not the `void H()`
-    after it."""
+    or a brace initialiser before it is skipped), or None. Of the definitions there: the one of the original's names
+    for the address (`names`: functions.json's symbol, `?G@@YAXXZ` or `_G@8`, and the real name the project gave it
+    in "names", `G` or `Town::Update`), when one says; else the first that isn't inline, else the first, as the app's
+    csource finds it. An inline helper before the function (`static inline int Tail(...)`) was judged as the
+    function, with no problem said; and an annotated `inline void G()` is G, not the `void H()` after it."""
     found = list(_definition_lines(text, clean, pos, bound))
-    if name and not name.startswith(("_func_", "func_", "@func_")):
-        named = [d for d, _ in found if (hint := symbol_hint(d)) is not None and hint in name]
+    for exact in (True, False):  # (as the app's csource takes it: a name as it is first, then any class's)
+        named = [d for d, _ in found if any(_is_named(d, n, exact) for n in names if n)]
         if named:
             return named[0]
     return next((d for d, inline in found if not inline), found[0][0] if found else None)
+
+
+def _is_named(decl: str, name: str, exact: bool) -> bool:
+    """True when a definition line (`inline bool Car::IsFast(`) is of the function the original calls `name`: a
+    decorated C++ symbol (`?IsFast@Car@@QAE_NXZ`), a C one (`_IsFast`, `_IsFast@8`, `@IsFast@8`, `_func_00011000`),
+    or a real name (`Car::IsFast`; not `exact`, `IsFast` for any class's)."""
+    declared = _declared(decl)
+    if not declared:
+        return False
+    if name.startswith("?"):
+        return (hint := symbol_hint(decl)) is not None and hint in name
+    if (c := re.fullmatch(r"[_@](\w+?)(?:@\d+)?", name)) and "::" not in declared and declared == c.group(1):
+        return True
+    return declared == name or (not exact and "::" not in name and declared.rsplit("::", 1)[-1] == name)
+
+
+def _declared(decl: str) -> str:
+    """The name a definition line gives its function: `Car::IsFast` for `inline bool Car::IsFast(`."""
+    return re.split(r"[\s*&]+", decl[:decl.rindex("(")].strip())[-1]
 
 
 def _definition_lines(text: str, clean: str, pos: int, bound: int):
@@ -287,9 +306,7 @@ def own_symbol(syms: dict[str, int], objects: dict[str, str], name: str, own: se
 def symbol_hint(decl: str) -> str | None:
     """The map symbol substring for a definition line: `bool Car::IsFast(` -> `?IsFast@Car@@` (MSVC mangles A::B::f
     as ?f@B@A@@ and a free function f as ?f@@). Operators, constructors and destructors need an explicit one."""
-    head = decl[:decl.rindex("(")].strip()
-    name = re.split(r"[\s*&]+", head)[-1]
-    parts = name.split("::")
+    parts = _declared(decl).split("::")
     last = parts[-1]
     if not last or last.startswith("operator") or last.startswith("~") or (len(parts) > 1 and last == parts[-2]):
         return None
@@ -298,9 +315,10 @@ def symbol_hint(decl: str) -> str | None:
     return "?" + "@".join([last] + parts[-2::-1]) + "@@"
 
 
-def annotations(paths: list[Path], named: dict[int, str] | None = None) -> tuple[dict[int, str], list[str]]:
+def annotations(paths: list[Path], named: dict[int, list[str]] | None = None) -> tuple[dict[int, str], list[str]]:
     """original address -> map symbol substring, from the sources' FUNCTION and TARGET annotations; and problems.
-    `named`: the original's names by address (functions.json), which say which definition an annotation is of."""
+    `named`: the original's names by address (functions.json's symbol and real name), which say which definition an
+    annotation is of."""
     out, problems = {}, []
     for p in paths:
         text = p.read_text(encoding="utf-8", errors="replace")
@@ -313,7 +331,7 @@ def annotations(paths: list[Path], named: dict[int, str] | None = None) -> tuple
             if sym and "::" in sym:  # `// FUNCTION: 0x29080 Mode::Tick (NONMATCHING ...)`: the source's name, which
                 sym = symbol_hint(sym + "(")  # no decorated map symbol contains; looked for as "Mode::Tick" it never
             bound = found[n + 1].start() if n + 1 < len(found) else len(text)  # was found, and never compiled in
-            decl = None if sym else definition(text, clean, m.end(), bound, (named or {}).get(int(va, 16)))
+            decl = None if sym else definition(text, clean, m.end(), bound, (named or {}).get(int(va, 16), ()))
             if not sym and decl is None:
                 problems.append(f"{p}: FUNCTION {va}: no function definition follows it")
                 continue
@@ -665,7 +683,9 @@ def main() -> None:
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
 
-    hints, problems = annotations(sources, {a: fn["name"] for a, fn in functions.items()})
+    given = info.get("names") or {}  # func_<address> -> the real name the project gave it
+    hints, problems = annotations(sources, {a: [fn["name"], given.get(f"func_{a:08X}", "")]
+                                            for a, fn in functions.items()})
     for va in sorted(hints):
         if va not in functions:
             where = f"it is in unit {unit_of[va]}" if va in unit_of else "no function starts there"

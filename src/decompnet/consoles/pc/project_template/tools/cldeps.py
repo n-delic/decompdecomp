@@ -12,9 +12,11 @@ the compiler's output is. Standard library only. Made by decompdecomp.
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 NOTE = "Note: including file:"
+SECONDS = 300  # tools/compile.py's COMPILE_SECONDS (each file of a project's tools runs on its own)
 ROOT = Path.cwd().resolve()
 
 
@@ -38,13 +40,28 @@ def escape(path: str) -> str:
 
 
 def main() -> int:
-    out, sep, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
-    if sep != "--" or not cmd:
-        sys.exit("usage: cldeps.py OUT -- COMMAND...")
-    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    out, rest = sys.argv[1], sys.argv[2:]
+    seconds = SECONDS
+    if rest[:1] == ["--timeout"] and len(rest) > 1:
+        seconds, rest = float(rest[1]), rest[2:]
+    sep, cmd = rest[:1], rest[1:]
+    if sep != ["--"] or not cmd:
+        sys.exit("usage: cldeps.py OUT [--timeout SECONDS] -- COMMAND...")
+    # the compiler's output to a file, not a pipe: under wine, the services the first program after a new server
+    # starts keep what it was given as long as the server runs, and given a pipe they kept this waiting for its end
+    # (tools/compile.py). Its own time limit: the compiler is this one's child, and stopped here it's really stopped
+    # (a limit on this script alone left a compiler stuck in a loop running on)
+    with tempfile.TemporaryFile() as said:
+        try:
+            code = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=said, stderr=subprocess.STDOUT,
+                                  timeout=seconds).returncode
+        except subprocess.TimeoutExpired:
+            code = None
+        said.seek(0)
+        text = said.read().decode("utf-8", "replace")
     deps: dict[str, None] = {}
     shown = []
-    for line in res.stdout.splitlines():
+    for line in text.splitlines():
         if line.startswith(NOTE):
             if (p := project_path(line[len(NOTE):])) is not None:
                 deps[p] = None
@@ -52,12 +69,13 @@ def main() -> int:
             shown.append(line)
     if shown:
         print("\n".join(shown))
-    if res.stderr:
-        sys.stderr.write(res.stderr)
-    if res.returncode == 0:
+    if code is None:
+        print(f"cldeps.py: the compiler took over {seconds:g} seconds and was stopped", file=sys.stderr)
+        return 1
+    if code == 0:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out + ".d").write_text(f"{escape(out)}: " + " ".join(escape(d) for d in deps) + "\n", encoding="utf-8")
-    return res.returncode
+    return code
 
 
 if __name__ == "__main__":

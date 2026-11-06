@@ -222,7 +222,7 @@ def main() -> None:
         n.build(targets, "delink", [CONFIG.as_posix(), "tools/delink.py"])
         objs = []
         versions, more = file_compilers(), file_flags()
-        harness_sources, harness_files = set(), []
+        harness_sources = set()
         if LTCG:  # ---- harness mode (tools/ltcg.py, tools/dll2coff.py)
             import ltcg
 
@@ -231,17 +231,15 @@ def main() -> None:
                 cl, includes = msvc(version)
                 return cl, includes, [*CL_FLAGS, *more.get(source, [])], shows_includes(version)
 
-            harness_sources, harness_files = ltcg.write_rules(
+            harness_sources, _ = ltcg.write_rules(
                 n, units=list(units), source_of=source_of, build=BUILD, config=CONFIG, compiler_of=compiler_of, py=PY,
                 wibo=args.wibo, headers=headers)
             objs += [(BUILD / Path(source_of(u)).with_suffix(".obj")).as_posix() for u in units
                      if source_of(u) in harness_sources]
         # ---- end of harness mode
         for src in files("src", (".c", ".cpp")):
-            if src.as_posix() in harness_sources:
-                continue
-            if LTCG and ltcg.is_part(src, units):  # a unit's code split over files: only its harness link builds it
-                continue
+            if src.as_posix() in harness_sources:  # (a harness unit's parts too: only its link builds them; a part
+                continue  # of a unit built plain is a file of its own, which isn't the unit's object)
             obj = (BUILD / src.with_suffix(".obj")).as_posix()
             src_posix = src.as_posix()
             version = versions.get(src_posix, MSVC_VERSION)

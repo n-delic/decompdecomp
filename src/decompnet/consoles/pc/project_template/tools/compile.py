@@ -40,6 +40,17 @@ def keep_wine_server(wine: str, env: dict) -> None:
         pass
 
 
+def run_to_text(cmd: list[str], env: dict | None = None, timeout: float | None = None) -> tuple[int, str]:
+    """(exit code, what it said) of a program run with its output going to a file, never a pipe: under wine, the
+    services the first program after a new server starts keep what it was given for as long as the server runs, and
+    given a pipe they kept the build waiting for its end. TimeoutExpired as subprocess.run raises it."""
+    with tempfile.TemporaryFile() as said:
+        res = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, stdout=said, stderr=said, timeout=timeout,
+                             creationflags=NO_WINDOW)
+        said.seek(0)
+        return res.returncode, said.read().decode("utf-8", "replace")
+
+
 def wine_setup() -> tuple[str, dict]:
     """The wine to run and its environment, found when the file builds (so a project configured before Visual C++
     2017 or wine was installed builds a 2017 file as soon as they are): $DECOMPNET_WINE, else wine on the PATH, in
@@ -80,8 +91,12 @@ def main() -> int:
     command = ([wine] if wine else [args.wrapper] if args.wrapper else []) + [
         args.compiler, *flags, f"/I{path('include')}", *(f"/I{path(d)}" for d in args.include),
         *(["/showIncludes"] if args.deps else []), f"/Fo{path(args.output)}", path(args.source)]
-    if args.deps:  # (cldeps.py reads the Z: paths wine and wibo show as the project's own)
-        command = [sys.executable, str(Path(__file__).with_name("cldeps.py")), args.output, "--", *command]
+    limit = COMPILE_SECONDS
+    if args.deps:  # (cldeps.py reads the Z: paths wine and wibo show as the project's own; it stops the compiler at
+        # the limit, its child, which stopping cldeps.py itself left running)
+        command = [sys.executable, str(Path(__file__).with_name("cldeps.py")), args.output,
+                   "--timeout", str(COMPILE_SECONDS), "--", *command]
+        limit += 30
     if args.wine:
         # wine's output to a file, then ours: the services the first wine program after a new server starts
         # (services.exe, winedevice.exe, rpcss.exe...) keep what it was given for as long as the server runs, and
@@ -89,7 +104,7 @@ def main() -> int:
         with tempfile.TemporaryFile() as said:
             try:
                 result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=said, stderr=said,
-                                        timeout=COMPILE_SECONDS, creationflags=NO_WINDOW)
+                                        timeout=limit, creationflags=NO_WINDOW)
             finally:
                 said.seek(0)
                 text = said.read().decode("utf-8", "replace")
@@ -98,7 +113,7 @@ def main() -> int:
                 sys.stdout.write(text)
                 sys.stdout.flush()
     else:
-        result = subprocess.run(command, timeout=COMPILE_SECONDS, creationflags=NO_WINDOW)
+        result = subprocess.run(command, timeout=limit, creationflags=NO_WINDOW)
     if result.returncode:  # (the old object stays, and so do its checks: removed, its 99.99% read 100)
         return result.returncode
     # a unit built plain has no LTCG checks: one left from its harness builds would be read as this object's (their

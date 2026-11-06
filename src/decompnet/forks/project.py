@@ -49,7 +49,6 @@ _CONFIG_LOCK = threading.Lock()
 # Agents may only edit source and header files, never the project's build setup, targets or verification.
 EDITABLE = re.compile(r"\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inc|inl)$", re.I)
 FORBIDDEN_PARTS = {".git", STATE, "orig", "build", "asm", "expected", "tools", "config", ".github", "assets", "bin"}
-SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}  # (EDITABLE's)
 _INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*(?:"([^"]+)"|<([^>]+)>|([A-Za-z_]))', re.M)  # (3: a macro's)
 # An edit that more units than this compile is checked with a build of the whole project: about as quick by then,
 # and it checks everything (units_built_from)
@@ -823,7 +822,7 @@ class ForkProject:
         if found or "." not in p.stem or not (self.manifest or {}).get("ltcg"):
             return found
         main = (p.parent / (p.stem.split(".")[0] + p.suffix)).as_posix()
-        return [u for u in self.units() if u.source and Path(u.source).as_posix() == main]
+        return [u for u in self.units() if u.source and Path(u.source).as_posix() == main and len(self.unit_files(u)) > 1]
 
     def units_built_from(self, rel: str) -> list[Unit]:
         """The units an edit of `rel` can change, when that's known to be a few: what units_for says and, in an LTCG
@@ -896,11 +895,15 @@ class ForkProject:
     def unit_files(self, unit: Unit) -> list[str]:
         """A unit's source files, relative to the root: its source file, then in an LTCG project the files its code is
         split into, <unit>.<part>.cpp beside it (the template's tools/ltcg.py links them all into the unit's harness:
-        under LTCG which file a function is in changes what its callers compile to)."""
+        under LTCG which file a function is in changes what its callers compile to). Only a unit built in harness mode
+        (its driver defines HarnessEntry) links its parts: another builds its source file alone, and a part beside it
+        is a file of its own, which the unit's object never has."""
+        from . import ltcg  # (it reads PE objects through consoles.pc, which imports this module)
+
         if not unit.source:
             return []
         src = Path(unit.source)
-        if not (self.manifest or {}).get("ltcg"):
+        if not (self.manifest or {}).get("ltcg") or not ltcg.has_entry(self.root, src.stem):
             return [src.as_posix()]
         parts = sorted(p for p in (self.root / src.parent).glob(f"{src.stem}.*{src.suffix}") if p.is_file())
         return [src.as_posix(), *((src.parent / p.name).as_posix() for p in parts)]

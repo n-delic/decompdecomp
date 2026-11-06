@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -110,6 +111,15 @@ def test_a_units_code_split_over_files_links_in_its_link_order_and_only_there(tm
     assert res.returncode != 0 and "Traceback" not in res.stderr
     assert "u.cpp:1: LINK-ORDER names u.score.cpp, which isn't one of this unit's files" in res.stderr
     assert (root / "build.ninja").read_text() == before
+    # a unit built plain (no HarnessEntry) links nothing: its parts were compiled nowhere, now each on its own
+    (auto / "u.cpp").write_text(body)
+    drv = root / "harness" / "u.drv.cpp"
+    drv.write_text(drv.read_text().replace('extern "C" __declspec(dllexport) void HarnessEntry', "// HarnessEntry"))
+    assert _configure(root).returncode == 0
+    ninja = _ninja(root)
+    assert "ltcg_cc src/auto/" not in ninja
+    for part in ("u.main", "u.scores"):
+        assert f"build build/v/src/auto/{part}.obj: cl_deps src/auto/{part}.cpp" in ninja
 
 
 def test_export_takes_the_xdk_whose_compiler_is_the_games(tmp_path):
@@ -203,3 +213,26 @@ def test_objects_depend_on_the_project_files_the_compiler_includes_and_nothing_e
     res = subprocess.run([sys.executable, "tools/cldeps.py", out, "--", sys.executable, str(fake), "2"], cwd=root,
                          capture_output=True, text=True)
     assert res.returncode == 2 and not (root / f"{out}.d").exists()
+
+
+def test_the_include_reader_ends_with_its_compiler_and_stops_it_at_its_limit(tmp_path):
+    """cldeps.py read the compiler's output through a pipe: under wine, the services the first program after a new
+    server starts (here a child that sleeps) kept it open, and the compile waited out its 300 s and failed. And with
+    the limit on cldeps.py alone, a compiler stuck in a loop ran on after it."""
+    root = _project(tmp_path)
+    fake = tmp_path / "cl.py"
+    fake.write_text("import subprocess, sys, time\n"
+                    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                    "print('Note: including file: include/a.h')\nsys.stdout.flush()\n"
+                    "time.sleep(float(sys.argv[1]))\n")
+    (root / "include" / "a.h").write_text("")
+    out = "build/v/a.obj"
+    began = time.monotonic()
+    res = subprocess.run([sys.executable, "tools/cldeps.py", out, "--", sys.executable, str(fake), "0"], cwd=root,
+                         capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0 and time.monotonic() - began < 20, res
+    assert (root / f"{out}.d").read_text() == f"{out}: include/a.h\n"
+    began = time.monotonic()
+    res = subprocess.run([sys.executable, "tools/cldeps.py", out, "--timeout", "2", "--", sys.executable, str(fake),
+                          "600"], cwd=root, capture_output=True, text=True, timeout=60)
+    assert res.returncode == 1 and "stopped" in res.stderr and time.monotonic() - began < 20, res

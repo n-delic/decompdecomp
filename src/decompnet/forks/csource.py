@@ -47,11 +47,12 @@ def _block_end(clean: str, brace: int) -> int:
     return k
 
 
-def _annotated(text: str, addr: int) -> tuple[int, int] | None:
+def _annotated(text: str, addr: int, names: tuple[str, ...] | list[str] = ()) -> tuple[int, int] | None:
     """The function definition after the annotation, before the next one: types and declarations the code needs
     may come in between (`struct CRigOwner { ... };`), and so may an inline helper (`static inline int Clamp(...)
-    { ... }`), which is never the annotated function when another definition follows: the first that isn't inline,
-    else the first."""
+    { ... }`), which is never the annotated function when another definition follows. Of the definitions there: the
+    one of the function's own `names` (an annotated `inline void G()` before `void H()` is G), else the first that
+    isn't inline, else the first; as the LTCG judge's tools/dll2coff.py takes it."""
     found = list(_ANNOTATION.finditer(text))
     clean = None
     for n, m in enumerate(found):
@@ -60,10 +61,24 @@ def _annotated(text: str, addr: int) -> tuple[int, int] | None:
         clean = clean if clean is not None else _blank(text)
         bound = found[n + 1].start() if n + 1 < len(found) else len(text)
         spans = list(_definitions(text, clean, m.end(), bound))
+        named = [s for s in spans if _is_named(clean[s[0]:s[2]], names, exact=True)] or \
+            [s for s in spans if _is_named(clean[s[0]:s[2]], names, exact=False)]
         own = [s for s in spans if not _INLINE_HEAD.search(clean[s[0]:s[2]])]
         if spans:
-            return (own or spans)[0][:2]
+            return (named or own or spans)[0][:2]
     return None
+
+
+_CALLED = re.compile(r"((?:[\w~]+::)*~?\w+)\s*\(")
+
+
+def _is_named(head: str, names, exact: bool) -> bool:
+    """True when a definition's head (`__declspec(noinline) bool Town::Update(int a) const`) names one of `names`:
+    as it is (`Town::Update`), or, not `exact`, a name without a class as its last part (`Update`: any class's, so
+    only when no definition there has one of the names as it is)."""
+    said = {m.group(1) for m in _CALLED.finditer(head)}
+    return any(n in said or (not exact and "::" not in n and any(s.rsplit("::", 1)[-1] == n for s in said))
+               for n in names if not n.startswith(ADDRESS_KEY))
 
 
 _INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
@@ -117,11 +132,11 @@ def _unbalanced(between: str) -> bool:
     return False
 
 
-def find(text: str, name: str) -> tuple[int, int] | None:
+def find(text: str, name: str, names: tuple[str, ...] | list[str] = ()) -> tuple[int, int] | None:
     """(start, end) of the definition of `name`, or of its asm stub; None when absent. `name` may be an
-    address_key(): the definition annotated with that address."""
+    address_key(): the definition annotated with that address, of the function's other `names` when one is."""
     if name.startswith(ADDRESS_KEY):
-        return _annotated(text, int(name[len(ADDRESS_KEY):], 16))
+        return _annotated(text, int(name[len(ADDRESS_KEY):], 16), names)
     clean = _blank(text)
     simple = name.split("::")[-1]
     if "::" in name:  # Class::method: match it exactly
@@ -229,8 +244,8 @@ def marker_above(text: str, at: int) -> int:
     return prev if at > 0 and _MARKER.match(text[prev:at].strip()) else at
 
 
-def get(text: str, name: str) -> str | None:
-    span = find(text, name)
+def get(text: str, name: str, names: tuple[str, ...] | list[str] = ()) -> str | None:
+    span = find(text, name, names)
     return text[span[0]:span[1]] if span else None
 
 
