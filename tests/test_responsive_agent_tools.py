@@ -153,6 +153,7 @@ def test_mcp_health_bypasses_busy_work_pool_and_records_numeric_timing(tmp_path,
     net,agent,fn=game(tmp_path)
     monkeypatch.setattr(Context,'headers',property(lambda self:{'x-decomp-connection-check':'1'}))
     monkeypatch.setattr(net,'overview',lambda *a:pytest.fail('Health must not hydrate overview'))
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:pytest.fail('Health must not synchronize saved files'))
     records=[];blocked=threading.Event();release=threading.Event()
     def authenticate(ctx):
         assert threading.current_thread() is not threading.main_thread()
@@ -251,3 +252,49 @@ def test_mcp_transcripts_include_accumulated_sql_phases_on_success_and_error(tmp
     for key, expected in [('connection', 30.), ('lock_wait', 60.), ('execute', 90.), ('fetch', 120.)]:
         assert record['timings']['sql_' + key + '_ms'] == expected
     assert all(isinstance(v, (float, int)) for v in record['timings'].values())
+
+
+@pytest.mark.parametrize('slug', ['game', 'removed-project'])
+def test_mcp_probe_keeps_authentication_and_project_existence_checks(tmp_path, monkeypatch, slug):
+    from mcp.server.mcpserver.exceptions import ToolError
+    net, agent, _ = game(tmp_path)
+    monkeypatch.setattr(Context, 'headers', property(lambda self: {'x-decomp-connection-check': '1'}))
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('Probe synchronized progress'))
+    authenticated = []
+    def agent_of(ctx):
+        authenticated.append(slug)
+        return agent, slug
+    server = tools.build_mcp(net, agent_of)
+    async def run():
+        return await server.call_tool('project_info', {'detail': False})
+    if slug == 'game':
+        assert 'Authenticated tools ready' in str(anyio.run(run))
+    else:
+        with pytest.raises(ToolError, match='no project'):
+            anyio.run(run)
+    assert authenticated == [slug]
+
+
+def test_ordinary_mcp_project_info_still_synchronizes_progress(tmp_path, monkeypatch):
+    net, agent, _ = game(tmp_path)
+    monkeypatch.setattr(Context, 'headers', property(lambda self: {}))
+    synchronized = []
+    monkeypatch.setattr(net.progress, 'sync', lambda slug, **kw: synchronized.append(slug))
+    server = tools.build_mcp(net, lambda ctx: (agent, 'game'))
+    async def run():
+        return await server.call_tool('project_info', {'detail': False})
+    anyio.run(run)
+    assert 'game' in synchronized
+
+
+def test_mcp_probe_does_not_skip_failed_authentication(tmp_path, monkeypatch):
+    from mcp.server.mcpserver.exceptions import ToolError
+    net, _, _ = game(tmp_path)
+    monkeypatch.setattr(Context, 'headers', property(lambda self: {'x-decomp-connection-check': '1'}))
+    def denied(ctx):
+        raise NetworkError('Synthetic rejected token')
+    server = tools.build_mcp(net, denied)
+    async def run():
+        return await server.call_tool('project_info', {'detail': False})
+    with pytest.raises(ToolError, match='Synthetic rejected token'):
+        anyio.run(run)

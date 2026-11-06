@@ -15,7 +15,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import __version__, agents, candidate_quality, consoles
-from ..network import Agent, NetworkError
+from ..network import Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
 from . import agent_tokens, boundary_investigations, claim_state, compiler_experiments, local_experiments
 from .engine import RomNetwork
@@ -696,7 +696,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                 dispatch=time.monotonic()
                 try:
                     if checking:
-                        net.project_row(slug)
+                        # The engine's project lookup also synchronizes saved C.
+                        # This authenticated wiring probe needs existence only;
+                        # ordinary project_info/work tools retain engine sync.
+                        Network._project(net,slug)
                         result=f'Authenticated tools ready for {slug}. App-only connection check; project facts are supplied separately.'
                     else:
                         result=_dispatch(net,agent,slug,name,args,count_usage=True)

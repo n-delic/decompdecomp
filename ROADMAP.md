@@ -6,6 +6,10 @@
   cancellation discards pending results, releases group claims and preserves completed work.
   Candidate alternatives release the project lock between groups; throughput updates live.
 
+- Done: app-only MCP startup probes validate authenticated project metadata without
+  synchronizing saved files or waiting for their verification lane. Ordinary tools
+  still synchronize progress; probes retain project-existence and authentication checks.
+
 - Done: app and permuter SQLite writers share OS-backed admission before BEGIN, including
   schema initialization, match-library writes and maintenance. Waiting leaves readers and
   the local connection mutex free; optional bookkeeping stays nonblocking, cancellation and
