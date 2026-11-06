@@ -72,4 +72,3 @@ vm.runInContext(source.slice(source.indexOf('async function renderTeam('),source
  assert.match(html,/Join an existing room/);assert.match(html,/Network unavailable/);
  box.querySelector('[data-team-join]').onclick();assert.equal(joins,6);
 })().catch(e=>{console.error(e);process.exit(1);});
-
