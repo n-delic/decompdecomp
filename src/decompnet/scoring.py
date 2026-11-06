@@ -208,9 +208,11 @@ _STACK_SLOT = re.compile(r"\[[^\]]*\b(?:esp|ebp|rsp|rbp|sp)\b[^\]]*\]|-?(?:0x[0-
 # is the element's size, not the frame's layout, and stays
 _SLOT_NUMBER = re.compile(r"(\*\s*|\b(?:lsl|lsr|asr|ror|[us]xt[bhwx])\s+#?)?(?<![\w$@?.])(-?(?:0x[0-9a-fA-F]+|\d+))"
                           r"(?![\w$@?])")
-# mnemonics that start like a branch and aren't one: ARM's bit clear and bit field ops and breakpoint, x86's bit tests
-# and scans, bswap and bound, MIPS's break (`bic r0, r1, #0x100` vs `#0x200` read as the same jump)
-_NOT_BRANCH = re.compile(r"(?:bics?|bfi|bfc|bkpt|bt[crs]?|bs[fwr]|bswap|bound|break)\b")
+# a branch's mnemonic (x86 j*, loop*; b* elsewhere; ARM64's compare/test and branch), and those that start like one and
+# aren't: ARM's bit clear, bit field ops, breakpoints and branch target marks with any condition (`biceq`, `bic.w`),
+# x86's bit tests and scans, bswap, bound and bextr, MIPS's break (`bic r0, r1, #0x100` vs `#0x200` read as one jump)
+_BRANCH = re.compile(r"j|b|loop|[ct]bn?z\b")
+_NOT_BRANCH = re.compile(r"bic|bf[ic]|bfm|bfxil|bkpt|brk|bti|(?:bt[crs]?|bsf|bsr|bswap|bound|bextr|break)\b")
 # x86 prefixes: `lock add` is an add, not a lock of something called add
 _PREFIXES = {"lock", "rep", "repe", "repz", "repne", "repnz", "xacquire", "xrelease", "bnd", "notrack"}
 RESIDUE_SHOWN = 5
@@ -224,10 +226,11 @@ def shape(text: str) -> str:
     if not t:
         return ""
     mnemonic, _, ops = t.partition(" ")
-    mnemonic = mnemonic.lower()
-    while mnemonic in _PREFIXES and ops.strip():
+    mnemonic = opcode = mnemonic.lower()
+    while opcode in _PREFIXES and ops.strip():  # (each word: `xacquire lock add` is an add)
         word, _, ops = ops.strip().partition(" ")
-        mnemonic = f"{mnemonic} {word.lower()}"
+        opcode = word.lower()
+        mnemonic = f"{mnemonic} {opcode}"
 
     def name(m: re.Match) -> str:
         word = m.group(0)
@@ -241,8 +244,8 @@ def shape(text: str) -> str:
     ops = _STACK_SLOT.sub(slot, ops.strip())
     ops = _NAME.sub(name, ops)
     ops = re.sub(r"\bS\s*[-+]\s*(?:0x[0-9a-fA-F]+|\d+)", "S", ops)  # a symbol and an offset: a place, like a symbol
-    if mnemonic.startswith(("j", "b", "loop")) and not _NOT_BRANCH.match(mnemonic):
-        ops = re.sub(r"(?<![\w$@?#])0x[0-9a-fA-F]{3,}$", "J", ops)  # (never an immediate: ARM's are `#0x...`)
+    if _BRANCH.match(opcode) and not _NOT_BRANCH.match(opcode):  # (ARM's targets are `#0x...` too: `b #0x108`)
+        ops = re.sub(r"(?<![\w$@?])(#?)0x[0-9a-fA-F]{3,}$", r"\1J", ops)
     return f"{mnemonic} {ops}".strip()
 
 

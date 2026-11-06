@@ -61,6 +61,15 @@ def test_a_diff_says_what_differs_once_registers_and_order_are_set_aside():
     ("ARM", ["ARM"], "02019de7", "42019de7", False),  # [sp, r2, lsl #2] vs asr #2: another shift
     ("ARM64", ["ARM"], "e05b61b8", "e0db61b8", False),  # [sp, w1, uxtw #2] vs sxtw #2: another extend
     ("ARM", ["ARM"], "010cc1e3", "020cc1e3", False),  # bic r0, r1, #0x100 vs #0x200: a mask, not a branch target
+    ("ARM", ["ARM"], "010cc103", "020cc103", False),  # biceq likewise
+    ("ARM64", ["ARM"], "007d20d4", "207d20d4", False),  # brk #0x3e8 vs #0x3e9: a breakpoint's number
+    # a branch's target (ARM's with `#`) moves with the code before it
+    ("ARM", ["ARM"], "400000ea", "410000ea", True),  # b #0x1108 vs b #0x110c
+    ("ARM", ["ARM"], "4000000a", "4100000a", True),  # beq
+    ("ARM64", ["ARM"], "40000014", "41000014", True),  # b #0x1100 vs b #0x1104
+    ("ARM64", ["ARM"], "00081836", "20081836", True),  # tbz w0, #3, #0x1100 vs #0x1104
+    ("ARM64", ["ARM"], "000800b4", "200800b4", True),  # cbz x0
+    ("X86", ["32"], "f2f00108", "f2f02908", False),  # xacquire lock add vs xacquire lock sub: two prefixes
     ("ARM", ["ARM"], "10009de5", "14109de5", True),  # ldr r0, [sp, #0x10] vs ldr r1, [sp, #0x14]
     # MIPS and PowerPC: a load of another size differs, another slot doesn't
     ("MIPS", ["MIPS32", "BIG_ENDIAN"], "8fa20054", "87a20054", False),
