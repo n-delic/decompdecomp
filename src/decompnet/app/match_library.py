@@ -16,7 +16,7 @@ from ..network import NetworkError
 
 log = logging.getLogger(__name__)
 ARCHIVE_BATCH = 256
-ARCHIVE_VERSION = 1  # Bump when the archived representation changes, not for unrelated app updates.
+ARCHIVE_VERSION = 2  # Bump when the archived representation changes, not for unrelated app updates.
 SCHEMA = '''
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS functions(
@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS occurrences(
  print TEXT NOT NULL, symbols TEXT NOT NULL, seen REAL NOT NULL,
  UNIQUE(game_id,solution_id,name,print,symbols));
 CREATE INDEX IF NOT EXISTS occurrences_solution ON occurrences(solution_id);
+CREATE TABLE IF NOT EXISTS preferred_names(function_id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS locations(
+ function_id INTEGER NOT NULL, game_id TEXT NOT NULL, name TEXT NOT NULL,
+ vram INTEGER, rom_offset INTEGER, unit TEXT, source_path TEXT,
+ UNIQUE(function_id,game_id,name,vram,unit));
 CREATE TABLE IF NOT EXISTS startup_scans(game_id TEXT PRIMARY KEY, stamp TEXT NOT NULL);
 '''
 
@@ -148,6 +153,7 @@ class Library:
         return {'arch':processor,'big':int(big),'fingerprint':p['key'],'size':p['size'],
                 'source':source,'header':header,'compiler':encoded(compiler),
                 'game':game,'game_name':proj['name'],'slug':proj['slug'],'name':fn['name'],
+                'location':{k:dict(fn).get(k) for k in ('vram','rom_offset','unit','source_path')},
                 'mode':'fork' if fork else 'rom','print':encoded(p),'symbols':encoded(symbols),'seen':fn['matched_at'] or 0}
 
     def write(self, rows):
@@ -183,6 +189,13 @@ class Library:
                         SET name=excluded.name,slug=excluded.slug
                         WHERE name!=excluded.name OR slug!=excluded.slug""",game)
                     games.add(game)
+                loc = item.get('location', {})
+                db.execute("""INSERT INTO locations VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(function_id,game_id,name,vram,unit) DO UPDATE
+                    SET rom_offset=excluded.rom_offset,source_path=excluded.source_path
+                    WHERE rom_offset IS NOT excluded.rom_offset OR source_path!=excluded.source_path""",
+                           (fid,item['game'],item['name'],loc.get('vram') if loc.get('vram') is not None else -1,
+                            loc.get('rom_offset'),loc.get('unit') or '',loc.get('source_path') or ''))
                 # Retrying an interrupted scan should not rewrite unchanged memberships.
                 db.execute("""INSERT INTO occurrences VALUES(?,?,?,?,?,?,?)
                     ON CONFLICT(game_id,solution_id,name,print,symbols) DO UPDATE
@@ -293,14 +306,15 @@ class Library:
         with self.connect() as db:
             counts={table:db.execute(f'SELECT COUNT(*) n FROM {table}').fetchone()['n']
                     for table in ('functions','solutions','games','occurrences')}
-            rows=db.execute('''SELECT f.id,f.arch,f.size,MIN(o.name) name,COUNT(DISTINCT g.id) games,
+            rows=db.execute('''SELECT f.id,f.arch,f.size,COALESCE(n.name,MIN(o.name)) name,COUNT(DISTINCT g.id) games,
                 GROUP_CONCAT(DISTINCT g.name) game_names,COUNT(DISTINCT s.id) variants
-                FROM functions f JOIN solutions s ON s.function_id=f.id
+                FROM functions f LEFT JOIN preferred_names n ON n.function_id=f.id
+                JOIN solutions s ON s.function_id=f.id
                 JOIN occurrences o ON o.solution_id=s.id JOIN games g ON g.id=o.game_id
-                WHERE (?='' OR f.id IN (SELECT s2.function_id FROM solutions s2
+                WHERE (?='' OR n.name LIKE ? OR f.id IN (SELECT s2.function_id FROM solutions s2
                     JOIN occurrences o2 ON o2.solution_id=s2.id JOIN games g2 ON g2.id=o2.game_id
                     WHERE o2.name LIKE ? OR g2.name LIKE ?)) GROUP BY f.id
-                ORDER BY games DESC,f.id LIMIT 100''',(search,'%'+search+'%','%'+search+'%')).fetchall()
+                ORDER BY games DESC,f.id LIMIT 100''',(search,'%'+search+'%','%'+search+'%','%'+search+'%')).fetchall()
         # Include SQLite's live journal and shared-memory files; they can disappear
         # between samples when another connection checkpoints or closes.
         disk_bytes=0
@@ -308,6 +322,93 @@ class Library:
             try:disk_bytes+=Path(str(self.path)+suffix).stat().st_size
             except FileNotFoundError:pass
         return {**counts,'disk_bytes':disk_bytes,'items':[dict(r) for r in rows]}
+
+    def detail(self, fid):
+        """Historical aliases remain visible even when a project is no longer loaded."""
+        with self.connect() as db:
+            row=db.execute('SELECT f.*,n.name FROM functions f LEFT JOIN preferred_names n ON n.function_id=f.id WHERE f.id=?',
+                           (fid,)).fetchone()
+            if row is None:raise NetworkError('That library function no longer exists. Refresh the library.')
+            item=dict(row)
+            rows=db.execute("""SELECT DISTINCT g.id game_id,g.name game,g.slug,o.name,l.vram,l.rom_offset,l.unit,l.source_path
+                FROM solutions s JOIN occurrences o ON o.solution_id=s.id JOIN games g ON g.id=o.game_id
+                LEFT JOIN locations l ON l.function_id=s.function_id AND l.game_id=o.game_id AND l.name=o.name
+                WHERE s.function_id=? ORDER BY g.name,o.name,l.vram""",(fid,)).fetchall()
+        project_rows=self.net.store.all('SELECT * FROM projects')
+        projects={self.game_key(p):p for p in project_rows}
+        occurrences=[];prints={}
+        for row in rows:
+            r=dict(row);proj=projects.get(r['game_id']);r['available']=False
+            if r['vram']==-1:r['vram']=None
+            if proj:
+                fn=self.net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],r['name'])
+                if fn:
+                    if proj['id'] not in prints:prints[proj['id']]=self.net.twins.prints(proj)
+                    proof=prints[proj['id']].get(fn['id'])
+                    if proof is None or proof.key!=item['fingerprint'] or proof.size!=item['size']:
+                        fn=None
+                if fn:
+                    r.update(available=True,slug=proj['slug'],function_id=fn['id'])
+                    for key in ('vram','rom_offset','unit','source_path'):r[key]=dict(fn).get(key)
+            occurrences.append(r)
+        # A project may have renamed a symbol since the last archive scan. Add its
+        # current locations by verified identity while retaining the historical aliases.
+        available={r.get('function_id') for r in occurrences if r['available']}
+        games={r['game_id'] for r in occurrences}
+        for proj in project_rows:
+            game=self.game_key(proj)
+            if game not in games:continue
+            if proj['id'] not in prints:prints[proj['id']]=self.net.twins.prints(proj)
+            ids=[key for key,p in prints[proj['id']].items()
+                 if p.key==item['fingerprint'] and p.size==item['size'] and key not in available]
+            for fn in self.net.store.all('SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
+                                         proj['id'],encoded(ids)):
+                fn=dict(fn)
+                occurrences.append({'game_id':game,'game':proj['name'],'slug':proj['slug'],'name':fn['name'],
+                                    'function_id':fn['id'],'available':True,
+                                    **{k:fn.get(k) for k in ('vram','rom_offset','unit','source_path')}})
+        item['occurrences']=occurrences
+        item['name']=item['name'] or min(r['name'] for r in occurrences)
+        return item
+
+    def set_name(self, fid, name):
+        name=str(name).strip()
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,199}',name):
+            raise NetworkError('Choose a C identifier, up to 200 characters, for the default name.')
+        with self.connect() as db:
+            if not db.execute('SELECT 1 FROM functions WHERE id=?',(fid,)).fetchone():
+                raise NetworkError('That library function no longer exists. Refresh the library.')
+            db.execute('INSERT INTO preferred_names VALUES(?,?) ON CONFLICT(function_id) DO UPDATE SET name=excluded.name',
+                       (fid,name))
+        return name
+
+    def apply_name(self, fid, name, log=None):
+        """Use the ordinary checked rename, including room and imported-project rules."""
+        name=self.set_name(fid,name)
+        rows=self.detail(fid)['occurrences'];results=[];seen=set()
+        agent,_=self.net.local_agent('you')
+        for i,row in enumerate(rows):
+            if log:
+                log.check_cancel()
+                log.progress({'phase':'Applying default name','game':row['game'],'function':row['name'],
+                              'done':i,'total':len(rows)})
+            key=(row['slug'] if row['available'] else row['game_id'],row['name'])
+            if key in seen:continue
+            seen.add(key)
+            result={'game':row['game'],'name':row['name']}
+            if not row['available']:result['message']='Project unavailable; default saved in the library only.'
+            elif row['name']==name:result['message']='Already uses this name.'
+            else:
+                try:
+                    message=self.net.rename_symbol(agent,row['slug'],row['name'],name,'Default name from the local match library')
+                    result['message']=message
+                    if not message.startswith('❌'):
+                        self.capture(self.net.project_row(row['slug']),row['function_id'])
+                except NetworkError as error:result['message']=str(error)
+            results.append(result)
+            if log:log(row['game']+': '+result['message'])
+        if log:log.progress({'phase':'Naming complete','done':len(rows),'total':len(rows)})
+        return {'results':results}
 
     def candidates(self, processor, big, fingerprint, size, exclude=()):
         with self.connect() as db:

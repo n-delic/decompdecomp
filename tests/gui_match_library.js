@@ -2,7 +2,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const source=fs.readFileSync('src/decompnet/app/static/js/pages.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:''});return elements.get(id);};
-const ctx={updateWorkProgress:()=>{},$:el,esc:s=>String(s).replaceAll('<','&lt;'),api:async()=>({functions:1,games:2,solutions:1,disk_bytes:1572864,items:[{name:'shared_function',arch:'mips',size:64,games:2,game_names:'First game,Second game',variants:1}]})};
+const ctx={S:{},updateWorkProgress:()=>{},$:el,esc:s=>String(s).replaceAll('<','&lt;'),api:async()=>({functions:1,games:2,solutions:1,disk_bytes:1572864,items:[{id:7,name:'shared_function',arch:'mips',size:64,games:2,game_names:'First game,Second game',variants:1}]})};
 vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('async function loadMatchLibrary()'),source.indexOf('$("matchLibraryRefresh").onclick')),ctx);
 (async()=>{
  const log={_workStatus:{}};
@@ -14,7 +14,22 @@ vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('async functio
  assert.match(el('matchLibraryCount').textContent,/1 functions · 2 games · 1 variants/);
  assert.match(el('matchLibraryCount').textContent,/1.5 MiB on disk/);
  assert.match(el('matchLibraryItems').innerHTML,/First game,Second game/);
+ assert.match(el('matchLibraryItems').innerHTML,/data-library-id="7"/);
  assert.match(el('matchLibraryItems').innerHTML,/shared_function/);
+ ctx.S={};ctx.beginWork=()=>()=>{};ctx.showJobError=()=>assert.fail('Unexpected drawer error');
+ ctx.dialog=(title,html,kind='')=>{ctx.S.dialogKind=kind;el('dialog').hidden=false;el('dialogBody').innerHTML=html;return el('dialogBody');};
+ const detail={id:7,name:'shared_function',occurrences:[{game:'Example game',name:'func_123',available:true,slug:'example',vram:4096,rom_offset:128,unit:'src/example.c'}]};
+ let saved;
+ ctx.api=async(url,options)=>{if(options){saved=options.body;return {name:'new_name'};}return url.includes('?id=')?detail:{functions:0,games:0,solutions:0,items:[]};};
+ await ctx.openLibraryFunction(7);
+ assert.match(el('dialogBody').innerHTML,/Default name/);
+ assert.match(el('libraryLocations').innerHTML,/src\/example.c/);
+ assert.match(el('libraryLocations').innerHTML,/0x1000/);
+ assert.match(el('libraryLocations').innerHTML,/data-library-fn="func_123"/);
+ el('libraryName').value='new_name';el('libraryApply').checked=false;
+ await el('librarySave').onclick();
+ assert.equal(saved.action,'name');assert.equal(saved.name,'new_name');
+
  ctx.api=async()=>({functions:0,games:0,solutions:0,items:[]});
  await ctx.loadMatchLibrary();assert.match(el('matchLibraryItems').innerHTML,/No saved matches/);
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -752,8 +752,65 @@ async function loadMatchLibrary() {
   const bytes=data.disk_bytes || 0, unit=bytes>=1048576 ? 'MiB' : bytes>=1024 ? 'KiB' : 'B';
   const size=(bytes/(unit==='MiB' ? 1048576 : unit==='KiB' ? 1024 : 1)).toLocaleString(undefined,{maximumFractionDigits:1});
   $("matchLibraryCount").textContent=`— ${data.functions.toLocaleString()} functions · ${data.games.toLocaleString()} games · ${data.solutions.toLocaleString()} variants · ${size} ${unit} on disk`;
-  $("matchLibraryItems").innerHTML=data.items.length ? `<div class="compiler-table"><table><thead><tr><th>Function</th><th>Games</th><th>Verified variants</th></tr></thead><tbody>${data.items.map(r=>`<tr><td class="mono">${esc(r.name)}<br><span class="small muted">${esc(r.arch)} · ${r.size} bytes</span></td><td><b>${r.games}</b><br><span class="small muted">${esc(r.game_names)}</span></td><td>${r.variants}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No saved matches found. Existing matches are indexed in the background, and new matches are saved automatically.</p>';
+  const sort=S.librarySort||{key:'games',descending:true};
+  data.items.sort((a,b)=>(typeof a[sort.key]==='number'?a[sort.key]-b[sort.key]:String(a[sort.key]||'').localeCompare(String(b[sort.key]||'')))*(sort.descending?-1:1));
+  const heading=(key,label)=>`<th scope="col" aria-sort="${sort.key===key?(sort.descending?'descending':'ascending'):'none'}"><button type="button" class="ghost" data-library-sort="${key}">${label}${sort.key===key?(sort.descending?' ↓':' ↑'):''}</button></th>`;
+  $("matchLibraryItems").innerHTML=data.items.length ? `<div class="compiler-table"><table><thead><tr>${heading('name','Function')}${heading('games','Games')}${heading('variants','Verified variants')}</tr></thead><tbody>${data.items.map(r=>`<tr><td class="mono"><button type="button" class="fn link" data-library-id="${r.id}">${esc(r.name)}</button><br><span class="small muted">${esc(r.arch)} · ${r.size} bytes</span></td><td><b>${r.games}</b><br><span class="small muted">${esc(r.game_names)}</span></td><td>${r.variants}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No saved matches found. Existing matches are indexed in the background, and new matches are saved automatically.</p>';
 }
+async function openLibraryFunction(id) {
+  const request=S.libraryRequest=(S.libraryRequest||0)+1;
+  const body=dialog('Library function', '<pre id="libraryLoading" class="joblog" hidden></pre>', 'library-loading');
+  const loading=$("libraryLoading"),finish=beginWork(loading,'Loading function locations',[]);
+  let data;
+  try {data=await api('/api/match-library?id='+encodeURIComponent(id));}
+  catch(error){showJobError(loading,error.message);return;}
+  finally{finish();}
+  if (S.libraryRequest!==request || S.dialogKind!=='library-loading' || $("dialog").hidden) return;
+  dialog(data.name,`<p>Choose a default name for this shared function, or apply it to projects using the checked rename process.</p>
+    <label class="field">Default name<input id="libraryName" value="${esc(data.name)}" maxlength="200" spellcheck="false"></label>
+    <label class="check"><input type="checkbox" id="libraryApply"> Apply to all available projects</label>
+    <p class="muted small">Closed or removed projects retain their archived names and locations. Unavailable projects and naming conflicts are reported; existing matches are checked before a project rename is saved.</p>
+    <div class="row"><button class="primary" id="librarySave" type="button">Save default name</button><button class="ghost" id="libraryNameStop" type="button" hidden>Stop</button></div>
+    <pre class="joblog" id="libraryNameLog" hidden></pre>
+    <h3>Names and locations</h3><div id="libraryLocations"></div>`, 'library-name');
+  const rows=data.occurrences;
+  let key='game',descending=false;
+  const render=()=>{
+    const cols=[['game','Project'],['name','Function name'],['vram','Address'],['unit','Source / unit']];
+    const ordered=[...rows].sort((a,b)=>{const x=a[key],y=b[key];if(x==null)return y==null?0:1;if(y==null)return -1;return (typeof x==='number'?x-y:String(x).localeCompare(String(y)))*(descending?-1:1);});
+    $("libraryLocations").innerHTML=`<div class="compiler-table"><table><thead><tr>${cols.map(([k,label])=>`<th scope="col" aria-sort="${key===k?(descending?'descending':'ascending'):'none'}"><button type="button" class="ghost" data-location-sort="${k}">${label}${key===k?(descending?' ↓':' ↑'):''}</button></th>`).join('')}</tr></thead><tbody>${ordered.map(r=>`<tr><td>${esc(r.game)}<br><span class="small muted">${r.available?'Available · '+esc(r.slug):'Archived'}</span></td><td class="mono">${r.available?`<button type="button" class="fn link" data-library-slug="${esc(r.slug)}" data-library-fn="${esc(r.name)}">${esc(r.name)}</button>`:esc(r.name)}</td><td class="mono">${r.vram==null?'—':'0x'+r.vram.toString(16).toUpperCase()}${r.rom_offset==null?'':`<br><span class="small muted">ROM 0x${r.rom_offset.toString(16).toUpperCase()}</span>`}</td><td>${esc(r.source_path||r.unit||'—')}</td></tr>`).join('')}</tbody></table></div>`;
+    $("libraryLocations").onclick=e=>{
+      const sort=e.target.closest('[data-location-sort]');
+      if(sort){descending=key===sort.dataset.locationSort?!descending:false;key=sort.dataset.locationSort;render();return;}
+      const fn=e.target.closest('[data-library-slug]');
+      if(fn){closeDialog();openNoted(fn.dataset.librarySlug,fn.dataset.libraryFn);}
+    };
+  };
+  render();
+  $("libraryApply").onchange=()=>{$("librarySave").textContent=$("libraryApply").checked?'Save & apply name':'Save default name';};
+  $("librarySave").onclick=async()=>{
+    const log=$("libraryNameLog"),button=$("librarySave"),name=$("libraryName").value;
+    log.hidden=false;
+    const stop=$("libraryNameStop");
+    const done=beginWork(log,'Saving function name',[button,$("libraryApply"),$("libraryName")],'Name saved. Project results are listed below.');
+    try {
+      const result=await api('/api/match-library',{method:'POST',body:{action:$("libraryApply").checked?'apply-name':'name',id,name}});
+      if(result.job){
+        stop.hidden=false;stop.onclick=()=>api('/api/job/cancel',{method:'POST',body:{id:result.job}}).catch(error=>showJobError(log,error.message));
+        await followJob(result.job,log,(_lines,state)=>updateWorkProgress(log,state.progress));
+        const fresh=await api('/api/match-library?id='+encodeURIComponent(id));
+        rows.splice(0,rows.length,...fresh.occurrences);
+        if(S.libraryRequest===request && S.dialogKind==='library-name')render();
+      }else log.textContent='Default name saved.';
+      if(S.libraryRequest===request && S.dialogKind==='library-name')$("dialogTitle").textContent=name;
+      await loadMatchLibrary();
+    }catch(error){showJobError(log,error.message);}finally{stop.hidden=true;done();}
+  };
+}
+$("matchLibraryItems").onclick=e=>{
+  const sort=e.target.closest('[data-library-sort]');
+  if(sort){const old=S.librarySort||{key:'games',descending:true};S.librarySort={key:sort.dataset.librarySort,descending:old.key===sort.dataset.librarySort?!old.descending:false};loadMatchLibrary().catch(error=>toast(error.message,'err'));return;}
+  const b=e.target.closest('[data-library-id]');if(b)openLibraryFunction(b.dataset.libraryId).catch(error=>toast(error.message,'err'));};
 function showMatchLibraryProgress(log, progress) {
   if (!progress) return;
   updateWorkProgress(log,progress);

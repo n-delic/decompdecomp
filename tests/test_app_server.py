@@ -2542,3 +2542,16 @@ def test_candidate_storage_routes_guard_validate_and_keep_history_scoped(app):
     assert client.get(query.replace('function=target','function=other')+'&attempt='+str(a)).status_code==400
     assert client.get(query+'&before=invalid').status_code==400
     assert other!=fid
+
+
+def test_match_library_detail_and_name_routes(app,monkeypatch):
+    client,net,*_=app
+    calls=[]
+    monkeypatch.setattr(net.match_library,'detail',lambda fid:{'id':fid,'name':'shared','occurrences':[]})
+    monkeypatch.setattr(net.match_library,'set_name',lambda fid,name:calls.append((fid,name)) or name)
+    assert client.get('/api/match-library?id=7').json()['id']==7
+    assert client.post('/api/match-library',json={'action':'name','id':7,'name':'new_name'}).status_code==403
+    reply=client.post('/api/match-library',headers={'X-Decomp':'1'},json={'action':'name','id':7,'name':'new_name'})
+    assert reply.json()=={'name':'new_name'}
+    assert calls==[(7,'new_name')]
+    assert client.get('/api/match-library?id=invalid').status_code==400
