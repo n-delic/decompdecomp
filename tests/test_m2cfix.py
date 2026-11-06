@@ -83,6 +83,101 @@ def test_every_argument_up_to_the_highest_is_declared():
     draft = "s32 func_80001000(s32 arg2) {\n    return arg2;\n}\n"
     out = m2cfix.refine_draft(draft, "func_80001000", "glabel func_80001000\njr $ra\naddu $v0, $a2, $zero\n")
     assert "func_80001000(s32 arg0, s32 arg1, s32 arg2)" in out  # (m2c named only the one it reads)
+
+
+BYTE_RELOAD_ASM = '''glabel func_80001000
+lw $v0, 0x20($a0)
+sw $v0, 8($a0)
+lbu $v1, 8($a0)
+addiu $v0, $zero, 1
+bne $v1, $v0, done
+nop
+done:
+jr $ra
+nop
+'''
+BYTE_RELOAD_DRAFT = '''void func_80001000(void *arg0) {
+    M2C_FIELD(arg0, s32 *, 8) = M2C_FIELD(arg0, s32 *, 0x20);
+    if ((u8) M2C_FIELD(arg0, s32 *, 8) == 1) { func_80002000(); }
+}
+'''
+
+
+def test_target_byte_reload_is_not_word_truncation():
+    refined = m2cfix.refine_draft(BYTE_RELOAD_DRAFT, 'func_80001000', BYTE_RELOAD_ASM)
+    assert 'if (M2C_FIELD(arg0, u8 *, 8) == 1)' in refined
+    assert 'M2C_FIELD(arg0, s32 *, 8) = M2C_FIELD(arg0, s32 *, 0x20)' in refined
+    # In big-endian storage, the first addressed byte is the high byte, not (u8)word.
+    word = 0x01020304
+    assert int.from_bytes(word.to_bytes(4, 'big')[:1], 'big') == 1
+    assert word & 0xff == 4
+
+
+@pytest.mark.parametrize('asm', [
+    '', BYTE_RELOAD_ASM.replace('lbu $v1', 'lw $v1'),
+    BYTE_RELOAD_ASM.replace('lbu $v1', 'lb $v1'),
+    BYTE_RELOAD_ASM.replace('lbu $v1, 8', 'lbu $v1, 9'),
+    BYTE_RELOAD_ASM.replace('lbu $v1, 8($a0)', 'lbu $v1, 8($a1)'),
+    'addiu $a0, $a0, 4\n'+BYTE_RELOAD_ASM,
+    'jal func_80003000\nnop\n'+BYTE_RELOAD_ASM,
+    'bnez $v0, done\nnop\n'+BYTE_RELOAD_ASM,
+])
+def test_byte_reload_requires_direct_unchanged_argument_address(asm):
+    assert '(u8) M2C_FIELD(arg0, s32 *, 8)' in m2cfix.refine_draft(BYTE_RELOAD_DRAFT, 'func_80001000', asm)
+
+
+def test_byte_reload_changes_only_selected_function_and_real_expressions():
+    source = BYTE_RELOAD_DRAFT.replace('    if', '    /* (u8) M2C_FIELD(arg0, s32 *, 8) */\n    if')
+    other = BYTE_RELOAD_DRAFT.replace('func_80001000', 'func_80004000')
+    refined = m2cfix._byte_field_loads(source+other, 'func_80001000', BYTE_RELOAD_ASM)
+    assert refined.endswith(other)
+    assert '/* (u8) M2C_FIELD(arg0, s32 *, 8) */' in refined
+    assert m2cfix._byte_field_loads(source, 'missing', BYTE_RELOAD_ASM) == source
+    custom = '#define M2C_FIELD(p,t,o) other(p,t,o)\n'+source
+    assert m2cfix._byte_field_loads(custom, 'func_80001000', BYTE_RELOAD_ASM) == custom
+    reassigned = source.replace('    if', '    arg0 += 4;\n    if')
+    assert m2cfix._byte_field_loads(reassigned, 'func_80001000', BYTE_RELOAD_ASM) == reassigned
+
+
+@pytest.mark.parametrize('source', [
+    BYTE_RELOAD_DRAFT.replace('    if', '    arg0 <<= 1;\n    if'),
+    BYTE_RELOAD_DRAFT.replace('    if', '    change(&arg0);\n    if'),
+    BYTE_RELOAD_DRAFT.replace('    if', '    change(&(arg0));\n    if'),
+    BYTE_RELOAD_DRAFT.replace('    if', '    unknown();\n    if'),
+    BYTE_RELOAD_DRAFT.replace('void *arg0', 's32 arg0'),
+    BYTE_RELOAD_DRAFT.replace(' == 1', ' == (u8) M2C_FIELD(arg0, s32 *, 8)'),
+    BYTE_RELOAD_DRAFT.replace(' == 1', ' == (u8) M2C_FIELD(arg0, s32 *, 0x8)'),
+])
+def test_byte_reload_rejects_ambiguous_source_binding_or_multiple_reads(source):
+    assert m2cfix._byte_field_loads(source, 'func_80001000', BYTE_RELOAD_ASM) == source
+
+
+def test_byte_reload_compiles_like_explicit_byte_control(tmp_path):
+    from decompnet import toolchains
+    from decompnet.compiler import compile_source
+    from decompnet.elfobj import extract_function
+    from decompnet.project import compiler_config
+    if not toolchains.installed('gcc-2.7.2-kmc'):
+        pytest.skip('needs already-installed compiler')
+    header = ('typedef int s32; typedef unsigned char u8;\n'
+              '#define M2C_FIELD(p,t,o) (*(t)((char *)(p)+(o)))\n')
+    refined = m2cfix.refine_draft(BYTE_RELOAD_DRAFT, 'func_80001000', BYTE_RELOAD_ASM)
+    control = BYTE_RELOAD_DRAFT.replace('(u8) M2C_FIELD(arg0, s32 *, 8)', 'M2C_FIELD(arg0, u8 *, 8)')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'gcc-2.7.2-kmc',
+                           'flags': ['-O2', '-G0', '-mips3', '-mgp32', '-mfp32']}})
+    results = [compile_source(cfg, header, s) for s in (BYTE_RELOAD_DRAFT, refined, control)]
+    assert all(r.ok for r in results), [r.log for r in results]
+    functions = [extract_function(r.obj, 'func_80001000') for r in results]
+    assert functions[1].fingerprint() == functions[2].fingerprint()
+    assert functions[0].fingerprint() != functions[2].fingerprint()
+
+
+def test_saved_draft_search_exposes_byte_reload_as_m2c_alternative():
+    from decompnet.app import draft_repairs
+    labels = {}
+    candidates = draft_repairs.variants(BYTE_RELOAD_DRAFT, 'func_80001000', 'mips', BYTE_RELOAD_ASM, labels=labels)
+    assert any(labels.get(candidate) == 'm2c_refinement' and
+               'if (M2C_FIELD(arg0, u8 *, 8) == 1)' in candidate for candidate in candidates)
     draft = "void func_80001000(void) {\n    func_80002000(1);\n}\n"
     asm = "glabel f\njal func_80002000\naddiu $a2, $zero, 1\n"
     assert "func_80001000(s32 arg0, s32 arg1)" in m2cfix.refine_draft(draft, "func_80001000", asm)

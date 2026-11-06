@@ -1213,3 +1213,9 @@ modern-compiler reconstruction, not evidence of historical retail GCC 4.4 use.
 Use a function-scoped profile, preserve neighboring selections, and run the full
 cartridge gate. Do not substitute a generic assembly tail-jump macro or infer
 64-bit arithmetic merely from this small control-flow shape.
+
+When a word store is followed by `lbu` at the same address, inspect m2c's
+field expression. `(u8)word_field` takes the low byte of the integer; a byte
+dereference at that address reads the high byte on big-endian N64. Use the
+target's actual load address and width. The refined draft can propose this
+correction for direct incoming-argument addresses; it still needs the exact judge.

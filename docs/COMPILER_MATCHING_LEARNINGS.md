@@ -20,6 +20,29 @@ Use these evidence levels:
 - **Observation:** output changed, but the mechanism or all contributing edits are not isolated.
 - **Hypothesis:** worth trying, with no successful controlled test yet.
 
+## MIPS byte reloads versus integer truncation
+
+**Observation:** comparable repair captures using `sn-n64-281`,
+`-G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp64`, replace
+`(u8) M2C_FIELD(arg0, s32 *, offset)` with a byte dereference. The target
+stores a word, then uses `lbu` at the same address. On big-endian MIPS this
+reads the high byte; casting the word to `u8` retains its low byte. The captures
+also expand macros and reformat source, so they do not isolate every scheduling effect.
+
+**Controlled regression:** synthetic `gcc-2.7.2-kmc` compilation with
+`-O2 -G0 -mips3 -mgp32 -mfp32` confirms that the corrected candidate has the
+same extracted function fingerprint as an explicit byte-load control, while the
+word-truncation draft differs. This is generator coverage, not an additional game match.
+See `tests/test_m2cfix.py::test_byte_reload_compiles_like_explicit_byte_control`.
+
+The refined m2c alternative requires an explicit `lbu` from the same incoming
+argument register and offset before a branch or call. It rejects overwritten
+argument registers, source pointer updates/escapes, unknown earlier calls,
+ambiguous repeated casts and custom accessor definitions. Original drafts remain
+available; every alternative still needs ordinary compilation and exact judging.
+Do not replace arbitrary integer truncations or infer byte access from a nearby
+load at another address.
+
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
 ### Controlled regression: matched integer prototype candidates

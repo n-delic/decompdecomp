@@ -12,6 +12,7 @@ function N64 game, where undoing them matched a few dozen functions that autopil
 - Colour bytes above 0x7F are stored through unsigned fields.
 - `x = x | c` is `x |= c` (it changes how the compiler orders the loads).
 - A typed pointer stepped by a byte count (`p += 0x24` on an `s16 *`).
+- An unsigned-byte cast of a word field where the target actually reloads a byte at that address.
 
 `refine_draft` makes one refined draft (a second candidate next to m2c's own, never instead of it). `expand_macros`
 turns m2c's `M2C_FIELD(...)` and simple visible byte-field accessors into plain C. The native parser has no
@@ -157,6 +158,53 @@ def _declare_arguments(body: str, name: str, written: set[int] | None) -> str | 
     return body[:m.start(2)] + (", ".join(params) if params else "void") + body[m.end(2):]
 
 
+def _byte_field_loads(source: str, name: str, asm: str) -> str:
+    """A target LBU can reload the first byte of a stored word, not truncate its integer value.
+
+    Only direct incoming argument addresses before control flow are witnesses. Keep the original draft as the
+    other candidate: this corrects a possible m2c memory interpretation, not an equivalent C expression.
+    """
+    from .forks.csource import _blank, find
+    span = find(source, name)
+    if span is None or re.search(r'^\s*#\s*define\s+M2C_FIELD\b', source, re.M):
+        return source
+    start, end = span
+    def offset(text):
+        return int(text, 16 if text.startswith('0x') else 10)
+    loads = set()
+    available = set(range(4))
+    for line in asm.splitlines():
+        line = _COMMENT.sub('', line).strip()
+        if not line or line.startswith(('glabel', 'endlabel', '.', '#')):
+            continue
+        op = line.split()[0]
+        if op.startswith('b') or op in {'j', 'jr', 'jal', 'jalr'}:
+            break  # no alias, delay-slot or path assumptions
+        load = re.fullmatch(r'lbu\s+\$\w+,\s*('+_NUMBER+r')\(\$a([0-3])\)', line)
+        if load and int(load[2]) in available:
+            loads.add((int(load[2]), offset(load[1])))
+        write = re.match(r'(\w+)\s+\$a([0-3])\b', line)
+        if write and write[1] not in _NOT_A_WRITE:
+            available.discard(int(write[2]))
+    clean = _blank(source)
+    pattern = re.compile(r'\(u8\)\s*M2C_FIELD\(arg([0-3]),\s*(?:s32|u32)\s*\*,\s*('+_NUMBER+r')\)')
+    hits = list(pattern.finditer(clean, start, end))
+    signature = _definition(clean, name)
+    for hit in reversed(hits):
+        arg = 'arg'+hit[1]
+        prefix = clean[start:hit.start()]
+        if ((int(hit[1]), offset(hit[2])) not in loads
+                or not signature or not re.search(r'\*\s*'+arg+r'\b', signature[2])
+                or sum(other[1] == hit[1] and offset(other[2]) == offset(hit[2]) for other in hits) != 1
+                or re.search(r'\b'+arg+r'\s*(?:\+\+|--|(?:<<|>>|[+*/%&|^\-])?=(?!=))|'
+                             r'(?:\+\+|--)\s*\b'+arg+r'\b|&\s*\(*\s*'+arg+r'\b', prefix)
+                or any(call[1] not in {name, 'M2C_FIELD', 'if', 'switch', 'while', 'for'}
+                       for call in re.finditer(r'\b(\w+)\s*\(', prefix))):
+            continue
+        source = source[:hit.start()]+f'M2C_FIELD({arg}, u8 *, {hit[2]})'+source[hit.end():]
+    return source
+
+
 def _pass_arguments_through(body: str, name: str, written: set[int]) -> str:
     """The function's own `arg0..` put in front of its first call, when that call has fewer arguments than the
     registers set for it need (m2c leaves out what the code passes on untouched)."""
@@ -196,7 +244,7 @@ def refine_draft(draft: str, name: str, asm: str) -> str | None:
     """`draft` (m2c's C for `name`, from `asm`, without the macro block) with the usual mistakes undone, for MIPS
     GCC games. Still uses m2c's macros for what it can't write plainly: the caller puts seeds.M2C_MACROS before it.
     None when the function's header can't be read."""
-    body = overlay_call_aliases(draft,asm)
+    body = _byte_field_loads(overlay_call_aliases(draft,asm), name, asm)
     from .app.hardware_operation_repairs import variants as hardware_variants
     if hardware := hardware_variants(body,name,"mips",asm):
         body = hardware[0][1]
