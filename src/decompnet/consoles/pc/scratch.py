@@ -871,15 +871,22 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
     built = describe(pe.data)
     traps = built.version is not None and _version_key(built.version) >= NORETURN_TRAP_FROM
     rows: dict[int, dict] = {}
+    own_thunks: list[tuple[int, int]] = []  # (start, end) of the thunks to the program's own functions
     for r in found:
         s = pe.section_at(r["entry"])
+        if r.get("thunk") and import_thunk(pe, r["entry"]) is None and s is not None:
+            own_thunks.append((r["entry"], max(r.get("end", r["entry"]), r["entry"])))
         if r.get("thunk") and import_thunk(pe, r["entry"]) is None or s is None or not s.code or \
                 pe.offset(r["entry"]) is None:
             continue  # (a thunk to one of the program's own functions: part of the code it's in, as Ghidra found it)
         rows[r["entry"]] = r if not r.get("thunk") else {**r, "end": r["entry"] + THUNK_BYTES}
     for sec in pe.sections:  # code before the first function of a section is looked for as gaps after one are
         first = min((s for s in rows if sec.va <= s < sec.va + sec.size), default=None)
-        if sec.code and first is not None and (rest := pe.read(sec.va, first - sec.va).lstrip(b"\x90\xcc\x00")):
+        # (from after the thunks before it: an incrementally linked program (Visual C++ 6.0's /DEBUG) starts its code
+        # with a table of `jmp` thunks to its functions, and that table was taken for a function nothing names, a
+        # source file of its own beside the ones its PDB names)
+        begin = max([sec.va, *(end for at, end in own_thunks if sec.va <= at < (first or sec.va))])
+        if sec.code and first is not None and (rest := pe.read(begin, first - begin).lstrip(b"\x90\xcc\x00")):
             if rest.strip(b"\x90\xcc\x00"):
                 missed = first - len(rest)
                 rows[missed] = _missed(md, missed, rest)

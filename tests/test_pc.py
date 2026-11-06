@@ -1639,6 +1639,21 @@ def test_functions_before_the_first_one_ghidra_found_are_found_too():
     assert [f.addr for f in scratch_pe.analyse(pe, [_row(0x401010, 0x401015)])] == [0x401010]
 
 
+def test_an_incrementally_linked_programs_thunk_table_is_no_function_before_the_first_one():
+    """Visual C++ 6.0 links with /DEBUG incrementally: the code starts with a table of `jmp` thunks to the program's
+    functions (Ghidra's thunks, left out). Looking for functions before the first one Ghidra found (2017's inlined
+    mix_score) took the table for one, a source file of its own beside the ones the demo's PDB names (text_00401005,
+    tests/test_pc_debug.py). A thunk Ghidra didn't mark, between two it did, is still the table's."""
+    pad = lambda code: code + b"\xcc" * (-len(code) % 16)
+    jmp = lambda at, to: b"\xe9" + struct.pack("<i", to - (at + 5))
+    thunks = b"\xcc" * 5 + jmp(0x401005, 0x401020) + jmp(0x40100A, 0x401030) + jmp(0x40100F, 0x401020)
+    code = thunks.ljust(0x20, b"\xcc") + pad(bytes.fromhex("8b442404c3")) + pad(bytes.fromhex("33c0c3"))
+    pe = scratch_pe.read_pe(_tiny_exe(code))
+    rows = [{**_row(0x401005, 0x40100A), "thunk": True}, {**_row(0x40100F, 0x401014), "thunk": True},
+            _row(0x401020, 0x401025), _row(0x401030, 0x401033)]
+    assert [(f.addr, f.size) for f in scratch_pe.analyse(pe, rows)] == [(0x401020, 5), (0x401030, 3)]
+
+
 def test_the_padding_the_linker_aligns_every_function_with_doesnt_end_a_source_file():
     """Visual C++ 2005 on aligns each function to 16 bytes with int3: a 2005 game got a source file for almost every
     function (19,028 for 20,863). More than that padding still ends a file, and so does int3 where the compiler pads
