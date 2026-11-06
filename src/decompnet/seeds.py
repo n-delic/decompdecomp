@@ -335,9 +335,12 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     """C draft from GNU/splat-style assembly text (plus optional data, for jump tables and strings). `valid`:
     m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is.
     `strict`: a context m2c can't read raises DraftError instead of drafting without it."""
+    from .arch.mips_compare import candidate as compare_candidate
     from .arch.mips_count import candidate as count_candidate
     from .arch.mips_fcsr import candidate as fcsr_candidate
     from .arch.mips_status import candidate as status_candidate
+    if source := compare_candidate(asm_text,name,toolchain_id):
+        return source
     if source := fcsr_candidate(asm_text,name,toolchain_id):
         return source
     if source := status_candidate(asm_text,name,toolchain_id):

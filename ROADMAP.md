@@ -2917,3 +2917,6 @@ need independent evidence before receiving this specific GNU C repair.
 - Done: registered GNU MIPS fixed CP0 Status read with a bounded complete-leaf
   seed, ordinary/diagnostic regression checks and no automatic assembly reopening.
   Other backends and arbitrary CP0/control-register hazard sequences remain unsupported.
+- Done: fixed registered GNU MIPS CP0 Compare write and bounded complete-leaf
+  machine seed. Ordinary linked judging remains unchanged; handwritten provenance
+  and timer-interrupt clearing semantics remain explicit.

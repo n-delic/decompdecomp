@@ -5154,3 +5154,23 @@ C functions, including the previously verified FCSR and Count accessors. All
 The normal copied prepared-source path promoted this leaf while preserving
 all 2,073 other selected source hashes and effective profiles. These are copied
 validation counts, not a claim of live adoption.
+
+### Fixed CP0 Compare writes are architectural I/O
+
+A retained three-instruction SDK leaf writes CP0 Compare ($11), returns, and has
+an empty delay slot. It can be represented with the fixed registered GNU MIPS
+`__builtin_mips_write_compare(unsigned int)` intrinsic. The pinned KMC-compatible
+GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, emitted all 12 target bytes
+identically in ordinary and `-da` compilation. The compiler chooses the input
+GPR and generates the return and delay slot; the fixed backend supplies only
+`mtc0 %0,$11`, a volatile operation with a memory clobber.
+
+The NEC VR4300 manual U10504EJ7V0UMJ1 section 6.3.4 specifies that this write also
+clears the timer interrupt. The actual callers used an existing `void(u32)`
+prototype to clear a pending timer or arm the next deadline; no caller correction
+was needed. A 64-bit deadline is narrowed by that existing parameter contract.
+This does not make the historical handwritten SDK portable arithmetic C.
+CP0 privilege checks and hazards still apply: this is not an arbitrary CP0
+selector, processor fence, general inlined ordering guarantee, or interrupt
+atomic section. The complete-leaf seed checks encoded words, contiguity and the
+registered backend; normal linked judging remains mandatory.

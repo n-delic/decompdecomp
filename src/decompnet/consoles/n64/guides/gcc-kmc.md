@@ -1144,3 +1144,13 @@ does not expose arbitrary assembly or selectors, and is not a CPU fence, Status
 writer or interrupt lock. Keep unsigned 32-bit caller declarations coherent and
 verify them normally. Preserve original handwritten-assembly provenance; a
 matching intrinsic-backed source does not show the SDK was written in portable C.
+
+### CP0 Compare write accessors
+
+For a complete standalone timer accessor, registered GNU MIPS compilers support
+`void f(unsigned int value) { __builtin_mips_write_compare(value); }`.
+It writes only Compare ($11), including the hardware side effect of clearing the
+timer interrupt. The compiler owns GPR selection, return and delay slot. Its
+bounded automatic seed still needs ordinary linked byte verification. Preserve
+handwritten provenance; privilege and CP0 hazards apply, and the memory clobber
+is not a processor fence or a general register-expression ordering barrier.
