@@ -2971,3 +2971,8 @@ bytes/address are available. It asks for caller/callee ABI and compiler sibling-
 capability before variants, without changing signatures, profiles or classification.
 Other processors have no reader for this instruction pattern; generalized tail-dispatch
 ABI analysis and automatic source/profile selection remain planned.
+
+- Done: repair evidence samples repeated source transformations by compiler/header context;
+  installed automatic rules keep one regression example and manual repairs keep three,
+  with durable repeat counts and no repeated analysis scheduling. Existing evidence remains
+  available; conservative capture applies when inputs cannot be grouped safely.

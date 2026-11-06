@@ -152,7 +152,7 @@ def test_paging_comparison_filter_and_manual_review_notes(setup):
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status='open' WHERE id=?", (fid,))
         net._record(fn(net, fid), winner, 10, f'failed {number}', 1)
-        net._record(fn(net, fid), winner, 0, f'matched {number}', 1, matched=True)
+        net._record(fn(net, fid), winner, 0, f'matched {number+100}', 1, matched=True)
     page = net.repair_feedback.listing('demo', comparable=True)
     assert len(page['examples']) == 25 and page['more']
     assert page['total'] == 28
@@ -558,3 +558,23 @@ def test_recording_selects_same_image_failure_across_container_metadata(setup):
     assert evidence['before']['settings']['rom']['byte_order'] == 'v64'
     assert evidence['after']['settings']['rom']['byte_order'] == 'z64'
     assert evidence['previous']['source'] == 'different compiler inputs'
+
+
+def test_repeated_installed_rule_keeps_match_but_skips_extra_capture_and_analysis(setup,monkeypatch):
+    from decompnet.app import repair_outcomes
+    from decompnet.repair_feedback import trial
+    net,winner,_,pid,fid=setup
+    scheduled=[]
+    monkeypatch.setattr(repair_outcomes,'schedule',lambda *args:scheduled.append(args))
+    for n in range(3):
+        with net.store.tx() as db:
+            identity=db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram,target,meta) VALUES(?,?,?,?,?,?,?,?,?)",
+                (pid,f'case{n}',16,4,'open','',0x80002000+n*16,b'original','{}')).lastrowid
+        net._record(fn(net,identity),winner,10,f'int case{n}(int x){{return x;}}',1)
+        with trial({'kind':'deep local repair','family':'unsigned_return'}):
+            net._record(fn(net,identity),winner,0,f'unsigned case{n}(int x){{return x;}}',1,matched=True)
+        assert fn(net,identity)['status']=='matched'
+    assert net.store.one('SELECT COUNT(*) n FROM repair_examples')['n']==1
+    assert len(scheduled)==1
+    row=net.store.one('SELECT successes,retained FROM repair_capture_groups')
+    assert tuple(row)==(3,1)
