@@ -122,11 +122,14 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
         return captured, paths, manifest
 
 
-def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_branch=None, message='Save matches and all decompilation progress', allow_empty=False):
+_ANY_HEAD = object()
+
+
+def commit_snapshot(root, files, paths, log, *, expected_head=_ANY_HEAD, expected_branch=None, message='Save matches and all decompilation progress', allow_empty=False):
     """Use a private index; helper writes after capture remain uncommitted in the working tree."""
     git = repository_git.git
-    head = git(root, 'rev-parse', 'HEAD')
-    if expected_head is not None and head != expected_head:
+    head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)
+    if expected_head is not _ANY_HEAD and head != expected_head:
         raise NetworkError('The checkout committed new work during capture. Review Git and retry.')
     branch = git(root, 'symbolic-ref', '--quiet', 'HEAD')
     if expected_branch is not None and branch != expected_branch:
@@ -136,7 +139,7 @@ def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_bra
     with tempfile.TemporaryDirectory(prefix='decomp-progress-commit-') as temp:
         index = Path(temp)/'index'
         env = {'GIT_INDEX_FILE': str(index)}
-        git(root, 'read-tree', head, env=env)
+        git(root, 'read-tree', *([head] if head else ['--empty']), env=env)
         names = sorted(files)
         # Feed blobs and index records in batches: large saves contain thousands of C files.
         blobs = []
@@ -151,11 +154,11 @@ def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_bra
         hashes = git(root, 'hash-object', '-w', '--no-filters', '--stdin-paths',
                      input=('\n'.join(blobs)+'\n').encode()).splitlines()
         records = [f'100644 {oid}\t{name}\0' for name, oid in zip(names, hashes)]
-        zero = '0' * len(git(root, 'rev-parse', head))
+        zero = '0' * len(git(root, 'hash-object', '--stdin', input=b''))
         records.extend(f'0 {zero}\t{name}\0' for name in sorted(paths - files.keys()))
         git(root, 'update-index', '-z', '--index-info', env=env, input=''.join(records).encode())
         tree = git(root, 'write-tree', env=env)
-        if not allow_empty and tree == git(root, 'rev-parse', head+'^{tree}'):
+        if head and not allow_empty and tree == git(root, 'rev-parse', head+'^{tree}'):
             return head
         check = getattr(log, 'check_cancel', None)
         if check:check()
@@ -171,8 +174,8 @@ def commit_snapshot(root, files, paths, log, *, expected_head=None, expected_bra
                 shutil.copyfileobj(source, output)
             if git(root, 'symbolic-ref', '--quiet', 'HEAD') != branch or git(root, 'diff', '--cached', '--name-only'):
                 raise NetworkError('The branch or staged files changed. Review Git before committing progress again.')
-            commit = git(root, 'commit-tree', tree, '-p', head, '-m', message)
-            git(root, 'update-ref', '-m', 'Save decompilation progress', branch, commit, head)
+            commit = git(root, 'commit-tree', tree, *(['-p', head] if head else []), '-m', message)
+            git(root, 'update-ref', '-m', 'Save decompilation progress', branch, commit, head or zero)
             os.replace(lock, index_path)
             return commit
         finally:

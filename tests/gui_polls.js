@@ -87,7 +87,7 @@ ctx.SERVER_CONSOLES = JSON.parse(process.env.GUI_CONSOLES || "[]");
 vm.createContext(ctx);
 // GUI_JS: another copy of the scripts (an older one, to see the test fail there)
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "transcripts", "repair-feedback", "function", "compiler-progress", "repository-push", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "transcripts", "repair-feedback", "function", "compiler-progress", "repository-setup", "repository-push", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 ctx.toast = (html) => toasts.push(html);

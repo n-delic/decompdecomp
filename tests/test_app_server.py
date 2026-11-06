@@ -2721,3 +2721,25 @@ def test_push_route_requires_write_header_and_does_not_sync_progress(app, monkey
         time.sleep(.01)
     assert result['state'] == 'done' and result['result']['pushed']
     assert calls == [('game','/repo')]
+
+
+def test_repository_setup_requires_write_guard_and_runs_as_job(app, monkeypatch):
+    from decompnet.app import repository_setup
+    client, net, _ = app
+    calls = []
+    monkeypatch.setattr(repository_setup, 'status', lambda net, slug: {'repository':False})
+    def setup(net, slug, action, origin, log):
+        calls.append((slug, action, origin))
+        return {'repository':True}
+    monkeypatch.setattr(repository_setup, 'run', setup)
+    assert client.get('/api/repository-setup?slug=game').json() == {'repository':False}
+    data = {'slug':'game', 'action':'origin', 'origin':'git@example.invalid:project.git'}
+    assert client.post('/api/repository-setup', json=data).status_code == 403
+    response = client.post('/api/repository-setup', json=data, headers={'X-Decomp':'1'})
+    assert response.status_code == 200
+    for _ in range(50):
+        result = client.get('/api/job?id='+response.json()['job']).json()
+        if result['state'] in ('done', 'error'):break
+        time.sleep(.01)
+    assert result['state'] == 'done' and result['result']['repository']
+    assert calls == [('game', 'origin', data['origin'])]

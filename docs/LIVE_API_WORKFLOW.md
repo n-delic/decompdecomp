@@ -261,3 +261,9 @@ are not copied into commit messages.
 existing commits from the current branch. It does not commit or stage working files.
 New commits created after the push begins remain for the next push. Imported build
 projects can use the same push-only control for their existing source commits.
+
+### Set up Git for a portable save
+
+Save location and Git settings share one panel. Save now remembers the folder; Create Git repository initializes it and adds progress-only `.gitignore` rules while preserving existing rules without staging or committing files. Commit saved progress creates a local checkpoint of manifest-listed C, headers and portable metadata. It leaves unrelated files out, refuses staged changes and never pushes. This checkpoint enables future automatic match commits. Adding origin is separate and never contacts the remote. A remembered backup becomes the ongoing progress folder only when its saved content agrees with the current progress (save timestamps and revision counters can differ). Review differing edits before adopting it. Separate rebuildable-export synchronization remains under Advanced; imported projects retain their source checkout for origin and push.
+
+`GET /api/repository-setup?slug=...` reads local save/repository state; authenticated `POST /api/repository-setup` accepts `slug`, `action` (`init`, `checkpoint`, `origin`) and an `origin` address for the last action. Mutations run as background jobs under the shared repository lock.

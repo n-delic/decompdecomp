@@ -1672,7 +1672,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 
 /* Repository sync: one purpose, one destination, and two clearly different outcomes. */
-.repository-sync { margin-top:22px; padding:18px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel); }
+.repository-sync { margin-top:22px; padding-top:18px; border-top:1px solid var(--line); }
 .repository-sync-heading { margin-bottom:18px; }
 .repository-sync-label { display:block; margin-bottom:6px; font:500 10px/1.4 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
 .repository-sync-heading h3 { margin:0 0 6px; font-size:16px; line-height:1.35; color:var(--ink); }
@@ -2042,3 +2042,6 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .repository-publish { display:grid; gap:8px; padding-bottom:16px; margin-bottom:18px; border-bottom:1px solid var(--line); min-width:0; }
 .repository-publish > button { justify-self:start; }
 .repository-publish p { margin:0; overflow-wrap:anywhere; }
+
+#repositoryDestination { margin-top:18px; }
+#repositoryOriginGroup { margin:14px 0; }
