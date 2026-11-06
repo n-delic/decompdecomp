@@ -135,6 +135,13 @@ The bounded repair pass also tries equal-type chained local assignments in eithe
 
 Candidate-quality reports are advisory: agents, autopilot and the deep permuter can keep working while a concern awaits review. Repair examples retains the warning and saved alternatives; exact matches still require the normal byte or objdiff judge.
 
+Permutation workers do not reserve functions, locally or in rooms. Agents can keep their
+claims while side searches submit better scored C; only fresh exact verification completes
+a function and releases its claim. The host also accepts older clients' permutation claim
+requests without creating a lease. Existing permutation leases are cleared on startup;
+ordinary agent and verification leases remain intact. Update room hosts and clients for
+the complete behavior. Historical worker identities remain for attribution.
+
 The permuter's bounded repair pass tries unused scalar locals, local and parameter `register` storage, and adjacent
 local declaration order before random permutation. It keeps original line layout and leaves shared headers alone.
 These hypotheses run through the same compiler and exact judge as agents, in ROM and supported 32-bit imported

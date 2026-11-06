@@ -460,6 +460,12 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         agent = room.agent_for(member, d.get("agent"))
         if "selection" in d:
             net.set_selection(room.slug, agent.name, d["selection"])
+        from ..permuter_claims import clear, nonexclusive
+        if nonexclusive(agent):
+            with net.store.tx() as db:clear(db)
+            fn=net._function(str(d.get('function') or ''),room.slug)
+            return {'function':fn['name'] if fn['status']=='open' else None,
+                    'vram':fn['vram'], 'claim_token':''}
         fn = net.claim_row(agent, room.slug, d.get("function") or None, str(d.get("strategy") or "easiest"))
         from ..release_receipts import current
         return {"function": fn["name"] if fn else None, "vram": fn["vram"] if fn else None,
@@ -468,7 +474,11 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
     def attempt(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
         if room.fork:
-            res = net.attempt(agent, str(d.get("function", "")), str(d.get("source", "")), room.slug)
+            from ..permuter_claims import nonexclusive
+            if nonexclusive(agent):
+                res=net.forks.attempt(agent,room.slug,str(d.get('function','')),str(d.get('source','')),keep=False,background=True)
+            else:
+                res = net.attempt(agent, str(d.get("function", "")), str(d.get("source", "")), room.slug)
             return {"score": res["score"], "matched": res["matched"]}
         from .room_matches import verify
         return verify(net,room.slug,agent,str(d.get('function','')),str(d.get('source','')),d.get('evidence'))
@@ -477,15 +487,23 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         """A member's attempt got better: kept as the function's best so far, as reported (no compile here: the host
         only spends its CPU on verifying matches)."""
         agent = room.agent_for(member, d.get("agent"))
+        guard=None
         if not room.fork and d.get('evidence') is not None:
             from .deep_room import comparable
             if not comparable(net,room.slug,str(d.get('function','')),d['evidence']):
                 return {'ok':False,'reason':'Saved score uses different build inputs; local candidate retained.'}
-        net.apply_reported_best(room.slug, str(d.get("function", "")), int(d.get("score", 0)), str(d.get("source", ""))[:65536], agent)
+            def guard():
+                if not comparable(net,room.slug,str(d.get('function','')),d['evidence']):
+                    raise NetworkError('Build inputs changed before saving the improved candidate. Retry with fresh evidence.')
+        net.apply_reported_best(room.slug, str(d.get("function", "")), int(d.get("score", 0)), str(d.get("source", ""))[:65536], agent, before_record=guard)
         return {"ok": True}
 
     def release(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
+        from ..permuter_claims import clear, nonexclusive
+        if nonexclusive(agent):
+            with net.store.tx() as db:clear(db)
+            return {'text':'Permutation workers do not reserve functions.'}
         from ..release_receipts import transport_release
         return {"text": transport_release(net, agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
                                      bool(d.get("not_c")), claim_token=str(d.get("claim_token") or ""))}

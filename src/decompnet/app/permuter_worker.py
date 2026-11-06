@@ -18,12 +18,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+from .. import permuter_claims
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from . import edition, local_claims, workers
 
 log = logging.getLogger("decompdecomp")
-WATCHED = ("app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
+WATCHED = ("permuter_claims.py", "app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
            "app/permuter_macro_effects.py", "permuter_gen.py", "permuter_capture.py")
 POLL_SECONDS = 1
 STOP_SECONDS = 5
@@ -79,8 +80,8 @@ class PermuterWorker:
                 self._send("configure", settings=self._settings)
 
     def _hold(self, agent, fn, *, count_turn=True, seconds=None) -> bool:
-        """Parent-side checks own their claims locally; no child round trip is needed."""
-        return local_claims.hold(self.net, agent, fn, self.seconds if seconds is None else seconds,
+        """Permutation is nonexclusive; other parent-side checks retain ordinary leases."""
+        return permuter_claims.hold(self.net, agent, fn, self.seconds if seconds is None else seconds,
                                  count_turn=count_turn)
 
     def _let_go(self, agent, fn) -> None:

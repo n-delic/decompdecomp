@@ -50,8 +50,6 @@ def validate(net, slug, name, minutes, max_variants):
     if fn['id'] in blocked(net,proj):raise NetworkError('Review this function boundary before starting a deep pass.')
     if fn['status'] != 'open' or not fn['best_source'] or fn['best_score'] is None:
         raise NetworkError('Choose an unmatched function with saved, scored C first.')
-    if slug in net.links and net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
-        raise NetworkError('This function is working; stop its agent or wait for its claim to finish.')
     return proj, fn
 
 
@@ -59,7 +57,7 @@ class Search(Permuter):
     def __init__(self, net, minutes, max_variants, log, fn=None):
         super().__init__(net)
         self.room_holds = {}
-        self.parallel_claims = getattr(log,'parallel_claims',True)
+        self.parallel_claims = True
         self.started_at = time.monotonic()
         self.seconds = min(minutes*60,getattr(log,'maximum_seconds',minutes*60))
         self.deadline = self.started_at+self.seconds
@@ -95,58 +93,18 @@ class Search(Permuter):
         self.allocation_diagnostic_compiles = 0
 
     def _hold(self, agent, fn, **kwargs):
-        proj = self.net.store.one('SELECT slug FROM projects WHERE id=?', fn['project_id'])
-        link = self.net.links.get(proj['slug']) if proj else None
-        if link:
-            from . import deep_room
-            if not deep_room.offline(link):
-                try:
-                    claimed=link.claim(agent,fn['name'],'easiest')
-                    if claimed!=fn['name']:
-                        if claimed:link.call('/collab/release',agent,function=claimed,notes='Function identity changed; synchronize before retrying.')
-                        return False
-                    self.room_holds[fn['id']]=(link,agent,fn['name'],time.monotonic())
-                except NetworkError as error:
-                    if self.net.fork_slug(proj['slug']):raise
-                    deep_room.disconnected(self,link,error)
-            elif self.net.fork_slug(proj['slug']):
-                raise NetworkError('Imported room drafts require the host build; retry when the host reconnects.')
-        if not link:
-            claim = self.net.store.one('SELECT agent_id FROM claims WHERE function_id=? AND expires_at>?',
-                                       fn['id'], time.time())
-            if claim and claim['agent_id'] != agent.id:
-                if not self.parallel_claims:
-                    return False
-                # A side search never takes, renews or releases the other worker's lease.
-                if kwargs.get('count_turn', True):
-                    with self.net.store.tx() as db:
-                        db.execute('UPDATE functions SET permuted=permuted+1 WHERE id=?', (fn['id'],))
-                return True
-        try:
-            held = super()._hold(agent, fn, **kwargs)
-        except BaseException:
-            self._let_go(agent, fn)
-            raise
-        if not held and link:
-            self._let_go(agent, fn)
-        return held
+        # Side searches do not reserve locally or on the host, including offline ROM work.
+        return super()._hold(agent, fn, **kwargs)
 
     def _let_go(self, agent, fn):
-        try:
-            hold = self.room_holds.pop(fn['id'], None)
-            from . import deep_room
-            if hold and not deep_room.offline(hold[0]):
-                try:hold[0].call('/collab/release', agent, function=fn['name'], notes='')
-                except NetworkError as error:
-                    deep_room.disconnected(self,hold[0],error)
-        finally:
-            super()._let_go(agent, fn)
+        # Release only a legacy lease owned by this worker, never another agent's work.
+        super()._let_go(agent, fn)
 
     def _score_work(self, agent, proj, fn, source, best, fork):
         link = self.net.links.get(proj['slug'])
         if link and fork:
             # Imported rooms share a source tree; the host owns its build and judges every draft.
-            verdict = link.attempt(agent, fn['name'], source)
+            verdict = link.call('/collab/attempt', agent, function=fn['name'], source=source, nonexclusive=True)
             score = verdict.get('score')
             if verdict.get('matched'):
                 self.room_holds.pop(fn['id'], None)
@@ -170,22 +128,6 @@ class Search(Permuter):
 
     def check(self):
         self.log.check_cancel()
-        for key, (link, agent, name, renewed) in list(self.room_holds.items()):
-            if time.monotonic() - renewed >= 30:
-                from . import deep_room
-                if deep_room.offline(link):
-                    self.room_holds.pop(key,None)
-                    continue
-                try:
-                    claimed=link.claim(agent,name,'easiest')
-                except NetworkError as error:
-                    if self.net.fork_slug(link.slug):raise
-                    deep_room.disconnected(self,link,error)
-                    self.room_holds.pop(key,None)
-                    continue
-                if claimed!=name:
-                    raise NetworkError('The host no longer grants this function claim; synchronize the room and retry.')
-                self.room_holds[key] = (link, agent, name, time.monotonic())
         if time.monotonic() >= self.deadline:
             raise SearchLimit('Time limit reached')
         if self.tested >= self.limit:
@@ -750,7 +692,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
     agent, _ = net.local_agent(f'permuter-{fn["id"]}')
     reason = 'Current candidate families finished'
     if slug in net.links:
-        log('Room search: host claims coordinate workers; exact matches require host confirmation. '
+        log('Room search: permutation does not reserve functions; exact matches require host confirmation. '
             + ('The host builds imported-project drafts.' if net.fork_slug(slug) else 'Candidates compile locally; improvements are shared with the host.'))
     from .compiler_preflight import warnings
     warning = warnings(net, proj, fn)
@@ -769,7 +711,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1):
             search.check()
             from . import source_preparation
             preparation = source_preparation.run(search, proj, state, log, budget=min(1, max_variants),
-                                                 seconds=min(20, max(1, search.deadline-time.monotonic())), only={name})
+                                                 seconds=min(20, max(1, search.deadline-time.monotonic())), only={name}, agent=agent)
             search.tested += preparation['tested']
             search.improvements += preparation['improved']
             proj, fn = net.project_row(slug), net._function(name, slug)
