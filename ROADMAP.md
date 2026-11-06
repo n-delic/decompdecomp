@@ -3042,3 +3042,5 @@ ABI analysis and automatic source/profile selection remain planned.
   refreshes the remote and pushes existing commits without staging working edits,
   creating a commit, changing another upstream or force-pushing. ROM progress and
   imported project checkouts share the push-only path. Full repair archives stay local.
+
+- Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.
