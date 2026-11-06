@@ -54,6 +54,25 @@ def capture(net,fn,agent,notes,progress):
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(PREFIX+str(fn['id']),json.dumps(saved[-4:])))
 
 
+def source_hint(net, fn, source):
+    """Surface only this candidate's pending report, without hydrating alternatives or context."""
+    if fn['status'] != 'open' or not source:
+        return ''
+    digest = hashlib.sha256(source.encode()).hexdigest()
+    report = next((r for r in reversed(records(net, fn)[-4:])
+                   if r.get('source_hash') == digest and r.get('review', 'pending') == 'pending'), None)
+    if not report:
+        return ''
+    warning = ' '.join(report.get('warning', '').split())[:200]
+    hint = (f'Candidate quality (agent report, not proven; revision {digest[:20]}): {warning} '
+            'Inspect get_function(section="quality") before optimizing this revision; '
+            'a lower score alone does not establish valid C. Work remains available.')
+    if report.get('structured') and type(report.get('corrected_attempt')) is int and report['corrected_attempt'] > 0:
+        hint += (' A compiled alternative was explicitly linked to this report: '
+                 'get_candidate(base="reported_corrected"); inspect and rejudge it before use.')
+    return hint
+
+
 def brief(net,fn):
     if fn['status']=='matched':
         return []

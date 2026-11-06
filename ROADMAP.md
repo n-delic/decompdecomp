@@ -2823,3 +2823,9 @@ need independent evidence before receiving this specific GNU C repair.
   lookups or source changes. Typedef callback types, header-only callback evidence,
   indirect calls and macro registries still need trustworthy type/dispatch evidence;
   this advisory check must not be described as a complete registry auditor.
+
+- Compact ROM/PROJECT claim receipts and candidate reads now expose bounded
+  pending quality concerns tied to the exact returned source revision. The cue
+  reads only the saved report, without hydrating alternatives or the full brief;
+  reviewed/historical reports do not attach to a different candidate. Reports
+  remain hypotheses and never block work or automatically select source.

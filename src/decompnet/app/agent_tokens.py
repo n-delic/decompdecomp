@@ -92,7 +92,10 @@ def get_candidate(net, agent, slug, function, base='current'):
     baseline = agent_evidence.baseline_note(fn, measured, net) or 'Baseline: historical/unverified for these inputs; no current score inferred.'
     from ..release_receipts import current as claim_token
     lease = claim_token(net,fn,agent)
+    from ..candidate_quality import source_hint as quality_hint
     from .candidate_changes import describe
+    quality = quality_hint(net, fn, source)
+    if quality:note += quality + '\n'
     return note + describe(net,agent,fn,source)+'\n'+baseline + '\n' + f'claim_token: {lease or "not held"}\nCandidate revision {revision}\n```c\n{source}\n```\n{remaining}' + mapping
 
 

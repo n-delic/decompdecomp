@@ -99,3 +99,11 @@ For shorter repeated-call branches, `branch_pointer_lifetimes` tests conservativ
 combinations and terminal-tail distribution, with `branch_pointer_declarations` as a bounded follow-up.
 Do not split every variable automatically: preserve mixed-lifetime alternatives and compare instruction
 structure before chasing register swaps. These families share existing input caches and compile budgets.
+
+Compact claim receipts and `get_candidate` show pending quality reports only
+when their source hash matches the candidate being returned. Treat the report
+as an agent hypothesis: inspect `get_function(section="quality")` before spending
+trials on the reported revision. An explicitly linked corrected alternative can
+be selected with `get_candidate(base="reported_corrected")`, then inspected and
+rejudged. A historical lower score does not prove a valid source model. Reports
+remain advisory and do not pause work or automatically replace source.
