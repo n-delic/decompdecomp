@@ -1236,11 +1236,22 @@ def test_assembly_label_support_does_not_allow_paths_or_invalid_symbols(project,
     assert (folder/saves.MANIFEST).read_bytes()==before
 
 
-def test_local_assembly_labels_are_not_allowed_as_c_layout_names(project):
+def test_non_numeric_assembly_labels_are_not_allowed_as_c_layout_names(project):
     net,folder,_=project
-    manifest(folder,layout=[{'name':'.L00100380','vram':0x100380,'size':4,'status':'open'}])
+    manifest(folder,layout=[{'name':'.Ltmp0','vram':0x100380,'size':4,'status':'open'}])
     with pytest.raises(NetworkError,match='layout entry'):
         net.progress.sync('game',force=True)
+
+
+def test_numeric_assembly_label_piece_saves_and_opens_again(project):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='.L00001004' WHERE name='g'")
+    net.progress.sync('game', force=True)
+    manifest(folder, instructions='edited in the folder')
+    net.progress.sync('game', force=True)
+    names = [row['name'] for row in json.loads((folder / saves.MANIFEST).read_text())['layout']]
+    assert '.L00001004' in names
 
 
 def test_verification_counters_reach_import_job_logger(project):

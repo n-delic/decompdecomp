@@ -200,7 +200,10 @@ def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_pat
         work = tmp_path / f"oc-{rule}-{model.replace('/', '_')}"
         work.mkdir()
         m._command(s, "tok", work)
-        assert json.loads((work / "opencode.json").read_text())["permission"] == {"edit": rule, "bash": rule, "webfetch": rule}
+        config = json.loads((work / "opencode.json").read_text())
+        assert config["permission"] == {"edit": rule, "bash": rule, "webfetch": rule}
+        # a rejected ask ended the run: a free model's first `rg` ended its session, every session, 20 s in
+        assert config.get("experimental") == ({"continue_loop_on_deny": True} if rule == "ask" else None)
     # its own connection, with its own token, and nothing else: opencode 2's shared service ran the user's own
     # `decomp` server without the session's token, so every helper worked as the user's one chat agent
     for version, standalone in (("opencode v2.0.28", True), ("0.15.4", False)):  # opencode 2's shared service
@@ -822,6 +825,38 @@ def test_the_api_helper_sends_a_thinking_models_reasoning_back(tmp_path, monkeyp
     turns = [x for x in sent[2] if x["role"] == "assistant"]
     assert turns[0]["reasoning_content"] == "The smallest function first." and "reasoning_content" not in turns[1]
 
+
+
+def test_the_api_helper_asks_again_after_a_dropped_request_keeping_its_conversation(tmp_path, monkeypatch):
+    """#154: behind a laggy gateway, one 502 or dropped connection ended the session, and the next one started the
+    function over, again and again. They're asked again in place, after a wait, with the same conversation."""
+    import httpx
+
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path, functions=1)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m", "per_session": 1,
+                                                       "context_tokens": 32768})
+    s.stop = Quick()
+    monkeypatch.setattr(agents.tools, "call", lambda net, agent, slug, name, args: "## CLAIMED: game/f0")
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content)["messages"])
+        if len(sent) == 2:
+            return httpx.Response(502, text="Bad Gateway")
+        if len(sent) == 3:
+            raise httpx.ReadTimeout("the gateway took too long")
+        if len(sent) > 4:
+            s.stop.set()
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+            {"id": f"c{len(sent)}", "type": "function", "function": {"name": "claim_function", "arguments": "{}"}}]}}]})
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    m._run(s)
+    assert sent[1] == sent[2] == sent[3] and len(sent[1]) > len(sent[0])
+    assert s.stop.waits[:2] == [10, 20] and s.runs == 1
 
 def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     """The Agents view says what each model cost on a game, to tell which models to run more of: cheapest per match

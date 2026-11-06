@@ -27,7 +27,7 @@ says how to send a change. Examples point at real code by file and name: search 
 | What agents learn, shared once two models agree | `app/knowledge.py` |
 | Saving a ROM project as plain files, and restoring one | `app/saves.py` |
 | Helper agents: starting and restarting them, their records | `app/agents.py`; their prompt: `WORK_PROMPT` in `app/tools.py` |
-| One agent (its command line, reading what it prints, its models; the API helper's own loop) | `agents/<id>.py`: `claude`, `codex`, `antigravity`, `opencode`, `zcode`, `api` |
+| One agent (its command line, reading what it prints, its models; the API helper's own loop) | `agents/<id>.py`: `claude`, `codex`, `antigravity`, `opencode`, `cursor`, `kimi`, `zcode`, `api` |
 | What every agent has to say, and the list of agents | `agents/__init__.py`, the connector |
 | Look-alikes (`find_similar`) | `similarity.py` |
 | Decompiling together | `app/collab.py`, `app/engine/rooms.py`, `app/routes/rooms.py` |
@@ -215,8 +215,9 @@ not touch it.
 
 ## 11. Commits and releases
 
-- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). `main` is what users update from.
-  CI (`.github/workflows/labels.yml`) fails a pull request from any other branch, and labels it by the prefix.
+- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`,
+  `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). `main` is what users update from. CI
+   (`.github/workflows/labels.yml`) fails a pull request from any other branch, and labels it by the prefix.
 - An issue gets a label for its kind (`bug`, `enhancement`, `documentation`, `question`) and for each console and
   system it's about (`gh label list`). The issue forms add them; an agent's `gh issue create` passes `--label`.
 - A commit's subject says what users (or contributors) get, in one sentence. The body says why.

@@ -20,6 +20,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import stat
 import threading
 import time
@@ -30,6 +31,9 @@ from pathlib import Path
 from .. import compiler, toolchains
 from ..network import NetworkError
 from ..rom.symbols import ASM_LOCAL, IDENT
+
+# spimdisasm can name a function piece by the numeric label at its first instruction.
+LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
 from . import saves
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
@@ -190,7 +194,7 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
         if len(layout) != len(manifest.get("layout", [])):
             raise ValueError("a function is listed twice in layout")
         for name, entry in layout.items():
-            if (not IDENT.fullmatch(name) or not isinstance(entry["vram"], int)
+            if (not (IDENT.fullmatch(name) or LOCAL_PIECE.fullmatch(name)) or not isinstance(entry["vram"], int)
                     or not isinstance(entry["size"], int) or entry["size"] <= 0
                     or entry.get("status", "open") not in ("open", "asm")):
                 raise ValueError(f"layout entry {name!r} needs a name, an integer vram and a size above 0")
@@ -214,7 +218,7 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
         if any(not isinstance(item, str) for item in manifest.get("knowledge", [])):
             raise ValueError("knowledge must be a list of text")
         for item in manifest.get("set_aside", []):
-            if (not isinstance(item, dict) or not IDENT.fullmatch(item.get("name", ""))
+            if (not isinstance(item, dict) or not (IDENT.fullmatch(item.get("name", "")) or LOCAL_PIECE.fullmatch(item.get("name", "")))
                     or not isinstance(item.get("vram"), int)
                     or any(key in item and not isinstance(item[key], str) for key in ("asm_code", "asm_twin"))
                     or "not_c" in item and (not isinstance(item["not_c"], dict)

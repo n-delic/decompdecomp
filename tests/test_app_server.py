@@ -69,6 +69,25 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
+    from .test_loading import tiny_game
+
+    client, net, _ = app
+    first, second = "save-location-first", "save-location-second"
+    tiny_game(net, first)
+    tiny_game(net, second)
+    for slug in (first, second):
+        target = tmp_path / slug
+        response = client.post("/api/save", headers={"X-Decomp": "1"},
+                               json={"slug": slug, "folder": str(target)})
+        assert response.status_code == 200, response.text
+        assert response.json()["folder"] == str(target.resolve())
+    for slug in (second, first):
+        response = client.get("/api/project", params={"slug": slug})
+        assert response.status_code == 200, response.text
+        assert response.json()["save_folder"] == str((tmp_path / slug).resolve())
+
+
 def test_on_windows_it_stops_updating_and_shows_the_way_back_to_1_0_2(tmp_path, monkeypatch):
     """1.0.2 on Windows (in WSL) can install this version by itself, and it doesn't run there. Going back to 1.0.2
     must stick: 1.0.2 reads the same settings, so its update checks are switched off, and its old tab says how."""

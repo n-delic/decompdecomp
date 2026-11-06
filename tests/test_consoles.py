@@ -4,6 +4,7 @@ First what holds for every console without any tool installed (CI checks it on e
 its compilers and packs are pinned toolchains, its guides exist, and the ids older projects stored still open them.
 """
 
+import hashlib
 import json
 import struct
 from pathlib import Path
@@ -91,6 +92,30 @@ def test_an_unknown_platform_is_a_console_with_only_its_name():
 def test_a_file_no_console_reads_says_which_ones_do():
     with pytest.raises(RomError, match="Nintendo 64.*PlayStation 2.*Windows PC"):
         consoles.identify(bytes(4096))
+
+
+# files no console reads as its own game: a PC program too small to be one, bytes, nothing
+NOT_A_GAME = {"tiny.exe": b"MZ" + bytes(0x3A) + b"\x40\0\0\0" + b"PE\0\0" + bytes(0x100),
+              "bytes.bin": bytes(range(256)) * 300, "empty.bin": b""}
+
+
+@pytest.mark.parametrize("console", STARTABLE, ids=[c.id for c in STARTABLE])
+def test_a_file_that_isnt_a_consoles_game_has_no_identity_of_its_own(console, tmp_path):
+    """Rooms (forkroom.game_identity) and the ROM library ask every console in turn which game a file is: one that
+    raises for a file that isn't its own stops the consoles after it from being asked (the Xbox did, so a PC game's
+    room couldn't be joined)."""
+    for name, data in NOT_A_GAME.items():
+        (tmp_path / name).write_bytes(data)
+        assert console.identity(tmp_path / name) is None, name
+
+
+def test_a_file_no_console_has_an_identity_for_is_its_own_bytes(tmp_path):
+    """The game a member joining a room has, as the room checks it: a PC game is its file's own SHA-1."""
+    from decompnet.app.forkroom import game_identity
+
+    for name, data in NOT_A_GAME.items():
+        (tmp_path / name).write_bytes(data)
+        assert game_identity(tmp_path / name) == hashlib.sha1(data).hexdigest(), name
 
 
 def test_a_psp_cso_is_not_taken_for_a_gamecube_disc():

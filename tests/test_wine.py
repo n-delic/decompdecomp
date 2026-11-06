@@ -1,8 +1,10 @@
 """wine: how Linux and macOS run Visual C++ 2017 (wine.py). The parts that need wine itself skip without it."""
 
+import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +13,10 @@ from decompnet import toolchains, wine
 
 @pytest.fixture
 def tc_root(tmp_path, monkeypatch):
+    """Toolchains in a folder of the test's own, and no prefix named (conftest.py names one for the session): the
+    prefix is then theirs, toolchains/.wine, a scratch one too."""
     monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    monkeypatch.delenv("DECOMPNET_WINE_PREFIX", raising=False)
     return tmp_path
 
 
@@ -229,3 +234,14 @@ def test_a_prefix_that_fails_fails_the_install_with_its_own_reason(tc_root, monk
                              ".*out of disk"):
         toolchains.install("pack", log=lambda *_: None)
     assert toolchains.installed("pack") is None and not toolchains.path("pack").exists()
+
+
+def test_no_test_runs_wine_in_the_apps_own_prefix():
+    """The tests' wine prefix is never the user's app's (toolchains/.wine, a development copy's .wine-dev: #146), even
+    in a test that names none: conftest.py gives the session one of its own, $DECOMPNET_WINE_PREFIX, which every wine
+    program a test starts follows (wine.prefix, prepare, environment, build_env, a project's tools/compile.py). Review
+    of #138: three tests named none, and left a wineserver running in the app's prefix."""
+    named = os.environ.get("DECOMPNET_WINE_PREFIX")
+    assert named and wine.prefix() == Path(named)
+    assert wine.prefix() not in {toolchains.root() / ".wine", toolchains.root() / ".wine-dev"}
+    assert wine.environment()["WINEPREFIX"] == named

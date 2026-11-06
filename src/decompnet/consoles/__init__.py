@@ -50,6 +50,7 @@ class Compiler:
     name: str  # what the app shows: "KMC GCC 2.7.2"
     built: str = ""  # which games it built, for Setup: "many third-party N64 games"
     guess: str = ""  # what read_game calls it when a program looks built by it ("KMC", "EEGCC-2.95.2")
+    target: str = ""  # processor for compiler versions that differ within one console (PC x86 and x64)
     automatic: bool = True  # routine comparisons; experimental profiles remain available by explicit selection
 
 
@@ -403,6 +404,16 @@ class Console:
         """A data symbol's bytes, when the project's objects don't hold the game's data; None: they do."""
         return None
 
+    def target(self, fp) -> str:
+        """Processor target for project compilers, or empty when all compilers apply."""
+        return ""
+
+    def project_compilers(self, fp) -> list[Compiler]:
+        """Compilers able to build this project's target."""
+        target = self.target(fp)
+        return [compiler for compiler in self.compilers
+                if not target or not compiler.target or compiler.target == target]
+
     def file_compiler(self, fp, source: str) -> str | None:
         """The compiler (one of `compilers`) the project builds a source file with, when its build lets each file have
         its own: then try_compiler can switch it. None: the project's build decides alone."""
@@ -575,7 +586,7 @@ class Console:
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [*(tool for tool, _ in self.packs), *self.kits],
-                "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
+                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target} for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
                 "sets_aside": self.mode == PROJECT and self.sets_aside,
