@@ -372,3 +372,28 @@ def test_compiler_panel_refresh_does_not_reconcile_saved_files(comparison,monkey
     monkeypatch.setattr(net.progress,'sync',lambda *args:(_ for _ in ()).throw(AssertionError('implicit saved-file sync')))
     monkeypatch.setattr(net,'compiler_map',lambda *args:None)
     assert net.compiler_answer('demo',display_only=True)['compiler']
+
+
+def test_discovery_does_not_load_assembly_or_seeds(comparison):
+    net, *_ = comparison
+    queries = []
+    net.store._reader().set_trace_callback(queries.append)
+    net.survey_compilers('demo', all_installed=True, untested_only=True, limit=0)
+    net.store._reader().set_trace_callback(None)
+    assert not any('SELECT * FROM' in q and 'functions' in q for q in queries)
+
+
+def test_auto_apply_reports_its_actual_stage(comparison, monkeypatch):
+    net, *_ = comparison
+    snapshots = []
+    class Log:
+        def __call__(self, line):
+            pass
+        def progress(self, value):
+            snapshots.append(dict(value))
+    monkeypatch.setattr(net, '_judge_with', lambda *a: (True, SimpleNamespace(percent=100, score=0), ''))
+    def apply(*args):
+        assert snapshots[-1]['phase'] == 'applying'
+    monkeypatch.setattr(net, 'apply_function_compiler', apply)
+    net.run_compiler_comparison('demo', log=Log(), auto_apply=True)
+    assert sum(s.get('phase') == 'applying' for s in snapshots) == 2

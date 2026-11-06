@@ -292,5 +292,10 @@ ctx.renderCompilerProgress({phase:'preparation',stage:'Checking installed compil
 assert.equal(fields.get('[data-current]').textContent,'Checking installed compiler profiles');
 assert.equal(fields.get('[data-queue-bar]').value,undefined);
 ctx.renderCompilerProgress({function:'f',tested:1,combinations:2,completed:1,total:null,best:80,before:70});
-assert.equal(fields.get('[data-queue]').textContent,'1 functions done · discovering remaining functions…');
+assert.equal(fields.get('[data-queue]').textContent,'1 functions done · comparing ready functions (total pending)');
 assert.equal(fields.get('[data-queue-bar]').value,undefined);
+
+ctx.renderCompilerProgress({phase:'applying',function:'example',stage:'Rechecking and applying best settings'});
+assert.equal(fields.get('[data-queue]').textContent, 'Rechecking and applying settings for example');
+assert.equal(fields.get('[data-tested]').textContent, 'Rechecking and applying best settings');
+assert.equal(fields.get('[data-queue-bar]').value, undefined);
