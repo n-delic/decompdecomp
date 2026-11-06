@@ -1,5 +1,6 @@
 """User-requested fresh turns for a bounded set of model-paused candidates, never claims or calls."""
 import json
+from contextlib import nullcontext
 
 from .. import claim_stalls, model_checks, pause_scope
 from ..network import NetworkError
@@ -24,8 +25,12 @@ def retry(net, project, agent, limit=5, log=lambda *_: None):
         if not rows:break
         for row in rows:
             after=row['id']
-            with net.store.lock:
-                proj=net._project(project)
+            # Synchronize before entering the writer lane, then read the fresh database
+            # under the transaction. This lock order also serializes grants with the child.
+            net._project(project)
+            progress=getattr(net,'progress',None)
+            with progress.view() if progress else nullcontext(), net.store.tx():
+                proj=net.store.one('SELECT * FROM projects WHERE id=?',proj['id'])
                 if pause_scope.identity(net,proj,agent)!=identity:
                     raise NetworkError('This worker changed models during retry. Check its settings and retry again.')
                 policy=net.selection(project,agent.name)

@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: app and permuter SQLite writers share OS-backed admission before BEGIN, including
+  schema initialization, match-library writes and maintenance. Waiting leaves readers and
+  the local connection mutex free; optional bookkeeping stays nonblocking, cancellation and
+  process-exit recovery release admission, and commit failures roll back without replay.
+
 - Done: authentication reads token identity on every request but coalesces advisory
   presence timestamps to five seconds and skips them when a writer is busy.
   Presence may temporarily look offline under contention; revoked tokens stay invalid.

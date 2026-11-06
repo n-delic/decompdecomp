@@ -187,7 +187,7 @@ def test_summary_includes_database_and_sqlite_sidecars(library):
     # Keep a connection open so SQLite does not remove the live sidecars.
     with lib.connect():
         data=lib.summary()
-        expected=sum(p.stat().st_size for p in lib.path.parent.glob(lib.path.name+'*'))
+        expected=sum(p.stat().st_size for p in lib.path.parent.glob(lib.path.name+'*') if p.name!=lib.path.name+'.writer.lock')
         assert data['disk_bytes']==expected and expected>0
     assert lib.summary()['disk_bytes']==lib.path.stat().st_size
 
@@ -370,7 +370,7 @@ def test_reindex_avoids_unchanged_writes_and_refreshes_game_and_seen_metadata(li
     item=lib.snapshot(net.project_row('game1'),1)
     with lib.connect() as db:
         @contextmanager
-        def connection():
+        def connection(**kwargs):
             with db:yield db
         monkeypatch.setattr(lib,'connect',connection)
         lib.write([item])
@@ -530,3 +530,18 @@ def test_library_drawer_and_apply_include_separate_copies_of_same_game(library,m
     monkeypatch.setattr(net,'rename_symbol',lambda agent,slug,*args:calls.append(slug) or '✅ Renamed')
     lib.apply_name(fid,'shared_function')
     assert sorted(calls)==['game1','game2']
+
+
+def test_library_write_admission_leaves_readers_available(library):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    net,lib=library
+    lib.backfill()
+    with lib.connect() as db:fid=db.execute('SELECT id FROM functions LIMIT 1').fetchone()[0]
+    with ThreadPoolExecutor(2) as pool:
+        with lib.writer_gate.hold():
+            writer=pool.submit(lib.set_name,fid,'shared_name')
+            time.sleep(.05)
+            assert not writer.done()
+            assert pool.submit(lib.summary).result(timeout=1)['functions']>0
+        assert writer.result(timeout=2)=='shared_name'

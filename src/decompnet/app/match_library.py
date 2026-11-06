@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
@@ -49,16 +49,18 @@ class Library:
     def __init__(self, net):
         self.net = net
         self.path = Path(net.store.path).parent / 'match-library.sqlite3'
+        from ..writer_gate import WriterGate
+        self.writer_gate=WriterGate(self.path)
         # No connection is shared between threads or held open by idle projects.
-        with self.connect() as db:
+        with self.connect(write=True) as db:
             db.executescript(SCHEMA)
 
     @contextmanager
-    def connect(self):
+    def connect(self,*,write=False):
         db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
         try:
-            with db:
+            with self.writer_gate.hold() if write else nullcontext(), db:
                 yield db
         finally:
             db.close()
@@ -157,7 +159,7 @@ class Library:
                 'mode':'fork' if fork else 'rom','print':encoded(p),'symbols':encoded(symbols),'seen':fn['matched_at'] or 0}
 
     def write(self, rows):
-        with self.connect() as db:
+        with self.connect(write=True) as db:
             texts, functions, solutions, games = {}, {}, {}, set()
             for item in rows:
                 hashes = {}
@@ -293,7 +295,7 @@ class Library:
                 self.archive_project(proj,log,rows=rows,progress=progress)
                 if log:log.check_cancel()
                 if stamp is not None and stamp == self._startup_stamp(self.net.project_row(proj['slug'])):
-                    with self.connect() as db:
+                    with self.connect(write=True) as db:
                         db.execute('INSERT OR REPLACE INTO startup_scans VALUES(?,?)',(self.game_key(proj),stamp))
             except (NetworkError,OSError,ValueError) as error:
                 failures.append(proj['name']+': '+str(error))
@@ -375,7 +377,7 @@ class Library:
         name=str(name).strip()
         if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,199}',name):
             raise NetworkError('Choose a C identifier, up to 200 characters, for the default name.')
-        with self.connect() as db:
+        with self.connect(write=True) as db:
             if not db.execute('SELECT 1 FROM functions WHERE id=?',(fid,)).fetchone():
                 raise NetworkError('That library function no longer exists. Refresh the library.')
             db.execute('INSERT INTO preferred_names VALUES(?,?) ON CONFLICT(function_id) DO UPDATE SET name=excluded.name',

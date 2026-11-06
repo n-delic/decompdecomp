@@ -57,7 +57,7 @@ def pack(net,log):
                 done+=1
             checkpoint()
     removed=collect(net)
-    with net.store.lock:
+    with net.store.writer_gate.hold(wait=log.check_cancel),net.store.lock:
         net.store.conn.execute('PRAGMA analysis_limit=1000')
         net.store.conn.execute('PRAGMA optimize')
     log(f'Packed {done:,} records; removed {removed:,} unused shared payloads. Compact the database to return free pages to disk.')
