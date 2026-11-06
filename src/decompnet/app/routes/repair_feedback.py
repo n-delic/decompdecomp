@@ -1,5 +1,6 @@
 """Review and locally export matching repairs, independently of agent activity/transcript routes."""
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ...network import NetworkError
 from .. import repair_investigations
@@ -7,6 +8,28 @@ from .. import repair_investigations
 
 def register(app):
     feedback = app.net.repair_feedback
+
+    @app.mcp.custom_route('/api/repair-examples/database', methods=['GET'])
+    async def export_database(request):
+        if bad := app.guard(request):return bad
+        import os
+        import tempfile
+        from pathlib import Path
+        def copy_database():
+            descriptor,path=tempfile.mkstemp(prefix='repair-evidence-',suffix='.sqlite3')
+            os.close(descriptor)
+            try:
+                reviews=app.net.store.all('SELECT e.evidence_archive,e.id,p.slug,f.name,e.category,e.explanation,e.automation,e.status,e.review_note FROM main.repair_examples e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id WHERE e.evidence_archive IS NOT NULL')
+                app.net.store.conn.repair_archive.export(path,[tuple(r) for r in reviews])
+            except BaseException:
+                Path(path).unlink(missing_ok=True)
+                raise
+            return path
+        try:
+            path=await app.call(copy_database)
+            return FileResponse(path,media_type='application/vnd.sqlite3',filename='repair-evidence.sqlite3',headers={'Cache-Control':'no-store'},
+                                background=BackgroundTask(Path(path).unlink,missing_ok=True))
+        except (ValueError,OSError) as error:return app.fail(error)
 
     @app.mcp.custom_route('/api/repair-examples/analysis', methods=['GET','POST'])
     async def automatic_analysis(request):

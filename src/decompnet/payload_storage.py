@@ -45,13 +45,15 @@ def metadata(text):
     def small(item):
         if isinstance(item,dict):
             return {k:small(v) for k,v in item.items() if k not in
-                    {'source','header','asm','assembly','target_asm','candidate_asm','diff','rows','log','diagnostics'}}
+                    {'source','header','asm','assembly','target_asm','candidate_asm','diff','rows','log','diagnostics','target_hex','target_relocs'}}
         if isinstance(item,list):return [small(v) for v in item]
         return item
     return json.dumps(small(value),separators=(',',':'))
 
 
 def register(conn):
+    from .repair_archive import register as register_archive
+    register_archive(conn)
     conn.create_function('unhex',1,lambda value:bytes.fromhex(value) if value is not None else None,deterministic=True)
     conn.create_function('payload_digest',1,digest,deterministic=True)
     conn.create_function('payload_pack',1,lambda text:zlib.compress(text.encode('utf-8')),deterministic=True)
@@ -107,6 +109,11 @@ def install(conn,table='attempts'):
     if ref not in columns:
         conn.execute(f'ALTER TABLE {table} ADD COLUMN {ref} TEXT')
         columns.append(ref)
+    if table=='repair_examples':
+        from .repair_archive import install as install_archive
+        install_archive(conn,columns)
+        if isinstance(conn,Connection):conn.detail_tables=set(conn.detail_tables)|{table}
+        return
     expression=f'CASE WHEN {ref} IS NULL THEN {field} ELSE payload_read({ref},(SELECT payload FROM text_payloads WHERE hash={ref})) END AS {field}'
     conn.execute(f'DROP VIEW IF EXISTS {view}')
     conn.execute(f'CREATE VIEW {view} AS SELECT '+','.join(expression if col==field else col for col in columns)+f' FROM {table}')

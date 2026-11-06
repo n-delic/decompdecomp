@@ -110,7 +110,9 @@ def compact(net, log):
     path = Path(store.path)
     if not path.is_file(): raise ValueError('Compaction requires a database file on disk.')
     library=path.parent/'match-library.sqlite3'
-    paths=[path,library] if library.is_file() else [path]
+    from ..repair_archive import archive_path
+    repair=archive_path(path)
+    paths=[p for p in (path,library,repair) if p.is_file()]
     size = max(p.stat().st_size for p in paths)
     if shutil.disk_usage(path.parent).free < size*2:
         raise ValueError('Free at least twice the database file size on this drive before compacting.')
@@ -133,6 +135,18 @@ def compact(net, log):
         log.check_cancel()
         log.progress({'phase':'Compacting match library · library writes wait until this finishes'})
         with Library(net).connect(write=True,wait=log.check_cancel) as db:
+            db.set_progress_handler(lambda: int(getattr(log,'cancel_event',None) is not None and log.cancel_event.is_set()),1000)
+            try:db.execute('VACUUM')
+            except sqlite3.OperationalError:
+                log.check_cancel()
+                raise
+            finally:db.set_progress_handler(None,0)
+            db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    if repair.is_file():
+        archive=store.conn.repair_archive
+        log.check_cancel()
+        log.progress({'phase':'Compacting repair evidence · evidence writes wait until this finishes'})
+        with archive.gate.hold(wait=log.check_cancel),archive.connection(write=True) as db:
             db.set_progress_handler(lambda: int(getattr(log,'cancel_event',None) is not None and log.cancel_event.is_set()),1000)
             try:db.execute('VACUUM')
             except sqlite3.OperationalError:

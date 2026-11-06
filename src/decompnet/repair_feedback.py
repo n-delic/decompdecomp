@@ -275,6 +275,8 @@ class RepairFeedback:
         if row is None:
             raise NetworkError('No repair example exists in this project.')
         result = dict(row); evidence = json.loads(result.pop('evidence'))
+        if include_source and row['evidence_archive']:
+            evidence=json.loads(self.store.conn.repair_archive.read(row['evidence_archive'],snapshot=True))['evidence']
         evidence['provenance'] = validated_provenance(evidence.get('provenance'),evidence['after'].get('source_sha256'))
         for stage in ('before', 'after', 'previous'):
             value = evidence.get(stage)
@@ -299,7 +301,7 @@ class RepairFeedback:
                 expected = (value.get('settings') or {}).get('context_sha256')
                 if header and expected and hashlib.sha256(header['header'].encode()).hexdigest() != expected:
                     header = None
-                value['header'] = header['header'] if header else None
+                value['header'] = header['header'] if header else value.get('header')
             else:
                 value.pop('source', None)
         worker = evidence.get('worker_baseline')
