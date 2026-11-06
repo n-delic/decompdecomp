@@ -632,7 +632,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
             function: the function to judge it against
             compiler: a toolchain id (project_info lists this project's); where each source file has its own
                 compiler (DS), "all" tries every one, and the one that matches becomes the file's
-            flags: its flags (default: that compiler's defaults for this game)
+            flags: its flags (default: that compiler's defaults for this game); quote arguments containing spaces,
+                e.g. -O3,p -pragma 'divbyzerocheck on'
             source: the C (default: the function's best attempt)
         """
         return await run(ctx, "try_compiler", function=function, compiler=compiler, flags=flags, source=source)

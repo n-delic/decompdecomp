@@ -60,6 +60,17 @@ class PlayStation2(Console):
     own_features = frozenset({EXPORT})
     as_flags = ("-EL", "-march=r5900", "-mabi=eabi")
 
+    def extra_flag_variants(self, toolchain: str, base: list[str]) -> list[list[str]]:
+        """CodeWarrior can emit checked integer division; source casts cannot replace this build option."""
+        if not toolchain.startswith("mwcps2-"):
+            return []
+        flags = list(base)
+        for index in range(len(flags) - 2, -1, -1):
+            if flags[index] == "-pragma" and flags[index + 1].split()[:1] == ["divbyzerocheck"]:
+                del flags[index:index + 2]
+        return [candidate for enabled in ("on", "off")
+                if (candidate := [*flags, "-pragma", f"divbyzerocheck {enabled}"]) != base]
+
     def sniff(self, head: bytes, file) -> bool:
         from . import chd, cso, disc, elf
 

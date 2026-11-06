@@ -190,6 +190,10 @@ class Console:
     # flags search_flags tries on its games beyond what its compiler family's search does ("-mminimal-toc")
     flag_extras: tuple[str, ...] = ()
 
+    def extra_flag_variants(self, toolchain: str, base: list[str]) -> list[list[str]]:
+        """Additional complete argument lists for bounded flag search, where an option takes multiple arguments."""
+        return []
+
     def game_flags(self, cfg: dict, toolchain: str) -> list[str]:
         """More flags a game of it was built with, as its import read them from the program (cfg["rom"]): a PS3 game
         whose code keeps a minimal TOC. None by default."""
