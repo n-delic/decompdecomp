@@ -494,7 +494,7 @@ function renderAutopilot(ov) {
   const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
   $("crossGamePanel").hidden = false;
   $("crossGameContext").textContent=`— ${count.toLocaleString()} verified · ${tried.toLocaleString()} checked`;
-  $("crossGameSummary").innerHTML = `<p class="transfer-saved-caption">Saved across runs</p><div class="transfer-totals" aria-label="Saved results across runs"><span><strong>${count.toLocaleString()}</strong> verified matches</span><span><strong>${(cross.counts.improved || 0).toLocaleString()}</strong> partial improvements</span><span><strong>${tried.toLocaleString()}</strong> candidate checks</span></div>`;
+  $("crossGameSummary").innerHTML = `<p class="transfer-saved-caption">Results across all searches</p><div class="transfer-totals" aria-label="Saved results across runs"><span><strong>${count.toLocaleString()}</strong> verified matches</span><span><strong>${(cross.counts.improved || 0).toLocaleString()}</strong> partial improvements</span><span><strong>${tried.toLocaleString()}</strong> candidate checks</span></div>`;
   const discovery = cross.discovery;
   $("crossGameSummary").innerHTML += discovery
     ? `<details class="transfer-context"><summary>Shared-code leads <span class="muted">· ${discovery.ready.toLocaleString()} ready to test</span></summary><p><b>${discovery.detected.toLocaleString()}</b> functions with shared code detected · <b>${discovery.ready.toLocaleString()}</b> ready to test · <b>${discovery.blocked.toLocaleString()}</b> need writable C scaffolding.</p><p class="muted small">Signatures are leads, not recovered C. The search prepares supported assembly-only units and tests candidates with this project's judge. Unsupported builds keep their original setup.</p>${discovery.block_reason ? `<p class="muted small">Setup blocker: ${esc(discovery.block_reason)}</p>` : ''}</details>`
@@ -504,7 +504,10 @@ function renderAutopilot(ov) {
   const renderTransfers = () => {
     const filter = $("crossGameFilter").value;
     const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match')) : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
-    $("crossGameRecent").innerHTML = rows.slice(0, 12).map((r) => {
+    const list = $("crossGameRecent");
+    const expanded = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.transferDetail));
+    list.innerHTML = rows.slice(0, 12).map((r) => {
+      const detailKey = encodeURIComponent(JSON.stringify([ov.slug, r.created_at, r.target, r.source_slug, r.source, r.reason]));
       const matched = r.outcome === 'match', improved = r.outcome === 'improved';
       const status = matched ? 'Verified byte match' : improved ? 'Improved · not matched' : r.outcome === 'miss' ? 'Not matched' : r.outcome === 'skip' ? 'Skipped' : r.outcome === 'asm' ? 'Assembly only' : r.outcome;
       const similarity = (r.reason || '').match(/similar code \((\d+)%\)/);
@@ -516,7 +519,7 @@ function renderAutopilot(ov) {
       const hint = similarity ? `Assembly similarity: ${similarity[1]}%` : '';
       return `<li class="transfer-row"><div class="transfer-target">${targetLink}<span class="transfer-status ${matched ? 'verified' : improved ? 'improved' : ''}">${esc(status)}</span></div>
         <div class="transfer-source"><span>From ${esc(r.game)}</span>${sourceLink}</div>
-        <div class="transfer-score ${improved ? 'improved' : ''}" title="${esc(r.reason || (matched ? 'The receiving game verified identical bytes.' : 'No scored result.'))}"><strong>${esc(scoreText)}</strong><span>${matched ? 'Byte for byte' : score ? 'Mismatch score · lower is better' : hint || 'Not compiled'}</span>${score && hint ? `<span>${hint}</span>` : ''}</div>${!matched && r.reason ? `<p class="transfer-diagnostic">${esc(r.reason.split(';').filter(part=>part.trim()!=='transfer').join(' · ').slice(0,240))}</p>` : ''}</li>`;
+        <div class="transfer-score ${improved ? 'improved' : ''}" title="${esc(r.reason || (matched ? 'The receiving game verified identical bytes.' : 'No scored result.'))}"><strong>${esc(scoreText)}</strong><span>${matched ? 'Byte for byte' : score ? 'Mismatch score · lower is better' : hint || 'Not compiled'}</span>${score && hint ? `<span>${hint}</span>` : ''}</div>${!matched && r.reason ? `<details class="transfer-diagnostic" data-transfer-detail="${esc(detailKey)}"${expanded.has(detailKey) ? " open" : ""}><summary>Check details</summary><p>${esc(r.reason.split(';').filter(part=>part.trim()!=='transfer').join(' · '))}</p></details>` : ''}</li>`;
     }).join('') || `<li class="transfer-empty">${filter === 'matches' ? run._working ? 'Searching indexed matches first. Candidate checks and rejection reasons appear here as they finish.' : tried ? 'No exact matches from these checks yet. Choose All recent attempts to see why candidates did not pass.' : 'Start a search to check saved matches first, then other projects and local SDKs.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : 'No recent transfer attempts.'}</li>`;
   };
   $("crossGameRecent").onclick = e => {

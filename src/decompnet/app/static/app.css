@@ -1883,17 +1883,17 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 #crossGamePanel .panel-head h2 { flex:1; }
 .transfer-local-badge { font-size:10px; color:var(--muted); padding:4px 9px; border:1px solid var(--line-soft); border-radius:99px; white-space:nowrap; }
 .transfer-intro { padding:18px 20px 0; margin:0; color:var(--muted); font-size:12px; line-height:1.7; }
-.transfer-dashboard { margin:20px 20px 24px; }
-.transfer-run-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--line-soft); }
+.transfer-dashboard { margin:16px 20px 18px; }
+.transfer-run-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding-bottom:0; border-bottom:0; }
 .transfer-run-heading h3 { margin:0; font-size:15px; letter-spacing:-.02em; }
 .transfer-run-heading h3::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:9px; background:var(--hl); }
-.transfer-dashboard .transfer-summary { padding:18px 0 0; border:0; }
+.transfer-dashboard .transfer-summary { margin-top:18px; padding:16px 0 0; border:0; border-top:1px solid var(--line-soft); }
 .transfer-totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0; }
 .transfer-totals > span { display:grid; gap:6px; align-content:start; border-left:1px solid var(--line-soft); padding:0 18px; font-size:11px; }
 .transfer-totals > span:first-child { border:0; padding-left:0; }
-.transfer-totals strong { font:650 28px/1.1 var(--sans); letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
+.transfer-totals strong { font:650 24px/1.1 var(--sans); letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
 .transfer-totals > span:first-child strong { color:var(--match); }
-.transfer-context { margin-top:16px; font-size:11px; color:var(--muted); }
+.transfer-context { margin-top:12px; font-size:11px; color:var(--muted); }
 .transfer-context summary { cursor:pointer; }
 .transfer-context p { line-height:1.7; }
 #crossGameWork { border:0; border-top:1px solid var(--line-soft); padding:16px 0 0; margin-top:16px; }
@@ -1919,12 +1919,12 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .transfer-results-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding:18px 20px 8px; }
 .transfer-results-heading h3 { margin:0; font-size:14px; }
 .transfer-results-heading label { display:flex; align-items:center; gap:9px; color:var(--muted); font-size:11px; }
-.transfer-list { padding:0 20px 18px; display:grid; gap:10px; }
-.transfer-row { border:1px solid var(--line-soft); border-radius:var(--r); padding:16px; background:var(--raise); gap:14px 24px; }
+.transfer-list { padding:0 20px 12px; display:grid; gap:0; }
+.transfer-row { border:0; border-radius:0; padding:16px 0; background:transparent; gap:8px 24px; }
 .transfer-row + .transfer-row { border-top:1px solid var(--line-soft); }
 .transfer-status { justify-self:start; font-size:10px; }
-.transfer-score { padding-left:18px; border-left:1px solid var(--line-soft); }
-.transfer-empty { padding:20px 16px; border:1px dashed var(--line-soft); border-radius:var(--r); line-height:1.7; }
+.transfer-score { padding-left:0; border-left:0; justify-self:end; text-align:right; }
+.transfer-empty { padding:20px 0; border:0; border-radius:0; line-height:1.7; }
 @media(max-width:650px) {
  .transfer-dashboard { margin:18px 14px 20px; }
  .transfer-intro { padding:14px 14px 0; }
@@ -1989,9 +1989,22 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .progress-sync-indicator[hidden] { display: inline-flex !important; visibility: hidden; pointer-events: none; }
 
 /* Cross-game search: visible evidence and a readable current operation. */
-.transfer-dashboard .transfer-totals { gap:12px; }
-.transfer-dashboard .transfer-totals > span { border:1px solid var(--line-soft); border-radius:var(--r); padding:14px 16px; background:var(--code-bg); }
-#crossGameWork { padding:16px; border:1px solid var(--line-soft); border-left:3px solid var(--match); border-radius:var(--r); background:var(--code-bg); }
+.transfer-dashboard .transfer-totals { gap:0; }
+.transfer-dashboard .transfer-totals > span { background:transparent; border:0; border-left:1px solid var(--line-soft); border-radius:0; padding:0 18px; }
+.transfer-dashboard .transfer-totals > span:first-child { border:0; padding-left:0; }
+#crossGameWork { padding:16px 0 0; border:0; border-top:1px solid var(--line-soft); border-radius:0; background:transparent; }
 .transfer-phase { font-size:13px; font-weight:600; }
 .transfer-lead-status { font-size:12px; color:var(--muted); line-height:1.65; margin:0 0 12px; }
-.transfer-diagnostic { grid-column:1/-1; margin:0; padding-top:8px; border-top:1px solid var(--line-soft); font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+.transfer-diagnostic { grid-column:1/-1; margin:0; padding:0; border:0; font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+.transfer-diagnostic summary { cursor:pointer; }
+.transfer-diagnostic p { margin:8px 0 0; max-width:90ch; line-height:1.7; }
+.transfer-advanced > p { max-width:60ch; font-size:11px; line-height:1.6; }
+/* Respond to the panel's available width, including narrow app windows. */
+#crossGamePanel { container-type:inline-size; }
+@container (max-width:600px) {
+  .transfer-row { grid-template-columns:minmax(0,1fr) minmax(110px,.65fr); gap:8px 16px; }
+  .transfer-source { grid-column:1; grid-row:2; }
+  .transfer-score { grid-column:2; grid-row:1 / span 2; }
+  .transfer-controls { grid-template-columns:1fr; gap:8px; }
+  .transfer-dashboard .transfer-totals > span { padding:0 10px; }
+}

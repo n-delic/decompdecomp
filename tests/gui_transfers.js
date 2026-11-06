@@ -2,7 +2,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
 const elements = new Map();
 const get = id => {
-  if (!elements.has(id)) elements.set(id, { value: id === "crossGameFilter" ? "matches" : "", hidden: false, innerHTML: "", textContent: "", reportValidity() {return true;}, firstElementChild: {style: {}}, setAttribute(name,value) {this[name]=value;} });
+  if (!elements.has(id)) elements.set(id, { value: id === "crossGameFilter" ? "matches" : "", hidden: false, querySelectorAll() {return [];}, innerHTML: "", textContent: "", reportValidity() {return true;}, firstElementChild: {style: {}}, setAttribute(name,value) {this[name]=value;} });
   return elements.get(id);
 };
 const opened = [];
@@ -30,6 +30,14 @@ assert.doesNotMatch(get("crossGameRecent").innerHTML.replace(/title="[^"]*"/g, "
 ctx.renderAutopilot({ slug: "target-game", kind: "rom", matched: 0, cross_game: { counts: { match: 1 }, recent: [], matches: [good] } });
 assert.equal(get("crossGameFilter").value, "all");
 assert.match(get("crossGameRecent").innerHTML, /No recent transfer attempts/);
+// Diagnostic details are optional and stay expanded when fresh results arrive.
+const list = get('crossGameRecent');
+const detailKey = encodeURIComponent(JSON.stringify(['target-game', undefined, miss.target, miss.source_slug, miss.source, miss.reason]));
+list.querySelectorAll = () => [{dataset:{transferDetail:detailKey}}];
+ctx.renderAutopilot({slug:'target-game',kind:'rom',matched:0,cross_game:{counts:{miss:1},recent:[miss]}});
+assert.match(list.innerHTML, /class="transfer-diagnostic"[^>]* open><summary>Check details/);
+assert.doesNotMatch(list.innerHTML, /<p class="transfer-diagnostic"/);
+list.querySelectorAll = () => [];
 console.log("Transfer filters and labels passed");
 const improved = {...miss, outcome: 'improved', reason: 'Partial donor; locally checked score 20; previous score 100'};
 ctx.renderAutopilot({slug:'target-game',kind:'fork',matched:0,cross_game:{counts:{improved:1},recent:[improved],matches:[]}});
