@@ -1874,3 +1874,159 @@ def test_merging_set_aside_records_keeps_same_address_overlays_separate():
     current=deepcopy(old);current['set_aside'][1]['asm_code']='updated second'
     merged=_merge_manifest(old,new,current)
     assert {entry['name']:entry['asm_code'] for entry in merged['set_aside']}=={'a':'updated first','b':'updated second'}
+
+@pytest.mark.parametrize('platform', ['n64', 'ps1', 'ps2', 'psp'])
+def test_foreground_judge_finishes_while_saved_compile_is_waiting(project, monkeypatch, platform):
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from types import MethodType
+
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.platform',?)", (platform,))
+    net.progress.sync('game', force=True)
+    ordinary_attempt = net.attempt
+    # Controlled compiler verdicts, through the real engine's foreground judging scope.
+    monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
+    monkeypatch.setattr(net, '_attempt', ordinary_attempt)
+    waiting, compilation = threading.Event(), Future()
+    def checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
+        for name in saved:
+            prepared = ('synthetic saved compile', compilation) if name == 'f' else None
+            waiting.set()
+            yield name, saved[name], 'src', files['src/'+name+'.c'], name, prepared
+    monkeypatch.setattr(saves, '_saved_checks', checks)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved f')
+    (folder/'src/g.c').write_text('good saved g')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor(3) as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert waiting.wait(5)
+            foreground = pool.submit(net.attempt, agent, 'f', 'good foreground', 'game')
+            assert foreground.result(timeout=3)['matched']
+            assert not background.done(), 'Foreground waited for the whole recheck'
+            assert ('f', 'good foreground') in judged
+            # A second importer must wait rather than reset the foreground result.
+            importer = pool.submit(net.progress.sync, 'game', force=True)
+            time.sleep(.05)
+            assert not importer.done()
+        finally:
+            compilation.set_result(None)
+        assert background.result(timeout=5)
+        importer.result(timeout=5)
+    assert ('f', 'good saved f') not in judged
+    assert ('g', 'good saved g') in judged
+    assert (folder/'src/f.c').read_text() == 'good foreground\n'
+    assert not net.progress.rechecking
+
+
+def test_foreground_judge_rejects_a_file_edit_during_saved_recheck(project, monkeypatch):
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from types import MethodType
+
+    net, folder, judged = project
+    ordinary_attempt = net.attempt
+    monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
+    monkeypatch.setattr(net, '_attempt', ordinary_attempt)
+    waiting, compilation = threading.Event(), Future()
+    def checks(*args):
+        waiting.set()
+        yield 'f', {'matched_by': 'helper'}, 'src', 'good saved', 'f', ('compile', compilation)
+    monkeypatch.setattr(saves, '_saved_checks', checks)
+    (folder/'src').mkdir(exist_ok=True)
+    path = folder/'src/f.c'
+    path.write_text('good saved')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor() as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert waiting.wait(5)
+            path.write_text('good newer contribution')
+            foreground = pool.submit(net.attempt, agent, 'f', 'good stale', 'game')
+            with pytest.raises(NetworkError, match='Saved files changed'):
+                foreground.result(timeout=3)
+            assert ('f', 'good stale') not in judged
+        finally:
+            compilation.set_result(None)
+        background.result(timeout=5)
+    assert path.read_text() == 'good newer contribution'
+    assert not net.progress.rechecking
+
+
+def test_failed_saved_judge_releases_the_recheck_gate(project, monkeypatch):
+    net, folder, _ = project
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved')
+    with monkeypatch.context() as patch:
+        def fail(*args, **kwargs):
+            raise NetworkError('synthetic cancelled recheck')
+        patch.setattr(saves, '_judge_saved', fail)
+        with pytest.raises(NetworkError, match='synthetic cancelled recheck'):
+            net.progress.sync('game', force=True)
+    assert not net.progress.rechecking
+    assert net.progress.sync('game', force=True)
+    assert net._function('f', 'game')['status'] == 'matched'
+
+
+def test_notes_written_during_recheck_are_published_even_without_source_changes(project, monkeypatch):
+    from concurrent.futures import Future, ThreadPoolExecutor
+
+    net, folder, _ = project
+    waiting, compilation = threading.Event(), Future()
+    def checks(*args):
+        waiting.set()
+        yield 'f', {'matched_by': 'helper'}, 'src', 'good saved', 'f', ('compile', compilation)
+    monkeypatch.setattr(saves, '_saved_checks', checks)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor() as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert waiting.wait(5)
+            with net.progress.foreground():
+                net.add_note(agent, 'game', 'Fresh foreground notes', 'g')
+                net.progress.foreground_changed('game', 'g')
+                with net.store.tx() as db:
+                    db.execute("UPDATE context_versions SET header='/* foreground context */' WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+                assert not net.progress.sync('game', force=True)
+        finally:
+            compilation.set_result(None)
+        assert background.result(timeout=5)
+    saved = json.loads((folder/saves.MANIFEST).read_text())
+    assert any(note['text'] == 'Fresh foreground notes' for note in saved['notes'])
+    assert any('foreground context' in path.read_text() for path in (folder/'include').glob('*.h'))
+    assert not net.progress.sync('game', force=True)
+
+
+def test_foreground_waits_until_saved_verification_evidence_is_installed(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import MethodType
+
+    net, folder, _ = project
+    ordinary_attempt = net.attempt
+    monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
+    monkeypatch.setattr(net, '_attempt', ordinary_attempt)
+    original_judge = saves._judge_saved
+    entered, release = threading.Event(), threading.Event()
+    def delayed(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return original_judge(*args, **kwargs)
+    monkeypatch.setattr(saves, '_judge_saved', delayed)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor(2) as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert entered.wait(5)
+            foreground = pool.submit(net.attempt, agent, 'g', 'good foreground', 'game')
+            time.sleep(.05)
+            assert not foreground.done()
+        finally:
+            release.set()
+        assert background.result(timeout=5)
+        assert foreground.result(timeout=5)['matched']
+    assert net._function('g', 'game')['matched_source'].strip() == 'good foreground'

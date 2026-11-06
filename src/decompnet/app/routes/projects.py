@@ -10,6 +10,7 @@ import secrets
 import shutil
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from starlette.requests import Request
@@ -45,7 +46,14 @@ def register(app: App) -> None:
                         # while they run; mutations and the judge retain their synchronization gate.
                         with net.progress.view():
                             return fn(slug, request, data)
-                    result = fn(slug, request, data)
+                    # These operations need no second import while a saved-code recheck is active.
+                    foreground = request.url.path in ("/api/try", "/api/note", "/api/release")
+                    with net.progress.foreground() if foreground else nullcontext():
+                        result = fn(slug, request, data)
+                        if foreground:
+                            net.progress.foreground_changed(slug, str(data.get("function") or data.get("name") or ""))
+                            net.progress.sync(slug, force=True)
+                            return result
                     if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result

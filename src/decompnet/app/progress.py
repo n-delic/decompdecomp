@@ -25,7 +25,7 @@ import stat
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import compiler, toolchains
@@ -388,6 +388,15 @@ def affected_functions(old, new, changed, rows):
     return affected
 
 
+@dataclass
+class _Recheck:
+    folder: Path
+    signature: tuple
+    functions: set[str] = field(default_factory=set)
+    foreground: bool = False
+    ready: bool = False
+
+
 class Progress:
     def __init__(self, net):
         self.net = net
@@ -404,6 +413,7 @@ class Progress:
         self.results: dict[str, dict] = {}
         self.revisions: dict[str, int] = {}
         self.project_locks: dict[str, threading.RLock] = {}
+        self.rechecking: dict[str, _Recheck] = {}
         self.errors: dict[str, str] = {}
         self.signatures: dict[str, tuple] = {}  # slug -> every file's stat after the last acknowledged sync
         self.stamps: dict[str, tuple] = {}  # slug -> the cheap directory/manifest stat a non-forced check compares
@@ -749,6 +759,71 @@ class Progress:
             return bool(self.batches.get(slug))
 
     @contextmanager
+    def foreground(self):
+        """Only explicit judge/notes requests may use already-imported inputs during a saved-code recheck."""
+        previous = getattr(self.local, 'foreground', False)
+        self.local.foreground = True
+        try:
+            yield
+        finally:
+            self.local.foreground = previous
+
+    def foreground_changed(self, slug, name=''):
+        if self.applying:
+            return
+        with self._project_lock(slug):
+            active = self.rechecking.get(slug)
+            if active is not None:
+                active.foreground = True
+                if name:active.functions.add(name)
+
+    def _check_rechecking_files(self, slug):
+        pending = self.rechecking.get(slug)
+        if pending and self._signature(pending.folder) != pending.signature:
+            raise NetworkError('Saved files changed during the recheck. Wait for synchronization, then read the function and retry.')
+
+    def _judge_saved(self, slug, *args, **kwargs):
+        """Wait without owning the project lock while saved functions compile and publish one at a time.
+
+        Context/layout imports have committed before this phase. Other imports still wait;
+        foreground attempts use those new inputs, and every saved verdict re-reads its function.
+        Condition.wait releases every recursive acquisition, including a caller's batch lock.
+        """
+        if not kwargs.get('judge_code', True):
+            return saves._judge_saved(self.net, slug, *args, **kwargs), None
+        lock = self._project_lock(slug)
+        condition = threading.Condition(lock)
+        outcome = []
+        folder = args[0]
+        active = _Recheck(folder, self._signature(folder))
+        self.rechecking[slug] = active
+
+        def run():
+            self.local.busy = True
+            try:
+                from .workers import lower_priority
+                lower_priority()
+                outcome.append((True, saves._judge_saved(self.net, slug, *args, **kwargs)))
+            except BaseException as error:
+                outcome.append((False, error))
+            finally:
+                self.local.busy = False
+                with condition:
+                    condition.notify_all()
+
+        worker = threading.Thread(target=run, name='saved-judge-'+slug, daemon=True)
+        try:
+            worker.start()
+            while not outcome:
+                condition.wait(timeout=0.1)
+        finally:
+            self.rechecking.pop(slug, None)
+        ok, result = outcome[0]
+        if not ok:
+            raise result
+        return result, active
+
+    @contextmanager
     def judging(self, slug: str):
         """Compiles may run together, but a result from before a pull must never replace its contribution."""
         if self.applying:
@@ -765,6 +840,8 @@ class Progress:
 
     def check_result(self) -> None:
         pending = getattr(self.local, "judging", None)
+        if pending and not self.applying:
+            self._check_rechecking_files(pending[0])
         if not self.applying and pending and self.revisions.get(pending[0], 0) != pending[1]:
             raise NetworkError("Progress changed while this attempt compiled. Read the function again and retry with the updated project.")
 
@@ -853,6 +930,14 @@ class Progress:
         from ..request_timing import span, timed_lock
         with (span('progress_sync'),
               timed_lock(self._project_lock(slug), 'progress_project_lock_wait')):
+            while slug in self.rechecking:
+                if getattr(self.local, 'foreground', False) and self.rechecking[slug].ready:
+                    self._check_rechecking_files(slug)
+                    return False
+                if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
+                self._check_paused(slug)
+                # Public Condition.wait also releases an outer batch's recursive lock.
+                threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
             if self._batching(slug):
                 return False
             if logger is not None:getattr(logger, "check_cancel", lambda: None)()
@@ -1304,7 +1389,7 @@ class Progress:
             saved = manifest.get("functions") or {}
             if affected is not None and needs_judging:
                 saved = {name: info for name, info in saved.items() if name in affected}
-            self.results[slug] = saves._judge_saved(net, slug, folder, manifest, by_name,
+            self.results[slug], recheck = self._judge_saved(slug, folder, manifest, by_name,
                                                     saved, report,
                                                     files=disk, judge_code=needs_judging)
             self._activity(slug, phase="Saving verified progress", function=None)
@@ -1326,10 +1411,20 @@ class Progress:
                        if name.startswith("best/") and name not in disk
                        and "src/"+name[5:] in disk
                        and saves._source_text(disk["src/"+name[5:]]) == text}
-            if promoted or demoted:
+            # Foreground work may replace an existing saved C while this recheck compiles.
+            # Publish only its affected files, guarded against an editor's newer disk contents.
+            foreground_names = recheck.functions if recheck is not None else set()
+            foreground_files = {name: text for name, text in rendered.items()
+                                if ((name.startswith(('src/', 'best/')) and name.split('/', 1)[1][:-2] in foreground_names)
+                                    or (name.startswith('include/') and recheck is not None and recheck.foreground))
+                                and text != disk.get(name)}
+            if promoted or demoted or (recheck is not None and recheck.foreground):
                 obsolete = {"best/"+name[4:]: disk["best/"+name[4:]] for name in promoted}
                 obsolete.update({"src/"+name[5:]: disk["src/"+name[5:]] for name in demoted})
-                transitions = promoted | demoted
+                obsolete.update({name: text for name, text in disk.items()
+                                 if name.startswith(("src/", "best/")) and name.split("/", 1)[1][:-2] in foreground_names
+                                 and name not in rendered})
+                transitions = promoted | demoted | foreground_files
                 transitions[saves.MANIFEST] = rendered[saves.MANIFEST]
                 if not saves._publish(folder, transitions, obsolete, expected=disk,
                                       chosen=bool(cfg.get("progress_folder"))):

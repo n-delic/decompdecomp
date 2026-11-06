@@ -215,10 +215,14 @@ class JudgeMixin:
             time.sleep(0.2)
 
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
-        fn = self._function(function, project)
-        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
-        with self.progress.judging(slug):
-            return self._attempt(agent, function, source, project)
+        with self.progress.foreground():
+            fn = self._function(function, project)
+            slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+            with self.progress.judging(slug):
+                try:
+                    return self._attempt(agent, function, source, project)
+                finally:
+                    self.progress.foreground_changed(slug, fn['name'])
 
     def _record(self, fn, *args, **kwargs):
         slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
