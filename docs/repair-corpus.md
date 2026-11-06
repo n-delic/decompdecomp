@@ -18,3 +18,13 @@ retroactive deletion. Sampling counters start with this update. Existing large-t
 compression and explicit compaction continue to work. The original retained example
 remains available for review and replay. This change does not create a submission service
 or a separate evidence database; portable exports still need to resolve referenced inputs.
+
+## Settings
+
+Settings → Database storage → Repair evidence controls future captures across projects.
+Defaults remain one automatic example and three AI/manual examples per pattern. Each
+limit accepts 0–1000; zero retains counts only for comparable patterns. Turning off
+“Limit repeated repair examples” retains every new example, subject to the existing
+identical-recheck suppression. Incomplete evidence still bypasses sampling. Changing
+limits does not delete historical examples or reset counters; raising a limit allows
+more examples to be retained until the new limit is reached.

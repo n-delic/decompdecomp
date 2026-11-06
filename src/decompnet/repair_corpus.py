@@ -15,6 +15,34 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_capture_groups(
  first_at REAL NOT NULL, last_at REAL NOT NULL)'''
 
 
+KEY='repair-evidence-sampling'
+DEFAULTS={'enabled':True,'automatic_limit':1,'manual_limit':3}
+
+
+def options(value):
+    if not isinstance(value,dict):raise ValueError('Repair evidence settings must be an object.')
+    result={key:value.get(key,default) for key,default in DEFAULTS.items()}
+    if type(result['enabled']) is not bool:
+        raise ValueError('Repair evidence sampling must be enabled or disabled.')
+    for key in ('automatic_limit','manual_limit'):
+        if type(result[key]) is not int or not 0<=result[key]<=1000:
+            raise ValueError('Choose 0–1000 retained repair examples per pattern.')
+    return result
+
+
+def read_options(db):
+    sql='SELECT value FROM settings WHERE key=?'
+    row=db.one(sql,KEY) if hasattr(db,'one') else db.execute(sql,(KEY,)).fetchone()
+    return options(json.loads(row['value'])) if row else dict(DEFAULTS)
+
+
+def save(store,value):
+    value=options(value)
+    with store.tx() as db:
+        db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(KEY,json.dumps(value)))
+    return value
+
+
 def bucket(evidence, before_source, source):
     after=evidence['after']
     provenance=evidence.get('provenance') or {}
@@ -51,9 +79,10 @@ def retain(db,evidence,before_source,source,now):
     signature,automated=bucket(evidence,before_source,source)
     if signature is None:return True
     # Keep one installed-rule regression case, or three manual examples for diversity.
-    limit=1 if automated else 3
+    policy=read_options(db)
+    limit=policy['automatic_limit' if automated else 'manual_limit']
     row=db.execute('SELECT retained FROM repair_capture_groups WHERE signature=?',(signature,)).fetchone()
-    keep=row is None or row['retained']<limit
+    keep=not policy['enabled'] or (row['retained'] if row else 0)<limit
     db.execute('INSERT INTO repair_capture_groups VALUES(?,1,?,?,?) ON CONFLICT(signature) DO UPDATE SET '
                'successes=successes+1,retained=retained+excluded.retained,last_at=excluded.last_at',
                (signature,int(keep),now,now))

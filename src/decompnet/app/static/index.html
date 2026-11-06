@@ -814,6 +814,13 @@
       <label class="check"><input id="databaseStorageAutomatic" type="checkbox"><span>Clean old unsuccessful source automatically, once a day</span></label>
       <div class="row"><button id="databaseStoragePack" class="primary" type="button">Compress existing records</button><details class="agent-menu"><summary aria-label="More candidate storage actions">⋮</summary><div class="agent-menu-items"><button id="databaseStorageCompact" type="button">Compact database files…</button><button id="databaseStorageSave" type="button">Save retention rules</button><button id="databaseStoragePrune" type="button">Clean old unsuccessful source</button></div></details><button id="databaseStorageStop" type="button" hidden>Stop</button></div>
       <div id="databaseStorageLog"></div>
+      <h3>Repair evidence</h3>
+      <p class="small muted">Keep representative successful repairs to review and improve automatic repair rules.</p>
+      <label class="check"><input id="repairEvidenceEnabled" type="checkbox" checked><span>Limit repeated repair examples</span></label>
+      <label class="field"><span>Automatic repair examples per pattern</span><input id="repairEvidenceAutomatic" type="number" min="0" max="1000" value="1"></label>
+      <label class="field"><span>AI/manual repair examples per pattern</span><input id="repairEvidenceManual" type="number" min="0" max="1000" value="3"><small>0 keeps counts only for comparable patterns. Incomplete evidence is always retained. Disable limits to retain every new example. Changes apply to future captures; existing examples are kept.</small></label>
+      <button id="repairEvidenceSave" type="button">Save repair evidence settings</button>
+      <div id="repairEvidenceLog" role="status"></div>
       <p class="small muted">Compression preserves exact text. Cleanup permanently removes only eligible source payloads. Use Compact database file under Saved C header history to return reusable space to disk when workers are idle.</p>
     </div>
   </details>

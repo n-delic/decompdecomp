@@ -89,6 +89,9 @@ def register(app: App) -> None:
         try:
             if request.method=='GET':return JSONResponse(await call(database_storage.stats,net))
             data=await body(request)
+            if data.get('action')=='save-repair-evidence':
+                from ...repair_corpus import save
+                return JSONResponse({'repair_evidence':await call(save,net.store,data)})
             if data.get('action')=='save':return JSONResponse({'retention':await call(database_storage.save,net,data)})
             if data.get('action') not in ('pack','prune'):raise ValueError('Choose pack, prune or save.')
             if data['action']=='prune':database_storage.options(data)

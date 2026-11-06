@@ -2977,3 +2977,6 @@ ABI analysis and automatic source/profile selection remain planned.
   installed automatic rules keep one regression example and manual repairs keep three,
   with durable repeat counts and no repeated analysis scheduling. Existing evidence remains
   available; conservative capture applies when inputs cannot be grouped safely.
+
+- Done: Settings → Database storage exposes persisted repair evidence sampling controls,
+  separate automatic/manual limits (0–1000), and unlimited capture mode for future examples.
