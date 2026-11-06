@@ -18,6 +18,29 @@ class LinkResult:
     problems: list[str] = field(default_factory=list)
     # data the candidate defines itself, as placed at the game's copy: section name -> {offset: address}
     placements: dict[str, dict[int, int]] = field(default_factory=dict)
+    mismatches: list[ByteMismatch] = field(default_factory=list)  # bounded windows of linked bytes, never a verdict
+
+
+@dataclass
+class ByteMismatch:
+    label: str
+    address: int
+    offset: int
+    expected: bytes
+    actual: bytes
+    code: bool
+
+
+def record_mismatch(out: list, label: str, address: int, expected: bytes, actual: bytes, code: bool) -> None:
+    """Keep at most three small windows around the first unequal byte, not entire helper bodies."""
+    if len(out) >= 3 or expected == actual:
+        return
+    first = next((i for i, (a, b) in enumerate(zip(expected, actual)) if a != b),
+                 min(len(expected), len(actual)))
+    start = max(0, (first // 4) * 4 - 8)
+    limit = 1024 if code else 64
+    out.append(ByteMismatch(label, address + start, first, expected[start:start + limit],
+                            actual[start:start + limit], code))
 
 
 def _text(data: bytes) -> bool:

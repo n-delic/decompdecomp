@@ -1041,3 +1041,21 @@ def test_rom_library_setting_and_background_lookup(app, tmp_path, monkeypatch):
     assert result['state'] == 'done' and result['result']['path'].endswith('game.z64')
     assert seen == [(p, {'sha1': 'a' * 40}, str(library))]
     assert client.post('/api/settings', json={'rom_library': ''}, headers={'X-Decomp': '1'}).json()['rom_library'] == ''
+
+
+
+def test_operator_match_diagnostics_toggle_is_immediate_and_reversible(app):
+    client, net, _ = app
+    assert client.get("/api/state").json()["settings"]["match_diagnostics"] is False
+    response = client.post("/api/settings", json={"match_diagnostics": True}, headers={"X-Decomp": "1"})
+    assert response.status_code == 200
+    assert response.json()["match_diagnostics"] is True
+    first = net.match_diagnostics_since
+    assert first > 0
+    invalid = client.post("/api/settings", json={"match_diagnostics": "false"}, headers={"X-Decomp": "1"})
+    assert invalid.status_code == 400
+    assert net.match_diagnostics_since == first
+    response = client.post("/api/settings", json={"match_diagnostics": False}, headers={"X-Decomp": "1"})
+    assert response.status_code == 200
+    assert response.json()["match_diagnostics"] is False
+    assert net.match_diagnostics_since == 0

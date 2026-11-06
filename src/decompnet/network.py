@@ -496,6 +496,8 @@ class Network:
         (the header, the file around the function...). Sources are compared without per-line indentation and
         trailing spaces (line numbers stay, for __LINE__)."""
         h = hashlib.sha1(f"{fn['id']}\0{self._generation.get(fn['project_id'], 0)}".encode())
+        if getattr(self, "match_diagnostics_since", 0):
+            h.update(f"diagnostics:{self.match_diagnostics_since}".encode())
         for part in state:
             h.update(b"\0" + normalized_source(part).encode("utf-8", "replace"))
         return h.hexdigest()
@@ -963,6 +965,11 @@ class Network:
             row = self.store.one("SELECT MIN(created_at) AS t FROM attempts WHERE function_id=? AND score=?",
                                  fn["id"], fn["best_score"])
             best_at = row["t"] if row else None
+        since = getattr(self, "match_diagnostics_since", 0)
+        if since:
+            from .app.match_diagnostics import annotate
+
+            rows = annotate(rows, since)
         return brief_notes(rows, fn, best_at, best_text, show, when)
 
     def _next_step(self, proj, ctx) -> str:

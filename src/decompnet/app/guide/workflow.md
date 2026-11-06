@@ -30,3 +30,14 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
 ## Priorities
 Get the instruction count and control flow right first, then operands, then register allocation.
 Plausible original code beats contortions: games were written by people, quickly.
+
+
+When the operator enables **Recheck stalled-match blockers** in Settings, linker failures include bounded
+windows of the actual linked helper/data bytes. Inspect those when the caller already matches: compare the
+helper's prototypes, argument types and included body with the target. Keep the complete best source;
+compiling a stub does not test its remaining mismatch. A helper mismatch does not by itself prove that
+another function must be matched first.
+
+Older blocker notes are marked for rechecking when the operator enables this option or the judge changes.
+The notes are retained, and the marker means “needs current evidence”, not “false”. Verify the retained
+candidate before repeating a dependency claim. Turning the setting off restores ordinary tool feedback.
