@@ -9,6 +9,12 @@ from .. import repository_sync
 
 def register(app):
     lock=threading.Lock()
+    pushes = {}
+
+    def active_push(slug):
+        with app.jobs._lock:
+            job = app.jobs.jobs.get(pushes.get(slug), {})
+            return {key:job[key] for key in ('id', 'state', 'progress', 'scope') if key in job} if job.get('state') == 'running' else None
 
     @app.mcp.custom_route('/api/repository-setup', methods=['GET', 'POST'])
     async def setup(request):
@@ -59,22 +65,23 @@ def register(app):
         try:
             from .. import repository_push
             if request.method == 'GET':
+                active = active_push(str(request.query_params.get('slug', '')))
+                if active:
+                    return JSONResponse({'job':active['id'], 'progress':active.get('progress', {}), **active['scope']})
                 return JSONResponse(await app.call(repository_push.status, app.net,
                     str(request.query_params.get('slug', '')), str(request.query_params.get('folder', '')).strip()))
             data = await app.body(request)
             slug = str(data.get('slug', ''))
             folder = str(data.get('folder', '')).strip()
-            # Reserve before spawning so duplicate clicks cannot queue two pushes.
-            if not lock.acquire(blocking=False):raise NetworkError('A repository operation is already running.')
-            def work(log):
-                try:return repository_push.run(app.net, slug, folder, log)
-                finally:lock.release()
-            try:
-                job = app.jobs.start('repository-push', work,
-                    cancel_message='Push stopped. Check origin before retrying; a completed push cannot be undone by Stop.')
-            except BaseException:
-                lock.release()
-                raise
+            # Reserve by project under the job lock; repeated clicks/windows attach
+            # to the same queued push without blocking a sync's API reservation.
+            with app.jobs._lock:
+                active = active_push(slug)
+                if active:return JSONResponse({'job':active['id']})
+                job = app.jobs.start('repository-push', lambda log: repository_push.run(app.net, slug, folder, log),
+                    cancel_message='Push stopped. Waiting requests are removed from the queue; check origin if pushing had already started.')
+                app.jobs.jobs[job]['scope'] = {'slug':slug, 'folder':folder}
+                pushes[slug] = job
             return JSONResponse({'job':job})
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
