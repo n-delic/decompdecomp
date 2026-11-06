@@ -44,6 +44,7 @@ import shutil
 import struct
 import subprocess
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1311,7 +1312,8 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
     tables, bytes_at = [], []
     # which byte table's byte each register holds now (a load puts it there, a plain `mov` moves it on, anything else
     # that writes the register ends it), and the byte tables a jump's index came from
-    holds, indexing = {}, {}  # (indexing: byte table -> the jump table it indexes)
+    holds, indexing = {}, defaultdict(set)  # (indexing: byte table -> the jump tables it indexes; one byte table
+    # can index several, `switch`es on one value)
     for ins in _disasm(md, pe.read(start, code_end - start), start):
         ops = ins.operands
         load = ins.id in _LOADS and len(ops) == 2 and ops[0].type == x86.X86_OP_REG
@@ -1325,7 +1327,7 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
             if op.mem.scale == 4 and ins.id == x86.X86_INS_JMP:
                 tables.append(disp)
                 if (b := holds.get(_full_reg(md, op.mem.index))) is not None:
-                    indexing[b] = disp
+                    indexing[b].add(disp)
             elif op.size == 1:
                 bytes_at.append(disp)
                 if load and i == 1:
@@ -1349,10 +1351,11 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
         data_end = max(data_end, at)
     for b in sorted(set(bytes_at)):  # a byte table runs to the next function, less its padding
         tail = pe.read(b, limit - b).rstrip(b"\x90\xcc")
-        if n := cases.get(indexing.get(b)):
+        if n := max((cases[t] for t in indexing.get(b, ())), default=0):
             # a byte table that indexes a jump table (the byte it loads is the jump's index) has every byte below that
-            # table's entry count: the first one that isn't is past the table (an x86 game: code that only a vtable
-            # reaches followed a byte table and was swallowed). Any other byte table (a lookup) keeps its whole run
+            # table's entry count (the largest, of tables it indexes): the first one that isn't is past the table (an
+            # x86 game: code that only a vtable reaches followed a byte table and was swallowed). Any other byte table
+            # (a lookup) keeps its whole run
             tail = tail[:next((k for k, v in enumerate(tail) if v >= n), len(tail))]
         data_end = max(data_end, b + len(tail))
     return code_end, data_end, entries
