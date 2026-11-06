@@ -65,6 +65,7 @@ def record_probe(net, fn, agent_id: int, source: str, measured: dict, score: int
     import time
 
     target = hashlib.sha256(fn["target"] or b"").hexdigest()
+    measured = {**measured, "vram": fn["vram"], "relocs_sha256": digest(fn["relocs"] or "")}
     encoded = json.dumps(measured, sort_keys=True)
     key = digest(encoded + target + str(fn["relocs"]) + str(fn["vram"]))
     with net.store.tx() as db:
@@ -81,6 +82,7 @@ def probe_brief(net, fn, header: str | None) -> list[str]:
         return []
     saved = json.loads(row["provenance"])
     changed = (row["target_sha256"] != hashlib.sha256(fn["target"] or b"").hexdigest()
+               or saved.get("vram") != fn["vram"] or saved.get("relocs_sha256") != digest(fn["relocs"] or "")
                or header is None or saved["header_sha256"] != digest(header))
     return ["", "### Retained alternate-compiler probe (not an accepted match)",
             f"{compiler_text(saved['compiler'])}: score {row['score']}; "

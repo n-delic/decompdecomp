@@ -363,6 +363,7 @@ class JudgeMixin:
         matched = verdict if verdict is not None else d.bytes_match
         if observe is not None:
             measured = attempts.provenance(settings, source, header=header, context_version=ctx["version"], unit=fn["unit"])
+            measured["language"] = result.language
             attempts.record_probe(self, fn, observe.id, source, measured, 0 if matched else max(1, d.score), matched)
         return matched, d, ""
 

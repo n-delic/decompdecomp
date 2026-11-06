@@ -445,7 +445,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                       function=st("a function whose best attempt should match with it: checked now"),
                       ranges=st("address ranges it built, when not the whole game: 0x10BFD0-0x10CD40, ..."),
                       source=st("the C to check it with (default: the best attempt)"))),
-        "try_compiler": ("Compile a function's C with another compiler and flags, recording nothing: test before suggesting.",
+        "try_compiler": ("Test another compiler before suggesting it. ROM probes retain evidence without accepting a match or spending an attempt.",
                          s(function=st("function", True), compiler=st("toolchain id", True), flags=st("flags"),
                            source=st("the C (default: the best attempt)"))),
         "search_notes": ("Search notes.", s(query=st("text", True))),

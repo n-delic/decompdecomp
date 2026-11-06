@@ -163,3 +163,31 @@ def test_dropping_a_function_cannot_leave_a_probe_for_a_reused_id(tmp_path):
     with net.store.tx() as db:
         db.execute("DELETE FROM functions WHERE id=?", (fn["id"],))
     assert not net.store.one("SELECT * FROM compiler_probes")
+
+
+def test_explicit_compiler_probe_records_the_header_actually_compiled(tmp_path, monkeypatch):
+    from decompnet import compiler, project
+
+    net, _ = _game(tmp_path, [("f", 1, "open")])
+    a, _ = net.local_agent("a")
+    fn = net.store.one("SELECT * FROM functions WHERE name='f'")
+    proj = net.store.one("SELECT * FROM projects LIMIT 1")
+    captured = []
+
+    def compile_source(config, header, source):
+        captured.append((header, source))
+        return compiler.CompileResult(True, b"object", "", language="c++")
+
+    monkeypatch.setattr(compiler, "compile_source", compile_source)
+    monkeypatch.setattr(project, "compiler_config", lambda *args: None)
+    monkeypatch.setattr(net, "_context", lambda *args: {"header": "the measured header", "version": 7})
+    target = FunctionObj("f", "mips", False, b"\0" * 4, [])
+    monkeypatch.setattr(net, "_evaluate", lambda *args: (target, True, []))
+    monkeypatch.setattr(net, "_target_obj", lambda *args: target)
+    ok, _, _ = net._judge_with(proj, fn, "alternate", ["-O2"], "candidate", observe=a)
+    assert ok and captured == [("the measured header", "candidate")]
+    saved = json.loads(net.store.one("SELECT provenance FROM compiler_probes")["provenance"])
+    assert saved["context_version"] == 7 and saved["language"] == "c++"
+    assert saved["header_sha256"] == attempts.digest("the measured header")
+    assert not net.store.one("SELECT * FROM attempts")
+    assert net.store.one("SELECT status FROM functions")["status"] == "open"

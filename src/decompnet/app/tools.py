@@ -629,8 +629,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def try_compiler(ctx: Context, function: str, compiler: str, flags: str = "", source: str = "") -> str:
-        """Compile a function's C with another compiler and flags and see the diff, recording nothing: to find out
-        which compiler built a part of the game before you suggest it. Cheap: try several.
+        """Compile a function's C with another compiler and flags before suggesting a compiler change. ROM probes
+        retain their source and measured inputs for handoffs, without accepting a match or spending an attempt.
 
         Args:
             function: the function to judge it against

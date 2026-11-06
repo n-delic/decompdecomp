@@ -261,3 +261,30 @@ def test_a_note_is_found_by_its_function_and_text_from_an_index(tmp_path):
     store = Store(tmp_path / "s.db")
     plan = store.all("EXPLAIN QUERY PLAN SELECT 1 FROM notes WHERE project_id=? AND text=? AND function_id IS ?", 1, "x", 5)
     assert "idx_notes_lookup" in " ".join(str(r[3]) for r in plan)
+
+
+def test_progress_and_spending_updates_do_not_rebuild_identical_attempts(net, agents, monkeypatch):
+    import json
+
+    alice, _ = agents
+    calls = []
+    compile_once = net._compile
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return compile_once(*args, **kwargs)
+
+    monkeypatch.setattr(net, "_compile", counted)
+    first = net.attempt(alice, "clamp_s32", WRONG_CLAMP)
+    project = net.store.one("SELECT * FROM projects LIMIT 1")
+    cfg = json.loads(project["config"])
+    cfg.update(progress_revision=42, spend={"tokens": 5000})
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), project["id"]))
+    repeated = net.attempt(alice, "clamp_s32", WRONG_CLAMP)
+    assert repeated["repeat"] and repeated["score"] == first["score"] and len(calls) == 1
+    cfg["compiler"]["flags"] = [*cfg["compiler"].get("flags", []), "-fno-inline"]
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), project["id"]))
+    net.attempt(alice, "clamp_s32", WRONG_CLAMP)
+    assert len(calls) == 2  # a real compiler change still rebuilds

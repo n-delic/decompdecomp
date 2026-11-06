@@ -545,7 +545,8 @@ class Network:
         for k, r in enumerate(rows[:-1], 1):  # (the last row is this compile)
             if r["score"] == score and normalized_source(r["source"] or "") != mine:
                 return (f"\nSame score as your compile #{k} of this claim ({score}) with a different source: this "
-                        "change made no difference the judge sees. Try a different kind of change.")
+                        "change has the same total score, but may differ in other instructions. Inspect last_diff before "
+                        "deciding what to try next.")
         return ""
 
     def _agent_name(self, agent_id) -> str:
@@ -1020,6 +1021,7 @@ class Network:
         if not scratch and (again := self.repeat_of(key, agent, fn)) is not None:
             return again
         result = self._compile(proj, ctx["header"], source, fn)
+        measured["language"] = result.language
 
         if not result.ok:
             self._record(fn, agent, None, source, ctx["version"], provenance=measured)
