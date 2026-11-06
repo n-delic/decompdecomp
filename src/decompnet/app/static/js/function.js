@@ -580,6 +580,9 @@ function renderFnChart(d) {
   const timing=typeof uiTimingEnabled==='function' && uiTimingEnabled() ? performance.now() : null;
   const wrap = $("fnChartWrap"), svg = $("fnChart");
   const pts = d.scores;
+  const tooltip = $("fnChartTooltip");
+  tooltip.hidden = true;
+  svg.onpointermove = svg.onpointerleave = svg.onpointerdown = svg.onfocus = svg.onblur = svg.onkeydown = null;
   wrap.hidden = !pts.length;
   if (!pts.length) return;
   const w = Math.max(300, svg.clientWidth || 600), h = 92, padL = 34, padR = 10, padT = 8, padB = 16;
@@ -590,9 +593,11 @@ function renderFnChart(d) {
   let out = "";
   for (const g of [0, 0.5, 1]) out += `<line class="grid" x1="${padL}" x2="${w - padR}" y1="${Y(g)}" y2="${Y(g)}"/><text class="axis" x="${padL - 6}" y="${Y(g) + 3.5}">${g * 100}%</text>`;
   let best = null, path = "";
+  const bestScores = [];
   const agents = [...new Set(pts.map((p) => p.agent))];
   pts.forEach((p, i) => {
     if (p.score != null) best = best == null ? p.score : Math.min(best, p.score);
+    bestScores.push(best);
     if (best != null) {
       const y = Y(pctOf(best, d.insns));
       path += path ? `H${X(i).toFixed(1)}V${y.toFixed(1)}` : `M${X(i).toFixed(1)},${y.toFixed(1)}`;
@@ -604,7 +609,48 @@ function renderFnChart(d) {
     if (p.score == null) out += `<g class="fail"><path d="M${X(i) - 3},${Y(0) + 5}l6,6m0,-6l-6,6"/>${title}</g>`;
     else out += `<circle class="${p.score === 0 ? "hit" : "pt"} a${agents.indexOf(p.agent) % 4}" cx="${X(i).toFixed(1)}" cy="${Y(pctOf(p.score, d.insns)).toFixed(1)}" r="${p.score === 0 ? 4.5 : 3}">${title}</circle>`;
   });
+  out += `<g class="fn-chart-cursor" hidden aria-hidden="true"><line y1="${padT}" y2="${Y(0)}"/><circle r="4.5"/></g>`;
   svg.innerHTML = out;
+  const cursor = svg.querySelector(".fn-chart-cursor"), guide = cursor.querySelector("line"), marker = cursor.querySelector("circle");
+  let selected = n - 1;
+  const inspect = (index, x = X(index)) => {
+    const changed = selected !== index || tooltip.hidden;
+    selected = index;
+    const point = pts[index], savedBest = bestScores[index];
+    cursor.removeAttribute("hidden");
+    guide.setAttribute("x1", x); guide.setAttribute("x2", x);
+    marker.setAttribute("cx", X(index));
+    marker.setAttribute("cy", Y(point.score == null ? 0 : pctOf(point.score, d.insns)));
+    marker.setAttribute("visibility", point.score == null ? "hidden" : "visible");
+    const score = point.score == null ? "Didn’t compile" : `Score ${point.score.toLocaleString()} · ${pctText(pctOf(point.score, d.insns))} match`;
+    const bestText = savedBest == null ? "No scored compile yet" : `Best so far: ${pctText(pctOf(savedBest, d.insns))} · score ${savedBest.toLocaleString()}`;
+    if (changed) tooltip.innerHTML = `<b>${esc(score)}</b><span>${esc(bestText)}</span><span>${esc(clock(point.t))} · ${esc(point.agent || "Unknown agent")}</span>${d.scores_sampled ? '<span>Nearest recorded sample</span>' : ""}`;
+    tooltip.hidden = false;
+    const width = svg.getBoundingClientRect().width;
+    const left = x / w * width;
+    const desiredLeft = left + 12 + tooltip.offsetWidth > width ? left - tooltip.offsetWidth - 12 : left + 12;
+    tooltip.style.left = `${Math.max(0, Math.min(desiredLeft, width - tooltip.offsetWidth))}px`;
+  };
+  const hide = () => { cursor.setAttribute("hidden", ""); tooltip.hidden = true; };
+  const pointAtPointer = event => {
+    const bounds = svg.getBoundingClientRect();
+    if (!bounds.width) return;
+    const x = Math.max(padL, Math.min(w - padR, (event.clientX - bounds.left) / bounds.width * w));
+    // Sampled histories have uneven compile IDs; use plotted positions, not array offsets.
+    let low = 0, high = n - 1;
+    while (low < high) { const mid = Math.floor((low + high) / 2); if (X(mid) < x) low = mid + 1; else high = mid; }
+    const index = low > 0 && x - X(low - 1) < X(low) - x ? low - 1 : low;
+    inspect(index, x);
+  };
+  svg.onpointermove = svg.onpointerdown = pointAtPointer;
+  svg.onpointerleave = svg.onblur = hide;
+  svg.onfocus = () => inspect(selected);
+  svg.onkeydown = event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End", "Escape"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Escape") { hide(); return; }
+    inspect(event.key === "Home" ? 0 : event.key === "End" ? n - 1 : Math.max(0, Math.min(n - 1, selected + (event.key === "ArrowLeft" ? -1 : 1))));
+  };
   if (timing!=null) uiTiming('function chart render',timing,{points:pts.length});
   const fails = pts.filter((p) => p.score == null).length;
   const bp = best == null ? null : pctOf(best, d.insns);

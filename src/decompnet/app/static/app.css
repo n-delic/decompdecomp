@@ -2045,3 +2045,14 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 #repositoryDestination { margin-top:18px; }
 #repositoryOriginGroup { margin:14px 0; }
+
+/* Inspect compile history without aiming at individual dots. */
+.fn-chart-plot { position:relative; min-width:0; }
+.fn-chart-plot svg { cursor:crosshair; }
+.fn-chart-cursor { pointer-events:none; }
+.fn-chart-cursor[hidden] { display:none; }
+.fn-chart-cursor line { stroke:var(--ink-2); stroke-width:1; stroke-dasharray:3 3; }
+.fn-chart-cursor circle { fill:var(--panel); stroke:var(--ink); stroke-width:2; }
+.fn-chart-tooltip { position:absolute; top:12px; z-index:2; display:grid; gap:4px; width:max-content; max-width:min(330px,100%); padding:10px 12px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel); color:var(--ink); box-shadow:0 4px 16px #0002; font-size:11px; pointer-events:none; overflow-wrap:anywhere; }
+.fn-chart-tooltip[hidden] { display:none; }
+.fn-chart-tooltip span { color:var(--muted); }
