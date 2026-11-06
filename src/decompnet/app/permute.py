@@ -37,7 +37,7 @@ from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
-from . import workers
+from . import callee_probes, workers
 
 log = logging.getLogger("decompdecomp")
 NEAR = 0.06  # a near miss: at most this much of the function differs (best_score <= 6% of n_insns * 100)
@@ -257,6 +257,23 @@ class Permuter:
         rng = random.Random(f"{fn['id']}-{fn['permuted']}")
         gen = None
         try:
+            deadline = time.monotonic() + SECONDS
+            alternatives = []
+            if not fork:
+                with self.net.progress.judging(proj["slug"]):
+                    matched, alternatives, summary = callee_probes.probe(
+                        self.net, agent, proj, fn, st.stop, deadline, count=lambda: st.add(variants=1))
+                if summary:
+                    log.info("permuter: %s: %s", fn["name"], summary)
+                if matched:
+                    st.add(improved=1, matched=1)
+                    return
+                updated = self.net.store.one("SELECT * FROM functions WHERE id=?", fn["id"])
+                if updated["best_score"] < fn["best_score"]:
+                    st.add(improved=1)
+                fn = updated
+            if st.stop.is_set() or time.monotonic() >= deadline:
+                return
             if available():
                 # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
                 header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
@@ -268,14 +285,15 @@ class Permuter:
                     log.info("permuter: decomp-permuter didn't start: %s", e)
             start_src = best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
-            deadline = time.monotonic() + SECONDS
+            starts = list(dict.fromkeys([start_src, *alternatives]))
+            exhausted = set()
             batches = misses = 0
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
                 if gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
                     # turn: from the best alone, rewrites piled on rewrites and got stuck on one of nine near misses of
                     # the demo ROM (at 45); taking turns, every one matched within 12 s
-                    base = best_src if batches % 2 else start_src
+                    base = best_src if batches % 2 else starts[(batches // 2) % len(starts)]
                     batches += 1
                     batch = gen.batch({"header": header, "source": base, "function": fn["name"], "family": family,
                                        "seed": rng.randrange(MAX_SEED), "count": BATCH})
@@ -283,10 +301,15 @@ class Permuter:
                         gen.close()
                         gen = None
                         continue
-                    if not batch:  # nothing new left to write from this C
-                        break
+                    if not batch:  # one context may be exhausted while another still has useful rewrites
+                        exhausted.add(base)
+                        if all(src in exhausted for src in [*starts, best_src]):
+                            break
+                        continue
                 else:  # one simple rewrite, mostly of the last C kept
-                    batch = [mutate(cur_src if rng.random() < 0.85 else best_src, rng)]
+                    base = starts[(batches // 4) % len(starts)] if batches % 4 == 0 else cur_src
+                    batches += 1
+                    batch = [mutate(base if rng.random() < 0.85 else best_src, rng)]
                     # none of them applies to this C (lerp's `a + (b - a) * t`): a minute of trying burnt a core
                     misses = 0 if batch[0] else misses + 1
                     if misses >= REWRITE_MISSES:
@@ -324,6 +347,9 @@ class Permuter:
             if not result.ok:
                 return None
             cand, verdict, _ = self.net._evaluate(fn, proj, result.obj)
+            # A rewrite must not turn a verified helper into a convenient fake body.
+            if self.net.is_rom(proj) and not callee_probes.helpers_match(self.net, proj, fn, source, result.obj):
+                return None
             if cand is None:
                 return None
             d = scoring.diff(self.net._target_obj(fn, proj), cand)
