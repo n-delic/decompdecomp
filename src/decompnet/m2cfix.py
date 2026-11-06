@@ -14,9 +14,9 @@ function N64 game, where undoing them matched a few dozen functions that autopil
 - A typed pointer stepped by a byte count (`p += 0x24` on an `s16 *`).
 
 `refine_draft` makes one refined draft (a second candidate next to m2c's own, never instead of it). `expand_macros`
-turns m2c's `M2C_FIELD(...)` and friends into plain C: decomp-permuter reads C through pycparser, which knows no
-macros, so a draft that still has them was never permuted. `static_helpers` keeps a permuter variant from adding
-a second, global function to the project: GCC 2.7 writes a plain `inline` function out-of-line, and the project
+turns m2c's `M2C_FIELD(...)` and simple visible byte-field accessors into plain C. The native parser has no
+preprocessor: opaque accessor calls hide their address arithmetic and even assignment destinations.
+`static_helpers` keeps a permuter variant from adding a second, global function to the project: GCC 2.7 writes a plain `inline` function out-of-line, and the project
 then fails to link with a duplicate definition.
 """
 
@@ -61,6 +61,8 @@ def _closing(text: str, start: int) -> int:
 def expand_macros(source: str, header: str = '') -> str:
     """`source` with m2c's macros written out as plain C, so decomp-permuter's parser can read it. The macro block
     itself goes (its types are the project header's, spelled the same)."""
+    from .byte_field_macros import expand as expand_byte_fields
+    source = expand_byte_fields(source, header)
     source = _field_macros(source, header)
     while (i := source.rfind("M2C_FIELD(")) >= 0:  # the innermost last, so an argument is plain by then
         start = i + len("M2C_FIELD(")

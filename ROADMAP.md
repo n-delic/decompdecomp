@@ -2881,3 +2881,9 @@ need independent evidence before receiving this specific GNU C repair.
   integer/pointer bindings and look through inert local scalar-record typedefs.
   Unsupported writes to one binding no longer hide a separate uninitialized read;
   complex declarations and unsupported semantics still receive no verdict.
+
+
+- Done: shared ROM/PROJECT native input preparation expands supported visible
+  two-argument byte-field accessors, including nested reads and assignment lvalues.
+  Ambiguous preprocessing and unsupported templates stay opaque; this is not a
+  replacement C preprocessor or an automatic match guarantee.

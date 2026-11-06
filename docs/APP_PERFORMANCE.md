@@ -200,3 +200,25 @@ uninitialized captures, including the reviewed pointer assigned only in an earli
 possibly empty loop. Original and layout-restored baseline sources remain allowed.
 These are skipped unsafe compilations, not new exact matches or a measured runtime
 speedup. Floating temporaries and semantic equivalence remain outside this guard.
+
+
+## Expose simple byte-field macros before native mutation
+
+The shared ROM/PROJECT native input preparation recognizes unique, unconditional
+accessors shaped like `FIELD(base, offset)` whose entire body dereferences a typed
+pointer at a byte address. Nested loads and assignment destinations become real
+memory expressions in the parser instead of opaque function calls. Parameter
+evaluation counts, types, byte scaling, definitions and physical lines are retained.
+This changes search visibility, not the exact judge or compiler profile.
+
+This is deliberately not a C preprocessor. Conditional/include/undef directives,
+redefinitions, stringification/pasting, line observers, splices, unsupported bodies
+and multiline invocations retain their original form. Unknown macros and ordinary
+functions are not guessed. The existing special m2c expansions remain separate.
+
+A private copied function exposed44 accessor calls, including7 assignment lvalues;
+only11 real helper calls remain. Full translation-unit AST/declaration equivalence
+and ordinary/diagnostic period-compiler checks preserve all1560 linked baseline
+bytes. The separately bounded search found no new exact match. No general speedup
+or match-rate improvement is inferred; the verified gain is access to previously
+hidden memory/address expressions.

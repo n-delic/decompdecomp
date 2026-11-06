@@ -4977,3 +4977,33 @@ only an identifier or one complete grouped operand under the byte cast. This
 retains the measured packed-field witness and leaves ambiguous pointer-expression
 shapes alone. Synthetic regressions demonstrated both false recognitions before
 this guard; neither occurred in the accepted game draft.
+
+
+### Observation: accessor visibility and period-compiler layout assertions
+
+KMC GCC2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian MIPS.
+In a copied unmatched function, the native parser represented44 byte-field macros
+as calls, including7 assignment lvalues. Pinned preprocessing and the shared app
+expander expose their casts, byte additions and dereferences, leaving11 actual
+helper calls. Full-TU AST and binding equivalence, followed by ordinary/diagnostic
+compilation, preserve295/1560 linked bytes, SHA256
+`43749f2981db46d5d60b9c55e197097bba5947a7dafd3438477eafc777a86291`.
+This establishes baseline-preserving search visibility, not a new exact match.
+
+The same experiment found a syntax-screen mismatch: modern Clang's MIPS layout
+of unnamed bitfields failed the unchanged matrix alignment assertion, while the
+pinned compiler accepts the verified size32/alignment4 model. First validate a
+syntax screen on the unchanged baseline. An independent syntax-only copy may
+exclude a known incompatible layout assertion, but never remove it from the
+actual period-compiler input or change the matrix to satisfy the modern compiler.
+Retain genuine undeclared/uninitialized diagnostics and verify their rejection.
+A modern syntax check is not evidence of the period compiler's object layout.
+
+The bounded search charged420 initial emissions and420 deterministic recovery
+emissions plus160 new emissions against its1000 physical limit after correcting
+that invalid screen. All original available source hashes/lineages were verified
+in recovery;580 raw sources survive. Of464 period judgments,23 are conservatively
+excluded for internal temporary-type randomization;441 judgments passing these screens found
+no improvement/exact. The screens do not prove semantic equivalence. These limits and negative results stay explicit. Private
+current-seed-nov6 reports retain the full accounting; no generated game code is
+included here.

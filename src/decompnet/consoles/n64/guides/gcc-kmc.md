@@ -1083,3 +1083,16 @@ not an exact match. The local `decoded_byte_normalization` family offers bounded
 hypotheses after a visible byte load. Do not add arbitrary masks to unknown
 values. A range-preserving width conversion can be meaningful reconstructed C
 without proving the unique original type; no dummy work or extra reads is needed.
+
+
+The native permuter now exposes supported visible byte-field accessor macros,
+including lvalue destinations. This lets it inspect address arithmetic rather
+than treating every access as an opaque call. Complex preprocessing stays opaque;
+check baseline byte equality before attributing a search result to expansion.
+
+Check a modern syntax preflight against the unchanged period-compiler baseline.
+Modern Clang can disagree with KMC on unnamed-bitfield alignment. Keep verified
+layout assertions in the actual compiler input; a syntax-only model may bypass
+only the known incompatible assertion. Do not alter genuine padding or infer a
+period ABI from the modern checker. Syntax acceptance does not replace linking
+and the exact-byte judge.
