@@ -272,12 +272,31 @@ def _workspace(prefix):
         yield temporary
 
 
-def _stable_inputs(inputs):
+def _stable_inputs(inputs, staged_names=()):
+    staged_names = set(staged_names)
     for part in inputs:
         # Translation phase two removes line splices before macro expansion.
         text = part.replace(b'\\\r\n', b'').replace(b'\\\n', b'')
         if any(word in text for word in (b'__TIME__', b'__DATE__', b'__TIMESTAMP__',
                                         b'__FILE__', b'__BASE_FILE__', b'__has_include', b'##', b'%:%:', b'??')):
+            return False
+        text = text.replace(b'%:', b'#')
+        text = _COMMENTS_AND_STRINGS.sub(
+            lambda match: ' ' if match.group().startswith('/') else match.group(),
+            text.decode('utf-8', errors='replace')).encode()
+        for directive in re.finditer(rb'(?m)^\s*#\s*(include(?:_next)?|import)\b([^\n]*)', text):
+            include = re.match(rb'\s*"([^"\n]+)"', directive[2])
+            if directive[1] == b'include_next' or include is None or include[1] not in staged_names:
+                return False
+    return True
+
+
+def _captured_include_paths(command):
+    for index, arg in enumerate(command):
+        if arg == '-I' and command[index+1:index+2] == ['{include}']:continue
+        if arg == '-I{include}':continue
+        if arg.startswith(('-I', '-include', '-imacros', '-isystem', '-iquote', '-idirafter',
+                           '-iprefix', '-iwithprefix', '-Wp,', '/I', '/FI', '@')):
             return False
     return True
 
@@ -329,7 +348,8 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         staged = (session.staged if session else [(str(path.relative_to(inc)).encode(), path.read_bytes()) for path in sorted(inc.rglob('*')) if path.is_file()]) if share else []
         intrinsic = importlib.import_module(cfg.intrinsics).header().encode() if share and cfg.intrinsics else b''
         inputs = [source.encode(), cfg.prelude.encode(), intrinsic, *(part for entry in staged for part in entry)]
-        if share and _stable_inputs([*inputs, *(arg.encode() for arg in cfg.cmd)]):
+        if share and _captured_include_paths(cfg.cmd) and _stable_inputs(
+                [*inputs, *(arg.encode() for arg in cfg.cmd)], [name for name, _ in staged]):
             from .compile_sharing import run as shared_compile
             digest = hashlib.sha256(repr((cfg, sorted(os.environ.items()))).encode())
             for part in inputs:

@@ -27,6 +27,8 @@ User-controlled compiler commands without coordinator identity retain ordinary s
 Cancellation is checked before cache lookup and after compilation. Failures and timeouts are
 not cached. Artifact capture uses a fresh invocation/directory. Time/path macros, line-spliced
 forms, token pasting, digraphs/trigraphs and dynamic include probes disable object reuse.
+Uncaptured include/import directives, macro includes, external include-path flags and response
+files also compile fresh; literal includes in the captured header tree remain eligible.
 
 ## Scoring and verification
 
