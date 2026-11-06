@@ -535,7 +535,7 @@
         <div class="deep-dashboard">
         <section class="deep-queue-state" id="deepSweepQueueState" role="status">
           <div><h3 id="deepSweepQueueTitle">Ready to search</h3><p id="deepSweepQueueReason"></p></div>
-          <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Start search</button><button id="deepSweepStatusRetry" type="button" class="ghost small-btn" hidden>Retry status</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop</button></div>
+          <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Start search</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop</button></div>
         </section>
         <div class="deep-sweep-counts" id="deepSweepCounts" aria-label="Deep permuter results">
           <button type="button" class="deep-metric" id="deepSweepMetricMatched" aria-haspopup="dialog" title="View matched functions"><b id="deepSweepMatched">0</b><span>Matched<span aria-hidden="true">↗</span></span></button>
@@ -544,6 +544,7 @@
         </div>
         <div id="deepSweepPreparation" class="compiler-queue-count" hidden><span id="deepSweepPreparationText"></span><progress id="deepSweepPreparationBar" max="1" value="0" aria-label="Functions checked for search eligibility"></progress></div>
         <div class="deep-progress-heading"><span>Saved search coverage</span><span class="small" id="deepSweepRunChecked"></span></div>
+        <div id="deepSweepLoadingBar" class="workbar" role="progressbar" aria-label="Loading saved search totals" hidden><i></i></div>
         <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Saved completed search turns"></progress>
         <p class="deep-sweep-progress-text small muted" id="deepSweepProgressText"></p>
         <div class="deep-queue-details small muted">

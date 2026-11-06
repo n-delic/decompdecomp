@@ -20,7 +20,7 @@ const opened = [];
 const ctx = {AbortController,setTimeout,clearTimeout,renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String, openFn:name=>opened.push(name),
   document:{createElement:()=>({})},
   beginWork:()=>()=>finished++, showJobError:()=>{},
-  followJob:(job, log, callback, active)=>new Promise(resolve=>{follower={job,callback,active,resolve};}),
+  followJob:(job, log, callback, active)=>new Promise((resolve,reject)=>{follower={job,callback,active,resolve,reject};}),
   api:async url=>({state:url.includes("game-a")?"running":"idle",job:7,minutes:5,max_variants:100,
     errors:0,completed:0,improvements:[{function:"one",starting_score:10,starting_percent_text:"90%",new_score:5,new_percent_text:"95%"}]}),
 };
@@ -219,27 +219,71 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   oldFollower.resolve(null);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(finished,1);
+  const timers=[];
+  ctx.setTimeout=(fn,ms)=>{const timer={fn,ms,cancelled:false};timers.push(timer);return timer;};
+  ctx.clearTimeout=timer=>{if(timer)timer.cancelled=true;};
   ctx.S.slug="status-error";
   ctx.api=async()=>{throw new Error('Server unavailable');};
   await ctx.renderDeepSweep();
   assert.equal(element('deepSweepStart').disabled,false);
-  assert.match(element('deepSweepQueueTitle').textContent,/unavailable/);
-  assert.match(element('deepSweepQueueReason').textContent,/Server unavailable/);
-  assert.equal(element('deepSweepStatusRetry').hidden,false);
+  assert.match(element('deepSweepQueueTitle').textContent,/Reconnecting/);
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  assert.equal(element('deepSweepMatched').textContent,'—');
+  assert.equal(element('deepSweepLoadingBar').hidden,false);
+  assert.equal(element('deepSweepImproved').textContent,'—');
+  const retry=timers.findLast(t=>t.ms===5000&&!t.cancelled);
+  assert.ok(retry,'retry is scheduled automatically');
   ctx.api=async()=>({state:'idle',minutes:5,max_variants:100});
-  await element('deepSweepStatusRetry').onclick();
-  assert.equal(element('deepSweepStatusRetry').hidden,true);
-  let timeout;
-  ctx.setTimeout=fn=>{timeout=fn;return 1;};ctx.clearTimeout=()=>{};
+  await retry.fn();
+  assert.match(element('deepSweepQueueTitle').textContent,/Ready/);
+  assert.equal(element('deepSweepLoadingBar').hidden,true);
   ctx.S.slug='slow-status';
   let calls=0;
   ctx.api=(url,options)=>{calls++;return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('aborted'))));};
   const slow=ctx.renderDeepSweep();
-  assert.equal(element('deepSweepStart').disabled,false,'status loading must not silently gate Start');
-  await ctx.renderDeepSweep();assert.equal(calls,1,'polls must coalesce a pending status read');
-  timeout();await slow;
-  assert.match(element('deepSweepQueueReason').textContent,/15 seconds/);
-  assert.equal(element('deepSweepStatusRetry').disabled,false);
+  assert.equal(element('deepSweepStart').disabled,false,'loading progress must not gate Start');
+  await ctx.renderDeepSweep();assert.equal(calls,1,'polls coalesce a pending control request');
+  const timeout=timers.findLast(t=>t.ms===15000&&!t.cancelled);
+  timeout.fn();await slow;
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  assert.doesNotMatch(element('deepSweepQueueReason').textContent,/15 seconds|Retry status/);
+  // A slow statistics request cannot hide a discovered running job or its Stop action.
+  ctx.S.slug='slow-totals';
+  let rejectTotals, reads=0;
+  ctx.api=(url,options)=>{
+    reads++;
+    if(url.includes('view=control'))return Promise.resolve({job:'fast-live',state:'running',control_only:true,minutes:5,max_variants:100,has_activity:true,progress:{workers:[{}]}});
+    return new Promise((resolve,reject)=>{rejectTotals=reject;});
+  };
+  const totalsPending=ctx.renderDeepSweep();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(follower.job,'fast-live','attach before loading saved statistics');
+  assert.equal(element('deepSweepStop').hidden,false);
+  assert.equal(element('deepSweepStart').hidden,true);
+  follower.callback([], {state:'running',progress:{workers:[{},{}],functions_tested:4}});
+  rejectTotals(Error('Statistics are slow'));
+  await totalsPending;
+  assert.match(element('deepSweepQueueTitle').textContent,/Running/);
+  assert.equal(element('deepSweepStop').hidden,false);
+  assert.equal(element('deepSweepMatched').textContent,'—');
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  // Keep known totals and active controls through a later connection failure.
+  ctx.renderDeepSweepResults({has_activity:true,improved:2,improvements:[{function:'f',new_score:0}]});
+  ctx.renderDeepQueueState({job:'fast-live',state:'running',statistics_pending:false,queue_left:9,progress:{workers:[{},{}]}});
+  ctx.api=async()=>{throw Error('Temporary connection failure');};
+  await ctx.renderDeepSweep();
+  assert.equal(element('deepSweepMatched').textContent,'1');
+  assert.equal(element('deepSweepLeft').textContent,'9');
+  assert.equal(element('deepSweepStop').hidden,false);
+  follower.reject(Error('Temporary job connection failure'));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  assert.equal(element('deepSweepStop').hidden,false,'losing progress transport must not hide Stop');
+  const oldRetry=timers.findLast(t=>t.ms===5000&&!t.cancelled);
+  const beforeSwitch=reads;
+  ctx.S.slug='different-project';
+  await oldRetry.fn();
+  assert.equal(reads,beforeSwitch,'old project retries cannot query or update another project');
   ctx.renderDeepQueueState({state:'running',loop:true,progress:{cycle:3,functions_tested:8}});
   assert.match(element('deepSweepRunChecked').textContent,/Pass 3 · looping/);
   element('deepSweepLoop').checked=true;
@@ -265,3 +309,5 @@ assert.match(panel,/<div class="deep-dashboard">/);
 
 assert.ok(panel.indexOf('id="deepSweepSettings"') < panel.indexOf('id="deepSweepStart"'));
 assert.doesNotMatch(html,/id="deepSweepResults"/);
+
+assert.doesNotMatch(panel, /deepSweepStatusRetry|Retry status/);
