@@ -2980,3 +2980,5 @@ ABI analysis and automatic source/profile selection remain planned.
 
 - Done: Settings → Database storage exposes persisted repair evidence sampling controls,
   separate automatic/manual limits (0–1000), and unlimited capture mode for future examples.
+
+- Done: Settings discovers active storage compression, compaction, header cleanup and transcript jobs from the server when reopened; restores progress and Stop controls without starting duplicate work.

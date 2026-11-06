@@ -11,7 +11,9 @@ function renderHeaderStorage(data) {
   else $('headerStorageEstimate').textContent=`${Number(data.unused_versions).toLocaleString()} unused versions can be removed. Current and referenced headers are kept.`;
 }
 async function loadHeaderStorage() {
-  if(!headerStorageJob)renderHeaderStorage(await api('/api/header-storage'));
+  if(headerStorageJob)return;
+  const data=await api('/api/header-storage');
+  if(!headerStorageJob)renderHeaderStorage(data);
 }
 function closeHeaderStorageMenu(control) {
   const menu=control.closest?.('details');
@@ -24,21 +26,28 @@ $('headerStoragePreview').onclick=async()=>{
   try{renderHeaderStorage(await api('/api/header-storage',{method:'POST',body:{action:'preview'}}));}
   catch(error){showJobError(log,error.message);}finally{done();}
 };
-async function runHeaderStorage(action) {
+async function runHeaderStorage(action,existing=null) {
   if(headerStorageJob)return;
+  headerStorageJob='starting';
   const log=$('headerStorageLog'),stop=$('headerStorageStop');showJobError(log,'');
   const done=beginWork(log,action==='compact'?'Preparing database compaction':'Clearing unused C headers',
-    ['headerStorageStart','headerStoragePreview','headerStorageCompact'].map($),'Database maintenance complete');
+    ['headerStorageStart','headerStoragePreview','headerStorageCompact','databaseStorageCompact'].map($),'Database maintenance complete');
   try{
-    const {job}=await api('/api/header-storage',{method:'POST',body:{action}});
+    const job=existing?.id || (await api('/api/header-storage',{method:'POST',body:{action}})).job;
     headerStorageJob=job;stop.hidden=false;
+    $('headerStoragePanel').open=true;
+    $('headerStorageContext').textContent=action==='compact'?'— Database compaction running':'— Header cleanup running';
+    if(existing?.progress)updateWorkProgress(log,existing.progress);
     const result=await followJob(job,log,(_lines,state)=>updateWorkProgress(log,state.progress));
     if(result?.headers)renderHeaderStorage(result.headers);
     if(result)$('headerStorageEstimate').textContent=action==='compact'
       ? `Compaction reclaimed ${headerStorageSize(result.reclaimed_bytes)} on disk.`
       : `Removed ${Number(result.removed_versions || 0).toLocaleString()} unused versions and ${Number(result.removed_contents || 0).toLocaleString()} unreferenced contents. Current and referenced headers kept.`;
   }catch(error){showJobError(log,error.message);}
-  finally{headerStorageJob=null;stop.hidden=true;stop.disabled=false;done();}
+  finally{headerStorageJob=null;stop.hidden=true;stop.disabled=false;done();
+    $('databaseStorageCompact').disabled=typeof databaseStorageJob!=='undefined' && Boolean(databaseStorageJob);
+    if($('headerStorageContext').textContent.includes('running'))$('headerStorageContext').textContent='— Shared C headers';
+  }
 }
 $('headerStorageStart').onclick=()=>runHeaderStorage('headers');
 $('headerStorageCompact').onclick=()=>{closeHeaderStorageMenu($('headerStorageCompact'));return runHeaderStorage('compact');};

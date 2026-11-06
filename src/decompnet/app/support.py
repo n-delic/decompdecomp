@@ -114,6 +114,14 @@ class Jobs:
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
+    def active(self, kinds):
+        """Small server-owned snapshot for a returning panel; never include large logs/results."""
+        with self._lock:
+            job=next((j for j in reversed(self.jobs.values())
+                      if j['kind'] in kinds and j['state']=='running'),None)
+            if job is None:return None
+            return {key:job[key] for key in ('id','kind','state','progress') if key in job}
+
     def check_start(self) -> None:
         """Reject work before receiving a large upload when a source update is taking over."""
         with self._lock:
