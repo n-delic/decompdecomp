@@ -2843,3 +2843,12 @@ def test_push_is_queued_behind_sync_deduplicated_and_discoverable(app, monkeypat
         assert snapshot['state'] == 'cancelled' and not pushed
     finally:
         release.set()
+
+
+def test_deep_controls_are_discovered_without_loading_statistics(app, monkeypatch):
+    client, net, _ = app
+    monkeypatch.setattr(net.deep_sweeps, 'status', lambda *a: pytest.fail('Must not read statistics'))
+    monkeypatch.setattr(net.deep_sweeps, 'control', lambda slug: {'job':'search-job','state':'running','control_only':True,'project':slug})
+    response = client.get('/api/permuter/pass?slug=example&view=control')
+    assert response.status_code == 200
+    assert response.json()['job'] == 'search-job' and response.json()['control_only']

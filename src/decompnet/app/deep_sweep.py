@@ -244,6 +244,17 @@ class Sweeps:
                 db.executemany("UPDATE deep_permutation_passes SET state='pending',error='' WHERE function_id=?",[(fid,) for fid in ids])
             with self.lock:self.queue_cache.clear()
 
+    def control(self, slug):
+        """Discover work and controls without scanning saved searches or build inputs."""
+        cfg = self.config(slug)
+        with self.lock:
+            current = dict(self.active.get(slug, {}))
+        with self.jobs._lock:
+            job = self.jobs.jobs.get(current.get('job'), {})
+            live = {key:job[key] for key in ('state', 'progress', 'error') if key in job}
+        return cfg | {'control_only':True, 'threads_default':workers.default_workers(),
+                      'has_activity':bool(job or cfg.get('metrics_started')), 'state':'idle', **current, **live}
+
     def status(self, slug):
         # A status poll must never queue behind a writer to repair old pass records.
         # The search worker performs recovery; until then transport errors and rotations are retryable.
@@ -320,7 +331,7 @@ class Sweeps:
         with self.lock:
             previous = self.active.get(slug, {})
             if self.jobs.jobs.get(previous.get('job'), {}).get('state') == 'running':
-                raise NetworkError('A deep pass is already running for this project. Stop it before starting another.')
+                return self.control(slug)
             if repeat:
                 self.queue_cache.clear()
                 with self.net.store.tx() as db:
@@ -331,7 +342,7 @@ class Sweeps:
             job = self.jobs.start('deep-permutation-pass', lambda log: self.run(slug, minutes, max_variants, log, threads, loop),
                                   cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}
-        return self.status(slug)
+        return self.control(slug)
 
     def stop(self, slug):
         with self.lock:
@@ -340,7 +351,7 @@ class Sweeps:
             job = self.active.get(slug, {}).get('job')
             if job:
                 self.jobs.cancel(job)
-        return self.status(slug)
+        return self.control(slug)
 
     def resume(self):
         """Leave interrupted passes stopped; the user starts them again when ready."""
