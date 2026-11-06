@@ -171,7 +171,7 @@
   <header class="page-head">
     <p class="eyebrow">Public decomps</p>
     <h1>Continue a public decomp</h1>
-    <p class="muted">Paste a community decomp's repository and add your own copy of its game. Before anything is cloned, decompdecomp shows what the project says about AI and contributions: every project decides that for itself. Your fork stays on this computer; decompdecomp never pushes it or opens pull requests.</p>
+    <p class="muted">Paste a community decomp's repository and add your own copy of its game. Before anything is cloned, decompdecomp shows what the project says about AI and contributions: every project decides that for itself. Your fork stays on this computer until you push it or enable automatic pushing in Settings. decompdecomp does not open pull requests.</p>
     <div class="row repo-row"><input id="repoUrl" class="mono" placeholder="https://github.com/owner/repo" aria-label="Repository address"><button class="primary" id="repoFork" type="button" disabled>Look at it</button></div>
     <p class="muted small" id="repoWhy" role="status"></p>
     <h2>Import checked-out projects</h2>
@@ -693,10 +693,17 @@
               <pre class="joblog" id="repositorySetupLog" hidden></pre>
               <div class="repository-auto-commit" id="repositoryAutoCommitGroup">
                 <label class="check"><input type="checkbox" id="repositoryAutoCommit" aria-describedby="repositoryAutoCommitAbout repositoryAutoCommitState"><span>Automatically commit new matches</span></label>
-                <p class="small muted" id="repositoryAutoCommitAbout">Commit each new match with its agent notes or “Match &lt;function&gt;”, who found it and available repair summaries. Remove its previous best draft in the same commit. Commits stay local until you push.</p>
+                <p class="small muted" id="repositoryAutoCommitAbout">Commit each new match with its agent notes or “Match &lt;function&gt;”, who found it and available repair summaries. Remove its previous best draft in the same commit. Commits stay local unless you enable automatic pushing.</p>
                 <p class="small muted" id="repositoryAutoCommitState" role="status"></p>
                 <button class="ghost small-btn" type="button" id="repositoryAutoCommitDetails" hidden>Pending commits</button>
                 <pre class="joblog" id="repositoryAutoCommitLog" hidden></pre>
+              </div>
+              <div class="repository-auto-commit" id="repositoryAutoPushGroup">
+                <label class="check"><input type="checkbox" id="repositoryAutoPush" aria-describedby="repositoryAutoPushAbout repositoryAutoPushState"><span>Automatically push commits to origin</span></label>
+                <label class="field"><span>Push after this many unpushed commits · 1–10,000</span><input id="repositoryAutoPushThreshold" type="number" min="1" max="10000" step="1" value="10"></label>
+                <p class="small muted" id="repositoryAutoPushAbout">Push all committed changes, including existing commits, when the threshold is reached. Checks origin first; pauses if the branch or remote changes or histories diverge. Uncommitted work stays local.</p>
+                <p class="small muted" id="repositoryAutoPushState" role="status"></p>
+                <pre class="joblog" id="repositoryAutoPushLog" hidden></pre>
               </div>
               <div class="repository-publish">
                 <p class="small muted" id="repositoryPushState" role="status">Choose a linked Git checkout to see unpushed commits.</p>

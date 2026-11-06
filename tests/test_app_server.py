@@ -2776,6 +2776,21 @@ def test_close_window_keep_working_explains_background_state_in_terminal(app,mon
     assert 'keep working in the background' in capsys.readouterr().err
 
 
+def test_auto_push_preference_requires_write_guard_and_valid_threshold(app, monkeypatch):
+    from decompnet.app import auto_push
+    client, net, _ = app
+    calls = []
+    def configure(net, slug, enabled, threshold, folder):
+        calls.append((slug, enabled, threshold, folder))
+        return {'enabled':enabled, 'threshold':threshold}
+    monkeypatch.setattr(auto_push, 'configure', configure)
+    data = {'slug':'game', 'enabled':True, 'folder':'/repo'}
+    assert client.post('/api/repository-auto-push', json=data).status_code == 403
+    response = client.post('/api/repository-auto-push', json=data, headers={'X-Decomp':'1'})
+    assert response.status_code == 200 and response.json()['threshold'] == 10
+    assert calls == [('game', True, 10, '/repo')]
+
+
 def test_tools_catalog_exposes_wibo_on_mac(app, monkeypatch):
     client, net, manager = app
     monkeypatch.setattr(toolchains, 'current_platform', lambda:'macos-arm64')

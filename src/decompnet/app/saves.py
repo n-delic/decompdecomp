@@ -1088,6 +1088,32 @@ class Autosave:
                 return
             self.thread = threading.Thread(target=self._loop, daemon=True, name="autosave-coordinator")
             self.thread.start()
+            self.push_thread = threading.Thread(target=self._push_loop, daemon=True, name="automatic-git-push")
+            self.push_thread.start()
+
+    def _push_loop(self):
+        # Network latency must not occupy the autosave lane or the matching callers.
+        from . import auto_push
+        def check_cancel():
+            if self.stop.is_set():raise _AutosavePaused("Automatic pushing stopped")
+        while not self.stop.is_set():
+            try:
+                rows = self._projects()
+            except Exception:
+                if self.stop.is_set():return
+                log.exception("Could not read projects for automatic Git push")
+                self.stop.wait(5)
+                continue
+            for row in rows:
+                if self.stop.is_set():return
+                try:
+                    if not json.loads(row["config"]).get("auto_push", {}).get("enabled"):continue
+                    auto_push.process(self.net, row["slug"], log.info, check_cancel)
+                except _AutosavePaused:
+                    return
+                except Exception:
+                    log.exception("Could not check automatic Git push for %s", row["slug"])
+            self.stop.wait(5)
 
     def close(self):
         self.stop.set()
