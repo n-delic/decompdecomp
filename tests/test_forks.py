@@ -364,6 +364,23 @@ def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for(
     assert csource.structor("void CFoo::Update() {}\nCFoo::CFoo();\n" + c) is None
 
 
+def test_the_definition_the_build_sees_beside_a_parked_one_is_found_by_its_annotation_too():
+    """A function found by its `// FUNCTION:` annotation: past the parked copy there's no annotation, so the `#else`
+    copy wasn't found, and a try put a second definition beside it (every compile a build error)."""
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fp = SimpleNamespace(never_defined=lambda names: set(names))  # (no build defines PARKED)
+    key = csource.address_key(0x11000)
+    text = ("// FUNCTION: 0x11000\n#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#else\nint f(void) {\n"
+            "    return 1;\n}\n#endif\nint g(void) {\n    f();\n    if (1) {\n    }\n}\n")
+    span = csource.find(text, key)
+    assert text[span[0]:span[1]].endswith("return 2;\n}\n")
+    seen = ForkEngine._seen_beside(fp, text, span, key, [key, "func_00011000"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
+
+
 def test_csource_takes_no_macro_written_prototype_for_a_definition():
     """A function written inside a macro without a body (`HEADER_INLINE(int Clamp(int x))`, a project's marker for
     a header inline) was found as a definition running to the next function's `{`: its brief showed the stretch in
@@ -389,6 +406,13 @@ def test_an_annotated_function_isnt_the_inline_helper_before_it():
     assert src[span[0]:span[1]].startswith("int Score(int x)")
     span = csource.find(src, csource.address_key(0x11040))  # an inline function annotated itself is still found
     assert src[span[0]:span[1]].startswith("static inline int Only(void)")
+    # an annotated inline G before H is G when G is the function's name, as the LTCG judge's dll2coff takes it: a try
+    # on G replaced H
+    src = "// FUNCTION: 0x11000\ninline void G()\n{\n}\n__declspec(noinline) void Car::H()\n{\n}\n"
+    key = csource.address_key(0x11000)
+    assert csource.get(src, key, [key, "G"]).startswith("inline void G()")
+    assert csource.get(src, key, [key, "func_00011000"]).startswith("__declspec(noinline) void Car::H()")
+    assert csource.get(src, key, [key, "Car::H", "H"]).startswith("__declspec(noinline) void Car::H()")
 
 
 def test_clone_rejects_odd_sources(tmp_path):
@@ -1288,6 +1312,19 @@ def test_builds_asked_for_during_a_run_go_together_in_the_next():
         raise AssertionError("b's error was lost")
     except OSError as e:
         assert str(e) == "b's own" and e.__cause__ is None
+    # the engine's run passes it on too: a project made from scratch read every result as (built, log), and the
+    # TypeError went to the whole batch
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    engine = ForkEngine.__new__(ForkEngine)
+    engine._build_locks = defaultdict(threading.Lock)
+    raised = OSError("a's own")
+    fp = SimpleNamespace(manifest={"created": "from scratch", "setup": []},
+                         build_units=lambda units: [raised, (False, "ninja: error: unknown target 'b.obj'")])
+    assert engine._build_units({"id": 1}, fp, ["a", "b"]) == [raised, (False, "ninja: error: unknown target 'b.obj'")]
 
     builds, runs = _UnitBuilds(), []
     first, release = threading.Event(), threading.Event()

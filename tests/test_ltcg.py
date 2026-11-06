@@ -575,6 +575,9 @@ def test_an_ltcg_units_parts_belong_to_it_and_a_function_is_rewritten_where_it_i
     scores = "int func_00011210(int x)\n{\n    return x * 3;\n}\n"
     (root / "src" / "auto" / "u.scores.cpp").write_text(scores)
     (root / "src" / "auto" / "u.main.cpp").write_text("void func_000117F0(void)\n{\n}\n")
+    (root / "harness").mkdir()
+    drv = 'extern "C" __declspec(dllexport) void HarnessEntry(void)\n{\n}\n'
+    (root / "harness" / "u.drv.cpp").write_text(drv)
     fp = ForkProject(root)
     unit = fp.unit("u")
     assert [u.name for u in fp.units_for("src/auto/u.scores.cpp")] == ["u"]
@@ -585,6 +588,11 @@ def test_an_ltcg_units_parts_belong_to_it_and_a_function_is_rewritten_where_it_i
     assert engine._home(fp, unit, ["func_00099999"])[0] == "src/auto/u.cpp"  # a new function: the source file
     assert "func_000117F0" in engine._unit_text(fp, unit) and "x * 3" not in engine._unit_text(
         fp, unit, "src/auto/u.scores.cpp", "")
+    # a unit built plain (its driver has no HarnessEntry) builds its source alone: a part beside it isn't its code
+    # (the app wrote its functions there, and the build never compiled them into the unit)
+    (root / "harness" / "u.drv.cpp").write_text("// " + drv.replace("\n", "\n// "))
+    assert fp.units_for("src/auto/u.scores.cpp") == [] and fp.unit_files(unit) == ["src/auto/u.cpp"]
+    (root / "harness" / "u.drv.cpp").write_text(drv)
     # without LTCG a file named like a part is no unit's: every file builds on its own there
     (root / ".decomp.wtf.json").write_text(json.dumps({"ltcg": False}))
     assert fp.units_for("src/auto/u.scores.cpp") == [] and fp.unit_files(unit) == ["src/auto/u.cpp"]
@@ -699,6 +707,14 @@ def test_the_brief_shows_a_functions_register_parameters_and_how_its_callers_set
     # only LTCG projects get it
     assert ForkEngine._convention_brief(SimpleNamespace(root=root, manifest={**manifest, "ltcg": False}),
                                         {"symbol": "_C"}, {"name": "C"}) == []
+    # a heuristic: one that fails on an odd call site leaves the brief out, never the function's brief itself
+    fp = SimpleNamespace(root=root, manifest=manifest)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(convention, "evidence", lambda prog, addr: [][0])
+        assert ForkEngine._convention_brief(fp, {"symbol": "_C"}, {"name": "C"}) == []
+        # and nothing found says nothing (it listed no registers under its heading)
+        mp.setattr(convention, "evidence", lambda prog, addr: [])
+        assert ForkEngine._convention_brief(fp, {"symbol": "_C"}, {"name": "C"}) == []
 
 
 def test_ltcg_is_detected_from_call_sites_that_load_registers_no_standard_convention_uses(tmp_path, monkeypatch):

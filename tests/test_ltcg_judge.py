@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.consoles.pc.scratch import DIR32
 
@@ -204,15 +206,17 @@ def test_jump_table_entries_going_elsewhere_are_a_difference(tmp_path):
         "+0x14: goes to +0xD in yours, +0xE in the original (a jump table entry)"]
 
 
-def _cut(tmp_path: Path, source: str, obj: str, helper: str = "") -> dict:
+def _cut(tmp_path: Path, source: str, obj: str, helper: str = "", name: str = "?G@@YAXXZ", given: str = "") -> dict:
     """dll2coff on one function G (`ret`) at 0x11000, ours at 0x10001000 from map object `obj`, the unit's source
     `source` (u.cpp): its .ltcg.json. `helper`: ours has that function too (`mov eax, [esp+4]; ret`) at 0x10001000,
-    in the map, and G after it at 0x10001010."""
+    in the map, and G after it at 0x10001010. `name`: the original's symbol for 0x11000 in functions.json; `given`:
+    the real name the project gave it there ("names")."""
     exe = b"\xc3".ljust(0x40, b"\xcc")
     (tmp_path / "game.bin").write_bytes(exe)
-    units = {"u": [{"name": "?G@@YAXXZ", "addr": 0x11000, "offset": 0, "size": 1, "relocs": []}]}
+    units = {"u": [{"name": name, "addr": 0x11000, "offset": 0, "size": 1, "relocs": []}]}
     (tmp_path / "functions.json").write_text(json.dumps({"exe": str(tmp_path / "game.bin"),
-                                                         "sha1": hashlib.sha1(exe).hexdigest(), "units": units}))
+                                                         "sha1": hashlib.sha1(exe).hexdigest(), "units": units,
+                                                         **({"names": {"func_00011000": given}} if given else {})}))
     text, publics = b"\xc3" + b"\xcc" * 4, f" 0001:00000000       ?G@@YAXXZ                  10001000 f   {obj}\n"
     if helper:
         text = bytes.fromhex("8b442404c3").ljust(0x10, b"\xcc") + b"\xc3" + b"\xcc" * 4
@@ -254,9 +258,43 @@ def test_an_inline_helper_in_the_map_isnt_judged_as_the_annotated_function(tmp_p
     side = _cut(tmp_path, "// FUNCTION: 0x11000\ninline void G()\n{\n}\nvoid H()\n{\n}\n", "00_u.obj",
                 helper="?H@@YAXXZ")
     assert side["functions"]["?G@@YAXXZ"]["symbol"] == "?G@@YAXXZ" and side["problems"] == []
+    # in a project started from scratch the symbol is _func_<address>, and the real name is the project's "names"
+    side = _cut(tmp_path, "// FUNCTION: 0x11000\ninline void G()\n{\n}\nvoid H()\n{\n}\n", "00_u.obj",
+                helper="?H@@YAXXZ", name="_func_00011000", given="G")
+    assert side["functions"]["_func_00011000"]["symbol"] == "?G@@YAXXZ" and side["problems"] == []
     # with no name for the address (func_<address>), the first that isn't inline, as the app's csource takes it
     text = "// FUNCTION: 0x11000\nstatic inline int Tail(int x)\n{\n    return x;\n}\nvoid G()\n{\n}\n"
-    at = text.index("\n") + 1
-    assert dll2coff.definition(text, dll2coff._blank(text), at, len(text), "_func_00011000") == "void G("
-    assert dll2coff.definition(text, dll2coff._blank(text), at, len(text), "?Tail@@YAHH@Z") == \
-        "static inline int Tail("
+    at, clean = text.index("\n") + 1, dll2coff._blank(text)
+    assert dll2coff.definition(text, clean, at, len(text), ["_func_00011000", ""]) == "void G("
+    assert dll2coff.definition(text, clean, at, len(text), ["?Tail@@YAHH@Z"]) == "static inline int Tail("
+    # a C symbol, and a real name with or without its class
+    text = "// FUNCTION: 0x11000\ninline int __stdcall Tail(int x)\n{\n    return x;\n}\nvoid Car::Go()\n{\n}\n"
+    clean = dll2coff._blank(text)
+    assert dll2coff.definition(text, clean, at, len(text), ["_Tail@4"]) == "inline int __stdcall Tail("
+    assert dll2coff.definition(text, clean, at, len(text), ["_func_00011000", "Tail"]) == "inline int __stdcall Tail("
+    assert dll2coff.definition(text, clean, at, len(text), ["_func_00011000", "Car::Go"]) == "void Car::Go("
+    assert dll2coff.definition(text, clean, at, len(text), ["_func_00011000", "Bus::Go"]) == "void Car::Go("
+
+
+@pytest.mark.parametrize("text,app,judge", [
+    # a method name as it is before the same name of another class (a bare `Go` is any class's)
+    ("inline void Bus::Go()\n{\n}\nvoid Car::Go()\n{\n}\n",
+     ["Car::Go", "Go", "?Go@Car@@QAEXXZ"], ["?Go@Car@@QAEXXZ"]),
+    # a definition named by the address itself is the function
+    ("inline int func_00011000(int x)\n{\n    return x;\n}\nvoid H()\n{\n}\n",
+     ["_func_00011000", "func_00011000"], ["_func_00011000"]),
+    # the real name the project gave the address
+    ("inline void G()\n{\n}\nvoid H()\n{\n}\n", ["G", "_func_00011000", "func_00011000"], ["_func_00011000", "G"]),
+    # no name says: the first that isn't inline
+    ("inline void G()\n{\n}\nvoid H()\n{\n}\n", ["_func_00011000", "func_00011000"], ["_func_00011000", ""]),
+])
+def test_the_app_and_the_judge_take_the_same_definition_for_an_annotation(text, app, judge):
+    """The app's csource writes a try where the judge's dll2coff then cuts the function out: when they took different
+    definitions, a try replaced one function and another was compared."""
+    from decompnet.forks import csource
+
+    text = "// FUNCTION: 0x11000\n" + text
+    key = csource.address_key(0x11000)
+    at, clean = text.index("\n") + 1, dll2coff._blank(text)
+    first = csource.get(text, key, [key, *app]).split("\n", 1)[0]
+    assert first.startswith(dll2coff.definition(text, clean, at, len(text), judge)), first

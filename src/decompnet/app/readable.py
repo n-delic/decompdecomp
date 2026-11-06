@@ -110,9 +110,10 @@ class Readability:
         if self.net.is_rom(proj):
             return fn["matched_source"] or ""
         fp = ForkProject(Path(proj["root"]))
+        if found := self.net.forks._current_source(fp, fn, comment=True):
+            return found
         inline = self.net.forks.inline_definition(fp, fn)  # (a header's inline: its file has only a marker)
-        return (self.net.forks._current_source(fp, fn, comment=True) or (inline[1] if inline else "")
-                or fn["matched_source"] or "")
+        return (inline[1] if inline else "") or fn["matched_source"] or ""
 
     def counts(self, proj) -> dict:
         """The game's own code only (GAME_CODE): library code set aside is out of progress, so out of polishing too."""
