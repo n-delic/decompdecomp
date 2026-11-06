@@ -30,7 +30,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, console_python
 
-from ..limits import capped, killed_for_memory
+from ..limits import CompilerMemoryWatchdog, capped, killed_for_memory, stop_group
 from ..network import NetworkError
 from . import objdiff
 
@@ -462,25 +462,32 @@ class ForkProject:
         log("$ " + " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd)))
         try:
             proc = subprocess.Popen(capped(cmd), cwd=self.root, env=env, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8", creationflags=NO_WINDOW)
+                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8",
+                                    creationflags=NO_WINDOW, start_new_session=os.name != "nt")
         except FileNotFoundError:
             return False, f"{cmd[0]} isn't installed"
-        out, seen, quiet = [], collections.Counter(), 0
-        for line in proc.stdout:
-            line = line.rstrip()
-            out.append(line)
-            if failed is not None and (m := _FAILED.match(line)):
-                failed.extend(t for t in (m.group(1) or m.group(2)).split() if t not in failed and not t.startswith("[code="))
-            seen[line] += 1
-            if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
-                quiet += 1
-            elif len(out) <= 400 or len(out) % 50 == 0:
-                log(line)
         try:
-            code = proc.wait(timeout=timeout)
+            with CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
+                out, seen, quiet = [], collections.Counter(), 0
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    out.append(line)
+                    if failed is not None and (m := _FAILED.match(line)):
+                        failed.extend(t for t in (m.group(1) or m.group(2)).split() if t not in failed and not t.startswith("[code="))
+                    seen[line] += 1
+                    if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
+                        quiet += 1
+                    elif len(out) <= 400 or len(out) % 50 == 0:
+                        log(line)
+                code = proc.wait(timeout=timeout)
+            if watchdog.timed_out:
+                return False, f"Build timed out after {timeout}s; its child processes were stopped."
+            if watchdog.exceeded:
+                out.append(watchdog.message())
         except subprocess.TimeoutExpired:
-            proc.kill()
-            return False, "timed out"
+            return False, f"Build timed out after {timeout}s; its child processes were stopped."
+        finally:
+            stop_group(proc)
         if quiet:
             log(f"({quiet} repeated lines and linker warnings not shown)")
         if killed_for_memory(code):
