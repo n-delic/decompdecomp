@@ -239,3 +239,73 @@ def test_cpu_handoff_limits_the_real_search_deadline_and_claim_policy(tmp_path):
     cpu,_=net.local_agent('cpu')
     assert not search._hold(cpu,fn,count_turn=False)
     assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?',fn['id'])['agent_id']==a.id
+
+
+def test_shared_saved_recheck_publishes_diff_for_each_requesting_agent(tmp_path, monkeypatch):
+    """get_candidate must not report a verified cached baseline then strand last_diff."""
+    import pytest
+
+    from decompnet import scoring
+    from decompnet.network import NetworkError
+
+    net, a, fn = game(tmp_path)
+    b, _ = net.local_agent('reader')
+    calls = []
+
+    def measure(net, agent, slug, fn, source, diagnostic=False):
+        calls.append(agent.id)
+        report = {'score':30, 'source':source, 'verified':True,
+                  'rows':[('i','add a,b,c','sub a,b,c')], 'legend':scoring.LEGEND}
+        key = agent_evidence.scope(net,agent,fn)+(hashlib.sha256(source.encode()).hexdigest(),)
+        net.__dict__.setdefault('_baseline_evidence',{})[key] = report
+        return report
+
+    monkeypatch.setattr(agent_evidence, '_baseline', measure)
+    assert 'current rechecked score 30' in agent_tokens.get_candidate(net,a,'game','f')
+    assert 'current rechecked score 30' in agent_tokens.get_candidate(net,b,'game','f')
+    assert calls == [a.id]  # Same saved-source/build recheck, not another compile.
+    assert 'sub a,b,c' in agent_tokens.diff_page(net,b,'game','f')
+    assert net._function('f','game')['best_score'] == 10
+    assert net.store.one('SELECT COUNT(*) AS n FROM attempts')['n'] == 1
+
+    # Reuse after a new lease gets the current agent/claim scope, not the old one.
+    net._last_diffs.clear()
+    net.claim_row(b,'game','f')
+    agent_tokens.get_candidate(net,b,'game','f')
+    assert 'sub a,b,c' in agent_tokens.diff_page(net,b,'game','f')
+    assert calls == [a.id]
+
+    # A changed source or target cannot borrow that verified baseline.
+    net._last_diffs.clear()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='int f(){return 9;}' WHERE id=?",(fn['id'],))
+    with pytest.raises(NetworkError,match='No verified diff'):
+        agent_tokens.diff_page(net,b,'game','f')
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,target=? WHERE id=?',(fn['best_source'],b'changed',fn['id']))
+    with pytest.raises(NetworkError,match='No verified diff'):
+        agent_tokens.diff_page(net,b,'game','f')
+
+
+def test_shared_diff_publication_does_not_relabel_evidence_after_inputs_change(tmp_path, monkeypatch):
+    import copy
+
+    import pytest
+
+    from decompnet.network import NetworkError
+
+    net, a, fn = game(tmp_path)
+    monkeypatch.setattr(agent_evidence,'_baseline',lambda *args,**kwargs:
+                        {'score':30,'source':fn['best_source'],'verified':True,'rows':[('i','old','candidate')]})
+    original_copy = copy.deepcopy
+
+    def deliver(result):
+        # Inputs change after cache freshness validation but before per-agent publication.
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET target=? WHERE id=?',(b'new target',fn['id']))
+        return original_copy(result)
+
+    monkeypatch.setattr(agent_evidence.copy,'deepcopy',deliver)
+    assert agent_evidence.baseline(net,a,'game',fn,fn['best_source'])['verified']
+    with pytest.raises(NetworkError,match='No verified diff'):
+        agent_tokens.diff_page(net,a,'game','f')

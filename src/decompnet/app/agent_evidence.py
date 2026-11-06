@@ -49,6 +49,8 @@ def shared_baseline(net, agent, slug, fn, source, diagnostic=False):
         result=net.store.read_cache.get(('agent-saved-baseline',fn['id']),stamp,measure,ttl=10 if net.fork_slug(slug) else None)
     except Unavailable as error:
         return error.report if diagnostic else None
+    # Freeze the publication key before validation; a later input edit must not retag old rows.
+    request_scope=scope(net,agent,fn)
     fresh=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
     if not fresh or build_key(net,fresh)!=stamp:
         return None  # Inputs changed during the diagnostic; no comparable score is inferred.
@@ -56,7 +58,12 @@ def shared_baseline(net, agent, slug, fn, source, diagnostic=False):
     saved[fn['id']]=(stamp,result)
     while len(saved)>64:
         del saved[next(iter(saved))]
-    return copy.deepcopy(result)
+    measured=copy.deepcopy(result)
+    # A shared diagnostic may have been built for another worker/lease. Publish its
+    # independently copied rows in this request's scope so last_diff can read them.
+    if measured.get('verified'):
+        _remember_baseline(net,request_scope,source,measured)
+    return measured
 
 
 def _baseline(net,agent,slug,fn,source,diagnostic=False):
@@ -124,17 +131,22 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
 
     # Imported diagnostic restoration can advance the compile generation. Cache against the
     # restored state, so the next read reuses evidence for that state rather than rebuilding.
-    key=scope(net,agent,fn)+(hashlib.sha256(source.encode()).hexdigest(),)
     measured['input_scope']=build_key(net,fn)[0]
+    _remember_baseline(net,scope(net,agent,fn),source,measured)
+    return measured
+
+
+def _remember_baseline(net,request_scope,source,measured):
+    key=request_scope+(hashlib.sha256(source.encode()).hexdigest(),)
+    cache=net.__dict__.setdefault('_baseline_evidence',{})
     cache[key]=measured
     if measured.get('rows') is not None:
         states=getattr(net,'_unchanged_output',{})
         net._unchanged_output=states
         fingerprint=hashlib.sha256(repr((measured['score'],measured['rows'])).encode()).hexdigest()
-        states.setdefault(scope(net,agent,fn),{'seen':{fingerprint},'repeated':0})
+        states.setdefault(request_scope,{'seen':{fingerprint},'repeated':0})
     while len(cache)>64:
         del cache[next(iter(cache))]
-    return measured
 
 
 def preflight(net,agent,slug,fn,source):

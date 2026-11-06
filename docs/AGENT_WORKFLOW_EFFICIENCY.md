@@ -34,6 +34,9 @@ bounded single-flight read cache. Keys include build inputs, the saved-source ha
 revision. Imported build dependencies are hashed too. Shared entries expire after ten seconds
 for imported projects; ROM entries last while their input scope and bounded cache entry remain valid. Input changes and source-only edits
 invalidate them; transactional callers bypass sharing. Failed probes are not shared verdicts.
+Each successful shared hit also publishes independently copied rows in the requesting
+worker’s current claim/build scope. `last_diff` can page that evidence after
+`get_candidate` without another compile; source/build changes still invalidate it.
 
 Feedback distinguishes the historical saved score, the saved C rechecked with current inputs,
 and the exploratory candidate. Older recorded settings remain unavailable when they were never

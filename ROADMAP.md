@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: shared saved-C baseline hits publish independent diff evidence for the requesting
+  worker and lease, so `last_diff` can read a rechecked candidate without compiling again.
+  Source/build scope guards and ordinary exact-match adoption remain unchanged.
+
 - Done: copied `project/function` claim labels resolve with an explicit matching project,
   including imported `symbol@unit` paths and ordinary alias/held-claim selection.
   Exact stored names, project isolation and ambiguous-name errors retain precedence.
