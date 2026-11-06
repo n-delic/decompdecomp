@@ -9,6 +9,7 @@ import threading
 import time
 
 from .. import scoring
+from ..compile_sessions import batched
 from ..network import NetworkError
 from ..project import compiler_for
 from ..repair_feedback import current_trial
@@ -677,6 +678,7 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
         lock.release()
 
 
+@batched
 def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
     proj, fn = validate(net, slug, name, minutes, max_variants)
