@@ -2789,3 +2789,12 @@ def test_auto_push_preference_requires_write_guard_and_valid_threshold(app, monk
     response = client.post('/api/repository-auto-push', json=data, headers={'X-Decomp':'1'})
     assert response.status_code == 200 and response.json()['threshold'] == 10
     assert calls == [('game', True, 10, '/repo')]
+
+
+def test_tools_catalog_exposes_wibo_on_mac(app, monkeypatch):
+    client, net, manager = app
+    monkeypatch.setattr(toolchains, 'current_platform', lambda:'macos-arm64')
+    rows = client.get('/api/state').json()['toolchains']
+    row = next(t for t in rows if t['id'] == 'wibo')
+    assert row['supported'] and row['kind'] == 'tool'
+    assert 'Windows' in row['use'] and 'macOS' in row['use']
