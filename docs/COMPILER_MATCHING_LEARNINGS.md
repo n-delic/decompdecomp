@@ -4893,3 +4893,16 @@ macros, real matching macro/array RHS indices1/2 and CFG dominance of the new
 initialization. It excludes hidden scope/control/type/line observers, preserves
 literal int type and creates only a genuinely consumed local. The same external
 PROJECT invocation-evidence coverage gap as promoted-entry repairs remains.
+
+
+### Do not infer const pointee contracts from read-only bodies
+
+A bounded V-Rally coordinate dependency correction independently recovered exact
+844-byte `func_8003035C` output using a common nonconst void-pointer entry and
+actual byte-addressed halfword fields. A control adding const both to the formal
+and read casts gave 790/824 bytes; removal recovered exact output. This is combined
+qualification evidence, not a general claim about one const token or all GCC
+versions. The KMC guide records the flags, limitations and caller-narrowing rule.
+No blanket qualification-removal family is enabled: compatible known caller
+contracts and actual object storage must guide a change before the unchanged judge
+can establish a match.

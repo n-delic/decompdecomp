@@ -1022,3 +1022,30 @@ statement-boundary proposal. It remains nonexact. Initializing the local earlier
 at entry regressed1202, so do not treat all equivalent constant captures as the
 same optimizer input. Preserve signed negative-even coordinate semantics and
 actual array/whole-object bounds; do not silently substitute unsigned arithmetic.
+
+
+### Coordinate API qualification can change load reuse
+
+A copied `func_8003035C` contract correction illustrates why inferred pointer
+qualification needs evidence. With KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+the common byte-addressed entry `s32(void *, s32, void *)` reproduces all 844 target
+bytes. Adding `const` to the position formal **and** its halfword/byte read casts
+instead gives score 790 and 824 bytes, with load reuse and register differences.
+Removing those added qualifications restores the exact output. This combined
+control does not isolate which qualifier caused each optimizer decision.
+
+Read-only behavior alone does not establish the original declaration. Keep
+callee and caller prototypes compatible, preserve actual narrowing explicitly
+(for these callers, `(s16)` on the s32 result), and check whole-object pointer
+bounds and actual scalar field types. Here complete record/array pointers and
+byte-based component accesses avoid pretending scalar struct members form an
+array. An exact object still does not prove every runtime allocation or arithmetic
+bound in the game.
+
+Do not turn this into a universal remove-const repair or infer a change to an
+external API. First compare a grounded compatible declaration against the current
+one using the same header, profile, target and linked-byte judge. In particular,
+`const T *` and `T *` are different parameter contracts when declarations are
+shared between translation units; synchronize any justified correction with all
+known callers. Keep unknown indirect callers and unproven storage assumptions
+visible in the investigation notes.
