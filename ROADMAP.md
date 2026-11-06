@@ -804,3 +804,10 @@ The answer goes here: build it, build part of it, or not, and why.
 - **A Flatpak** on the GNOME runtime.
 - **macOS signed/notarized** distribution and a menu bar tray icon.
 - **macOS memory, CPU and file-size caps** for compiler processes (Linux currently uses systemd scopes).
+
+
+### Call-argument scheduling probes
+- ROM permuter: up to 12 inline-return candidates before random mutations, within the existing turn budget.
+  Literal argument swaps are paired with helper extraction so a worse intermediate score does not block discovery.
+- Project mode: automatic helper insertion — planned. Its single-function attempt API refuses extra definitions;
+  a transactional file-edit probe with rollback is needed. Agents can use the shared guidance with edit_file today.
