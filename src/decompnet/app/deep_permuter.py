@@ -200,7 +200,8 @@ class Search(Permuter):
         self.measurement_counts.clear()
 
     def _compiler_preflight(self, proj, fn, state, deadline):
-        if getattr(getattr(self, 'parallel_lane', None), 'index', 0):
+        lane = getattr(self, 'parallel_lane', None)
+        if lane is not None and (lane.index or lane.preflight_done):
             return {'tested': 0}
         if self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
             self.log('Searching with the current compiler settings while an agent owns the function; flag changes are deferred.')

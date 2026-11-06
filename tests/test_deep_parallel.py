@@ -49,6 +49,9 @@ def test_preparation_precedes_other_paths_and_credentials_are_distinct(monkeypat
     monkeypatch.setattr(deep_permuter.Search, '_baseline', baseline)
     monkeypatch.setattr(deep_permuter.Search, 'local_repairs', lambda *a, **k: (40, 'x'))
     def permute(self, agent, proj, fn, state):
+        # The random phase must not mutate compiler settings underneath another path.
+        self._compiler_preflight(proj, fn, state, self.deadline)
+        assert preflight == ['done']
         state.tried = 1
         self.tested = self.limit
     monkeypatch.setattr(deep_permuter.Search, '_permute', permute)
@@ -136,3 +139,12 @@ def test_one_completed_record_uses_whole_function_budget(monkeypatch):
     assert len(records) == 1
     assert records[0][2:4] == (5,11)
     assert records[0][4]['tested'] == 11
+
+
+def test_wrapped_deadline_is_not_multiplied_by_worker_count(monkeypatch):
+    net = setup(monkeypatch)
+    log = Log()
+    log.maximum_seconds = 0
+    monkeypatch.setattr(deep_permuter, '_run', lambda *a, **k: pytest.fail('expired budget'))
+    result = deep_permuter.run(net, 'game', 'f', 1, 10, log, threads_per_function=3)
+    assert result['reason'] == 'Time limit reached' and result['tested'] == 0

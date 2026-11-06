@@ -15,8 +15,10 @@ def validate_threads(count):
 class Lane:
     def __init__(self, index, count, deadline, ready):
         self.index, self.count, self.deadline, self.ready = index, count, deadline, ready
+        self.preflight_done = False
 
     def prepared(self):
+        self.preflight_done = True
         if self.index == 0:
             self.ready.set()
 
