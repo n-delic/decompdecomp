@@ -213,3 +213,16 @@ def test_duplicate_guard_includes_repair_rules_and_compiler_identity(monkeypatch
     second = search._recent_key(proj, fn, 'int f(){return 9;}', None)
     monkeypatch.setattr(match_bundle, 'compiler_identity', lambda *a: 'replacement compiler')
     assert search._recent_key(proj, fn, 'int f(){return 9;}', None) != second
+
+
+def test_delayed_statistics_do_not_move_collection_windows_backwards(monkeypatch):
+    net = FakeNet();adaptive_repairs.prepare(net)
+    clock = [20.];monkeypatch.setattr(adaptive_repairs.time, 'time', lambda: clock[0])
+    with trial_bookkeeping.scope():
+        adaptive_repairs.record(net, 'profile', 'focus', 'family', 40, 40)
+        clock[0] = 30.
+        thread = threading.Thread(target=lambda: adaptive_repairs.record(net, 'profile', 'focus', 'family', 40, 40))
+        thread.start();thread.join(3)
+        assert not thread.is_alive()
+    row = net.store.one('SELECT first_at,last_at,attempted FROM repair_policy_coverage')
+    assert (row['first_at'], row['last_at'], row['attempted']) == (20., 30., 2)

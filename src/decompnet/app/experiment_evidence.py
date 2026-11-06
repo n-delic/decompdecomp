@@ -68,7 +68,9 @@ def record(net, fn, key, family, before, after, baseline, score, prior_output, m
         ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+1,
         no_edit=no_edit+excluded.no_edit,same_output=same_output+excluded.same_output,
         worse=worse+excluded.worse,failed=failed+excluded.failed,improved=improved+excluded.improved,
-        elapsed_ms=elapsed_ms+excluded.elapsed_ms,last_edits=excluded.last_edits,updated_at=excluded.updated_at""",
+        elapsed_ms=elapsed_ms+excluded.elapsed_ms,
+        last_edits=CASE WHEN excluded.updated_at>=updated_at THEN excluded.last_edits ELSE last_edits END,
+        updated_at=MAX(updated_at,excluded.updated_at)""",
         (fn['id'],key,family,1,int(not changes),int(bool(changes) and same),
          int(score is not None and score > baseline),int(bool(changes) and score is None),
          int(improved),max(0,round(elapsed_ms)),json.dumps(changes),time.time()))], immediate=improved)

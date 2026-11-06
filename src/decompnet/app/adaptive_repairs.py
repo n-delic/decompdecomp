@@ -57,7 +57,7 @@ def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local
         matched=matched+excluded.matched, failed=failed+excluded.failed,
         elapsed_ms=elapsed_ms+excluded.elapsed_ms""",
         (key, focus, family, 1, int(improved), int(matched), int(score is None), max(0, int(elapsed_ms)))), (
-        "INSERT INTO repair_policy_coverage VALUES(?,?,?,?,?,?,?) ON CONFLICT(origin) DO UPDATE SET last_at=excluded.last_at,attempted=attempted+1,improved=improved+excluded.improved,matched=matched+excluded.matched,elapsed_ms=elapsed_ms+excluded.elapsed_ms",
+        "INSERT INTO repair_policy_coverage VALUES(?,?,?,?,?,?,?) ON CONFLICT(origin) DO UPDATE SET first_at=MIN(first_at,excluded.first_at),last_at=MAX(last_at,excluded.last_at),attempted=attempted+1,improved=improved+excluded.improved,matched=matched+excluded.matched,elapsed_ms=elapsed_ms+excluded.elapsed_ms",
         (origin, now, now, 1, int(improved), int(matched), max(0, int(elapsed_ms))))], immediate=improved)
 
 
