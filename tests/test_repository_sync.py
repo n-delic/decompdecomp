@@ -416,3 +416,9 @@ def test_sync_exports_only_referenced_fixed_intrinsics(project):
     assert '#define __builtin_mips_debug_break()' in header and 'break 9' in header
     commit(root)
     assert not sync.run(net, 'game', str(root))['accepted']
+
+
+def test_blocking_path_preview_filters_generated_changes_and_keeps_rename_sources():
+    raw = b' M README.md\0R  new name.c\0old name.c\0?? private.rom\0'
+    assert sync.checkout_changes(raw, only={'private.rom'}) == ['  untracked: "private.rom"']
+    assert sync.checkout_changes(raw, only={'old name.c'}) == ['  renamed (staged): "old name.c" -> "new name.c"']
