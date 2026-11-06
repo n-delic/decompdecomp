@@ -179,3 +179,30 @@ def test_directory_symlinks_use_ordinary_staging_and_missing_roots_still_fail(bu
         assert 'session' not in calls[0][0].name
         with pytest.raises(FileNotFoundError):
             compiler.compile_source(replace(cfg, include_dirs=(str(tmp_path / 'absent'),)), '', 'int entry(){return 1;}')
+
+
+@pytest.mark.parametrize('header', ['#include "/external/header.h"', '#include <external.h>',
+                                   '#define H "external.h"\n#include H', '%:include "/external/header.h"',
+                                   '#include_next "types.h"', '#import "/external/header.h"'])
+def test_uncaptured_includes_cannot_reuse_objects(builds, header):
+    cfg, calls, _ = builds
+    with compile_sessions.session():
+        for _ in range(2):compiler.compile_source(cfg, header, 'int entry(){return 1;}')
+    assert len(calls) == 2
+
+
+def test_captured_literal_include_remains_cacheable(builds):
+    cfg, calls, _ = builds
+    with compile_sessions.session():
+        for _ in range(2):compiler.compile_source(cfg, '#include "types.h"', 'int entry(){return 1;}')
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('args', [['-I/external'], ['-I', '/external'], ['-include', '/external.h'],
+                                 ['-Wp,-include,/external.h'], ['@/external.rsp']])
+def test_external_command_include_inputs_bypass_object_cache(builds, args):
+    cfg, calls, _ = builds
+    cfg = replace(cfg, cmd=[*cfg.cmd, *args])
+    with compile_sessions.session():
+        for _ in range(2):compiler.compile_source(cfg, '', 'int entry(){return 1;}')
+    assert len(calls) == 2
