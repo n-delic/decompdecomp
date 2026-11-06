@@ -3029,3 +3029,8 @@ ABI analysis and automatic source/profile selection remain planned.
   foreground attempts. Notes/releases from the GUI use the same foreground lane.
   Controlled concurrency regressions cover N64, PS1, PS2 and PSP; PROJECT builds keep
   their existing objdiff path and do not use the ROM saved-source recheck.
+
+- Done: automatic per-function commits leave unrelated modified, deleted and untracked
+  checkout files untouched and uncommitted. Whole-progress manual checkpoints keep
+  their existing unrelated-edit gate; staged changes still pause automatic commits.
+  Matches waiting for notes do not consume the ready-commit batch limit.

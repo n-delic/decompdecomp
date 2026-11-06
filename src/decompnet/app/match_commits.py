@@ -93,7 +93,7 @@ def enqueue(net, proj, function_id, *, restored=False):
 def scoped_snapshot(net, proj, root, job, output):
     """Advance only one function in the committed manifest, retaining its exact context and evidence."""
     head = repository_git.git(root, 'rev-parse', 'HEAD')
-    files, _, current = repository_progress.snapshot(net, proj['slug'], root, output)
+    files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, allow_unrelated_edits=True)
     folder = saves.default_folder(net, proj['slug']).resolve()
     prefix = folder.relative_to(root).as_posix()
     prefix = '' if prefix == '.' else prefix + '/'
@@ -158,7 +158,11 @@ def process(net, slug, output=log.info):
     if not repository_sync._LOCK.acquire(blocking=False):
         return
     try:
-        for job in net.store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY created_at LIMIT 20", proj['id'], time.time()):
+        # Waiting-for-notes jobs must not starve ready matches beyond the batch limit.
+        for job in net.store.all("SELECT q.* FROM auto_match_commits q WHERE q.project_id=? AND q.state='pending' AND q.retry_at<=? "
+                                 "AND COALESCE(TRIM((SELECT n.text FROM notes n WHERE n.function_id=q.function_id "
+                                 "AND n.agent_id=q.agent_id AND n.created_at>=q.notes_after ORDER BY n.id DESC LIMIT 1)), '')<>'' "
+                                 "ORDER BY q.created_at LIMIT 20", proj['id'], time.time()):
             check = getattr(output, 'check_cancel', None)
             if check:check()
             proj = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])

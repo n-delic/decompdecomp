@@ -54,8 +54,12 @@ def recover_missing_sources(net, slug, folder, manifest, missing, log):
     return True
 
 
-def snapshot(net, slug, root, log, *, recover=True):
-    """Read contributions through the ordinary judge, then capture files under the autosave lock."""
+def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False):
+    """Read contributions through the ordinary judge, then capture files under the autosave lock.
+
+    Per-function commits may leave unrelated edits in place: their caller selects a strict
+    subset of this snapshot for the private index. Whole-progress checkpoints still reject them.
+    """
     folder = saves.default_folder(net, slug).resolve()
     with net.progress._project_lock(slug):
         net.progress.sync(slug, force=True, logger=log)
@@ -83,7 +87,7 @@ def snapshot(net, slug, root, log, *, recover=True):
         missing = owned(manifest) - files.keys()
         if missing:
             if recover and recover_missing_sources(net, slug, folder, manifest, missing, log):
-                return snapshot(net, slug, root, log, recover=False)
+                return snapshot(net, slug, root, log, recover=False, allow_unrelated_edits=allow_unrelated_edits)
             names = ', '.join(sorted(missing)[:12])
             extra = f' (and {len(missing)-12} more)' if len(missing)>12 else ''
             raise NetworkError(f'Cannot commit: {len(missing)} saved progress file(s) are missing: {names}{extra}. '
@@ -103,10 +107,10 @@ def snapshot(net, slug, root, log, *, recover=True):
                      if 'matched_by' in info and prefix + f'best/{name}.c' in tracked)
         changed = set(filter(None, repository_sync.git(root, 'diff', '--name-only', '--no-renames', '-z', 'HEAD').decode().split('\0')))
         changed.update(filter(None, repository_sync.git(root, 'ls-files', '--others', '--exclude-standard', '-z').decode().split('\0')))
-        if changed - paths:
+        if changed - paths and not allow_unrelated_edits:
             repository_sync.checkout(root, blocking=changed - paths)  # Show only files that block this checkpoint.
         # Retired paths may be deleted, but never discard a file that survived a rename or layout change.
-        if any(repository_sync.inside(root, name).exists() for name in paths - {prefix+n for n in files}):
+        if not allow_unrelated_edits and any(repository_sync.inside(root, name).exists() for name in paths - {prefix+n for n in files}):
             raise NetworkError('Retired progress files still contain edits. Move them before committing progress.')
         captured = {}
         for name, text in files.items():

@@ -5308,3 +5308,20 @@ The detector rejects modified delay slots, linked calls, internal/duplicate jump
 targets and incomplete extents. Use the toolchain resolver for availability:
 VM/WSL packs live in separate directories, so scanning the native toolchain root
 can incorrectly report an installed comparison compiler missing.
+
+### KMC table-base return and leaf register allocation
+
+A live MIPS leaf updates bytes 2 and 3 in an indexed 28-byte record. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a typed record pointer and
+`void` return produced 10 instructions but score 40: the index/address occupied
+`v0`, while the table base occupied `v1`. Returning the table base from the
+otherwise identical C kept the base in `v0` and record address in `v1`: score 0,
+all 40 linked bytes identical, and standalone layout checked. The earlier
+untyped draft's saved score was 10. No flags, header or target changes were needed.
+
+Evidence: one live-game exact function verdict, not a controlled compiler regression
+or a complete game rebuild. The return contract remains inferred from assembly;
+caller evidence is still needed before treating that signature as a documented API.
+This is a useful return-value lifetime hypothesis for a leaf with a surviving base
+in the return register, not evidence that arbitrary register differences need
+return-type changes. Game source and target bytes remain outside this repository.
