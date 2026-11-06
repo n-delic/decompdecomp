@@ -10,6 +10,24 @@ from .. import repository_sync
 def register(app):
     lock=threading.Lock()
 
+    @app.mcp.custom_route('/api/repository-setup', methods=['GET', 'POST'])
+    async def setup(request):
+        if bad := app.guard(request, write=request.method == 'POST'):
+            return bad
+        try:
+            from .. import repository_setup
+            if request.method == 'GET':
+                return JSONResponse(await app.call(repository_setup.status, app.net,
+                    str(request.query_params.get('slug', ''))))
+            data = await app.body(request)
+            slug = str(data.get('slug', ''))
+            job = app.jobs.start('repository-setup', lambda log: repository_setup.run(
+                app.net, slug, str(data.get('action', '')), str(data.get('origin', '')).strip(), log),
+                cancel_message='Repository setup stopped. Created Git metadata or a completed local commit remain; review the folder before retrying.')
+            return JSONResponse({'job': job})
+        except (NetworkError, ValueError, KeyError, OSError) as error:
+            return app.fail(error)
+
     @app.mcp.custom_route('/api/repository-auto-commit', methods=['POST'])
     async def auto_commit(request):
         if bad := app.guard(request, write=True):

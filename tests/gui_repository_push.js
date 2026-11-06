@@ -33,7 +33,7 @@ async function run({failure=false,switchProject=false}={}) {
 function modes() {
   const steering=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/steering.js'),'utf8');
   const block=steering.slice(steering.indexOf('  $("saveTitle").textContent'),steering.indexOf('  renderKnowledge();'));
-  const els={},ctx={$:id=>els[id]??={},ov:{kind:'fork'},S:{slug:'game'},loadRepositoryFolder(){},renderRepositoryAutoCommit(){},refreshRepositoryPush(){}};
+  const els={},ctx={$:id=>els[id]??={},ov:{kind:'fork'},S:{slug:'game'},refreshRepositorySetup(){},loadRepositoryFolder(){},renderRepositoryAutoCommit(){},refreshRepositoryPush(){}};
   vm.createContext(ctx);vm.runInContext(block,ctx);
   assert.equal(els.repositorySync.hidden,false);assert.equal(els.repositoryAutoCommitGroup.hidden,true);assert.equal(els.repositorySyncActions.hidden,true);
   assert.match(els.repositorySyncTitle.textContent,/Push your project/);
