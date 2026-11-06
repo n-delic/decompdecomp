@@ -10,6 +10,7 @@ const ctx={S:{ov:{kind:'rom'},slug:'game'},esc:String,ROOM_PORT:6481,setHtml:(_,
 let joins=0;ctx.openJoin=()=>{joins++;};
 vm.createContext(ctx);const source=fs.readFileSync('src/decompnet/app/static/js/project.js','utf8');
 vm.runInContext(source.slice(source.indexOf('function teamJoinHtml('),source.indexOf('async function renderTeam(')),ctx);
+vm.runInContext(source.slice(source.indexOf('function roomAgentSummary('),source.indexOf('function renderGuest(')),ctx);
 vm.runInContext(source.slice(source.indexOf('function renderHost('),source.indexOf('function openReconnect(')),ctx);
 ctx.box=box;
 ctx.info={sharing:true,stable_link:false,mode:'tunnel',link:'https://example.test/join/code',settings:{visibility:'private'},room:{members:[]}};
@@ -48,6 +49,19 @@ for (const info of [
 vm.runInContext('renderGuest(box,room)',ctx);
 assert.match(html,/Join an existing room/);box.querySelector('[data-team-join]').onclick();
 assert.equal(joins,4);
+// Host and guest use the same compact worker summary, retaining contribution totals.
+ctx.info={sharing:true,stable_link:true,mode:'address',link:'http://host/join',settings:{visibility:'private'},room:{members:[{name:'Sam',online:true,agents:['codex',...Array.from({length:1000},(_,i)=>`permuter-${i}`)],matched:2,improved:7,working:[]}]}};
+vm.runInContext('renderHost(box,info)',ctx);
+assert.match(html,/codex · 1,000 permuters/);assert.doesNotMatch(html,/permuter-999/);
+ctx.room.members=ctx.info.room.members;
+vm.runInContext('renderGuest(box,room)',ctx);
+assert.match(html,/codex · 1,000 permuters/);assert.match(html,/2 matched/);
+assert.equal(ctx.roomAgentSummary(['permuter-1']),'1 permuter');
+assert.equal(ctx.roomAgentSummary(['permuter-1','permuter-1']),'1 permuter');
+assert.equal(ctx.roomAgentSummary(['@permuter-2','saved-progress']),'saved-progress · 1 permuter');
+assert.equal(ctx.roomAgentSummary(['my-permuter-1','permuter-custom']),'my-permuter-1, permuter-custom');
+assert.equal(ctx.roomAgentSummary([]),'no agents yet');assert.equal(ctx.roomAgentSummary(null),'no agents yet');
+
 ctx.clearInterval=()=>{};ctx.teamTimer=null;ctx.teamOpen=()=>true;
 vm.runInContext(source.slice(source.indexOf('async function renderTeam('),source.indexOf('function renderGuest(')),ctx);
 (async()=>{
