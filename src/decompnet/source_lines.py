@@ -6,13 +6,13 @@ ECOFF layout/line deltas: binutils include/coff/sym.h and bfd/ecofflink.c.
 """
 import re
 import struct
-from io import BytesIO
 from pathlib import PurePosixPath
 
 from elftools.common.exceptions import DWARFError, ELFError
 from elftools.elf.elffile import ELFFile
 
 from . import scoring
+from .candidate_work import elf as candidate_elf
 from .elfobj import _function_symbols, extract_function
 
 
@@ -118,7 +118,7 @@ def _ecoff(elf, data, start, size, name, filename):
 def locations(data, name, filename='func.c'):
     """Function-relative byte ranges. Unsupported/ambiguous formats have no locations."""
     try:
-        elf = ELFFile(BytesIO(data))
+        elf = candidate_elf(data, ELFFile)
         found = _function_symbols(elf).get(name)
         if found is None:
             return []

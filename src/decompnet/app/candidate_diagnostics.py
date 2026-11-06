@@ -1,10 +1,10 @@
 """Explain linking blockers and standalone layout separately from the exact function verdict."""
 import re
-from io import BytesIO
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
+from ..candidate_work import elf as candidate_elf
 from ..elfobj import _function_symbols
 from ..rom.export import _section_bases, _single_definition
 
@@ -24,7 +24,7 @@ def export_layout(obj, name, exact, placements):
     if not exact:
         return {'state': 'unmatched', 'ready': False, 'message': 'Function is not yet byte-identical.'}
     try:
-        elf = ELFFile(BytesIO(obj))
+        elf = candidate_elf(obj, ELFFile)
         if elf['e_machine'] != 'EM_MIPS' or elf['e_type'] != 'ET_REL':
             return {'state': 'unsupported', 'ready': None,
                     'message': 'Standalone layout checks are not available for this object format yet.'}

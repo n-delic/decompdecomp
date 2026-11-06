@@ -17,13 +17,13 @@ import json
 import re
 import shutil
 import subprocess
-from io import BytesIO
 from pathlib import Path
 
 import yaml
 from elftools.elf.elffile import ELFFile
 
 from .. import toolchains
+from ..candidate_work import elf as candidate_elf
 from ..hostenv import NO_WINDOW, console_python
 from ..limits import capped
 from ..project import compiler_for
@@ -147,10 +147,10 @@ def _single_definition(obj: bytes, name: str) -> bool:
 
     # Count before name mapping: overloads can map to the same game name, but still have
     # separate bodies. The ordinary judge resolves the single C++ method back to that name.
-    if len(_function_symbols(ELFFile(BytesIO(obj)))) != 1:
+    if len(_function_symbols(candidate_elf(obj, ELFFile))) != 1:
         return False
     obj = unmangle(obj, lambda symbol: symbol == name)
-    elf=ELFFile(BytesIO(obj))
+    elf=candidate_elf(obj, ELFFile)
     if set(_function_symbols(elf))!={name}:return False
     # A debug-only static procedure has no linkable entry symbol. It needs the
     # same freshly judged matching-only extraction as a real multi-body unit.

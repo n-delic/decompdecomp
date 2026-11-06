@@ -11,13 +11,14 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from io import BytesIO
 
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 
 from . import arch
+from .candidate_work import current, remember
+from .candidate_work import elf as candidate_elf
 
 # e_machine -> arch key used throughout decompnet
 MACHINES = {"EM_X86_64": "x86_64", "EM_386": "x86", "EM_MIPS": "mips", "EM_PPC": "ppc", "EM_PPC64": "ppc64",
@@ -197,6 +198,13 @@ def metadata_placeholders(elf):
 
 
 def _function_symbols(elf) -> dict[str, tuple[int, int, int]]:
+    work = current()
+    if work is not None and any(parsed is elf for parsed in work.objects.values()):
+        return dict(remember(('elf-functions', elf), lambda: _read_function_symbols(elf)))
+    return _read_function_symbols(elf)
+
+
+def _read_function_symbols(elf) -> dict[str, tuple[int, int, int]]:
     """name -> (section index, offset, size) of every function defined in the object.
 
     Modern assemblers mark functions (STT_FUNC, with a size). Period ones, like the binutils 2.6 that PSY-Q-era
@@ -238,13 +246,13 @@ def _function_symbols(elf) -> dict[str, tuple[int, int, int]]:
 
 
 def list_functions(data: bytes) -> list[str]:
-    return list(_function_symbols(ELFFile(BytesIO(data))))
+    return list(_function_symbols(candidate_elf(data, ELFFile)))
 
 
 def extract_function(data: bytes, name: str) -> FunctionObj | None:
     """One function of an object file: its code, its relocations (with what each refers to) and the processor; None
     when the object has no function of that name."""
-    elf = ELFFile(BytesIO(data))
+    elf = candidate_elf(data, ELFFile)
     arch, big_endian = _arch_of(elf)
     found = _function_symbols(elf).get(name)
     if found is None:
@@ -310,7 +318,7 @@ def unmangle(data: bytes, known) -> bytes:
     (_$_4CPed, a destructor; _vt$4CPed, a vtable) are the game's with _ for $ (consoles/ps2/symtab.py), as long."""
     if b"__" not in data and b"_Z" not in data and b"$" not in data:
         return data
-    elf = ELFFile(BytesIO(data))
+    elf = candidate_elf(data, ELFFile)
     symtab = elf.get_section_by_name(".symtab")
     if not isinstance(symtab, SymbolTableSection):
         return data

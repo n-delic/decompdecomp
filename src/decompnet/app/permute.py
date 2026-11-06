@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import consoles, m2cfix, permuter_claims, scoring, seeds, toolchains
+from ..candidate_work import trial
 from ..compile_sessions import batched
 from ..forks.project import ForkError
 from ..hostenv import NO_WINDOW
@@ -43,6 +44,7 @@ from ..permuter import mutate
 from ..project import compiler_for
 from ..repair_feedback import trial as repair_trial
 from . import draft_repairs, local_claims, switch_tables, workers
+from .trial_bookkeeping import buffered
 
 log = logging.getLogger("decompdecomp")
 NEAR = 0.06  # a near miss: at most this much of the function differs (best_score <= 6% of n_insns * 100)
@@ -285,6 +287,7 @@ class Permuter:
             self._repair_round(agent, self.net.project_row(slug), st)
         return st
 
+    @buffered
     @batched
     def _repair_round(self, agent, proj, st: State, *, function_id=None, budget=32, seconds=20) -> None:
         """At most 32 compiles / 20 seconds before normal random turns; rotate even over ineligible drafts.
@@ -443,6 +446,7 @@ class Permuter:
         return run(self.net, proj, fn, log.info,
                    lambda: not st.stop.is_set() and time.monotonic() < deadline)
 
+    @buffered
     @batched
     def _permute(self, agent, proj, fn, st: State) -> None:
         seconds = self.seconds
@@ -708,6 +712,7 @@ class Permuter:
             del cache[next(iter(cache))]
         return score, 1
 
+    @trial
     def _score(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         """A variant's score; recorded (as the function's best attempt, or its match) only when it beats `best`."""
         with self.net.progress.judging(proj["slug"]) if hasattr(self.net, "progress") else nullcontext():
@@ -800,6 +805,8 @@ class Permuter:
         self.net._agent_outcomes[agent.id, fn['id']] = {'source': source, 'score': d.score, 'rows': rows, 'repair_locations':self._trial_locations}
         if d.score < best or (d.bytes_match and fn['status'] != 'matched'):
             self._accept_candidate(agent, proj, fn, source, d)
+            from .trial_bookkeeping import flush
+            flush(self.net.store)
             self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter", effective_settings=getattr(result,"effective_settings",None),
                              **({"before_record": guard} if guard else {}))
         return 0 if d.bytes_match else max(1, d.score)

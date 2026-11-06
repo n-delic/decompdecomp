@@ -19,13 +19,13 @@ from __future__ import annotations
 import re
 import struct
 from dataclasses import dataclass
-from io import BytesIO
 from typing import Callable
 
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
 from .. import scoring
+from ..candidate_work import elf as candidate_elf
 from ..elfobj import MASKS_BY_ARCH, FunctionObj, Reloc, canonical_symbol, section_target, symbol_at, unmangle
 from .link import LinkResult, significant  # (re-exported: callers still ask match.LinkResult)
 from .split import RomFunction
@@ -199,7 +199,7 @@ def raw_relocs(elf: ELFFile, shndx: int, start: int, size: int, code: bytes) -> 
 
 class _Linker:
     def __init__(self, obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn):
-        self.elf = ELFFile(BytesIO(obj))
+        self.elf = candidate_elf(obj, ELFFile)
         self.name, self.target, self.symbols, self.read = name, target, symbols, read
         self.symtab = self.elf.get_section_by_name(".symtab")
         self.problems: list[str] = []

@@ -3,12 +3,17 @@
 The finite local candidate list can be visited completely. Random C rewriting has no finite exhaustive
 search space, so time/variant limits and cancellation always remain explicit.
 """
+import copy
 import hashlib
 import json
+import os
+import sys
 import threading
 import time
+from collections import OrderedDict
 
 from .. import scoring
+from ..candidate_work import trial
 from ..compile_sessions import batched
 from ..network import NetworkError
 from ..project import compiler_for
@@ -30,8 +35,10 @@ from . import (
     search_frontier,
     stack_padding_repairs,
     switch_tables,
+    trial_bookkeeping,
 )
 from .permute import Permuter, State
+from .trial_bookkeeping import buffered
 
 AFTER_RANDOM_TRIALS = 32
 
@@ -146,10 +153,16 @@ class Search(Permuter):
                 'allocation_trials':self.allocation_trials,
                 'allocation_diagnostic_compiles':self.allocation_diagnostic_compiles}
 
-    def report(self):
+    def report(self, *, force=False):
         if self.best is not None and (self.recorded_best is None or self.best < self.recorded_best):
             self.record_improvement(self.best)
             self.recorded_best = self.best
+        now = time.monotonic()
+        urgent = (self.phase, self.best, self.improvements,
+                  self.last_outcome if self.last_outcome in ('compile failed', 'matched', 'error') else '')
+        if not force and urgent == getattr(self, '_reported_state', None) and now-getattr(self, '_reported_at', 0) < .2:
+            return
+        self._reported_state, self._reported_at = urgent, now
         self.log.progress({'phase': self.phase, 'tested': self.tested, 'skipped': self.skipped,
                            **self.metrics(), 'variant_limit': self.limit, 'rejected': self.rejected,
                            'seconds_left': max(0, round(self.deadline-time.monotonic())), 'refinement_rounds': self.refinement_rounds,
@@ -575,9 +588,48 @@ class Search(Permuter):
                 return 0
         return score
 
+    def _recent_key(self, proj, fn, source, fork):
+        # Imported files can change outside the database, so keep their full dependency scan.
+        if fork or self.measuring_baseline:return None
+        if not hasattr(self.net.store, 'read_version'):return None
+        from .. import claim_stalls
+        from ..candidate_work import remember
+        from ..match_bundle import compiler_identity
+        cfg = self.net.cfg(proj)
+        own = compiler_for(cfg, fn['vram'], fn) if cfg.get('compiler') else {}
+        from .. import compiler, toolchains
+        from ..candidate_scope import context
+        # External include files/custom compilers have no database input revision.
+        if not own.get('toolchain') or own.get('cmd'):return None
+        try:toolchains.get(own['toolchain'])
+        except toolchains.ToolchainError:return None
+        flags = own.get('flags', [])
+        flags = flags.split() if isinstance(flags, str) else flags
+        if not compiler._captured_include_paths(flags):return None
+        ctx = context(self.net, proj, fn['unit'])
+        if not compiler._stable_inputs([source.encode(), (ctx['header'] if ctx else '').encode()]):return None
+        rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
+        return (self.net.store.read_version('inputs', proj['id']),
+                hashlib.sha256(repr((dict(proj), dict(fn), source, compiler_identity(own), rules,
+                                     sorted(os.environ.items()))).encode()).digest())
+
+    @trial
     def _score_current(self, agent, proj, fn, source, best, fork):
         self.check()
         self.visited += 1
+        recent_key = self._recent_key(proj, fn, source, fork)
+        recent = getattr(self, '_recent_candidates', None)
+        duplicate = recent.get(recent_key) if recent is not None and recent_key is not None else None
+        if duplicate is not None and duplicate[0] >= best:
+            self.skipped += 1
+            self._trial_reused = True
+            self._cached_rows = copy.deepcopy(duplicate[1])
+            self._trial_locations = None
+            self._trial_output_granularity = None
+            self._trial_output = duplicate[2]
+            self.recipe(fn, source, best, duplicate[0], 'skipped')
+            self.report()
+            return duplicate[0]
         if not fork and not self.measuring_baseline and source != fn['best_source']:
             from .repair_preflight import invalid_call
             header = self.net._context(proj['id'], fn['unit'])['header']
@@ -590,7 +642,9 @@ class Search(Permuter):
         # miss is reusable only in that scope. Better cached results are rejudged before being kept.
         scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
         key = 'deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest()
-        cached = self.net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
+        pending = trial_bookkeeping.lookup(self.net.store, ('reuse_trials', fn['id'], key))
+        cached = ({'feedback':pending} if pending is not None else self.net.store.one(
+            'SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key))
         feedback = json.loads(cached['feedback']) if cached and cached['feedback'] else None
         score = feedback.get('score') if isinstance(feedback, dict) else feedback
         self._cached_rows = feedback.get('rows', []) if isinstance(feedback, dict) else []
@@ -628,10 +682,11 @@ class Search(Permuter):
                             and (best <= score <= best*1.25 or permuter_focus.classify(own[0]) != policy_focus or
                                  best <= score <= best*2 and search_frontier.structure_recovery(rows,own[0],proj['arch'])) else score)
                 if isinstance(feedback,dict):feedback['output']=getattr(self,'_trial_output',None)
-                with self.net.store.tx() as db:
-                    db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                               (fn['id'], key, 'miss', 'deep function search; path: '+ ' → '.join((current_trial() or {}).get('lineage', [])),
-                                json.dumps(feedback)))
+                packed_feedback = json.dumps(feedback)
+                trial_bookkeeping.submit(self.net.store, [(
+                    'INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+                    (fn['id'], key, 'miss', 'deep function search; path: '+ ' → '.join((current_trial() or {}).get('lineage', [])),
+                     packed_feedback))], memo=(('reuse_trials', fn['id'], key), packed_feedback))
         if not self.measuring_baseline:
             self.recipe(fn, source, best, score, 'skipped' if reused else 'tested', elapsed_ms)
             if self.tested and self.tested % 100 == 0 and not reused:
@@ -657,6 +712,13 @@ class Search(Permuter):
                 self.winner_output_granularity = getattr(self,'_trial_output_granularity','function')
                 self.winner_locations = getattr(self,'_trial_locations',None)
                 self.winner_scope = scope
+        if (recent_key is not None and isinstance(score, int) and score > 0 and score >= best
+                and self.net.store.read_version('inputs', proj['id']) == recent_key[0]):
+            if recent is None:self._recent_candidates = recent = OrderedDict()
+            rows = self._cached_rows if reused else (feedback.get('rows', []) if isinstance(feedback, dict) else [])
+            if len(rows) <= 256:
+                recent[recent_key] = (score, copy.deepcopy(rows), getattr(self, '_trial_output', None))
+                while len(recent) > 128:recent.popitem(last=False)
         self.report()
         return score
 
@@ -678,6 +740,7 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
         lock.release()
 
 
+@buffered
 @batched
 def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
@@ -795,6 +858,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         raise
     finally:
         search.flush_recipes()
+        if sys.exc_info()[0] is None:search.report(force=True)
         link = net.links.get(slug)
         from . import deep_room
         if link and not deep_room.offline(link) and (search.tested or reason.startswith('Stopped:')):
@@ -809,7 +873,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
             except NetworkError:
                 # Notes are advisory; a disconnected host must not mask the search verdict/error.
                 pass
-    search.report()
+    search.report(force=True)
     if lane is None and reason=='Matched' and hasattr(net,'_candidate_checks') and slug not in net.links:
         from .export_source_recovery import run as repair_export
         export_report=repair_export(net,net.project_row(slug),{name},state,log,

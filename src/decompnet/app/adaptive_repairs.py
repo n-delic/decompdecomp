@@ -11,6 +11,7 @@ import time
 from itertools import zip_longest
 
 from ..project import compiler_for
+from . import trial_bookkeeping
 
 MIN_TRIALS = 32
 MIN_FACTOR, MAX_FACTOR = 0.25, 4.0
@@ -49,19 +50,19 @@ def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local
     prepare(net)
     improved = isinstance(score, (int, float)) and 0 <= score < baseline
     matched = improved and score == 0 and (exact is None or exact is True)
-    with net.store.tx() as db:
-        db.execute('''INSERT INTO repair_policy VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(profile,focus,family)
-            DO UPDATE SET attempted=attempted+1, improved=improved+excluded.improved,
-            matched=matched+excluded.matched, failed=failed+excluded.failed,
-            elapsed_ms=elapsed_ms+excluded.elapsed_ms''',
-                   (key, focus, family, 1, int(improved), int(matched),
-                    int(score is None), max(0, int(elapsed_ms))))
-        now = time.time()
-        db.execute("INSERT INTO repair_policy_coverage VALUES(?,?,?,?,?,?,?) ON CONFLICT(origin) DO UPDATE SET last_at=excluded.last_at,attempted=attempted+1,improved=improved+excluded.improved,matched=matched+excluded.matched,elapsed_ms=elapsed_ms+excluded.elapsed_ms",
-                   (origin,now,now,1,int(improved),int(matched),max(0,int(elapsed_ms))))
+    now = time.time()
+    trial_bookkeeping.submit(net.store, [(
+        """INSERT INTO repair_policy VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(profile,focus,family)
+        DO UPDATE SET attempted=attempted+1, improved=improved+excluded.improved,
+        matched=matched+excluded.matched, failed=failed+excluded.failed,
+        elapsed_ms=elapsed_ms+excluded.elapsed_ms""",
+        (key, focus, family, 1, int(improved), int(matched), int(score is None), max(0, int(elapsed_ms)))), (
+        "INSERT INTO repair_policy_coverage VALUES(?,?,?,?,?,?,?) ON CONFLICT(origin) DO UPDATE SET first_at=MIN(first_at,excluded.first_at),last_at=MAX(last_at,excluded.last_at),attempted=attempted+1,improved=improved+excluded.improved,matched=matched+excluded.matched,elapsed_ms=elapsed_ms+excluded.elapsed_ms",
+        (origin, now, now, 1, int(improved), int(matched), max(0, int(elapsed_ms))))], immediate=improved)
 
 
 def factors(net, key, focus):
+    trial_bookkeeping.flush(net.store)
     prepare(net)
     result = {}
     rows=net.store.all('SELECT * FROM repair_policy WHERE profile=? AND focus=?', key, focus)
@@ -118,6 +119,7 @@ def order(net, proj, fn, rows, families):
 
 def efficiency(net):
     """Measured trial-time rates, never CPU-time claims or cross-profile causal comparisons."""
+    trial_bookkeeping.flush(net.store)
     prepare(net)
     rows = net.store.all('SELECT * FROM repair_policy ORDER BY attempted DESC LIMIT 64')
     return [dict(row) | {'matches_per_compile':row['matched']/row['attempted'] if row['attempted'] else None,
@@ -129,6 +131,7 @@ def efficiency(net):
 
 def coverage(net):
     """Expose denominators and collection windows; legacy aggregates cannot be compared as one cohort."""
+    trial_bookkeeping.flush(net.store)
     prepare(net)
     policy = dict(net.store.one("SELECT COALESCE(SUM(attempted),0) attempted,COALESCE(SUM(improved),0) improved,COALESCE(SUM(matched),0) matched FROM repair_policy"))
     sources = [dict(r) for r in net.store.all("SELECT * FROM repair_policy_coverage ORDER BY origin")]

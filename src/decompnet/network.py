@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import agent_notes, agents, scoring
+from .candidate_work import trial
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
@@ -1474,6 +1475,7 @@ class Network:
         text = self.attempt(agent, function, source, project)["text"]
         return text + self.attempt_limit_note(agent, function, project)
 
+    @trial
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         with self.attempt_turn(agent, self._function(function, project)):
             return self._attempt_unlimited(agent, function, source, project)
