@@ -4828,3 +4828,39 @@ or hidden declaration qualifiers, referenced macros, includes and unsupported
 syntax, and introduces no dummy computation. It reaches shared local repairs,
 autopilot, deep/iterative search, donor retries and replay through the normal
 candidate generator. Destination compilation and exact verification remain required.
+
+### Unsigned shift/add staging: local versus global allocation (KMC GCC 2.7.2)
+
+A controlled N64 renderer experiment under `-G0 -mips3 -mgp32 -mfp32 -O2
+-ffast-math -g3` improved a corrected draft from score 322 to 172, removing
+30 register differences. Preserve the low-first statement order:
+
+```c
+low = color << 8;
+high = (color << 16) + tag;
+/* alternative */
+low = color << 8;
+high = color << 16;
+high += tag;
+```
+
+Here all three objects are ordinary unsigned 32-bit locals and tags are 1/2/4.
+Expansion of the original expression creates a separate shifted temporary; the
+alternative writes the same high pseudo twice. Dumps show its use count rising
+24 to 60, different allocation order, and the color pseudo losing a hard-register
+2 conflict. Final color/high registers then agree with the target. An earlier
+float-conversion-clobber explanation was rejected by the live ranges. Ordinary
+and diagnostic `-da` builds have identical linked bytes for each input. Independent
+parent compilation reproduced both scores; the bounded combined repair also
+reproduces 172. Individual-site changes remain 322: the combined hypothesis matters.
+
+This is **not an exact match**. Remaining frame offsets, vertex-pointer registers
+and constant-hoist positions still differ. Real address-taken normalization locals
+produce the desired frame size but retain six stores and regress the result;
+extra matrix padding is not justified. The existing saved draft also has signed
+shift and object-layout issues, so its numeric score is not a correctness baseline.
+The shared `unsigned_shift_staging` family only handles visible, unescaped unsigned
+int locals, valid literal shifts and nonzero tags; it preserves statement order,
+rejects ambiguous bindings/macros and uses the unchanged destination judge. Its
+C32 invocation requirement has the same external-command coverage limitation as
+`promoted_entry_local`.
