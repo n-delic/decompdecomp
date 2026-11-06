@@ -1712,10 +1712,10 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
   .deep-advanced-fields { grid-template-columns:1fr; }
 }
 
-/* One live dashboard; compact controls stay below the work in progress. */
+/* Configure before starting; keep the running view focused on progress. */
 #deepSweepPanel > summary > span { border:1px solid var(--line-soft); border-radius:99px; padding:3px 9px; font-size:10px; white-space:nowrap; }
 #deepSweepPanel > .pad { gap:18px; }
-.deep-dashboard { display:grid; gap:16px; border:1px solid var(--line-soft); border-radius:var(--r); padding:18px 20px; background:var(--raise); min-width:0; }
+.deep-dashboard { display:grid; gap:16px; border:0; border-radius:0; padding:0; background:transparent; min-width:0; }
 .deep-dashboard .deep-queue-state { border:0; border-bottom:1px solid var(--line-soft); border-radius:0; padding:0 0 16px; background:transparent; }
 .deep-dashboard .deep-queue-state h3 { font-size:16px; letter-spacing:-.02em; display:flex; align-items:center; gap:9px; }
 .deep-dashboard .deep-queue-state h3::before { content:""; width:8px; height:8px; flex:none; border-radius:50%; background:var(--muted); }
@@ -2029,3 +2029,10 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .function-focus-state.active::before { content:""; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--hl); margin-right:6px; }
 .function-focus-reason { color:var(--ink-2); line-height:1.6; }
 #fnFocusedSessions:empty { display:none; }
+
+#deepSweepSettings[hidden] { display:none; }
+#deepSweepSettings { padding-bottom:18px; border-bottom:1px solid var(--line-soft); }
+#dialogBody .deep-sweep-results .compiler-table { max-height:none; }
+#dialogBody .deep-sweep-results td { padding:14px 10px; }
+
+.drawer-card.narrow:has(.deep-sweep-results) { width:min(900px,100vw); }
