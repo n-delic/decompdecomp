@@ -305,6 +305,19 @@ def test_a_change_that_breaks_a_neighbour_still_says_how_close_the_function_came
     assert fn["best_source"] is None or "x * 5" not in fn["best_source"]
 
 
+def test_a_call_after_a_parked_draft_isnt_taken_for_the_builds_own_definition(fork):
+    """Past a parked draft, the next match was a call followed by a block (`y = scale(x) * 2.0;`, then the `if`'s
+    `{`): the try replaced `twice` from the call on, and sat inside it."""
+    net, slug, agent = fork
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    twice = ("double twice(double x) {\n    double y = 0.0;\n    y = scale(x) * 2.0;\n    if (y > 1.0) {\n"
+             "        y = 1.0;\n    }\n    return y;\n}\n")
+    path.write_text(path.read_text() + "\n#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#endif\n\n" + twice)
+    net.compile_and_diff(agent, "scale", SCALE, slug)
+    text = path.read_text()
+    assert twice in text, text
+
+
 def test_a_parked_draft_beside_the_builds_own_definition_leaves_the_draft_and_replaces_the_definition(fork):
     """A draft in `#ifdef PARKED_DRAFTS` and the build's own definition in its `#else`: the parked one was taken out
     and a new one put in, beside the visible one (redefinition of 'scale', every try a build error)."""
