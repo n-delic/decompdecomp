@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: saved-progress metadata scans read function status once, import missing historical
+  evidence in cancellable batches and hash shared headers once per scan. Recovery indexes
+  historical donors by address while retaining target, relocation, ABI and exact-byte checks.
+
 - Done: authentication reads token identity on every request but coalesces advisory
   presence timestamps to five seconds and skips them when a writer is busy.
   Presence may temporarily look offline under contention; revoked tokens stay invalid.

@@ -270,3 +270,24 @@ def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(
     assert result['matched']==1 and net._function('empty_return','game')['status']=='matched'
     assert net.store.one('SELECT via FROM attempts ORDER BY id DESC LIMIT 1')['via']=='saved-match-reconciliation'
     assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_recovery_bank_indexes_addresses_without_losing_overlay_identity(monkeypatch):
+    net, proj, fn = prepared_net()
+    source = 'int old(void){return 1;}'
+    proof = dict(verdict='exact', source_sha256=match_bundle.digest(source),
+                 abi=match_bundle.abi(proj, json.loads(proj['config'])), vram=fn['vram'],
+                 target_sha256=match_bundle.digest(fn['target'] or b''),
+                 relocations_sha256=match_bundle.digest(fn['relocs'] or ''),
+                 header_sha256=match_bundle.digest('private'))
+    with net.store.tx() as db:
+        db.execute(match_bundle.SCHEMA)
+        db.execute('INSERT INTO verified_matches VALUES(?,?,?,?,?)',
+                   (fn['id'], -1, json.dumps(proof), source, 'private'))
+    indexed = recovery.bank(net, proj)
+    assert list(indexed) == [fn['vram']]
+    expected = recovery.candidates(net, proj, fn, indexed[fn['vram']])
+    assert recovery.candidates(net, proj, fn, indexed) == expected
+    # A different overlay can share an address, but its different target still rejects the donor.
+    changed = dict(fn, target=b'different overlay')
+    assert recovery.candidates(net, proj, changed, indexed) == recovery.candidates(net, proj, changed, [])

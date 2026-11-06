@@ -1456,6 +1456,10 @@ followed by random rewrites. The separate near-match pass is no longer shown.
 combinations against the current project. Its time and compile limits apply to the
 whole recovery run; every recovered match must pass fresh verification. Recovery synchronizes before compiling, ignores save-only revision changes, and waits cancellably for database writers. Busy derived twins indexing is refreshed on its next use without losing the committed match. No AI tokens
 are used.
+Metadata-only synchronization reads function status in one batch and skips already imported history.
+New historical evidence is hash-checked in short cancellable batches; it never counts as
+a match until the ordinary judge verifies it. Recovery looks up donors by address, including
+separate target checks for overlays that share an address.
 
 ROM code audits also show possible function-pointer references and unowned bytes inside
 mapped segments. These are review leads. N64 reimport can recover narrowly proven
