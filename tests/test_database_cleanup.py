@@ -137,3 +137,56 @@ def test_cleanup_pacing_checkpoints_never_hold_the_database_write_transaction(da
     monkeypatch.setattr(maintenance,'checkpoint',checkpoint)
     cleanup.run(net,{'removed':True},Log())
     assert checks
+
+
+def test_age_limit_rolls_forward_and_preserves_ongoing_sessions(data,monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    net,_,ids=data
+    now=datetime(2026,11,6,tzinfo=timezone.utc)
+    class Clock(datetime):
+        @classmethod
+        def now(cls,tz=None):return now
+    monkeypatch.setattr(cleanup,'datetime',Clock)
+    with net.store.tx() as db:
+        for sid,age in [(ids[0],15),(ids[4],13)]:
+            db.execute('UPDATE helper_sessions SET ended_at=? WHERE id=?',((now-timedelta(days=age)).timestamp(),sid))
+    value={'removed':False,'days':14,'automatic':True}
+    cleanup.save(net,value)
+    assert cleanup.saved(net)==value
+    assert ids[0] in {r['id'] for r in cleanup.eligible(net,value)}
+    assert ids[4] not in {r['id'] for r in cleanup.eligible(net,value)}
+    now+=timedelta(days=2)
+    assert ids[4] in {r['id'] for r in cleanup.eligible(net,cleanup.saved(net))}
+    expected=cleanup.summary(net)['messages']
+    assert cleanup.run(net,value,Log())['messages']==expected
+    assert net.store.one('SELECT id FROM helper_messages WHERE session_id=?',ids[1])
+
+
+@pytest.mark.parametrize('days',[0,-1,1.5,True,'14',36501])
+def test_invalid_retention_ages_do_not_delete(data,days):
+    net,_,_=data
+    with pytest.raises(ValueError,match='whole number of days'):
+        cleanup.run(net,{'days':days},Log())
+    assert net.store.one('SELECT COUNT(*) n FROM helper_messages')['n']==5
+
+
+def test_automatic_cleanup_rechecks_the_rolling_age(data,monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    net,_,ids=data
+    now=datetime(2026,11,6,tzinfo=timezone.utc)
+    class Clock(datetime):
+        @classmethod
+        def now(cls,tz=None):return now
+    monkeypatch.setattr(cleanup,'datetime',Clock)
+    with net.store.tx() as db:
+        db.execute('DELETE FROM helper_messages WHERE session_id!=?',(ids[4],))
+        db.execute('UPDATE helper_sessions SET ended_at=? WHERE id=?',((now-timedelta(days=13)).timestamp(),ids[4]))
+    cleanup.save(net,{'removed':False,'days':14,'automatic':True})
+    started=[]
+    monkeypatch.setattr(cleanup,'start',lambda *args,**kwargs:started.append(kwargs))
+    retention=cleanup.Retention(net,None)
+    retention.tick(0)
+    assert not started
+    now+=timedelta(days=2)
+    retention.tick(301)
+    assert started==[{'foreground':False}]
