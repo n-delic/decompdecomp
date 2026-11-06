@@ -45,7 +45,7 @@ assert.equal(c.helperState({state:'working'},{name:'f',n_insns:85,best_score:85,
 
 // A polling deadline is not a promise that work will become available then.
 c.esc=String; c.hhmm=()=> '12:54';
-assert.match(c.helperState({state:'waiting',why:'3 unchanged candidates paused',until:100}),/next check at 12:54/);
+assert.match(c.helperState({state:'waiting',why:'3 unchanged candidates paused',until:Date.now()/1000+600}),/next check at 12:54/);
 assert.doesNotMatch(c.helperState({state:'waiting',why:'3 unchanged candidates paused',until:100}),/carries on/);
 
 const recentAgents=[
@@ -69,3 +69,13 @@ assert(!elements.get('sessions').html.includes('data-agent-creation-status'));
 vm.runInContext('agentCreation=null',c);
 c.renderSessions([]);
 assert(!elements.get('sessions').html.includes('data-agent-creation-status'));
+
+assert.match(c.helperState({state:'waiting',why:'Provider limit',until:Date.now()/1000-3600}),/retry due/);
+assert.doesNotMatch(c.helperState({state:'waiting',why:'Provider limit',until:Date.now()/1000-3600}),/next check at/);
+assert.match(c.helperState({state:'waiting',why:'Provider limit',until:Date.now()/1000+86400}),/next check at 12:54 \(/);
+
+agent.state='waiting';agent.provider_waiting=true;agent.until=Date.now()/1000+3600;
+c.renderSessions([agent]);html=elements.get('sessions').html;
+assert(html.includes('Retry provider now'));assert(!html.includes('class="ghost" data-retry-paused'));
+agent.provider_retry_requested=true;c.renderSessions([agent]);html=elements.get('sessions').html;
+assert(html.includes('Provider retry requested…'));assert(/data-retry-provider="test"[^>]*disabled/.test(html));

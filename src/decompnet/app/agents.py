@@ -435,6 +435,8 @@ class Session:
     throttled: bool = False  # the last run ended on the provider's limit of requests at once: not a failure
     limited: bool = False  # the last run ended on the plan's usage limit: wait for it to reset
     cooldown_observed: float = 0
+    provider_waiting: bool = False
+    provider_retry_requested: bool = False
     continuation_attempts: int = 0
     continuation_note: str = ""
     limit_until: float | None = None  # when the agent said that limit resets
@@ -462,6 +464,7 @@ class Session:
                 "per_session": self.options.get("per_session", PER_SESSION),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
+                "provider_waiting": self.provider_waiting, "provider_retry_requested": self.provider_retry_requested,
                 "configuration_error": self.configuration_error, "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
                 "last_message": self.last_message, "runs": self.runs, "restarts": self.restarts, "error": self.error,
                 "started_at": self.started_at, "usd": round(self.usd, 4), "tokens": self.tokens,
@@ -761,6 +764,17 @@ class Manager:
             s.label = label.strip()
             self._save(s)
             return s.label
+
+    def retry_provider(self, sid):
+        with self._lock:
+            s=self.sessions.get(sid)
+            if s is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
+            if s.stop.is_set() or s.state!='waiting' or not s.provider_waiting:
+                raise ValueError('This agent is not waiting for a provider limit.')
+            s.provider_retry_requested=True
+            self._set(s,'waiting','Provider retry requested; checking within 30 seconds',time.time()+30,
+                      'This worker will retry once. A successful session releases the shared account wait.')
+        return {'requested':True}
 
     def retry_paused(self, sid, limit=5, log=lambda *_: None):
         from . import retry_paused
@@ -1240,11 +1254,27 @@ class Manager:
             s.state, s.why, s.until, s.todo = state, why, until, todo
         self._save(s)
 
-    def _wait(self, s: Session, why: str, until: float, todo: str = "") -> None:
+    def _wait(self, s: Session, why: str, until: float, todo: str = "", *, wall_clock=False) -> None:
         """Wait (unless stopped meanwhile), saying why and until when."""
         self._set(s, "waiting", why, until, todo)
-        s.push("info", f"waiting until {datetime.fromtimestamp(until).strftime('%H:%M')}: {why}")
-        s.stop.wait(max(0.0, until - time.time()))
+        s.push("info", f"waiting until {datetime.fromtimestamp(until).astimezone().strftime('%d %b %Y %H:%M %Z')}: {why}")
+        if wall_clock:
+            # Event.wait uses an elapsed-time clock which can stop during system sleep.
+            # Provider reset timestamps use wall time: recheck after wake/clock changes.
+            from . import session_followups
+            s.provider_waiting=True
+            try:
+                while not s.stop.is_set() and (remaining := until - time.time()) > 0:
+                    if s.provider_retry_requested:break
+                    if s.cooldown_observed and not session_followups.active_limit(self,s):break
+                    s.stop.wait(min(30.0, remaining))
+            finally:
+                s.provider_waiting=False
+                s.provider_retry_requested=False
+            if not s.stop.is_set():
+                self._set(s, "starting", "Checking provider availability")
+        else:
+            s.stop.wait(max(0.0, until - time.time()))
 
     def _pause(self, s: Session, why: str, todo: str = "") -> None:
         """It can't work until the user does something: it stops trying, says why and what to do."""
@@ -1354,7 +1384,7 @@ class Manager:
             if (shared_until := session_followups.cooldown(self, s)) is not None:
                 s.cooldown_observed = shared_until
                 self._wait(s, "This provider account's usage limit is reached", shared_until + session_followups.stagger(s),
-                           "Helpers using this account resume automatically after reset.")
+                           "Helpers using this account resume automatically after reset.", wall_clock=True)
                 continue
             s.runs += 1
             with self._lock:
@@ -1414,6 +1444,7 @@ class Manager:
                 self._wait(s,transport,time.time()+delay,'Local tool connection retry; saved work remains available.')
                 continue
             if ok and not s.stop.is_set() and not s.limited and not s.throttled and not s.auth_failed:
+                session_followups.clear_limit(self,s)
                 from .session_recovery import completed
                 completed(s, self.net)
                 self._save(s)
@@ -1478,7 +1509,7 @@ class Manager:
                 s.limited, s.limit_until = False, None
                 s.restarts += 1
                 self._wait(s, f"{kind.name}'s usage limit is reached", until + session_followups.stagger(s),
-                           "it resets by itself; this helper carries on then")
+                           "it resets by itself; this helper carries on then", wall_clock=True)
                 continue
             if s.throttled and throttles < THROTTLES_IN_A_ROW:  # the provider's limit, not the agent's failure
                 s.throttled, throttles = False, throttles + 1

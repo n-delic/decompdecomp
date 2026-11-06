@@ -70,7 +70,7 @@ def test_account_wait_precedes_any_provider_session(tmp_path,monkeypatch):
     net,manager,s,agent=setup(tmp_path,monkeypatch)
     session_followups.remember_limit(manager,s,time.time()+3600)
     monkeypatch.setattr(manager,'_run_cli',lambda *a:pytest.fail('No provider session during cooldown'))
-    def wait(session,why,until,todo=''):
+    def wait(session,why,until,todo='',**kwargs):
         assert 'provider account' in why
         manager.stop(session.id)
     monkeypatch.setattr(manager,'_wait',wait)
@@ -179,3 +179,83 @@ def test_frontload_refreshes_claim_state_even_when_revision_did_not_change(tmp_p
     result=frontload(net,agent,'game',fn['name'],old)
     assert 'claim=not held' in result and 'claim=held' not in result
     assert 'applied_patch_ids=1' in result and 'Do not patch without a claim' in result
+
+
+def test_provider_wait_rechecks_wall_clock_after_system_sleep(tmp_path,monkeypatch):
+    net,manager,s,_=setup(tmp_path,monkeypatch)
+    now=[time.time()]
+    monkeypatch.setattr(agents.time,'time',lambda:now[0])
+    deadline=now[0]+3600
+    checks=[]
+    class Sleep:
+        def is_set(self):return False
+        def wait(self,seconds):
+            checks.append(seconds)
+            now[0]+=7200  # The computer wakes after the provider's wall-clock reset.
+    s.stop=Sleep()
+    manager._wait(s,'Provider limit reached',deadline,wall_clock=True)
+    assert checks==[30]
+    assert s.state=='starting' and s.until is None
+    assert 'checking provider' in s.why.lower()
+
+
+def test_provider_wait_honors_deadline_when_clock_moves_back_and_can_stop(tmp_path,monkeypatch):
+    net,manager,s,_=setup(tmp_path,monkeypatch)
+    now=[time.time()];deadline=now[0]+60
+    monkeypatch.setattr(agents.time,'time',lambda:now[0])
+    class Clock(Quick):
+        def wait(self,seconds):
+            result=super().wait(seconds)
+            now[0]+= -60 if len(self.waits)==1 else seconds
+            return result
+    s.stop=Clock()
+    manager._wait(s,'Provider limit reached',deadline,wall_clock=True)
+    assert now[0]==deadline and s.stop.waits==[30]*5
+    s.stop=Quick()
+    def cancel(seconds):s.stop.set();return True
+    s.stop.wait=cancel
+    manager._wait(s,'Provider limit reached',now[0]+3600,wall_clock=True)
+    assert s.stop.is_set() and s.until==now[0]+3600
+
+
+def test_manual_provider_retry_tests_one_worker_then_releases_siblings_on_success(tmp_path,monkeypatch):
+    net,manager,s,_=setup(tmp_path,monkeypatch)
+    until=time.time()+3*86400
+    s.cooldown_observed=session_followups.remember_limit(manager,s,until)
+    peer=manager._record('game','claude','peer','peer',{})
+    peer.cooldown_observed=until
+    s.state='waiting';s.provider_waiting=True
+    assert manager.retry_provider(s.id)=={'requested':True}
+    assert s.provider_retry_requested and not peer.provider_retry_requested
+    manager._wait(s,'Provider limit',until,wall_clock=True)
+    assert s.state=='starting' and not s.provider_retry_requested
+    assert session_followups.active_limit(manager,peer)  # Retry alone is not proof the quota is free.
+    session_followups.clear_limit(manager,s)
+    assert not session_followups.active_limit(manager,peer)
+    manager._wait(peer,'Provider limit',until,wall_clock=True)
+    assert peer.state=='starting' and not peer.provider_waiting
+    with pytest.raises(ValueError,match='not waiting'):manager.retry_provider(peer.id)
+
+
+def test_successful_retry_does_not_erase_a_newer_provider_limit(tmp_path,monkeypatch):
+    net,manager,s,_=setup(tmp_path,monkeypatch)
+    s.cooldown_observed=session_followups.remember_limit(manager,s,time.time()+3600)
+    newer=session_followups.remember_limit(manager,s,time.time()+7200)
+    session_followups.clear_limit(manager,s)
+    peer=manager._record('game','claude','peer','peer',{})
+    assert session_followups.cooldown(manager,peer)==newer
+
+
+def test_successful_provider_session_automatically_releases_observed_cooldown(tmp_path,monkeypatch):
+    net,manager,s,_=setup(tmp_path,monkeypatch)
+    s.cooldown_observed=session_followups.remember_limit(manager,s,time.time()+86400)
+    runs=[]
+    def run(*args):
+        runs.append(1)
+        if len(runs)==2:
+            assert not session_followups.active_limit(manager,s)
+            manager.stop(s.id)
+        return True
+    monkeypatch.setattr(manager,'_run_cli',run)
+    manager._run(s)
+    assert runs==[1,1] and not session_followups.active_limit(manager,s)

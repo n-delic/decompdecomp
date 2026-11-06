@@ -49,7 +49,7 @@ def test_invalid_past_distant_or_ambiguous_dates_remain_unknown(text):
 
 def test_weekly_reset_flows_into_one_manager_wait_before_retry(tmp_path, monkeypatch):
     from decompnet.app import agents
-    from tests.test_agents import URL, Quick, _game, _no_agent_settings
+    from tests.test_agents import URL, ClockQuick, _game, _no_agent_settings
 
     _no_agent_settings(monkeypatch)
     now = datetime(2026,11,6,10,tzinfo=timezone.utc).timestamp()
@@ -57,7 +57,7 @@ def test_weekly_reset_flows_into_one_manager_wait_before_retry(tmp_path, monkeyp
     net = _game(tmp_path)
     manager = agents.Manager(net,tmp_path,URL)
     session = manager._record('game','claude','claude-1','claude-1',{})
-    session.stop = Quick()
+    session.stop = ClockQuick(monkeypatch,now)
     said = "You've hit your weekly limit · resets Nov 9 at 5pm (Europe/London)"
     runs = []
 
@@ -74,6 +74,6 @@ def test_weekly_reset_flows_into_one_manager_wait_before_retry(tmp_path, monkeyp
     monkeypatch.setattr(manager,'_run_cli',run)
     manager._run(session)
     expected = datetime(2026,11,9,17,tzinfo=timezone.utc).timestamp() - now + agents.LIMIT_RESET_MARGIN
-    assert max(w for w in session.stop.waits if w) == pytest.approx(expected, abs=5)  # Existing worker stagger can add a few seconds.
+    assert sum(w for w in session.stop.waits if w) == pytest.approx(expected, abs=5)  # Existing worker stagger can add a few seconds.
     assert runs == [1,1]
     assert [r['outcome'] for r in net.store.all('SELECT outcome FROM helper_sessions')] == ['limit','stopped']

@@ -55,7 +55,15 @@ function helperState(s, claim) {
     return `Working on ${fnLink(claim.name)} (${facts.join(" · ")})${claim.attempts ? "" : ` · ${reading(claim)}`}`;
   }
   if (s.state === "starting") return s.why ? `Starting: ${esc(s.why)}` : "Starting…";
-  if (s.state === "waiting") return `Waiting: ${esc(s.why || "a moment")}${s.until ? ` · next check at ${hhmm(s.until)}` : ""}`;
+  if (s.state === "waiting") {
+    let check = "";
+    if (s.until) {
+      const when = new Date(s.until * 1000), now = new Date();
+      const date = when.toLocaleDateString() !== now.toLocaleDateString() ? ` (${when.toLocaleDateString([], {day:"numeric",month:"short",year:"numeric"})})` : "";
+      check = s.until <= now.getTime()/1000 ? " · retry due" : ` · next check at ${hhmm(s.until)}${date}`;
+    }
+    return `Waiting: ${esc(s.why || "a moment")}${check}`;
+  }
   if (s.state === "paused") return `Paused: ${esc(s.why)}`;
   return s.stopped_by === "you" || !s.why ? "Stopped by you" : `Stopped: ${esc(s.why)}`;
 }
@@ -260,7 +268,7 @@ function renderSessions(sessions, refreshCosts = true) {
       ${agentMetrics(s, b)}
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
       ${todo ? `<span class="todo-line">${esc(todo)}</span>${s.can_login && !live && /login|sign.?in/i.test(s.todo || "") ? `<button class="ghost" type="button" data-login="${id}">Sign in to ${esc(s.kind_name)}</button>` : ""}` : ''}
-      ${s.task !== "readable" && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
+      ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : s.task !== "readable" && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
       ${agentUsage(s)}
       <details class="agent-details" data-agent-details="${id}" ${agentDetailsOpen.has(s.id) ? 'open' : ''}><summary>Details</summary><div class="agent-details-body">
       <span class="facts-line">${facts.join(' · ')}</span>
@@ -298,6 +306,7 @@ function renderSessions(sessions, refreshCosts = true) {
       poll(false);
     };
   });
+  act('[data-retry-provider]', '/api/agents/retry-provider', b => ({id:b.dataset.retryProvider}));
   box.querySelectorAll('[data-agent-prompts]').forEach(button => { button.onclick = () => showAgentPrompts(sessions.find(s => s.id === button.dataset.agentPrompts)); });
   box.querySelectorAll('[data-retry-paused]').forEach(button => { button.onclick = () => showRetryPaused(sessions.find(s => s.id === button.dataset.retryPaused)); });
   box.querySelectorAll('[data-agent-tools]').forEach(button => { button.onclick = () => showAgentTools(sessions.find(s => s.id === button.dataset.agentTools)); });
