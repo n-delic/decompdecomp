@@ -16,8 +16,8 @@ without complete replay inputs and large sources are retained conservatively.
 Existing evidence and manual review notes are preserved; there is no startup scan or
 retroactive deletion. Sampling counters start with this update. Existing large-text
 compression and explicit compaction continue to work. The original retained example
-remains available for review and replay. This change does not create a submission service
-or a separate evidence database; portable exports still need to resolve referenced inputs.
+remains available for review and replay. Full evidence now resides in the separate database described in
+[repair-evidence-database.md](repair-evidence-database.md); no submission service is enabled.
 
 ## Settings
 

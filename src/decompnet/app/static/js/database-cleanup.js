@@ -78,7 +78,7 @@ async function loadDatabaseStorage() {
   if(databaseStorageJob)return;
   const size=n=>`${(Number(n)/1048576).toLocaleString(undefined,{maximumFractionDigits:1})} MiB`;
   $('databaseStorageSize').textContent=`— ${size(data.stored_bytes)} shared content`;
-  $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of shared text stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database.`;
+  $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of shared text stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database. Repair evidence: ${size(data.repair_archive_bytes)} in its separate database.`;
   $('repairEvidenceEnabled').checked=data.repair_evidence.enabled;
   $('repairEvidenceAutomatic').value=data.repair_evidence.automatic_limit;
   $('repairEvidenceManual').value=data.repair_evidence.manual_limit;
@@ -128,6 +128,19 @@ $('repairEvidenceSave').onclick=async()=>{
   }catch(error){showJobError(log,error.message);}
   finally{done();updateRepairEvidenceFields();}
 };
+
+$('repairEvidenceExport').onclick=async()=>{
+  const log=$('repairEvidenceLog'),button=$('repairEvidenceExport');
+  const done=beginWork(log,'Exporting repair evidence database',[button],'Repair evidence database exported');
+  try{
+    const response=await fetch('/api/repair-examples/database');
+    if(!response.ok)throw new Error('Could not export repair evidence. Check that its background migration has started.');
+    const url=URL.createObjectURL(await response.blob()),link=document.createElement('a');
+    link.href=url;link.download='repair-evidence.sqlite3';link.click();URL.revokeObjectURL(url);
+  }catch(error){showJobError(log,error.message);}
+  finally{done();}
+};
+
 
 /* Navigation and new windows reconnect to the server's job, without starting work again.
    The run functions reserve their attachment before awaiting, so repeated visits cannot

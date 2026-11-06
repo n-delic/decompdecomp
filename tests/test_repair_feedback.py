@@ -176,7 +176,7 @@ def test_deleted_old_attempt_cannot_be_replaced_with_unrelated_reused_id(setup):
     with net.store.tx() as db:
         db.execute('DELETE FROM attempts WHERE id=?', (before,))
         db.execute('INSERT INTO attempts(id,function_id,source) VALUES(?,?,?)', (before, fid, 'unrelated reused record'))
-    assert net.repair_feedback.detail('demo', case)['evidence']['before']['source'] is None
+    assert net.repair_feedback.detail('demo', case)['evidence']['before']['source'] == 'int target(void) { return 2; }\n'
 
 
 def test_mcp_and_api_accept_inline_feedback_without_an_extra_model_call(setup, monkeypatch):
@@ -578,3 +578,18 @@ def test_repeated_installed_rule_keeps_match_but_skips_extra_capture_and_analysi
     assert len(scheduled)==1
     row=net.store.one('SELECT successes,retained FROM repair_capture_groups')
     assert tuple(row)==(3,1)
+
+
+def test_archived_case_preserves_historical_header_and_explicit_winning_score(setup):
+    net,*_=setup
+    case=match(setup)
+    detail=net.repair_feedback.detail('demo',case)
+    key=detail['evidence_archive']
+    snapshot=json.loads(net.store.conn.repair_archive.read(key,snapshot=True))
+    assert snapshot['evidence']['after']['score']==0
+    assert snapshot['evidence']['after']['header']=='typedef int word;'
+    assert snapshot['evidence']['target_hex']==b'original'.hex()
+    with net.store.tx() as db:db.execute('DELETE FROM context_versions')
+    restored=net.repair_feedback.detail('demo',case)['evidence']
+    assert restored['before']['header']=='typedef int word;'
+    assert restored['after']['header']=='typedef int word;'

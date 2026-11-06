@@ -2614,6 +2614,25 @@ def test_repair_evidence_settings_routes_validate_and_persist(app):
         client.post('/api/database-storage',json=dict(action='save-repair-evidence',**DEFAULTS),headers=headers)
 
 
+def test_repair_evidence_database_download_is_guarded_and_standalone(app,tmp_path):
+    import sqlite3
+    client,net,*_=app
+    archive=net.store.conn.repair_archive
+    key=archive.put('{"case":"export-test"}',{'format':1,'evidence':{'source':'frozen source'}})
+    assert client.get('/api/repair-examples/database',headers={'User-Agent':'outside'}).status_code==401
+    with net.store.tx() as db:
+        pid=db.execute("INSERT INTO projects(slug,root,config) VALUES('evidence-export-review',?,'{}')",(str(tmp_path),)).lastrowid
+        fid=db.execute("INSERT INTO functions(project_id,name) VALUES(?,'example')",(pid,)).lastrowid
+        db.execute("INSERT INTO repair_examples(project_id,function_id,created_at,evidence,explanation) VALUES(?,?,0,?,?)",(pid,fid,'{\"after\":{}}','Useful explanation for corpus review'))
+    response=client.get('/api/repair-examples/database')
+    assert response.status_code==200
+    path=tmp_path/'download.sqlite3';path.write_bytes(response.content)
+    with sqlite3.connect(path) as db:
+        assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+        assert db.execute('SELECT 1 FROM cases WHERE hash=?',(key,)).fetchone()
+        assert db.execute("SELECT explanation FROM reviews WHERE project='evidence-export-review'").fetchone()[0]=='Useful explanation for corpus review'
+
+
 def test_settings_job_discovery_is_guarded_small_and_independent_of_database_stats(app,monkeypatch):
     from decompnet.app import header_cleanup
     client,net,*_=app

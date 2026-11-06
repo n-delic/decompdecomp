@@ -2992,4 +2992,9 @@ ABI analysis and automatic source/profile selection remain planned.
 - Done: Settings → Database storage exposes persisted repair evidence sampling controls,
   separate automatic/manual limits (0–1000), and unlimited capture mode for future examples.
 
+- Done: full repair evidence resides in a separate compressed, checksummed SQLite archive,
+  with frozen historical inputs, resumable/stoppable legacy migration, compatible review/replay,
+  database export including annotations, and multi-file compaction. Main keeps its small index.
+
+
 - Done: Settings discovers active storage compression, compaction, header cleanup and transcript jobs from the server when reopened; restores progress and Stop controls without starting duplicate work.

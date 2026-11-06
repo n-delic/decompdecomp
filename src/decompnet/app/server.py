@@ -140,6 +140,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         log.check_cancel()
     startup_projects = list(net.store.all('SELECT slug FROM projects'))
     startup_projects.sort(key=lambda r: r['slug'] != settings.data.get('last_project'))
+    from ..repair_archive import migrate as migrate_repairs
+    startup.add('Move repair evidence',lambda log:migrate_repairs(net,log),with_log=True)
     startup.add("Archive verified matches", lambda log: net.match_library.backfill(log, only_changed=True), with_log=True)
     for row in startup_projects:
         slug = row['slug']
