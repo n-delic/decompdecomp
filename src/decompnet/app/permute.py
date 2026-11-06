@@ -364,12 +364,12 @@ class Permuter:
             message = (f"Saved best score {best} does not reproduce under the active compiler "
                        f"(now {baseline[0] if baseline else 'compile/link failure'}). "
                        "Random permutations paused; check compiler provenance and header changes first.")
-            self._save_probe(fn, key, {"diagnostic": message, "contexts": []})
+            self._save_probe(fn, key, {"diagnostic": message, "contexts": [], "complete": False})
             log.info("permuter: %s: %s", fn['name'], message)
             return None
         cached = self.net.store.one("SELECT result FROM matching_probes WHERE function_id=? AND cache_key=?",
                                     fn["id"], key)
-        if cached:
+        if cached and json.loads(cached['result']).get('complete'):
             kept = json.loads(cached['result']).get('contexts', [])
             return [source, *kept][:MAX_CONTEXTS], best, source, baseline[1]
         variants = (field_probes.candidates(source, fn['name'], ctx['header'])
@@ -396,7 +396,7 @@ class Permuter:
         kept = [entry[2] for entry in sorted(ranked)[:MAX_CONTEXTS - 1]]
         if complete:
             self._save_probe(fn, key, {"diagnostic": f"Tested {len(variants)} field layouts under the active compiler; "
-                                      "none matched exactly.", "contexts": kept})
+                                      "none matched exactly.", "contexts": kept, "complete": True})
         distances = [v for v in [baseline[1], *[entry[0] for entry in ranked]] if v is not None]
         order = min(distances) if distances else None
         return [source, *kept], best, best_source, order

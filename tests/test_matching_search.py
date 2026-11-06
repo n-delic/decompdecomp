@@ -110,6 +110,18 @@ def test_stale_baseline_stops_before_mutations_and_survives_restart():
     assert 'does not reproduce' in text and 'Random permutations paused' in text
 
 
+def test_failed_baseline_diagnostic_does_not_cache_untried_field_probes():
+    net = prepare_net()
+    p = Permuter(net)
+    p._measure = lambda *args: None
+    assert p._prepare(AGENT, net.project_row('game'), net.function(), State(), None, time.monotonic() + 5) is None
+    calls = []
+    p = Permuter(net)
+    p._measure = lambda *args: calls.append(args[3]) or (200, 4)
+    p._prepare(AGENT, net.project_row('game'), net.function(), State(), None, time.monotonic() + 5)
+    assert len(calls) == 17  # recovered compiler: baseline plus all sixteen previously untried layouts
+
+
 def test_negative_probes_are_cached_but_a_header_change_retries():
     net = prepare_net()
     calls = []
