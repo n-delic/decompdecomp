@@ -36,7 +36,12 @@ class JudgeMixin:
             return super()._evaluate(fn, proj, obj)
         console = self.console(proj)
         res = console.link_function(obj, fn["name"], self._rom_target(fn), self.symbols(proj["id"]), self.reader(proj))
-        return res.candidate, res.exact if res.candidate is not None else None, res.problems
+        problems = list(res.problems)
+        if getattr(self, "match_diagnostics_since", 0) and not res.exact:
+            from ..match_diagnostics import details
+
+            problems += details(res, console.cpu_variant)
+        return res.candidate, res.exact if res.candidate is not None else None, problems
 
     def rename_tokens(self, proj, text: str) -> str:
         """Show automatic names under their current names (func_80001234 -> deflate)."""

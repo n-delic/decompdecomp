@@ -71,6 +71,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         settings.data.update(auto_update=False, check_updates=False)
         settings.save()
     net.auto_compiler = bool(settings.data.get("auto_compiler"))
+    from .match_diagnostics import configure
+
+    configure(settings, net)
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 

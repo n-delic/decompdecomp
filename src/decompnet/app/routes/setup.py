@@ -277,6 +277,15 @@ def register(app: App) -> None:
                     manager.stop(sid)
         if "per_session" in data:
             settings.data["per_session"] = max(1, min(int(data["per_session"]), 20))
+        if "match_diagnostics" in data:
+            if not isinstance(data["match_diagnostics"], bool):
+                return fail(ValueError("match_diagnostics must be true or false"))
+            from ..match_diagnostics import configure
+
+            if data["match_diagnostics"] and not settings.data.get("match_diagnostics"):
+                settings.data.pop("match_diagnostics_since", None)
+            settings.data["match_diagnostics"] = data["match_diagnostics"]
+            configure(settings, net)
         if "autopilot" in data:
             settings.data["autopilot"] = bool(data["autopilot"])
         if "budget_usd" in data:

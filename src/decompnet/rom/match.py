@@ -27,7 +27,7 @@ from elftools.elf.relocation import RelocationSection
 
 from .. import scoring
 from ..elfobj import MASKS_BY_ARCH, FunctionObj, Reloc, canonical_symbol, section_target, symbol_at, unmangle
-from .link import LinkResult, significant  # (re-exported: callers still ask match.LinkResult)
+from .link import LinkResult, record_mismatch, significant  # (re-exported: callers still ask match.LinkResult)
 from .split import RomFunction
 from .symbols import AUTO_NAME, SymbolTable
 
@@ -159,6 +159,7 @@ class _Linker:
         self.name, self.target, self.symbols, self.read = name, target, symbols, read
         self.symtab = self.elf.get_section_by_name(".symtab")
         self.problems: list[str] = []
+        self.mismatches: list = []
         self.local_map: dict[tuple[int, int], int] = {}  # (section index, offset) -> ROM address
         self.target_at = {off: (rtype, addr) for off, rtype, addr in target.relocs}
         self.data: dict[tuple[int, int], int] = {}  # every datum of its own the candidate uses -> ROM address
@@ -336,6 +337,7 @@ class _Linker:
             return  # the ROM has no bytes there (e.g. .bss in the ROM): nothing to compare
         if bytes(mine[:n]) != rom:
             where = self.symbols.label(addr)
+            record_mismatch(self.mismatches, where, addr, rom, bytes(mine[:n]), bool(sec["sh_flags"] & 4))
             self.problem(f"your data for {where} differs from the ROM: yours {bytes(mine[:min(n, 24)]).hex(' ')}"
                          f"{'…' if n > 24 else ''}, ROM {rom[:24].hex(' ')}{'…' if n > 24 else ''}")
 
@@ -376,7 +378,7 @@ class _Linker:
         for (dshndx, off), addr in self.local_map.items():
             placements.setdefault(self.elf.get_section(dshndx).name, {})[off] = addr
         return LinkResult(FunctionObj(self.name, "mips", self.target.big_endian, code, relocs), exact, self.problems,
-                          placements)
+                          placements, self.mismatches)
 
 
 def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn) -> LinkResult:
