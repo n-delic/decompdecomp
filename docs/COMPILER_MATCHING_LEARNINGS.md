@@ -5282,3 +5282,29 @@ The callers justify the old-IE value, not these scratch registers or additional
 spacing. Do not generalize the known Status-write branch-spacing primitive into
 an interrupt-disable completion guarantee, or add fixed GPRs/padding to reproduce
 this residual. This is a bounded negative experiment, not a new source match.
+
+### Two-way tail dispatch: recover the ABI, then check compiler capability
+
+A complete six-word O32 leaf tested `a2`, then jumped directly to either of two
+arithmetic helpers. Earlier 32-bit wrappers misrepresented the ABI. A direct
+caller supplied two 64-bit arguments in `a0:a1` and `a2:a3`, and consumed `v0:v1`;
+both helper bodies corroborated unsigned 64-bit division. Correct forwarding is
+`unsigned long long f(unsigned long long n, unsigned long long d)` with the high
+word of `d` choosing the helper. The shape alone does not establish these types.
+
+The archived KMC GCC 2.7.2 sources show why allocation searches were unproductive:
+`stmt.c` tail recursion requires the current declaration; `calls.c` emits ordinary
+calls, MIPS call patterns clobber register 31, and the frame logic saves it.
+Registered `gcc-4.4.0-n64` defaults (`-G0 -march=vr4300 -mabi=32 -mno-abicalls
+-fno-pic -O2`) instead emitted the exact 24-byte leaf with ordinary/`-da` parity
+and ordinary linker resolution of the two `R_MIPS_26` relocations. Disabling delay
+scheduling was also exact but unnecessary: retain default settings. This proves
+a modern-compiler reconstruction, not original retail toolchain provenance.
+
+Agent briefs now recognize this bounded raw control-flow shape and request
+caller/callee ABI and sibling-call capability checks before more variants. They
+do not change signatures, reopen assembly, select profiles or declare a match.
+The detector rejects modified delay slots, linked calls, internal/duplicate jump
+targets and incomplete extents. Use the toolchain resolver for availability:
+VM/WSL packs live in separate directories, so scanning the native toolchain root
+can incorrectly report an installed comparison compiler missing.

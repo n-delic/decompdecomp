@@ -74,6 +74,8 @@ def brief(net, proj, fn, source):
     """One bounded matched-callee lookup, also usable for project-mode C functions."""
     from . import callback_contracts, callee_contracts
 
+    tail = tail_dispatch_hint(proj, fn)
+
     leads, stubs, contracts = [], [], []
     if callee := forwarding(source, fn['name']):
         leads.append((fn['name'], callee))
@@ -96,4 +98,22 @@ def brief(net, proj, fn, source):
                 contracts.append(discrepancy)
             if len(leads) + len(stubs) + len(contracts) >= LIMIT:
                 break
-    return '\n'.join(part for part in (message(leads), stub_message(stubs), callee_contracts.message(contracts), callback_contracts.message(callbacks if source else [])) if part)
+    return '\n'.join(part for part in (tail, message(leads), stub_message(stubs), callee_contracts.message(contracts), callback_contracts.message(callbacks if source else [])) if part)
+
+
+def tail_dispatch_hint(proj, fn):
+    """Use the processor reader in either project mode; never infer a signature from register position."""
+    from ..arch import get
+
+    proj, fn = dict(proj), dict(fn)
+    if fn.get('status') == 'matched':
+        return ''
+    reader = get(proj.get('arch')).source_tail_dispatch
+    if not reader or not fn.get('target') or fn.get('vram') is None:
+        return ''
+    if 'big_endian' not in proj:
+        return ''
+    evidence = reader(fn['target'], bool(proj['big_endian']), vram=fn['vram'])
+    if not evidence:
+        return ''
+    return evidence['advice']

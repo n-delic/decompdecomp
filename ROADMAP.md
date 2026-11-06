@@ -2964,3 +2964,10 @@ need independent evidence before receiving this specific GNU C repair.
 - Done: shared, checksummed compression for large function text, reuse feedback,
   compiler evidence, transcripts, compiler settings and progress manifests. Bounded
   legacy backfill, match-library compression and two-file compaction preserve exact history.
+
+Implemented: bounded MIPS conditional tail-dispatch advice in agent contract briefs,
+including assembly review without saved C, for ROM and project modes when raw target
+bytes/address are available. It asks for caller/callee ABI and compiler sibling-call
+capability before variants, without changing signatures, profiles or classification.
+Other processors have no reader for this instruction pattern; generalized tail-dispatch
+ABI analysis and automatic source/profile selection remain planned.
