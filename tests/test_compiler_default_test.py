@@ -434,3 +434,28 @@ def test_cancelled_parallel_checks_do_not_publish_settings_or_matches(net,monkey
         trial.apply_matches(net,'game',PROFILE,['f3'],log)
     assert net._project('game')['config']==before
     assert not net.store.all('SELECT * FROM attempts')
+
+
+def test_missing_address_skips_only_that_candidate(net,monkeypatch):
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='open',vram=NULL WHERE name='f2'")
+    seen=[]
+    monkeypatch.setattr(net,'_judge_with',lambda proj,fn,*args:(seen.append(fn['name']) or True,NS(score=0),''))
+    result=trial.apply_matches(net,'game',PROFILE,['f2','f3'])
+    assert result['passed']==1 and result['failed']==1 and seen==['f3']
+    assert result['matches']==['f3']
+
+
+def test_custom_command_is_verified_with_actual_invocation_not_trial_receipt(net,monkeypatch):
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(True,NS(score=0),''))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    cfg=json.loads(net._project('game')['config']);cfg['compiler']['cmd']=['custom compiler']
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=?',(json.dumps(cfg),))
+    def compile_custom(proj,header,source,fn):
+        assert trial.profile(compiler_for(json.loads(proj['config']),fn['vram'],fn))==trial.profile(PROFILE)
+        assert json.loads(proj['config'])['compiler']['cmd']==['custom compiler']
+        return NS(ok=False)
+    from decompnet.project import compiler_for
+    monkeypatch.setattr(net,'_compile',compile_custom)
+    result=trial.apply_matches(net,'game',PROFILE,['f3'],receipt=out['receipt'])
+    assert result['passed']==0 and result['failed']==1 and result['reused']==0
+    assert not net.store.all('SELECT * FROM attempts')

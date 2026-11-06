@@ -76,10 +76,12 @@ def run(net, slug, selected, log=print, nonmatches=False):
     cancel()
     current = net.store.one('SELECT config FROM projects WHERE id=?', proj['id'])
     current_cfg = json.loads(current['config']) if current else None
-    latest = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
-    latest_candidates = population(latest, current_cfg) if current_cfg else []
-    state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
-                      or headers() != original_headers or signature(latest_candidates) != signature(candidates))
+    latest = (net.store.all('SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY id',proj['id'],json.dumps(list(proofs)))
+              if nonmatches else net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id']))
+    if not nonmatches:
+        latest_candidates = population(latest, current_cfg) if current_cfg else []
+        state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
+                          or headers() != original_headers or signature(latest_candidates) != signature(candidates))
     if nonmatches:
         state['receipt']=batch.remember(net,slug,selected,proofs)
         current_env=batch.environment(net,{**dict(proj),'config':json.dumps(current_cfg)},selected) if current_cfg else None

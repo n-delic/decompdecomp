@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from .. import match_bundle, toolchains
+from .. import match_bundle, scoring, toolchains
 from ..network import NetworkError
 from ..project import compiler_for, function_compiler_key
 from .compiler_cleanup import replace_range
@@ -22,7 +22,7 @@ def environment(net,proj,selected):
     cfg=json.loads(proj['config'])
     for key in ('compiler_ranges','function_compilers','boundaries','suggestions','knowledge_auto','range_checks','compiler_survey'):
         cfg.pop(key,None)
-    cfg['compiler']={**selected,'timeout':20}
+    cfg['compiler']={**cfg['compiler'],**selected,'timeout':20}
     return (cfg,proj['root'],proj['arch'],proj['big_endian'],
             [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
             match_bundle.compiler_identity(selected))
@@ -77,6 +77,7 @@ def parallel(items,check,cancel):
 
 def eligible(net,proj,fn,identities):
     if fn['status']!='open':raise NetworkError('No longer unmatched; skipped.')
+    if fn['vram'] is None:raise NetworkError('Review this function address before applying a profile.')
     siblings=[row for row in identities if row['vram']==fn['vram']]
     if len(siblings)!=1 and (fn['rom_offset'] is None or any(r['id']!=fn['id'] and r['rom_offset']==fn['rom_offset'] for r in siblings)):
         raise NetworkError('Shares an overlay address without a unique ROM location; identify its original overlay before applying.')
@@ -99,6 +100,7 @@ def apply(net,slug,selected,names,log,receipt=None):
         identities=net.store.all('SELECT id,vram,rom_offset,size,name FROM functions WHERE project_id=?',proj['id'])
         env=environment(net,proj,selected);cache=remembered(net,slug,selected,receipt)
         boundaries=blocked(net,proj)
+        custom=bool(set(json.loads(proj['config'])['compiler'])-{'toolchain','flags','timeout'})
         def check(name):
             cancel()
             try:
@@ -108,8 +110,17 @@ def apply(net,slug,selected,names,log,receipt=None):
                 source=net._comparison_source(fn)
                 if not source:raise NetworkError('No saved C is available.')
                 signature=fingerprint(net,proj,fn,source,env)
-                reuse=cache.get(fn['id'])==signature
-                if not reuse and not net._judge_with(proj,fn,selected['toolchain'],selected['flags'],source)[0]:
+                reuse=not custom and cache.get(fn['id'])==signature
+                if custom:
+                    # The diagnostic judge uses the pinned tool's normal command. Custom
+                    # commands/includes must instead verify the actual proposed invocation.
+                    from .prepared_evidence import scoped_config
+                    private={**dict(proj),'config':json.dumps(scoped_config(proj,fn,selected))}
+                    result=net._compile(private,net._context(proj['id'],fn['unit'])['header'],source,fn)
+                    candidate,verdict,_=net._evaluate(fn,private,result.obj) if result.ok else (None,False,[])
+                    exact=candidate is not None and (verdict if verdict is not None else scoring.diff(net._target_obj(fn,private),candidate).bytes_match)
+                else:exact=reuse or net._judge_with(proj,fn,selected['toolchain'],selected['flags'],source)[0]
+                if not exact:
                     raise NetworkError('Saved C no longer matches this profile; rerun the test.')
                 return name,(fn,source,signature,reuse),None
             except (NetworkError,toolchains.ToolchainError,OSError) as error:return name,None,error
@@ -169,7 +180,7 @@ def apply(net,slug,selected,names,log,receipt=None):
             for fn,source,reuse in candidates:
                 cancel()
                 context=net._context(proj['id'],fn['unit'])
-                net._record(fn,agent,0,source,context['version'],matched=True,via='compiler-profile',effective_settings={'compiler':selected})
+                net._record(fn,agent,0,source,context['version'],matched=True,via='compiler-profile',effective_settings={'compiler':compiler_for(cfg,fn['vram'],fn)})
                 state['passed']+=1;state['reused']+=int(reuse);state['matches'].append(fn['name'])
         publish('Verified matches saved')
     log(f"Saved {state['passed']} matches; reused {state['reused']} unchanged exact checks; {state['failed']} skipped.")
