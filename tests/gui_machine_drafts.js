@@ -1,6 +1,6 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('path');
 const nodes=new Map(),posts=[];
-const get=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,disabled:false,checked:false,value:'0',textContent:'',firstElementChild:{style:{}},setAttribute(){},classList:{toggle(){},add(){},remove(){}}});return nodes.get(id);};
+const get=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,querySelectorAll(){return [];},disabled:false,checked:false,value:'0',textContent:'',firstElementChild:{style:{}},setAttribute(){},classList:{toggle(){},add(){},remove(){}}});return nodes.get(id);};
 let finished=0,release,errors=[];
 const ctx={renderSavedMatchRecovery:()=>{},plural:()=>'',esc:s=>s,$:get,S:{slug:'overlay-demo'},cFunctions:()=>10,
  beginWork:(log,label,buttons)=>{log._workStatus={textContent:''};assert.match(label,/Regenerating/);buttons.forEach(b=>b.disabled=true);return ()=>{finished++;buttons.forEach(b=>b.disabled=false);};},
