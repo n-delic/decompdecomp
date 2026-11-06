@@ -161,15 +161,17 @@ def test_apply_rejects_stale_source_and_overlay_addresses(net, monkeypatch):
     assert 'overlay' in result['failures'][0]['reason']
 
 
-def test_apply_refuses_active_claims(net, monkeypatch):
+def test_apply_rechecks_active_claims(net, monkeypatch):
     agent, _ = net.local_agent('test-worker')
     fn = net._function('f3', 'game')
     import time
     with net.store.tx() as db:
         db.execute('INSERT INTO claims(function_id,agent_id,expires_at) VALUES(?,?,?)', (fn['id'],agent.id,time.time()+3600))
-    monkeypatch.setattr(net, '_judge_with', lambda *args:pytest.fail('busy functions must be skipped'))
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(True,NS(score=0),''))
+    calls=[]
+    monkeypatch.setattr(net,'apply_function_compiler',lambda *args:calls.append(args) or {'newly_matched':True})
     result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
-    assert result['failed'] == 1 and 'agent is working' in result['failures'][0]['reason']
+    assert result['passed']==1 and calls[0][1]=='f3'
 
 
 def test_apply_returns_structured_affected_matches(net, monkeypatch):
@@ -215,7 +217,7 @@ def test_safe_range_isolates_overlapping_extent_and_preserves_other_match(net, m
         verified.extend(fn['name'] for fn in only)
         return [(fn['name'], 'different bytes') for fn in only if fn['name'] == 'neighbor']
     monkeypatch.setattr(net, 'regression_test', regression)
-    def save(agent, proj, fn, source):
+    def save(agent, proj, fn, source, **options):
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=?", (source, fn['id']))
     monkeypatch.setattr(net, 'try_quietly', save)
@@ -270,7 +272,7 @@ def test_bulk_apply_scopes_same_address_overlays_by_rom_location(net, monkeypatc
     def regression(proj, agent, only, **kwargs):
         return [(fn['name'],'different bytes') for fn in only if fn['name']=='other_overlay']
     monkeypatch.setattr(net,'regression_test',regression)
-    def save(agent, proj, fn, source):
+    def save(agent, proj, fn, source, **options):
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=?",(source,fn['id']))
     monkeypatch.setattr(net,'try_quietly',save)

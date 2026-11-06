@@ -283,3 +283,6 @@ assert(!failureContext.profileFailureGroups([{function:'<unsafe>',reason:'<unsaf
   assert.equal(node('[data-apply-matches]').hidden,true);
   assert.match(node('[data-default-verdict]').textContent,/0 new matches saved/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+assert.doesNotMatch(read('steering'), /Busy functions are skipped\./);
+assert.match(read('steering'), /Verified matches release active claims/);

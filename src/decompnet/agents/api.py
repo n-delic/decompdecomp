@@ -122,6 +122,7 @@ class Api(Agent):
             steps = itertools.count() if focused else range(int(s.options.get("max_steps", API_STEPS)))
             idle_replies = 0
             for _step in steps:
+                if s.rotated or s.stop.is_set():return True
                 api_messages(net, s, identity, messages)
                 if focused:
                     from ..app.focused_agents import completion
@@ -131,7 +132,7 @@ class Api(Agent):
                     s.rotated=True
                     s.push('info','Starting a fresh session with saved candidates and experiments.')
                     return True
-                if s.stop.is_set():
+                if s.stop.is_set() or s.rotated:
                     return True
                 if focused and len(messages) >= 10 and sum(_tokens(m) for m in messages) > budget * .85:
                     compact_focus(client, base, headers, model, messages, budget, manager, s)
@@ -143,9 +144,11 @@ class Api(Agent):
                     if s.record:
                         s.record('api_request', request)
                     r = client.post(f"{base}/chat/completions", headers=headers, json=request)
-                    if r.status_code == 200 or not _too_long(r):
+                    if s.rotated or r.status_code == 200 or not _too_long(r):
                         break
                     budget = int(budget * API_TRIM_FACTOR)  # the server counts differently, or knows better: trim more
+                if s.rotated and r.status_code != 200:
+                    return True
                 if r.status_code != 200:
                     if (why := no_credit(r.text)) or r.status_code == PAYMENT_REQUIRED:
                         raise Fatal(why or no_credit("payment required"))
@@ -170,6 +173,8 @@ class Api(Agent):
                     return False
                 if isinstance(reply.get("usage"), dict):
                     manager.account(s, api_usage(reply["usage"]))
+                if s.rotated:
+                    return True
                 if msg.get("reasoning_content"):
                     s.push("think", msg["reasoning_content"])
                 if msg.get("content"):
@@ -194,6 +199,7 @@ class Api(Agent):
                 idle_replies = 0
                 finishing = False
                 for c in calls:
+                    if s.rotated or s.stop.is_set():return True
                     name = c["function"]["name"]
                     try:
                         args = json.loads(c["function"].get("arguments") or "{}")

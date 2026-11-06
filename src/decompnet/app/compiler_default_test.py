@@ -127,8 +127,6 @@ def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False):
             fn = net._function(name, slug)
             if fn['status'] != 'open':
                 raise NetworkError('No longer unmatched; skipped.')
-            if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
-                raise NetworkError('An agent is working on this function; retry after it releases the claim.')
             siblings = net.store.all('SELECT id,rom_offset FROM functions WHERE project_id=? AND vram=?', proj['id'], fn['vram'])
             if len(siblings) != 1 and (fn['rom_offset'] is None or any(
                     row['id'] != fn['id'] and row['rom_offset'] == fn['rom_offset'] for row in siblings)):
