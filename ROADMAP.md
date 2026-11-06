@@ -646,6 +646,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
+| Create Git repository and initial checkpoint from a portable save | ✓ | ✓ | ✓ | ✓ | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned |
+| Add missing origin remote in Settings | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Review and push existing Git commits to origin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Automatic per-match local commits with agent notes | ✓ | ✓ | ✓ | ✓ | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -3044,5 +3046,10 @@ ABI analysis and automatic source/profile selection remain planned.
   imported project checkouts share the push-only path. Full repair archives stay local.
 
 - Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.
+
+- Done: non-match compiler trials read metadata first, then prepare and judge up to eight functions independently; avoid implicit saved-file synchronization and whole-project payload loading, and hash common compiler/symbol inputs once per pass.
+
+
+Portable-save Git setup shares the Save location panel. Create repository adds Git metadata and an allowlist `.gitignore`; Commit saved progress creates the initial local checkpoint without unrelated files. A remembered backup is adopted for ongoing progress only after its contents agree with the current save. Imported projects can add origin and push their source checkout; creating source checkouts and per-unit automatic commits remains planned.
 
 - Done: explicit Autopilot runs bypass the background CPU lane using dedicated coordinator and compile threads. Clicking during an automatic run promotes its existing reusable-code pass rather than queuing or duplicating it; automatic runs retain background pacing.

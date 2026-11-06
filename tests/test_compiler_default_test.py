@@ -460,3 +460,114 @@ def test_custom_command_is_verified_with_actual_invocation_not_trial_receipt(net
     result=trial.apply_matches(net,'game',PROFILE,['f3'],receipt=out['receipt'])
     assert result['passed']==0 and result['failed']==1 and result['reused']==0
     assert not net.store.all('SELECT * FROM attempts')
+
+
+def test_nonmatch_testing_starts_before_another_function_finishes_loading(net,monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open' WHERE name='f2'")
+    one=net.store.one
+    blocked=threading.Event();first_result=threading.Event();release=threading.Event();seen=[]
+    def slow_read(sql,*args):
+        if sql.startswith('SELECT * FROM functions WHERE project_id=') and args[-1]==3 and not release.is_set():
+            blocked.set()
+            assert release.wait(5),'blocked preparation was not released'
+        return one(sql,*args)
+    monkeypatch.setattr(net.store,'one',slow_read)
+    monkeypatch.setattr(net,'_judge_with',lambda proj,fn,*args:(seen.append(fn['name']) or True,None,''))
+    def log(line):pass
+    log.progress=lambda state:first_result.set() if state.get('checked',0)>0 else None
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        task=pool.submit(trial.run,net,'game',PROFILE,log,True)
+        try:
+            assert blocked.wait(3)
+            assert first_result.wait(3),'ready function waited for unrelated preparation'
+            assert seen==['f3']
+        finally:release.set()
+        out=task.result(timeout=5)
+    assert out['checked']==out['passed']==2
+
+
+def test_nonmatch_metadata_does_not_load_matched_source_or_trigger_disk_sync(net,monkeypatch):
+    # A project full of compressed matches should not be inflated before testing one open function.
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET asm=?,matched_source=? WHERE status='matched'",('assembly'*10000,'matched C'*10000))
+    monkeypatch.setattr(net,'_project',RomNetwork._project.__get__(net))
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**k:pytest.fail('diagnostic must not reconcile/export saved files'))
+    original=net.store.all
+    def metadata_only(sql,*args):
+        assert not (sql.startswith('SELECT * FROM functions') and 'id IN' not in sql),'full project payload scan'
+        return original(sql,*args)
+    monkeypatch.setattr(net.store,'all',metadata_only)
+    monkeypatch.setattr(net,'_judge_with',lambda *a:(True,None,''))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    assert out['matches']==['f3'] and not out['stale']
+
+
+def test_nonmatch_cancellation_only_admits_a_bounded_window(net,monkeypatch):
+    import threading
+    with net.store.tx() as db:
+        for i in range(30):
+            db.execute("INSERT INTO functions(project_id,name,vram,size,best_source,status) VALUES(1,?,?,16,'draft','open')",(f'queued{i}',0x80002000+16*i))
+    stopped=threading.Event();judged=[]
+    def judge(proj,fn,*args):
+        judged.append(fn['name']);stopped.set()
+        return False,None,''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    before=net.store.one('SELECT config FROM projects')[0]
+    def log(line):pass
+    def cancel():
+        if stopped.is_set():raise RuntimeError('cancelled')
+    log.check_cancel=cancel
+    with pytest.raises(RuntimeError,match='cancelled'):
+        trial.run(net,'game',PROFILE,log,True)
+    assert len(judged)<=8
+    assert net.store.one('SELECT config FROM projects')[0]==before
+    assert not net.store.all('SELECT * FROM attempts')
+
+
+def test_nonmatch_symbol_changes_invalidate_receipts(net,monkeypatch):
+    def judge(*args):
+        with net.store.tx() as db:
+            db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,'changed',4096,4,'data')")
+        return True,None,''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    assert out['stale'] and out['changed_matches']==['f3']
+
+
+def test_common_environment_is_a_compact_digest_with_all_inputs(net,monkeypatch):
+    from decompnet.app import compiler_match_batch as batch
+    proj=net._project('game')
+    monkeypatch.setattr(batch.match_bundle,'compiler_identity',lambda selected:{'compiler':'first'})
+    first=batch.environment(net,proj,PROFILE)
+    assert len(first)==64 and isinstance(first,str)
+    assert batch.environment(net,proj,PROFILE)==first
+    monkeypatch.setattr(batch.match_bundle,'compiler_identity',lambda selected:{'compiler':'second'})
+    assert batch.environment(net,proj,PROFILE)!=first
+
+
+def test_nonmatch_changed_or_missing_function_is_reported_without_testing(net,monkeypatch):
+    original=net.store.one
+    def removed(sql,*args):
+        if sql.startswith('SELECT * FROM functions WHERE project_id='):return None
+        return original(sql,*args)
+    monkeypatch.setattr(net.store,'one',removed)
+    monkeypatch.setattr(net,'_judge_with',lambda *a:pytest.fail('removed function was compiled'))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    assert out['failed']==out['checked']==1 and 'No longer unmatched' in out['failures'][0]['reason']
+
+
+def test_nonmatch_uses_current_name_when_renamed_before_preparation(net,monkeypatch):
+    original=net.store.one;renamed=False
+    def rename_before_load(sql,*args):
+        nonlocal renamed
+        if sql.startswith('SELECT * FROM functions WHERE project_id=') and not renamed:
+            renamed=True
+            with net.store.tx() as db:db.execute("UPDATE functions SET name='renamed' WHERE name='f3'")
+        return original(sql,*args)
+    monkeypatch.setattr(net.store,'one',rename_before_load)
+    monkeypatch.setattr(net,'_judge_with',lambda *args:(True,None,''))
+    out=trial.run(net,'game',PROFILE,nonmatches=True)
+    assert out['matches']==['renamed'] and not out['stale']

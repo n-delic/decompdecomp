@@ -54,6 +54,57 @@ def test_existing_locals_and_unreachable_reads_do_not_block():
     assert not unsafe_temporary(PARENT, 'int f(int condition) { int temp; return 0; return temp; }', 'f')
 
 
+@pytest.mark.parametrize('declaration,read,initial', [
+    ('unsigned short value', 'value', 'packet[0]'),
+    ('int *value', '*value', 'packet'),
+])
+def test_existing_binding_cannot_lose_initialization_on_one_branch(declaration, read, initial):
+    parent = ('int f(int condition, int *packet) {'+declaration+'; int count; int i; int total=0; '
+              'if(condition) count=4; else count=8; value='+initial+'; '
+              'for(i=0; i<count; i++) total+='+read+'; return total; }')
+    bad = parent.replace('else count=8; value='+initial+';',
+                         'else { count=8; value='+initial+'; }')
+    good = parent.replace('if(condition) count=4; else count=8; value='+initial+';',
+                          'if(condition) { count=4; value='+initial+'; } '
+                          'else { count=8; value='+initial+'; }')
+    assert not unsafe_temporary(parent, parent, 'f')
+    assert unsafe_temporary(parent, bad, 'f')
+    assert not unsafe_temporary(parent, good, 'f')
+
+
+def test_existing_unsafe_or_unknown_binding_is_not_a_new_regression():
+    bad = 'int f(int condition) { int value; if(condition) value=2; return value; }'
+    assert not unsafe_temporary(bad, bad, 'f')
+    opaque = 'int f(int condition) { int value; UNKNOWN(); value=2; return value; }'
+    assert not unsafe_temporary(opaque, bad, 'f', '#define UNKNOWN() hidden_effect()')
+    qualified = bad.replace('int value;', 'volatile int value;')
+    assert not unsafe_temporary(qualified, bad, 'f')
+
+
+def test_one_unknown_existing_binding_does_not_hide_another_regression():
+    parent = ('int f(int condition) { int opaque; int value; '
+              'use((opaque=condition)); value=2; return value; }')
+    assert unsafe_temporary(parent, parent.replace('value=2;', 'if(condition) value=2;'), 'f')
+
+
+def test_generator_filters_lost_existing_initialization_and_preserves_valid_lineage(tmp_path):
+    parent = 'int f(int condition) { int value; value=2; return value; }'
+    bad = parent.replace('value=2;', 'if(condition) value=2;')
+    good = parent.replace('value=2;', 'if(condition) value=2; else value=3;')
+    script = tmp_path/'generator.py'
+    script.write_text('import json,sys\nfor line in sys.stdin:\n'
+                      ' for source in '+repr([bad, good])+':\n'
+                      '  print(json.dumps({"variant":source,"lineage":["perm_reorder_stmts"]}))\n'
+                      ' print(json.dumps({"done":True}),flush=True)\n')
+    gen = permute.Generator([sys.executable, str(script)])
+    try:
+        result = gen.batch(dict(source=parent, function='f'))
+    finally:
+        gen.close()
+    assert result == [good]
+    assert result[0].lineage == ['perm_reorder_stmts']
+
+
 @pytest.mark.parametrize('declaration,parameter', [
     ('u8 *temp', 'u8 *bytes'), ('u8*temp', 'u8*bytes'),
     ('void **temp', 'void **bytes'), ('void * *temp', 'void * *bytes'),

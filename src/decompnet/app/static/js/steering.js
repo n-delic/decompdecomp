@@ -110,9 +110,10 @@ function renderSteering(ov) {
   $("repositoryAutoCommitGroup").hidden = ov.kind === "fork";
   $("repositorySyncActions").hidden = ov.kind === "fork";
   $("repositorySyncHelp").hidden = ov.kind === "fork";
-  $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Sync your verified matches";
-  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Commit your saved progress, or copy matching C into a rebuildable export checkout.";
+  $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Version history and sharing";
+  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Keep local progress commits, automatically commit new matches, and push them when ready.";
   loadRepositoryFolder(S.slug);
+  if (typeof refreshRepositorySetup === "function") refreshRepositorySetup();
   refreshRepositoryPush();
   renderRepositoryAutoCommit(ov.auto_commit);
   renderKnowledge();
@@ -154,7 +155,7 @@ $("repositoryAutoCommit").onchange = async () => {
   repositoryAutoCommitBusy = true;
   const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [field], "Automatic commit preference saved.");
   try {
-    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:$("repositoryFolder").value.trim()}});
+    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:(typeof repositorySaveRoot === "undefined" ? "" : repositorySaveRoot) || $("repositoryFolder").value.trim()}});
     if (S.slug === slug) {
       repositoryAutoCommitBusy = false;
       if (S.ov) S.ov.auto_commit = state;
@@ -1063,14 +1064,27 @@ $("recheckBtn").onclick = async () => {
 };
 
 $("saveGo").onclick = async () => {
-  $("saveGo").disabled = true;
+  const slug = S.slug, log = $("saveLog");
+  const finish = beginWork(log, "Saving progress", [$("saveGo")], "Progress saved.");
+  showJobError(log, "");
   try {
-    const r = await api("/api/save", { method: "POST", body: { slug: S.slug, folder: $("saveFolder").value.trim() || undefined } });
+    const r = await api("/api/save", { method: "POST", body: { slug, folder: $("saveFolder").value.trim() || undefined } });
+    if (S.slug !== slug) return;
+    S.ov.save_folder = r.folder;
+    if (typeof refreshRepositorySetup === "function") { repositorySetupSlug = ""; refreshRepositorySetup(); }
     $("saveState").textContent = `saved ${clock(Date.now() / 1000).slice(0, 5)}`;
     $("saveLog").hidden = false;
     $("saveLog").textContent = S.ov.kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
       : `Saved to ${r.folder}: ${plural(r.matched || 0, "matched function")}, ${plural(r.best || 0, "best attempt")}.`;
-  } catch (e) { toast(esc(e.message), "err"); } finally { $("saveGo").disabled = false; }
+  } catch (e) { if (S.slug === slug) showJobError(log, e.message); }
+  finally {
+    finish();
+    if (S.slug !== slug) {
+      log.hidden = true;
+      if (log._workStatus) log._workStatus.hidden = true;
+      if (log._workBar) log._workBar.hidden = true;
+    }
+  }
 };
 
 /* ------------------------------------------------------------------ the compiler, as one answer
@@ -1169,7 +1183,7 @@ async function testProfileAsDefault(button, action="test") {
   const replacing=action==='replace', nonmatches=action==='nonmatches';
   const body = dialog(replacing ? 'Replace project default compiler' : nonmatches ? 'Test all non-matches' : 'Test compiler profile as default', `<p class="profile-test-intro">${replacing ? 'Check compatibility and replace the project default.' : nonmatches ? 'Find exact matches for currently unmatched functions.' : 'Check whether this profile preserves matches using the project default.'}</p>
     <div class="profile-test-selection"><span class="small muted">Compiler to test</span><strong>${esc(group.compiler)}</strong><code class="compiler-arguments">${esc(profile.flags.join(' '))}</code></div>
-    <p class="small muted">${replacing ? 'Make this profile the default. Existing matches that need the previous default keep it as a non-default override. Other profiles keep their settings. Saved attempts are rescored before settings are saved.' : nonmatches ? 'Includes all compiler profiles. Testing changes nothing; apply verified matches afterward. Functions without saved C are reported.' : 'Test only. Compiler settings, ranges and saved matches stay unchanged. Functions using other profiles are excluded.'}</p>
+    <p class="small muted">${replacing ? 'Make this profile the default. Existing matches that need the previous default keep it as a non-default override. Other profiles keep their settings. Saved attempts are rescored before settings are saved.' : nonmatches ? 'Includes all compiler profiles. Testing changes nothing; apply verified matches afterward. Ready functions are tested while others load. Functions without saved C are reported.' : 'Test only. Compiler settings, ranges and saved matches stay unchanged. Functions using other profiles are excluded.'}</p>
     <section class="default-profile-test" aria-label="Compiler profile test progress"><div class="profile-test-heading"><p data-default-status role="status">${nonmatches ? 'Preparing non-matching functions…' : 'Preparing default-profile matches…'}</p><span class="small muted" data-default-count></span><button class="ghost small-btn" type="button" data-default-stop hidden>Stop</button></div>
     <div data-default-work></div><progress class="deep-sweep-bar" data-default-bar hidden max="1" aria-label="Functions checked"></progress><p class="small muted profile-test-current" data-default-function></p>
     <dl class="default-profile-counts"><div><dt>Passed</dt><dd class="ok" data-default-passed>0</dd></div><div><dt>Did not pass</dt><dd data-default-failed>0</dd></div><div><dt>Remaining</dt><dd data-default-left>—</dd></div></dl></section>
@@ -1269,7 +1283,7 @@ async function testProfileAsDefault(button, action="test") {
     if (counted || p.total === 0) bar.value = p.total === 0 ? 1 : checked; else bar.removeAttribute('value');
     if(p.checked===undefined)return;
     get('[data-default-passed]').textContent=(p.applied && p.phase==='Verifying selected matches' ? (p.verified || 0) : p.passed).toLocaleString();get('[data-default-failed]').textContent=p.failed.toLocaleString();
-    get('[data-default-left]').textContent=Math.max(0,p.total-p.checked).toLocaleString();
+    get('[data-default-left]').textContent=Number.isFinite(p.total)?Math.max(0,p.total-p.checked).toLocaleString():'—';
     get('[data-default-matches]').hidden=!p.matches?.length;
     get('[data-default-match-list]').textContent=(p.matches || []).join(', ');
     get('[data-default-failures]').hidden=!p.failures?.length;
