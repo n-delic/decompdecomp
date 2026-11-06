@@ -20,7 +20,7 @@ PRAGMA user_version=1;'''
 
 
 def archive_path(path):
-    path=Path(path)
+    path=Path(path).resolve()
     return path.with_name('repair-evidence.sqlite3' if path.name=='decomp.db' else path.name+'.repair-evidence.sqlite3')
 
 
@@ -41,6 +41,7 @@ class Archive:
         conn=sqlite3.connect(self.path if write else Path(self.path).as_uri()+'?mode=ro',uri=not write,timeout=5)
         try:
             if write:
+                if conn.execute('PRAGMA user_version').fetchone()[0] not in (0,1):raise ValueError('Repair evidence database requires a newer app.')
                 conn.execute('PRAGMA journal_mode=WAL')
                 conn.executescript(SCHEMA)
             yield conn
@@ -106,8 +107,11 @@ def freeze(conn,text):
     except (ValueError,TypeError):return {'format':1,'evidence':text}
     if not isinstance(evidence,dict):return {'format':1,'evidence':evidence}
     snapshot=json.loads(text)
+    def one(sql,args):
+        cursor=conn.execute(sql,args);row=cursor.fetchone()
+        return dict(zip((c[0] for c in cursor.description),row)) if row is not None else None
     fid=evidence.get('function_id')
-    fn=conn.execute('SELECT f.target,f.relocs,p.slug,p.name,p.arch,p.big_endian FROM functions f JOIN projects p ON p.id=f.project_id WHERE f.id=?',(fid,)).fetchone() if fid else None
+    fn=one('SELECT f.target,f.relocs,p.slug,p.name,p.arch,p.big_endian FROM functions f JOIN projects p ON p.id=f.project_id WHERE f.id=?',(fid,)) if fid else None
     missing=[]
     if fn:
         snapshot['project']={k:fn[k] for k in ('slug','name','arch','big_endian')}
@@ -119,7 +123,7 @@ def freeze(conn,text):
         value=snapshot.get(stage)
         if not isinstance(value,dict):continue
         aid=value.get('attempt_id')
-        row=conn.execute('SELECT source,score,function_id FROM attempts WHERE id=?',(aid,)).fetchone() if aid else None
+        row=one('SELECT source,score,function_id FROM attempts WHERE id=?',(aid,)) if aid else None
         if row and row['function_id']==fid and row['source'] is not None and hashlib.sha256(row['source'].encode()).hexdigest()==value.get('source_sha256'):
             value['source']=row['source'];value['score']=row['score']
         if value.get('source') is None:missing.append(stage+' source')
@@ -127,8 +131,8 @@ def freeze(conn,text):
         if settings.get('mode')=='project':missing.append(stage+' imported build tree')
         expected=settings.get('context_sha256')
         if expected:
-            header=conn.execute('SELECT header FROM context_versions WHERE project_id=(SELECT project_id FROM functions WHERE id=?) AND version=? AND unit=?',
-                                (fid,value.get('context_version'),settings.get('context_unit') or '')).fetchone()
+            header=one('SELECT header FROM context_versions WHERE project_id=(SELECT project_id FROM functions WHERE id=?) AND version=? AND unit=?',
+                                (fid,value.get('context_version'),settings.get('context_unit') or ''))
             if header and header['header'] is not None and hashlib.sha256(header['header'].encode()).hexdigest()==expected:value['header']=header['header']
             elif value.get('header') is None:missing.append(stage+' header')
     return {'format':1,'evidence':snapshot,'missing_inputs':missing}

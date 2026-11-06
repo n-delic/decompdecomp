@@ -161,3 +161,14 @@ def test_compaction_includes_separate_archive_and_preserves_cases(tmp_path):
     log.check_cancel=lambda:None;log.progress=lambda value:None;log.cancel_event=threading.Event()
     assert compact(net,log)['reclaimed_bytes']>1000000
     assert archive.read(key)=='{"example":1}'
+
+
+def test_database_alias_reads_the_same_archive(tmp_path):
+    net=network(tmp_path)
+    text='{"function":"alias","after":{}}'
+    with net.store.tx() as db:
+        db.execute('INSERT INTO repair_examples(project_id,function_id,created_at,evidence) VALUES(1,1,0,?)',(text,))
+    folder=tmp_path/'aliases';folder.mkdir()
+    alias=folder/'alias.db';alias.symlink_to(net.store.path)
+    other=Network(alias)
+    assert other.store.one('SELECT evidence FROM repair_examples')['evidence']==text
