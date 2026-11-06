@@ -2783,3 +2783,9 @@ need independent evidence before receiving this specific GNU C repair.
   widths. Do not enable this family from a filename. Supply complete current
   invocation language and target-width evidence before enabling it there; existing
   repair families remain available.
+
+- Done: bounded unsigned shift/add staging through shared local repair generation,
+  including combined sites, unchanged compiler/link judging and C32 invocation
+  guards. A real copied N64 draft improves 322 to 172, not exact. External PROJECT
+  compiler commands without proven C32/macro scope remain excluded, as with
+  promoted-entry and pure-preheader repairs; invocation evidence is planned work.

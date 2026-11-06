@@ -1004,3 +1004,12 @@ pure local assignments before loops or labels. Calls and memory operations stay
 in place; no dummy local or operation is added. This control is not exact and
 is not better than the differently shaped saved 565 draft. The remaining callback
 dispatch contract must be audited separately; pointer casts alone do not prove it.
+
+For unsigned color/bit packing, try staging `(color << shift) + tag` as
+`high = color << shift; high += tag;` while preserving the surrounding statement
+order. KMC's local/global allocator can treat the expression temporary differently
+from the destination pseudo. One controlled case removed 30 register differences
+(score 322 to 172), independently reproduced, but was not exact. The bounded
+`unsigned_shift_staging` repair tries this for proven ordinary unsigned-int locals;
+do not apply it to signed shifts, volatile/escaped objects or guessed-width types.
+Do not add padding to compensate for a remaining stack-frame difference.
