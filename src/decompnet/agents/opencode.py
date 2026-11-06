@@ -117,7 +117,10 @@ class Opencode(Agent):
         # (No --dir: it runs in workdir, and OpenCode before 1.4 stops at the flag. No --log-level either: before
         # 2.0 it took only ERROR, from 2.0 only error, and either stops the other at once.)
         cmd = [exe, "run", *(["--standalone"] if self.standalone(exe) else []), "--format", "json", "--print-logs"]
-        return cmd + (["-m", model] if model else []), {}
+        # Concurrent helpers otherwise write OpenCode's one user database: a busy writer can end a prompt with
+        # "database is locked" before it calls an app tool. Reuse one database per helper across its sessions.
+        # Override only the database, not HOME/XDG_DATA_HOME: provider sign-in and MCP auth stay in their usual place.
+        return cmd + (["-m", model] if model else []), {"OPENCODE_DB": str((workdir / "opencode.db").resolve())}
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
