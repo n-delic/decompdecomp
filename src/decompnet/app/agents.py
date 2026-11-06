@@ -150,7 +150,8 @@ SPIN_MATCHES = 3
 
 
 # what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login")
-_SIGNED_OUT = re.compile(r"not logged in|run /login|invalid api key|not authenticated|please (?:log|sign) ?in|"
+_SIGNED_OUT = re.compile(r"not logged in|run /login|run ['\"]?(?:agent|kimi) login|no model configured|"
+                         r"authentication required|invalid api key|not authenticated|please (?:log|sign) ?in|"
                          r"auth(?:entication)? method", re.I)
 # and when its sign-in stopped working (Claude Code, exit code 1 at once, nothing done: "Failed to authenticate: OAuth
 # session expired and could not be refreshed", its message marked "error": "authentication_failed"). Read as a plain
@@ -266,6 +267,7 @@ def _which(cmd: str) -> str | None:
     if os.name == "nt":
         directories.append(Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "npm")
         directories.append(Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "agy" / "bin")
+        directories.append(Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "cursor-agent")
     for d in directories:
         if os.name == "nt":
             found = shutil.which(cmd, path=str(d))
@@ -1136,7 +1138,7 @@ class Manager:
         except ValueError as e:
             raise Fatal(str(e)) from e
         cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
-        cmd = agents.cli_argv(cmd)
+        cmd = k.launch_command(agents.cli_argv(cmd))
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
