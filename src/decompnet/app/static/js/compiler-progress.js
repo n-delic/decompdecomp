@@ -41,7 +41,7 @@ function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
     return;
   }
   const total = tally?.total, completed = result ? result.tried : (progress?.completed || 0);
-  set("queue", total == null ? (progress?.function ? `${completed} functions done · comparing ready functions (total pending)` : "Preparing comparison…") : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} queued for another run` : ""}`);
+  set("queue", total == null ? (progress?.function ? `${completed} functions done · comparing ready functions (total pending)` : "Preparing comparison…") : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} not processed` : ""}`);
   const queueBar = box.querySelector("[data-queue-bar]");
   queueBar.max = total || 1;
   if(total==null)queueBar.removeAttribute('value');else queueBar.value=completed || 0;

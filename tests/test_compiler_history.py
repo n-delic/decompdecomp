@@ -397,3 +397,35 @@ def test_auto_apply_reports_its_actual_stage(comparison, monkeypatch):
     monkeypatch.setattr(net, 'apply_function_compiler', apply)
     net.run_compiler_comparison('demo', log=Log(), auto_apply=True)
     assert sum(s.get('phase') == 'applying' for s in snapshots) == 2
+
+
+def test_default_task_compares_every_function_past_old_batch_limit(comparison):
+    net, _, calls, _ = comparison
+    pid = net.project_row('demo')['id']
+    with net.store.tx() as db:
+        for i in range(4, 405):
+            db.execute('INSERT INTO functions(project_id,name,vram,size,n_insns,status,best_score,best_source) VALUES(?,?,?,?,?,?,?,?)',
+                       (pid, f'f{i}', 0x80001000+i*32, 16, 4, 'open', 200, f'int f{i}(void){{return 1;}}'))
+    result = net.run_compiler_comparison('demo')
+    assert result['tried'] == 403
+    assert result['deferred'] == 0
+    assert 'f404' in calls
+    assert net.store.one('SELECT COUNT(*) n FROM compiler_tests')['n'] == 403
+    assert net.run_compiler_comparison('demo')['tried'] == 0
+
+
+def test_continuous_task_can_stop_and_resume_saved_functions(comparison):
+    net, _, _, _ = comparison
+    class Stopped(Exception):
+        pass
+    class Log:
+        def __call__(self, line):
+            pass
+        def check_cancel(self):
+            if net.store.one('SELECT COUNT(*) n FROM compiler_tests')['n']:
+                raise Stopped()
+    with pytest.raises(Stopped):
+        net.run_compiler_comparison('demo', log=Log())
+    assert net.store.one('SELECT COUNT(*) n FROM compiler_tests')['n'] == 1
+    resumed = net.run_compiler_comparison('demo')
+    assert resumed['tried'] == 1 and resumed['skipped'] == 1
