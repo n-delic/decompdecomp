@@ -635,3 +635,10 @@ def test_save_repository_setup_and_project_switches():
 def test_auto_push_preferences_defaults_errors_and_project_switches():
     subprocess.run([NODE, str(Path(__file__).with_name('gui_auto_push.js'))], check=True,
                    capture_output=True, text=True)
+
+
+def test_function_chart_cursor_shows_compile_scores():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_chart.js'))], check=True,
+                   cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)
