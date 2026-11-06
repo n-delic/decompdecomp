@@ -553,6 +553,7 @@ class Manager:
         self.sessions: dict[str, Session] = {}
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.RLock()
+        net.on_external_match = self.matched_elsewhere
         self._tool_startup_slots = threading.BoundedSemaphore(2)
         self._metrics_locks = {}
         self._prep: dict[str, threading.Event] = {}  # slug -> giving its code source files before agents claim
@@ -812,6 +813,25 @@ class Manager:
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
         s.thread.start()
+
+    def matched_elsewhere(self, agent_id, function, project_id):
+        """Rotate only the displaced matching worker after the exact match commits."""
+        row=self.net.store.one('SELECT name FROM agents WHERE id=?',agent_id)
+        proj=self.net.store.one('SELECT slug FROM projects WHERE id=?',project_id)
+        if not row or not proj:return
+        if self.net.store.one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id "
+                              "WHERE c.agent_id=? AND f.status='open'",agent_id):
+            return  # the worker already moved on; do not interrupt its new function
+        from .session_recovery import completed
+        with self._lock:
+            for s in self.sessions.values():
+                if (s.agent_name!=row['name'] or s.slug!=proj['slug'] or s.state!='working'
+                        or s.stop.is_set() or s.options.get('task') in ('readable','boundary')):continue
+                s.rotated=True
+                completed(s,self.net)
+                s.continuation_note=function+' was matched and saved by another operation. Claim a different eligible function.'
+                s.push('info',s.continuation_note)
+                if s.proc is not None:_terminate(s.proc)
 
     def restart(self, sid: str) -> None:
         """Start a stopped or paused helper again, by hand."""
@@ -1369,7 +1389,7 @@ class Manager:
             if task == 'boundary' and boundary_investigations.reported(self.net,s):
                 ok = True
                 investigation = 'Boundary recommendation submitted'
-            followup = task != "boundary" and ok and not investigation and session_followups.premature(self, s, agent, compiled)
+            followup = task != "boundary" and ok and not s.rotated and not investigation and session_followups.premature(self, s, agent, compiled)
             if compiled >= 2:
                 s.continuation_attempts = 0
             if followup:
@@ -1740,6 +1760,7 @@ class Manager:
             s.push('info','No eligible work; waiting without starting a model request.')
             return True
         cmd, env, prompt = self._command(s, token, workdir)
+        if s.rotated:return True
         if s.record:
             previous = s.record
             s.record = lambda kind, value: previous(kind, (value if isinstance(value, str) else

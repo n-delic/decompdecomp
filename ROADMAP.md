@@ -2856,3 +2856,8 @@ need independent evidence before receiving this specific GNU C repair.
   known32-bit C profile (C++ reference calls need a different proof) and uses
   a visible byte load, rejects unsafe/unknown bindings and introduces no storage,
   reads or assignments. A private unmatched witness improved1848 to1733, not exact.
+
+- Done: applying verified compiler-profile matches no longer skips claimed ROM functions.
+  Exact-only rechecks retain input validation, release the displaced claim only on commit,
+  and rotate its managed matching worker onto eligible work. CLI conversations are ended;
+  API conversations switch at the next response/tool boundary without replaying obsolete calls.

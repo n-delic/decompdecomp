@@ -904,10 +904,6 @@ class CompilerMixin:
         fn = self._function(function, slug)
         if fn["status"] == "asm":
             raise NetworkError("This function is no longer unmatched. Run a fresh comparison.")
-        with self.store.tx() as db:
-            self._expire_claims(db)
-            if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
-                raise NetworkError("This function is being worked on. Wait until it is released, then compare again.")
         source = self._comparison_source(fn)
         if not source:
             raise NetworkError("This function has no C attempt to apply. Run a fresh comparison.")
@@ -918,6 +914,11 @@ class CompilerMixin:
             raise NetworkError("These settings could not compile or compare this function. Run a fresh comparison.")
         if not allow_non_improving and not ok and fn["best_score"] is not None and diff.score >= fn["best_score"]:
             raise NetworkError("These settings no longer improve this function. Run a fresh comparison.")
+        if not ok:
+            with self.store.tx() as db:
+                self._expire_claims(db)
+                if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn['id'],)).fetchone():
+                    raise NetworkError('This function is being worked on. Only a verified exact match can replace active work.')
         default = self.cfg(proj)["compiler"]
         use_default = toolchain == default["toolchain"] and flags == default["flags"]
         end = fn["vram"] + fn["size"]
@@ -942,9 +943,10 @@ class CompilerMixin:
             with self.store.tx() as db:
                 db.execute("UPDATE functions SET best_score=? WHERE id=? AND status='open'", (diff.score, fn["id"]))
         agent, _ = self.local_agent("autopilot")
-        # The background autopilot may hold another function. A scoped try checks this function's claim
-        # and releases its own on both matches and misses, without disturbing the other work.
-        self.try_quietly(agent, self._project(slug), self._function(function, slug), source)
+        # An exact-only recheck may finish someone else's function without disturbing
+        # unrelated claims. Misses never take over another worker's claim.
+        self.try_quietly(agent, self._project(slug), self._function(function, slug), source,
+                         **({"exact_only":True} if ok else {}))
         fresh = self._function(function, slug)
         matched = fresh['status'] == 'matched'
         return {"said": (f"MATCH: {function} became byte-identical after applying compiler settings. Its verified C is saved."
