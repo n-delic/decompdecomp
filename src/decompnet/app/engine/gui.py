@@ -204,6 +204,8 @@ class GuiMixin:
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
+        from ..function_searches import activity
+        searching = {r['name']:r['agent'] for r in activity(self,proj)}
         from ..function_names import state as name_state
         from ..history_summary import recency as map_recency
         recency = map_recency(self.store, proj['id'], function_ids)
@@ -213,8 +215,8 @@ class GuiMixin:
         incomplete = {r["function"]: r["reason"] for r in boundaries(self, proj) if not r.get("override")}
         sdk = self.sdk_functions(proj)
         return [{"id": r["id"], "cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
-                 "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
-                 "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
+                 "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote or r["name"] in searching) else "open",
+                 "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)) or searching.get(r["name"]),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],
                  "analysis_state":"boundary_review" if r["name"] in incomplete else None,
                  "boundary_review":incomplete.get(r["name"]) or (json.loads(r["meta"] or "{}").get("boundary_review") if r["status"]!="matched" else None),
@@ -480,6 +482,9 @@ class GuiMixin:
                 for claim in remote:
                     if row := by_key.get(claim[key]):
                         claims.append(row | {'agent':'@'+claim['agent'],'claimed_at':None})
+        from ..function_searches import activity
+        occupied = {c['name'] for c in claims}
+        claims.extend(row for row in activity(self,proj) if row['name'] not in occupied)
         # (`cut`: more attempts than it sends, so the map's counts need the whole map again)
         return {"events": [dict(e) for e in reversed(events)], "attempts": [dict(t) for t in reversed(attempts)],
                 "cut": len(attempts) == LIVE_ATTEMPTS, "claims": claims, "overview": self.overview(slug, room_members=False)}
