@@ -149,6 +149,32 @@ def test_a_projects_turn_judges_its_variants_in_one_run_of_tries(monkeypatch):
     Recording(net, {"same": 0})._permute(AGENT, net.project_row("game"), net.function(), State())
     assert events == [("run", ""), ("judge", "far"), ("judge", "same"), ("end", ""), ("let go", "f")]
 
+    # the build at the run's end failed: the function stayed held, and shown as the permuter's, until its hold ran out
+    @contextmanager
+    def failing(proj, unit):
+        yield
+        raise OSError("the build stopped")
+
+    monkeypatch.setattr(net.forks, "trial_run", failing, raising=False)
+    batches(monkeypatch, ["far"])
+    st = State()
+    with pytest.raises(OSError):
+        ScriptedPermuter(net, {})._permute(AGENT, net.project_row("game"), net.function(), st)
+    assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0 and st.current == ""
+
+    # the run waited for another turn on the unit past the turn's hold, and an agent claimed the function meanwhile:
+    # the turn ends without trying anything (the hold is counted from when the run starts)
+    @contextmanager
+    def slow(proj, unit):
+        with net.store.tx() as db:
+            db.execute("UPDATE claims SET agent_id=2")
+        yield
+
+    monkeypatch.setattr(net.forks, "trial_run", slow, raising=False)
+    p = ScriptedPermuter(net, {})
+    p._permute(AGENT, net.project_row("game"), net.function(), State())
+    assert p.judged == [] and net.store.one("SELECT agent_id FROM claims")["agent_id"] == 2
+
 
 def test_decomp_permuter_looks_a_function_up_by_the_name_its_c_has(monkeypatch):
     """A PC or Xbox game's function is its mangled symbol, which no C spells: every turn ended with "Function
