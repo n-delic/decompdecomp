@@ -802,6 +802,12 @@ an apparently unchanged value. A lower score does not make them valid. The nativ
 wrapper excludes its self-assignment insertion family; review old saved drafts
 separately, and use corrective candidate adoption when a cleaner draft scores worse.
 
+Also inspect statement motion that moves an initialization into only one branch.
+A packet-decoder candidate improved 1200 to 1195 this way but read an uninitialized
+mask on the other path; compiler warning preflight missed it. The native wrapper
+now rejects supported initialization regressions in existing locals as well as
+new temporaries. Unknown flow still needs manual review; lower scores are not proof.
+
 
 ### Discarded byte increments
 

@@ -23,9 +23,11 @@ def environment(net,proj,selected):
     for key in ('compiler_ranges','function_compilers','boundaries','suggestions','knowledge_auto','range_checks','compiler_survey'):
         cfg.pop(key,None)
     cfg['compiler']={**cfg['compiler'],**selected,'timeout':20}
-    return (cfg,proj['root'],proj['arch'],proj['big_endian'],
+    # Hash common symbol/config/compiler input once, rather than reformatting the
+    # full project symbol inventory for each candidate fingerprint.
+    return hashlib.sha256(repr((cfg,proj['root'],proj['arch'],proj['big_endian'],
             [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
-            match_bundle.compiler_identity(selected))
+            match_bundle.compiler_identity(selected))).encode()).hexdigest()
 
 
 def fingerprint(net,proj,fn,source,env):
@@ -54,10 +56,10 @@ def remembered(net,slug,selected,token):
         return dict(item[3])
 
 
-def parallel(items,check,cancel):
+def parallel(items,check,cancel,*,thread_name='profile-apply'):
     """Only eight candidates in flight; cancellation never queues the whole project."""
     iterator=iter(items)
-    with ThreadPoolExecutor(max_workers=8,thread_name_prefix='profile-apply') as pool:
+    with ThreadPoolExecutor(max_workers=8,thread_name_prefix=thread_name) as pool:
         pending=set()
         try:
             while True:

@@ -4214,7 +4214,7 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   states across reachable predecessors. Bare declarations reset initialization;
   assignments check RHS reads before generating an initialized value.
 - This is a limited guard, not a general undefined-behavior or equivalence proof.
-  Existing names, escapes, qualifiers, shadows, macros, constant controls and unsupported sequencing
+  Escapes, qualifiers, shadows, macros, constant controls and unsupported sequencing
   receive no verdict. Correlated branches are not proved equivalent; this conservative
   filter may omit valid candidates. Only literal-zero do-loop back edges are pruned.
   The native generator protocol has no per-candidate rejection
@@ -4224,6 +4224,27 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   self-read assignments and batch protocol coverage. Private replay rejects the
   observed unsafe temporary while allowing the sound boolean-materialization and
   early narrowing alternatives. Ordinary exact judging remains mandatory.
+
+### Statement motion can lose an existing local's initialization
+
+- A typed native search of an N64 packet decoder with KMC GCC 2.7.2
+  `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` produced a 1200-to-1195 score change.
+  The sole edit moved a mask load from after an if/else into only the else arm.
+  The other arm still ran the consumer loop and read the uninitialized mask.
+  It was rejected; this is not a new match. Modern Clang warning preflight also
+  missed this case, so successful compilation is not a safety proof.
+- The shared native wrapper now compares per-binding initialization verdicts
+  against the job's parent, including existing integer and pointer locals.
+  It rejects a candidate hazard only if that same parent binding has a supported
+  safe verdict. Existing unsafe/unknown parents are not relabeled as regressions;
+  unsupported analysis remains distinct from a safe result. Parent verdicts are
+  cached across a batch, and an opaque binding does not disable unrelated checks.
+- Synthetic scalar/pointer, branch, unchanged/unknown-parent and traced generator
+  regressions pass. Private replay flags the invalid lower-scoring candidate and
+  four other previously compiled candidates, while allowing the unchanged parent.
+  These are bounded syntactic checks, not equivalence proofs or a claim that all
+  invalid candidates are caught. The same wrapper serves ROM, imported-project
+  and deep native searches; the exact judge is unchanged.
 
 ### A single constant memory store can need a one-shot scope
 
