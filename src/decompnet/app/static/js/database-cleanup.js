@@ -1,7 +1,7 @@
 /* Database transcript retention uses the shared cancellable job/progress controls. */
 let databaseCleanupJob=null;
 function databaseCleanupOptions() {
-  return {removed:$("databaseCleanupRemoved").checked,before:$("databaseCleanupBefore").value,automatic:$("databaseCleanupAutomatic").checked};
+  return {removed:$("databaseCleanupRemoved").checked,days:$("databaseCleanupAge").value===''?null:Number($("databaseCleanupAge").value)*Number($("databaseCleanupUnit").value),automatic:$("databaseCleanupAutomatic").checked};
 }
 function renderDatabaseCleanup(data) {
   const number=n=>Number(n || 0).toLocaleString();
@@ -15,10 +15,13 @@ async function loadDatabaseCleanup() {
   if(databaseCleanupJob)return;
   const data=await api('/api/database-cleanup');
   $("databaseCleanupRemoved").checked=data.options.removed;
-  $("databaseCleanupBefore").value=data.options.before;
+  // Round legacy fixed dates up so conversion does not widen the deletion scope.
+  const days=data.options.days ?? (data.options.before ? Math.max(1,Math.ceil((Date.now()-Date.parse(data.options.before+'T00:00:00Z'))/86400000)) : null);
+  $("databaseCleanupUnit").value=days && days%7===0?'7':'1';
+  $("databaseCleanupAge").value=days===null?'':days/Number($("databaseCleanupUnit").value);
   $("databaseCleanupAutomatic").checked=data.options.automatic;
-  $("databaseCleanupBefore").max=new Date().toISOString().slice(0,10);
   renderDatabaseCleanup(data);
+  if(data.options.before)$("databaseCleanupEstimate").textContent+=' Save these rules to replace the previous fixed date with the displayed rolling age.';
 }
 $("databaseCleanupPreview").onclick=async()=>{
   const log=$("databaseCleanupLog");showJobError(log,'');
@@ -29,7 +32,7 @@ $("databaseCleanupPreview").onclick=async()=>{
 $("databaseCleanupStart").onclick=async()=>{
   if(databaseCleanupJob)return;
   const log=$("databaseCleanupLog"),stop=$("databaseCleanupStop");showJobError(log,'');
-  const controls=['databaseCleanupStart','databaseCleanupPreview','databaseCleanupRemoved','databaseCleanupBefore','databaseCleanupAutomatic','databaseCleanupSave'].map($);
+  const controls=['databaseCleanupStart','databaseCleanupPreview','databaseCleanupRemoved','databaseCleanupAge','databaseCleanupUnit','databaseCleanupAutomatic','databaseCleanupSave'].map($);
   const done=beginWork(log,'Clearing old agent transcripts',controls,'Transcript cleanup complete');
   try{
     const {job}=await api('/api/database-cleanup',{method:'POST',body:{action:'start',...databaseCleanupOptions()}});
@@ -55,8 +58,8 @@ $("databaseCleanupSave").onclick=async()=>{
   try{await api('/api/database-cleanup',{method:'POST',body:{action:'save',...databaseCleanupOptions()}});}
   catch(error){showJobError(log,error.message);}finally{done();}
 };
-$("databaseCleanupBefore").onchange=()=>{
-  $("databaseCleanupAutomatic").checked=Boolean($("databaseCleanupBefore").value);
+$("databaseCleanupAge").onchange=$("databaseCleanupUnit").onchange=()=>{
+  $("databaseCleanupAutomatic").checked=Boolean($("databaseCleanupAge").value);
   $("databaseCleanupEstimate").textContent='Rules changed. Preview to check eligible transcripts, then save or clean up now.';
 };
 

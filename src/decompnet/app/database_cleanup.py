@@ -1,6 +1,6 @@
 """Bounded, cancellable transcript retention; saved code and lifetime summaries remain."""
 import json
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 KEY='database-cleanup-options'
@@ -11,6 +11,12 @@ def options(value):
     if not isinstance(value,dict) or type(value.get('removed',True)) is not bool:
         raise ValueError('Choose whether to clean transcripts from removed agents.')
     if type(value.get('automatic',False)) is not bool:raise ValueError('Choose whether to enforce the cutoff automatically.')
+    days=value.get('days')
+    if days is not None:
+        if type(days) is not int or not 1<=days<=36500:
+            raise ValueError('Choose a whole number of days between 1 and 36,500.')
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=days)).timestamp()
+        return {'removed':value.get('removed',True),'days':days,'automatic':value.get('automatic',False)},cutoff
     before=value.get('before','')
     if not isinstance(before,str):raise ValueError('Choose a valid cutoff date.')
     cutoff=None
@@ -20,9 +26,9 @@ def options(value):
             if day.isoformat()!=before or day>datetime.now(timezone.utc).date():raise ValueError
             cutoff=datetime.combine(day,time.min,timezone.utc).timestamp()
         except ValueError:raise ValueError('Choose a cutoff date no later than today (UTC).') from None
-    if value.get('automatic',False) and cutoff is None:raise ValueError('Choose a cutoff date for automatic cleanup.')
+    if value.get('automatic',False) and cutoff is None:raise ValueError('Choose an age limit for automatic cleanup.')
     if not value.get('removed',True) and cutoff is None:
-        raise ValueError('Choose removed agents or a cutoff date before starting cleanup.')
+        raise ValueError('Choose removed agents or an age limit before starting cleanup.')
     return {'removed':value.get('removed',True),'before':before,'automatic':value.get('automatic',False)},cutoff
 
 

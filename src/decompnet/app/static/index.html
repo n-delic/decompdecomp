@@ -792,13 +792,14 @@
       <p>Clear old agent transcripts while keeping saved matches, candidates, notes and usage totals.</p>
       <div class="row">
         <label class="check"><input id="databaseCleanupRemoved" type="checkbox" checked><span>Transcripts from removed agents</span></label>
-        <label class="field"><span>Also clear completed sessions before (UTC)</span><input id="databaseCleanupBefore" type="date"><small class="muted">Optional · ongoing sessions are kept.</small></label>
+        <label class="field"><span>Also clear completed sessions older than</span><input id="databaseCleanupAge" type="number" min="1" max="36500" step="1" placeholder="Keep all ages"><small class="muted">Optional · ongoing sessions are kept.</small></label>
+        <label class="field"><span>Age unit</span><select id="databaseCleanupUnit"><option value="1">Days</option><option value="7">Weeks</option></select><small class="muted">Rolling age, recalculated each cleanup.</small></label>
       </div>
-      <label class="check"><input id="databaseCleanupAutomatic" type="checkbox"><span>Automatically enforce the saved cutoff date<br><small class="muted">Checks every five minutes while the app is running.</small></span></label>
+      <label class="check"><input id="databaseCleanupAutomatic" type="checkbox"><span>Automatically enforce the saved age limit<br><small class="muted">Checks every five minutes while the app is running.</small></span></label>
       <p class="small muted" id="databaseCleanupEstimate" role="status">Preview cleanup to see eligible transcripts.</p>
       <div class="row"><button id="databaseCleanupStart" class="primary" type="button">Clean up now</button><button id="databaseCleanupSave" class="ghost" type="button">Save cleanup rules</button><button id="databaseCleanupPreview" class="ghost" type="button">Preview cleanup</button><button id="databaseCleanupStop" class="ghost" type="button" hidden>Stop cleanup</button></div>
       <div id="databaseCleanupLog"></div>
-      <details class="more"><summary>What gets removed?</summary><p class="small muted">The selected rules are combined: removed agents, plus completed sessions older than the date. Enable automatic cleanup and save your rules to enforce the cutoff in the background. Stopping a run keeps completed deletions; disable automatic cleanup to prevent future runs. Clearing transcripts is permanent; export any history you need first. Space becomes reusable inside SQLite, so the database file may stay the same size. Saved source and exact matches are kept.</p></details>
+      <details class="more"><summary>What gets removed?</summary><p class="small muted">The selected rules are combined: removed agents, plus completed sessions older than the selected age. Enable automatic cleanup and save your rules to enforce the rolling age limit in the background. Stopping a run keeps completed deletions; disable automatic cleanup to prevent future runs. Clearing transcripts is permanent; export any history you need first. Space becomes reusable inside SQLite, so the database file may stay the same size. Saved source and exact matches are kept.</p></details>
     </div>
   </details>
   <details class="panel settings-disclosure" id="databaseStoragePanel">

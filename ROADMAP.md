@@ -106,7 +106,7 @@
   Network discovery, member/settings reads and response encoding stay off that loop.
 
 
-- Done: Settings database cleanup with removed-agent history, a saved UTC cutoff,
+- Done: Settings database cleanup with removed-agent history, a rolling age limit in days or weeks (with legacy UTC cutoffs retained),
   automatic enforcement, counted cancellable batches and preserved work/usage totals.
 
 - Done: bounded named-donor materialization; indexed/revision-cached latest headers;
