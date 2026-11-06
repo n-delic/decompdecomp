@@ -1158,7 +1158,11 @@ def _analyse_x64(pe: PE, found: list[dict]) -> list[Function]:
     ordered = sorted(starts | set(data))  # (the next start after an address, by bisect: a game has tens of thousands)
     for sec in (s for s in pe.sections if s.code):
         known = sorted((a, e) for a, (_, e, _) in extents.items() if sec.va <= a < sec.va + sec.size)
-        bounds = [sec.va, *(x for a, e in known for x in (a, e)), sec.va + sec.size]
+        # (from after the thunk table an incrementally linked program starts it with: _thunk_table_end; up to the
+        # first function .pdata or Ghidra has that isn't one of its thunks, not the entry point: that's a thunk too)
+        first = min([sec.va + sec.size, *(a for a, _ in known[:1]), *(
+            a for a, r in rows.items() if sec.va <= a < sec.va + sec.size and not r.get("thunk"))])
+        bounds = [_thunk_table_end(pe, sec.va, first), *(x for a, e in known for x in (a, e)), sec.va + sec.size]
         for lo, hi in zip(bounds[::2], bounds[1::2]):
             _sweep(md, pe, lo, hi, ordered, extents, data)
     names = {}
@@ -1341,7 +1345,9 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
         rows[r["entry"]] = r if not r.get("thunk") else {**r, "end": r["entry"] + THUNK_BYTES}
     for sec in pe.sections:  # code before the first function of a section is looked for as gaps after one are
         first = min((s for s in rows if sec.va <= s < sec.va + sec.size), default=None)
-        if sec.code and first is not None and (rest := pe.read(sec.va, first - sec.va).lstrip(b"\x90\xcc\x00")):
+        # (from after the thunk table an incrementally linked program starts it with: _thunk_table_end)
+        begin = sec.va if first is None else _thunk_table_end(pe, sec.va, first)
+        if sec.code and first is not None and (rest := pe.read(begin, first - begin).lstrip(b"\x90\xcc\x00")):
             if rest.strip(b"\x90\xcc\x00"):
                 missed = first - len(rest)
                 rows[missed] = _missed(md, missed, rest)
@@ -1384,6 +1390,26 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
 
     return [Function(start, extents[start][1] - start, names[start], _relocations(md, pe, start, *extents[start], names))
             for start in starts]
+
+
+def _thunk_table_end(pe: PE, at: int, stop: int) -> int:
+    """Where the table of `jmp` thunks a code section starting at `at` starts with ends, short of `stop` (the first
+    function known there), or `at` if it has none. An incrementally linked program (Visual C++'s /INCREMENTAL, on
+    with /DEBUG) starts its code with one: a `jmp rel32` to each function, which the program calls through. Only a
+    run from the section's start of padding and at least two such jumps, each to code, is taken for one: a lone
+    `jmp`, or one after a function, is a function (one Ghidra missed, or that is only a tail call), as before."""
+    code, k, end, count = pe.read(at, stop - at), 0, 0, 0
+    while True:
+        while k < len(code) and code[k] in b"\x90\xcc\x00":
+            k += 1
+        if code[k:k + 1] != b"\xe9" or k + 5 > len(code):
+            break
+        target = at + k + 5 + struct.unpack_from("<i", code, k + 1)[0]
+        if (s := pe.section_at(target)) is None or not s.code:
+            break
+        k = end = k + 5
+        count += 1
+    return at + end if count >= 2 else at
 
 
 def _missed(md, at: int, rest: bytes) -> dict:
