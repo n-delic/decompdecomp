@@ -281,3 +281,19 @@ def test_auto_commit_leaves_unrelated_tracked_edits_and_deleted_drafts_uncommitt
     assert (root/'review.txt').read_text() == 'unfinished user review'
     assert not (root/'best/retired.c').exists()
     assert {'src/f.c', 'best/f.c'} <= set(git(root, 'show', '--format=', '--name-only', 'HEAD').splitlines())
+
+
+def test_waiting_for_notes_does_not_starve_a_later_ready_match(automatic):
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic, note='Ready match notes')
+    job = net.store.one('SELECT * FROM auto_match_commits')
+    other, _ = net.local_agent('waiting helper')
+    with net.store.tx() as db:
+        for index in range(25):
+            db.execute('INSERT INTO auto_match_commits(id,project_id,function_id,attempt_id,agent_id,created_at,notes_after,snapshot) VALUES(?,?,?,?,?,0,0,?)',
+                       ('waiting-'+str(index), job['project_id'], job['function_id'], -index-1, other.id, job['snapshot']))
+    match_commits.process(net, 'game')
+    assert net.store.one('SELECT state FROM auto_match_commits WHERE id=?', job['id'])['state'] == 'done'
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 25
+    assert git(root, 'log', '-1', '--format=%s') == 'Ready match notes'

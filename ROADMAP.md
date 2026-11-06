@@ -3033,3 +3033,4 @@ ABI analysis and automatic source/profile selection remain planned.
 - Done: automatic per-function commits leave unrelated modified, deleted and untracked
   checkout files untouched and uncommitted. Whole-progress manual checkpoints keep
   their existing unrelated-edit gate; staged changes still pause automatic commits.
+  Matches waiting for notes do not consume the ready-commit batch limit.
