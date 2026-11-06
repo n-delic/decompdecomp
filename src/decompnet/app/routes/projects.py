@@ -145,6 +145,19 @@ def register(app: App) -> None:
 
     def p_compiler_default_test(slug, request, data):
         from .. import compiler_default_test
+        if data.get('action')=='nonmatches':
+            # Reopening the same profile drawer follows the existing project task.
+            key=(slug,json.dumps(data.get('profile'),sort_keys=True))
+            with jobs._lock:
+                active=getattr(net,'_nonmatch_test_jobs',None)
+                if active is None:active=net._nonmatch_test_jobs={}
+                for scope,identity in list(active.items()):
+                    if jobs.jobs.get(identity,{}).get('state')!='running':active.pop(scope)
+                previous=active.get(key)
+                if previous and jobs.jobs.get(previous,{}).get('state')=='running':return {'job':previous}
+                active[key]=jobs.start('Test compiler profile as default',
+                    lambda log:compiler_default_test.run(net,slug,data.get('profile'),log,nonmatches=True))
+                return {'job':active[key]}
         return {"job": jobs.start("Test compiler profile as default", lambda log:(compiler_default_test.check_affected(net, slug, data.get('profile'), data.get('functions'), log) if data.get('action') == 'check-affected' else compiler_default_test.apply_matches(net, slug, data.get('profile'), data.get('functions'), log, safe_ranges=data.get('action') == 'apply-safe-range', receipt=data.get('receipt')) if data.get('action') in ('apply-matches', 'apply-safe-range') else compiler_default_test.replace_default(net, slug, data.get('profile'), log) if data.get('action') == 'replace' else compiler_default_test.run(net, slug, data.get('profile'), log, nonmatches=data.get('action') == 'nonmatches')))}
 
     def p_compiler_cleanup(slug, request, data):
