@@ -127,3 +127,11 @@ Actual imports, progress writes and verification still acquire that shared slot;
 project metadata, pause and cancellation state are rechecked after waiting.
 This removes an unrelated-project queue from no-op checks. It does not bypass
 same-project synchronization or guarantee that a real import/full recheck is fast.
+
+### Progress filesystem failures
+
+Rejected links and non-regular progress paths identify their relative filename.
+Failed synchronization also reports a bounded, escaped OS filename and error code
+when available, without printing arbitrary exception arguments or source contents.
+These diagnostics preserve the original failure and all synchronization guards;
+they do not establish the cause of long per-project lock waits or retry failed work automatically.

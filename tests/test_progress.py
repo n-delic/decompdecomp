@@ -1652,3 +1652,68 @@ def test_database_changes_cannot_take_the_unchanged_fast_path(project, monkeypat
     monkeypatch.setattr(net.progress, 'verification_slot', RequiredSlot())
     with pytest.raises(RuntimeError, match='verification slot required'):
         net.progress.sync('game')
+
+
+def test_progress_rejected_link_names_the_relative_path_without_following_it(tmp_path):
+    from decompnet.app.progress import _read
+
+    folder = tmp_path / 'progress'
+    (folder / 'src').mkdir(parents=True)
+    outside = tmp_path / 'outside.c'
+    outside.write_text('private source must not be included')
+    (folder / 'src' / 'bad.c').symlink_to(outside)
+    with pytest.raises(NetworkError) as caught:
+        _read(folder)
+    assert 'src/bad.c' in str(caught.value)
+    assert 'symbolic link' in str(caught.value)
+    assert 'private source' not in str(caught.value)
+    assert outside.read_text() == 'private source must not be included'
+
+
+def test_progress_wrong_file_type_names_the_path(tmp_path):
+    from decompnet.app.progress import _read
+
+    folder = tmp_path / 'progress'
+    (folder / 'best' / 'bad.c').mkdir(parents=True)
+    with pytest.raises(NetworkError) as caught:
+        _read(folder)
+    assert 'best/bad.c' in str(caught.value)
+    assert 'regular file' in str(caught.value)
+
+
+@pytest.mark.parametrize('code', [2, 13, 5])
+def test_sync_filesystem_failure_preserves_cause_and_names_path(project, monkeypatch, code):
+    import errno
+
+    net, folder, _ = project
+    filename = str(folder / 'include' / 'context.h')
+    original = OSError(code, 'synthetic host failure', filename)
+
+    def fail(*args, **kwargs):
+        raise original
+
+    monkeypatch.setattr(net.progress, '_sync', fail)
+    monkeypatch.setattr(net.progress, '_state', lambda pid: None)
+    with pytest.raises(NetworkError) as caught:
+        net.progress.sync('game', force=True)
+    assert caught.value.__cause__ is original
+    assert filename in str(caught.value)
+    assert errno.errorcode[code] in str(caught.value)
+    assert net.progress.errors['game'] == str(caught.value)
+
+
+def test_filesystem_diagnostics_bound_and_escape_paths_without_exception_payload(project, monkeypatch):
+    net, _, _ = project
+    original = OSError(errno.EIO, 'private source must not be printed', 'bad\n' + 'x' * 800)
+
+    def fail(*args, **kwargs):
+        raise original
+
+    monkeypatch.setattr(net.progress, '_state', lambda pid: None)
+    monkeypatch.setattr(net.progress, '_sync', fail)
+    with pytest.raises(NetworkError) as caught:
+        net.progress.sync('game', force=True)
+    message = str(caught.value)
+    assert 'private source' not in message
+    assert "'bad\\n" in message and 'bad\n' not in message
+    assert len(message) < 600

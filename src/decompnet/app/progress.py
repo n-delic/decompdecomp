@@ -16,6 +16,7 @@ sync is about to write or remove.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -111,11 +112,15 @@ def _read(folder: Path) -> dict[str, str]:
     for directory in ("src", "best", "include"):
         path = folder / directory
         if path.is_symlink():
-            raise NetworkError("Progress folders must be regular directories. Replace the symbolic link and try again.")
+            raise NetworkError(f"Progress folder {directory!r} is a symbolic link. Replace it with a regular directory and try again.")
     for pattern in (saves.MANIFEST, "src/*.c", "best/*.c", "include/*.h"):
         for path in folder.glob(pattern):
-            if path.is_symlink() or not path.is_file():
-                raise NetworkError("Progress files must be regular files. Replace the symbolic link and try again.")
+            relative = path.relative_to(folder).as_posix()
+            mode = path.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                raise NetworkError(f"Progress file {relative!r} is a symbolic link. Replace it with a regular file and try again.")
+            if not stat.S_ISREG(mode):
+                raise NetworkError(f"Progress path {relative!r} is not a regular file. Move the conflicting path and try again.")
             text = path.read_text(encoding="utf-8")
             if any(line.startswith(("<<<<<<<", "=======", ">>>>>>>")) for line in text.splitlines()):
                 raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
@@ -853,6 +858,12 @@ class Progress:
             except (OSError, UnicodeError, json.JSONDecodeError) as e:
                 from ..storage_errors import message as storage_error
                 message = storage_error(e) or "Could not read or write progress. Finish the git operation and check the folder's permissions."
+                if isinstance(e, OSError):
+                    # Do not stringify arbitrary exception arguments: they may contain source text.
+                    code = errno.errorcode.get(e.errno, type(e).__name__)
+                    filename = os.fsdecode(e.filename) if e.filename is not None else None
+                    location = f" at {filename[:400]!r}" if filename else ""
+                    message += f"\nFilesystem failure: {code}{location}."
                 self.errors[slug] = message
                 self._failed(slug)
                 raise NetworkError(message) from e

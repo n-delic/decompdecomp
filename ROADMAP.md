@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: progress-file failures name rejected relative paths and bounded filesystem
+  error codes/filenames, preserving link rejection and the original exception cause.
+  This improves diagnosis; it does not resolve long synchronization lock waits.
+
 - Done: shared saved-C baseline hits publish independent diff evidence for the requesting
   worker and lease, so `last_diff` can read a rechecked candidate without compiling again.
   Source/build scope guards and ordinary exact-match adoption remain unchanged.
