@@ -19,6 +19,25 @@ def identify(net, proj, recorded, *, include_asm=False):
     return dict(recorded) | discovered
 
 
+def naming_prints(net, proj):
+    """Add ROM assembly targets only for naming; Twins intentionally omits them.
+
+    Imported target prints already include assembly. Keep their normal readers
+    and keep assembly out of the shared C-reuse fingerprint cache.
+    """
+    prints = dict(net.twins.prints(proj))
+    if net.cfg(proj).get('kind') == 'fork':
+        return prints
+    from .twins import rom_print
+    symbols = net.symbols(proj['id'])
+    for row in net.store.all("SELECT id,target,relocs FROM functions WHERE project_id=? AND status='asm'", proj['id']):
+        checkpoint()
+        target = rom_print(row, proj['arch'] or 'mips', bool(net.cfg(proj).get('big_endian', True)), symbols.label)
+        target.asm = 'hand-written assembly'
+        prints[row['id']] = target
+    return prints
+
+
 def _identify(net, proj, *, include_asm=False):
     recorded = {}
     from .shared_reuse import machine
@@ -37,7 +56,7 @@ def _identify(net, proj, *, include_asm=False):
     selection = net.cfg(proj).get('sdk_libraries')
     selected = set(selection) if selection is not None else None
     out = dict(recorded)
-    for fid, target in net.twins.prints(proj).items():
+    for fid, target in (naming_prints(net, proj) if include_asm else net.twins.prints(proj)).items():
         checkpoint()
         hints = [r for r in by_key.get(target.key, []) if r["size"] == target.size
                  and (selected is None or r["corpus"] in selected)]

@@ -6,7 +6,7 @@ from collections import Counter
 
 from ..network import NetworkError
 from .function_names import BUILTIN_NAMES, generated, record, state
-from .sdk_identity import identify
+from .sdk_identity import identify, naming_prints
 
 log = logging.getLogger('decompdecomp')
 
@@ -46,7 +46,7 @@ def _name_functions(net, slug, job=None):
     hints = identify(net, proj, {}, include_asm=True)
     if not hints:
         return 0
-    prints = net.twins.prints(proj)
+    prints = naming_prints(net, proj)
     multiplicity = Counter(p.key for p in prints.values())
     rows = net.store.all('SELECT id,name,meta,size FROM functions WHERE project_id=?', proj['id'])
     taken = {r['name'] for r in rows}
