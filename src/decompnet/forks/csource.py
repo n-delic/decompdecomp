@@ -156,6 +156,23 @@ _COND_TOKEN = re.compile(r"\s*(defined\b|[A-Za-z_]\w*|\d+[uUlL]*|&&|\|\||!|\(|\)
 _IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 
 
+_SCOPE_BLOCK = re.compile(r"(?<![\w:])(?:extern|namespace(?:\s+[\w:]+)?)\s*$")  # (`extern "C"`, blanked)
+
+
+def at_file_scope(text: str, at: int) -> bool:
+    """True when `at` isn't inside a block of code: only `namespace` and `extern "C"` blocks, which hold definitions,
+    are open there. find() takes a call followed by a block (`y = f(x) * 2.0;` then `if (y) { ... }`) for a
+    definition of `f`, and where one is looked for past the first, the next one may be such a call."""
+    clean, opened, last = _blank(text[:at]), [], 0
+    for m in re.finditer(r"[{};]", clean):
+        if m.group() == "{":
+            opened.append(bool(_SCOPE_BLOCK.search(clean[last:m.start()])))
+        elif m.group() == "}" and opened:
+            opened.pop()
+        last = m.end()
+    return all(opened)
+
+
 def _conditionals(text: str, pos: int):
     """(line number, directive, its condition) of each conditional line above `pos`, comments left out."""
     clean = _blank(text[:pos])

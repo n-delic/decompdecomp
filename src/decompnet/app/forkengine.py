@@ -2080,6 +2080,21 @@ class ForkEngine:
                 return n, span
         return None, None
 
+    @classmethod
+    def _seen_beside(cls, fp: ForkProject, text: str, span: tuple[int, int], hit: str,
+                     names: list[str]) -> tuple[int, int] | None:
+        """The definition the build sees after one an `#if` hides at `span`, or None: found by `hit`, then by the
+        function's other `names`. Only one at file scope counts: a call in another function's body followed by a
+        block reads as a definition (`y = f(x) * 2.0;` then `if (y) {`), and taken for it, that function was cut from
+        the call on and the try put inside it."""
+        for look in dict.fromkeys([hit, *names]):
+            at = span
+            while (later := csource.find(text[at[1]:], look)) is not None:
+                at = (at[1] + later[0], at[1] + later[1])
+                if csource.at_file_scope(text, at[0]) and not cls._hidden(fp, text, at[0]):
+                    return at
+        return None
+
     @staticmethod
     def _hidden(fp: ForkProject, text: str, at: int) -> tuple[int, str] | None:
         """(line, directive) of the `#if` branch that leaves the code at `at` of a source out of the build. The search
@@ -2912,13 +2927,10 @@ class ForkEngine:
             hit, old_span = self._find(before, names)
             base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
             parked = self._hidden(fp, before, old_span[0]) if old_span else None
-            at = old_span
-            while parked and at and (later := csource.find(before[at[1]:], hit)):
+            if parked and (seen := self._seen_beside(fp, before, old_span, hit, names)):
                 # a draft parked in `#ifdef` before the build's own definition in its `#else`: the one the build sees
                 # is the one tried (the parked one taken out, a new one put in, the visible one stayed: defined twice)
-                at = (at[1] + later[0], at[1] + later[1])
-                if not self._hidden(fp, before, at[0]):
-                    old_span, parked = at, None
+                old_span, parked = seen, None
             if parked:
                 # parked in an #if branch the build leaves out: written there, the compile was judged on other code,
                 # and moved out with edit_file it was refused when it broke a matched neighbour (where whole-program

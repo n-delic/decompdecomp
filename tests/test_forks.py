@@ -266,6 +266,32 @@ def test_search_globs_as_agents_write_them():
         list(Path(".").glob(want))  # pathlib takes it (it raised ValueError for the given form)
 
 
+def test_file_scope_is_outside_every_block_but_a_namespace_or_extern_c():
+    """A definition past a parked one is taken only at file scope: find() reads a call followed by a block as one."""
+    text = 'namespace a {\nextern "C" {\nint f(void) {\n    if (x) {\n        g();\n    }\n}\n}\n}\nint h;\n'
+    assert csource.at_file_scope(text, text.index("int f"))
+    assert not csource.at_file_scope(text, text.index("g();"))
+    assert not csource.at_file_scope(text, text.index("    }\n}"))
+    assert csource.at_file_scope(text, text.index("int h"))
+    call = "int t(int x) {\n    y = scale(x) * 2.0;\n    if (y) {\n        y = 1;\n    }\n}\n"
+    assert csource.find(call, "scale") is not None  # (why the check is needed)
+    assert not csource.at_file_scope(call, csource.find(call, "scale")[0])
+
+
+def test_the_definition_the_build_sees_beside_a_parked_one_is_at_file_scope():
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fp = SimpleNamespace(never_defined=lambda names: set(names))  # (no build defines PARKED)
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#else\nint f(void) {\n    return 1;\n}\n#endif\n"
+    seen = ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
+    # past the parked copy, a call in g followed by a block isn't the build's definition
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\nint g(void) {\n    x = f() * 2;\n    if (x) {\n    }\n}\n"
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+
+
 def test_csource_finds_definitions_and_stubs():
     src = ('s32 f(s32 a) {\n    return a; /* } */\n}\nINCLUDE_ASM("asm/nonmatchings/x", g);\n'
            'uLong h(a)\n    uLong a;\n{\n    return a;\n}\nvoid C::m(int x) {\n}\n')
