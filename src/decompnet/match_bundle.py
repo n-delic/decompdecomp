@@ -119,33 +119,66 @@ def portable(net, project_id):
     return {'matches':matches,'sources':sources,'headers':headers} if matches else {}
 
 
-def restore_evidence(net, project_id, name, old_name, manifest):
-    """Import hash-checked historical text only; no flags, source selection, status or verdict is applied."""
-    section = manifest.get('verification')
-    if not isinstance(section,dict): return
-    records, sources, headers = (section.get(key) for key in ('matches','sources','headers'))
-    if not all(isinstance(value,dict) for value in (records,sources,headers)): return
+def _imported_evidence(records, sources, headers, old_name, checked_digest):
     detail = records.get(old_name)
     required = {'source_sha256','header_sha256','compiler','compiler_identity','target_sha256',
                 'relocations_sha256','vram','unit','mode','recorded_at','abi','symbols_sha256'}
-    if not isinstance(detail,dict) or not required <= detail.keys(): return
-    if detail.get('format') != 1 or detail.get('verdict') != 'exact': return
+    if not isinstance(detail,dict) or not required <= detail.keys(): return None
+    if detail.get('format') != 1 or detail.get('verdict') != 'exact': return None
     for key in ('source_sha256','header_sha256','target_sha256','relocations_sha256','symbols_sha256'):
         if key == 'header_sha256' and detail[key] is None: continue
-        if not isinstance(detail[key],str) or not re.fullmatch('[0-9a-f]{64}',detail[key]): return
-    if not isinstance(detail['recorded_at'],(int,float)) or not math.isfinite(detail['recorded_at']): return
+        if not isinstance(detail[key],str) or not re.fullmatch('[0-9a-f]{64}',detail[key]): return None
+    if not isinstance(detail['recorded_at'],(int,float)) or not math.isfinite(detail['recorded_at']): return None
     source, header = sources.get(detail['source_sha256']), headers.get(detail['header_sha256'],'')
-    if not isinstance(source,str) or not isinstance(header,str) or len(source)>2_000_000 or len(header)>2_000_000: return
-    if digest(source)!=detail['source_sha256'] or (detail['header_sha256'] is not None and digest(header)!=detail['header_sha256']): return
-    if not isinstance(detail['compiler'],dict) or not isinstance(detail['compiler_identity'],dict): return
-    if not isinstance(detail['unit'],str) or not isinstance(detail['mode'],str) or detail['mode'] not in {'rom','project'}: return
-    historical = dict(detail, imported=True)
-    with net.store.tx() as db:
-        db.execute(SCHEMA)
-        fn=db.execute('SELECT id FROM functions WHERE project_id=? AND name=?',(project_id,name)).fetchone()
-        if fn:
-            db.execute('INSERT OR IGNORE INTO verified_matches VALUES(?,?,?,?,?)',
-                       (fn['id'],-1,json.dumps(historical),source,header))
+    if not isinstance(source,str) or not isinstance(header,str) or len(source)>2_000_000 or len(header)>2_000_000: return None
+    if checked_digest(source)!=detail['source_sha256'] or (detail['header_sha256'] is not None and checked_digest(header)!=detail['header_sha256']): return None
+    if not isinstance(detail['compiler'],dict) or not isinstance(detail['compiler_identity'],dict): return None
+    if not isinstance(detail['unit'],str) or not isinstance(detail['mode'],str) or detail['mode'] not in {'rom','project'}: return None
+    return json.dumps(dict(detail, imported=True)), source, header
+
+
+def restore_evidence_many(net, project_id, names, manifest, check_cancel=lambda: None):
+    """Import missing history in short batches, hashing shared text once per scan.
+
+    Existing rows win just as with INSERT OR IGNORE. Historical evidence never selects
+    source, changes compiler settings or awards a match; the judge still does that.
+    """
+    section = manifest.get('verification')
+    if not isinstance(section, dict): return
+    records, sources, headers = (section.get(key) for key in ('matches','sources','headers'))
+    if not all(isinstance(value, dict) for value in (records,sources,headers)): return
+    check_cancel()
+    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
+        with net.store.tx() as db:
+            db.execute(SCHEMA)
+    missing = {row['name']:row['id'] for row in net.store.all(
+        'SELECT f.id,f.name FROM functions f LEFT JOIN verified_matches v ON v.function_id=f.id '
+        'WHERE f.project_id=? AND v.function_id IS NULL', project_id)}
+    if not missing: return
+    # The cache lives only for this immutable manifest scan, never across file edits.
+    hashes = {}
+    def checked_digest(text):
+        if text not in hashes: hashes[text] = digest(text)
+        return hashes[text]
+    pending = []
+    def flush():
+        check_cancel()
+        with net.store.tx() as db:
+            db.executemany('INSERT OR IGNORE INTO verified_matches VALUES(?,?,?,?,?)', pending)
+        pending.clear()
+    for name, old_name in names:
+        check_cancel()
+        if name not in missing: continue
+        evidence = _imported_evidence(records, sources, headers, old_name, checked_digest)
+        if evidence is not None:
+            pending.append((missing.pop(name), -1, *evidence))
+            if len(pending) >= 64: flush()
+    if pending: flush()
+
+
+def restore_evidence(net, project_id, name, old_name, manifest):
+    """Import hash-checked historical text only, without applying a verdict."""
+    restore_evidence_many(net, project_id, [(name, old_name)], manifest)
 
 
 ALERT_SCHEMA = '''CREATE TABLE IF NOT EXISTS verification_regressions(

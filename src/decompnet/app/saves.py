@@ -800,6 +800,14 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     return by_name, manifest.get("functions") or {}
 
 
+def _saved_name(old_name, info, by_name, by_vram):
+    row = by_name.get(old_name)
+    if row is not None and row["vram"] == info["vram"]:
+        return old_name
+    candidates = by_vram.get(info["vram"], [])
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
     """Compile a bounded window ahead; only the caller may judge or change project state."""
     from . import workers
@@ -809,7 +817,8 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
     width = workers.WORKERS if judge_code else 1
     # Shared background workers can be waiting for this project's lock. Never queue compiles
     # behind those tasks while holding that lock. Compiler._SLOTS still caps subprocesses globally.
-    pool = ThreadPoolExecutor(width, thread_name_prefix="progress-compile", initializer=workers.lower_priority)
+    pool = (ThreadPoolExecutor(width, thread_name_prefix="progress-compile", initializer=workers.lower_priority)
+            if judge_code else None)
     stopped = threading.Event()
 
     def compile_one(proj, header, text, fn):
@@ -831,11 +840,7 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
                 old_name, info = entry
                 kind = "src" if "matched_by" in info else "best"
                 text = _saved_source(folder, files, f"{kind}/{old_name}.c")
-                row = by_name.get(old_name)
-                name = old_name if row is not None and row["vram"] == info["vram"] else None
-                if name is None:
-                    candidates = by_vram.get(info["vram"], [])
-                    name = candidates[0] if len(candidates) == 1 else None
+                name = _saved_name(old_name, info, by_name, by_vram)
                 prepared = None
                 if judge_code and name is not None and text is not None:
                     fn = dict(net.store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
@@ -859,7 +864,8 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
         for *_, prepared in pending:
             if prepared is not None:
                 prepared[1].cancel()
-        pool.shutdown(wait=False, cancel_futures=True)
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
@@ -873,19 +879,36 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
     matched, lost, best = 0, [], 0
     log(f"judging {len(saved)} saved functions again")
     update = getattr(log, "progress", lambda **fields: None)
+    from ..match_bundle import restore_evidence_many
+    def evidence_names():
+        for old_name, info in saved.items():
+            check_cancel()
+            name = _saved_name(old_name, info, by_name, by_vram)
+            kind = "src" if "matched_by" in info else "best"
+            if name is not None and _saved_source(folder, files, f"{kind}/{old_name}.c") is not None:
+                yield name, old_name
+    restore_evidence_many(net, pid, evidence_names(), manifest, check_cancel)
+    # Metadata imports run under the project lock and do not compile or change function
+    # status. One snapshot replaces thousands of identical point queries in that scan.
+    current_rows = None if judge_code else {row["name"]:row for row in net.store.all(
+        "SELECT name,status,best_source FROM functions WHERE project_id=?", pid)}
+    last_update = 0
     checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel)
     with closing(checks):
         for index, (old_name, info, kind, text, name, prepared) in enumerate(checks):
-            update(phase="Verifying saved functions" if judge_code else "Reading saved function records",
-                   done=index, total=len(saved), function=old_name, matched=matched, best=best, lost=len(lost))
+            now = time.monotonic()
+            if judge_code or now - last_update >= 0.1:
+                update(phase="Verifying saved functions" if judge_code else "Reading saved function records",
+                       done=index, total=len(saved), function=old_name, matched=matched, best=best, lost=len(lost))
+                last_update = now
             check_cancel()
-            log(f"checking {old_name}")
+            if judge_code:
+                log(f"checking {old_name}")
             if name is None or text is None:
                 lost.append(old_name) if kind == "src" else None
                 continue
-            from ..match_bundle import restore_evidence
-            restore_evidence(net,pid,name,old_name,manifest)
-            current = net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
+            current = (net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
+                       if judge_code else current_rows[name])
             if current["status"] == "matched":
                 matched += kind == "src"
                 continue

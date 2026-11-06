@@ -161,3 +161,22 @@ def test_compile_snapshots_keep_per_unit_headers_and_range_settings(inputs, monk
         item[-1][1].result(timeout=5)
     assert captured["f0"] == ("header", files["best/f0.c"], cfg, 4096)
     assert captured["f1"] == ("other header", files["best/f1.c"], cfg, 4100)
+
+
+def test_metadata_scan_uses_one_status_snapshot_and_no_compiler_pool(inputs, monkeypatch, tmp_path):
+    net, proj, rows, saved, files = inputs
+    monkeypatch.setattr(saves, 'ThreadPoolExecutor', lambda *a, **k: pytest.fail('metadata scan started a pool'))
+    one = net.store.one
+    def no_function_queries(sql, *args):
+        assert 'FROM functions' not in sql
+        return one(sql, *args)
+    monkeypatch.setattr(net.store, 'one', no_function_queries)
+    lines, updates = [], []
+    def log(line): lines.append(line)
+    log.progress = lambda **fields: updates.append(fields)
+    log.check_cancel = lambda: None
+    result = saves._judge_saved(net, proj['slug'], tmp_path, {}, rows, saved, log,
+                               files=files, judge_code=False)
+    assert result == {'matched':0, 'best':4, 'lost':[]}
+    assert len(lines) == 2 and len(updates) == 2
+    assert updates[-1]['done'] == 4

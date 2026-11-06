@@ -19,13 +19,14 @@ def bank(net, proj):
     if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return []
     rows=net.store.all('SELECT v.details,v.source,v.header,f.name,f.meta,f.vram FROM verified_matches v '
                        'JOIN functions f ON f.id=v.function_id WHERE f.project_id=? ORDER BY v.attempt_id DESC LIMIT ?',proj['id'],MAX_BANK)
-    out=[]
+    out={}
     for row in rows:
         try:proof=json.loads(row['details'])
         except (ValueError,TypeError):continue
         if (proof.get('verdict')!='exact' or proof.get('source_sha256')!=match_bundle.digest(row['source'])
                 or len(row['source'])>128000):continue
-        out.append((row,proof))
+        address = proof.get('vram')
+        if isinstance(address, int):out.setdefault(address, []).append((row,proof))
     return out
 
 
@@ -42,10 +43,15 @@ def candidates(net, proj, fn, records):
             add(function_names.canonical_source(fn,fn['matched_source']),header,'saved exact source')
     from .repository_sync import source_text
     abi=match_bundle.abi(proj,json.loads(proj['config']))
-    for row,proof in records:
+    target = match_bundle.digest(fn['target'] or b'')
+    relocations = match_bundle.digest(fn['relocs'] or '')
+    # Overlay-heavy games have thousands of records; inspect only this address's
+    # donors, preserving their original order and the complete identity checks.
+    donors = records.get(fn['vram'], ()) if isinstance(records, dict) else records
+    for row,proof in donors:
         old_abi=proof.get('abi') or {}
-        if (proof.get('target_sha256')!=match_bundle.digest(fn['target'] or b'') or proof.get('vram')!=fn['vram']
-                or proof.get('relocations_sha256')!=match_bundle.digest(fn['relocs'] or '')
+        if (proof.get('target_sha256')!=target or proof.get('vram')!=fn['vram']
+                or proof.get('relocations_sha256')!=relocations
                 or any(old_abi.get(k)!=abi.get(k) for k in ('rom_sha1','arch','big_endian'))):continue
         source=function_names.canonical_source(row,row['source'])
         source=source_text(source,row['name'],fn['name'])

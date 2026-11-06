@@ -5206,3 +5206,66 @@ operation could address that specific case without claiming general Status
 completion. The current caller's CU1 change does not prove the original
 assembler's intent. Audit this branch-spacing contract separately before adding
 any instruction; the operation-only negative above does not settle it.
+
+### Standalone Status-write return spacing has a narrow manual basis
+
+A later primary-manual audit found a distinct lead for the preceding negative
+experiment: [VR4300 manual chapter 19, printed page 622, caution 2](https://hack64.net/docs/VR43XX.pdf#page=622)
+warns of a multi-instruction stall if a jump or branch immediately follows
+setting Status ITS. ITS is Instruction Trace Support (bit 24), not CU1. A fixed
+write followed by one spacing instruction avoids that immediate-branch pattern.
+This is a performance spacing contract, **not** proof that all Status effects
+have completed, a coprocessor-use fence or interrupt exclusion. Privilege,
+mode-change and dependent-operation hazards remain the caller's responsibility.
+The observed caller sets CU1; it does not prove historical ITS-related intent.
+
+The registered `__builtin_mips_write_status_return_spacing(value)` operation
+supplies fixed `mtc0 %0,$12; nop` with a compiler-chosen input GPR; GCC supplies
+the return and its delay slot. Legacy KMC GNU as removed an unprotected NOP in
+reorder mode and does not implement `.set push/pop`. The backend therefore
+brackets only these two instructions with `.set noreorder` / `.set reorder`.
+The pinned KMC compiler's emitted assembly was inspected: it expects reorder
+around this standalone `#APP` block. Conditional neighbor functions before and
+after the accessor retain identical bytes, including branch delay slots.
+Automatic recognition is limited to this tested KMC backend and the complete
+four-word encoded leaf; unknown backends and changed spacing/register/return
+patterns are rejected. It does not expose arbitrary assembly to source or
+reopen retained assembly automatically. Ordinary linked verification remains
+mandatory. Do not generalize this contract to arbitrary inline Status users.
+
+The generated accessor retains the existing caller's `void(int)` declaration;
+the intrinsic converts the input to unsigned 32-bit modulo 2^32 before the
+hardware write. This is a bit-pattern transfer, not signed arithmetic. No caller
+prototype correction is needed. Compatibility of the assembler-state bracket
+has been validated only with the pinned KMC backend, despite the fixed macro
+being part of the shared GNU MIPS intrinsic module.
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the signed accessor reproduced all
+16 target bytes in ordinary and diagnostic compilation. A private full
+12,582,912-byte cartridge rebuilt exactly with 2,076 selected C functions;
+all 2,075 prior profiles and selected C objects were preserved. Adding the
+accessor splits an assembly run, so its generated wrapper/object must be rebuilt
+rather than reused from a stale cache. Normal copied prepared-source adoption
+also preserved all 2,075 other selected source hashes and effective profiles.
+These are copied validation results, not a claim of live adoption.
+
+### A loaded return word needs caller evidence before changing a void draft
+
+A four-instruction SDK list pop loads the old head into the return register,
+loads its successor and writes the new head. Seven direct callers consume the
+old head, but the saved machine draft declares a void result. The existing
+return-contract witness recognized explicit register copies only, so this load
+was invisible to its caller-backed draft context and advisory.
+
+The MIPS witness now exposes an unchanged straight-line `lw` result for bounded
+caller lookup. A consuming direct caller is required before suggesting a return
+contract or adding a temporary m2c result hypothesis. A load alone never enables
+the caller-free return-rewrite family. Control flow, overwritten results, unknown
+clobbers and 64-bit loads remain conservative exclusions. No shared prototype,
+selected source or pointer type is changed automatically.
+
+A real pinned m2c replay on the private list-pop input now emits a result-returning
+draft, with the shared header unchanged. This is an ABI hypothesis, not a new
+exact match: prior KMC candidates still differed in scratch register allocation,
+and bounded IDO 5.3/7.1 controls also failed to match. Do not implement a fixed
+list intrinsic that merely selects the target's arbitrary scratch register.

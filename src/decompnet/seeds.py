@@ -339,6 +339,9 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     from .arch.mips_count import candidate as count_candidate
     from .arch.mips_fcsr import candidate as fcsr_candidate
     from .arch.mips_status import candidate as status_candidate
+    from .arch.mips_status_return_spacing import candidate as status_return_candidate
+    if source := status_return_candidate(asm_text,name,toolchain_id):
+        return source
     if source := compare_candidate(asm_text,name,toolchain_id):
         return source
     if source := fcsr_candidate(asm_text,name,toolchain_id):

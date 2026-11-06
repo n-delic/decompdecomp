@@ -46,6 +46,28 @@ def test_word_return_is_target_backed_and_caller_overwrite_is_not_consumption():
     assert mips_returns.result(asm('beqz $a0, .Ldone','nop','move $v0, $s0','jr $ra','nop')) is None
 
 
+def test_loaded_result_requires_a_real_caller_and_never_enables_unbacked_rewrites():
+    target=asm('lw $v0, 0($a0)','lw $t9, 0($v0)','jr $ra','sw $t9, 0($a0)')
+    proof=mips_returns.result(target)
+    assert proof['requires_caller'] and not proof['caller_consumes']
+    assert not returns.variants(SOURCE,'f','','mips',target)
+    assert not returns.hint(SOURCE,'f',target,'mips')
+    assert 'loaded word' in returns.hint(SOURCE,'f',target,'mips',CALLER)
+    overwritten=asm('jal f','nop','li $v0, 0','move $s1, $v0','jr $ra','nop')
+    assert not returns.hint(SOURCE,'f',target,'mips',overwritten)
+    assert mips_returns.result(target.replace('lw $v0','ld $v0')) is None
+    assert mips_returns.result(target.replace('sw $t9, 0($a0)','move $v0, $zero')) is None
+    fn=dict(name='f',vram=123);proj=dict(id=1,arch='mips')
+    net=SimpleNamespace(xrefs=lambda p:dict(called_by={123:{10}}),
+        _asm_text=lambda row,p:target if row is fn else CALLER,
+        store=SimpleNamespace(one=lambda *a:dict(name='caller')))
+    context=return_contract_evidence.m2c_context(net,proj,fn,'original','')
+    assert 'int f();' in context
+    assert return_contract_evidence.m2c_context(net,proj,fn,'original','void f(void);')=='original'
+    net.xrefs=lambda p:dict(called_by={})
+    assert return_contract_evidence.m2c_context(net,proj,fn,'original','')=='original'
+
+
 def test_return_first_candidate_is_initialized_call_result_and_keeps_newline_inside_body():
     choices=returns.variants(SOURCE,'f','','mips',TARGET)
     assert choices and len(choices)<=returns.LIMIT

@@ -1159,7 +1159,33 @@ A Status writer is a separate case: a tested fixed `mtc0 %0,$12` operation emitt
 12 bytes while a handwritten leaf contained 16, due to an extra NOP before its
 return. Do not repair that difference with target-shaped padding. VR4300 CP0
 hazards depend on the changed bits and following instruction; a memory clobber
-is not a hardware hazard barrier. No Status-write intrinsic is currently provided.
+is not a hardware hazard barrier. The operation-only experiment did not establish a general Status-write intrinsic;
+the separately documented return-spacing operation below has a narrower contract.
 The manual separately warns about an immediate jump after setting ITS. A narrowly
-specified return-spacing operation is an untested lead, distinct from a general
-Status completion barrier; do not infer its contract from the target alone.
+specified return-spacing operation below is distinct from a general Status
+completion barrier; its contract comes from the manual, not the target alone.
+
+### Status write with return-branch spacing
+
+A separate narrow operation is now available for a standalone SDK accessor:
+`__builtin_mips_write_status_return_spacing(value)`. It writes Status then
+provides one intervening instruction before the compiler's return branch.
+VR4300 manual chapter 19 p.622 documents an immediate-branch stall after setting
+ITS (Instruction Trace Support, bit 24). This performance spacing is not full
+Status completion, an interrupt lock or a barrier for arbitrary inlined users.
+The actual caller setting CU1 does not establish original ITS-related intent.
+Keep handwritten provenance and use the normal exact judge. The automatic seed
+recognizes only the complete four-word leaf on the tested KMC compiler; it does
+not reopen assembly automatically. Other CP0 privilege and mode hazards remain.
+The accessor can retain an existing `void(int)` caller contract: the intrinsic
+converts to unsigned 32-bit modulo 2^32, preserving the supplied hardware bits.
+The assembler-state bracket is validated only with the pinned KMC backend.
+
+### Caller-backed loaded returns
+
+For a void SDK draft that leaves a loaded word in the return register, inspect
+actual direct callers before allocation searches. A consumed loaded value can
+be an omitted scalar or pointer return, even without a final register-copy
+instruction. The app can supply a caller-backed m2c hypothesis when no shared
+prototype exists; it does not infer the pointer type or edit existing headers.
+An arbitrary scratch register difference alone still cannot justify an intrinsic.

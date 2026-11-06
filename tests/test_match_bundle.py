@@ -109,3 +109,53 @@ def test_scratch_rechecks_warn_only_when_the_saved_exact_source_fails(tmp_path, 
     assert current['status']=='matched' and current['matched_source']==source
     assert current['matched_agent_id']==owner and current['matched_at']==matched_at
     assert dict(net.store.one('SELECT * FROM verified_matches WHERE function_id=?',fn['id']))==original
+
+
+def test_bulk_history_hashes_shared_header_once_and_keeps_existing_evidence(tmp_path, monkeypatch):
+    net, source = setup_bundle(tmp_path/'original')
+    manifest = {'verification':match_bundle.portable(net, 1)}
+    original = manifest['verification']['matches']['f']
+    (tmp_path/'restored').mkdir()
+    other, _ = _game(tmp_path/'restored', [(f'f{i}',10+i,'open') for i in range(130)])
+    names = [(f'f{i}',f'f{i}') for i in range(130)]
+    manifest['verification']['matches'] = {name:dict(original) for name, _ in names}
+    calls = []
+    digest = match_bundle.digest
+    monkeypatch.setattr(match_bundle, 'digest', lambda text: calls.append(text) or digest(text))
+    writes = []
+    from contextlib import contextmanager
+    tx = other.store.tx
+    @contextmanager
+    def counted_tx(*args, **kwargs):
+        writes.append(1)
+        with tx(*args, **kwargs) as db: yield db
+    monkeypatch.setattr(other.store, 'tx', counted_tx)
+    match_bundle.restore_evidence_many(other, 1, names, manifest)
+    assert calls == [source, 'typedef int s32;']
+    assert len(writes) == 4  # schema plus three bounded writes, rather than 130 transactions
+    assert other.store.one('SELECT COUNT(*) n FROM verified_matches')['n'] == 130
+    assert not other.store.one("SELECT 1 FROM functions WHERE status!='open' OR best_source IS NOT NULL")
+    calls.clear()
+    match_bundle.restore_evidence_many(other, 1, names, manifest)
+    assert calls == []  # the already imported evidence is never rehashed or replaced
+    assert len(writes) == 4  # repeat scans never acquire the database writer
+
+
+def test_bulk_history_revalidates_new_scans_and_can_cancel_between_batches(tmp_path):
+    net, _ = setup_bundle(tmp_path/'original')
+    manifest = {'verification':match_bundle.portable(net, 1)}
+    detail = manifest['verification']['matches']['f']
+    (tmp_path/'restored').mkdir()
+    other, _ = _game(tmp_path/'restored', [(f'f{i}',10+i,'open') for i in range(130)])
+    names = [(f'f{i}',f'f{i}') for i in range(130)]
+    manifest['verification']['matches'] = {name:dict(detail) for name, _ in names}
+    def cancel():
+        if other.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
+            if other.store.one('SELECT COUNT(*) n FROM verified_matches')['n'] >= 64:
+                raise RuntimeError('cancelled')
+    with pytest.raises(RuntimeError, match='cancelled'):
+        match_bundle.restore_evidence_many(other, 1, names, manifest, cancel)
+    assert other.store.one('SELECT COUNT(*) n FROM verified_matches')['n'] == 64
+    manifest['verification']['headers'][detail['header_sha256']] = 'tampered header'
+    match_bundle.restore_evidence_many(other, 1, names, manifest)
+    assert other.store.one('SELECT COUNT(*) n FROM verified_matches')['n'] == 64

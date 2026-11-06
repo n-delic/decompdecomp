@@ -5,6 +5,10 @@
   the local connection mutex free; optional bookkeeping stays nonblocking, cancellation and
   process-exit recovery release admission, and commit failures roll back without replay.
 
+- Done: saved-progress metadata scans read function status once, import missing historical
+  evidence in cancellable batches and hash shared headers once per scan. Recovery indexes
+  historical donors by address while retaining target, relocation, ABI and exact-byte checks.
+
 - Done: authentication reads token identity on every request but coalesces advisory
   presence timestamps to five seconds and skips them when a writer is busy.
   Presence may temporarily look offline under contention; revoked tokens stay invalid.
@@ -2925,3 +2929,15 @@ need independent evidence before receiving this specific GNU C repair.
 - Done: fixed registered GNU MIPS CP0 Compare write and bounded complete-leaf
   machine seed. Ordinary linked judging remains unchanged; handwritten provenance
   and timer-interrupt clearing semantics remain explicit.
+- Done: KMC MIPS complete-leaf drafting for a fixed Status write with one
+  return-branch spacing instruction, grounded in the VR4300 ITS immediate-branch
+  stall warning. This does not provide full Status hazard completion, arbitrary
+  inlined barriers or automatic reopening of assembly. Other backend assembler
+  state policies remain unvalidated; the automatic seed is KMC-only.
+
+
+- Done: caller-backed MIPS loaded-word return evidence reaches ROM machine-draft
+  context and advisory hints. A load alone never enables return rewrite candidates.
+- Planned: expose equivalent direct-caller consumption evidence for imported
+  projects where no caller graph is currently available. Keep inference disabled
+  there until such evidence exists; do not infer a return type from a scratch load.
