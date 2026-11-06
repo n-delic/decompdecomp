@@ -2852,3 +2852,18 @@ def test_deep_controls_are_discovered_without_loading_statistics(app, monkeypatc
     response = client.get('/api/permuter/pass?slug=example&view=control')
     assert response.status_code == 200
     assert response.json()['job'] == 'search-job' and response.json()['control_only']
+
+
+def test_score_commit_preferences_require_write_guard_and_default_to_ten(app, monkeypatch):
+    from decompnet.app import score_commits
+    client, net, _ = app
+    calls = []
+    def configure(net, slug, enabled, threshold, folder):
+        calls.append((slug, enabled, threshold, folder))
+        return {'enabled':enabled, 'threshold':threshold}
+    monkeypatch.setattr(score_commits, 'configure', configure)
+    data = {'slug':'game', 'enabled':True, 'folder':'/repo'}
+    assert client.post('/api/repository-score-commits', json=data).status_code == 403
+    response = client.post('/api/repository-score-commits', json=data, headers={'X-Decomp':'1'})
+    assert response.status_code == 200 and response.json()['threshold'] == 10
+    assert calls == [('game', True, 10, '/repo')]

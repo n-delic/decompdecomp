@@ -650,6 +650,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Add missing origin remote in Settings | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Opt-in automatic push after a configurable commit threshold | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Review and push existing Git commits to origin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Batched local commits for improved best drafts | ✓ | ✓ | ✓ | ✓ | — per-unit source adapter planned | — per-unit source adapter planned | — per-unit source adapter planned | — per-unit source adapter planned |
 | Automatic per-match local commits with agent notes | ✓ | ✓ | ✓ | ✓ | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -3064,5 +3065,7 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Done: optional automatic pushes default to ten unpushed commits, with a configurable threshold of 1–10,000. A separate background worker checks local refs and only contacts origin at the threshold. It pins the selected checkout, branch and origin, uses ordinary non-force push checks, retains failed commits locally and retries failures once a minute. ROM progress and PROJECT source checkouts share the behavior; it is independent of automatic match commits.
 
 - Compiler comparison discovery reads only source and fingerprint inputs; assembly and seeds load only for selected compilations. Auto-apply has an explicit progress stage instead of appearing to discover remaining functions.
+
+- Done: optional score-improvement commits batch at least ten distinct improved functions by default (configurable 1–10,000). Repeated improvements count once and use the latest saved draft. Exact matches leave the batch and retain their match-commit path. Scoped progress commits include selected drafts and required context, preserve unrelated edits, pause on staged changes and acknowledge completed checkpoints after interruption. These commits use the existing independent automatic-push threshold. Imported-build source batching needs a per-unit ownership adapter and remains planned.
 
 - Compile throughput: scoped per-worker header/workspace and successful-object reuse, prepared target/disassembly state, lean permutation scoring with full winner diagnostics, numeric phase timings and an installed-toolchain concurrency benchmark. See docs/compile-performance.md.

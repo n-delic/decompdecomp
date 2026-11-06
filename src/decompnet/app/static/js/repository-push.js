@@ -146,3 +146,54 @@ async function saveRepositoryAutoPush() {
 }
 $("repositoryAutoPush").onchange = saveRepositoryAutoPush;
 $("repositoryAutoPushThreshold").onchange = saveRepositoryAutoPush;
+
+
+let repositoryScoreBusy = false, repositoryScoreSlug = "", repositoryScoreState = {};
+function renderRepositoryScoreCommits(state = {}) {
+  if (repositoryScoreSlug !== S.slug) {
+    repositoryScoreSlug = S.slug; repositoryScoreState = {};
+    $("repositoryScoreCommitLog").textContent = ""; $("repositoryScoreCommitLog").hidden = true;
+    $("repositoryScoreDetails").hidden = true;
+    $("repositoryScoreCommits").checked = false; $("repositoryScoreThreshold").value = 10;
+    $("repositoryScoreCommitState").textContent = "";
+  }
+  if (repositoryScoreBusy) return;
+  repositoryScoreState = state;
+  $("repositoryScoreDetails").hidden = !state.pending;
+  $("repositoryScoreDetails").textContent = `Pending improved functions (${state.pending || 0})`;
+  $("repositoryScoreCommits").checked = !!state.enabled;
+  if (document.activeElement !== $("repositoryScoreThreshold")) $("repositoryScoreThreshold").value = state.threshold || 10;
+  $("repositoryScoreCommitState").textContent = state.error || (state.enabled
+    ? `${state.pending || 0} improved functions waiting · Commit at ${state.threshold || 10}.${state.last_commit ? " Last commit: " + state.last_commit.slice(0, 8) : ""}`
+    : "Off. Improved drafts are saved without automatic batch commits.");
+  $("repositoryScoreCommitState").classList.toggle("err", !!state.error);
+}
+async function saveRepositoryScoreCommits() {
+  if (repositoryScoreBusy) return;
+  const slug = S.slug, field = $("repositoryScoreCommits"), threshold = $("repositoryScoreThreshold"), log = $("repositoryScoreCommitLog"), previous = repositoryScoreState;
+  repositoryScoreBusy = true;
+  const finish = beginWork(log, "Saving improvement commit preference", [field, threshold], "Improvement commit preference saved.");
+  try {
+    const state = await api("/api/repository-score-commits", {method:"POST", body:{slug, enabled:field.checked,
+      threshold:Number(threshold.value), folder:typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot}});
+    if (S.slug === slug) { repositoryScoreBusy = false; if (S.ov) S.ov.score_commits = state; renderRepositoryScoreCommits(state); }
+  } catch (error) {
+    if (S.slug === slug) { field.checked = !!previous.enabled; showJobError(log, error.message); }
+  } finally {
+    repositoryScoreBusy = false; finish();
+    if (S.slug !== slug) {
+      log.hidden = true;
+      if (log._workStatus) log._workStatus.hidden = true;
+      if (log._workBar) log._workBar.hidden = true;
+      renderRepositoryScoreCommits(S.ov?.score_commits);
+    }
+    if (typeof refreshRepositorySetup === "function") { repositorySetupChecked = 0; refreshRepositorySetup(); }
+  }
+}
+$("repositoryScoreCommits").onchange = saveRepositoryScoreCommits;
+$("repositoryScoreThreshold").onchange = saveRepositoryScoreCommits;
+
+$("repositoryScoreDetails").onclick = () => {
+  const state = repositoryScoreState;
+  dialog("Pending improved functions", `<p>Each function counts once in the current batch. Lower judge distance is better.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}<br><span class="small muted">Distance ${esc(item.before ?? "unscored")} → ${esc(item.score)}</span></p>`).join("")}${state.pending > (state.items || []).length ? "<p>Showing the first 20 functions.</p>" : ""}<button class="ghost" data-close type="button">Close</button>`);
+};
