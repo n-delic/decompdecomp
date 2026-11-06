@@ -1,8 +1,8 @@
-"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010 and 2017 (2015's and
-newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows program: decompdecomp runs on Linux and
+"""Windows PC games: 32-bit x86 (.exe) and 64-bit x64 (PE32+ .exe and DLLs) programs, built with Microsoft Visual
+C++ 6.0 to 2010 and 2017 (2015's and newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows program: decompdecomp runs on Linux and
 macOS, and so do the compilers (through wibo; Visual C++ 2017's, which wibo can't run, through wine: wine.py).
-Visual C++ 2017 (its 32-bit and 64-bit compilers) can also be chosen for a source file in Settings; its 64-bit
-compiler is for 64-bit games, which come next (ROADMAP.md, Newer Windows games). The user's own Visual C++ copies
+Visual C++ 2017's 32- and 64-bit compilers can also be chosen for a source file in Settings; a 64-bit game builds
+with its x64 one. The user's own Visual C++ copies
 (kits/visualcpp.py, any number, any version from 2.0 on) build a game whose compiler build the packs don't have:
 its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
 MSVC/own-<version>.
@@ -20,6 +20,12 @@ MSVC/own-<version>.
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
   and split_file divides one (split_source: a unit of functions.json). The game's own DLLs beside the .exe are
   programs of the project too (find_modules; a game given as its folder: program_in), each in a folder of src/auto/.
+  A 64-bit program is read the same way, and differently: its functions come from its exception directory (.pdata,
+  exact) and the calls between them (a leaf nothing calls has no record and is found by neither), and its code's
+  references are nearly all relative (call rel32, [rip+disp], a switch table's 4-byte ADDR32NB entries), so the
+  delinked objects are AMD64 ones (X64_ADDR64/ADDR32NB/REL32 relocations, names without the 32-bit underscore) and
+  the project builds with the game's x64 compiler (MSVC/14.16-x64). The 32-bit readers don't know x64 yet: C++
+  classes, struct layouts, exact drafts and the game's PDB/map don't come with a 64-bit import (ROADMAP.md).
 - rtti.py: the C++ classes the program's run-time type information names, those of its code built without it (from
   the vtables constructors store), their fields and the struct layouts of every function's pointers, read by
   arch/x86_fields.py (get_class, guess_struct, drafts as `Class::method`).
@@ -188,6 +194,11 @@ class WindowsPC(Console):
         if manifest.get("created") != "from scratch" or (manifest.get("analysis", 1) >= self.ANALYSIS and
                                                           manifest.get("tools") == scratch.tools_version()):
             return
+        if self.target(fp) == "x64":
+            # the steps below are the 32-bit rules (Ghidra's functions, pieces, stubs, ebp frames): a 64-bit project
+            # keeps what it was imported with until they have x64 versions (ROADMAP.md, Newer Windows games, F)
+            log("a 64-bit PC game: its analysis steps come with its readers (ROADMAP.md), so it stays as it is")
+            return
         version = manifest["version"]
         if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file() or \
                 scratch.missing(fp.root, version):  # (the game's DLLs too: each step reads every program)
@@ -290,11 +301,21 @@ class WindowsPC(Console):
         if scratch.missing(fp.root, manifest["version"]):
             raise NetworkError("the project is missing the game's DLLs it was made with (in orig/): put your copies "
                                "there, then reimport")
-        log(f"analysing {game.name} with Ghidra again (a big game takes a few minutes)")
-        found = {"": ghidra.functions(game)}
-        for m in _functions_json(fp, manifest["version"]).get("modules", []):
-            log(f"analysing {m['exe'].removeprefix('orig/')} with Ghidra again")
-            found[m["name"]] = scratch.module_rows(ghidra, fp.root / m["exe"], m["image_base"] - m["preferred_base"])
+        info = _functions_json(fp, manifest["version"])
+        if scratch.read_pe(game.read_bytes()).x64:
+            # a 64-bit program's functions are in its own headers: no Ghidra, and each DLL read at the address the
+            # project gives it
+            log(f"reading {game.name}'s functions from its exception directory again (.pdata, and the calls between)")
+            pes = scratch.programs(fp.root, info)
+            found = {"": scratch.x64_functions(pes[""]),
+                     **{name: scratch.x64_functions(pe) for name, pe in pes.items() if name}}
+        else:
+            log(f"analysing {game.name} with Ghidra again (a big game takes a few minutes)")
+            found = {"": ghidra.functions(game)}
+            for m in info.get("modules", []):
+                log(f"analysing {m['exe'].removeprefix('orig/')} with Ghidra again")
+                found[m["name"]] = scratch.module_rows(ghidra, fp.root / m["exe"],
+                                                       m["image_base"] - m["preferred_base"])
         matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
                                                      "status='matched'", net.project_row(slug)["id"])}
         return net.forks.reanalyse(slug, lambda fp: scratch.reanalyse_program(fp.root, manifest["version"], found,
@@ -311,6 +332,10 @@ class WindowsPC(Console):
     def join_functions(self, fp, first: str, last: str, keep: set[str], log=print) -> str:
         from . import scratch
 
+        if self.target(fp) == "x64":
+            # joining reads the code's references the 32-bit way (scratch.join), which would misname a 64-bit
+            # function's: it comes with the x64 readers (ROADMAP.md, Newer Windows games, F)
+            raise NetworkError("joining functions isn't read for a 64-bit PC game yet (ROADMAP.md, Newer Windows games)")
         return scratch.join_functions(fp.root, (fp.manifest or {})["version"], first, last, keep=keep)
 
     def function_extent(self, fp, symbol: str) -> tuple[int, int] | None:
@@ -544,7 +569,7 @@ def _address_key(name: str) -> str | None:
     """func_XXXXXXXX / D_XXXXXXXX (upper case address) in a name, as tools/names.py keys them; None without one."""
     import re
 
-    m = re.search(r"\b_*(func|D)_([0-9A-Fa-f]{8})(?![0-9A-Fa-f])", name)
+    m = re.search(r"\b_*(func|D)_([0-9A-Fa-f]{6,16})(?![0-9A-Fa-f])", name)
     return f"{m.group(1)}_{m.group(2).upper()}" if m else None
 
 

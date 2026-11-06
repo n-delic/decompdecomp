@@ -21,7 +21,9 @@ own symbols (consoles/pc/debuginfo.py), and the demo is a game without them unle
 
 With 14.16 (the `msvc2015` pack) it's Demo Quest as a game of 2017-2019: compiled and linked by Visual C++ 2017, its
 own linker (only it writes 2017's Rich entry for itself, its file alignment and debug directory), both run through
-wine on Linux and macOS (wibo can't run them): `build.py 14.16` -> build/14.16/demoquest.exe.
+wine on Linux and macOS (wibo can't run them): `build.py 14.16` -> build/14.16/demoquest.exe. `build.py 14.16-x64`
+builds it as a 64-bit (x64, PE32+) game: the same code with the pack's x64 compiler (x64 has no inline assembly, so
+pcmain.c's `_ftol` is 32-bit only) -> build/14.16-x64/demoquest.exe.
 
 --pdb builds it as a game that shipped its program database: compiled with /Zi, linked with /DEBUG (a PDB 2.0, as
 Visual C++ 6.0 wrote them). Only 6.0's: under wibo 1.2.0, 7.1's linker stops at lstrcmpiA with /DEBUG, and 2005's and
@@ -57,7 +59,9 @@ BUILD = HERE / "build" / ("dll" if DLL else "pdb" if PDB else "" if VERSION == "
 EXPORTS = ("player_take_damage", "entity_default_hp", "clamp_s32")  # what the DLL exports, by their own names
 DLL_VERSION = "10.0SP1"
 GAME = HERE.parent / "demo-n64" / "original"
-CFLAGS = ["/nologo", "/c", "/O2", "/Gd", "/W0"]
+# /Gd is 32-bit only (the x64 ABI's one calling convention is what it asks for); nothing else the compiler is given
+# changes between the two, so a 64-bit demo builds its code the way a 64-bit project's flags do
+CFLAGS = ["/nologo", "/c", "/O2", *([] if VERSION.endswith("-x64") else ["/Gd"]), "/W0"]
 
 
 def run(argv, cwd=BUILD, env=None):
@@ -95,7 +99,7 @@ def write_key() -> None:
     tests/test_consoles.py knows which of the project's functions is which."""
     # (2017's linker lists the compiler's local labels too, $LN14 and the like: no function of the game's)
     symbols = {m.group(1): int(m.group(2), 16)
-               for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", (BUILD / "symbols.map").read_text(), re.M)
+               for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8,16}) ", (BUILD / "symbols.map").read_text(), re.M)
                if not m.group(1).startswith("$")}
     (BUILD / "demo.json").write_text(json.dumps({"game": "demoquest.exe", "symbols": symbols}, indent=1), encoding="utf-8")
 

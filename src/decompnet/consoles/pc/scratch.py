@@ -29,6 +29,7 @@ own copy.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import hashlib
 import importlib.util
@@ -59,6 +60,7 @@ UNIT_BYTES = 0x1000
 FUNCTION_ALIGN, PADDING_BYTES, ALIGNED_SHARE = 16, (0xCC, 0x00, 0x90), 3
 TEMPLATE = Path(__file__).with_name("project_template")
 MSVC_DEFAULT = "6.0"
+X64_SUFFIX = "-x64"  # a 64-bit compiler's version, as the packs name it (WindowsPC's X64_SUFFIX: MSVC/14.16-x64)
 DIR32, REL32 = 0x06, 0x14
 PAD = 0x90  # what Visual C++ 6 pads a function's section with (the linker pads between objects with 0xCC or zeros)
 # Which Visual C++ built each part of the program, by the product ids its Rich header gives: every version numbers its
@@ -91,8 +93,8 @@ RELEASES = {("6.0", 8447): "SP3", ("6.0", 8799): "SP4", ("6.0", 8966): "SP5", ("
 # The compiler packs' Visual C++ (consoles/pc MSVC_VERSIONS) by the version and build the Rich header names: each update
 # generates other code, so a game builds with its own build's. 2005's RTM and SP1 are both build 50727 (the Rich
 # header keeps no more of the version), so an import takes SP1; RTM ("8.0") is chosen by file, with try_compiler.
-# 2017's 64-bit compiler (14.16-x64) is never a game's: 64-bit games aren't started yet. From each compiler's own
-# banner (cl.exe)
+# A 64-bit game builds with its Visual C++'s x64 compiler (14.16-x64, the packs' only one: Build.pack_version adds
+# the suffix). From each compiler's own banner (cl.exe)
 RICH_BUILDS = {("6.0", 8168): "6.0", ("7.0", 9466): "7.0", ("7.1", 3077): "7.1", ("8.0", 50727): "8.0SP1",
                ("9.0", 21022): "9.0", ("9.0", 30729): "9.0SP1", ("10.0", 30319): "10.0", ("10.0", 40219): "10.0SP1",
                ("14.1", 27027): "14.16"}
@@ -136,6 +138,12 @@ class Section:
     size: int  # bytes in the file
     code: bool
 
+    @property
+    def loaded_size(self) -> int:
+        """How many bytes of this section are in the loaded image: VirtualSize when it says (SizeOfRawData is the
+        file's, rounded up to FileAlignment: 0x400 where the loader maps 0x236)."""
+        return min(self.vsize or self.size, self.size) if self.size else 0
+
 
 @dataclass
 class PE:
@@ -147,6 +155,8 @@ class PE:
     sections: list[Section]
     imports: dict[int, str] = field(default_factory=dict)  # import address table slot -> "Sleep"
     dlls: list[str] = field(default_factory=list)  # the DLLs it imports from, as it names them ("KERNEL32.dll")
+    x64: bool = False  # a PE32+ (64-bit) program
+    dirs: list[tuple[int, int]] = field(default_factory=list)  # the optional header's data directories (RVA, size)
 
     def section_at(self, addr: int) -> Section | None:
         return next((s for s in self.sections if s.va <= addr < s.va + max(s.vsize, s.size)), None)
@@ -162,6 +172,14 @@ class PE:
     def contains(self, addr: int) -> bool:
         return self.image_base <= addr < self.image_base + self.image_size
 
+    def directory(self, index: int) -> tuple[int, int]:
+        """One data directory as (RVA, size), (0, 0) when the program has none there."""
+        return self.dirs[index] if index < len(self.dirs) else (0, 0)
+
+    def code_sections(self) -> list[Section]:
+        """The sections that hold code (`.text`, and a packer's or linker's own)."""
+        return [s for s in self.sections if s.code and s.size]
+
 
 # a Windows program: the DOS header ("MZ") says where the PE header is; after it the COFF header, then the optional
 # header (PE32's: a 32-bit program), then the section table
@@ -169,12 +187,18 @@ DOS_HEADER_BYTES, PE_OFFSET_AT = 0x40, 0x3C
 PE_HEADER_BYTES = 0x18  # "PE\0\0" and the COFF header
 MACHINE_AT, SECTION_COUNT_AT, TIMESTAMP_AT, OPTIONAL_HEADER_SIZE_AT = 4, 6, 8, 20  # in the COFF header, from "PE\0\0"
 OPTIONAL_HEADER_AT = PE_HEADER_BYTES
-MACHINE_I386, PE32_MAGIC = 0x14C, 0x10B
+MACHINE_I386, PE32_MAGIC, PE32PLUS_MAGIC = 0x14C, 0x10B, 0x20B
 X64_MACHINE = 0x8664  # AMD64: a 64-bit program's (MACHINES)
 X86 = "32-bit x86"
 MACHINES = {MACHINE_I386: X86, X64_MACHINE: "64-bit (x64)", 0xAA64: "64-bit ARM", 0x1C0: "ARM", 0x1C4: "ARM",
             0x200: "Itanium"}
-ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT, IMPORTS_AT = 16, 28, 56, 104  # in the optional header
+# in the optional header: PE32+ (a 64-bit program) puts its 8-byte image base at 24, and its data directories after a
+# longer header: the import directory is at 120, not 104, and the exception directory (.pdata) at 136
+ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT, IMPORTS_AT = 16, 28, 56, 104
+PE32_IMAGE_BASE_AT, PE32PLUS_IMAGE_BASE_AT = 28, 24
+PE32_IMPORTS_AT, PE32PLUS_IMPORTS_AT = 104, 120
+PE32_DIRS_AT, PE32PLUS_DIRS_AT = 96, 112
+EXCEPTION_DIR = 3  # the data directory listing a 64-bit program's functions (.pdata)
 SECTION_HEADER_BYTES, SECTION_FLAGS_AT = 40, 36
 CODE_AND_EXECUTABLE = 0x20000020  # IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE
 PE_PROBE_BYTES, PE_HEADERS_BYTES = 0x1000, 0x200  # is_pe reads this much of a file, or the PE header and this much more
@@ -229,21 +253,32 @@ def _pe_header(head: bytes) -> int | None:
 
 
 def is_pe(head: bytes) -> bool:
-    """A 32-bit x86 Windows program (the first 4 KiB of the file are enough)."""
+    """A Windows program this console reads: 32-bit x86 (PE32) or 64-bit x64 (PE32+; the first 4 KiB are enough)."""
     at = _pe_header(head)
-    return at is not None and struct.unpack_from("<H", head, at + MACHINE_AT)[0] == MACHINE_I386 and \
-        struct.unpack_from("<H", head, at + OPTIONAL_HEADER_AT)[0] == PE32_MAGIC
+    if at is None:
+        return False
+    machine = struct.unpack_from("<H", head, at + MACHINE_AT)[0]
+    magic = struct.unpack_from("<H", head, at + OPTIONAL_HEADER_AT)[0]
+    return (machine, magic) in ((MACHINE_I386, PE32_MAGIC), (X64_MACHINE, PE32PLUS_MAGIC))
 
 
 def read_pe(data: bytes) -> PE:
     at = _pe_header(data)
     if at is None or not is_pe(data[:max(PE_PROBE_BYTES, at + PE_HEADERS_BYTES)]):
-        raise ForkError("this isn't a 32-bit Windows program (.exe): PC games start from their x86 .exe")
+        raise ForkError("this isn't a Windows program (.exe): PC games start from their .exe")
     count, _, _, _, opt_size = struct.unpack_from("<HIIIH", data, at + SECTION_COUNT_AT)
     timestamp = struct.unpack_from("<I", data, at + TIMESTAMP_AT)[0]
     opt = at + OPTIONAL_HEADER_AT
-    entry_rva, base, image_size = (struct.unpack_from("<I", data, opt + field)[0]
-                                   for field in (ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT))
+    machine = struct.unpack_from("<H", data, at + MACHINE_AT)[0]
+    magic = struct.unpack_from("<H", data, at + OPTIONAL_HEADER_AT)[0]
+    x64 = (machine, magic) == (X64_MACHINE, PE32PLUS_MAGIC)
+    # PE32+ keeps its image base in 8 bytes at 24, its 16 data directories at 112; PE32's are 4 bytes at 28, 96
+    entry_rva, image_size = struct.unpack_from("<II", data, opt + ENTRY_AT)[0], \
+        struct.unpack_from("<I", data, opt + IMAGE_SIZE_AT)[0]
+    base = struct.unpack_from("<Q" if x64 else "<I", data, opt + (PE32PLUS_IMAGE_BASE_AT if x64 else PE32_IMAGE_BASE_AT))[0]
+    dirs_at = opt + (PE32PLUS_DIRS_AT if x64 else PE32_DIRS_AT)
+    all_dirs = struct.unpack_from("<I", data, opt + (108 if x64 else 92))[0] or 16  # (a hand-made one may omit)
+    dirs = [struct.unpack_from("<II", data, dirs_at + 8 * i) for i in range(min(16, all_dirs))]
     sections = []
     for number in range(count):
         header = opt + opt_size + SECTION_HEADER_BYTES * number
@@ -251,17 +286,19 @@ def read_pe(data: bytes) -> PE:
         flags = struct.unpack_from("<I", data, header + SECTION_FLAGS_AT)[0]
         sections.append(Section(name.rstrip(b"\0").decode("latin-1"), base + va, vsize, offset,
                                 min(size, max(0, len(data) - offset)), bool(flags & CODE_AND_EXECUTABLE)))
-    pe = PE(data, base, image_size, base + entry_rva, timestamp, sections)
+    pe = PE(data, base, image_size, base + entry_rva, timestamp, sections, x64=x64, dirs=dirs)
     pe.imports = _imports(pe, opt)
     return pe
 
 
 def _imports(pe: PE, opt: int) -> dict[int, str]:
-    """Import address table slot -> the function's name (or DLL ordinal), from the import directory."""
-    rva = struct.unpack_from("<I", pe.data, opt + IMPORTS_AT)[0]
+    """Import address table slot -> the function's name (or DLL ordinal), from the import directory. A 64-bit
+    program's slots and lookup entries are 8 bytes, and its ordinals are marked in the top bit (bit 63)."""
+    rva = pe.directory(1)[0]
     out: dict[int, str] = {}
     if not rva:
         return out
+    width, fmt, ordinal = (8, "<Q", 1 << 63) if pe.x64 else (4, "<I", BY_ORDINAL)
     at = pe.image_base + rva
     for _ in range(MAX_IMPORT_DLLS):
         desc = pe.read(at, IMPORT_DESCRIPTOR_BYTES)
@@ -272,16 +309,16 @@ def _imports(pe: PE, opt: int) -> dict[int, str]:
         pe.dlls.append(dll)
         lookup = lookup or iat
         for k in range(MAX_IMPORTS_PER_DLL):
-            entry = pe.read(pe.image_base + lookup + 4 * k, 4)
-            if len(entry) < 4 or not struct.unpack("<I", entry)[0]:
+            entry = pe.read(pe.image_base + lookup + width * k, width)
+            if len(entry) < width or not struct.unpack(fmt, entry)[0]:
                 break
-            value = struct.unpack("<I", entry)[0]
-            if value & BY_ORDINAL:
+            value = struct.unpack(fmt, entry)[0]
+            if value & ordinal:
                 name = f"{Path(dll).stem}_{value & ORDINAL_BITS}"
             else:
                 address = pe.image_base + value + IMPORT_HINT_BYTES
                 name = pe.read(address, IMPORT_NAME_BYTES).split(b"\0", 1)[0].decode("latin-1")
-            out[pe.image_base + iat + 4 * k] = name if _IDENT.fullmatch(name) else f"{Path(dll).stem}_{k}"
+            out[pe.image_base + iat + width * k] = name if _IDENT.fullmatch(name) else f"{Path(dll).stem}_{k}"
         at += IMPORT_DESCRIPTOR_BYTES
     return out
 
@@ -321,6 +358,12 @@ class Build:
     own: kits.OwnCompiler | None = None  # the user's own Visual C++ that builds it, when the packs' don't (own_copy)
 
     @property
+    def x64(self) -> bool:
+        """A 64-bit (x64) program: its compiler is the x64 one of its Visual C++, and its functions come from its
+        exception directory (.pdata) rather than Ghidra's analysis."""
+        return self.machine == MACHINES[X64_MACHINE]
+
+    @property
     def compiler(self) -> str:
         """Its name, release and build: "Visual C++ 2008 SP1 (9.0, build 30729)"."""
         if self.version is None:
@@ -356,9 +399,13 @@ class Build:
         if self.own is not None:
             return self.own.version
         same = [(build, name) for (version, build), name in RICH_BUILDS.items() if version == self.version]
-        if same:
-            return min(same, key=lambda b: abs(b[0] - self.build) if self.build else -b[0])[1]
-        return RICH_BUILDS[self.stand_in] if self.stand_in else MSVC_DEFAULT
+        version = (min(same, key=lambda b: abs(b[0] - self.build) if self.build else -b[0])[1] if same
+                   else RICH_BUILDS[self.stand_in] if self.stand_in else MSVC_DEFAULT)
+        if self.x64:
+            # a 64-bit program builds with its Visual C++'s x64 compiler; the only one the packs have is 2017's
+            # (a program whose build names an older Visual C++ can't be 64-bit, but is offered the nearest x64 one)
+            return (version if _version_key(version.split("-")[0]) >= (14, 0) else "14.16") + X64_SUFFIX
+        return version
 
     @property
     def exact(self) -> bool:
@@ -376,9 +423,9 @@ class Build:
     def blockers(self) -> list[str]:
         """Why decompdecomp can't start a project for this program, each with what it means: none, it can."""
         out = []
-        if self.machine != X86:
-            out.append(f"it's a {self.machine} program, and decompdecomp starts PC games from 32-bit x86 ones for now "
-                       "(64-bit games come next: ROADMAP.md, Newer Windows games)")
+        if self.machine not in (X86, MACHINES[X64_MACHINE]):
+            out.append(f"it's a {self.machine} program, and decompdecomp reads 32-bit x86 and 64-bit x64 Windows "
+                       "programs")
         if self.packed:
             out.append(f"it's compressed with {self.wrapper}, so its code only appears when it runs, and decompdecomp "
                        "reads a program as it is on disk")
@@ -511,7 +558,9 @@ def describe(data: bytes) -> Build:
             len({n for n in names if DENUVO_SECTION.fullmatch(n)}) >= DENUVO_MIN_NAMES:
         wrapper = "Denuvo"
     return Build(MACHINES.get(machine_id, f"machine type {machine_id:#x}"), version, number, whole,
-                 sum(files.values()), wrapper, own_copy(version, number))
+                 sum(files.values()), wrapper,
+                 # (a copy of the user's own is a 32-bit compiler for now: a 64-bit game uses its pack's x64 one)
+                 own_copy(version, number) if machine_id != X64_MACHINE else None)
 
 
 def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
@@ -525,9 +574,13 @@ def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
                 if version == "14":
                     version = next(v for first, v in VC14_BUILDS if number >= first)
                 files[version, number] = files.get((version, number), 0) + n
+    at = _pe_header(data)
+    machine = MACHINES.get(struct.unpack_from("<H", data, at + MACHINE_AT)[0] if at is not None else MACHINE_I386,
+                           X86)
     out = []
     for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
-        built = Build(X86, version, number, own=own_copy(version, number))
+        built = Build(machine, version, number, own=own_copy(version, number) if machine != MACHINES[X64_MACHINE]
+                      else None)
         try:
             installed = built.own is not None or toolchains.installed(compiler_pack(built.pack_version)) is not None
         except ForkError:
@@ -864,8 +917,291 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
     return code_end, data_end, entries
 
 
+# ------------------------------------------------------------------------------------------ 64-bit programs (x64)
+# A 64-bit program names its functions in its exception directory (.pdata): an entry is a function's start and end, an
+# unwind region exactly (a function with a frame and a call has one; a leaf has none, and chained unwind info gives
+# several). Calls find the leaf ones something calls, and a sweep of what is left finds the rest. The code refers to
+# addresses relatively: `call rel32`, and `[rip + disp32]`, which the compiler's object writes as a zeroed field with a
+# REL32 (or REL32_1..5, when bytes follow the field) relocation. A switch's jump table stays in .text, reached through
+# the image base the compiler loads with `lea reg, [rip + __ImageBase]`: the load's disp32 is the table's RVA, and each
+# 4-byte entry is a case label's RVA (ADDR32NB), zeroed in the object. Measured against Visual C++ 19.44 objects:
+# every relocatable field is 0, the table's disp and entries are RVAs, and an intra-function jump has no relocation.
+X64_ADDR64, X64_ADDR32NB, X64_REL32, X64_REL32_LAST = 0x01, 0x03, 0x04, 0x09
+X64_PADDING = frozenset((0xCC, 0x90, 0x00))
+X64_TERMINATORS = frozenset(("ret", "retf", "jmp", "int3", "ud2", "hlt"))
+PDATA_ENTRY_BYTES = 12
+X64_FUNCTION_BYTES = 0x100000  # a .pdata entry longer than this isn't one (a misread table)
+MAX_TABLE_ENTRIES = 4096  # a switch longer than this is not believed (the fork's limit, measured on a real one)
+# MSVC's x64 prologues, as bytes: the sweep only keeps a candidate it already found at a boundary; this only throws
+# away padding and data that happens to look like code (the 32-bit-register saves are /Od's, `mov [rsp+8], ecx`)
+X64_PROLOGUES = (
+    b"\x48\x83\xec", b"\x48\x81\xec", b"\x48\x89\x5c\x24", b"\x48\x89\x4c\x24", b"\x48\x89\x54\x24",
+    b"\x48\x89\x74\x24", b"\x48\x89\x7c\x24", b"\x4c\x89\x44\x24", b"\x4c\x89\x4c\x24", b"\x4c\x89\x5c\x24",
+    b"\x89\x4c\x24", b"\x89\x54\x24", b"\x89\x5c\x24", b"\x89\x74\x24", b"\x89\x7c\x24", b"\x44\x89\x44\x24",
+    b"\x44\x89\x4c\x24", b"\x40\x53", b"\x40\x55", b"\x40\x56", b"\x40\x57", b"\x53", b"\x55", b"\x56", b"\x57",
+    b"\x41\x54", b"\x41\x55", b"\x41\x56", b"\x41\x57", b"\xf3\x0f\x1e\xfa", b"\x48\x8b\xc4", b"\x48\x83\xe4",
+)
+
+
+def _x64_reader() -> capstone.Cs:
+    """A 64-bit disassembler. skipdata: a linked .text always holds padding, jump tables and literal pools, and
+    without it disassembly stops at the first byte it can't decode, hiding everything after it."""
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    md.detail = True
+    md.skipdata = True
+    return md
+
+
+def x64_unwind_regions(pe: PE) -> list[tuple[int, int]]:
+    """(start, end) of every function .pdata describes, merged where records touch: chained unwind info gives one
+    function several records, and only records that actually touch are joined."""
+    rva, size = pe.directory(EXCEPTION_DIR)
+    if not rva or size < PDATA_ENTRY_BYTES:
+        return []
+    regions: list[tuple[int, int]] = []
+    for at in range(0, size - PDATA_ENTRY_BYTES + 1, PDATA_ENTRY_BYTES):
+        raw = pe.read(pe.image_base + rva + at, PDATA_ENTRY_BYTES)
+        if len(raw) < PDATA_ENTRY_BYTES:
+            break
+        begin, end, _unwind = struct.unpack("<III", raw)
+        if not begin or not end or end <= begin or end - begin > X64_FUNCTION_BYTES or \
+                not pe.contains(pe.image_base + begin):
+            continue
+        lo, hi = pe.image_base + begin, pe.image_base + end
+        # chained unwind info overlaps; adjacent functions' records merely touch, and merging those made one
+        # function of two (measured: 0x1050 and 0x1090 of the lab DLL came out as 0x1050..0x1134)
+        if regions and lo < regions[-1][1]:
+            regions[-1] = (regions[-1][0], max(regions[-1][1], hi))
+        else:
+            regions.append((lo, hi))
+    return regions
+
+
+def _x64_call_targets(md, section: Section, code: bytes) -> set[int]:
+    """The addresses a direct `call rel32` in this section targets."""
+    lo, hi = section.va, section.va + len(code)
+    out = set()
+    for ins in md.disasm(code, lo):
+        if ins.mnemonic == "call" and ins.operands and ins.operands[0].type == x86.X86_OP_IMM:
+            target = ins.operands[0].imm
+            if lo <= target < hi:
+                out.add(target)
+    return out
+
+
+def _x64_prologue(code: bytes, at: int) -> bool:
+    window = code[at:at + 4]
+    return any(window[:len(p)] == p for p in X64_PROLOGUES)
+
+
+def _x64_sweep(md, code: bytes, section_va: int, lo: int, hi: int) -> set[int]:
+    """Candidate starts in [lo, hi): only at a boundary (the gap's start, or just past a terminator and its padding)
+    and only where the bytes are one of MSVC's prologues. The weakest source of the three: it can invent a function
+    where padding or data looks like one, but only between what .pdata and calls already found."""
+    starts: set[int] = set()
+    at, end, boundary = lo - section_va, hi - section_va, True
+    while at < end:
+        if boundary and _x64_prologue(code, at):
+            starts.add(section_va + at)
+        ins = next(md.disasm(code[at:end], section_va + at, count=1), None)
+        if ins is None:
+            at, boundary = at + 1, False
+            continue
+        if ins.mnemonic in X64_TERMINATORS:
+            j = at + ins.size
+            while j < end and code[j] in X64_PADDING:
+                j += 1
+            if j >= end:
+                break
+            at, boundary = j, True
+            continue
+        at, boundary = at + ins.size, False
+    return starts
+
+
+def x64_functions(pe: PE) -> list[dict]:
+    """Every function of a 64-bit program that can be justified, in address order, as the rows analyse takes: .pdata
+    first (exact), then each direct call's target outside a .pdata function, then a sweep of only the ranges neither
+    covered. A function .pdata doesn't end runs to the next function, or to its section's end."""
+    md = _x64_reader()
+    regions = [(start, end) for start, end in x64_unwind_regions(pe)
+               if (section := pe.section_at(start)) is not None and section.code]
+    found: dict[int, int | None] = dict(regions)
+    starts, ends = [a for a, _ in regions], [b for _, b in regions]
+
+    def covered(addr: int) -> bool:
+        i = bisect.bisect_right(starts, addr) - 1
+        return i >= 0 and addr < ends[i]
+
+    for section in pe.code_sections():
+        code = pe.read(section.va, section.loaded_size)
+        lo, hi = section.va, section.va + len(code)
+        for target in _x64_call_targets(md, section, code):
+            if not covered(target):
+                found.setdefault(target, None)
+        # the gaps .pdata leaves: a leaf function is in one, and so is code after the last record. A sweep stops at
+        # every known start, so two functions are never swept as one (a 20,000-function game has as many gaps: the
+        # slices are taken by bisect, not by scanning every start again)
+        spans, cursor = [], lo
+        for a, b in sorted((max(a, lo), min(b, hi)) for a, b in regions if a < hi and b > lo):
+            if a > cursor:
+                spans.append((cursor, a))
+            cursor = max(cursor, b)
+        if cursor < hi:
+            spans.append((cursor, hi))
+        known = sorted(s for s in found if lo <= s < hi)
+        for a, b in spans:
+            edges = [a, *known[bisect.bisect_left(known, a):bisect.bisect_left(known, b)], b]
+            for g0, g1 in zip(edges, edges[1:]):
+                for candidate in _x64_sweep(md, code, section.va, g0, g1):
+                    if not covered(candidate):
+                        found.setdefault(candidate, None)
+    ordered = sorted(found)
+    pdata_starts = set(starts)
+    for i, start in enumerate(ordered):
+        if found[start] is not None:
+            continue
+        section = pe.section_at(start)
+        limit = section.va + section.loaded_size if section is not None else start + 1
+        nxt = ordered[i + 1] if i + 1 < len(ordered) and ordered[i + 1] < limit else limit
+        found[start] = max(start + 1, min(nxt, limit))
+    return [{"entry": start, "end": int(found[start]), "name": "", "source": "DEFAULT", "purge": 0,
+             "convention": "__cdecl", "pdata": start in pdata_starts}
+            for start in ordered if (found[start] or 0) > start]
+
+
+def _x64_tables(md, pe: PE, instructions: list, start: int, code_end: int) -> list[tuple[int, int, list[int]]]:
+    """(where the jump table starts in the function, the offset of the load's disp32, the entries' case offsets):
+    the table stays in .text, its entries 4-byte RVAs to code in the function."""
+    image_regs: set[int] = set()
+    for ins in instructions:
+        if ins.id == 0 or ins.mnemonic != "lea" or not ins.operands or \
+                ins.operands[0].type != x86.X86_OP_REG:
+            continue
+        for op in ins.operands[1:]:
+            if op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_RIP and \
+                    ins.address + ins.size + op.mem.disp == pe.image_base:
+                image_regs.add(ins.operands[0].reg)
+    if not image_regs:
+        return []
+    tables: list[tuple[int, int, list[int]]] = []
+    seen: set[tuple[int, int]] = set()
+    for ins in instructions:
+        if ins.id == 0:
+            continue
+        for op in ins.operands:
+            if op.type != x86.X86_OP_MEM or op.mem.scale != 4 or not op.mem.index or \
+                    op.mem.base not in image_regs or not op.mem.disp:
+                continue
+            table = pe.image_base + op.mem.disp
+            entries, at = [], table
+            while len(entries) < MAX_TABLE_ENTRIES:
+                raw = pe.read(at, 4)
+                if len(raw) < 4:
+                    break
+                value, = struct.unpack("<I", raw)
+                target = pe.image_base + value
+                if not value or not start <= target < code_end:
+                    break
+                entries.append(target - start)
+                at += 4
+            key = (table - start, (ins.address - start) + ins.disp_offset)
+            if len(entries) >= 2 and key not in seen:
+                seen.add(key)
+                tables.append((key[0], key[1], entries))
+    return tables
+
+
+def _x64_symbol(pe: PE, start: int, end: int, names: dict[int, str], addr: int) -> tuple[str | None, int]:
+    """The symbol and addend an address is referred to by: a label inside the function (its own data or a case
+    label), another function, an import (__imp_Name), the image base (__ImageBase), or data by its address."""
+    if start <= addr < end:
+        return None, addr - start
+    if addr in names:
+        return names[addr], 0
+    if addr in pe.imports:
+        return f"__imp_{pe.imports[addr]}", 0
+    if addr == pe.image_base:
+        return "__ImageBase", 0
+    return f"D_{addr:08X}", 0
+
+
+def _x64_relocations(pe: PE, instructions: list, start: int, end: int, names: dict[int, str],
+                     tables: list[tuple[int, int, list[int]]]) -> list[tuple[int, int, str | None, int]]:
+    """The function's relocations: every call and jump out of it, every RIP-relative reference, an absolute 64-bit
+    address, and the switch table's disp32 and 4-byte entries. A local label's addend is its offset; a compiler's
+    object keeps 0 in the field, so nothing else is inline."""
+    relocs: list[tuple[int, int, str | None, int]] = []
+    for ins in instructions:
+        if ins.id == 0:  # a skipped data byte
+            continue
+        at = ins.address - start
+        if ins.mnemonic in ("call", "jmp") and ins.operands and ins.operands[0].type == x86.X86_OP_IMM:
+            target = ins.operands[0].imm
+            if not start <= target < end:  # a jmp inside the function is the compiler's own, no relocation
+                name, addend = _x64_symbol(pe, start, end, names, target)
+                relocs.append((at + ins.size - 4, X64_REL32, name, addend))
+            continue
+        for op in ins.operands:
+            if op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_RIP:
+                target = ins.address + ins.size + op.mem.disp
+                kind = X64_REL32 + (ins.size - ins.disp_offset - 4)
+                if X64_REL32 <= kind <= X64_REL32_LAST:
+                    name, addend = _x64_symbol(pe, start, end, names, target)
+                    relocs.append((at + ins.disp_offset, kind, name, addend))
+            elif op.type == x86.X86_OP_IMM and ins.imm_size == 8 and pe.contains(op.imm):
+                name, addend = _x64_symbol(pe, start, end, names, op.imm)
+                relocs.append((at + ins.imm_offset, X64_ADDR64, name, addend))
+    for table, disp, entries in tables:
+        relocs.append((disp, X64_ADDR32NB, None, table))
+        relocs.extend((table + 4 * k, X64_ADDR32NB, None, target) for k, target in enumerate(entries))
+    return sorted(relocs)
+
+
+def _x64_code_ends(instructions: list, start: int, end: int) -> int:
+    """Where a function's code ends when no .pdata record says: the last instruction that isn't the linker's padding
+    (0xCC, and 0x90) before the next function. The compiler's object doesn't hold that padding (its `add` section was
+    16 bytes where the image's function ran to the next one, 32), so a function matched with it must not either."""
+    real = start + 1
+    for ins in instructions:
+        if ins.mnemonic in ("int3", "nop") and all(b in (0xCC, 0x90) for b in ins.bytes):
+            continue
+        if ins.id == 0 and all(b in X64_PADDING for b in ins.bytes):
+            continue
+        real = ins.address + ins.size
+    return max(start + 1, min(real, end))
+
+
+def _x64_analyse(pe: PE, rows: list[dict]) -> list[Function]:
+    """Every function's extent, name and relocations of a 64-bit program: the function runs through its jump table
+    (the object's section does), and its code's references become AMD64 relocations."""
+    md = _x64_reader()
+    rows = {row["entry"]: row for row in rows
+            if (section := pe.section_at(row["entry"])) is not None and section.code}
+    starts = sorted(rows)
+    names = {start: f"func_{start:08X}" for start in starts}
+    functions = []
+    for i, start in enumerate(starts):
+        section = pe.section_at(start)
+        stop = section.va + section.loaded_size
+        limit = min(starts[i + 1] if i + 1 < len(starts) and starts[i + 1] < stop else stop, stop)
+        code_end = max(start + 1, min(int(rows[start].get("end") or limit), limit))
+        instructions = list(md.disasm(pe.read(start, code_end - start), start))
+        if not rows[start].get("pdata"):  # (a record's end is exact; another source's runs to the next function)
+            code_end = _x64_code_ends(instructions, start, code_end)
+            instructions = [i for i in instructions if i.address < code_end]
+        tables = _x64_tables(md, pe, instructions, start, code_end)
+        end = min(max([code_end, *(start + table + 4 * len(entries) for table, _, entries in tables)]), limit)
+        functions.append(Function(start, end - start, names[start],
+                                  _x64_relocations(pe, instructions, start, end, names, tables)))
+    return functions
+
+
 def analyse(pe: PE, found: list[dict]) -> list[Function]:
-    """Every function's extent, name and relocations, from Ghidra's function list."""
+    """Every function's extent, name and relocations, from Ghidra's function list (or, for a 64-bit program, its
+    exception directory and calls: x64_functions)."""
+    if pe.x64:
+        return _x64_analyse(pe, found)
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
     built = describe(pe.data)
@@ -1236,7 +1572,7 @@ def _source_units(functions: list[Function], pe: PE | None, sources: dict[int, s
         if source not in keys:
             stem = re.sub(r"[^A-Za-z0-9_]", "_", source.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]) or "unit"
             key, n = stem, 2
-            while key in keys.values() or re.fullmatch(r"text_[0-9A-F]{8}", key):
+            while key in keys.values() or re.fullmatch(r"text_[0-9A-F]{6,16}", key):
                 key, n = f"{stem}_{n}", n + 1
             keys[source] = key
         out.setdefault(keys[source], []).append(fn)
@@ -1569,8 +1905,9 @@ def reanalyse_program(root: Path, version: str, found: dict[str, list[dict]], ke
     for program, rows in found.items():
         pe = pes[program]
         fresh = analyse(pe, rows)
-        stubs = exception_stubs(pe, [(f.addr, f.size) for f in fresh])
-        fresh = merge_pieces(pe, fresh, keep={f.name for f in fresh if f.addr in stubs}, log=lambda *_: None)[0]
+        if not pe.x64:  # (a 64-bit program's .pdata functions are whole: no stubs, no pieces)
+            stubs = exception_stubs(pe, [(f.addr, f.size) for f in fresh])
+            fresh = merge_pieces(pe, fresh, keep={f.name for f in fresh if f.addr in stubs}, log=lambda *_: None)[0]
         own_symbols(fresh, {f.name for f in old if unit_module(f.unit) != program} | {f.name for f in new})
         new += fresh
     new = sorted([f for f in new if not any(f.addr < k.addr + k.size and k.addr < f.addr + f.size for k in kept)]
@@ -1599,8 +1936,9 @@ def reanalyse_program(root: Path, version: str, found: dict[str, list[dict]], ke
     info["units"] = {**{u: fns for u, fns in info["units"].items() if any(f.unit == u for f in new)},
                      **{u: [] for u in added}}
     _save_functions(path, info, pes, new)
-    mark_exception_stubs(root, version)
-    name_import_thunks(root, version, keep)
+    if not any(pe.x64 for pe in pes.values()):
+        mark_exception_stubs(root, version)
+        name_import_thunks(root, version, keep)
     before = {(f.addr, f.size) for f in old}
     changed = sum((f.addr, f.size) not in before for f in new)
     return (f"{len(new):,} functions (it had {len(old):,}), {changed:,} of them new or with another extent"
@@ -1904,14 +2242,7 @@ def own_versions(args: list[str]) -> set[str]:
     return {args[i + 1].split("=", 1)[0] for i, a in enumerate(args[:-1]) if a == "--own"}
 
 
-TYPES_H = """/* Basic types for this decompilation (32-bit x86, Visual C++, written in C++). Agents add structs, classes and
- * prototypes here or in new headers next to it.
- *
- * The game's functions are func_<address> and its data D_<address>: write them as free functions or as a class's
- * methods (`void Town::func_0041B470(int id)`), with the original's calling convention (methods: this in ecx; free
- * functions: __cdecl, __stdcall or __fastcall, as the code shows). The build gives what they compile to the
- * original's symbol names, so any C++ name mangling pairs with the game's code. Data: `extern int D_00402034;`. */
-#ifndef COMMON_H
+_TYPES_BODY = """#ifndef COMMON_H
 #define COMMON_H
 
 typedef signed char s8;
@@ -1933,6 +2264,25 @@ typedef int BOOL;
 
 #endif
 """
+
+TYPES_H = """/* Basic types for this decompilation (32-bit x86, Visual C++, written in C++). Agents add structs, classes and
+ * prototypes here or in new headers next to it.
+ *
+ * The game's functions are func_<address> and its data D_<address>: write them as free functions or as a class's
+ * methods (`void Town::func_0041B470(int id)`), with the original's calling convention (methods: this in ecx; free
+ * functions: __cdecl, __stdcall or __fastcall, as the code shows). The build gives what they compile to the
+ * original's symbol names, so any C++ name mangling pairs with the game's code. Data: `extern int D_00402034;`. */
+""" + _TYPES_BODY
+
+TYPES_H_X64 = """/* Basic types for this decompilation (64-bit x64, Visual C++, written in C++). Agents add structs, classes and
+ * prototypes here or in new headers next to it.
+ *
+ * The game's functions are func_<address> and its data D_<address>: write them as free functions or as a class's
+ * methods (`void Town::func_140001470(int id)`). x64 has one calling convention: the first four arguments in rcx,
+ * rdx, r8 and r9 (a method's this in rcx), the rest on the stack, and the caller reserves 32 bytes of shadow space.
+ * C names carry no underscore or @n: the build gives what they compile to the original's symbol names, so any C++
+ * name mangling pairs with the game's code. Pointers and long are 8 bytes. Data: `extern int D_140008010;`. */
+""" + _TYPES_BODY
 
 # what common.h defines already: the game's typedefs of these names are left out of its types (cheader.Header)
 HEADER_NAMES = {name for pair in re.findall(r"typedef [^;]*\b(\w+);|#define (\w+)", TYPES_H) for name in pair if name}
@@ -1975,7 +2325,7 @@ def write_debug(root: Path, version: str, info) -> None:
 
 def debug_of(root: Path, version: str, symbol: str) -> dict | None:
     """What the game's debug information says about a function, by its symbol (_func_0041B470@8)."""
-    m = re.search(r"func_[0-9A-Fa-f]{8}", symbol)
+    m = re.search(r"func_[0-9A-Fa-f]{6,16}", symbol)
     try:
         known = json.loads((root / "config" / version / DEBUG_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -2037,10 +2387,10 @@ def _named_data(root: Path, manifest: dict, name: str) -> str | None:
 def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_BYTES) -> str:
     """What read_data shows on a PC project: the bytes at a D_<address> (or any address) in the user's copy, the
     addresses its words point to, and a string or floats when it reads as one."""
-    m = re.fullmatch(r"_?D_([0-9A-Fa-f]{8})|(?:0x)?([0-9A-Fa-f]{6,8})", name)
+    m = re.fullmatch(r"_?D_([0-9A-Fa-f]{6,16})|(?:0x)?([0-9A-Fa-f]{6,16})", name)
     real = None
     if m is None and (key := _named_data(root, manifest, name)) is not None:  # a real name given since
-        real, m = name, re.fullmatch(r"D_([0-9A-F]{8})()", key)
+        real, m = name, re.fullmatch(r"D_([0-9A-F]{8,16})()", key)
     if m is None:
         raise ForkError(f"`{name}` isn't data by address or a real name of data: PC data is named D_<address> "
                         "(D_00402034) until rename_symbol names it")
@@ -2059,11 +2409,14 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
     for i in range(0, len(data), HEX_ROW_BYTES):
         chunk = data[i:i + HEX_ROW_BYTES]
         out.append(f"  +0x{i:03X}: {chunk.hex(' '):<47}  {''.join(chr(c) if c in PRINTABLE else '.' for c in chunk)}")
-    words = [w for (w,) in struct.iter_unpack("<I", data[:len(data) // 4 * 4])]
-    ptrs = [(4 * i, w) for i, w in enumerate(words) if pe.contains(w)]
+    width = 8 if pe.x64 else 4
+    words = [w for (w,) in struct.iter_unpack("<Q" if pe.x64 else "<I", data[:len(data) // width * width])]
+    ptrs = [(width * i, w) for i, w in enumerate(words) if pe.contains(w)]
     if ptrs:
-        out.append("pointers in it: " + ", ".join(f"+0x{at:X} -> 0x{w:08X}" for at, w in ptrs[:POINTERS_SHOWN]))
-    floats = [struct.unpack("<f", struct.pack("<I", w))[0] for w in words[:FLOATS_SHOWN]]
+        out.append("pointers in it: " + ", ".join(f"+0x{at:X} -> 0x{w:0{width * 2}X}" for at, w in ptrs[:POINTERS_SHOWN]))
+    # floats are 4 bytes on both: the words a 64-bit read saw are split back into f32s
+    f32 = [w & 0xFFFFFFFF for w in words] if pe.x64 else words
+    floats = [struct.unpack("<f", struct.pack("<I", w))[0] for w in f32[:FLOATS_SHOWN]]
     smallest, biggest = PLAUSIBLE_FLOAT
     if words and any(smallest < abs(x) < biggest for x in floats):
         out.append("as f32: " + ", ".join(f"{x:g}" for x in floats))
@@ -2116,8 +2469,11 @@ def check_code(root: Path, version: str, log=print) -> dict:
 def _program_units(pe: PE, found: list[dict], log, sources: dict[int, str] | None = None) -> dict[str, list[Function]]:
     """One program's functions (from Ghidra's rows, `found`), its exception-handling stubs kept whole and the
     pieces Ghidra cut off joined to their function, in source files (the game's own, where its debug information
-    names them: `sources`)."""
+    names them: `sources`). A 64-bit program's functions come from .pdata and calls, exact at both ends: none is a
+    stub or a piece."""
     functions = analyse(pe, found)
+    if pe.x64:
+        return units(functions, pe, sources)
     # the stubs first, as a project made before gets them (WindowsPC.on_start): no join takes one
     stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions])
     functions, _ = merge_pieces(pe, functions, keep={f.name for f in functions if f.addr in stubs}, log=log)
@@ -2144,6 +2500,12 @@ def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
     instead, as several DLLs export the same names (an engine's and a game's DLL both export their interface)."""
     return [{**r, "entry": r["entry"] + moved, **({"end": r["end"] + moved} if "end" in r else {}),
              "source": "DEFAULT"} for r in ghidra.functions(module)]
+
+
+def x64_module_rows(pe: PE) -> list[dict]:
+    """A 64-bit DLL's functions (.pdata and calls): `pe` is read at the address the project gives it, so they are
+    already the project's addresses (Ghidra, which reads the file at its preferred one, needs the shift instead)."""
+    return x64_functions(pe)
 
 
 def _run(cmd: list[str], root: Path, what: str, log, platform: str = "pc") -> None:
@@ -2196,26 +2558,32 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     if not own and (problem := toolchains.runtime_error(pack)):  # (2017's runs through wine off Windows)
         raise ForkError(f"this game builds with Visual C++ {compiler}, which needs what this computer lacks: {problem}")
     args = args or tool_args()
-    if not ghidra.available():
-        if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
-            log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
-            toolchains.ensure("jdk", log=log)
-        if toolchains.installed("ghidra") is None:
-            log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
-            toolchains.ensure("ghidra", log=log)
     pe = read_pe(game.read_bytes())
+    if not pe.x64:  # (a 64-bit program's functions are in its headers: no Ghidra is needed to find them)
+        if not ghidra.available():
+            if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
+                log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
+                toolchains.ensure("jdk", log=log)
+            if toolchains.installed("ghidra") is None:
+                log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
+                toolchains.ensure("ghidra", log=log)
     modules, left_out = find_modules(game, pe)
     if modules or left_out:
         log(f"the game's own DLLs beside {game.name}: {', '.join(m.rel for m in modules) or 'none'}")
     for line in left_out_lines(left_out):
         log(line)
-    log(f"analysing {game.name} with Ghidra (finds every function; a big game takes a few minutes)")
-    found = ghidra.functions(game)
+    if pe.x64:
+        log(f"reading {game.name}'s functions from its exception directory (.pdata, and the calls between)")
+        found = x64_functions(pe)
+    else:
+        log(f"analysing {game.name} with Ghidra (finds every function; a big game takes a few minutes)")
+        found = ghidra.functions(game)
     if not found:
         why = (info["cannot_match"] or ["a program that is packed or protected in a way decompdecomp doesn't recognise "
                                         "shows none: decompdecomp never unpacks or gets around protection"])[0]
-        raise ForkError(f"Ghidra found no functions in this program: {why}.")
-    debug = debuginfo.find(game, pe.data, HEADER_NAMES, log=log)
+        raise ForkError(f"no functions were found in this program: {why}.")
+    # (a 64-bit program's own debug information, a PDB, comes later: ROADMAP.md, Newer Windows games)
+    debug = None if pe.x64 else debuginfo.find(game, pe.data, HEADER_NAMES, log=log)
     if debug is not None:
         log(f"{debug.source}: {debug.info.summary()}")
     groups = _program_units(pe, found, log, debug.info.units if debug is not None else None)
@@ -2233,9 +2601,9 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         where = (f"at 0x{m.pe.image_base:08X}, its own address" if not moved else
                  f"at 0x{m.pe.image_base:08X}: the program or a DLL before it has its own address, 0x{m.preferred:08X}, "
                  "so it's moved by its base relocations, as Windows moves it")
-        log(f"analysing {m.rel} with Ghidra: {m.built.summary()}, {where}")
-        rows = module_rows(ghidra, m.path, moved)
-        found_debug = debuginfo.find(m.path, m.pe.data, HEADER_NAMES, log=log)  # (read at its address in the project)
+        log(f"analysing {m.rel} with {'its exception directory' if m.pe.x64 else 'Ghidra'}: {m.built.summary()}, {where}")
+        rows = x64_module_rows(m.pe) if m.pe.x64 else module_rows(ghidra, m.path, moved)
+        found_debug = None if m.pe.x64 else debuginfo.find(m.path, m.pe.data, HEADER_NAMES, log=log)
         if found_debug is not None:
             log(f"{m.rel}: {found_debug.source}: {found_debug.info.summary()}")
             debugs.append(found_debug.info)
@@ -2279,10 +2647,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         except OSError:
             shutil.copyfile(source, dest)
     (root / "include").mkdir()
-    (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
+    (root / "include" / "common.h").write_text(TYPES_H_X64 if pe.x64 else TYPES_H, encoding="utf-8")
     cfg = root / "tools" / "configure.py"
     cfg.write_text(configure_settings(cfg.read_text(encoding="utf-8"), compiler, pe, log=log, modules=modules,
-                                      ehsc=pack != "msvc" or info.get("modern_eh"), cl_flags=cl_flags),
+                                      ehsc=pe.x64 or pack != "msvc" or info.get("modern_eh"), cl_flags=cl_flags),
                    encoding="utf-8")
     conf = root / "config" / version
     conf.mkdir(parents=True)
@@ -2303,12 +2671,14 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         write_debug(root, version, debugs[0])
     _write_compilers(compilers_file(root, version), own)  # (the DLLs built by another Visual C++; the rest: its own)
     _write_compilers(flags_file(root, version), {})  # (set_frame_flags below: once the thunks are functions)
-    if stubs := mark_exception_stubs(root, version):
+    # (an x64 program has none of these: .pdata gives every function's exact extent, there are no linker thunks for
+    # imports (calls go through the IAT by rip), and /Oy- doesn't exist for x64)
+    if not pe.x64 and (stubs := mark_exception_stubs(root, version)):
         log(f"{stubs} of them are exception-handling code Visual C++ makes from the function they belong to: set aside")
-    if thunks := name_import_thunks(root, version):
+    if not pe.x64 and (thunks := name_import_thunks(root, version)):
         log(f"{thunks} of them are import thunks the linker adds for calls to DLLs' functions: named after the "
             "function each calls, and set aside")
-    if frames := set_frame_flags(root, version):
+    if not pe.x64 and (frames := set_frame_flags(root, version)):
         log(f"{frames} of {len(groups)} source files keep an ebp frame in most of their functions: they build "
             f"with {FRAME_FLAG} (Visual C++ keeps the frame pointer)")
     sources = {addr: source for known in debugs for addr, source in known.units.items()}
@@ -2331,7 +2701,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
             not _header_compiles(root, version, next(iter(groups)), log, platform):
         log(f"the game's types don't compile with Visual C++ {compiler} as written: they're in include/{DEBUG_TYPES} "
             "for agents to fix, and common.h doesn't include it yet")
-        (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
+        (root / "include" / "common.h").write_text(TYPES_H_X64 if pe.x64 else TYPES_H, encoding="utf-8")
     _run(["ninja", "prepare"], root, "the first build", log, platform)
     if not (root / "objdiff.json").exists():
         raise ForkError("the first build finished without writing objdiff.json")
@@ -2377,4 +2747,4 @@ one) is moved by its base relocations at build time, as Windows moves it.
                      f"Start the {info['title']} decompilation (decompdecomp, Ghidra)"]):
             subprocess.run(cmd, cwd=root, capture_output=True, creationflags=NO_WINDOW)
     return {"platform": platform, "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
-            "sources": len(groups), "sha1": info["sha1"]}
+            "target": info.get("target", "x86"), "sources": len(groups), "sha1": info["sha1"]}

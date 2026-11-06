@@ -194,7 +194,7 @@ the game.
 | **PS3** | Beta | ✓ program (decrypted EBOOT.ELF; a SELF is refused) | ps3dev GCC (free) · your own SDK's ppu-lv2-gcc and SNC | — | |
 | **PSP** | Beta | ✓ UMD image (ISO, CSO, CHD) with its other modules, or ELF/PRX, unencrypted or decrypted | CodeWarrior for PSP 3.0.1 · PSP SDK GCC 3.3.3 · SN pspsnc | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
-| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (wine); any other, from your own copy (Setup) | — | ✓ |
+| **Windows PC** | Beta | ✓ program (32-bit x86 or 64-bit x64 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (wine); any other, from your own copy (Setup) | — | ✓ |
 | **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 (24 versions), one per source file | ✓ ds-decomp | ✓ |
 | **Game Boy Advance** | Beta | ✓ ROM (.gba) | agbcc | ✓ luvdis export | ✓ |
 | **Xbox** | Beta | ✓ default.xbe, .xiso or Redump .iso (as a Windows program; Ghidra finds the functions) | Visual C++ 7.0 · 7.1 (the XDK's); your own XDK's for early games, and to set its library code aside | ✓ (`ninja rebuild` writes your default.xbe back) | |
@@ -227,8 +227,9 @@ different build, which is planned.
   decompdecomp doesn't have yet builds with your own copy of it, when you set one up in Setup, else with the nearest
   decompdecomp has, and the import says so: 2015's with 2017's (much of its code is the same), 2019 and newer with
   2017's (what their compilers generate differently can't match until they come), 2012 and 2013 with 2010's (little
-  matches). 64-bit programs, mostly-/GL ones and protected ones aren't started, and the import says why. Visual C++ 2017
-  (32- and 64-bit, the 64-bit one for 64-bit games, which come next) runs through wine on Linux and macOS, which you
+  matches). A 64-bit (x64) program imports like a 32-bit one, its functions read from its exception directory, and builds
+  with its Visual C++'s x64 compiler; mostly-/GL games and protected ones aren't started, and the import says why.
+  Visual C++ 2017 (32- and 64-bit) runs through wine on Linux and macOS, which you
   install. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them when
   you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the project,
   with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C runtime, DirectX

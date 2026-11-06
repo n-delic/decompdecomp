@@ -19,7 +19,8 @@ import struct
 import sys
 from pathlib import Path
 
-REF = re.compile(rb"(func|D)_([0-9A-Fa-f]{8})")
+REF = re.compile(rb"(func|D)_([0-9A-Fa-f]{6,16})(?![0-9A-Fa-f])")
+AMD64 = 0x8664  # a 64-bit object's machine: its C names have no leading underscore
 
 
 def wanted(info: dict) -> dict[bytes, bytes]:
@@ -29,8 +30,9 @@ def wanted(info: dict) -> dict[bytes, bytes]:
         for fn in functions:
             out[f"func_{fn['addr']:08X}".encode()] = fn["name"].encode()
             for _, _, name, _ in fn["relocs"]:
-                if name and name.startswith("_D_"):
-                    out[name[1:].encode()] = name.encode()
+                # a 64-bit program's data has no leading underscore: its relocations name D_<address> already
+                if name and re.fullmatch(r"_?D_[0-9A-Fa-f]{6,16}", name):
+                    out[name.removeprefix("_").encode()] = name.encode()
     return out
 
 
@@ -66,6 +68,7 @@ def address_of(name: bytes, real: dict[bytes, bytes]) -> bytes | None:
 def rename(data: bytes, names: dict[bytes, bytes], real: dict[bytes, bytes] | None = None) -> bytes:
     """The COFF object with its symbols renamed (new names go at the end of the string table)."""
     sym_at, count = struct.unpack_from("<II", data, 8)
+    amd64 = struct.unpack_from("<H", data, 0)[0] == AMD64
     strings_at = sym_at + 18 * count
     strings = bytearray(data[strings_at:])
     table = bytearray(data[sym_at:strings_at])
@@ -82,7 +85,7 @@ def rename(data: bytes, names: dict[bytes, bytes], real: dict[bytes, bytes] | No
         if key is not None and name != names.get(key):
             new = names.get(key)
             if new is None and key.startswith(b"D_"):
-                new = b"_" + key  # data the original's code doesn't name
+                new = key if amd64 else b"_" + key  # data the original's code doesn't name
             if new is not None:
                 if len(new) <= 8:
                     table[at:at + 8] = new.ljust(8, b"\0")

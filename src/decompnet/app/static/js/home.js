@@ -253,9 +253,16 @@ function identifyHead(head, file) {
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (isGbaHead(head)) return { ...base, platform: "gba", order: "GBA ROM", code: ascii(0xac, 0xb0), title: ascii(0xa0, 0xac) || stem, entry: dv.getUint32(0, true) };
-  if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
-    return { ...base, platform: "win32", order: "Windows program (.exe)",
-      entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe), target: "x86" };
+  if (pe && pe + 0x1c <= head.length && text(pe, pe + 4) === "PE\0\0") {  // a PC program: 32-bit x86 or 64-bit x64
+    const machine = dv.getUint16(pe + 4, true), magic = dv.getUint16(pe + 24, true);
+    const target = machine === 0x14c && magic === 0x10b ? "x86" : machine === 0x8664 && magic === 0x20b ? "x64" : null;
+    if (target) {
+      // PE32's image base is 4 bytes at 28 of the optional header; PE32+'s is 8 at 24 (entry is at 16 for both)
+      const imageBase = target === "x64" ? Number(dv.getBigUint64(pe + 48, true)) : dv.getUint32(pe + 52, true);
+      return { ...base, platform: "win32", order: "Windows program (.exe)",
+        entry: imageBase + dv.getUint32(pe + 40, true), pack: pcPack(head, pe), target };
+    }
+  }
   if (isXbe(head, dv)) return { ...base, platform: "xbox", order: "Xbox program (XBE)" };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
   // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
@@ -294,15 +301,13 @@ function identifyHead(head, file) {
 function notSupported(head, file) {
   const text = (a, b) => String.fromCharCode(...head.slice(a, b));
   const ext = (file.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
-  if (text(0, 2) === "MZ") {  // (a 32-bit x86 one is identifyHead's): which machine, from its PE header
+  if (text(0, 2) === "MZ") {  // (32-bit x86 and 64-bit x64 ones are identifyHead's): which machine
     const dv = new DataView(head.buffer), pe = head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
     const machine = pe && pe + 6 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
-    if (machine === 0x8664) {
-      return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games "
-        + "come next (see the roadmap, Newer Windows games).";
-    }
-    if (machine) return "That Windows program isn't for a 32-bit x86 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 .exe.";
-    return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
+    const magic = machine && pe + 0x1a <= head.length ? dv.getUint16(pe + 24, true) : 0;
+    if ((machine === 0x14c && magic === 0x10b) || (machine === 0x8664 && magic === 0x20b)) return null;  // identifyHead's
+    if (machine) return "That Windows program isn't for a 32-bit x86 or 64-bit x64 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 or 64-bit x64 .exe.";
+    return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their Windows .exe.";
   }
   if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
   if (ext === "gba") return "That doesn't look like a Game Boy Advance ROM: its header's branch, fixed 0x96 byte or checksum is wrong. Try a clean dump of your cartridge.";
