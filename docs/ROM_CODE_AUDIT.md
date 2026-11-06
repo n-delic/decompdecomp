@@ -171,3 +171,34 @@ remaining bytes keep their ROM offsets and are split at the supported load addre
 Existing projects are not rewritten in the background. A reviewed reimport uses the
 ordinary saved-layout and exact-match preservation rules. Back up the project first;
 new detection alone does not prove that every old manual boundary should be replaced.
+
+
+## Code lost after an invalid word
+
+A splat text chunk can be emitted as a single raw `dlabel`/`.word` region after an
+invalid instruction, even when later callers reference ordinary routines inside it.
+Adding function names alone does not necessarily make the disassembler revisit it.
+ROM imports now refine those raw text chunks before recording functions.
+
+Recovery requires a direct `jal` from an already decoded, non-hardware CPU function,
+a unique existing code mapping, an entry frame, valid closed scalar control flow,
+and an exactly balanced frame pop in every return delay slot. Extra frames, other
+stack writes, competing called entries, indirect switches and overlapping candidates
+are rejected. Parents containing existing switch pieces are left in their original
+source units. Explicit data/rodata and ambiguous overlay addresses are never promoted.
+Recognized entries, including assembly entries, are anchored at their original ROM/RAM
+addresses. Losing an existing entry discards refinement and restores the initial split.
+New calls may separate an initially merged open extent into several functions; saved
+exact extents remain protected by ordinary reimport restoration and judging. The new
+boundaries are passed back through splat; they do not grant matches.
+
+This shared MIPS rule covers both byte orders in N64, PS1, PS2 and PSP ROM imports.
+Other processors and imported build-owned source need their own readers/adapters.
+There are at most three refinement passes, 512 candidate probes per pass and 4,096
+flow steps per candidate. Frames larger than 4 KiB and bodies beyond 64 KiB are excluded. Cancellation is checked between probes and each additional
+splat run has a 120-second deadline. Hitting limits leaves an explicit coverage note;
+function totals describe detected entries, not proven whole-image completion.
+
+Existing projects still need a reviewed reimport. The ordinary saved-boundary,
+header, compiler and exact-match preservation checks apply; no running project is
+rewritten automatically.

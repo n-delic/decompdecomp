@@ -652,6 +652,10 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     log("disassembling every function")
     out += "\n" + _splat(["split", config.name], workdir, log)
 
+    from . import mixed_code
+
+    out += mixed_code.run(config, workdir, image, console, log)
+
     functions = []
     for path in sorted((workdir / "asm" / "nonmatchings").glob("*/*.s")):
         fn = parse_function(path, path.parent.name, big_endian)

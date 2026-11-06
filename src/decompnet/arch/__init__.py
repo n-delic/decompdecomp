@@ -16,6 +16,7 @@ from typing import Any
 from . import (
     arm,
     mips,
+    mips_code_recovery,
     mips_debug,
     mips_drafts,
     mips_fields,
@@ -69,6 +70,7 @@ class Arch:
     # [(offset, mnemonic, operands)], for scoring's diffs (MIPS: the PSP's Allegrex, read by rabbitizer)
     # Uniform saved-register/frame shifts in scored instruction pairs, for bounded padding hypotheses.
     stack_frame_growth: Callable[..., int | None] | None = None
+    called_code_extent: Callable[..., int | None] | None = None  # bounded framed direct-call recovery for ROM splits
     boundary_instruction: Callable[..., dict] | None = None  # original-word control-flow facts for review
     source_operand_changes: Callable[..., list] | None = None
     source_switch_blocks: Callable[..., dict] | None = None
@@ -99,7 +101,7 @@ class Arch:
 
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
-         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts, padding_reason=mips.padding_reason, gcc_register_aliases=mips.gcc_register_aliases,
+         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts, called_code_extent=mips_code_recovery.called_extent, padding_reason=mips.padding_reason, gcc_register_aliases=mips.gcc_register_aliases,
          source_local_storage=mips_local_storage.read, initial_draft_evidence=mips_drafts.read, source_hazard_rows=mips_hazards.rows_witness, source_return_contract=mips_returns.result, source_stack_call_store=mips_returns.stack_call_store, repair_search_hints=mips_search.read, object_functions=mips_debug.functions, object_placeholders=mips_debug.placeholders, instruction_regions=mips_regions.read, build_tool_paths=mips_tools.build_paths, stack_frame_growth=mips_stack.frame_growth, stack_layout=mips_stack.layout, source_operand_changes=mips_source_recovery.operand_changes, source_extra_narrowing=mips_source_recovery.extra_narrowing, source_private_abi=mips_source_recovery.private_abi, source_pointer_lifetime=mips_pointer_lifetime.read, source_pointer_snapshot=mips_source_recovery.pointer_snapshot_order, source_switch_blocks=mips_source_recovery.blocks, source_recovery_hints=mips_source_recovery.recovery_hints, source_tail_branch=mips_source_recovery.tail_branch, source_tail_dispatch=mips_tail_dispatch.read, source_symbol_bindings=mips_source_symbols.bindings, boundary_reason=mips.boundary_reason, boundary_instruction=mips.boundary_instruction, variants={mips.ALLEGREX: mips.allegrex_lines}),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
     Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES})),

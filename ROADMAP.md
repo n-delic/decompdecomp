@@ -1,5 +1,11 @@
 # Roadmap
 
+- Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
+  directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored
+  before adding new source boundaries; explicit data, indirect guesses and ambiguous
+  overlays are excluded. Three bounded passes and scan limits retain coverage notes.
+  Non-MIPS readers and imported build-owned text adapters remain planned.
+
 - Done: C permutation workers no longer reserve functions locally or in rooms. Score
   improvements preserve other agents' claims; freshly verified exact matches finish the
   function normally. ROM submissions retain frozen-input/byte checks; imported builds
@@ -587,6 +593,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Last-exact failed-recheck alerts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ local judgments only |
 | Status | recommended | beta | beta | beta | beta | beta | beta | the project's own |
 | Start from your own copy | ✓ bounded TLB boot-map recovery | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ | ✓ | ✓ | fork by address |
+| Called framed recovery inside dropped raw text | ✓ | ✓ | ✓ scalar MIPS | ✓ scalar MIPS | — build-owned adapter planned | — reader/build adapter planned | — ARM/build adapter planned | — own-build adapter planned |
 | Judge | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
 | Compile-tested draft refresh and saved diagnostics | ✓ | ✓ | ✓ | ✓ | ✓ m2c | ✓ Ghidra | — draft generator planned | ✓ supported draft generators |
