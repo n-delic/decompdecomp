@@ -229,12 +229,14 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.match(element('deepSweepQueueTitle').textContent,/Reconnecting/);
   assert.match(element('deepSweepQueueReason').textContent,/automatically/);
   assert.equal(element('deepSweepMatched').textContent,'—');
+  assert.equal(element('deepSweepLoadingBar').hidden,false);
   assert.equal(element('deepSweepImproved').textContent,'—');
   const retry=timers.findLast(t=>t.ms===5000&&!t.cancelled);
   assert.ok(retry,'retry is scheduled automatically');
   ctx.api=async()=>({state:'idle',minutes:5,max_variants:100});
   await retry.fn();
   assert.match(element('deepSweepQueueTitle').textContent,/Ready/);
+  assert.equal(element('deepSweepLoadingBar').hidden,true);
   ctx.S.slug='slow-status';
   let calls=0;
   ctx.api=(url,options)=>{calls++;return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('aborted'))));};

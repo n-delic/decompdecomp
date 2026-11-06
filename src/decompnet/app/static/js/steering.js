@@ -1786,6 +1786,7 @@ function renderDeepQueueState(status) {
   $("deepSweepBar").max = Math.max(1, total);
   $("deepSweepBar").value = done;
   $("deepSweepProgressText").textContent = total ? `${done.toLocaleString()} of ${total.toLocaleString()} functions completed · ${Math.floor(100 * done / total)}%` : "";
+  $("deepSweepLoadingBar").hidden = !status.statistics_pending;
   if (status.statistics_pending) {
     $("deepSweepBar").hidden = true;
     for (const id of ["deepSweepMatched", "deepSweepImproved", "deepSweepLeft"]) $(id).textContent = "—";
