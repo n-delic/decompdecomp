@@ -266,11 +266,13 @@ def _member_order(member: tuple) -> tuple:
     return ({GLOBAL: 0, ARGUMENT: 1, RETURN: 2}.get(kind, 3), rest[0], rest[1] if len(rest) > 1 else 0)
 
 
-def recover(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[..., Facts],
-            datum: Callable[[int], int]) -> Structs:
-    """Types from (address, code, relocations) of every function, read by the processor's reader:
+def extract(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[..., Facts],
+            datum: Callable[[int], int], *, only: set[int] | None = None) -> dict[int, Facts]:
+    """Each function's Facts: what it does with pointers, read by the processor's reader
     `read_facts(address, code, relocations, datum=...)`. `datum(address)`: where the global containing a data address
-    starts (the symbol table's)."""
+    starts (the symbol table's). The whole function list sets `data_start` (a data address inside another function's
+    code is code, not a global), so pass them all even when `only` restricts which functions are read — a caller can
+    then re-read just the functions whose bytes changed and keep the rest from a cache."""
     funcs = sorted(functions, key=lambda function: function[0])
     starts = [addr for addr, _, _ in funcs]
     ends = [addr + len(code) for addr, code, _ in funcs]
@@ -279,7 +281,13 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[.
         below = bisect.bisect_right(starts, addr) - 1
         return None if below >= 0 and addr < ends[below] else datum(addr)
 
-    facts = {addr: read_facts(addr, code, relocs, datum=data_start) for addr, code, relocs in funcs}
+    return {addr: read_facts(addr, code, relocs, datum=data_start)
+            for addr, code, relocs in funcs if only is None or addr in only}
+
+
+def recover_from(facts: dict[int, Facts]) -> Structs:
+    """The types `facts` (from extract()) imply: one pass recording each function's accesses, stores, returns and
+    calls, then joining a callee's type into its callers' once the callee itself uses it."""
     types = _Types()
     named: dict[tuple, int] = {}
 
@@ -337,6 +345,12 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[.
             break
         pending = waiting
     return Structs(types, named)
+
+
+def recover(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[..., Facts],
+            datum: Callable[[int], int]) -> Structs:
+    """Types from (address, code, relocations) of every function; extract() then recover_from()."""
+    return recover_from(extract(functions, read_facts, datum))
 
 
 # --------------------------------------------------------------------------------------------- what agents read
