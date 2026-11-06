@@ -57,6 +57,8 @@ def symbols(db, project_id):
 def capture(db, fn, attempt_id, source, context_version, settings):
     """Called only after a non-stale normal exact verdict, including later polishing attempts."""
     db.execute(SCHEMA)
+    from .large_text_storage import install
+    install(db, ('verified_matches',))
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='verification_regressions'").fetchone():
         db.execute('DELETE FROM verification_regressions WHERE function_id=?',(fn['id'],))
     proj = db.execute('SELECT * FROM projects WHERE id=?',(fn['project_id'],)).fetchone()
@@ -151,6 +153,8 @@ def restore_evidence_many(net, project_id, names, manifest, check_cancel=lambda:
     if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
         with net.store.tx() as db:
             db.execute(SCHEMA)
+            from .large_text_storage import install
+            install(db, ('verified_matches',))
     missing = {row['name']:row['id'] for row in net.store.all(
         'SELECT f.id,f.name FROM functions f LEFT JOIN verified_matches v ON v.function_id=f.id '
         'WHERE f.project_id=? AND v.function_id IS NULL', project_id)}

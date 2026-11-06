@@ -165,6 +165,8 @@ def test_give_ups_are_recounted_once_without_decomp_wtfs_own_expiries(tmp_path):
     path = tmp_path / "old.db"
     Store(path)
     db = sqlite3.connect(path)
+    from decompnet.payload_storage import register
+    register(db)  # Raw maintenance connections must understand the stored text codecs.
     db.execute("DELETE FROM settings WHERE key='abandons_recounted'")  # a database from before
     db.execute("INSERT INTO agents(id,name,token_hash,created_at) VALUES(1,'autopilot','x',0),(2,'claude-1','y',0)")
     db.execute("INSERT INTO projects(id,slug,root,config) VALUES(1,'p','/','{}')")

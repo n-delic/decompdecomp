@@ -2961,6 +2961,10 @@ need independent evidence before receiving this specific GNU C repair.
   projects where no caller graph is currently available. Keep inference disabled
   there until such evidence exists; do not infer a return type from a scratch load.
 
+- Done: shared, checksummed compression for large function text, reuse feedback,
+  compiler evidence, transcripts, compiler settings and progress manifests. Bounded
+  legacy backfill, match-library compression and two-file compaction preserve exact history.
+
 Implemented: bounded MIPS conditional tail-dispatch advice in agent contract briefs,
 including assembly review without saved C, for ROM and project modes when raw target
 bytes/address are available. It asks for caller/callee ABI and compiler sibling-call

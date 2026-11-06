@@ -109,12 +109,14 @@ def compact(net, log):
     store = net.store
     path = Path(store.path)
     if not path.is_file(): raise ValueError('Compaction requires a database file on disk.')
-    size = path.stat().st_size
+    library=path.parent/'match-library.sqlite3'
+    paths=[path,library] if library.is_file() else [path]
+    size = max(p.stat().st_size for p in paths)
     if shutil.disk_usage(path.parent).free < size*2:
         raise ValueError('Free at least twice the database file size on this drive before compacting.')
     log.check_cancel()
     log.progress({'phase': 'Compacting database · writes wait until this finishes'})
-    before = disk_bytes(path)
+    before = sum(disk_bytes(p) for p in paths)
     with store.writer_gate.hold(wait=log.check_cancel),store.lock:
         log.check_cancel()
         store.conn.set_progress_handler(lambda: int(getattr(log, 'cancel_event', None) is not None and log.cancel_event.is_set()), 1000)
@@ -126,7 +128,19 @@ def compact(net, log):
         finally:
             store.conn.set_progress_handler(None, 0)
         store.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-    after = disk_bytes(path)
+    if library.is_file():
+        from .match_library import Library
+        log.check_cancel()
+        log.progress({'phase':'Compacting match library · library writes wait until this finishes'})
+        with Library(net).connect(write=True,wait=log.check_cancel) as db:
+            db.set_progress_handler(lambda: int(getattr(log,'cancel_event',None) is not None and log.cancel_event.is_set()),1000)
+            try:db.execute('VACUUM')
+            except sqlite3.OperationalError:
+                log.check_cancel()
+                raise
+            finally:db.set_progress_handler(None,0)
+            db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    after = sum(disk_bytes(p) for p in paths)
     log(f'Compaction complete: {max(0, before-after):,} bytes reclaimed. Saved work retained.')
     return {'before_bytes': before, 'after_bytes': after, 'reclaimed_bytes': max(0, before-after)}
 

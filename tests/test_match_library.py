@@ -545,3 +545,33 @@ def test_library_write_admission_leaves_readers_available(library):
             assert not writer.done()
             assert pool.submit(lib.summary).result(timeout=1)['functions']>0
         assert writer.result(timeout=2)=='shared_name'
+
+
+def test_library_compresses_new_text_and_cancellable_legacy_backfill(library):
+    import hashlib
+
+    from decompnet.app.match_library import read_text
+    net,lib=library
+    source='int f1(void) {return 42;}\n'+'/* café */\n'*1000
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET matched_source=? WHERE id=1',(source,))
+    lib.backfill()
+    candidate=next(c for c in lib.candidates('mips',1,'same-code',32) if 'café' in c['source'])
+    with lib.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM texts WHERE typeof(text)='blob'").fetchone()[0]>0
+    assert 'café' in candidate['source']
+    legacy='legacy header\n'*1000;key=hashlib.sha256(legacy.encode()).hexdigest()
+    with lib.connect(write=True) as db:db.execute('INSERT INTO texts VALUES(?,?)',(key,legacy))
+    class Log:
+        def check_cancel(self):pass
+        def progress(self,event):pass
+    class Cancel(Log):
+        def check_cancel(self):raise RuntimeError('cancel')
+    with pytest.raises(RuntimeError):lib.pack(Cancel())
+    assert lib.pack(Log())==1
+    assert lib.pack(Log())==0
+    with lib.connect() as db:
+        raw=db.execute('SELECT text FROM texts WHERE hash=?',(key,)).fetchone()[0]
+    assert isinstance(raw,bytes) and len(raw)<len(legacy)/10
+    assert read_text(key,raw)==legacy
+    with pytest.raises(ValueError):read_text('wrong',raw)

@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import sqlite3
+import zlib
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from pathlib import Path
@@ -41,6 +42,19 @@ CREATE TABLE IF NOT EXISTS startup_scans(game_id TEXT PRIMARY KEY, stamp TEXT NO
 '''
 
 
+def packed_text(value):
+    raw=value.encode('utf-8')
+    return zlib.compress(raw) if len(raw)>=512 else value
+
+
+def read_text(key, value):
+    if not isinstance(value,bytes):return value
+    text=zlib.decompress(value).decode('utf-8')
+    if hashlib.sha256(text.encode('utf-8')).hexdigest()!=key:
+        raise ValueError('Stored match-library text checksum failed.')
+    return text
+
+
 def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'))
 
@@ -56,11 +70,12 @@ class Library:
             db.executescript(SCHEMA)
 
     @contextmanager
-    def connect(self,*,write=False):
+    def connect(self,*,write=False,wait=None):
         db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
+        db.create_function('library_text',2,read_text,deterministic=True)
         try:
-            with self.writer_gate.hold() if write else nullcontext(), db:
+            with self.writer_gate.hold(wait=wait) if write else nullcontext(), db:
                 yield db
         finally:
             db.close()
@@ -159,6 +174,13 @@ class Library:
                 'mode':'fork' if fork else 'rom','print':encoded(p),'symbols':encoded(symbols),'seen':fn['matched_at'] or 0}
 
     def write(self, rows):
+        rows=list(rows)
+        # Hash and compress before admission; only SQL publication holds the writer.
+        prepared={}
+        for item in rows:
+            for kind in ('source','header','print','symbols'):
+                value=item[kind]
+                if value not in prepared:prepared[value]=(hashlib.sha256(value.encode()).hexdigest(),packed_text(value))
         with self.connect(write=True) as db:
             texts, functions, solutions, games = {}, {}, {}, set()
             for item in rows:
@@ -167,8 +189,8 @@ class Library:
                     value = item[kind]
                     digest = texts.get(value)
                     if digest is None:
-                        digest = hashlib.sha256(value.encode()).hexdigest()
-                        db.execute('INSERT OR IGNORE INTO texts VALUES(?,?)',(digest,value))
+                        digest,content=prepared[value]
+                        db.execute('INSERT OR IGNORE INTO texts VALUES(?,?)',(digest,content))
                         texts[value] = digest
                     hashes[kind] = digest
                 identity = tuple(item[k] for k in ('arch','big','fingerprint','size'))
@@ -412,9 +434,38 @@ class Library:
         if log:log.progress({'phase':'Naming complete','done':len(rows),'total':len(rows)})
         return {'results':results}
 
+    def pack(self, log):
+        """Bounded legacy conversion; readers stay available and content hashes stay stable."""
+        from .maintenance import checkpoint
+        cursor=0;done=0
+        while True:
+            log.check_cancel()
+            log.progress({'phase':'Packing match library','done':done})
+            with self.connect() as db:
+                sizes=db.execute("SELECT rowid AS id,length(CAST(text AS BLOB)) size FROM texts WHERE rowid>? AND typeof(text)='text' "
+                                 "AND length(CAST(text AS BLOB))>=512 ORDER BY rowid LIMIT 50",(cursor,)).fetchall()
+                ids=[];used=0
+                for row in sizes:
+                    if ids and used+row['size']>2*1024*1024:break
+                    ids.append(row['id']);used+=row['size']
+                rows=db.execute('SELECT rowid AS id,hash,text FROM texts WHERE rowid IN (SELECT value FROM json_each(?)) '
+                                "AND typeof(text)='text' ORDER BY rowid",(encoded(ids),)).fetchall()
+            if not rows:break
+            # Compression happens outside the library's writer admission/transaction.
+            values=[]
+            for row in rows:
+                log.check_cancel();cursor=row['id']
+                values.append((packed_text(row['text']),row['hash'],row['text']))
+            with self.connect(write=True,wait=log.check_cancel) as db:
+                changed=db.executemany('UPDATE texts SET text=? WHERE hash=? AND text=?',values).rowcount
+            done+=changed
+            checkpoint()
+        return done
+
     def candidates(self, processor, big, fingerprint, size, exclude=()):
         with self.connect() as db:
-            rows=db.execute('''SELECT s.id,s.compiler,src.text source,h.text header,p.text print,y.text symbols,
+            rows=db.execute('''SELECT s.id,s.compiler,library_text(src.hash,src.text) source,library_text(h.hash,h.text) header,
+                library_text(p.hash,p.text) print,library_text(y.hash,y.text) symbols,
                 o.name,o.mode,g.name game,g.slug source_slug FROM functions f JOIN solutions s ON s.function_id=f.id
                 JOIN occurrences o ON o.solution_id=s.id JOIN games g ON g.id=o.game_id
                 JOIN texts src ON src.hash=s.source JOIN texts h ON h.hash=s.header

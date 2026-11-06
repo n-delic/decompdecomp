@@ -69,14 +69,14 @@ async function loadDatabaseStorage() {
   const data=await api('/api/database-storage');
   const size=n=>`${(Number(n)/1048576).toLocaleString(undefined,{maximumFractionDigits:1})} MiB`;
   $('databaseStorageSize').textContent=`— ${size(data.stored_bytes)} shared content`;
-  $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of source and evidence stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database.`;
+  $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of shared text stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database.`;
   $('databaseStorageDays').value=data.retention.days;
   $('databaseStorageAutomatic').checked=data.retention.automatic;
 }
 async function runDatabaseStorage(action) {
   if(databaseStorageJob)return;
   const log=$('databaseStorageLog'),stop=$('databaseStorageStop');
-  const controls=['Pack','Save','Prune','Days','Automatic'].map(x=>$('databaseStorage'+x));
+  const controls=['Pack','Compact','Save','Prune','Days','Automatic'].map(x=>$('databaseStorage'+x));
   const done=beginWork(log,action==='pack'?'Compressing saved history':action==='save'?'Saving retention rules':'Cleaning old unsuccessful source',controls,'Storage maintenance complete');
   try {
     const result=await api('/api/database-storage',{method:'POST',body:{action,days:Number($('databaseStorageDays').value),automatic:$('databaseStorageAutomatic').checked}});
@@ -92,3 +92,5 @@ $('databaseStorageStop').onclick=async()=>{
   try{await api('/api/job/cancel',{method:'POST',body:{id:databaseStorageJob}});}
   catch(error){$('databaseStorageStop').disabled=false;showJobError($('databaseStorageLog'),error.message);}
 };
+
+$('databaseStorageCompact').onclick=()=>{$('headerStoragePanel').open=true;$('headerStorageCompact').click();};
