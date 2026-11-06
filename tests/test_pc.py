@@ -3164,6 +3164,13 @@ def test_two_jump_tables_and_a_byte_table_relocate_each_entry_once():
     # (`add eax, eax`), was cut a byte in
     assert _one_switch(code + t1 + t2, 0x101A, bytes([0, 1]) + bytes.fromhex("03c0c3")) == [(LOW + 0x1000, 0x30),
                                                                                            (LOW + 0x1030, 0x3)]
+    # one B = [0, 1, 2, 3, 4] indexing both T2 (5 cases), then T1 (3 cases): B ends at the larger count, not the last
+    # table's (cut at its byte 3, B's last two bytes and the next function were a false function)
+    code = bytes.fromhex("0fb681 3a100010" "ff2485 1a100010" "ff2485 2e100010" "c3c3c3c3c3")
+    t2 = struct.pack("<5I", *range(LOW + 0x1015, LOW + 0x101A))
+    t1 = struct.pack("<3I", *range(LOW + 0x1015, LOW + 0x1018))
+    assert _one_switch(code + t2 + t1, 0x101A, bytes(range(5)) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x3F),
+                                                                                             (LOW + 0x103F, 0x3)]
 
 
 def test_a_jumps_index_table_ends_at_its_first_byte_past_the_cases_and_a_lookup_table_runs_on():
