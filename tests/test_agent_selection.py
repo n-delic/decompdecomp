@@ -307,3 +307,35 @@ def test_assembly_metadata_policy_is_boolean_persisted_and_agent_scoped(net):
     for value in ('false', 0, None):
         with pytest.raises(NetworkError, match='Assembly byte'):
             net.validate_selection({'assembly_metadata': value})
+
+
+def test_startup_counts_equal_live_selection_and_recompute_after_claim(net):
+    a, _ = net.local_agent('startup-worker')
+    counts = net.selection_counts('game', a)
+    assert counts['selected'] == net.selection_remaining('game', a, include_paused=True)
+    assert counts['eligible'] == net.selection_remaining('game', a)
+    assert counts['available'] == net.selection_remaining('game', a, available_only=True)
+    assert net.claim_row(a, 'game') is not None
+    assert net.selection_counts('game', a)['available'] == counts['available'] - 1
+
+
+@pytest.mark.parametrize('policy', [{}, {'match_below':50}, {'max_tries':1}, {'model_untried':True}])
+def test_combined_startup_selection_preserves_filters(net, monkeypatch, policy):
+    from decompnet import claim_stalls
+    a, _ = net.local_agent('combined-startup')
+    from decompnet.app.agents import SCHEMA
+    with net.store.tx() as db:
+        for statement in SCHEMA:db.execute(statement)
+        db.execute("INSERT INTO helpers(id,project,kind,model,name,label,state) VALUES(1,'game','codex','model-a',?,'new','stopped')", (a.name,))
+    net.set_selection('game', a.name, policy)
+    calls = []
+    original = claim_stalls.blocked
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(claim_stalls, 'blocked', counted)
+    counts = net.selection_counts('game', a)
+    assert len(calls) == 1
+    assert counts['selected'] == net.selection_remaining('game', a, include_paused=True)
+    assert counts['eligible'] == net.selection_remaining('game', a)
+    assert counts['available'] == net.selection_remaining('game', a, available_only=True)

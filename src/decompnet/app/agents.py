@@ -46,7 +46,7 @@ from decompnet.hostenv import NO_WINDOW
 
 from .. import agents, consoles, network
 from ..network import NetworkError
-from . import tools
+from . import agent_startup, tools
 from .engine import RomNetwork
 
 start_progress = ContextVar('agent-start-progress', default=None)
@@ -419,6 +419,8 @@ class Session:
     session_id: int = 0
     prompt_config: dict | None = field(default=None, repr=False)
     startup_context: str | None = field(default=None, repr=False)
+    startup_stage: str = ""
+    startup_stage_at: float | None = None
     tool_handshake_failures: int = 0
     tool_handshake_required: bool = False
     context_budget: object | None = field(default=None, repr=False)
@@ -467,6 +469,7 @@ class Session:
                 "provider_waiting": self.provider_waiting, "provider_retry_requested": self.provider_retry_requested,
                 "configuration_error": self.configuration_error, "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
                 "last_message": self.last_message, "runs": self.runs, "restarts": self.restarts, "error": self.error,
+                "startup_stage": self.startup_stage, "startup_stage_at": self.startup_stage_at,
                 "started_at": self.started_at, "usd": round(self.usd, 4), "tokens": self.tokens,
                 "current_usage_coverage": self.usage.get("coverage", "unknown"),
                 "feed": [f for f in self.feed if f["seq"] > since]}
@@ -1311,8 +1314,10 @@ class Manager:
             return boundary_investigations.run(self,s)
         focused_agents.run(self,s)
 
+    @agent_startup.current_projects
     def _run_work(self, s: Session) -> None:
         from . import focused_agents
+        agent_startup.stage(s, "Reading project and worker settings")
         agent, token = self.net.local_agent(s.agent_name)
         self.net.set_selection(s.slug, agent.name, s.options.get("selection"))
         self.assignments[agent.id] = s.slug
@@ -1328,10 +1333,12 @@ class Manager:
         # Targeted work already has its input; unrelated matching preparation cannot unlock it.
         targeted = bool(s.options.get("focus_id")) or s.options.get("task") in {"readable", "boundary"}
         if not targeted and (prep := self._prep.get(s.slug)) is not None:
+            agent_startup.stage(s, "Waiting for source preparation")
             self._set(s, "starting", "first giving the game's code without a source file one (about a minute)")
             prep.wait(PREP_WAIT)
         twins = getattr(getattr(self.net, "twins", None), "jobs", {}).get(s.slug)
         if not targeted and twins is not None and not twins.ordered.is_set():
+            agent_startup.stage(s, "Waiting for function ordering")
             self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)
@@ -1353,18 +1360,20 @@ class Manager:
             if task != 'boundary' and self._left(s.slug, task) == 0:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
                 break
+            agent_startup.stage(s, "Selecting eligible work")
+            counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in {"readable", "boundary"} else None
             policy = self.net.selection(s.slug, agent.name)
-            if task not in {"readable", "boundary"} and (policy.get("match_below") is not None or policy.get("max_tries") or policy.get("model_untried")):
-                if not self.net.selection_remaining(s.slug, agent, include_paused=True) and not self.net.store.one(
+            if counts is not None and (policy.get("match_below") is not None or policy.get("max_tries") or policy.get("model_untried")):
+                if not counts["selected"] and not self.net.store.one(
                         "SELECT 1 FROM claims WHERE agent_id=?", agent.id):
                     below = policy.get("match_below")
                     why = f"no functions remain below {below:g}% match" if below is not None else "no functions remain unchecked by this model" if policy.get("model_untried") else "no functions remain within max tries"
                     self._pause(s, why + " for this worker (unscored functions also count)",
                                 "Change Work selection, then press Start again.")
                     break
-            if not s.options.get('focus_id') and task not in {'readable', 'boundary'} and not self.net.selection_remaining(s.slug,agent) and not self.net.store.one(
+            if not s.options.get('focus_id') and task not in {'readable', 'boundary'} and not counts['available'] and not self.net.store.one(
                     'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
-                why, todo = self.net.selection_wait_reason(s.slug, agent)
+                why, todo = self.net.selection_wait_reason(s.slug, agent, counts=counts)
                 self._wait(s, why, time.time()+30, todo)
                 continue
             if (cap := self.over_budget(s.slug)) is not None:
@@ -1394,9 +1403,11 @@ class Manager:
             began = time.time()
             before = self._progress(agent.id)
             activity_before = self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] if task == 'readable' else 0
+            agent_startup.stage(s, "Preparing session records and prompt settings")
             row = self._session_begin(s)
             kind = agents.get(s.kind)
             try:
+                if not kind.command:agent_startup.stage(s, "")
                 ok = self._run_cli(s, token, workdir) if kind.command else kind.run(self, s, agent)
                 while (ok and kind.command and kind.focus_resume and s.options.get('focus_id')
                        and s.options.get('focus_conversation') and not s.stop.is_set()
@@ -1638,6 +1649,7 @@ class Manager:
             agent_notes.finish(db, row)
         s.record = None
 
+    @agent_startup.current_projects
     def prepare_session(self, s: Session, agent=None, *, token=None) -> None:
         """Preload facts and one ordinary claim, once; previews never claim work."""
         if s.startup_context is not None:
@@ -1805,10 +1817,12 @@ class Manager:
                 raise Fatal(detail+'. No model request was started.') from error
             raise ToolConnectionUnavailable(detail+'. No model request was started; reconnecting automatically.') from error
 
+    @agent_startup.current_projects
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
         k = agents.get(s.kind)
         if why := k.validate_model(s.model):
             raise Fatal(why)
+        agent_startup.stage(s, "Checking local tool connection")
         self._preflight_tools(token)
         if s.context_budget and s.context_budget.waiting:
             s.rotated = True
@@ -1816,14 +1830,17 @@ class Manager:
             return True
         agent = self.net.authenticate(token)
         pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
-        if self.net.selection_remaining(s.slug, agent, available_only=True) or self.net.store.one('SELECT 1 FROM claims WHERE agent_id=?',agent.id):
+        # Selection was checked by the runner. The authenticated claim rechecks live availability.
+        if s.options.get('task') not in {'readable', 'boundary'}:
             pending.add((agent.id, s.slug))
             s.tool_handshake_required = True
+        agent_startup.stage(s, "Preparing compact startup context")
         self.prepare_session(s, token=token)
         if s.context_budget and s.context_budget.waiting:
             s.rotated=True
             s.push('info','No eligible work; waiting without starting a model request.')
             return True
+        agent_startup.stage(s, "Preparing agent CLI")
         cmd, env, prompt = self._command(s, token, workdir)
         if s.rotated:return True
         if s.record:
@@ -1833,6 +1850,7 @@ class Manager:
                                                    .replace(token, '[redacted]'))
             s.record('prompt', prompt)
             s.record('instructions', self.app_instructions(s))
+        agent_startup.stage(s, "")
         s.push("info", f"session {s.runs}: {k.name} started")
         if os.name == "nt":
             import sys

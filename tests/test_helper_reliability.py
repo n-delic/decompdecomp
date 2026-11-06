@@ -43,6 +43,8 @@ def test_mcp_preflight_checks_actual_advertised_tools(monkeypatch, missing, deni
     monkeypatch.setattr(transport, 'streamable_http_client', stream)
     monkeypatch.setattr(mcp, 'ClientSession', Session)
     manager = Manager.__new__(Manager)
+    import threading
+    manager._tool_startup_slots = threading.BoundedSemaphore(2)
     manager.net = SimpleNamespace(authenticate=lambda token: seen.append('authenticated'))
     manager.mcp_url = 'http://127.0.0.1:1234/mcp'
     if missing or denied:
@@ -152,13 +154,17 @@ def test_lost_tool_connection_pauses_instead_of_paid_retries(tmp_path, monkeypat
     monkeypatch.setattr(Manager, 'refresh_detected', lambda self: None)
     manager = Manager(net, tmp_path, 'http://127.0.0.1:1/mcp')
     monkeypatch.setattr(manager, '_preflight_tools', lambda token: None)
-    monkeypatch.setattr(manager, "prepare_session", lambda *a, **kw: None)
+    # This case represents a connection lost after the initial handshake succeeded.
+    def prepared(*args, **kwargs):
+        net._pending_tool_handshakes.clear()
+    monkeypatch.setattr(manager, "prepare_session", prepared)
     event = {'type':'assistant', 'message':{'content':[{'type':'text', 'text':message}]}}
     code = f'print({json.dumps(event)!r})'
     monkeypatch.setattr(manager, '_command', lambda *args: ([sys.executable, '-c', code], dict(os.environ), ''))
     session = Session('1', 'claude', 'helper', 'game', 'helper', {})
+    _, token = net.local_agent('helper')
     with pytest.raises(Fatal, match='lost access'):
-        manager._run_cli(session, 'test-token', tmp_path)
+        manager._run_cli(session, token, tmp_path)
 
 
 def test_transient_preflight_retains_phase_and_redacted_leaf_error(monkeypatch):
@@ -173,6 +179,8 @@ def test_transient_preflight_retains_phase_and_redacted_leaf_error(monkeypatch):
 
     monkeypatch.setattr(http,'create_mcp_http_client',unavailable)
     manager=Manager.__new__(Manager)
+    import threading
+    manager._tool_startup_slots=threading.BoundedSemaphore(2)
     manager.net=SimpleNamespace(authenticate=lambda token: None)
     manager.mcp_url='http://127.0.0.1:1/mcp'
     with pytest.raises(ToolConnectionUnavailable) as error:

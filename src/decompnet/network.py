@@ -991,6 +991,30 @@ class Network:
         raise NetworkError(f"Max tries reached for {fn['name']} ({used}/{limit}). Your work is saved. "
                            "Call claim_function for another function, or ask the user to raise the limit.")
 
+    def selection_counts(self, project: str, agent: Agent) -> dict:
+        """One current policy/blocked scan for the runner; claims still recheck availability."""
+        policy = self.selection(project, agent.name)
+        proj = self._project(project)
+        from .model_checks import tried
+        excluded = tried(self, project, agent) if policy.get('model_untried') else set()
+        from . import claim_stalls
+        paused = claim_stalls.blocked(self, proj, agent)
+        from .app.data_regions import blocked as data_blocked
+        excluded.update(data_blocked(self, proj))
+        row = self.store.one(
+            "SELECT COUNT(*) selected, "
+            "COALESCE(SUM(f.id NOT IN (SELECT value FROM json_each(?))),0) eligible, "
+            "COALESCE(SUM(f.id NOT IN (SELECT value FROM json_each(?)) AND "
+            "f.id NOT IN (SELECT function_id FROM claims WHERE expires_at>?)),0) available "
+            "FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? "
+            "AND f.id NOT IN (SELECT value FROM json_each(?)) "
+            "AND f.status='open' AND (? IS NULL OR f.best_score IS NULL OR "
+            "MAX(0.0, 100.0 * (1.0 - CAST(f.best_score AS REAL) / MAX(1, f.n_insns * 100))) < ?) "
+            "AND (? IS NULL OR (SELECT COUNT(*) FROM attempts a WHERE a.function_id=f.id AND a.agent_id=?) < ?)",
+            json.dumps(list(paused)), json.dumps(list(paused)), time.time(), project, json.dumps(list(excluded)),
+            policy.get('match_below'), policy.get('match_below'), policy.get('max_tries'), agent.id, policy.get('max_tries'))
+        return dict(row)
+
     def selection_remaining(self, project: str, agent: Agent, *, include_paused: bool = False, available_only: bool = False) -> int:
         policy = self.selection(project, agent.name)
         from .model_checks import tried
@@ -1010,12 +1034,12 @@ class Network:
             project, json.dumps(list(excluded)), available_only, time.time(), policy.get("match_below"), policy.get("match_below"), policy.get("max_tries"), agent.id,
             policy.get("max_tries"))["n"]
 
-    def selection_wait_reason(self, project: str, agent: Agent) -> tuple[str, str]:
+    def selection_wait_reason(self, project: str, agent: Agent, *, counts: dict | None = None) -> tuple[str, str]:
         """Explain the automatic-selection gate without implying its timer resets exhaustion."""
         total = self.store.one("SELECT COUNT(*) n FROM functions f JOIN projects p ON p.id=f.project_id "
                                "WHERE p.slug=? AND f.status='open'", project)["n"]
-        selected = self.selection_remaining(project, agent, include_paused=True)
-        eligible = self.selection_remaining(project, agent)
+        counts = counts if counts is not None else self.selection_counts(project, agent)
+        selected, eligible = counts['selected'], counts['eligible']
         paused = max(0, selected - eligible)
         filtered = max(0, total - selected)
         facts = [f"{paused} unchanged candidates paused in this worker's selection"] if paused else []
