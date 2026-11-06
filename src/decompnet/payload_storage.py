@@ -8,15 +8,29 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import zlib
-from functools import lru_cache
+from collections import OrderedDict
+
+_cache=OrderedDict()
+_cache_lock=threading.Lock()
 
 
-@lru_cache(maxsize=32)
 def unpack(digest, payload):
     if payload is None:raise ValueError('Missing database payload; restore a database backup.')
-    text=zlib.decompress(payload).decode('utf-8')
-    if hashlib.sha256(text.encode()).hexdigest()!=digest:raise ValueError('Database payload checksum failed.')
+    key=(digest,payload)
+    with _cache_lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+    raw=zlib.decompress(payload)
+    if hashlib.sha256(raw).hexdigest()!=digest:raise ValueError('Database payload checksum failed.')
+    text=raw.decode('utf-8')
+    # A few 80-MiB progress manifests must not turn a count-bounded cache into GiBs.
+    if len(raw)<=256*1024:
+        with _cache_lock:
+            _cache[key]=text
+            while len(_cache)>32:_cache.popitem(last=False)
     return text
 
 
@@ -38,6 +52,7 @@ def metadata(text):
 
 
 def register(conn):
+    conn.create_function('unhex',1,lambda value:bytes.fromhex(value) if value is not None else None,deterministic=True)
     conn.create_function('payload_digest',1,digest,deterministic=True)
     conn.create_function('payload_pack',1,lambda text:zlib.compress(text.encode('utf-8')),deterministic=True)
     conn.create_function('payload_read',2,unpack,deterministic=True)
@@ -46,22 +61,39 @@ def register(conn):
         conn.detail_tables={r[0].removesuffix('_details') for r in sqlite3.Connection.execute(conn,
             "SELECT name FROM sqlite_master WHERE type='view' AND name IN ('attempt_details','repair_details')")}
         conn.detail_tables={'attempts' if x=='attempt' else 'repair_examples' for x in conn.detail_tables}
+        from .large_text_storage import FIELDS
+        installed={r[0] for r in sqlite3.Connection.execute(conn,
+            "SELECT name FROM sqlite_master WHERE type='view' AND name LIKE 'packed_%'")}
+        conn.detail_tables|={t for t in FIELDS if 'packed_'+t in installed}
 
 
 # Quoted values/comments must never be rewritten (including JSON paths and recorded SQL text).
 QUOTED=re.compile(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|--[^\n]*|/\*[\s\S]*?\*/)")
-TABLE=re.compile(r'\b(FROM|JOIN)\s+(attempts|repair_examples)\b',re.I)
+from .large_text_storage import FIELDS
+
+TABLE=re.compile(r'\b(FROM|JOIN)\s+('+ '|'.join(('attempts','repair_examples',*FIELDS))+r')\b',re.I)
+ALIAS=re.compile(r'\s+(?:AS\s+)?([a-zA-Z_]\w*)',re.I)
+KEYWORDS={'where','on','using','join','left','right','inner','outer','cross','full','order','group','limit',
+          'having','union','except','intersect','set','returning','indexed','not','window'}
 
 
 class Connection(sqlite3.Connection):
     detail_tables=frozenset()
     def execute(self,sql,parameters=(),/):
-        if self.detail_tables and not re.match(r'\s*(CREATE|DROP|ALTER|PRAGMA)',sql,re.I):
+        if not re.match(r'\s*(CREATE|DROP|ALTER|PRAGMA)',sql,re.I):
             def part(text):
                 def table(match):
-                    if match.group(2).lower() not in self.detail_tables:return match.group()
+                    table=match.group(2).lower()
+                    if table not in self.detail_tables and table in FIELDS:
+                        if sqlite3.Connection.execute(self,"SELECT 1 FROM sqlite_master WHERE type='view' AND name=?",('packed_'+table,)).fetchone():
+                            self.detail_tables=set(self.detail_tables)|{table}
+                    if table not in self.detail_tables:return match.group()
                     if re.search(r'\bDELETE\s*$',text[:match.start()],re.I):return match.group()
-                    return match.group(1)+' '+('attempt_details' if match.group(2).lower()=='attempts' else 'repair_details')
+                    table=match.group(2).lower()
+                    view={'attempts':'attempt_details','repair_examples':'repair_details'}.get(table,'packed_'+table)
+                    alias=ALIAS.match(text,match.end())
+                    suffix='' if alias and alias[1].lower() not in KEYWORDS else ' AS '+match.group(2)
+                    return match.group(1)+' '+view+suffix
                 return TABLE.sub(table,text)
             bits=QUOTED.split(sql)
             sql=''.join(part(bit) if i%2==0 else bit for i,bit in enumerate(bits))

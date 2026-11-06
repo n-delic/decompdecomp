@@ -957,7 +957,7 @@ class Twins:
             # projection materialized code bytes for every size-compatible function.
             rows = self.net.store.all("""WITH shortlist AS MATERIALIZED (
                 SELECT i.function_id,i.project_id,i.size FROM cross_game_index i INDEXED BY idx_cross_game_compiler_size
-                JOIN functions f INDEXED BY idx_functions_matched_id ON f.id=i.function_id AND f.status='matched'
+                JOIN main.functions f INDEXED BY idx_functions_matched_id ON f.id=i.function_id AND f.status='matched'
                 JOIN projects p ON p.id=i.project_id
                 WHERE i.project_id!=? AND p.arch=? AND p.big_endian=? AND i.fingerprint!=?
                 AND i.compiler=? AND i.size BETWEEN ? AND ? ORDER BY ABS(i.size-?),i.function_id LIMIT 400)

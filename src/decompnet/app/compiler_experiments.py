@@ -16,6 +16,8 @@ def trial_table(net):
                    'id TEXT PRIMARY KEY,project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,'
                    'function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,'
                    'agent_id INTEGER NOT NULL,record TEXT NOT NULL,created_at REAL NOT NULL)')
+        from ..large_text_storage import install
+        install(db, ('compiler_trial_evidence',))
 
 
 def save_trial(net,fn,key,record):

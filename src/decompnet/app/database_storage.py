@@ -1,8 +1,10 @@
 """Explicit payload backfill, optional failed-source retention and bounded history pages."""
 import json
 import time
+import zlib
 
 BATCH=50
+BATCH_BYTES=2*1024*1024
 KEY='database-source-retention'
 
 
@@ -34,28 +36,86 @@ def save(net,value):
 
 
 def collect(net):
+    from ..large_text_storage import references
     with net.store.tx() as db:
-        return db.execute('DELETE FROM text_payloads WHERE hash NOT IN '
-            '(SELECT source_hash FROM main.attempts WHERE source_hash IS NOT NULL UNION '
-            'SELECT evidence_hash FROM main.repair_examples WHERE evidence_hash IS NOT NULL)').rowcount
+        # Discover lazy tables under admission too: a new evidence table must not race
+        # this snapshot and have its freshly referenced payloads collected.
+        refs = ['SELECT source_hash FROM main.attempts WHERE source_hash IS NOT NULL',
+                'SELECT evidence_hash FROM main.repair_examples WHERE evidence_hash IS NOT NULL',
+                *references(net.store)]
+        return db.execute('DELETE FROM text_payloads WHERE hash NOT IN ('+' UNION '.join(refs)+')').rowcount
 
 
 def pack(net,log):
     from .maintenance import checkpoint
     done=0
+    from ..large_text_storage import FIELDS, MIN_BYTES
+    from ..payload_storage import digest, metadata
+    def prepare(rows, field):
+        values=[];blobs={}
+        for row in rows:
+            log.check_cancel()
+            text=row[field];key=digest(text)
+            if key not in blobs:blobs[key]=(key,zlib.compress(text.encode('utf-8')),len(text.encode('utf-8')))
+            values.append((row['id'],text,key))
+        return values,blobs.values()
+    def batch(table,field,cursor,eligible):
+        # Fetch lengths first: fifty unusually large records must not all enter Python
+        # memory together. A single oversized record still advances the cursor.
+        sizes=net.store.all(f'SELECT rowid AS id,length(CAST({field} AS BLOB)) size FROM main.{table} '
+                            f'WHERE rowid>? AND {eligible} ORDER BY rowid LIMIT ?',cursor,BATCH)
+        ids=[];used=0
+        for row in sizes:
+            if ids and used+row['size']>BATCH_BYTES:break
+            ids.append(row['id']);used+=row['size']
+        if not ids:return []
+        return net.store.all(f'SELECT rowid AS id,{field} FROM main.{table} '
+                             f'WHERE rowid IN (SELECT value FROM json_each(?)) AND {eligible} ORDER BY rowid',json.dumps(ids))
+    # No startup scan or monolithic migration: conversion is explicit and resumable.
     for table,field,ref in (('attempts','source','source_hash'),('repair_examples','evidence','evidence_hash')):
         cursor=0
         while True:
             log.check_cancel()
-            rows=net.store.all(f'SELECT id FROM main.{table} WHERE id>? AND {ref} IS NULL AND {field} IS NOT NULL ORDER BY id LIMIT ?',cursor,BATCH)
+            rows=batch(table,field,cursor,f'{ref} IS NULL AND {field} IS NOT NULL')
             if not rows:break
             log.progress({'phase':'Packing '+table,'done':done,'function':str(rows[0]['id'])})
-            for row in rows:
-                log.check_cancel();cursor=row['id']
-                with net.store.tx() as db:
-                    db.execute(f'UPDATE {table} SET {field}={field} WHERE id=? AND {ref} IS NULL',(cursor,))
-                done+=1
+            values,blobs=prepare(rows,field);changed=0
+            with net.store.tx(wait=log.check_cancel) as db:
+                db.executemany('INSERT OR IGNORE INTO text_payloads VALUES(?,?,?)',blobs)
+                for identity,text,key in values:
+                    log.check_cancel();cursor=identity
+                    stored=None if table=='attempts' else metadata(text)
+                    changed+=db.execute(f'UPDATE {table} SET {field}=?,{ref}=? WHERE id=? AND {ref} IS NULL AND {field} IS ?',
+                               (stored,key,cursor,text)).rowcount
+            done+=changed
             checkpoint()
+    installed={r['name'] for r in net.store.all("SELECT name FROM sqlite_master WHERE type='table'")}
+    for table,fields in FIELDS.items():
+        if table not in installed:continue
+        for field in fields:
+            cursor=0
+            eligible=f"typeof({field})='text' AND length(CAST({field} AS BLOB))>={MIN_BYTES}"
+            while True:
+                log.check_cancel()
+                log.progress({'phase':f'Packing {table}: {field}','done':done})
+                rows=batch(table,field,cursor,eligible)
+                if not rows:break
+                values,blobs=prepare(rows,field);changed=0
+                with net.store.tx(wait=log.check_cancel) as db:
+                    db.executemany('INSERT OR IGNORE INTO text_payloads VALUES(?,?,?)',blobs)
+                    for identity,text,key in values:
+                        log.check_cancel();cursor=identity
+                        changed+=db.execute(f'UPDATE {table} SET {field}=? WHERE rowid=? AND {field} IS ?',
+                                   (bytes.fromhex(key),cursor,text)).rowcount
+                done+=changed
+                checkpoint()
+    from pathlib import Path
+    library_path=Path(net.store.path).parent/'match-library.sqlite3'
+    if library_path.is_file():
+        from .match_library import Library
+        done+=Library(net).pack(log)
+    log.check_cancel()
+    log.progress({'phase':'Collecting unused shared text','done':done})
     removed=collect(net)
     with net.store.writer_gate.hold(wait=log.check_cancel),net.store.lock:
         net.store.conn.execute('PRAGMA analysis_limit=1000')

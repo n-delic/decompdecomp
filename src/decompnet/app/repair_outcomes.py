@@ -17,6 +17,8 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_outcome_analysis(
 def prepare(feedback):
     with feedback.store.tx() as db:
         db.execute(SCHEMA)
+        from ..large_text_storage import install
+        install(db, ('repair_outcome_analysis',))
         db.execute(QUEUE)
         db.execute('CREATE INDEX IF NOT EXISTS idx_repair_analysis_queue_order ON repair_analysis_queue(created_at,example_id)')
         pending=tuple(feedback.net.__dict__.get('_repair_analysis_pending',()))

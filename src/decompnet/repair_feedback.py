@@ -96,6 +96,8 @@ class RepairFeedback:
                 db.execute(statement)
             from .payload_storage import install as install_payloads
             install_payloads(db,'repair_examples')
+            from .large_text_storage import install as install_large
+            install_large(db, ('repair_attempt_settings','repair_attempt_provenance'))
             self.store._track_reads('repair_examples', 'repair_profiles', 'evidence,project_id')
             from .repair_profile_index import install
             install(db)

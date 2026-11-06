@@ -530,6 +530,8 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_origin_owner ON agents(origin,owner)")
         self._track_reads('functions', 'audit_layout', 'name,vram,rom_offset,size,project_id')
         self._slow_queries = {}
+        from .large_text_storage import install as install_large_text
+        install_large_text(self.conn)
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
 

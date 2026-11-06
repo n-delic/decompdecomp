@@ -22,6 +22,8 @@ class Transcripts:
                        'id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, created_at REAL NOT NULL, '
                        'kind TEXT NOT NULL, text TEXT NOT NULL)')
             db.execute('CREATE INDEX IF NOT EXISTS idx_helper_messages_session ON helper_messages(session_id,id)')
+            from ..large_text_storage import install
+            install(db, ('helper_messages',))
             db.execute('CREATE INDEX IF NOT EXISTS idx_helper_messages_kind ON helper_messages(session_id,kind,id)')
             db.execute('CREATE TABLE IF NOT EXISTS helper_score_events(session_id INTEGER,attempt_id INTEGER, PRIMARY KEY(session_id,attempt_id))')
 
