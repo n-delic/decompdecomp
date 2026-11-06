@@ -4,6 +4,7 @@ ending everything they started, what each session spent, and the compact context
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -223,6 +224,37 @@ def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_pat
     assert {"execute", "subagent", "external_directory"} <= {p["action"] for p in config["permissions"]
                                                             if p["effect"] == "deny"}
     assert config["mcp"]["servers"]["decompdecomp"]["codemode"] is False
+
+
+@pytest.mark.parametrize("version", ["1.19.5", "opencode v2.0.32"])
+def test_opencode_helpers_use_independent_databases_without_losing_signin(tmp_path, monkeypatch, version):
+    """A writer in one helper or the user's OpenCode must not lock another helper out before its MCP handshake."""
+    m = _manager(tmp_path, monkeypatch, "opencode")
+    monkeypatch.setitem(kinds.known_versions, "opencode", (0, version))
+    shared = tmp_path / "user-opencode.db"
+    monkeypatch.setenv("OPENCODE_DB", str(shared))
+    for key in ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(key, str(tmp_path / key))
+    paths = []
+    for name in ("first helper", "second helper", "first helper"):
+        work = tmp_path / name
+        work.mkdir(exist_ok=True)
+        s = agents.Session(name, "opencode", name, "demo", name, {"model": "fake/fake"})
+        _, env, _ = m._command(s, "tok", work)
+        paths.append(env["OPENCODE_DB"])
+        assert os.path.isabs(paths[-1]) and os.path.dirname(paths[-1]) == str(work.resolve())
+        for key in ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"):
+            assert env[key] == os.environ[key]  # auth/config discovery is unchanged
+    assert paths[0] == paths[2] and paths[0] != paths[1] and str(shared) not in paths
+    assert os.environ["OPENCODE_DB"] == str(shared)  # only the child environment changes
+    # Exercise real SQLite contention at the paths passed to the CLI, without starting a model or a live project.
+    with sqlite3.connect(shared, timeout=0) as user, sqlite3.connect(paths[0], timeout=0) as first:
+        user.execute("BEGIN IMMEDIATE")
+        first.execute("BEGIN IMMEDIATE")
+        with sqlite3.connect(paths[1], timeout=0) as second:
+            second.execute("CREATE TABLE startup (ready INTEGER)")
+            second.execute("INSERT INTO startup VALUES (1)")
+            assert second.execute("SELECT ready FROM startup").fetchone() == (1,)
 
 
 def test_opencode_2_helpers_get_a_plugin_that_waits_for_the_apps_tools(tmp_path, monkeypatch):
