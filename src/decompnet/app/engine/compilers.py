@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import re
+import shlex
 import threading
 import time
 
@@ -28,6 +29,14 @@ FLAG_EXTRAS = {"gcc": ("-fno-strength-reduce", "-fno-schedule-insns"),
 SMALL_DATA_SIZES = (0, 8)
 MAX_FLAG_VARIANTS = 12
 FLAGS_SHOWN = 6
+
+
+def parse_flags(text: str) -> list[str]:
+    """Read quoted arguments without executing a shell: a pragma's name and value must stay one argument."""
+    try:
+        return shlex.split(text)
+    except ValueError as exc:
+        raise NetworkError(f"Invalid compiler flags: {exc}. Quote arguments containing spaces.") from None
 
 
 class CompilerMixin:
@@ -246,7 +255,7 @@ class CompilerMixin:
                     f"{self._short((tc, flags))}; {run.confirmed} of them match the game with it and not with today's "
                     f"compiler ({fn['name']}'s C is the check).")
             try:
-                said = self.suggest(agent, proj["slug"], text, compiler=tc, flags=" ".join(flags), function=fn["name"],
+                said = self.suggest(agent, proj["slug"], text, compiler=tc, flags=shlex.join(flags), function=fn["name"],
                                     ranges=f"0x{run.start:X}-0x{run.end:X}", source=source)
             except NetworkError as e:
                 said = f"not suggested: {e}"
@@ -269,7 +278,7 @@ class CompilerMixin:
         if looks and compilermap.kind(looks) != compilermap.kind(today):
             lines.append(f"The compiler map says this part of the game looks built by {self._short(looks)}, not "
                          f"{self._short(today)}: if it won't match, try_compiler(\"{fn['name']}\", \"{looks[0]}\", "
-                         f"\"{' '.join(looks[1])}\").")
+                         f"{json.dumps(shlex.join(looks[1]))}).")
         if fn["vram"] in cmap.contradicted:
             habits = ", ".join(cmap.never.get(compilermap.kind(today), []))
             lines.append(f"Its code shows a habit {self._short(today)} never has here ({habits}): it was probably "
@@ -300,7 +309,7 @@ class CompilerMixin:
             if self.fork_slug(slug):
                 raise NetworkError("a fork builds with its project's own compilers: suggest the change in words only")
             tc = self._toolchain_named(cfg, compiler)
-            flag_list = flags.split() or consoles.default_flags(cfg, tc)
+            flag_list = parse_flags(flags) or consoles.default_flags(cfg, tc)
             if not spans and (tc, flag_list) == (cfg["compiler"]["toolchain"], cfg["compiler"]["flags"]):
                 raise NetworkError("that's already the project's compiler and flags")
             if function:
@@ -335,7 +344,7 @@ class CompilerMixin:
                 return f"Suggested, not applied by itself: {e}.{note}"
             where = f"{', '.join(f'0x{a:X}-0x{b:X}' for a, b in spans)} build" if spans else "the project builds"
             return (f"Applied (the user lets agreed compiler changes apply themselves): {where} with "
-                    f"{consoles.compiler_name(tc)} {' '.join(flag_list)} from now on.{note}")
+                    f"{consoles.compiler_name(tc)} {shlex.join(flag_list)} from now on.{note}")
         return f"Suggested: the user sees it on the project page and can apply it.{note}"
 
     def auto_adjusts(self, proj) -> bool:
@@ -384,7 +393,7 @@ class CompilerMixin:
         for r in ranges:
             c = audits.get(((r["start"], r["end"]),)) or {}
             parts.append({"start": r["start"], "end": r["end"], "compiler": consoles.compiler_name(r["toolchain"]),
-                          "flags": " ".join(r["flags"]),
+                          "flags": shlex.join(r["flags"]),
                           "check": c.get("status", ""), "said": c.get("said", "")})
         elsewhere = sorted((r for r in (cmap.runs if cmap else []) if r.differs()), key=lambda r: -r.functions)
         # the compiler's name and its flags apart: "built with KMC GCC 2.7.2" reads at a glance, the flags are details
@@ -456,18 +465,18 @@ class CompilerMixin:
         proj = self._project(slug)
         cfg = self.cfg(proj)
         tc = self._toolchain_named(cfg, compiler)
-        flag_list = flags.split() or consoles.default_flags(cfg, tc)
+        flag_list = parse_flags(flags) or consoles.default_flags(cfg, tc)
         fn = self._function(function, slug)
         source = source.strip() or self._source_of(fn)
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
         ok, d, problem = self._judge_with(proj, fn, tc, flag_list, source)
-        what = f"{consoles.compiler_name(tc)} {' '.join(flag_list)}"
+        what = f"{consoles.compiler_name(tc)} {shlex.join(flag_list)}"
         if d is None:
             return f"{what}: doesn't compile:\n{problem.strip()[-1500:]}"
         if ok:
             self.rangechecks.tried(proj, fn, tc, flag_list, source, True)
-            return (f"{what}: MATCHES the game byte for byte. Suggest it: suggest(compiler=\"{tc}\", flags=\"{' '.join(flag_list)}\", "
+            return (f"{what}: MATCHES the game byte for byte. Suggest it: suggest(compiler=\"{tc}\", flags={json.dumps(shlex.join(flag_list))}, "
                     f"function=\"{fn['name']}\", ranges=<the address range it built>, source=<this C>)")
         return f"{what}: score {d.score} ({d.percent:.1f}%), not a match\n{d.render(context=1, max_rows=40)}"
 
@@ -512,25 +521,29 @@ class CompilerMixin:
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
         results = []
-        for flags in self.flag_variants(tc, base, consoles.of(cfg).flag_extras):
+        console = consoles.of(cfg)
+        variants = self.flag_variants(tc, base, console.flag_extras)
+        # Multi-argument console options are tested early, before the bounded generic optimisation sweep.
+        variants = [variants[0], *console.extra_flag_variants(tc, base), *variants[1:]]
+        for flags in variants[:MAX_FLAG_VARIANTS]:
             ok, d, _ = self._judge_with(proj, fn, tc, flags, source)
             if d is not None:
                 results.append((0 if ok else max(1, d.score), flags))
         if not results:
             return f"{consoles.compiler_name(tc)}: the C doesn't compile with any of its flag variants"
         results.sort(key=lambda r: r[0])
-        lines = [f"- score {score:>5}  {' '.join(flags)}" + ("   ← the project's flags" if flags == base else "")
+        lines = [f"- score {score:>5}  {shlex.join(flags)}" + ("   ← the project's flags" if flags == base else "")
                  for score, flags in results[:FLAGS_SHOWN]]
         best_score, best = results[0]
         head = f"{consoles.compiler_name(tc)}, {len(results)} flag variants for {fn['name']} (lower is better):\n"
         if best_score == 0 and best != base:
             if tc == own["toolchain"]:
                 self.rangechecks.tried(proj, fn, tc, best, source, True)
-            return (head + "\n".join(lines) + f"\nIt MATCHES with {' '.join(best)}. Suggest it: suggest(compiler=\"{tc}\", "
-                    f"flags=\"{' '.join(best)}\", function=\"{fn['name']}\", ranges=<the address range it built>, "
+            return (head + "\n".join(lines) + f"\nIt MATCHES with {shlex.join(best)}. Suggest it: suggest(compiler=\"{tc}\", "
+                    f"flags={json.dumps(shlex.join(best))}, function=\"{fn['name']}\", ranges=<the address range it built>, "
                     f"source=<this C>)")
         own_score = next((score for score, flags in results if flags == base), None)
-        verdict = ("The flags aren't the problem: the project's are as good as any." if own_score == best_score
+        verdict = ("None of the tested flag variants improves on the project's settings; untested options may still matter." if own_score == best_score
                    else "Other flags come closer, but none matches: look at the C again first.")
         return head + "\n".join(lines) + "\n" + verdict
 
@@ -585,7 +598,7 @@ class CompilerMixin:
                                + ("" if toolchain else ", or remove them and reopen those functions"))
         with self.store.tx() as db:
             where = ", ".join(f"0x{a:X}-0x{b:X}" for a, b in ranges)
-            self._event(db, proj["id"], None, "compiler", f"{consoles.compiler_name(toolchain)} {' '.join(flags)} for {where}"
+            self._event(db, proj["id"], None, "compiler", f"{consoles.compiler_name(toolchain)} {shlex.join(flags)} for {where}"
                         if toolchain else f"the project's compiler again for {where}")
 
     def _reopen(self, proj, names: list[str], why: str) -> None:
@@ -618,7 +631,7 @@ class CompilerMixin:
         with self.store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
             db.execute("UPDATE functions SET seed=NULL WHERE project_id=? AND status='open'", (proj["id"],))
-            self._event(db, proj["id"], None, "compiler", f"{tc.name} {' '.join(cfg['compiler']['flags'])}")
+            self._event(db, proj["id"], None, "compiler", f"{tc.name} {shlex.join(cfg['compiler']['flags'])}")
         matched = self.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' ORDER BY vram", proj["id"])
         sample = matched[::max(1, len(matched) // 40)][:40]
         broken = self.regression_test(self._project(slug), None, only=sample,

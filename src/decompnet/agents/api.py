@@ -444,7 +444,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                       ranges=st("address ranges it built, when not the whole game: 0x10BFD0-0x10CD40, ..."),
                       source=st("the C to check it with (default: the best attempt)"))),
         "try_compiler": ("Compile a function's C with another compiler and flags, recording nothing: test before suggesting.",
-                         s(function=st("function", True), compiler=st("toolchain id", True), flags=st("flags"),
+                         s(function=st("function", True), compiler=st("toolchain id", True), flags=st("flags; quote arguments containing spaces"),
                            source=st("the C (default: the best attempt)"))),
         "search_notes": ("Search notes.", s(query=st("text", True))),
         "find_similar": ("Functions that look like this one, matched ones first, with the best one's source.",
