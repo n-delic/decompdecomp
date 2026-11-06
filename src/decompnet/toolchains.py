@@ -327,7 +327,8 @@ def require(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> P
     """Directory of an installed toolchain, or a clear error telling the operator how to install it."""
     metadata = installed(tid, linux, vm=vm)
     if metadata is None:
-        raise ToolchainError(f"toolchain {tid!r} is not installed: install it in decompdecomp, under Compilers & tools")
+        section = "Compilers & tools → Tools" if get(tid).kind == "tool" else "Compilers & tools"
+        raise ToolchainError(f"toolchain {tid!r} is not installed: install it in decompdecomp, under {section}")
     if get(tid).case_sensitive and (metadata.get('linux_vm') or metadata.get('wsl')) and not metadata.get('archive_parts'):
         raise ToolchainError(f'Reinstall {tid} in Compilers & tools so its case-sensitive Linux files are preserved.')
     if why := runtime_error(tid):
@@ -1112,11 +1113,28 @@ def status() -> list[dict]:
     """Every pinned compiler and tool: whether it's installed and can be on this computer, its licence, and whether
     its downloads are pinned. For Compilers & tools."""
     rows = []
-    for tc in registry().values():
+    tools = registry()
+    dependency_cache = {}
+    def missing(tc, linux, vm, seen):
+        result = []
+        for tid in tc.requires:
+            if tid in seen:
+                continue
+            seen.add(tid)
+            cache_key = (tid, linux, vm)
+            if cache_key not in dependency_cache:
+                dependency_cache[cache_key] = installed(tid, linux, vm=vm)
+            if dependency_cache[cache_key] is None:
+                result.append({'id':tid, 'name':tools[tid].name})
+            else:
+                result.extend(missing(tools[tid], linux, vm, seen))
+        return result
+    for tc in tools.values():
         m = installed(tc.id)
         rows.append({"id": tc.id, "name": tc.name, "kind": tc.kind, "platform": tc.platform, "license": tc.license,
                      "source": tc.source,  # (where it comes from: the install's confirmation says)
                      "installed": m is not None, "supported": tc.supported, "description": tc.description,
+                     "missing_dependencies": missing(tc, tc.via_wsl or tc.via_vm, True if tc.via_vm else None, {tc.id}) if m else [],
                      "changed": m is None and _manifest(tc.id) is not None,
                      "wsl": tc.via_wsl, "linux_vm": tc.via_vm, "local": tc.local,
                      **(_local_status(tc, m) if tc.local and m else {}),

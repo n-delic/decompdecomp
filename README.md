@@ -703,6 +703,12 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | PS2 SN Systems EE-GCC 2.95.2/2.95.3 and CodeWarrior 2.3.3/3.0.1 | Pinned Windows compilers through wibo on Intel and Apple Silicon; CodeWarrior requires license acceptance |
 | Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
 
+**Missing wibo:** open **Compilers & tools → Tools**, find **wibo** and choose **Install**.
+An installed compiler with a missing runtime also shows **Install missing tools**; this repairs its
+dependencies without downloading the compiler again. On Apple Silicon, follow the Rosetta instructions
+if the Intel runtime is unavailable.
+
+
 When launched from a terminal, quitting reports each shutdown stage and the project being saved.
 Stages taking more than five seconds print elapsed-time updates. Closing just the window while
 keeping work running is reported explicitly; it does not mean the app has quit.
