@@ -34,6 +34,17 @@ def register(app):
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
 
+    @app.mcp.custom_route('/api/repository-score-commits', methods=['POST'])
+    async def score_commits(request):
+        if bad := app.guard(request, write=True):return bad
+        try:
+            from .. import score_commits
+            data = await app.body(request)
+            return JSONResponse(await app.call(score_commits.configure, app.net, str(data.get('slug', '')),
+                data.get('enabled'), data.get('threshold', 10), str(data.get('folder', '')).strip()))
+        except (NetworkError, ValueError, KeyError, OSError) as error:
+            return app.fail(error)
+
     @app.mcp.custom_route('/api/repository-auto-push', methods=['POST'])
     async def auto_push(request):
         if bad := app.guard(request, write=True):return bad

@@ -9,6 +9,7 @@ function renderRepositorySetup(state) {
   $("repositoryCheckpoint").hidden = !state.repository || !state.portable;
   $("repositoryOriginGroup").hidden = !state.repository || state.origin;
   $("repositoryAutoCommit").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoCommit").checked && (!state.repository || !state.checkpoint || !state.linked));
+  $("repositoryScoreCommits").disabled = repositorySetupBusy || unsaved || (!$("repositoryScoreCommits").checked && (!state.repository || !state.checkpoint || !state.linked));
   $("repositoryAutoPush").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoPush").checked && (!state.repository || !state.checkpoint || !state.origin));
   $("repositorySetupState").textContent = unsaved ? "Save now to apply the new location before changing its Git settings." : !state.repository
     ? (state.portable ? "Create a Git repository here to keep progress commits. This makes it the ongoing progress folder, adds .gitignore rules and stages nothing." : "This source folder is not a Git repository. Source checkout setup is planned.")

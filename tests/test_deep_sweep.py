@@ -141,7 +141,6 @@ def test_start_stop_and_restart_require_manual_resume_and_prevent_parallel_sweep
     import threading
     import time
 
-    from decompnet.network import NetworkError
     obj,net,calls,_=sweep
     entered,finish=threading.Event(),threading.Event()
     def block(*args):
@@ -153,7 +152,8 @@ def test_start_stop_and_restart_require_manual_resume_and_prevent_parallel_sweep
     first=obj.start('game',1,10,loop=True)
     assert obj.config('game')['loop'] is True
     assert entered.wait(2)
-    with pytest.raises(NetworkError,match='already running'):obj.start('game',1,10)
+    assert obj.start('game',1,10)['job'] == first['job']
+    assert len(obj.jobs.jobs) == 1
     obj.shutdown()
     assert obj.config('game')['enabled']  # startup clears this without re-running work
     finish.set()
@@ -812,3 +812,27 @@ def test_invalid_function_threads_do_not_start_or_save(sweep, value):
     with pytest.raises(NetworkError, match='threads per function'):
         obj.start('game', threads_per_function=value)
     assert not obj.active and obj.config('game')['threads_per_function'] == 1
+
+
+def test_controls_and_start_stop_do_not_wait_for_saved_statistics(sweep, monkeypatch):
+    import threading
+    obj, net, calls, path = sweep
+    entered, release = threading.Event(), threading.Event()
+    def slow(*args):
+        entered.set()
+        assert release.wait(5)
+    monkeypatch.setattr(obj, 'run', slow)
+    monkeypatch.setattr(obj, 'status', lambda *a: pytest.fail('Controls must not scan statistics'))
+    monkeypatch.setattr(obj, 'attention', lambda *a: pytest.fail('Controls must not load attention history'))
+    try:
+        result = obj.start('game', threads=2, threads_per_function=3)
+        assert entered.wait(2)
+        assert result['control_only'] and result['job']
+        assert result['threads_per_function'] == 3
+        current = obj.control('game')
+        assert current['job'] == result['job'] and current['state'] == 'running'
+        assert obj.start('game')['job'] == result['job']
+        assert len(obj.jobs.jobs) == 1
+        assert not obj.stop('game')['enabled']
+    finally:
+        release.set()

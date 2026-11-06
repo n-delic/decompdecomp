@@ -108,6 +108,7 @@ function renderSteering(ov) {
   $("saveAboutFork").hidden = ov.kind !== "fork";
   $("repositorySync").hidden = false;
   $("repositoryAutoCommitGroup").hidden = ov.kind === "fork";
+  $("repositoryScoreCommitGroup").hidden = ov.kind === "fork";
   $("repositorySyncActions").hidden = ov.kind === "fork";
   $("repositorySyncHelp").hidden = ov.kind === "fork";
   $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Version history and sharing";
@@ -116,6 +117,7 @@ function renderSteering(ov) {
   if (typeof refreshRepositorySetup === "function") refreshRepositorySetup();
   refreshRepositoryPush();
   renderRepositoryAutoCommit(ov.auto_commit);
+  if (typeof renderRepositoryScoreCommits === "function") renderRepositoryScoreCommits(ov.score_commits);
   if (typeof renderRepositoryAutoPush === "function") renderRepositoryAutoPush(ov.auto_push);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
@@ -1577,7 +1579,13 @@ $("sourcePrepExportRun").onclick = async () => {
   } catch (e) { showJobError(log, e.message); } finally { finish(); }
 };
 
-let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null;
+let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null, deepSweepRetryTimer = null;
+function retryDeepUpdates(slug, version) {
+  clearTimeout(deepSweepRetryTimer);
+  deepSweepRetryTimer = setTimeout(() => {
+    if (S.slug === slug && version === deepSweepProjectVersion && (!S.tab || S.tab === "settings")) return renderDeepSweep();
+  }, 5000);
+}
 let deepMetricRows = [], deepMetricSlug = null, deepMetricResultStatus = {};
 function deepAttentionReason(issue) {
   const error=String(issue.error || "Search stopped");
@@ -1728,6 +1736,8 @@ function setDeepRunVisibility(running) {
   for (const id of ["deepActivitySection", "deepSweepLogSection"]) $(id).hidden = !running;
 }
 function renderDeepQueueState(status) {
+  if (status.control_only === true) status = {...deepSweepSnapshot, ...status, statistics_pending:status.statistics_pending ?? deepSweepSnapshot?.statistics_pending ?? true};
+  if (status.control_only !== true && status.statistics_pending == null) status = {...status, statistics_pending:false};
   deepSweepSnapshot = status;
   renderDeepMetricDrawer();
   const running = status.state === "running", left = status.queue_left || 0;
@@ -1752,21 +1762,21 @@ function renderDeepQueueState(status) {
   $("deepSweepQueueState").dataset.state = running ? "running" : stopped ? "stopped" : error ? "error" : "idle";
   $("deepSweepQueueTitle").textContent = running ? active ? `Running — searching ${active} function${active === 1 ? "" : "s"}` : status.progress?.phase === "waiting for host claims or scored C" ? "Running — waiting for available functions" : preparing ? "Running — checking candidates" : "Running — preparing the next search"
     : stopped ? "Search stopped" : error ? "Search needs attention" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
-    : blocked ? "Paused — remaining functions need attention" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
+    : blocked ? "Paused — remaining functions need attention" : status.statistics_pending ? "Ready to search" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
   $("deepSweepQueueReason").textContent = running
     ? preparing ? active ? "Searching while preparing the queue. More candidates are checked as workers become free." : "Checking saved candidates and previous passes. Searches start as soon as work is ready."
     : !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Improvements are verified and saved as they happen."
     : stopped ? "Your improvements and completed searches are saved." : error ? error : left ? `${rotated ? `${rotated} paused early without further progress. ` : ""}Continue gives remaining functions a fresh search; completed turns stay saved.`
     : blocked ? "Open the reasons below, fix the affected functions, then run again."
     : waiting ? `${waiting} functions need saved C with a measured score before they can be searched.`
-    : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.";
+    : status.statistics_pending ? "Saved totals are loading. You can start a search now." : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.";
   $("deepSweepStart").hidden = running;
   $("deepSweepStart").textContent = left && status.has_activity ? "Continue search" : status.has_activity ? "Run again" : "Start search";
   $("deepSweepStart").disabled = false;
   $("deepSweepStop").hidden = !running;
   if (!running) { $("deepSweepStop").disabled = false; $("deepSweepStop").textContent = "Stop"; }
   $("deepSweepReset").disabled = running;
-  $("deepSweepActive").textContent = active.toLocaleString();
+  $("deepSweepActive").textContent = status.statistics_pending && !running ? "—" : active.toLocaleString();
   $("deepSweepDone").textContent = done.toLocaleString();
   $("deepSweepLeft").textContent = left.toLocaleString();
   for (const [id, count] of [["Paused", rotated], ["Blocked", blocked], ["Waiting", waiting]]) {
@@ -1778,6 +1788,13 @@ function renderDeepQueueState(status) {
   $("deepSweepBar").max = Math.max(1, total);
   $("deepSweepBar").value = done;
   $("deepSweepProgressText").textContent = total ? `${done.toLocaleString()} of ${total.toLocaleString()} functions completed · ${Math.floor(100 * done / total)}%` : "";
+  $("deepSweepLoadingBar").hidden = !status.statistics_pending;
+  if (status.statistics_pending) {
+    $("deepSweepBar").hidden = true;
+    for (const id of ["deepSweepMatched", "deepSweepImproved", "deepSweepLeft"]) $(id).textContent = "—";
+    $("deepSweepProgressText").textContent = "Loading saved totals…";
+    $("deepSweepStart").textContent = "Start search";
+  }
 }
 
 async function renderDeepSweep() {
@@ -1785,6 +1802,7 @@ async function renderDeepSweep() {
   if (!slug) return;
   const panel = $("deepSweepPanel");
   if (panel.dataset.slug !== slug) {
+    clearTimeout(deepSweepRetryTimer);
     if (deepSweepFollowing) deepSweepFollowing.finish();
     deepSweepFollowing = null;
     panel.dataset.slug = slug;
@@ -1798,16 +1816,15 @@ async function renderDeepSweep() {
     $("deepSweepAttention").hidden = true;
     $("deepSweepAttentionList").replaceChildren();
     $("deepSweepLog").replaceChildren();
-    renderDeepQueueState({});
-    $("deepSweepQueueTitle").textContent = "Loading search status…";
+    renderDeepQueueState({control_only:true, statistics_pending:true});
+    $("deepSweepQueueTitle").textContent = "Getting ready…";
     $("deepSweepStatus").textContent = "";
     $("deepSweepStart").disabled = false;
-    $("deepSweepQueueReason").textContent = "Checking saved search progress. You can start now; the server will check whether a search is already running.";
-    $("deepSweepStatusRetry").hidden = false;
+    $("deepSweepQueueReason").textContent = "Loading saved progress. You can start a search now.";
     $("deepSweepStop").hidden = true;
     $("deepSweepStop").disabled = false; $("deepSweepStop").textContent = "Stop";
     $("deepSweepStart").hidden = false;
-    $("deepSweepActive").textContent = "0";
+    $("deepSweepActive").textContent = "—";
     $("deepSweepRecipes").replaceChildren();
     for (const id of ["deepSweepDone", "deepSweepLeft", "deepSweepWaiting"]) $(id).textContent = "0";
     $("deepSweepBar").value = 0;
@@ -1817,12 +1834,15 @@ async function renderDeepSweep() {
   const version = deepSweepProjectVersion;
   if (panel.dataset.resetting === slug || panel.dataset.statusLoading === slug) return;
   panel.dataset.statusLoading = slug;
-  $("deepSweepStatusRetry").disabled = true;
+  panel.dataset.statusVersion = String(version);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
+  let controlsLoaded = false;
   try {
-    const status = await api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`, {signal:controller.signal});
+    const control = await api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}&view=control`, {signal:controller.signal});
     if (S.slug !== slug || version !== deepSweepProjectVersion || panel.dataset.resetting === slug) return;
+    controlsLoaded = true;
+    const status = {...deepSweepSnapshot, ...control, statistics_pending:deepSweepSnapshot?.statistics_pending !== false};
     if (panel.dataset.loadedSlug !== slug) {
       panel.dataset.loadedSlug = slug;
       $("deepSweepMinutes").value = status.minutes;
@@ -1833,27 +1853,44 @@ async function renderDeepSweep() {
       $("deepSweepRepeat").checked = false;
       $("deepSweepLoop").checked = !!status.loop;
     }
-    $("deepSweepStatusRetry").hidden = true;
-    renderDeepSweepResults(status);
     renderDeepQueueState(status);
     renderDeepActivity(status.state === "running" ? status.progress || {} : {...(status.progress || {}), workers:[]});
     $("deepSweepThreads").placeholder = status.threads_default ? `auto (${status.threads_default})` : "auto";
     if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
+    clearTimeout(timeout);
+    const totalsTimeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const totals = await api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`, {signal:controller.signal});
+      if (S.slug !== slug || version !== deepSweepProjectVersion || panel.dataset.resetting === slug) return;
+      // Job updates can arrive while saved statistics are loading. Keep their newer state.
+      const live = deepSweepSnapshot || {};
+      const combined = {...totals, statistics_pending:false};
+      if (live.job === totals.job) Object.assign(combined, {state:live.state, progress:live.progress, error:live.error});
+      renderDeepSweepResults(combined);
+      renderDeepQueueState(combined);
+      if (combined.state === "running" && deepSweepFollowing?.job !== combined.job) followDeepSweep(slug, combined.job);
+    } finally { clearTimeout(totalsTimeout); }
+    clearTimeout(deepSweepRetryTimer);
   } catch (error) {
     if (S.slug === slug && version === deepSweepProjectVersion) {
-      $("deepSweepQueueTitle").textContent = "Search status unavailable";
-      $("deepSweepQueueReason").textContent = controller.signal.aborted
-        ? "The status check took longer than 15 seconds. Retry status, or start a search; the server will check whether one is already running."
-        : `Could not load search status: ${error.message}. Retry status, or try Start search to get the server’s current result.`;
-      $("deepSweepStatusRetry").hidden = false;
-      if (!deepSweepFollowing) { $("deepSweepStart").hidden = false; $("deepSweepStart").disabled = false; }
+      if (!controlsLoaded) {
+        if (deepSweepSnapshot?.state === "running") {
+          $("deepSweepQueueTitle").textContent = "Running — reconnecting to progress updates";
+        } else {
+          $("deepSweepQueueTitle").textContent = "Reconnecting to search…";
+          $("deepSweepQueueReason").textContent = "Progress updates are delayed. Retrying automatically; you can still start a search.";
+        }
+        if (!deepSweepFollowing && deepSweepSnapshot?.state !== "running") { $("deepSweepStart").hidden = false; $("deepSweepStart").disabled = false; }
+      } else if (deepSweepSnapshot?.statistics_pending) {
+        $("deepSweepQueueReason").textContent += " Saved totals are still loading and will update automatically.";
+      }
+      retryDeepUpdates(slug, version);
     }
   } finally {
     clearTimeout(timeout);
-    if (panel.dataset.statusLoading === slug) { delete panel.dataset.statusLoading; $("deepSweepStatusRetry").disabled = false; }
+    if (panel.dataset.statusLoading === slug && panel.dataset.statusVersion === String(version)) delete panel.dataset.statusLoading;
   }
 }
-$("deepSweepStatusRetry").onclick = () => renderDeepSweep();
 async function followDeepSweep(slug, job) {
   if (deepSweepFollowing) deepSweepFollowing.finish();
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = false;
@@ -1873,7 +1910,7 @@ async function followDeepSweep(slug, job) {
       const progress = state.progress || {};
       if (S.slug !== slug || deepSweepFollowing !== following) return;
       renderDeepActivity((state.state || deepSweepSnapshot?.state) !== "running" ? {...progress, workers:[]} : progress);
-      if (!refreshing && Date.now() - lastResults >= 2000) {
+      if (!refreshing && $("deepSweepPanel").dataset.statusLoading !== slug && Date.now() - lastResults >= 5000) {
         refreshing = true; lastResults = Date.now();
         api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`).then(status => {
           if (S.slug === slug && deepSweepFollowing === following) {
@@ -1883,15 +1920,25 @@ async function followDeepSweep(slug, job) {
         }).catch(() => {}).finally(() => { refreshing = false; });
       }
       if (deepSweepSnapshot?.state === "running") {
-        renderDeepQueueState({...deepSweepSnapshot, state:state.state || "running", progress});
+        renderDeepQueueState({...deepSweepSnapshot, state:state.state || "running", progress, error:state.error || ""});
       }
     }, () => S.slug === slug && deepSweepFollowing === following);
-  } catch (error) { if (S.slug === slug && deepSweepFollowing === following) showJobError(log, error.message); }
+  } catch (error) {
+    if (S.slug === slug && deepSweepFollowing === following) {
+      if (error.job) showJobError(log, error.message);
+      else {
+        following.reconnecting = true;
+        $("deepSweepQueueTitle").textContent = "Reconnecting to progress updates…";
+        $("deepSweepQueueReason").textContent = "The search may still be running. Updates will reconnect automatically; Stop remains available.";
+        retryDeepUpdates(slug, deepSweepProjectVersion);
+      }
+    }
+  }
   finally {
     following.finish();
     if (deepSweepFollowing === following) {
       deepSweepFollowing = null;
-      if (S.slug === slug) { setDeepRunVisibility(false); renderDeepSweep(); }
+      if (S.slug === slug && !following.reconnecting) { setDeepRunVisibility(false); renderDeepSweep(); }
     }
   }
 }
@@ -1901,6 +1948,8 @@ $("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
 $("deepSweepMetricActive").onclick = () => openDeepMetric("active");
 $("deepSweepStart").onclick = async () => {
   const slug = S.slug, log = $("deepSweepLog");
+  deepSweepProjectVersion++; clearTimeout(deepSweepRetryTimer);
+  delete $("deepSweepPanel").dataset.statusLoading;
   setDeepRunVisibility(true);
   const done = beginWork(log, "Starting deep pass", [$("deepSweepStart")], "Deep pass started");
   let job = null;
@@ -1915,8 +1964,7 @@ $("deepSweepStart").onclick = async () => {
       setDeepRunVisibility(false);
       $("deepSweepQueueTitle").textContent = "Search could not start";
       $("deepSweepQueueReason").textContent = error.message;
-      $("deepSweepStatusRetry").hidden = false;
-    }
+      }
   }
   finally { done(); }
   if (job && S.slug === slug) { $("deepSweepStop").hidden = false; followDeepSweep(slug, job); }

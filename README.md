@@ -1563,6 +1563,11 @@ Single-choice dropdowns share the app’s common control styling automatically,
 including function activity sorting and dynamically added settings. They retain
 native keyboard navigation and use the current light or dark theme.
 
+Deep permuter controls load independently of saved search statistics. Delayed progress updates
+reconnect automatically; they do not stop a search or require a manual status refresh. Unknown totals
+show “—” until loaded, and known totals remain visible during reconnection. Start reconnects to an
+existing search instead of starting a duplicate; Stop remains available for a known running search.
+
 The Deep permutation pass groups its limits in a compact form and shows live result
 cards with a completed-function count and percentage. Search behavior and resume
 details are available under **How this search works**. A queue summary explains whether the pass is
