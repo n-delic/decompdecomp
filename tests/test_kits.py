@@ -325,8 +325,7 @@ def test_your_own_compiler_is_a_card_per_console_and_runs_like_the_pack_its_vers
     _add(own["n64"], tmp_path / "gcc")
     _add(own["ps"], tmp_path / "gcc")  # (one GCC 2.7.2 folder, set up for both consoles)
     own_n64 = ids("n64")[0]
-    row = next(r for r in toolchains.status() if r["id"] == own_n64)
-    assert row["kind"] == "compiler" and row["installed"] and row["supported"]
+    assert own_n64 not in {r["id"] for r in toolchains.status()}
     # the CodeWarrior PS2 whose version its program names
     [mw] = ids("ps2")
     assert mw.startswith("mwcps2-3.0.1-own-") and toolchains.known(mw)  # (its id: what the PS2's flags go by)
@@ -360,10 +359,18 @@ def test_user_supplied_n64_compiler_is_in_picker_state(tmp_path, monkeypatch):
                         base_url='http://127.0.0.1:6503',
                         headers={'User-Agent': window.TOKEN_AGENT + 'picker-secret'})
     state = client.get('/api/state').json()
-    row = next(t for t in state['toolchains'] if t['id'] == own.id)
+    assert own.id not in {t['id'] for t in state['toolchains']}
+    row = next(t for t in state['compiler_choices'] if t['id'] == own.id)
     n64 = next(c for c in state['consoles'] if c['id'] == 'n64')
     assert row['kind'] == 'compiler' and row['installed'] and row['supported']
     assert row['use'] and own.id in {c['id'] for c in n64['compilers']}
+
+
+def test_own_n64_gnu_compiler_gets_its_matching_guide(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(kits, 'own_compiler', lambda _: SimpleNamespace(like='gcc-2.8.1-pm'))
+    assert consoles.get('n64').up_front_guide('gcc-2.8.1-pm-own-12345678') == 'gcc-variants'
 
 
 @pytest.mark.parametrize("pack", ["gcc-2.7.2-kmc", "gcc-2.7.2-psx", "ee-gcc-2.96", "mwcps2-2.3.3", "ido-5.3", "agbcc"])

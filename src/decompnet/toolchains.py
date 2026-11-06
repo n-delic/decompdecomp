@@ -1026,11 +1026,4 @@ def status() -> list[dict]:
                      "changed": m is None and _manifest(tc.id) is not None,
                      "wsl": tc.via_wsl, "linux_vm": tc.via_vm, "local": tc.local, **(_local_status(tc, m) if tc.local and m else {}),
                      "pinned": all(p.get("sha256") for p in tc.parts) or bool(tc.commit)})
-    from . import kits
-    for own in kits.compilers(k.id for k in kits.KITS):
-        tc = get(own.version)
-        rows.append({"id": tc.id, "name": tc.name, "kind": "compiler", "platform": "",
-                     "license": tc.license, "source": tc.source, "installed": True,
-                     "supported": tc.supported, "description": tc.description, "changed": False,
-                     "wsl": False, "local": True, "pinned": False})
     return rows

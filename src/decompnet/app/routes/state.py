@@ -42,15 +42,19 @@ def register(app: App) -> None:
     def state() -> dict:
         own = {c.id: c.built for console in consoles.CONSOLES if hasattr(console, 'fixed_compilers')
                for c in console.kit_compilers()}
-        tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS or t["id"] in own]
+        tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:
-            t["use"] = COMPILERS.get(t["id"]) or TOOLS.get(t["id"]) or own[t["id"]]
+            t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
             t["name"] = consoles.compiler_name(t["id"]) if t["id"] in COMPILERS else t["name"]
         return {"version": __version__, "build": build_id, "install": updates.installed(), "dev": edition.DEV,
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "linux_vm": ({"ready": linuxvm.status()[0], "why": linuxvm.status()[1]} if linuxvm.wanted() else None),
-                "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
+                "toolchains": tcs,
+                "compiler_choices": [{"id": cid, "name": toolchains.get(cid).name, "kind": "compiler",
+                                      "license": "proprietary", "installed": True, "supported": True, "use": use}
+                                     for cid, use in own.items()],
+                "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "bridges_removed": [] if settings.data.get("bridges_removed_seen") else cleanup.report(home),
                 "api_presets": API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
                 # every console: names, status, compilers, layout, features (consoles/, Console.describe)

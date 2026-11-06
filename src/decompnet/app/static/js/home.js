@@ -421,7 +421,8 @@ $("mwAccept").addEventListener("change", updateAnalyse);
 function fillCompilers(select, current, platform, only) {
   // the console's compilers
   const own = (consoleOf(platform)?.compilers || []).map((c) => c.id).filter((id) => !only || only.includes(id));
-  const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
+  const tcs = [...(S.st?.toolchains || []), ...(S.st?.compiler_choices || [])]
+    .filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
   if (own.length && !tcs.length) {  // versions of a compiler pack (DS's CodeWarriors), not toolchains of their own
     select.innerHTML = consoleOf(platform).compilers.filter((c) => own.includes(c.id))
       .map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`)

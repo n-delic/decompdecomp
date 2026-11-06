@@ -145,6 +145,11 @@ class Nintendo64(Console):
         return add_segments(config, workdir, image, log)
 
     def up_front_guide(self, compiler: str) -> str:
+        from ... import kits
+
+        own = kits.own_compiler(compiler)
+        if own and own.like:
+            compiler = own.like
         compiler = compiler.lower()  # (a fork of a public decomp: "project", its own build's)
         if compiler in ("gcc-2.8.1-pm-sn-as", "gcc-2.8.1-pm", "gcc-egcs-2.91.66", "gcc-egcs-1.1.2-4", "gcc-4.4.0-n64"):
             return "gcc-variants"
