@@ -3057,3 +3057,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Done: compiler comparison starts from DB snapshots without implicit saved-file rechecks
   or cold compiler-map builds; identity-aware linear profile counting, per-tool runtime probes,
   streamed eligibility/content batches and visible timed preparation preserve comparison reuse.
+
+- Done: shutdown and restart preparation report flushed terminal stages, per-project final-save activity, failures and periodic elapsed-time updates; closing just the window explicitly says when background work continues.
