@@ -521,6 +521,16 @@
       <summary class="panel-head"><h2>Deep permuter</h2><span class="muted small">No AI tokens</span></summary>
       <div class="pad">
         <p class="deep-sweep-intro">Search saved C for better matches.</p>
+        <div class="deep-sweep-settings" id="deepSweepSettings">
+          <label class="field deep-main-budget"><span>Time limit</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5"><span class="deep-budget-unit">min / function</span></label>
+          <details class="deep-advanced"><summary>Advanced settings</summary><div class="deep-advanced-fields">
+            <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
+            <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
+            <label class="field"><span>Parallel threads</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
+            <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label>
+            <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
+          </div></details>
+        </div>
         <div class="deep-dashboard">
         <section class="deep-queue-state" id="deepSweepQueueState" role="status">
           <div><h3 id="deepSweepQueueTitle">Ready to search</h3><p id="deepSweepQueueReason"></p></div>
@@ -542,16 +552,6 @@
           <span id="deepSweepWaitingGroup" hidden><b id="deepSweepWaiting">0</b> waiting for saved C</span>
         </div>
         </div>
-        <div class="deep-sweep-settings">
-          <label class="field deep-main-budget"><span>Time limit</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5"><span class="deep-budget-unit">min / function</span></label>
-          <details class="deep-advanced"><summary>Advanced settings</summary><div class="deep-advanced-fields">
-            <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
-            <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
-            <label class="field"><span>Parallel threads</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
-            <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label>
-            <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
-          </div></details>
-        </div>
         <div class="deep-sweep-tools">
         <details class="deep-sweep-help"><summary>How it works</summary>
           <p class="small muted">Completed passes are saved across restarts. Start the pass again after restarting the app to continue. Changes to source, headers or compiler inputs make a function eligible again.</p>
@@ -559,9 +559,8 @@
         </details>
         <button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>
         </div>
-        <p class="small" id="deepSweepStatus" role="status" hidden></p>
+        <div class="small" id="deepSweepStatus" role="status" hidden></div>
         <details id="deepSweepAttention" hidden><summary id="deepSweepAttentionTitle"></summary><p class="deep-issue-intro">Grouped by reason. Select a function to inspect its saved C and settings.</p><div id="deepSweepAttentionList"></div><p class="deep-issue-footer">After fixing an issue, start the pass again. To retry unchanged inputs, enable <b>Repeat completed passes</b>. This list covers errors for the current inputs; matched and set-aside functions are excluded.</p></details>
-        <div class="deep-sweep-results" id="deepSweepResults" aria-live="polite"></div>
         <div id="deepSweepRecipes"></div>
         <details class="deep-activity-section" id="deepActivitySection" hidden>
         <summary>Function activity <span class="muted small" id="deepActivityCount"></span></summary>

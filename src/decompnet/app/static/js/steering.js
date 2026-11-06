@@ -1511,7 +1511,7 @@ $("sourcePrepExportRun").onclick = async () => {
 };
 
 let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null;
-let deepMetricRows = [], deepMetricSlug = null;
+let deepMetricRows = [], deepMetricSlug = null, deepMetricResultStatus = {};
 function deepAttentionReason(issue) {
   const error=String(issue.error || "Search stopped");
   if (/^no function ['"]/.test(error)) return "Function lookup failed during search";
@@ -1538,6 +1538,12 @@ function renderDeepMetricDrawer() {
   if (deepMetricSlug !== S.slug) { closeDialog(); return; }
   const kind = S.dialogKind.slice("deep-metric:".length), status = deepSweepSnapshot || {};
   const active = kind === "active", attention = kind === "attention", body = $("dialogBody");
+  if (kind === "improved") {
+    if (body._deepMetricHtml && body._deepMetricSource === deepMetricResultStatus && body._deepMetricKind === kind) return;
+    renderDeepImprovementTable(deepMetricResultStatus, body);
+    body._deepMetricHtml = body.innerHTML; body._deepMetricSource = deepMetricResultStatus; body._deepMetricKind = kind;
+    return;
+  }
   const source = active ? status.state === "running" ? status.progress?.workers : null : attention ? status.attention : deepMetricRows;
   if (body._deepMetricHtml && body._deepMetricSource === source && body._deepMetricKind === kind) return;
   body._deepMetricSource = source; body._deepMetricKind = kind;
@@ -1566,6 +1572,7 @@ function renderDeepMetricDrawer() {
   });
 }
 function renderDeepSweepResults(status) {
+  deepMetricResultStatus = status;
   deepMetricRows = status.improvements || [];
   renderDeepMetricDrawer();
   const attention = status.attention || [];
@@ -1586,19 +1593,28 @@ function renderDeepSweepResults(status) {
 
   const visible = status.has_activity ?? (status.state === "running" || !!status.completed || !!status.errors
     || !!status.improvements?.length || !!status.recipe_wins?.length || !!status.measurements?.length);
-  for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = !visible;
+  $("deepSweepBar").hidden = !visible;
+  setDeepRunVisibility(status.state === "running");
   if (!visible) {
     $("deepSweepLog").textContent = "";
     $("deepActivity").replaceChildren();
   }
 
-  const scrollPositions = ["deepSweepRecipes", "deepSweepResults"].map(id =>
-    [...$(id).querySelectorAll(".compiler-table")].map(table => [table.scrollTop, table.scrollLeft]));
-  const resultDetailsOpen = new Map([...$("deepSweepResults").querySelectorAll("details[data-result-detail]")].map(d => [d.dataset.resultDetail, d.open]));
+  const scrollPositions = [...$("deepSweepRecipes").querySelectorAll(".compiler-table")].map(table => [table.scrollTop, table.scrollLeft]);
   const detailsOpen = new Map([...$("deepSweepRecipes").querySelectorAll("details")].map((d,i) => [d.dataset?.performanceFamily || d.dataset?.kind || i,d.open]));
   renderRewritePerformance(status);
-  const wins = status.recipe_wins || [];
   $("deepSweepRecipes").querySelectorAll("details").forEach((detail, i) => { detail.open = !!detailsOpen.get(detail.dataset?.performanceFamily || detail.dataset?.kind || i); });
+  $("deepSweepRecipes").querySelectorAll(".compiler-table").forEach((table, i) => {
+    const position = scrollPositions[i];
+    if (position) [table.scrollTop, table.scrollLeft] = position;
+  });
+  $("deepSweepMatched").textContent = (status.improvements || []).filter(r => r.new_score === 0).length.toLocaleString();
+  $("deepSweepImproved").textContent = (status.improved || (status.improvements || []).length || 0).toLocaleString();
+}
+function renderDeepImprovementTable(status, resultHost) {
+  const scrollPositions = [...resultHost.querySelectorAll(".compiler-table")].map(t => [t.scrollTop, t.scrollLeft]);
+  const resultDetailsOpen = new Map([...resultHost.querySelectorAll("details[data-result-detail]")].map(d => [d.dataset.resultDetail, d.open]));
+  const wins = status.recipe_wins || [];
   const histories = new Map();
   for (const win of wins) {
     if (!histories.has(win.function)) histories.set(win.function, []);
@@ -1609,7 +1625,6 @@ function renderDeepSweepResults(status) {
     return {...row, match_gain: parseFloat(row.new_percent_text) - parseFloat(row.starting_percent_text), history, created_at: history[0]?.created_at || 0,
       rewrite: history.map(w => (w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " ")).join("; ")};
   });
-  const resultHost = $("deepSweepResults");
   if (resultHost.dataset.slug !== S.slug) {
     resultHost.dataset.slug = S.slug; resultHost.dataset.sortKey = "match_gain"; resultHost.dataset.sortDirection = "desc";
   }
@@ -1622,36 +1637,34 @@ function renderDeepSweepResults(status) {
     return (descending ? -comparison : comparison) || a.function.localeCompare(b.function);
   });
   const columns = [["function", "Function"], ["new_percent_text", "Match before → now"], ["match_gain", "Improvement"]];
-  const headings = columns.map(([key,label]) => `<th aria-sort="${sortKey === key ? descending ? "descending" : "ascending" : "none"}"><button class="table-sort" type="button" data-deep-sort="${key}">${label}${sortKey === key ? descending ? " ↓" : " ↑" : ""}</button></th>`).join("");
-  $("deepSweepMatched").textContent = (status.improvements || []).filter(r => r.new_score === 0).length.toLocaleString();
-  $("deepSweepImproved").textContent = (status.improved || (status.improvements || []).length || 0).toLocaleString();
+  const headings = columns.map(([key,label]) => `<th scope="col" aria-sort="${sortKey === key ? descending ? "descending" : "ascending" : "none"}"><button class="table-sort" type="button" data-deep-sort="${key}">${label}${sortKey === key ? descending ? " ↓" : " ↑" : ""}</button></th>`).join("");
   const time = stamp => `<time datetime="${esc(new Date(stamp * 1000).toISOString())}">${esc(new Date(stamp * 1000).toLocaleString())}</time>`;
-  $("deepSweepResults").innerHTML = (rows.length || status.improved ? `<p><b>${status.improved || rows.length} functions improved</b><span class="small muted"> · saved results</span></p>` : "")
-    + (rows.length ? `<div class="compiler-table"><table><thead><tr>${headings}<th>Details</th></tr></thead><tbody>${rows.map((r, i) => {
+  resultHost.innerHTML = '<div class="deep-sweep-results">' + (rows.length || status.improved ? `<p><b>${status.improved || rows.length} functions improved</b><span class="small muted"> · saved results</span></p>` : "")
+    + (rows.length ? `<div class="compiler-table"><table><thead><tr>${headings}<th scope="col">Details</th></tr></thead><tbody>${rows.map((r, i) => {
       const gain = Number.isFinite(r.match_gain) ? `${r.match_gain > 0 ? "+" : ""}${r.match_gain > 0 && r.match_gain < 0.1 ? "<0.1" : Number(r.match_gain.toFixed(1))} points` : "—";
       return `<tr><td><button type="button" class="ghost small-btn mono" data-deep-result="${i}">${esc(r.function)}</button></td><td class="deep-match-change">${esc(r.starting_percent_text || "—")} <span class="muted">→</span> <b>${esc(r.new_percent_text || "—")}</b></td><td class="deep-match-gain">${esc(gain)}</td><td><details class="deep-result-detail" data-result-detail="${esc(r.function)}"><summary>Scores & rewrites</summary><p>Score: ${esc(r.starting_score)} → <b>${esc(r.new_score)}</b><br>${esc(r.starting_score - r.new_score)} lower</p>${r.created_at ? `<p>Latest improvement<br>${time(r.created_at)}</p>` : ""}${r.history.length ? `<p>${r.history.length} verified improvement${r.history.length === 1 ? "" : "s"}</p>${r.history.map(w => `<p>${time(w.created_at)} · ${esc(w.previous_score)} → ${esc(w.new_score)}<br>${esc((w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " "))}</p>`).join("")}` : ""}</details></td></tr>`;
-    }).join("")}</tbody></table></div><details class="deep-result-help"><summary>About these results</summary><p>Saved across runs and restarts. Each function shows its first recorded match percentage and best deep-permuter result. Improvement is measured in percentage points. Lower scores are better. Rewrite details cover the latest 50 improvements; older evidence stays stored locally.</p></details>` : "");
-  ["deepSweepRecipes", "deepSweepResults"].forEach((id, group) => {
-    $(id).querySelectorAll(".compiler-table").forEach((table, i) => {
-      const position = scrollPositions[group][i];
-      if (position) [table.scrollTop, table.scrollLeft] = position;
-    });
-  });
+    }).join("")}</tbody></table></div><details class="deep-result-help"><summary>About these results</summary><p>Saved across runs and restarts. Each function shows its first recorded match percentage and best deep-permuter result. Improvement is measured in percentage points. Lower scores are better. Rewrite details cover the latest 50 improvements; older evidence stays stored locally.</p></details>` : '<p class="deep-metric-empty">No improvements yet. Verified results will appear here.</p>') + "</div>";
+  resultHost.querySelectorAll(".compiler-table").forEach((t,i) => { if (scrollPositions[i]) [t.scrollTop,t.scrollLeft] = scrollPositions[i]; });
   resultHost.querySelectorAll("details[data-result-detail]").forEach(d => { d.open = !!resultDetailsOpen.get(d.dataset.resultDetail); });
   resultHost.querySelectorAll("[data-deep-sort]").forEach(button => { button.onclick = () => {
     const key = button.dataset.deepSort;
     resultHost.dataset.sortDirection = key === sortKey ? descending ? "asc" : "desc" : key === "function" ? "asc" : "desc";
     resultHost.dataset.sortKey = key;
-    renderDeepSweepResults(status);
+    renderDeepImprovementTable(status, resultHost);
   }; });
-  $("deepSweepResults").querySelectorAll("[data-deep-result]").forEach(button => {
-    button.onclick = () => openFn(rows[Number(button.dataset.deepResult)].function);
+  resultHost.querySelectorAll("[data-deep-result]").forEach(button => {
+    button.onclick = () => { closeDialog(); openFn(rows[Number(button.dataset.deepResult)].function); };
   });
+}
+function setDeepRunVisibility(running) {
+  $("deepSweepSettings").hidden = running;
+  for (const id of ["deepActivitySection", "deepSweepLogSection"]) $(id).hidden = !running;
 }
 function renderDeepQueueState(status) {
   deepSweepSnapshot = status;
   renderDeepMetricDrawer();
   const running = status.state === "running", left = status.queue_left || 0;
+  setDeepRunVisibility(running);
   // A previous job's error must never contradict the current live state.
   $("deepSweepStatus").textContent = "";
   $("deepSweepStatus").hidden = true;
@@ -1729,7 +1742,6 @@ async function renderDeepSweep() {
     $("deepSweepStart").hidden = false;
     $("deepSweepActive").textContent = "0";
     $("deepSweepRecipes").replaceChildren();
-    $("deepSweepResults").replaceChildren();
     for (const id of ["deepSweepDone", "deepSweepLeft", "deepSweepWaiting"]) $(id).textContent = "0";
     $("deepSweepBar").value = 0;
     $("deepSweepProgressText").textContent = "";
@@ -1811,7 +1823,7 @@ async function followDeepSweep(slug, job) {
     following.finish();
     if (deepSweepFollowing === following) {
       deepSweepFollowing = null;
-      if (S.slug === slug) renderDeepSweep();
+      if (S.slug === slug) { setDeepRunVisibility(false); renderDeepSweep(); }
     }
   }
 }
@@ -1821,7 +1833,7 @@ $("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
 $("deepSweepMetricActive").onclick = () => openDeepMetric("active");
 $("deepSweepStart").onclick = async () => {
   const slug = S.slug, log = $("deepSweepLog");
-  $("deepSweepLogSection").hidden = false;
+  setDeepRunVisibility(true);
   const done = beginWork(log, "Starting deep pass", [$("deepSweepStart")], "Deep pass started");
   let job = null;
   const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
@@ -1832,6 +1844,7 @@ $("deepSweepStart").onclick = async () => {
   } catch (error) {
     showJobError(log, error.message);
     if (S.slug === slug) {
+      setDeepRunVisibility(false);
       $("deepSweepQueueTitle").textContent = "Search could not start";
       $("deepSweepQueueReason").textContent = error.message;
       $("deepSweepStatusRetry").hidden = false;
@@ -1850,13 +1863,13 @@ $("deepSweepReset").onclick = async () => {
   const button = $("deepSweepReset"), panel = $("deepSweepPanel");
   if (button.disabled || panel.dataset.resetting) return;
   if (!confirm("Reset this project’s deep permuter totals and visible improvement lists? Saved code, matches, completed passes and rewrite evidence are kept. Stop active deep searches first.")) return;
-  const slug = S.slug, log = $("deepSweepLog");
+  const slug = S.slug, log = $("deepSweepStatus");
+  log.hidden = false;
   panel.dataset.resetting = slug;
   deepSweepProjectVersion++; // Discard status requests that started before this reset.
   const previousLabel = button.innerHTML;
   button.innerHTML = '<span class="spin-dot" aria-hidden="true"></span> Resetting…';
   button.setAttribute("aria-busy", "true");
-  $("deepSweepLogSection").hidden = false;
   const done = beginWork(log, "Resetting deep permuter metrics", [button, $("deepSweepStart")], "Metrics reset");
   try {
     const status = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"reset-metrics"}});

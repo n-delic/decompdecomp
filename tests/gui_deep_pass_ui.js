@@ -3,12 +3,12 @@ const fs = require("fs"), vm = require("vm"), assert = require("assert");
 const elements = new Map();
 function element(id) {
   if (!elements.has(id)) {
-    let html = "", tables = [], sorts = [], attention = [], metricFunctions = [];
-    elements.set(id, {dataset:{}, textContent:"", value:0, hidden:false, disabled:false,
+    let html = "", tables = [], sorts = [], attention = [], metricFunctions = [], resultFunctions = [];
+    elements.set(id, {classList:{add(){},remove(){}},dataset:{}, textContent:"", value:0, hidden:false, disabled:false,
       get innerHTML() { return html; }, set innerHTML(value) {
-        html = value; metricFunctions = Array.from(value.matchAll(/data-deep-metric-function="(\d+)">([^<]+)/g), m => ({dataset:{deepMetricFunction:m[1]},textContent:m[2],focus(){}})); attention = Array.from(value.matchAll(/data-deep-attention="(\d+)"/g), m => ({dataset:{deepAttention:m[1]}})); sorts = Array.from(value.matchAll(/data-deep-sort="([^"]+)"/g), m => ({dataset:{deepSort:m[1]}})); tables = Array.from(value.matchAll(/class="compiler-table"/g), () => ({scrollTop:0, scrollLeft:0}));
+        html = value; resultFunctions = Array.from(value.matchAll(/data-deep-result="(\d+)"/g), m => ({dataset:{deepResult:m[1]}})); metricFunctions = Array.from(value.matchAll(/data-deep-metric-function="(\d+)">([^<]+)/g), m => ({dataset:{deepMetricFunction:m[1]},textContent:m[2],focus(){}})); attention = Array.from(value.matchAll(/data-deep-attention="(\d+)"/g), m => ({dataset:{deepAttention:m[1]}})); sorts = Array.from(value.matchAll(/data-deep-sort="([^"]+)"/g), m => ({dataset:{deepSort:m[1]}})); tables = Array.from(value.matchAll(/class="compiler-table"/g), () => ({scrollTop:0, scrollLeft:0}));
       },
-      querySelector:()=>null, querySelectorAll(selector) { return selector === "[data-deep-metric-function]" ? metricFunctions : selector === "[data-deep-attention]" ? attention : selector === ".compiler-table" ? tables : selector === "[data-deep-sort]" ? sorts : []; },
+      querySelector:()=>null, querySelectorAll(selector) { return selector === "[data-deep-result]" ? resultFunctions : selector === "[data-deep-metric-function]" ? metricFunctions : selector === "[data-deep-attention]" ? attention : selector === ".compiler-table" ? tables : selector === "[data-deep-sort]" ? sorts : []; },
       replaceChildren() { this.innerHTML = ""; this.textContent = ""; },
       append() {},
     });
@@ -33,7 +33,6 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
 (async()=>{
   ctx.renderDeepSweepResults({has_activity:false, completed:12, queue_done:12, improvements:[]});
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,true);
-  assert.equal(element("deepSweepResults").innerHTML,"");
   assert.equal(element("deepSweepAttention").hidden,true);
   ctx.renderDeepSweepResults({has_activity:true,attention:[{function:"broken",error:"Compile failed",action:"Fix declarations"}]});
   assert.equal(element("deepSweepAttention").hidden,false);
@@ -66,6 +65,9 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepActive").textContent, "0");
   assert.equal(element("deepSweepStart").textContent, "Continue search");
   assert.equal(element("deepSweepStop").hidden, true);
+  assert.equal(element("deepSweepSettings").hidden,false);
+  assert.equal(element("deepActivitySection").hidden,true);
+  assert.equal(element("deepSweepLogSection").hidden,true);
   assert.equal(element("deepSweepBlocked").textContent, "2");
   const lookupIssue={function:'missing',error:"no function 'missing' in 'game-a'. Did you mean: other?",action:'Inspect saved C'};
   ctx.renderDeepQueueState({state:'idle',attention:[lookupIssue],queue_blocked:1});
@@ -91,6 +93,9 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   ctx.renderDeepQueueState({state:"running",progress:{phase:"waiting for host claims or scored C"}});
   assert.match(element("deepSweepQueueReason").textContent, /Waiting for available functions/);
   assert.equal(element("deepSweepStart").hidden, true);
+  assert.equal(element("deepSweepSettings").hidden,true);
+  assert.equal(element("deepActivitySection").hidden,false);
+  assert.equal(element("deepSweepLogSection").hidden,false);
   element("deepSweepStatus").textContent = "Deep pass stopped: Deep pass stopped.";
   ctx.renderDeepQueueState({state:"running",error:"Deep pass stopped.",progress:{workers:[{}]}});
   assert.match(element("deepSweepQueueTitle").textContent,/Running/);
@@ -112,10 +117,11 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepStop").hidden, false);
   assert.equal(element("deepSweepStart").hidden, true);
   const oldFollower=follower;
-  const table=element("deepSweepResults").querySelectorAll(".compiler-table")[0];
+  ctx.openDeepMetric("improved");
+  const table=element("dialogBody").querySelectorAll(".compiler-table")[0];
   table.scrollTop=177; table.scrollLeft=23;
   ctx.renderDeepSweepResults({improvements:[{function:"one",starting_score:10,starting_percent_text:"90%",new_score:5,new_percent_text:"95%"}]});
-  const rebuilt=element("deepSweepResults").querySelectorAll(".compiler-table")[0];
+  const rebuilt=element("dialogBody").querySelectorAll(".compiler-table")[0];
   assert.equal(rebuilt.scrollTop,177); assert.equal(rebuilt.scrollLeft,23);
   const status={improved:3,improvements:[
     {function:"a",starting_score:10,new_score:0,starting_percent_text:"90%",new_percent_text:"100%"},
@@ -124,23 +130,23 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   ctx.renderDeepSweepResults(status);
   assert.equal(element("deepSweepMatched").textContent,"1");
   assert.equal(element("deepSweepImproved").textContent,"3");
-  const order=()=>Array.from(element("deepSweepResults").innerHTML.matchAll(/data-deep-result="\d+">([^<]+)/g),m=>m[1]);
+  const order=()=>Array.from(element("dialogBody").innerHTML.matchAll(/data-deep-result="\d+">([^<]+)/g),m=>m[1]);
   assert.deepEqual(order(),["b","a","c"]);
-  const sort=key=>element("deepSweepResults").querySelectorAll("[data-deep-sort]").find(b=>b.dataset.deepSort===key).onclick();
+  const sort=key=>element("dialogBody").querySelectorAll("[data-deep-sort]").find(b=>b.dataset.deepSort===key).onclick();
   sort("new_percent_text"); assert.deepEqual(order(),["a","c","b"]);
   sort("new_percent_text"); assert.deepEqual(order(),["b","c","a"]);
   ctx.renderDeepSweepResults(status); assert.deepEqual(order(),["b","c","a"]);
   sort("function"); assert.deepEqual(order(),["a","b","c"]);
-  assert.match(element("deepSweepResults").innerHTML,/Improvement/);
-  assert.match(element("deepSweepResults").innerHTML,/class="table-sort"/);
-  assert.doesNotMatch(element("deepSweepResults").innerHTML,/class="link-btn"[^>]*data-deep-sort/);
-  assert.match(element("deepSweepResults").innerHTML, /<details class="deep-result-detail" data-result-detail="a"><summary>Scores & rewrites/);
-  assert.match(element("deepSweepResults").innerHTML, /\+30 points/);
+  assert.match(element("dialogBody").innerHTML,/Improvement/);
+  assert.match(element("dialogBody").innerHTML,/class="table-sort"/);
+  assert.doesNotMatch(element("dialogBody").innerHTML,/class="link-btn"[^>]*data-deep-sort/);
+  assert.match(element("dialogBody").innerHTML, /<details class="deep-result-detail" data-result-detail="a"><summary>Scores & rewrites/);
+  assert.match(element("dialogBody").innerHTML, /\+30 points/);
   element("deepSweepMetricImproved").onclick();
   assert.equal(element("dialogTitle").textContent,"Improved by deep permuter");
-  assert.match(element("dialogBody").innerHTML,/3 functions/);
-  assert.match(element("dialogBody").innerHTML,/Score 100 → 50/);
-  assert.equal(element("dialogBody").querySelectorAll("[data-deep-metric-function]").length,3);
+  assert.match(element("dialogBody").innerHTML,/3 functions improved/);
+  assert.match(element("dialogBody").innerHTML,/Score: 100 → <b>50/);
+  assert.equal(element("dialogBody").querySelectorAll("[data-deep-result]").length,3);
   ctx.closeDialog();
   ctx.openDeepMetric("improved");
   assert.match(element("dialogBody").innerHTML,/3 functions/,"reopening must repopulate the drawer");
@@ -176,11 +182,12 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
     {function:"b",created_at:30,previous_score:100,new_score:50,family:"other_fix",provenance:{}}];
   ctx.renderDeepSweepResults(status);
   assert.doesNotMatch(element("deepSweepRecipes").innerHTML,/Recent verified rewrite improvements|data-deep-win/);
+  ctx.openDeepMetric("improved");
   assert.deepEqual(order(),["a","b","c"]);
-  assert.match(element("deepSweepResults").innerHTML,/2 verified improvements/);
-  assert.match(element("deepSweepResults").innerHTML,/first → last/);
-  assert.match(element("deepSweepResults").innerHTML,/10 → 5/);
-  assert.match(element("deepSweepResults").innerHTML,/Latest improvement/);
+  assert.match(element("dialogBody").innerHTML,/2 verified improvements/);
+  assert.match(element("dialogBody").innerHTML,/first → last/);
+  assert.match(element("dialogBody").innerHTML,/10 → 5/);
+  assert.match(element("dialogBody").innerHTML,/Latest improvement/);
   sort("match_gain"); assert.deepEqual(order(),["b","a","c"]);
   sort("match_gain"); assert.deepEqual(order(),["c","a","b"]);
   oldFollower.callback([], {progress:{workers:[{},{}],functions_tested:156,matches:0}});
@@ -236,9 +243,11 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   ctx.renderDeepQueueState({state:'running',loop:true,progress:{cycle:3,functions_tested:8}});
   assert.match(element('deepSweepRunChecked').textContent,/Pass 3 · looping/);
   element('deepSweepLoop').checked=true;
-  ctx.api=async(url, options)=>{assert.equal(options.body.loop,true);throw new Error('A deep pass is already running');};
+  ctx.api=async(url, options)=>{assert.equal(element('deepSweepSettings').hidden,true,'hide settings before starting request resolves'); assert.equal(options.body.loop,true);throw new Error('A deep pass is already running');};
   vm.runInContext(source.slice(source.indexOf('$("deepSweepStart").onclick'),source.indexOf('$("deepSweepStop").onclick')),ctx);
   await element('deepSweepStart').onclick();
+  assert.equal(element('deepSweepSettings').hidden,false);
+  assert.equal(element('deepSweepLogSection').hidden,true);
   assert.match(element('deepSweepQueueTitle').textContent,/could not start/);
   assert.match(element('deepSweepQueueReason').textContent,/already running/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
@@ -251,3 +260,6 @@ for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','de
 }
 assert.match(panel,/<details class="deep-advanced">[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/details>/);
 assert.match(panel,/<div class="deep-dashboard">/);
+
+assert.ok(panel.indexOf('id="deepSweepSettings"') < panel.indexOf('id="deepSweepStart"'));
+assert.doesNotMatch(html,/id="deepSweepResults"/);

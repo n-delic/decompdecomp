@@ -132,6 +132,7 @@ async function main() {
   for (const failed of [false, true]) {
     const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
     const followed = [];
+    test.ctx.setDeepRunVisibility = () => {};
     test.ctx.followDeepSweep = (...args) => followed.push(args);
     const running = test.ctx.run();
     assert.equal(test.button.disabled, true);
@@ -146,6 +147,7 @@ async function main() {
   // Run again explicitly repeats saved completed turns, even with Advanced unchecked.
   {
     const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    test.ctx.setDeepRunVisibility = () => {};
     test.ctx.deepSweepSnapshot = {has_activity:true, queue_left:0, queue_done:12};
     test.ctx.$("deepSweepRepeat").checked = false;
     let request;
@@ -155,7 +157,7 @@ async function main() {
   }
   for (const outcome of ["done", "error", "cancelled", "detached"]) {
     const test = setup("steering", 'async function followDeepSweep(slug, job) {', '\n}\n', "deepSweepLog", "deepSweepStart");
-    Object.assign(test.ctx, {slug:"test", job:"sweep", deepSweepFollowing:null, renderDeepSweep:()=>{}, renderDeepActivity:()=>{}});
+    Object.assign(test.ctx, {slug:"test", job:"sweep", deepSweepFollowing:null, setDeepRunVisibility:()=>{}, renderDeepSweep:()=>{}, renderDeepActivity:()=>{}});
     const running = test.ctx.run();
     await tick();
     const log = test.log.children[0];
@@ -330,18 +332,19 @@ main().catch((error) => { console.error(error); process.exitCode = 1; });
 
 // Durable deep-pass results show every improvement and keep the function link usable.
 {
-  const source = read("steering"), start = source.indexOf("function renderDeepSweepResults(status) {");
-  const end = source.indexOf("async function renderDeepSweep()", start);
+  const source = read("steering"), start = source.indexOf("function renderDeepImprovementTable(status, resultHost) {");
+  const end = source.indexOf("function setDeepRunVisibility", start);
   const result = {dataset:{}, innerHTML:"", replaceChildren(){this.innerHTML="";}, querySelector:()=>null, querySelectorAll:selector=>selector === "[data-deep-result]" ? [button] : []}, button = {dataset:{deepResult:"0"}};
   let opened;
-  const ctx = {renderDeepMetricDrawer:()=>{}, deepMetricRows:[], S:{slug:"game"}, $:()=>result, esc:s=>String(s).replaceAll("<", "&lt;"), openFn:name=>{opened=name;}};
+  const ctx = {closeDialog:()=>{}, renderDeepMetricDrawer:()=>{}, deepMetricRows:[], S:{slug:"game"}, $:()=>result, esc:s=>String(s).replaceAll("<", "&lt;"), openFn:name=>{opened=name;}};
   vm.createContext(ctx); vm.runInContext(read("rewrite-performance"),ctx); vm.runInContext(source.slice(start,end), ctx);
-  ctx.renderDeepSweepResults({improved:1, improvements:[{function:"f<0", starting_score:50,
-    new_score:25, starting_percent_text:"95.0%", new_percent_text:"97.5%"}]});
+  ctx.resultHost=result;
+  ctx.renderDeepImprovementTable({improved:1, improvements:[{function:"f<0", starting_score:50,
+    new_score:25, starting_percent_text:"95.0%", new_percent_text:"97.5%"}]}, result);
   for (const text of ["1 functions improved", "f&lt;0", "50", "25", "95.0%", "97.5%"])
     assert.ok(result.innerHTML.includes(text));
   button.onclick(); assert.equal(opened,"f<0");
-  ctx.renderDeepSweepResults({improved:0, improvements:[]});
+  ctx.renderDeepImprovementTable({improved:0, improvements:[]}, result);
   assert.ok(!result.innerHTML.includes("<table>"));
 }
 
