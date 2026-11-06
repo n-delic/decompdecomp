@@ -4269,6 +4269,27 @@ scope source while preserving all 2,063 prior C objects and compiler profiles.
   invalid candidates are caught. The same wrapper serves ROM, imported-project
   and deep native searches; the exact judge is unchanged.
 
+### Embedded pointer copies still need initialization on every path
+
+- **Observation:** a native KMC GCC 2.7.2 allocation candidate with
+  `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` reached a 96-byte frame and score 260,
+  versus the retained sound draft's score 22. It assigned a new pointer inside
+  a conditional store address, then read that pointer after the loop. A path
+  that never entered the store left it uninitialized. Clang preflight passed;
+  neither compilation nor the desired frame size established source validity.
+  No match was accepted and no new game compiler call was needed for this review.
+- The shared initialization guard now tracks a single plain pointer copy in an
+  ordinary indirect store's address, such as `*((temp=base)+offset)=value`.
+  Completing that store initializes `temp`; bypassing it does not. The bounded
+  CFG can therefore reject a later read reached without the copy, including
+  regressions of previously initialized bindings. Other references to `temp`,
+  calls in the address, short-circuit/conditional or unevaluated expressions,
+  complex copies and unsupported bindings retain no verdict.
+- Synthetic branch, loop, goto, valid-store and traced generator controls cover
+  this rejection. Private source-only replay rejects the observed candidate and
+  retains its parent. This is a safety-filter regression, not a new matched
+  function, a general equivalence checker or a compiler scheduling repair.
+
 ### A single constant memory store can need a one-shot scope
 
 - Profile: KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.

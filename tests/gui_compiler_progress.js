@@ -22,7 +22,7 @@ assert.equal(fields.get('[data-queue-bar]').max, 4000);
 ctx.renderCompilerProgress({ function: "<synthetic>", tested: 80, combinations: 196, before: 99.72, best: 99.94,
   completed: 3, total: 10, remaining: 7, deferred: 2, improved: 2, exact: 1, profile: ["Example GCC", ["-O2", "-g3"]] });
 assert.equal(fields.get("[data-current]").textContent, "<synthetic>");
-assert.equal(fields.get("[data-queue]").textContent, "3 of 10 functions done · 7 left · 2 queued for another run");
+assert.equal(fields.get("[data-queue]").textContent, "3 of 10 functions done · 7 left · 2 not processed");
 assert.equal(fields.get("[data-queue-bar]").value, 3);
 assert.equal(fields.get("[data-best]").textContent, "99.94%");
 assert.equal(fields.get("[data-bar]").value, 80);

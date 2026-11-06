@@ -126,6 +126,28 @@ def _without_type_only_records(candidate, part, macros):
     return ''.join(result)
 
 
+def _embedded_pointer_copy(text, variable):
+    """Recognize one plain pointer copy in an ordinary indirect store's address.
+
+    Calls/unevaluated builtins and other references to the copied binding stay opaque.
+    Short-circuit and conditional expressions are already excluded by the caller.
+    """
+    if not text.lstrip().startswith('*') or len(re.findall(rf'\b{variable}\b', text)) != 1:
+        return False
+    depth = 0
+    for pos, char in enumerate(text):
+        if char in '([':
+            depth += 1
+        elif char in ')]':
+            depth -= 1
+        elif (char == '=' and depth == 0 and text[pos+1:pos+2] != '='
+              and text[pos-1:pos] not in '<>!=+-*/%&|^'):
+            address = text[:pos]
+            return (not re.search(rf'\b{IDENT}\s*\(', address)
+                    and re.search(rf'\(\s*{variable}\s*=(?!=)\s*{IDENT}\s*\)', address) is not None)
+    return False
+
+
 def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_conditions):
     """True for a possible uninitialized read, False for initialized reads, None for unknown flow."""
     names = {decl['name']}
@@ -174,7 +196,12 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
                 return None
             generates.add(assignment[1])
         elif not contained and re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', text):
-            return None
+            if decl['name'] not in pointers or not _embedded_pointer_copy(text, decl['name']):
+                return None
+            # Completing this ordinary store necessarily evaluates its address. Track the
+            # copy on this CFG edge, not on paths that bypass the whole store.
+            uses.discard(decl['name'])
+            generates.add(decl['name'])
         transfers.append((uses, generates, kills))
     reachable, pending = set(), [flow.entry]
     while pending:

@@ -137,6 +137,61 @@ def test_initialized_pointee_write_and_existing_pointer_remain_allowed():
     assert not unsafe_temporary(existing, existing, 'f')
 
 
+@pytest.mark.parametrize('body,unsafe', [
+    ('if(condition) *((temp=bytes)+1)=3; return *temp;', True),
+    ('while(condition) { *((temp=bytes)+1)=3; condition--; } return *temp;', True),
+    ('goto use; *((temp=bytes)+1)=3; use: return *temp;', True),
+    ('*((temp=bytes)+1)=3; return *temp;', False),
+    ('do { *((temp=bytes)+1)=3; } while(condition); return *temp;', False),
+    ('if(condition) *((temp=bytes)+1)=3; else *((temp=bytes)+2)=4; return *temp;', False),
+])
+def test_pointer_copy_embedded_in_store_participates_in_initialization_flow(body, unsafe):
+    parent = 'int f(int condition, int *bytes) { return *bytes; }'
+    candidate = 'int f(int condition, int *bytes) { int *temp; '+body+' }'
+    assert unsafe_temporary(parent, candidate, 'f') is unsafe
+
+
+@pytest.mark.parametrize('statement', [
+    'consume((temp=bytes));',
+    '*__builtin_choose_expr(0, (temp=bytes), bytes)=3;',
+    'sizeof(*((temp=bytes)+1));',
+    'condition && (*((temp=bytes)+1)=3);',
+    '*((temp=bytes)+*temp)=3;',
+    '*((temp=bytes)+1)=*temp;',
+    '*(temp=lookup())=3;',
+])
+def test_unsupported_embedded_copy_keeps_no_initialization_verdict(statement):
+    parent = 'int f(int condition, int *bytes) { return *bytes; }'
+    candidate = ('int f(int condition, int *bytes) { int *temp; '
+                 'if(condition) '+statement+' return *temp; }')
+    assert not unsafe_temporary(parent, candidate, 'f')
+
+
+def test_existing_embedded_pointer_copy_cannot_lose_initialization():
+    parent = 'int f(int condition, int *bytes) { int *temp; *((temp=bytes)+1)=3; return *temp; }'
+    candidate = parent.replace('*((temp=bytes)+1)=3;', 'if(condition) *((temp=bytes)+1)=3;')
+    assert unsafe_temporary(parent, candidate, 'f')
+
+
+def test_generator_filters_conditional_embedded_capture_and_preserves_lineage(tmp_path):
+    parent = 'int f(int condition, int *bytes) { return *bytes; }'
+    bad = ('int f(int condition, int *bytes) { int *temp; '
+           'if(condition) *((temp=bytes)+1)=3; return *temp; }')
+    good = bad.replace('if(condition) ', '')
+    script = tmp_path/'generator.py'
+    script.write_text('import json,sys\nfor line in sys.stdin:\n'
+                      ' for source in '+repr([bad, good])+':\n'
+                      '  print(json.dumps({"variant":source,"lineage":["perm_temp_for_expr"]}))\n'
+                      ' print(json.dumps({"done":True}),flush=True)\n')
+    gen = permute.Generator([sys.executable, str(script)])
+    try:
+        result = gen.batch(dict(source=parent, function='f'))
+    finally:
+        gen.close()
+    assert result == [good]
+    assert result[0].lineage == ['perm_temp_for_expr']
+
+
 @pytest.mark.parametrize('header', ['typedef volatile int s32;', 'typedef const int s32;'])
 def test_qualified_pointee_alias_has_no_verdict(header):
     assert not unsafe_temporary(PARENT, 'int f(int condition) { s32 *temp; return *temp; }', 'f', header)
