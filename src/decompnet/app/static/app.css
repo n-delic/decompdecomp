@@ -1559,7 +1559,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .compiler-progress[data-mode="function"] .compiler-single-exact { display:block; }
 #fnCompilerTest:has(#fnCompilerProgress:not([hidden])) #fnCompilerHistory { display:none; }
 
-.default-profile-test { margin:20px 0; padding:16px; border:1px solid var(--line); border-radius:var(--r); display:grid; gap:14px; }
+.default-profile-test { margin:24px 0 18px; padding:20px 0 0; border:0; border-top:1px solid var(--line); display:grid; gap:14px; }
 .default-profile-test p { margin:0; }
 .default-profile-counts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }
 .default-profile-counts dt { font-size:12px; color:var(--ink-2); margin-bottom:6px; }
@@ -2008,3 +2008,14 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
   .transfer-controls { grid-template-columns:1fr; gap:8px; }
   .transfer-dashboard .transfer-totals > span { padding:0 10px; }
 }
+
+.profile-test-intro { margin:0 0 18px; line-height:1.6; }
+.profile-test-selection { display:grid; gap:6px; margin-bottom:14px; }
+.profile-test-selection .compiler-arguments { margin:2px 0 0; overflow-wrap:anywhere; white-space:normal; }
+.profile-test-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.profile-test-heading > p { font-weight:650; }
+.profile-test-current:empty, .profile-test-verdict:empty { display:none; }
+.default-profile-counts > div + div { border-left:1px solid var(--line-soft); padding-left:16px; }
+.profile-test-log { border-top:1px solid var(--line); margin-top:20px; padding-top:14px; font-size:12px; color:var(--muted); }
+.profile-test-log > summary { cursor:pointer; }
+.profile-test-verdict { font-size:13px; line-height:1.7; }

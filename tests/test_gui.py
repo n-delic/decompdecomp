@@ -586,3 +586,10 @@ def test_routine_saved_progress_checks_stay_in_the_header():
         pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_quiet_sync.js'))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_compiler_profile_drawer_uses_scope_and_one_progress_display():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_profile_test.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

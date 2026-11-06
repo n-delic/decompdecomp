@@ -48,6 +48,7 @@ def test_only_default_matches_are_checked_and_nothing_is_changed(net, monkeypatc
     assert not out['compatible'] and not out['stale']
     assert out['failures'][0]['function']=='f1'
     assert [p['checked'] for p in progress]==[0,1,2]
+    assert {p['function'] for p in progress[1:]} == {'f0', 'f1'}
     assert all(p['passed']+p['failed']==p['checked'] for p in progress)
     assert net._project('game')['config']==before_config
     assert [dict(r) for r in net.store.all('SELECT * FROM functions ORDER BY id')]==before_rows
