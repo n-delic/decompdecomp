@@ -53,7 +53,7 @@ def test_cache_is_invalidated_by_file_changes_and_alternate_version_matches(tmp_
     cfg = needs(b'other')
     assert romlibrary.find(project(root, 'ps'), cfg, str(lib))['path'] is None
     file.write_bytes(b'other')
-    cfg['rom_versions'] = [{'sha1': hashlib.sha1(b'other').hexdigest()}]
+    cfg['rom_versions'] = [{'version': 'other', 'sha1': hashlib.sha1(b'other').hexdigest()}]
     cfg['sha1'] = '0' * 40
     assert romlibrary.find(project(root, 'ps'), cfg, str(lib))['path'] == str(file)
 
