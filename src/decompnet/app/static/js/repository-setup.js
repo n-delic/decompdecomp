@@ -54,6 +54,9 @@ async function refreshRepositorySetup() {
     if ($("repositorySetupLog")._workBar) $("repositorySetupLog")._workBar.hidden = true;
     $("repositorySetupLog").hidden = true; $("repositorySetupLog").textContent = "";
     $("repositoryOrigin").value = "";
+    $("repositoryGithubOwner").value = "";
+    $("repositoryGithubOwners").replaceChildren();
+    $("repositoryGithubOwnersState").textContent = "";
     $("repositoryGithubName").value = slug + "-progress";
     $("repositoryGithubVisibility").value = "private";
     $("repositorySetupStop").hidden = true;
@@ -77,10 +80,15 @@ async function refreshRepositorySetup() {
 async function setupRepository(action, existingJob = null) {
   if (repositorySetupBusy) return;
   const slug = S.slug, log = $("repositorySetupLog");
+  if (action === "github") {
+    if (!repositorySetupState?.github_create) { showJobError(log, "Close and reopen decompdecomp after updating, then reload Settings. The running backend does not support GitHub repository creation."); return; }
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test($("repositoryGithubOwner").value.trim())) { showJobError(log, "Choose or enter the GitHub account or organization that will own this repository."); return; }
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/.test($("repositoryGithubName").value.trim())) { showJobError(log, "Enter a repository name without an owner or slash."); return; }
+  }
   repositorySetupBusy = true; ++repositorySetupRequest;
   const finish = beginWork(log, "Updating save repository", [$("repositoryInit"), $("repositoryCheckpoint"), $("repositoryOriginGo"), $("repositoryGithubGo"), $("saveGo"), $("repositoryAutoCommit")], "Save repository updated.");
   try {
-    const {job} = existingJob ? {job:existingJob} : await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:$("repositoryOrigin").value.trim(), github_name:$("repositoryGithubName").value.trim(), visibility:$("repositoryGithubVisibility").value}});
+    const {job} = existingJob ? {job:existingJob} : await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:$("repositoryOrigin").value.trim(), github_name:$("repositoryGithubOwner").value.trim()+"/"+$("repositoryGithubName").value.trim(), visibility:$("repositoryGithubVisibility").value}});
     repositorySetupJob = job;
     if (S.slug === slug) $("repositorySetupStop").hidden = false;
     const state = await followJob(job, null, (lines, snapshot) => {
@@ -144,3 +152,24 @@ async function prepareRepositoryCommits(slug, log) {
     if (S.slug === slug && state) renderRepositorySetup(state);
   }
 }
+
+
+let repositoryGithubOwnersBusy = false;
+async function loadRepositoryGithubOwners() {
+  if (repositoryGithubOwnersBusy) return;
+  const slug = S.slug, status = $("repositoryGithubOwnersState");
+  if (!repositorySetupState?.github_create) { status.textContent = "Close and reopen decompdecomp after updating, then reload Settings to load GitHub owners."; return; }
+  repositoryGithubOwnersBusy = true;
+  const finish = beginWork(status, "Loading GitHub accounts and organizations", [$("repositoryGithubOwnersGo")]);
+  try {
+    const state = await api(`/api/repository-github-owners?slug=${encodeURIComponent(slug)}`);
+    if (S.slug !== slug) return;
+    $("repositoryGithubOwners").replaceChildren(...state.owners.map(name => {
+      const option = document.createElement("option"); option.value = name; return option;
+    }));
+    status.textContent = state.warning || "Choose an owner above, or type an organization name. GitHub checks your permission when creating.";
+  } catch (error) { if (S.slug === slug) showJobError(status, error.message); }
+  finally { finish(); repositoryGithubOwnersBusy = false; }
+}
+$("repositoryGithubOwnersGo").onclick = loadRepositoryGithubOwners;
+$("repositoryGithubDetails").ontoggle = () => { if ($("repositoryGithubDetails").open) loadRepositoryGithubOwners(); };

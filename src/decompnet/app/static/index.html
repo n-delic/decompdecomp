@@ -691,9 +691,12 @@
               <p class="small muted" id="repositorySetupState" role="status"></p>
               <div class="row"><button class="ghost small-btn" id="repositoryInit" type="button" hidden>Create Git repository</button><button class="ghost small-btn" id="repositoryCheckpoint" type="button" hidden>Commit saved progress</button></div>
               <div id="repositoryOriginGroup" hidden><label class="field"><span>Origin repository URL</span><input id="repositoryOrigin" placeholder="https://github.com/you/project.git" autocomplete="off" spellcheck="false"></label><button class="ghost small-btn" id="repositoryOriginGo" type="button">Add origin</button><p class="small muted">Origin is where Push sends your commits. Adding it does not fetch or push.</p>
-                <details><summary>Create a new GitHub repository</summary>
+                <details id="repositoryGithubDetails"><summary>Create a new GitHub repository</summary>
                   <p class="small muted">Create an empty repository and connect it as origin. Push your saved commits when ready.</p>
-                  <label class="field"><span>Repository name (or owner/name)</span><input id="repositoryGithubName" placeholder="my-game-progress" autocomplete="off" spellcheck="false" maxlength="140"></label>
+                  <label class="field"><span>GitHub owner (account or organization)</span><input id="repositoryGithubOwner" list="repositoryGithubOwners" placeholder="Choose or enter an owner" autocomplete="off" spellcheck="false"><datalist id="repositoryGithubOwners"></datalist></label>
+                  <button class="ghost small-btn" id="repositoryGithubOwnersGo" type="button">Load GitHub accounts and organizations</button>
+                  <p class="small muted" id="repositoryGithubOwnersState" role="status"></p>
+                  <label class="field"><span>Repository name</span><input id="repositoryGithubName" placeholder="my-game-progress" autocomplete="off" spellcheck="false" maxlength="100"></label>
                   <label class="field"><span>Visibility</span><select id="repositoryGithubVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
                   <p class="small muted">Uses GitHub CLI on this computer. Install it from cli.github.com, then run <code>gh auth login --hostname github.com</code> in a terminal.</p>
                   <button class="primary small-btn" id="repositoryGithubGo" type="button">Create GitHub repository and add origin</button>

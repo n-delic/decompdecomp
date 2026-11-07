@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/repository-setup.js'),'utf8');
-const els={},$=id=>els[id]??={value:'',textContent:'',hidden:true,disabled:false};
+const els={},$=id=>els[id]??={value:'',textContent:'',hidden:true,disabled:false,replaceChildren(){}};
 let resolve, posted, update, finish=0;
 const ctx={$,S:{slug:'game',ov:{save_folder:'/save'}},Date,encodeURIComponent,refreshRepositoryPush(){},updateWorkProgress(){},
  api(url,options){if(options){posted=options.body;return Promise.resolve({job:'setup'});}return new Promise(r=>resolve=r);},
@@ -15,7 +15,8 @@ vm.createContext(ctx);vm.runInContext(source,ctx);
  $('saveFolder').value='/new';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,true);assert.match($('repositorySetupState').textContent,/Save now/);
  $('saveFolder').value='/save';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,false);
  const init=$('repositoryInit').onclick();await init;assert.equal(posted.action,'init');assert.equal(finish,1);assert.equal($('repositoryOriginGroup').hidden,false);
- $('repositoryGithubName').value='person/progress';$('repositoryGithubVisibility').value='public';
+ ctx.renderRepositorySetup({folder:'/save',root:'/save',repository:true,portable:true,checkpoint:true,linked:true,origin:false,github_create:true});
+ $('repositoryGithubOwner').value='person';$('repositoryGithubName').value='progress';$('repositoryGithubVisibility').value='public';
  await $('repositoryGithubGo').onclick();
  assert.equal(posted.action,'github');assert.equal(posted.github_name,'person/progress');assert.equal(posted.visibility,'public');
  update(['No old project logs'],{});
@@ -28,7 +29,7 @@ await simpleSetupRegression();
 })().catch(e=>{console.error(e);process.exit(1);});
 
 async function loadingRegression() {
-  const fields={},field=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false};
+  const fields={},field=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false,replaceChildren(){}};
   const pending=[];
   const context={$:field,S:{slug:'first',ov:{overview_pending:true}},Date,encodeURIComponent,
     refreshRepositoryPush(){},api(){return new Promise(resolve=>pending.push(resolve));}};
@@ -96,7 +97,7 @@ async function loadingRegression() {
 }
 
 async function simpleSetupRegression() {
- const fields={},get=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false};
+ const fields={},get=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false,replaceChildren(){}};
  const actions=[];let failure=false, projectSwitch=false;
  const state={folder:'/repo/progress',save_folder:'/repo/progress',root:'/repo',repository:true,portable:true,checkpoint:true,linked:false,origin:true,build_folder:'/repo'};
  const context={$:get,S:{slug:'game',ov:{}},Date,encodeURIComponent,refreshRepositoryPush(){},updateWorkProgress(){},
@@ -139,7 +140,7 @@ async function simpleSetupRegression() {
 }
 
 (async()=>{
-  const fields={},field=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false};
+  const fields={},field=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false,replaceChildren(){}};
   let posts=0, follows=0, complete;
   const context={$:field,S:{slug:'game',ov:{save_folder:'/save'}},Date,encodeURIComponent,
     refreshRepositoryPush(){}, updateWorkProgress(){},showJobError(){},
@@ -153,4 +154,22 @@ async function simpleSetupRegression() {
   complete({folder:'/save',root:'/save',repository:true,portable:true,checkpoint:true,linked:true,origin:true});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(field('repositoryOriginGroup').hidden,true);
+})().catch(e=>{console.error(e);process.exit(1);});
+
+(async()=>{
+  const fields={},field=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false,replaceChildren(...items){this.items=items;}};
+  let posts=0;
+  const context={$:field,S:{slug:'game'},Date,encodeURIComponent,document:{createElement(){return{};}},
+    refreshRepositoryPush(){},showJobError(log,message){log.textContent=message;},
+    beginWork(){return()=>{};},api(url,options){if(options)posts++;return Promise.resolve({owners:['person','Studio'],warning:''});}};
+  vm.createContext(context);vm.runInContext(source,context);
+  context.renderRepositorySetup({folder:'/save',root:'/save',repository:true,portable:true,origin:false});
+  await field('repositoryGithubGo').onclick();
+  assert.match(field('repositorySetupLog').textContent,/Close and reopen/);assert.equal(posts,0);
+  context.renderRepositorySetup({folder:'/save',root:'/save',repository:true,portable:true,origin:false,github_create:true});
+  await field('repositoryGithubGo').onclick();
+  assert.match(field('repositorySetupLog').textContent,/Choose or enter/);assert.equal(posts,0);
+  await field('repositoryGithubOwnersGo').onclick();
+  assert.deepEqual(field('repositoryGithubOwners').items.map(item=>item.value),['person','Studio']);
+  assert.equal(field('repositoryGithubOwner').value,''); // Choosing an owner is deliberate.
 })().catch(e=>{console.error(e);process.exit(1);});

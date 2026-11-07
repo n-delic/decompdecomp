@@ -46,6 +46,17 @@ def register(app):
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
 
+    @app.mcp.custom_route('/api/repository-github-owners', methods=['GET'])
+    async def github_owners(request):
+        if bad := app.guard(request):return bad
+        try:
+            from .. import repository_github, repository_setup
+            slug = str(request.query_params.get('slug', ''))
+            path, _ = await app.call(repository_setup.folder, app.net, slug)
+            return JSONResponse(await app.call(repository_github.owners, path))
+        except (NetworkError, ValueError, KeyError, OSError) as error:
+            return app.fail(error)
+
     @app.mcp.custom_route('/api/repository-score-commits', methods=['POST'])
     async def score_commits(request):
         if bad := app.guard(request, write=True):return bad
