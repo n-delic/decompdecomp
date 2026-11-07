@@ -51,6 +51,14 @@ class Antigravity(Agent):
     def config_model(self) -> str | None:
         return read_json(agy_settings()).get("model") or None
 
+    def resolve_model(self, model: str, path: str | None) -> str:
+        """settings.json keeps the model's display name ("Gemini 3.8 Flash (High)"); `agy --model` takes the slug
+        `agy models` lists ("gemini-3.8-flash-high"). Only the cached list is read: running `agy models` starts the
+        MCP servers in the user's settings, which starting a helper mustn't do. Unmapped: "" (no --model, as before)."""
+        name = model.strip()
+        return next((str(row["id"]) for row in self.models(path, run=False)
+                     if name and name in (row.get("id"), row.get("name"))), "")
+
     def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
         # The workspace's own MCP config; tool permission comes from the user's rule for decomp's tools (AGY_ALLOW).
         # Antigravity CLI 1.1.3 ignored it and loaded only the user's settings; 1.4.2 reads it (October 2026: its

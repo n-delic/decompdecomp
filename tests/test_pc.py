@@ -47,6 +47,27 @@ def test_decorated_names():
     assert scratch_pe.decorate("func_00401000", "__thiscall", 4, 2) == "@func_00401000@12"  # this, unused edx, one int
 
 
+@pytest.mark.parametrize("version", ["6.0", "7.0", "7.1"])
+@pytest.mark.skipif(toolchains.installed("msvc") is None
+                    or (sys.platform != "win32" and toolchains.installed("wibo") is None),
+                    reason="needs Visual C++ 6.0-7.1 (msvc, proprietary), and wibo off Windows")
+def test_each_visual_cpp_of_the_pack_compiles_on_this_computer(tmp_path, version):
+    """On Windows, Visual C++ 7.1 couldn't start: its archive has no C runtime (wibo brings its own on Linux and
+    macOS), so Windows stopped cl.exe with "MSVCR71.dll was not found", a dialog on the desktop for every compile."""
+    if sys.platform == "win32":  # a compiler that can't start fails the test, instead of waiting on Windows' dialog
+        import ctypes
+
+        ctypes.windll.kernel32.SetErrorMode(0x8003)  # SEM_FAILCRITICALERRORS | NOGPFAULTERRORBOX | NOOPENFILEERRORBOX
+    folder = toolchains.path("msvc") / version
+    cl = next(p for p in (folder / "Bin").iterdir() if p.name.lower() == "cl.exe")
+    (tmp_path / "t.c").write_text("int add(int a, int b) { return a + b; }\n")
+    wibo = [] if sys.platform == "win32" else [str(toolchains.binary("wibo"))]
+    done = subprocess.run([*wibo, str(cl), "/nologo", "/c", f"/I{folder / 'Include'}", "t.c"], cwd=tmp_path,
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0 and (tmp_path / "t.obj").exists(), done.stdout + done.stderr
+
+
+
 def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp_path, monkeypatch):
     """The compiler and its includes may live in a Windows user folder with spaces or shell characters."""
     root = tmp_path / "Project with spaces ü"
