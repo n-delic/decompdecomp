@@ -2148,3 +2148,13 @@ def test_scoped_judging_keeps_saved_file_change_guard(project, monkeypatch):
     with net.progress.judging('game', synchronize=False):
         with pytest.raises(NetworkError, match='Saved files changed'):
             net.progress.check_result()
+
+
+def test_first_sync_keeps_private_verified_header_bindings():
+    from decompnet.app import progress, saves
+    local = {"headers": {"": "common.h", "exact_match_1_2": "common_exact_match_1_2.h"},
+             "function_headers": {"func_1": "exact_match_1_2"}}
+    projected = {saves.MANIFEST: json.dumps(local), "include/common_exact_match_1_2.h": "typedef int s32;"}
+    merged, pending = progress._initial_merge({"headers": {"": "common.h"}}, projected, {})
+    assert merged["function_headers"] == local["function_headers"]
+    assert pending["include/common_exact_match_1_2.h"] == "typedef int s32;"

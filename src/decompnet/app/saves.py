@@ -294,7 +294,7 @@ def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | No
     # Packed sources are nonempty hash blobs; only large text is packed. Presence
     # checks must use physical rows so they don't inflate either source again.
     matched = "r.status='matched' AND r.matched_source IS NOT NULL AND r.matched_source != ''"
-    columns = ("r.name, r.vram, r.size, r.status, r.matched_agent_id, r.best_score, "
+    columns = ("r.name, r.unit, r.vram, r.size, r.status, r.matched_agent_id, r.best_score, "
                "r.best_agent_id, r.readable, r.meta, "
                "CASE WHEN r.matched_source IS NOT NULL AND r.matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
                "CASE WHEN r.best_source IS NOT NULL AND r.best_source != '' THEN 1 ELSE 0 END AS has_best")
@@ -350,6 +350,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "auto_compiler": cfg.get("auto_compiler"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
+        "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith("exact_match_")},
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
         "symbols": [dict(r) for r in store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
@@ -796,6 +797,12 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                            "VALUES(?,?,?,?,?,?,?)", (pid, net._next_version(db, pid), header, agents['restored'],
                                                      "restored from a save", time.time(), unit))
+        # Exact matches may retain a private header while the shared header moves on.
+        # Restore that binding before compilation; older saves have no bindings.
+        for name, unit in (manifest.get("function_headers") or {}).items():
+            check_cancel()
+            if isinstance(unit, str) and unit.startswith("exact_match_") and unit in (manifest.get("headers") or {}):
+                db.execute("UPDATE functions SET unit=? WHERE project_id=? AND name=?", (unit, pid, name))
         for text in manifest.get("knowledge") or []:
             check_cancel()
             if not db.execute("SELECT 1 FROM knowledge WHERE project_id=? AND text=?", (pid, text)).fetchone():
