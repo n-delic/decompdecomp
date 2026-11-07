@@ -138,6 +138,54 @@ def _hash_mismatch(tail: str) -> str | None:
             "from). Or start the game from your own copy instead: choose New project → Open a game file.")
 
 
+MADE_FROM_MAX = 2000  # targets followed up from a build's failures (failed_units): a few levels in practice
+QUERY_BATCH = 50  # targets per `ninja -t query`
+# never_defined: macros compilers define themselves without a leading underscore (IDO's, on SGI and N64 code; the
+# pinned KMC GCC 2.7.2's MACH, EE-GCC 2.96's R5900, read off their `-dM -E`; Windows projects' own WIN32), where the
+# project's files may never mention them
+PREDEFINED = {"LANGUAGE_C", "LANGUAGE_ASSEMBLY", "MIPSEB", "MIPSEL", "R3000", "R4000", "R5900", "MACH", "WIN32",
+              "WIN64"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".cp", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}
+BUILD_SUFFIXES = {".py", ".ninja", ".mk", ".json", ".toml", ".yml", ".yaml", ".cmake", ".sh", ".bat", ".ps1", ".lcf", ".ld"}
+BUILD_FILES = {"Makefile", "makefile", "GNUmakefile", "CMakeLists.txt"}
+NOT_SEARCHED = {".git", "build", "orig", "extract", "node_modules", STATE}
+SEARCH_MAX = 16 << 20  # bigger files aren't sources or build files
+
+
+def project_macro(name: str) -> bool:
+    """Whether a macro may be the project's own rather than the compiler's: those start with "_", have lowercase
+    letters (`mips`, `unix`) or are known ones (PREDEFINED)."""
+    return not name.startswith("_") and name == name.upper() and name not in PREDEFINED
+
+
+def _ninja_where(args: list[str]) -> list[str]:
+    """Of a project's ninja arguments (objdiff.json `custom_args`), the ones that say which build it is: `-f FILE`
+    and `-C DIR`, apart or joined (`-fother.ninja`). Targets and the rest (`-j8`, `all_source`) aren't a query's."""
+    out, i = [], 0
+    while i < len(args):
+        a = str(args[i])
+        if a in ("-f", "-C") and i + 1 < len(args):
+            out += [a, str(args[i + 1])]
+            i += 1
+        elif a[:2] in ("-f", "-C") and len(a) > 2:
+            out.append(a)
+        i += 1
+    return out
+
+
+def _query_outputs(text: str) -> set[str]:
+    """The targets under "outputs:" in `ninja -t query`'s answer: what each queried target is an input of."""
+    found, section = set(), ""
+    for line in text.splitlines():
+        if not line.startswith(" "):
+            section = ""  # the next queried target
+        elif not line.startswith("    "):
+            section = line.strip().split(":")[0]  # "input", "outputs", "validations"
+        elif section == "outputs":
+            found.add(line.strip())
+    return found
+
+
 class ForkProject:
     def __init__(self, root: Path, platform: str = ""):
         self.root = Path(root)
@@ -688,9 +736,63 @@ class ForkProject:
         return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=600)
 
     def failed_units(self, targets: list[str]) -> set[str]:
-        """Units whose source object is among the build's failed targets."""
-        want = {os.path.normpath(t) for t in targets}
+        """Units whose source object the build couldn't make: it failed, or a step it's made from did. A unit built
+        in steps (objects linked into one, a generated source) reports only the step: `ninja -k 0` never tries what
+        depends on it. Counting the object alone, an x86 game's edits that broke such a step were kept as breaking
+        nothing, and the next agent to compile there was told the file was broken before it came."""
+        want = {os.path.normpath(t) for t in [*targets, *self._made_from(targets)]}
         return {u.name for u in self.units() if u.base is not None and os.path.normpath(os.path.relpath(u.base, self.root)) in want}
+
+    def never_defined(self, names: set[str]) -> set[str]:
+        """Which of these macros no build of the project can define: not the compiler's own (a name that starts with
+        "_" or has a lowercase letter, or one compilers are known to predefine), not #defined in any of its sources,
+        and named in none of its build files (a -D, a configure script). What csource.hidden_by goes by."""
+        left = {n for n in names if project_macro(n)}
+        if not left:
+            return set()
+        # (after -D or /D too: `/DNAME` has no word boundary before the name)
+        words = re.compile(r"(?:\b|(?<=[-/]D))(" + "|".join(map(re.escape, sorted(left))) + r")\b")
+        defines = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(" + "|".join(map(re.escape, sorted(left))) + r")\b", re.M)
+        for d, dirs, files in os.walk(self.root):
+            dirs[:] = [x for x in dirs if x not in NOT_SEARCHED]
+            for f in files:
+                p = Path(d) / f
+                source = p.suffix.lower() in SOURCE_SUFFIXES
+                if not source and p.suffix.lower() not in BUILD_SUFFIXES and f not in BUILD_FILES:
+                    continue
+                try:
+                    if p.stat().st_size > SEARCH_MAX:
+                        continue
+                    text = p.read_text(errors="replace", encoding="utf-8")
+                except OSError:
+                    continue
+                left -= set((defines if source else words).findall(text))
+                if not left:
+                    return set()
+        return left
+
+    def _made_from(self, targets: list[str]) -> set[str]:
+        """Everything the build makes from these targets, all the way up (ninja's `-t query`, on the build file and
+        folder the project's `custom_args` give ninja). A make-built project has no such query: nothing, so a step's
+        failure there counts against its own target alone, as before (ROADMAP.md)."""
+        cfg = self.objdiff_config()
+        make = cfg.get("custom_make") or "make"
+        if not targets or not (make == "ninja" or Path(make).name.startswith("ninja")):
+            return set()
+        tool = [_tool(make) or make, *_ninja_where(cfg.get("custom_args", []))]
+        found: set[str] = set()
+        todo = list(dict.fromkeys(targets))
+        while todo and len(found) < MADE_FROM_MAX:
+            batch, todo = todo[:QUERY_BATCH], todo[QUERY_BATCH:]
+            try:
+                out = subprocess.run([*tool, "-t", "query", *batch], cwd=self.root, capture_output=True, text=True,
+                                     errors="replace", encoding="utf-8", timeout=60, creationflags=NO_WINDOW).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                break
+            for t in _query_outputs(out) - found:
+                found.add(t)
+                todo.append(t)
+        return found
 
     def _all_source(self) -> bool:
         """dtk-template's `all_source`: every unit's source object, including units the game's link doesn't use yet
