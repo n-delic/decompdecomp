@@ -237,9 +237,9 @@ def entry_source(fn, source, header):
     return rewrite(source), rewrite(header)
 
 
-def verify(net,slug,agent,function,source,evidence=None):
+def verify(net,slug,agent,function,source,evidence=None, *, preserve_exact=False):
     key,item=save(net,slug,'host',agent,function,source,evidence)
-    result=retry(net,slug,key,recover_profiles=bool(evidence))
+    result=retry(net,slug,key,recover_profiles=bool(evidence), **({'preserve_exact':True} if preserve_exact else {}))
     if not result['matched']:
         # The client finished its local exact candidate. A pending host review must not strand its next claim.
         with net.project_store(slug).tx() as db:
@@ -248,7 +248,7 @@ def verify(net,slug,agent,function,source,evidence=None):
     return result
 
 
-def retry(net,slug,key, *, recover_profiles=True, progress=None):
+def retry(net,slug,key, *, recover_profiles=True, progress=None, preserve_exact=False):
     report=progress or (lambda value:None)
     report({'phase':'Loading saved submission'})
     proj=net.project_row(slug)
@@ -343,7 +343,7 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
                     try:
                         expected=source_preparation.inputs(net,net.project_row(slug),net._function(fn['name'],slug))
                         prepared_evidence.promote_measured(net,net.project_row(slug),net._function(fn['name'],slug),
-                                                          source,header,profile,agent,expected)
+                                                          source,header,profile,agent,expected, **({'preserve_exact':True} if preserve_exact else {}))
                         result.update(matched=True,score=0,pending=False,compiler=profile)
                         break
                     except NetworkError as error:

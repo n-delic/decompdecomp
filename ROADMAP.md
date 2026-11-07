@@ -3143,3 +3143,9 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 ### Guarded-return discovery from the saved checkpoint
 
 Done: bounded MIPS return-register reaching definitions (including branch-likely slots/traps), direct-caller use summaries, diagnostic-only final-guard/partial-return plus scalar-lifetime pairs even when the first edit regresses, mapped middle quotient sites and heuristic depth ranking, scoped negative diagnostics and seed-free private replay with independent linked verification. No signatures or callers change automatically. See docs/REVIEWED_SEARCH_SEEDS.md. Non-MIPS return-path readers, broader private-prototype shapes, imported builds and room guests remain explicit gaps; ordinary repairs remain available.
+
+
+### Room match reconciliation
+
+- Done: host-requested ROM match inventories, target/location comparison, missing source/header/compiler bundle transfer, host byte verification, per-client/function outcomes, stale pending cleanup, Stop and drawer reattachment. Online clients advertise support through the independent heartbeat; offline/older clients are reported.
+- Planned: equivalent reconciliation for imported source-tree rooms using their build and objdiff verification. ROM portable bundles cannot substitute for those source trees.

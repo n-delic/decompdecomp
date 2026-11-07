@@ -215,7 +215,7 @@ def retry_inputs(expected, current):
     return bool(changed) and set(changed) <= {'symbols', 'build files'}
 
 
-def promote_measured(net, proj, fn, source, header, settings, agent, expected):
+def promote_measured(net, proj, fn, source, header, settings, agent, expected, *, preserve_exact=False):
     """At most two full checks; exclusive callers keep their lease, side searches freeze all inputs."""
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Automatic prepared bundles require a local ROM project.')
@@ -230,7 +230,7 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
         if actual != expected and retry_inputs(expected, actual):
             expected = actual
         try:
-            return _promote_measured(net, fresh, current, source, header, settings, agent, expected)
+            return _promote_measured(net, fresh, current, source, header, settings, agent, expected, preserve_exact=preserve_exact)
         except NetworkError as error:
             latest = net._function(fn['name'], proj['slug'])
             state = prep.inputs(net, net.project_row(proj['slug']), latest)
@@ -245,7 +245,7 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
             raise
 
 
-def _promote_measured(net, proj, fn, source, header, settings, agent, expected):
+def _promote_measured(net, proj, fn, source, header, settings, agent, expected, *, preserve_exact=False):
     """Recompile under frozen inputs; only an explicit ROM byte/data verdict wins."""
     from .compiler_context import acceptable, single_source
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
@@ -254,6 +254,9 @@ def _promote_measured(net, proj, fn, source, header, settings, agent, expected):
     if current['status']!='open' or prep.inputs(net,fresh,current)!=expected:
         raise NetworkError('Prepared inputs changed before automatic recheck. Run preparation again.')
     private={**dict(fresh),'config':json.dumps(scoped_config(fresh,current,settings))}
+    if preserve_exact:
+        from .exact_match_inputs import capture
+        exact_inputs=capture(net,private,current,{'header':header},source)
     result=net._compile(private,header,source,current)
     if result.ok and not acceptable(net,proj,fn,result.obj):
         from .function_names import canonical_source
@@ -270,9 +273,15 @@ def _promote_measured(net, proj, fn, source, header, settings, agent, expected):
         detail='; '.join(problems) or 'Compiled instructions or referenced data differ from the original bytes.'
         raise NetworkError('Automatic bundle recheck failed linked-byte/data verification. '+detail)
     # _record atomically rechecks the claim/inputs and publishes context, profile and source.
-    net._record(current,agent,0,source,0,matched=True,via='local-source-auto-exact',
-                effective_settings=result.effective_settings,prepared_header=header,
-                prepared_inputs=expected,prepared_compiler=settings)
+    if preserve_exact:
+        # Isolation may have recompiled a smaller source/header, under the same frozen target.
+        exact_inputs.update(source=source,header=header)
+        net._record(current,agent,0,source,0,matched=True,via='room-reconcile-exact',
+                    effective_settings=result.effective_settings,exact_inputs=exact_inputs)
+    else:
+        net._record(current,agent,0,source,0,matched=True,via='local-source-auto-exact',
+                    effective_settings=result.effective_settings,prepared_header=header,
+                    prepared_inputs=expected,prepared_compiler=settings)
     return True
 
 

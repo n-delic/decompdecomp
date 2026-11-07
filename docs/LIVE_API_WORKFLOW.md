@@ -308,3 +308,10 @@ Improvement batches follow the judge’s context inheritance: an overlay or sour
 An exact compiler-application recheck retains the source, header and compiler profile that produced its byte-identical verdict. Saving progress, updating usage totals or changing another function's settings does not invalidate it. If a shared header changes during compilation, the verified header becomes private to the matched function; newer shared work remains intact. A concurrent toolchain/flag change is preserved for other functions while this function keeps its verified profile. Profile, context, match evidence and claim release publish atomically.
 
 Target identity, boundaries, symbols, game/ABI identity, build files, compiler installation and unknown build settings remain checked before publication. Changed targets must be checked against their new bytes; a percentage alone cannot create a match. Ordinary non-exact attempts retain their existing claim and input protections.
+
+
+### Reconciling room matches
+
+On the host, Sharing → Review pending matches → Reconcile room matches requests inventories from connected clients. Update both host and clients first. Clients compare matched functions by ROM offset, address, size and target hash; names may differ. Only missing bundles travel, with the client's exact source, private header and compiler flags. The host recompiles and verifies linked bytes before applying anything; a busy agent yields only after a verified match is saved.
+
+The drawer reports inventory totals, matches already shared, applied results and failures by client/function. Offline or older clients are identified explicitly. Reopen the drawer to attach to the active job or read the saved report. Stop keeps verified results; a fresh reconciliation inventories again and skips matches already held by the host. A disconnected transfer remains identifiable in the report and can be retried with another run. No ROM bytes leave either computer. Imported source-tree rooms retain their existing verification flow; portable reconciliation currently supports ROM projects.
