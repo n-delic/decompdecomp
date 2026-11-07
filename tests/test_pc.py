@@ -2666,6 +2666,7 @@ def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tm
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
     rows = [_row(0x401000, 0x401009), _row(0x401009, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401033)]
+    monkeypatch.setattr(scratch_pe, "ensure_ghidra", lambda log: None)  # analysis is synthetic, no tool download
     monkeypatch.setattr(ghidra, "functions", lambda program, timeout=3600: rows)
     with pytest.raises(NetworkError, match="isn't this project's program"):
         net.forks.reimport("p", ROOT / "README.md")
