@@ -644,7 +644,8 @@ $("deleteBtn").onclick = () => {
   };
 };
 
-let compilerRows = [], compilerJob = null, compilerJobSlug = null, compilerResultFilter = "improved";
+let compilerRows = [], compilerJob = null, compilerJobSlug = null, compilerResultsSlug = null;
+let compilerHasRun = false, compilerResultFilter = "all";
 
 function compilerScope() {
   const used = $("compilerUsedProfilesOnly"), flags = $("compilerFlagsOnly");
@@ -681,22 +682,24 @@ function renderCompilerProgress(p, finished = false) {
     `${p.applied || 0} applied · review remaining results below` : p.profile ?
       `Best settings: ${p.profile[0]} ${p.profile[1].join(" ")}` : "Comparing the saved C. Compiler settings stay unchanged.");
   box.dataset.improved = String(p.best != null && (p.before == null || p.best > p.before + .001));
-  if (p.results) { compilerRows = p.results; renderCompilerResults(); }
+  if (p.results) { compilerRows = p.results; compilerHasRun = true; renderCompilerResults(); }
 }
 
 function renderCompilerResults() {
-  const box = $("compilerImprovements"), filtered = compilerRows.filter(r =>
+  const box = $("compilerImprovements");
+  box.hidden = !compilerHasRun;
+  if (!compilerHasRun) { $("compilerResultFilters").hidden = true; box.replaceChildren(); return; }
+  const filtered = compilerRows.filter(r =>
     compilerResultFilter === "all" || compilerResultFilter === "improved" && r.improved || compilerResultFilter === "exact" && r.exact);
   $("compilerResultFilters").hidden = !compilerRows.length;
   const sort = $("compilerResultSort")?.value || "best";
   const ordered = filtered.slice().sort((a, b) => sort === "name" ? a.function.localeCompare(b.function)
     : sort === "recent" ? (b.completed_at || 0) - (a.completed_at || 0)
       : (b.best ?? -1) - (a.best ?? -1));
-  box.innerHTML = `<label class="small">Sort results <select id="compilerResultSort"><option value="best">Best score</option><option value="name">Function</option><option value="recent">Most recent</option></select></label>`
+  box.innerHTML = (compilerRows.length ? `<label class="field compiler-result-sort"><span>Sort results</span><select id="compilerResultSort"><option value="best">Best score</option><option value="name">Function</option><option value="recent">Most recent</option></select></label>` : "")
     + (ordered.length ? ordered.map(r => `<details class="compiler-result"><summary><b>${esc(r.function)}</b> · ${r.before == null ? "no previous score" : r.before.toFixed(2) + "%"} → ${r.best == null ? "no result" : r.best.toFixed(2) + "%"}${r.exact ? " · exact match" : ""}${r.applied ? " · applied" : ""}${r.stale ? " · inputs changed: retest" : ""}</summary>
-      <div class="compiler-result-actions">${(r.ranked || []).filter(p => p.percent != null && (p.exact || r.before == null || p.percent > r.before + .001)).slice(0, 12).map(p => `<button class="ghost small-btn" type="button" data-apply-function="${esc(r.function)}" data-apply-toolchain="${esc(p.toolchain)}" data-apply-flags="${esc(JSON.stringify(p.flags))}"${r.stale || r.applied ? " disabled" : ""}>${esc(p.toolchain)} ${esc(p.flags.join(" "))} · ${p.percent.toFixed(2)}%${p.exact ? " exact" : ""}</button>`).join("")}</div>${r.apply_error ? `<p class="err-msg">${esc(r.apply_error)}</p>` : ""}</details>`).join("") : `<p class="small muted">No results in this view.</p>`);
-  $("compilerResultSort").value = sort;
-  $("compilerResultSort").onchange = renderCompilerResults;
+      <div class="compiler-result-actions">${(r.ranked || []).filter(p => p.percent != null && (p.exact || r.before == null || p.percent > r.before + .001)).slice(0, 12).map(p => `<button class="ghost small-btn" type="button" data-apply-function="${esc(r.function)}" data-apply-toolchain="${esc(p.toolchain)}" data-apply-flags="${esc(JSON.stringify(p.flags))}"${r.stale || r.applied ? " disabled" : ""}>${esc(p.toolchain)} ${esc(p.flags.join(" "))} · ${p.percent.toFixed(2)}%${p.exact ? " exact" : ""}</button>`).join("")}</div>${r.apply_error ? `<p class="err-msg">${esc(r.apply_error)}</p>` : ""}</details>`).join("") : `<p class="small muted">${compilerRows.length ? "No results in this view." : "No eligible saved C attempts were compared yet."}</p>`);
+  if (compilerRows.length) { $("compilerResultSort").value = sort; $("compilerResultSort").onchange = renderCompilerResults; }
 }
 $("compilerResultFilters").onclick = (e) => {
   const filter = e.target.closest("[data-result-filter]");
@@ -705,11 +708,16 @@ $("compilerResultFilters").onclick = (e) => {
 
 async function loadCompilerComparison() {
   const slug = S.slug;
+  if (compilerResultsSlug !== slug) {
+    compilerResultsSlug = slug; compilerRows = []; compilerHasRun = false; compilerResultFilter = "all";
+    renderCompilerResults();
+  }
   compilerScope();
   try {
     const data = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}&compiler_results=1`);
     if (S.slug !== slug) return;
     compilerRows = data.results || [];
+    compilerHasRun = !!data.ran;
     renderCompilerResults();
     if (data.job && compilerJob !== data.job) followCompilerComparison(data.job, slug);
   } catch (e) { $("compilerImprovements").textContent = e.message; }

@@ -130,7 +130,8 @@ def register(app: App) -> None:
             return {"job": jid}
         if request.query_params.get("compiler_results") == "1":
             active = comparison_jobs.get(slug)
-            return {"results": net.compiler_comparison_results(slug),
+            results = net.compiler_comparison_results(slug)
+            return {"results": results, "ran": bool(results) or active is not None,
                     "job": active if active and jobs.jobs.get(active, {}).get("state") == "running" else None}
         return net.compiler_answer(slug, check_now=request.method == "POST")
 

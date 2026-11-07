@@ -68,6 +68,8 @@ body.locked { overflow: hidden; }
 h1, h2, h3, p, dl, dd, ol { margin: 0; }
 ol { padding: 0; list-style: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
+select { box-sizing: border-box; min-width: 0; max-width: 100%; height: 36px; border: 1px solid var(--line);
+  border-radius: var(--r); background-color: var(--raise); padding: 0 10px; font-size: 14px; color: var(--ink); }
 a { color: inherit; }
 code, pre, .mono { font-family: var(--mono); }
 .muted { color: var(--muted); }
@@ -1042,3 +1044,4 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-result { padding: .7rem; border: 1px solid var(--line); border-radius: .4rem; }
 .compiler-result summary { cursor: pointer; }
 .compiler-result-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+.compiler-result-sort { width: min(100%, 220px); }
