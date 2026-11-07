@@ -1422,7 +1422,7 @@ $("testInstalledCompilers").onclick = () => {
   if (button._compilerRun) return button._compilerRun.cancel();
   return followCompilerComparison();
 };
-let compilerComparisonFollowing = null, compilerComparisonRequest = 0;
+let compilerComparisonFollowing = null, compilerComparisonRequest = 0, compilerComparisonDiscovery = null;
 const compilerComparisonSeen = new Map();
 function compilerComparisonHeading(running) {
   $("installedCompilerTest").querySelector("summary").textContent = "Find better compiler settings" + (running ? " · Running" : "");
@@ -1434,7 +1434,9 @@ async function refreshCompilerComparison() {
     if (compilerComparisonFollowing.slug === slug && compilerComparisonFollowing.gen === gen) return;
     compilerComparisonFollowing.detach();
   }
-  const request = ++compilerComparisonRequest;
+  if (compilerComparisonDiscovery?.slug === slug && compilerComparisonDiscovery.gen === gen) return;
+  const request = ++compilerComparisonRequest, discovery = {slug, gen};
+  compilerComparisonDiscovery = discovery;
   try {
     const state = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}&view=comparison`);
     if (request !== compilerComparisonRequest || slug !== S.slug || gen !== S.gen) return;
@@ -1449,6 +1451,8 @@ async function refreshCompilerComparison() {
       $("compilerStopError").textContent = `Could not load compiler activity: ${error.message}. Retrying automatically.`;
       $("compilerStopError").dataset.discoveryError = "true"; $("compilerStopError").hidden = false;
     }
+  } finally {
+    if (compilerComparisonDiscovery === discovery) compilerComparisonDiscovery = null;
   }
 }
 if (typeof setInterval === "function") setInterval(refreshCompilerComparison, 5000);

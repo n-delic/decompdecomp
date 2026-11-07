@@ -359,9 +359,10 @@ async function checkCompilerReconnection() {
     assert.equal(get('testInstalledCompilers').textContent,'Find better settings');
     if(state==='error')assert.equal(get('installedCompilerWork').textContent,'Compiler failed');
   }
-  let late;
-  context.api=async(url,options)=>options?{job:'new-click'}:new Promise(resolve=>{late=resolve;});
+  let late, discoveryReads=0;
+  context.api=async(url,options)=>options?{job:'new-click'}:new Promise(resolve=>{discoveryReads++;late=resolve;});
   const staleDiscovery=context.refreshCompilerComparison();
+  await context.refreshCompilerComparison();assert.equal(discoveryReads,1,'slow discovery reads do not overlap or invalidate one another');
   const manual=get('testInstalledCompilers').onclick();await flush();
   const count=followers.length;
   late({job:'stale-discovery',state:'running',progress:{function:'wrong'}});await staleDiscovery;
