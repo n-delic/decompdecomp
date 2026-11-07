@@ -48,10 +48,13 @@ class EditMixin:
             new = console.function_at(rom, addr, limit, new_name)
             if new is not None:
                 return self._add_function(proj, fn, new, syms, agent.id, new_name)
-        head, tail = self._cut(proj, fn, addr, new_name, syms, agent.id, "split", f"{fn['name']} / {new_name}")
+        head, tail, head_padding = self._cut(proj, fn, addr, new_name, syms, agent.id, "split",
+                                             f"{fn['name']} / {new_name}")
+        cont = (f"The head was pure alignment padding and is set aside; continue with {new_name} "
+                "(get_function shows its assembly)." if head_padding else
+                f"Continue with {fn['name']} (get_function shows its new assembly).")
         return (f"✅ split: {fn['name']} is now {console.function_insns(head)} instructions; {new_name} at "
-                f"0x{addr:08X} has {console.function_insns(tail)}. Continue with {fn['name']} "
-                "(get_function shows its new assembly).")
+                f"0x{addr:08X} has {console.function_insns(tail)}. {cont}")
 
     def _add_function(self, proj, prev, new, syms: SymbolTable, agent_id: int | None, new_name: str) -> str:
         """Add a function the splitter missed after `prev`; it starts at its own address and mode."""
@@ -90,9 +93,20 @@ class EditMixin:
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
-            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL "
-                       "WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
-                                      console.function_asm(head), fn["id"]))
+            # The head's extent changed, so its old best attempt no longer describes it (reset seed/best, not just
+            # the score). A head trimmed down to pure alignment padding (the processor's nop/filler) is not a
+            # function to match — mark it done ('asm'), with a reason for its page, so it leaves the open pool
+            # instead of lingering as an open sliver. arm/thumb have no padding reader yet, so their heads stay
+            # 'open' (harmless; ROADMAP).
+            head_padding = bool(head.size) and console.is_padding(th.code)
+            head_meta = json.loads(fn["meta"] or "{}")
+            if head_padding:
+                head_meta["asm_code"] = "alignment padding"
+            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
+                       "best_source=NULL, status=?, meta=? WHERE id=?",
+                       (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                        console.function_asm(head), "asm" if head_padding else fn["status"],
+                        json.dumps(head_meta) if head_meta else None, fn["id"]))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
@@ -103,7 +117,7 @@ class EditMixin:
                        (proj["id"], new_name, addr, tail.size, "func"))
             self._event(db, proj["id"], agent_id, kind, detail)
         self._xrefs.pop(proj["id"], None)
-        return head, tail
+        return head, tail, head_padding
 
     def request_boundary(self, agent: Agent, slug: str, function: str, end: str, reason: str) -> str:
         """An agent's report that a function really ends earlier: what follows is alignment padding, linker leftovers
