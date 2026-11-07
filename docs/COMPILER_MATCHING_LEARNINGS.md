@@ -6063,6 +6063,42 @@ root; saved source SHA-256
 `978ea35c532ffcdb12fc2d1626949c48d38cc4cfd2b948898d3368ce151857ef`.
 No game source, target assembly, ROM or database is included in this finding.
 
+## KMC GCC 2.7.2: dead assignment into a narrow field (November 2026)
+
+**Evidence:** one private 386-instruction N64 function, ordinary live linked-byte judge;
+controlled replay of saved pre-match candidates, not additional new matches.
+Compiler: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
+A dead embedded assignment (`box.y = (half = y + half + 1)`) kept the scalar in
+an allocation shape with multiple deaths. A read-only trace reproduced the ordinary
+410-point output byte for byte and exposed a tied local allocation priority.
+Removing that write alone worsened to 3731; independent field-store order then
+found a 205-point allocation alternative. A scoped **signed 16-bit** next-coordinate
+initializer before adjacent independent stores restored scheduling with the original
+field-store order, reaching 5. The signed 32-bit temporary did not reproduce that
+result. Collapse of three consecutive coordinate-field updates fixed the last
+commuted `addu` operands and reached 0 (1544 identical linked bytes).
+
+The automated replay preserves the intermediate signed-halfword conversion explicitly:
+`box.x = (s16)(x + half_width) + 1`. It also reaches exact; simply swapping the
+original addition's C operands had no effect. Do not remove intermediate narrowing
+without proving its effect. Pure input expressions, declared fields, scalar widths,
+CFG liveness, escaped storage, qualifiers and signed-addition bounds must be checked.
+No target, ABI, profile, compiler or judge was changed. Full-image equality is a
+separate verification step.
+
+Implemented candidates: `dead_assignment_narrow_capture`, `narrow_field_update_fold`,
+and one bounded `narrow_store_sequence`. Autopilot's optional m2c trials retain raw
+output; shared local/deep search uses the same generators and ordinary judge.
+Source-mapped allocation ties prioritize these actual operations and independent
+store order, never dummy references. A copy-removal alternative with the same frame
+and instruction count can retain a bounded frontier slot despite a worse score.
+
+Negative controls worth avoiding: 725 broad CPU-search candidates found no improvement;
+shared object/rectangle pointer storage, shared branch locals, broad formatting changes
+and blind extent-width changes were worse or inert. This case supports a focused
+repair family, not a universal old-GCC allocation rule. Game source, ROM data and
+private regression inputs remain outside the repository.
 ### Automatic replay of disjoint selector/pointer/sentinel storage
 
 The shared `scratch_role_reuse` family now materializes an actual narrow selector

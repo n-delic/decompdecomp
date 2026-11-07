@@ -3471,7 +3471,10 @@ class ForkEngine:
             current = (fp.root / unit.source).read_text(errors="replace", encoding="utf-8")
         except OSError:
             current = ""
-        yield "", "/* machine draft (m2c), tried by autopilot */\n" + drafts.self_contained(text, span, current)
+        from .narrow_store_repairs import machine_drafts as narrow_drafts
+        original="/* machine draft (m2c), tried by autopilot */\n" + drafts.self_contained(text, span, current)
+        for _,candidate in narrow_drafts([('raw_m2c',original)],meta.get('symbol') or fn['name'],self._known(fp,unit),proj['arch']):
+            yield "",candidate
         if report is not None and not report.get('compiled'):
             from .. import seeds
             from . import initial_draft_repairs

@@ -5,7 +5,7 @@ import math
 from . import region_repairs
 
 LIMIT = 128
-STRUCTURAL = ('scan_load_capture', 'scan_load_reuse', 'branch_scalar_lifetime',
+STRUCTURAL = ('dead_assignment_narrow_capture', 'narrow_field_update_fold', 'scan_load_capture', 'scan_load_reuse', 'branch_scalar_lifetime',
               'split_integer_lifetime', 'merge_integer_lifetimes', 'paired_integer_lifetimes',
               'block_accumulator_lifetime', 'one_shot_scope', 'structured_backedge',
               'branch_orientation', 'goto_leaf', 'shared_return_tail')

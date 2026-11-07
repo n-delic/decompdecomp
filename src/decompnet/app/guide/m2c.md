@@ -33,3 +33,11 @@ Partial m2c output and `M2C_ERROR` placeholders are reported as generation failu
 Draft regeneration tries bounded private callback/frame repairs after compilation fails;
 only the ordinary compiler and exact judge can establish a match. Missing delay slots
 or targets outside the recorded function need boundary review, never invented instructions.
+
+Autopilot retains raw m2c output and can judge up to three additional typed-store
+alternatives: replace a CFG-dead embedded scalar assignment with a destination-typed
+coordinate temporary, fold consecutive narrow field updates while retaining their
+intermediate cast, or combine the two. Declared record types and scalar bounds are
+required; no missing layout is invented. These candidates also reach shared local
+and deep repair search. They are optional compiler-matching trials, not unconditional
+cleanup of m2c output. A narrow temporary and a wide temporary need not allocate alike.

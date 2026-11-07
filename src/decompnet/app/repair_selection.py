@@ -11,6 +11,9 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'dead_assignment_narrow_capture': ('narrow_field_update_fold','independent_field_store_order'),
+    'narrow_field_update_fold': ('dead_assignment_narrow_capture','independent_field_store_order'),
+    'independent_field_store_order': ('dead_assignment_narrow_capture','narrow_field_update_fold'),
     'scratch_role_reuse': ('scratch_role_reuse','scalar_storage_reuse'),
     'one_shot_scope': ('narrow_load_subtraction','parameter_carriers'),
     'narrow_load_subtraction': ('parameter_carriers','one_shot_scope'),

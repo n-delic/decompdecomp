@@ -2,7 +2,7 @@
 import hashlib
 import math
 
-from . import allocation_evidence, loop_weight_repairs, rtl_value_trace
+from . import allocation_evidence, field_order_repairs, loop_weight_repairs, narrow_store_repairs, rtl_value_trace
 from .value_trace_repairs import changes, touches
 
 
@@ -27,12 +27,14 @@ def targets(source, header, rows, evidence, arch="mips"):
                  and math.isfinite(p['legacy_weight']) and p['legacy_weight'] > weight]
         peer = min(peers, key=lambda p:p['legacy_weight']) if peers else None
         extra = next((n for n in range(1, 7) if ((refs+n).bit_length()-1)*(refs+n)/length > peer['legacy_weight']), None) if peer else None
+        ties=sum(1 for p in values if p is not value and isinstance(p.get('legacy_weight'),(int,float))
+                 and math.isclose(p['legacy_weight'],weight,rel_tol=1e-9,abs_tol=1e-12))
         lines = [n for n in value.get('source_lines', []) if type(n) is int and n in mapped and 0 < n <= len(source.splitlines())]
         if lines:
             result.append({'pseudo':value['pseudo'], 'aliases':value.get('aliases', [])[:2],
                            'source_lines':lines[:8], 'references':refs, 'live_insns':length,
                            'priority':int(weight*10000), 'next_priority':int(peer['legacy_weight']*10000) if peer else None,
-                           'additional_weighted_refs':extra})
+                           'additional_weighted_refs':extra,'tied_priorities':ties})
     return result[:6]
 
 
@@ -48,6 +50,9 @@ def proposals(source, name, header, rows, evidence, arch="mips"):
     selected = []
     for family, candidate in candidates:
         if touches(source, changes(source, candidate), lines, 0):selected.append((family, candidate))
+    focused=set(n for p in points for n in p['source_lines'])
+    targeted=narrow_store_repairs.variants(source,name,header,arch)+field_order_repairs.variants(source,name,header)
+    selected=[(f,c) for f,c in targeted if touches(source,changes(source,c),focused,2)][:6]+selected
     return list(dict.fromkeys(selected))[:18]
 
 
@@ -59,6 +64,8 @@ def brief(source, header, rows, evidence, arch="mips"):
     for point in points[:3]:
         text = (f"{','.join(point['aliases'])}: {point['references']} refs/{point['live_insns']} live, "
                 f"priority {point['priority']}")
+        if point.get('tied_priorities'):
+            text += f"; {point['tied_priorities']} tied competing priorities: try typed captures and independent store order before weighted-use scopes"
         if point['additional_weighted_refs'] is not None:
             text += f"; next competing priority {point['next_priority']}, needs at least +{point['additional_weighted_refs']} weighted refs if lifetime stays fixed"
         snippets = [f"L{n}: {lines[n-1].strip()[:140]}" for n in point['source_lines'][:2]]

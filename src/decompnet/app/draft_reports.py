@@ -5,6 +5,8 @@ import time
 
 PREFIX = 'machine-draft:'
 GENERATION_PREFIX = 'machine-draft-generation:'
+# Bump when optional initial-draft trials change, so completed misses can retry.
+REPAIR_REVISION = 1
 
 
 def generation(net, fid, *, project_id=None):
@@ -14,7 +16,7 @@ def generation(net, fid, *, project_id=None):
 
 
 def key(plan, header, data, fn):
-    return hashlib.sha256(repr((plan, header, data, fn['target'], fn['relocs'])).encode()).hexdigest()
+    return hashlib.sha256(repr((REPAIR_REVISION, plan, header, data, fn['target'], fn['relocs'])).encode()).hexdigest()
 
 
 def read(net, fid, *, project_id=None):
