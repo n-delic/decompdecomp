@@ -53,6 +53,19 @@ calling thread holds a write transaction on any Store. It does not select a
 database or block unrelated threads. Tests cover nested stores, rollback,
 callbacks, independent save baselines and score-commit acknowledgements.
 
+The room engine now selects project storage for link configuration, mirrored
+leases, events, matches, best candidates, notes, headers and layout edits. Link
+restoration discovers catalog slugs but reads the current link from each owning
+store. Remote author identities remain shared, with transactional insertion that
+handles simultaneous room updates for the same author.
+
+Saved-progress restores prepare shared author IDs before taking a separate
+project store's write transaction. The legacy single-file path keeps author
+creation inside the same transaction as the restore so failed imports still
+roll back atomically. The preparation helper refuses cross-store preparation
+inside an existing transaction. Tests exercise both layouts and real disk-note
+imports, without issuing runner credentials for attribution identities.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
@@ -71,9 +84,10 @@ need explicit ownership during the project split.
 
 1. Convert the remaining engine services, routes, workers and maintenance paths
    to explicit project storage. Separate global settings from the project-owned
-   keys that currently share the `settings` table. Resolve shared author identities
-   before project write transactions, including saved-progress restoration, rather
-   than introducing nested catalog writes during project transactions.
+   keys that currently share the `settings` table. Audit remaining shared identity
+   writes for lock ordering; saved-progress restoration now resolves them before
+   separate project transactions. The room transport, snapshots and host/client
+   service discovery still need conversion beyond the engine's mirror methods.
 2. Replace cross-project operational SQL joins with bounded queries to individual
    project stores. Keep cross-game matching and activity feeds complete without
    loading every project's full history. Preserve global identity and cursor

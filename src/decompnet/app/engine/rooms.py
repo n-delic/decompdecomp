@@ -15,6 +15,7 @@ from ...rom.symbols import Symbol
 
 class RoomMixin:
     def link_project(self, slug: str, info: dict, client=None, start: bool = True):
+        store = self.project_store(slug)
         from ..collab import Link
 
         proj = self._project(slug)
@@ -28,7 +29,7 @@ class RoomMixin:
         if queued:
             info["saved_progress"] = queued
         cfg["link"] = info
-        with self.store.tx() as db:
+        with store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
         link = Link(self, slug, info["url"], info["room"], info["token"], info["member"], client=client)
         self.links[slug] = link
@@ -37,12 +38,16 @@ class RoomMixin:
         return link
 
     def restore_links(self) -> None:
-        for p in self.store.all("SELECT slug, config FROM projects"):
+        for row in self.store.all("SELECT slug FROM projects"):
+            p = self.project_store(row['slug']).one('SELECT slug,config FROM projects WHERE slug=?', row['slug'])
+            if p is None:
+                raise NetworkError(f"Project {row['slug']!r} is missing from its database. Restore it from backup.")
             info = json.loads(p["config"]).get("link")
             if info and p["slug"] not in self.links:
                 self.link_project(p["slug"], info)
 
     def unlink(self, slug: str) -> None:
+        store = self.project_store(slug)
         link = self.links.pop(slug, None)
         if link is not None:
             link.stop()
@@ -53,7 +58,7 @@ class RoomMixin:
         proj = self._project(slug)
         cfg = json.loads(proj["config"])  # a copy of its own: changed below
         cfg.pop("link", None)
-        with self.store.tx() as db:
+        with store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
 
     def _link(self, project: str | None):
@@ -72,9 +77,11 @@ class RoomMixin:
         validation fails, and never release another worker's or the host's claim.
         """
         proj = self._project(project)
+        project = proj['slug']
+        store = self.project_store(proj['id'])
         fn = self._function(name, project)
         self._yield_autopilot(name, project)  # wait outside the transaction for local draft work
-        with self.store.tx() as db:
+        with store.tx() as db:
             stale = db.execute('SELECT f.id,f.name FROM claims c JOIN functions f ON f.id=c.function_id '
                                'WHERE c.agent_id=? AND f.project_id=? AND f.id<>?',
                                (agent.id,proj['id'],fn['id'])).fetchall()
@@ -92,23 +99,26 @@ class RoomMixin:
         row = self.store.one("SELECT id FROM agents WHERE name=?", label)
         if row is None:
             with self.store.tx() as db:
-                aid = db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
-                                 (label, "room", "remote:" + secrets.token_hex(16), time.time(), "remote")).lastrowid
+                db.execute("INSERT OR IGNORE INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
+                           (label, "room", "remote:" + secrets.token_hex(16), time.time(), "remote"))
+                aid = db.execute('SELECT id FROM agents WHERE name=?', (label,)).fetchone()['id']
         else:
             aid = row["id"]
         self._remote_ids[label] = aid
         return aid
 
     def remote_event(self, project_id: int, kind: str, detail: str, agent_name: str, created_at: float) -> None:
+        store = self.project_store(project_id)
         aid = self._remote_agent(agent_name)
-        with self.store.tx() as db:
+        with store.tx() as db:
             db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                        (project_id, aid, kind, detail, created_at))
 
     def apply_remote_match(self, slug: str, vram: int, source: str, agent_name: str, *, rom_offset=None) -> None:
+        store = self.project_store(slug)
         proj = self._project(slug)
         aid = self._remote_agent(agent_name)
-        with self.store.tx() as db:
+        with store.tx() as db:
             rows = db.execute("SELECT id,status,rom_offset FROM functions WHERE project_id=? AND vram=?", (proj["id"], vram)).fetchall()
             row = next((r for r in rows if r['rom_offset']==rom_offset),None) if rom_offset is not None else (rows[0] if len(rows)==1 else None)
             if row is None or row["status"] == "matched":
@@ -119,9 +129,10 @@ class RoomMixin:
 
     def apply_remote_match_named(self, slug: str, name: str, agent_name: str) -> None:
         """A git project's room: who matched a function (the code itself arrives with the host's commits)."""
+        store = self.project_store(slug)
         proj = self._project(slug)
         aid = self._remote_agent(agent_name)
-        with self.store.tx() as db:
+        with store.tx() as db:
             row = db.execute("SELECT id, status, matched_agent_id FROM functions WHERE project_id=? AND name=?",
                              (proj["id"], name)).fetchone()
             if row is None:
@@ -134,23 +145,25 @@ class RoomMixin:
             self._release_matched_claim(db,row["id"],aid)
 
     def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
+        store = self.project_store(slug)
         proj = self._project(slug)
-        row = self.store.one("SELECT id FROM functions WHERE project_id=? AND name=?", proj["id"], function) if function else None
+        row = store.one("SELECT id FROM functions WHERE project_id=? AND name=?", proj["id"], function) if function else None
         fid = row["id"] if row else None
-        existing = self.store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
+        existing = store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
         if existing:
             if score_before is not None and score_after is not None:
-                with self.store.tx() as db:
+                with store.tx() as db:
                     db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
             return
         aid = self._remote_agent(agent_name)
-        with self.store.tx() as db:
+        with store.tx() as db:
             db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
                        (proj["id"], fid, aid, text, created_at, score_before, score_after))
 
     def apply_remote_best(self, slug: str, vram: int, score: int, source: str, *, rom_offset=None) -> None:
+        store = self.project_store(slug)
         proj = self._project(slug)
-        with self.store.tx() as db:
+        with store.tx() as db:
             rows=db.execute('SELECT id,rom_offset FROM functions WHERE project_id=? AND vram=?',(proj['id'],vram)).fetchall()
             row=next((r for r in rows if r['rom_offset']==rom_offset),None) if rom_offset is not None else (rows[0] if len(rows)==1 else None)
             if row is not None:
@@ -158,27 +171,29 @@ class RoomMixin:
                            "AND (best_score IS NULL OR best_score > ?)",(score,source,row['id'],score))
 
     def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
+        store = self.project_store(slug)
         proj = self._project(slug)
         fid = None
         if vram is not None:
-            row = self.store.one("SELECT id FROM functions WHERE project_id=? AND vram=?", proj["id"], vram)
+            row = store.one("SELECT id FROM functions WHERE project_id=? AND vram=?", proj["id"], vram)
             fid = row["id"] if row else None
-        existing = self.store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
+        existing = store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
         if existing:
             if score_before is not None and score_after is not None:
-                with self.store.tx() as db:
+                with store.tx() as db:
                     db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
             return
         aid = self._remote_agent(agent_name)
-        with self.store.tx() as db:
+        with store.tx() as db:
             db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
                        (proj["id"], fid, aid, text, created_at, score_before, score_after))
 
     def apply_remote_context(self, slug: str, header: str, host_version: int) -> None:
+        store = self.project_store(slug)
         proj = self._project(slug)
         if self._context(proj["id"])["header"] == header:
             return
-        with self.store.tx() as db:
+        with store.tx() as db:
             version = self._next_version(db, proj["id"])
             db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                        "VALUES(?,?,?,?,?,?,?)", (proj["id"], version, header, None, f"from the room (host v{host_version})",
@@ -186,10 +201,11 @@ class RoomMixin:
 
     def apply_remote_layout(self, slug: str, functions: list[dict], symbols: list[dict]) -> None:
         """Mirror the room's splits and names. The host already regression-tested them on the same ROM."""
+        store = self.project_store(slug)
         proj = self._project(slug)
         pid = proj["id"]
         console = self.console(proj)
-        local = {r["id"]: r for r in self.store.all("SELECT * FROM functions WHERE project_id=?", pid)}
+        local = {r["id"]: r for r in store.all("SELECT * FROM functions WHERE project_id=?", pid)}
         by_vram: dict[int, list] = {}
         for row in local.values():
             by_vram.setdefault(row["vram"], []).append(row)
@@ -202,7 +218,7 @@ class RoomMixin:
                 if any(r["name"] == new for r in local.values()):
                     new = f"{new}_local"
                 word = re.compile(rf"\b{re.escape(name)}\b")
-                with self.store.tx() as db:
+                with store.tx() as db:
                     db.execute("UPDATE functions SET name=?, matched_source=?, best_source=? WHERE id=?",
                                (new, word.sub(new, row["matched_source"]) if row["matched_source"] else None,
                                 word.sub(new, row["best_source"]) if row["best_source"] else None, row["id"]))
@@ -230,7 +246,7 @@ class RoomMixin:
             syms = self.symbols(pid)
             syms.add(Symbol(f["name"], f["vram"], tail.size, "func"))
             th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
-            with self.store.tx() as db:
+            with store.tx() as db:
                 db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL WHERE id=?",
                            (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
                             console.function_asm(head), owner["id"]))
@@ -263,7 +279,7 @@ class RoomMixin:
                 continue
             old = current if off == 0 else f"D_{sym['address']:08X}"
             word = re.compile(rf"\b{re.escape(old)}\b")
-            with self.store.tx() as db:
+            with store.tx() as db:
                 db.execute("DELETE FROM symbols WHERE project_id=? AND (name=? OR name=?)", (pid, old, sym["name"]))
                 db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                            (pid, sym["name"], sym["address"], sym["size"], sym["kind"]))

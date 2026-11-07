@@ -1342,6 +1342,12 @@ class Progress:
             layout_by_vram: dict[int, list] = {}
             for entry in applied_manifest.get("layout", []):
                 layout_by_vram.setdefault(entry["vram"], []).append(entry)
+            restore_notes = applied_manifest.get('notes', []) != json.loads(rendered[saves.MANIFEST]).get('notes', [])
+            # The legacy file keeps credits in the same atomic rollback as the
+            # restore. Separate stores resolve shared identities before locking
+            # project state, never by opening a nested catalog transaction.
+            agents = (None if store is net.store else saves._context_agents(
+                net, store, applied_manifest, report.check_cancel, restore_notes=restore_notes))
             try:
                 # The layout, the database resets and every applied change are one transaction. An error rolls all
                 # of them back; the folder is written inside it, so a failed apply publishes nothing.
@@ -1385,7 +1391,6 @@ class Progress:
                             db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
                     # A source-only edit must not replay the whole note history. Compare
                     # with the fresh database render, retaining concurrent new notes too.
-                    restore_notes = applied_manifest.get('notes', []) != json.loads(rendered[saves.MANIFEST]).get('notes', [])
                     if restore_notes:
                         db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
                     db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (pid,))
@@ -1397,7 +1402,7 @@ class Progress:
                                        (pid, row["unit"]))
                     with compiler.cancellable(report.check_cancel):
                         by_name, _ = saves._apply_context(net, slug, folder, applied_manifest, report,
-                                                         files=applied_files, restore_notes=restore_notes)
+                                                         files=applied_files, restore_notes=restore_notes, agents=agents)
                     report.check_cancel()
                     if not saves._publish(folder, pending, removed, expected=disk,
                                           chosen=bool(cfg.get("progress_folder"))):

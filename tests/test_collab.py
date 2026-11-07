@@ -334,6 +334,9 @@ def test_link_refresh_keeps_saved_progress_only_in_the_same_room(monkeypatch):
         store = Store()
         links = {}
 
+        def project_store(self, _project):
+            return self.store
+
         def _project(self, _slug):
             return {"id": 1, "config": json.dumps(config)}
 

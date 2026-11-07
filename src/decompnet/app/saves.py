@@ -714,11 +714,30 @@ def _saved_source(folder: Path, files: dict[str, str] | None, name: str) -> str 
     return path.read_text(encoding="utf-8") if path.exists() else None
 
 
+def _context_agents(net, store, manifest: dict, check_cancel=lambda: None, *, restore_notes=True) -> dict[str, int]:
+    """Resolve shared credits before acquiring the project write transaction."""
+    from ..store import in_transaction
+
+    if in_transaction() and not (store is net.store and getattr(store._local, 'in_tx', False)):
+        raise NetworkError('Resolve saved-progress authors before starting a database transaction.')
+    names = {'restored'}
+    if restore_notes:
+        names.update(note.get('by') or 'restored' for note in manifest.get('notes') or [])
+    agents = {}
+    for name in sorted(names):
+        check_cancel()
+        agents[name] = net.attribution_agent(name).id
+    return agents
+
+
 def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
-                   files: dict[str, str] | None = None, *, restore_notes: bool = True) -> tuple[dict, dict]:
+                   files: dict[str, str] | None = None, *, restore_notes: bool = True,
+                   agents: dict[str, int] | None = None) -> tuple[dict, dict]:
     """Put back everything a save changes before its C is judged: layout, names, settings, notes, set-aside."""
     store = net.project_store(slug)
     check_cancel = getattr(log, "check_cancel", lambda: None)
+    if agents is None:
+        agents = _context_agents(net, store, manifest, check_cancel, restore_notes=restore_notes)
     proj = net._project(slug)
     pid = proj["id"]
     log("putting back the function splits and names")
@@ -768,14 +787,13 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     if manifest.get("title"):
         with store.tx() as db:
             db.execute("UPDATE projects SET name=? WHERE id=?", (manifest["title"], pid))
-    restorer = net.attribution_agent("restored")
     with store.tx() as db:
         for unit, file in (manifest.get("headers") or {}).items():
             check_cancel()
             header = _saved_source(folder, files, "include/" + file)
             if header is not None and header != net._context(pid, unit)["header"]:
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
-                           "VALUES(?,?,?,?,?,?,?)", (pid, net._next_version(db, pid), header, restorer.id,
+                           "VALUES(?,?,?,?,?,?,?)", (pid, net._next_version(db, pid), header, agents['restored'],
                                                      "restored from a save", time.time(), unit))
         for text in manifest.get("knowledge") or []:
             check_cancel()
@@ -787,7 +805,6 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     # Resolve the small identity/function sets once; old saves without measurements stay unknown.
     functions = {r["name"]: r["id"] for r in store.all(
         "SELECT id,name FROM functions WHERE project_id=?", pid)}
-    authors = {}
     with store.tx() as db:
         for note in (manifest.get("notes") or []) if restore_notes else []:
             check_cancel()
@@ -795,8 +812,6 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             if name and name not in functions:
                 continue  # A split may have removed this function.
             author = note.get("by") or "restored"
-            if author not in authors:
-                authors[author] = net.attribution_agent(author).id
             before, after = note.get("score_before"), note.get("score_after")
             if not all(type(value) is int and value >= 0 for value in (before, after)):
                 before = after = None
@@ -804,7 +819,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             if type(at) not in (int, float):
                 at = time.time()
             db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) "
-                       "VALUES(?,?,?,?,?,?,?)", (pid, functions.get(name), authors[author], note["text"],
+                       "VALUES(?,?,?,?,?,?,?)", (pid, functions.get(name), agents[author], note["text"],
                                                at, before, after))
     with store.tx() as db:
         for item in manifest.get("set_aside") or []:
