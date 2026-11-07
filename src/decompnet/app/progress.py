@@ -846,14 +846,19 @@ class Progress:
             raise NetworkError("Progress changed while this attempt compiled. Read the function again and retry with the updated project.")
 
     def flush(self, *, notify=None) -> dict[str, str]:
-        """Synchronize every ROM project's final database work before the process exits."""
+        """Publish pending ROM changes without rereading untouched projects on shutdown."""
         failures = {}
-        for row in self.net.store.all("SELECT slug FROM projects"):
-            if notify:notify(row["slug"])
+        rows = self.net.store.all(
+            "SELECT p.slug FROM projects p JOIN progress_dirty d ON d.project_id=p.id "
+            "LEFT JOIN progress_state s ON s.project_id=p.id "
+            "WHERE d.functions OR d.headers OR d.metadata OR d.token IS NOT s.dirty_token")
+        pending = {row["slug"] for row in rows} | set(self.failed) | set(self.blocked)
+        for slug in sorted(pending):
+            if notify:notify(slug)
             try:
-                self.sync(row["slug"], force=True)
+                self.sync(slug, force=True)
             except NetworkError as error:
-                failures[row["slug"]] = str(error)
+                failures[slug] = str(error)
         return failures
 
     @property
