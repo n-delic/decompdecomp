@@ -2160,7 +2160,8 @@ def update_segments(root: Path, version: str) -> bool:
     original = (root / info["exe"]).read_bytes()
     if not is_le(original):
         return False
-    pe, changed = read_pe(original), False
+    pe, changed = read_pe(original), info.get("format") != "LE"
+    info["format"] = "LE"
     for fs in info["units"].values():
         for fn in fs:
             sites = [[at - fn["addr"], *target] for at, target in sorted(pe.segment_targets.items())

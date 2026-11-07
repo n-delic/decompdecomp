@@ -218,3 +218,16 @@ def test_rebuild_rejects_changes_in_unmapped_object_tail():
     changed[pe.offset(0x12000)] = 1
     with pytest.raises(ValueError, match="unmapped object"):
         image.restore(changed)
+
+
+def test_existing_le_project_records_its_target_when_tools_are_updated(tmp_path):
+    import json
+
+    (tmp_path / "orig").mkdir()
+    (tmp_path / "orig/game.exe").write_bytes(le_image())
+    config = tmp_path / "config/v/functions.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"exe": "orig/game.exe", "units": {}}))
+    assert scratch.update_segments(tmp_path, "v")
+    assert json.loads(config.read_text())["format"] == "LE"
+    assert not scratch.update_segments(tmp_path, "v")
