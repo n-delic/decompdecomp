@@ -111,3 +111,57 @@ def test_changed_hardware_or_initializer_helper_reopens_cached_candidate(tmp_pat
     assert claim_stalls.blocked(net,proj,agent)
     changed=True
     assert not claim_stalls.blocked(net,proj,agent)
+
+
+def test_large_claim_batches_keep_the_complete_scheduling_result(tmp_path,monkeypatch):
+    # More candidates than the shared cache capacity: per-function callee entries
+    # used to evict the complete paused queue and rebuild it for every batch slot.
+    net,(a,_,c)=setup(tmp_path,160)
+    pause_all(net,a)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='void f(){ changed(); }'")
+    monkeypatch.setattr(net,'sdk_functions',lambda _: {})
+    monkeypatch.setattr(net,'_brief',lambda fn,agent,header: f"## CLAIMED: {fn['name']}")
+    net.store.read_cache.entries.clear()
+    signatures=[]
+    original=claim_stalls.signature
+    def signature(*args,**kwargs):
+        signatures.append(args[2]['id'])
+        return original(*args,**kwargs)
+    monkeypatch.setattr(claim_stalls,'signature',signature)
+    net.claim_many(a,'game',4)
+    assert len(signatures)==160
+    first={r['function_id'] for r in net.store.all('SELECT function_id FROM claims WHERE agent_id=?',a.id)}
+    assert len(first)==4
+    net.claim_many(c,'game',4)  # another worker of the same model uses the same current result
+    second={r['function_id'] for r in net.store.all('SELECT function_id FROM claims WHERE agent_id=?',c.id)}
+    assert len(second)==4 and not first & second
+    assert len(signatures)==160
+    # Restoring one unchanged failed candidate invalidates the result immediately.
+    fn=net._function('f159','game')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='void f(){}' WHERE id=?",(fn['id'],))
+    assert claim_stalls.blocked(net,net._project('game'),a)==[fn['id']]
+    assert len(signatures)==320
+
+
+def test_standalone_callee_cache_and_batch_signatures_keep_current_evidence(tmp_path,monkeypatch):
+    net,(_,_,_)=setup(tmp_path,1)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='void f0(){ helper(); }'")
+        db.execute("INSERT INTO functions(project_id,name,status,matched_source,unit) "
+                   "VALUES(1,'helper','matched','void helper(){}','a')")
+    proj=net._project('game');fn=net._function('f0','game')
+    calls=[];original=candidate_scope.callees
+    def callees(*args,**kwargs):
+        calls.append(1)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(candidate_scope,'callees',callees)
+    first=candidate_scope.key(net,proj,fn)
+    assert candidate_scope.key(net,proj,fn)==first and len(calls)==1
+    assert candidate_scope.key(net,proj,fn,candidate_scope.batch_context(net,proj))==first
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='void helper(){ changed(); }' WHERE name='helper'")
+    changed=candidate_scope.key(net,proj,fn)
+    assert changed!=first
+    assert candidate_scope.key(net,proj,fn,candidate_scope.batch_context(net,proj))==changed

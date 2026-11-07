@@ -129,7 +129,10 @@ def state(net,proj,fn,shared=None):
     def callee_hashes():
         return [(r['name'],hashlib.sha256((r['matched_source'] or '').encode()).hexdigest())
                 for r in callees(net,proj,fn,source)]
-    if hasattr(store, 'read_cache'):
+    # A scheduling batch caches its complete result. Thousands of one-use callee
+    # entries would evict that project result from the bounded shared cache and
+    # force the next claim in the same batch to recompute every paused function.
+    if hasattr(store, 'read_cache') and shared is None:
         evidence = store.read_cache.get(('candidate-callees', proj['id'], fn['name'], hashlib.sha256(source.encode()).hexdigest()),
             _version(net,proj,'matched_evidence',shared), callee_hashes)
     else:

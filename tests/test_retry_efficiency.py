@@ -56,7 +56,9 @@ def test_budget_exhausted_release_pauses_immediately(tmp_path):
     net.set_selection('game',a.name,{'stall_compiles':2})
     for _ in range(3):net._record(fn,a,10,'void f(){}',1)
     net.release(a,'f','No progress.','game')
-    assert claim_stalls.blocked(net,net._project('game'))==[fn['id']]
+    assert claim_stalls.blocked(net,net._project('game'),a)==[fn['id']]
+    other,_=net.local_agent('other-worker')
+    assert not claim_stalls.blocked(net,net._project('game'),other)
     assert net.claim_row(a,'game','f')['id']==fn['id']  # explicit override remains available
 
 
