@@ -679,20 +679,19 @@ function renderCompilerProgress(p, finished = false) {
   set("best", p.best == null ? "—" : `${p.best.toFixed(2)}%`);
   set("completed", completed); set("improved", p.improved || 0); set("exact", p.exact || 0);
   set("profile", p.phase === "applying" ? "Rechecking and applying best settings" : finished ?
-    `${p.applied || 0} applied · review remaining results below` : p.profile ?
+    `${p.applied || 0} applied · select a count to review the results` : p.profile ?
       `Best settings: ${p.profile[0]} ${p.profile[1].join(" ")}` : "Comparing the saved C. Compiler settings stay unchanged.");
   box.dataset.improved = String(p.best != null && (p.before == null || p.best > p.before + .001));
   if (p.results) { compilerRows = p.results; compilerHasRun = true; renderCompilerResults(); }
 }
 
 function renderCompilerResults() {
-  const box = $("compilerImprovements");
-  box.hidden = !compilerHasRun;
-  if (!compilerHasRun) { $("compilerResultFilters").hidden = true; box.replaceChildren(); return; }
+  if (S.dialogKind !== "compiler-results") return;
+  const box = $("dialogBody");
+  if (!compilerHasRun) { box.innerHTML = '<p class="small muted">No comparison results yet.</p>'; return; }
   const filtered = compilerRows.filter(r =>
     compilerResultFilter === "all" || compilerResultFilter === "improved" && r.improved || compilerResultFilter === "exact" && r.exact);
-  $("compilerResultFilters").hidden = !compilerRows.length;
-  const sort = $("compilerResultSort")?.value || "best";
+  const sort = box.querySelector("#compilerResultSort")?.value || "best";
   const ordered = filtered.slice().sort((a, b) => sort === "name" ? a.function.localeCompare(b.function)
     : sort === "recent" ? (b.completed_at || 0) - (a.completed_at || 0)
       : (b.best ?? -1) - (a.best ?? -1));
@@ -700,10 +699,17 @@ function renderCompilerResults() {
     + (ordered.length ? ordered.map(r => `<details class="compiler-result"><summary><b>${esc(r.function)}</b> · ${r.before == null ? "no previous score" : r.before.toFixed(2) + "%"} → ${r.best == null ? "no result" : r.best.toFixed(2) + "%"}${r.exact ? " · exact match" : ""}${r.applied ? " · applied" : ""}${r.stale ? " · inputs changed: retest" : ""}</summary>
       <div class="compiler-result-actions">${(r.ranked || []).filter(p => p.percent != null && (p.exact || r.before == null || p.percent > r.before + .001)).slice(0, 12).map(p => `<button class="ghost small-btn" type="button" data-apply-function="${esc(r.function)}" data-apply-toolchain="${esc(p.toolchain)}" data-apply-flags="${esc(JSON.stringify(p.flags))}"${r.stale || r.applied ? " disabled" : ""}>${esc(p.toolchain)} ${esc(p.flags.join(" "))} · ${p.percent.toFixed(2)}%${p.exact ? " exact" : ""}</button>`).join("")}</div>${r.apply_error ? `<p class="err-msg">${esc(r.apply_error)}</p>` : ""}</details>`).join("") : `<p class="small muted">${compilerRows.length ? "No results in this view." : "No eligible saved C attempts were compared yet."}</p>`);
   if (compilerRows.length) { $("compilerResultSort").value = sort; $("compilerResultSort").onchange = renderCompilerResults; }
+  if (compilerRows.some(r => r.improved && !r.stale && !r.applied && r.profile)) {
+    box.insertAdjacentHTML("afterbegin", '<button class="ghost small-btn" type="button" id="applyAllCompilerResults">Apply all improvements</button>');
+  }
 }
-$("compilerResultFilters").onclick = (e) => {
-  const filter = e.target.closest("[data-result-filter]");
-  if (filter) { compilerResultFilter = filter.dataset.resultFilter; renderCompilerResults(); }
+$("compilerProgress").onclick = (e) => {
+  const count = e.target.closest("[data-compiler-results]");
+  if (!count) return;
+  compilerResultFilter = count.dataset.compilerResults;
+  const titles = {all: "Functions finished", improved: "Better settings found", exact: "Exact matches found"};
+  dialog(titles[compilerResultFilter], "", "compiler-results");
+  renderCompilerResults();
 };
 
 async function loadCompilerComparison() {
@@ -720,7 +726,7 @@ async function loadCompilerComparison() {
     compilerHasRun = !!data.ran;
     renderCompilerResults();
     if (data.job && compilerJob !== data.job) followCompilerComparison(data.job, slug);
-  } catch (e) { $("compilerImprovements").textContent = e.message; }
+  } catch (e) { if (S.dialogKind === "compiler-results") $("dialogBody").textContent = e.message; }
 }
 
 async function followCompilerComparison(job, slug) {
@@ -779,9 +785,9 @@ $("installedCompilerLog").onscroll = () => {
     $("compilerFollowLog").checked = false;
   }
 };
-$("compilerImprovements").onclick = async (e) => {
+$("dialogBody").addEventListener("click", async (e) => {
   const button = e.target.closest("[data-apply-function]");
-  if (!button || button.disabled) return;
+  if (S.dialogKind !== "compiler-results" || !button || button.disabled) return;
   button.disabled = true;
   try {
     await api("/api/compilermap", {method: "POST", body: {slug: S.slug, apply_compiler_result: true,
@@ -789,13 +795,15 @@ $("compilerImprovements").onclick = async (e) => {
       flags: JSON.parse(button.dataset.applyFlags)}});
     await loadCompilerComparison();
   } catch (error) { toast(esc(error.message), "err"); button.disabled = false; }
-};
-$("applyAllCompilerResults").onclick = async () => {
-  const button = $("applyAllCompilerResults"); button.disabled = true;
+});
+$("dialogBody").addEventListener("click", async (e) => {
+  const button = e.target.closest("#applyAllCompilerResults");
+  if (S.dialogKind !== "compiler-results" || !button || button.disabled) return;
+  button.disabled = true;
   for (const row of compilerRows.filter(r => r.improved && !r.stale && !r.applied && r.profile)) {
     try { await api("/api/compilermap", {method: "POST", body: {slug: S.slug, apply_compiler_result: true,
       function: row.function, toolchain: row.profile[0], flags: row.profile[1]}}); }
     catch (error) { toast(`${esc(row.function)}: ${esc(error.message)}`, "err"); }
   }
-  await loadCompilerComparison(); button.disabled = false;
-};
+  await loadCompilerComparison();
+});

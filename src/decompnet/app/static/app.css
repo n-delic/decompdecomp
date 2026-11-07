@@ -1033,6 +1033,8 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-progress-stats dt { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .compiler-progress-stats dd { margin: 0; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .compiler-progress-stats [data-exact] { color: var(--match); }
+.compiler-stat-link { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: left; text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 4px; }
+.compiler-stat-link:hover, .compiler-stat-link:focus-visible { color: var(--hl); text-decoration-color: currentColor; }
 .compiler-progress p { margin: 0; line-height: 1.6; }
 .compiler-progress-profile { overflow-wrap: anywhere; }
 .compiler-progress[data-finished="true"] .compiler-percent,

@@ -380,7 +380,7 @@
                 <label class="check"><input type="checkbox" id="compilerFlagsOnly"><span><b>Flag variations only</b><small>Faster: keep each function’s compiler and test different flags.</small></span></label>
                 <label class="check"><input type="checkbox" id="compilerUsedProfilesOnly"><span><b>Only profiles used in this project</b><small>Faster: test exact compiler and flag combinations already assigned to functions.</small></span></label>
                 <label class="check"><input type="checkbox" id="compilerRetest"><span><b>Retest completed functions</b><small>Leave off to continue with new or changed attempts.</small></span></label>
-                <label class="check"><input type="checkbox" id="compilerAutoApply"><span><b>Automatically apply better settings</b><small>Apply each function’s best settings when its comparison finishes. Each change is rechecked; busy or changed functions stay available for review.</small></span></label>
+                <label class="check"><input type="checkbox" id="compilerAutoApply" checked><span><b>Automatically apply better settings</b><small>Apply each function’s best settings when its comparison finishes. Each change is rechecked; busy or changed functions stay available for review.</small></span></label>
               </div>
               <p id="compilerTestScope" class="muted small">All installed compilers and supported flag variations · new or changed attempts only.</p>
               <div class="row"><button class="primary" type="button" id="testInstalledCompilers">Find better settings</button></div>
@@ -391,19 +391,12 @@
                 <dl class="compiler-progress-stats">
                   <div class="compiler-percent"><dt>Saved match</dt><dd data-before>—</dd></div>
                   <div class="compiler-percent"><dt>Best tested</dt><dd data-best>—</dd></div>
-                  <div><dt>Functions finished</dt><dd data-completed>0</dd></div>
-                  <div><dt>Better settings found</dt><dd data-improved>0</dd></div>
-                  <div><dt>Exact matches found</dt><dd data-exact>0</dd></div>
+                  <div><dt>Functions finished</dt><dd><button type="button" class="compiler-stat-link" data-compiler-results="all" aria-label="Show finished functions"><span data-completed>0</span></button></dd></div>
+                  <div><dt>Better settings found</dt><dd><button type="button" class="compiler-stat-link" data-compiler-results="improved" aria-label="Show functions with better settings"><span data-improved>0</span></button></dd></div>
+                  <div><dt>Exact matches found</dt><dd><button type="button" class="compiler-stat-link" data-compiler-results="exact" aria-label="Show exact matches"><span data-exact>0</span></button></dd></div>
                 </dl>
                 <p class="small muted compiler-progress-profile" data-profile>Comparing the saved C. Compiler settings stay unchanged.</p>
               </section>
-              <div id="compilerResultFilters" class="row" hidden>
-                <button class="ghost small-btn" type="button" data-result-filter="all">All results</button>
-                <button class="ghost small-btn" type="button" data-result-filter="improved">Better settings</button>
-                <button class="ghost small-btn" type="button" data-result-filter="exact">Exact matches</button>
-                <button class="ghost small-btn" type="button" id="applyAllCompilerResults">Apply all improvements</button>
-              </div>
-              <div id="compilerImprovements" class="compiler-results"></div>
               <details class="more"><summary>What gets tested?</summary><div class="more-body small muted">All eligible unmatched functions in one run. Stop at any time; completed comparisons are saved so the next run can skip unchanged work. Tests supported optimization and small-data flag variants locally. This is a bounded search, not every possible flag combination.</div></details>
               <details class="more" id="compilerLogDetails" hidden><summary>Detailed output</summary>
                 <label class="check"><input type="checkbox" id="compilerFollowLog"><span>Follow latest output</span></label>
