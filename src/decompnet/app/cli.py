@@ -220,7 +220,15 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     cleanup.old_registrations(internal)
     from .. import compiler_processes
     compiler_processes.configure(internal / "compiler-processes")
-    net = RomNetwork(internal / "decomp.db", home,project_databases=True)
+    from ..store import CorruptDatabaseError
+    try:
+        net = RomNetwork(internal / "decomp.db", home,project_databases=True)
+    except CorruptDatabaseError as error:
+        sock.close()
+        state_file.unlink(missing_ok=True)
+        log.exception('Database corruption prevented startup')
+        print(str(error), file=sys.stderr, flush=True)
+        return 1
     mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if headless else {}))
     app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
     from ..ui_diagnostics import Diagnostics
