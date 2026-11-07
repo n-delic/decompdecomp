@@ -314,3 +314,14 @@ In separate transcript databases, retention seeks distinct session IDs through t
 `(session_id,id)` index before fetching session summaries by primary key. It skips already-cleared
 history without scanning each message of long transcripts. Removed-helper identity and completed
 session cutoff rules remain unchanged; session summaries and lifetime costs are retained.
+
+### Shared lease identities and project removal
+
+Speculative lease cleanup caches derived agent IDs against a durable catalog identity revision.
+Insertions, deletions and name/owner/ID changes invalidate it, including external commits.
+Transaction-local reads bypass publication to the shared cache; callers receive their own set.
+Token validation and project ownership checks are separate and remain uncached here.
+
+Autosave discovery can race a project removal after its catalog snapshot. It discards that row
+only when a fresh catalog lookup confirms removal, allowing worker reconciliation to cancel
+its old worker and continue other projects. Owner errors for catalogued projects still surface.

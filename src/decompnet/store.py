@@ -565,6 +565,14 @@ class Store:
             self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_sdk_inventory_{event} AFTER {event} ON sdk_signatures "
                               "BEGIN INSERT INTO read_revisions VALUES('sdk_names',1) "
                               "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
+        # Speculative lease cleanup reads shared names/owners, not token or usage
+        # history. A durable revision also observes writes from another process.
+        for event in ('INSERT', 'DELETE', 'UPDATE'):
+            clause = 'UPDATE OF id,name,owner' if event == 'UPDATE' else event
+            when = 'WHEN OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name OR OLD.owner IS NOT NEW.owner' if event == 'UPDATE' else ''
+            self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_lease_identities_agents_{event.lower()} AFTER {clause} ON agents {when} "
+                              "BEGIN INSERT INTO read_revisions VALUES('lease_identities',1) "
+                              "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
         self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_baseline ON attempts(function_id,score,id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_context ON attempts(context_version,function_id)")

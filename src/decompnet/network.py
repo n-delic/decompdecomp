@@ -685,9 +685,14 @@ class Network:
         from types import SimpleNamespace
 
         from .permuter_claims import nonexclusive
-        return {row['id'] for row in self.store.all(
-            "SELECT id,name,owner FROM agents WHERE name LIKE '%permuter%'")
-                if nonexclusive(SimpleNamespace(**dict(row)))}
+        def load():
+            return frozenset(row['id'] for row in self.store.all(
+                "SELECT id,name,owner FROM agents WHERE name LIKE '%permuter%'")
+                    if nonexclusive(SimpleNamespace(**dict(row))))
+        # Historical permuter workers accumulate even when no leases remain.
+        # Cache only derived IDs, never authentication, with transactional invalidation.
+        return set(self.store.read_cache.get('nonexclusive-agent-ids',
+                                             self.store.read_version('lease_identities'),load))
 
     def _expire_claims(self, db, *, machine_ids=None, nonexclusive_ids=None) -> None:
         from .permuter_claims import clear

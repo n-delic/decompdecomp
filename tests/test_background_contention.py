@@ -28,6 +28,7 @@ def test_deep_autosave_checks_are_periodic_but_dirty_checks_continue(monkeypatch
     calls=[]
     net=SimpleNamespace(store=SimpleNamespace(all=lambda *_:[{'slug':'a','root':'','config':'{}'}]),
                         progress=SimpleNamespace(sync=lambda slug,**kw:calls.append(kw['force']) or True))
+    net.project_store=lambda _:net.store
     auto=saves.Autosave(net)
     assert auto.run_once(force=False)==['a']
     clock[0]+=1
