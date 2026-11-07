@@ -386,7 +386,7 @@ def _run(twins, slug, job):
     limit, deadline = job.reuse_limit, job.reuse_deadline
     agent, _ = net.local_agent('autopilot')
     cfg = net.cfg(proj)
-    symbols = [(r['name'], r['address']) for r in net.store.all(
+    symbols = [(r['name'], r['address']) for r in net.project_store(proj['id']).all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     known = {name for name, _ in symbols}
     matched = [0]
@@ -394,10 +394,10 @@ def _run(twins, slug, job):
     diagnostics = Counter()
     from . import prototype_reuse
     rules = repair_rules()
-    rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
+    rows = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
                          "AND best_score>0 AND best_score<=?*MAX(1,n_insns) "
                          "ORDER BY id", proj['id'], 100 - similar_matches.REPAIR_PERCENT)
-    cursor = net.store.one('SELECT function_id FROM repair_cursors WHERE project_id=?', proj['id'])
+    cursor = net.project_store(proj['id']).one('SELECT function_id FROM repair_cursors WHERE project_id=?', proj['id'])
     last = cursor['function_id'] if cursor else 0
     if getattr(job,'finish_near',False):
         from . import finish_near
@@ -410,9 +410,9 @@ def _run(twins, slug, job):
     def visit(fn):
         if free_candidates.exhausted(job) or job.reuse_attempts >= limit or time.monotonic() >= deadline:
             return
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO repair_cursors VALUES(?,?)', (proj['id'], fn['id']))
-        if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
+        if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
             return
         if getattr(job,'finish_near',False):finish_near.visited(net,proj,fn)
         header = net._context(proj['id'], fn['unit'])['header']
@@ -422,7 +422,7 @@ def _run(twins, slug, job):
                          verified_unit_context.signature(net,proj,fn,fn['best_source']))
         recipe_profile=repair_sequences.profile(net,proj,fn)
         context = similar_matches.trial_key('', header, settings, fn, ['beam-v13', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
-        saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
+        saved = net.project_store(proj['id']).one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:
             state = dict(pending=[dict(source=fn['best_source'], depth=0, ceiling=fn['best_score'])],
@@ -471,7 +471,7 @@ def _run(twins, slug, job):
             # Only reuse reports under the full frozen input scope, never legacy partial keys.
             for kind in ('iterative-v2',):
                 key = similar_matches.trial_key(source, header, settings, fn, [kind, build_scope, symbols])
-                cached = net.store.one("SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=? AND outcome='miss'",
+                cached = net.project_store(proj['id']).one("SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=? AND outcome='miss'",
                                        fn['id'], key)
                 if cached:
                     return initial_trace(source,{**json.loads(cached['feedback']),'cached':True})
@@ -541,7 +541,7 @@ def _run(twins, slug, job):
             outcome = 'match' if report.get('matched') else 'miss'
             path = state['pending'][0].get('path', []) if state['pending'] else []
             reason = 'iterative local repair; ' + ('byte match' if outcome == 'match' else f"score {report.get('score')}") + '; path: ' + ' → '.join(path)
-            with net.store.tx() as db:
+            with net.project_store(proj['id']).tx() as db:
                 # Unscored reports mix syntax errors with resource/tool failures. Keep
                 # their audit row, but do not poison persistent candidate caching.
                 if report.get('score') is not None:
@@ -588,7 +588,7 @@ def _run(twins, slug, job):
                 job.reuse_matched += 1
                 job.reuse_bytes += fn['size']
             net.add_note(agent, slug, 'Autopilot matched with iterative local repairs', fn['name'])
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO repair_frontiers VALUES(?,?,?)', (fn['id'], context, json.dumps(state)))
         with guard:
             reasons[state.get('reason', 'busy_or_paused')] += 1
@@ -622,7 +622,7 @@ def optional_phase(twins, slug, parent):
     matched = run(twins, slug, phase)
     net = twins.net
     proj = net.project_row(slug)
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.execute('INSERT INTO iterative_runs(project_id,attempts,matched,bytes,seconds,created_at) VALUES(?,?,?,?,?,?)',
                    (proj['id'], phase.reuse_attempts, phase.reuse_matched, phase.reuse_bytes,
                     time.monotonic() - started, time.time()))

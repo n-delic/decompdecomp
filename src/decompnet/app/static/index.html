@@ -846,8 +846,8 @@
     <div class="pad">
       <p>Store repeated source, assembly, reuse feedback, compiler evidence, agent messages and progress snapshots once, compressed. Exact text and history stay available on demand.</p>
       <p id="databaseStorageEstimate" class="small muted" role="status"></p>
-      <label class="field"><span>Keep unsuccessful compile source for at least this many days</span><input id="databaseStorageDays" type="number" min="1" max="3650" value="90"><small>Current, best, matched and referenced source is kept. Attempt scores and metrics are never removed.</small></label>
-      <label class="check"><input id="databaseStorageAutomatic" type="checkbox"><span>Clean old unsuccessful source automatically, once a day</span></label>
+      <label class="field"><span>Keep superseded unsuccessful C source for this many days</span><input id="databaseStorageDays" type="number" min="0" max="3650" value="0"><small>0 removes superseded unsuccessful source at the next cleanup. Latest candidates, improvements, exact matches and referenced source are kept. Older unsuccessful candidates retain their SHA-256 hash, score and metrics.</small></label>
+      <label class="check"><input id="databaseStorageAutomatic" type="checkbox"><span>Clean old unsuccessful source and oversized search diagnostics automatically, once a day</span></label>
       <div class="row"><button id="databaseStoragePack" class="primary" type="button">Compress existing records</button><details class="agent-menu"><summary aria-label="More candidate storage actions">⋮</summary><div class="agent-menu-items"><button id="repairEvidenceExport" type="button">Export repair evidence database</button><button id="databaseStorageCompact" type="button">Compact database files…</button><button id="databaseStorageSave" type="button">Save retention rules</button><button id="databaseStoragePrune" type="button">Clean old unsuccessful source</button></div></details><button id="databaseStorageStop" type="button" hidden>Stop</button></div>
       <div id="databaseStorageLog"></div>
       <h3>Repair evidence</h3>

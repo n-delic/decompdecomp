@@ -6,6 +6,7 @@ Only fresh trials are recorded; the existing search cache owns repeated inputs.
 import difflib
 import hashlib
 import json
+import threading
 import time
 from itertools import accumulate
 
@@ -20,11 +21,15 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_input_effects(
  last_edits TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(function_id,scope,family))'''
 
 
-def prepare(net):
-    if not getattr(net,'_repair_input_effects_ready',False):
-        with net.store.tx() as db:
-            db.execute(SCHEMA)
-        net._repair_input_effects_ready = True
+def prepare(net, project=None):
+    store = net.project_store(project) if project is not None else net.store
+    lock = net.__dict__.setdefault('_repair_input_effects_lock',threading.RLock())
+    with lock:
+        ready = net.__dict__.setdefault('_repair_input_effects_stores',set())
+        if store not in ready:
+            with store.tx() as db:db.execute(SCHEMA)
+            ready.add(store)
+    return store
 
 
 def build_scope(net, proj, fn):
@@ -59,12 +64,12 @@ def output(candidate):
 
 
 def record(net, fn, key, family, before, after, baseline, score, prior_output, measured_output, elapsed_ms, *, compact=False):
-    prepare(net)
+    store = prepare(net,fn['project_id'])
     changes = ([{'before_start':0, 'before_end':len(before), 'after_start':0, 'after_end':len(after)}]
                if compact and before != after else [] if compact else edits(before, after))
     improved = score is not None and score < baseline
     same = prior_output is not None and prior_output == measured_output
-    trial_bookkeeping.submit(net.store, [(
+    trial_bookkeeping.submit(store, [(
         """INSERT INTO repair_input_effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+1,
         no_edit=no_edit+excluded.no_edit,same_output=same_output+excluded.same_output,
@@ -78,10 +83,10 @@ def record(net, fn, key, family, before, after, baseline, score, prior_output, m
 
 
 def factors(net, proj, fn):
-    trial_bookkeeping.flush(net.store)
-    prepare(net)
+    store = prepare(net,fn['project_id'])
+    trial_bookkeeping.flush(store)
     key = scope(net,proj,fn)
-    rows = net.store.all('SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?',fn['id'],key)
+    rows = store.all('SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?',fn['id'],key)
     result = {}
     for row in rows:
         if row['improved']:
@@ -95,11 +100,17 @@ def factors(net, proj, fn):
 
 
 def listing(net):
-    trial_bookkeeping.flush(net.store)
-    prepare(net)
-    return [dict(row) for row in net.store.all('''SELECT family,SUM(attempted) attempted,SUM(no_edit) no_edit,
-      SUM(same_output) same_output,SUM(worse) worse,SUM(failed) failed,SUM(improved) improved,
-      SUM(elapsed_ms) elapsed_ms FROM repair_input_effects GROUP BY family ORDER BY attempted DESC LIMIT 12''')]
+    totals = {}
+    for store, pids in net.project_stores():
+        prepare(net,pids[0]) if pids else prepare(net)
+        trial_bookkeeping.flush(store)
+        for row in store.all('''SELECT family,SUM(attempted) attempted,SUM(no_edit) no_edit,
+          SUM(same_output) same_output,SUM(worse) worse,SUM(failed) failed,SUM(improved) improved,
+          SUM(elapsed_ms) elapsed_ms FROM repair_input_effects GROUP BY family'''):
+            total = totals.setdefault(row['family'],dict.fromkeys(row.keys(),0) | {'family':row['family']})
+            for key in row.keys():
+                if key != 'family':total[key] += row[key]
+    return sorted(totals.values(),key=lambda row:row['attempted'],reverse=True)[:12]
 
 
 def measured(permuter, agent, proj, fn, source, best, fork):

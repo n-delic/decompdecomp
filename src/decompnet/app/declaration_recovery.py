@@ -29,7 +29,7 @@ def preflight(net, agent, slug, fn, source):
     report = agent_evidence.preflight(net, agent, slug, fn, source)
     if not report or report.get('score') is not None:
         return source, report
-    known = [r['source'] for r in net.store.all('SELECT source FROM attempts WHERE function_id=? AND score IS NOT NULL ORDER BY id DESC LIMIT 8', fn['id']) if r['source']]
+    known = [r['source'] for r in net.project_store(fn['project_id']).all('SELECT source FROM attempts WHERE function_id=? AND score IS NOT NULL ORDER BY id DESC LIMIT 8', fn['id']) if r['source']]
     proj = net.project_row(slug)
     if not net.fork_slug(slug):
         context = net._context(proj['id'], fn['unit'])

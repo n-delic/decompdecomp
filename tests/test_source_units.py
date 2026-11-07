@@ -104,6 +104,7 @@ def test_saved_matched_callback_owner_can_come_from_another_source_unit(monkeypa
     from decompnet.app import repository_candidates
     rows=[{'name':'install','matched_source':'void install(void){ callback=&entry; }','meta':'{}','vram':8192}]
     net=SimpleNamespace(is_rom=lambda p:True,fork_slug=lambda s:None,store=SimpleNamespace(all=lambda *a:rows))
+    net.project_store = lambda project:net.store
     monkeypatch.setattr(repository_candidates,'contexts',lambda *a:iter(['void entry(void);']))
     pairs=source_units.matched_owners(net,{'slug':'game','id':1,'arch':'mips'},{'id':1,'vram':4096,'name':'entry'},'void entry(void){ work(); }','void work(void);')
     assert pairs[0][0]=='cpu-address-source-unit' and 'callback=&entry' in pairs[0][1]

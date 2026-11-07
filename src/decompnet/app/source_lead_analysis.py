@@ -18,7 +18,7 @@ def destination(net, proj, fn):
         from ..candidate_scope import key
         return key(net,proj,fn)
     context=net._context(proj['id'],fn['unit']) or {'header':''}
-    symbols=[tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])]
+    symbols=[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])]
     return hashlib.sha256(repr((compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else {},cfg.get('gp'),proj['arch'],
                                fn['target'],fn['relocs'],fn['size'],fn['vram'],context['header'],symbols,build_state(proj))).encode()).hexdigest()
 
@@ -80,7 +80,7 @@ def key(scope, source, header, family, profile):
 
 
 def rejected(net, fn, scope, source, header, lead, profile):
-    row=net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key(scope,source,header,lead.get('family','original-context'),profile))
+    row=net.project_store(fn['project_id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key(scope,source,header,lead.get('family','original-context'),profile))
     return bool(row and json.loads(row['feedback']).get('rejected'))
 
 
@@ -132,7 +132,7 @@ def record(net, proj, fn, source, header, score, rows, lead=None, elapsed_ms=0, 
           'baseline_source_sha256':hashlib.sha256((dict(fn).get('best_source') or '').encode()).hexdigest(),
           'source_sha256':hashlib.sha256(source.encode()).hexdigest(),'header_sha256':hashlib.sha256(header.encode()).hexdigest(),
           'comparison':comparison}
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         previous=db.execute('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',(fn['id'],signature)).fetchone()
         if previous:
             old=json.loads(previous['feedback'] or '{}')
@@ -149,7 +149,7 @@ def record(net, proj, fn, source, header, score, rows, lead=None, elapsed_ms=0, 
 
 
 def listing(net, proj):
-    rows=net.store.all('SELECT r.signature,r.feedback,f.name FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE f.project_id=? AND r.signature LIKE ? ORDER BY r.rowid DESC LIMIT 500',proj['id'],PREFIX+'%')
+    rows=net.project_store(proj['id']).all('SELECT r.signature,r.feedback,f.name FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE f.project_id=? AND r.signature LIKE ? ORDER BY r.rowid DESC LIMIT 500',proj['id'],PREFIX+'%')
     leads=[];groups={}
     for row in rows:
         item=json.loads(row['feedback']);family=item['family'];profile=item['profile']
@@ -167,7 +167,7 @@ def listing(net, proj):
 def reject(net, proj, signature, reason):
     reason=str(reason).strip()
     if not reason:raise NetworkError('Give a reason for rejecting this source lead.')
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         row=db.execute('SELECT r.* FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE f.project_id=? AND r.signature=? AND r.signature LIKE ?',
                        (proj['id'],signature,PREFIX+'%')).fetchone()
         if not row:raise NetworkError('This source lead is no longer available. Refresh its evidence.')
@@ -187,14 +187,14 @@ def brief(net, proj, fn):
             if hasattr(net,'xrefs'):
                 callers=sorted(net.xrefs(proj)['called_by'].get(fn['vram'],()))[:4]
                 for address in callers:
-                    row=net.store.one('SELECT name,asm FROM functions WHERE project_id=? AND vram=?',proj['id'],address)
+                    row=net.project_store(proj['id']).one('SELECT name,asm FROM functions WHERE project_id=? AND vram=?',proj['id'],address)
                     if row:
                         code=(row['asm'] or '').splitlines();at=next((i for i,line in enumerate(code) if re.search(r'\bjal\s+'+re.escape(fn['name'])+r'\b',line)),None)
                         lines.append('Caller '+row['name']+(':\n'+'\n'.join(code[max(0,at-3):at+2]) if at is not None else ' (inspect its call-site argument setup).'))
     if proj['arch']=='mips' and hasattr(net,'xrefs'):
         from ..arch.mips_runtime import specialized_argument_setup
         for address in sorted(net.xrefs(proj)['called_by'].get(fn['vram'],()))[:8]:
-            caller=net.store.one('SELECT name,asm FROM functions WHERE project_id=? AND vram=?',proj['id'],address)
+            caller=net.project_store(proj['id']).one('SELECT name,asm FROM functions WHERE project_id=? AND vram=?',proj['id'],address)
             evidence=specialized_argument_setup(fn['asm'] or '',caller['asm'] or '',fn['name']) if caller else None
             if evidence:
                 lines.append('Specialized internal argument lead: '+', '.join(evidence['registers'])+
@@ -203,7 +203,7 @@ def brief(net, proj, fn):
                 break
     scope=destination(net,proj,fn)
     misses=[];next_steps=[];ineffective=[]
-    for row in net.store.all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 80',fn['id'],PREFIX+'%'):
+    for row in net.project_store(proj['id']).all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 80',fn['id'],PREFIX+'%'):
         item=json.loads(row['feedback'])
         if item['scope']==scope and not item['improved']:
             next_steps.extend(item['comparison'].get('next_steps',[]))
@@ -239,7 +239,7 @@ def rank_pairs(net, proj, fn, pairs, families):
         hashes=tuple(hashlib.sha256(text.encode()).hexdigest() for text in pair)
         comparison=measured.get(hashes)
         return (bool(identity(comparison)), -comparison.get('support',0)) if comparison else (False,0)
-    trials=net.store.all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 512',fn['id'],PREFIX+'%')
+    trials=net.project_store(proj['id']).all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 512',fn['id'],PREFIX+'%')
     scores={}
     for row in trials:
         item=json.loads(row['feedback'] or '{}')

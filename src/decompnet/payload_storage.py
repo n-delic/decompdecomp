@@ -109,11 +109,22 @@ def install(conn,table='attempts'):
     if ref not in columns:
         conn.execute(f'ALTER TABLE {table} ADD COLUMN {ref} TEXT')
         columns.append(ref)
+    from .payload_links import install as install_links
+    install_links(conn,table,ref)
     if table=='repair_examples':
         from .repair_archive import install as install_archive
         install_archive(conn,columns)
         if isinstance(conn,Connection):conn.detail_tables=set(conn.detail_tables)|{table}
         return
+    if table=='attempts':
+        if 'source_digest' not in columns:
+            conn.execute('ALTER TABLE attempts ADD COLUMN source_digest TEXT')
+            columns.append('source_digest')
+        for event in ('INSERT','UPDATE OF source_hash'):
+            name='attempt_digest_insert' if event=='INSERT' else 'attempt_digest_update'
+            conn.execute(f'CREATE TRIGGER IF NOT EXISTS {name} AFTER {event} ON attempts '
+                         'WHEN NEW.source_hash IS NOT NULL BEGIN UPDATE attempts SET '
+                         'source_digest=NEW.source_hash WHERE id=NEW.id; END')
     expression=f'CASE WHEN {ref} IS NULL THEN {field} ELSE payload_read({ref},(SELECT payload FROM text_payloads WHERE hash={ref})) END AS {field}'
     conn.execute(f'DROP VIEW IF EXISTS {view}')
     conn.execute(f'CREATE VIEW {view} AS SELECT '+','.join(expression if col==field else col for col in columns)+f' FROM {table}')

@@ -99,9 +99,10 @@ def test_retention_keeps_current_referenced_successful_and_latest_sources(data):
         db.execute('UPDATE functions SET best_source=?,seed=? WHERE id=?',('best','seed',fid))
         db.execute('INSERT INTO attempt_hints VALUES(?,?,?)',(hint,fid,'keep'))
     result=database_storage.prune(net,{'days':1},Log())
-    assert result['removed_sources']==1
+    assert result['removed_sources']==2
     assert net.store.one('SELECT source FROM attempts WHERE id=?',old)['source'] is None
-    for a in (best,seed,hint,success,latest):assert net.store.one('SELECT source FROM attempts WHERE id=?',a)['source']
+    assert net.store.one('SELECT source_digest,source FROM attempts WHERE id=?',hint)['source'] is None
+    for a in (best,seed,success,latest):assert net.store.one('SELECT source FROM attempts WHERE id=?',a)['source']
     assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==6
     assert net.store.one('SELECT settings FROM repair_attempt_settings WHERE attempt_id=?',old)['settings']=='{}'
 
@@ -109,7 +110,7 @@ def test_retention_keeps_current_referenced_successful_and_latest_sources(data):
 def test_history_page_never_decodes_payloads_and_details_are_scoped(data,monkeypatch):
     net,fid=data
     for i in range(105):add(net,fid,str(i))
-    monkeypatch.setattr(net,'_function',lambda name,slug: {'id':fid})
+    monkeypatch.setattr(net,'_function',lambda name,slug: {'id':fid,'project_id':net.store.one('SELECT project_id FROM functions WHERE id=?',fid)[0]})
     # A metadata-only query must not invoke the SQL decompressor at all.
     net.store.conn.create_function('payload_read',2,lambda *_:(_ for _ in ()).throw(AssertionError('decoded')))
     page=database_storage.history(net,'game','target')
@@ -126,7 +127,7 @@ def test_checksum_and_missing_payload_fail_closed():
 
 
 def test_options_reject_accidental_retention():
-    for rules in ({'days':0},{'days':True},{'automatic':'yes'}):
+    for rules in ({'days':-1},{'days':True},{'automatic':'yes'}):
         with pytest.raises(ValueError):database_storage.options(rules)
 
 

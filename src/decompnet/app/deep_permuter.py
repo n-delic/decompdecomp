@@ -94,6 +94,7 @@ class Search(Permuter):
         self.measurement_counts = {}
         self.recipe_wins = []
         self.recipe_fn = fn['id'] if fn is not None else None
+        self.recipe_project = fn['project_id'] if fn is not None else None
         self.current_family = ''
         self.last_outcome = ''
         self.last_score = None
@@ -190,6 +191,7 @@ class Search(Permuter):
         self.current_family, self.last_outcome, self.last_score = (
             family, detail if outcome == 'tested' and score is None else outcome, score)
         self.recipe_fn = fn['id']
+        self.recipe_project = fn['project_id']
         counts = self.recipe_counts.setdefault(family, [0, 0, 0, 0, 0, 0])
         counts[{'tested': 0, 'skipped': 1, 'rejected': 2}[outcome]] += 1
         if outcome == 'tested':
@@ -222,7 +224,7 @@ class Search(Permuter):
     def flush_recipes(self):
         sweeps = getattr(self.net, 'deep_sweeps', None)
         if sweeps and self.recipe_fn is not None and (self.recipe_counts or self.recipe_wins or self.measurement_counts):
-            sweeps.record_recipes(self.recipe_fn, self.recipe_counts, self.recipe_wins, self.measurement_counts)
+            sweeps.record_recipes(self.recipe_fn, self.recipe_counts, self.recipe_wins, self.measurement_counts, project=self.recipe_project)
         self.recipe_counts.clear()
         self.recipe_wins.clear()
         self.measurement_counts.clear()
@@ -231,7 +233,7 @@ class Search(Permuter):
         lane = getattr(self, 'parallel_lane', None)
         if lane is not None and (lane.index or lane.preflight_done):
             return {'tested': 0}
-        if self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
+        if self.net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
             self.log('Searching with the current compiler settings while an agent owns the function; flag changes are deferred.')
             return {'tested': 0}
         if proj['slug'] in self.net.links:
@@ -291,7 +293,7 @@ class Search(Permuter):
                     self.net._record(fn, agent, None, fn['best_source'],
                                      self.net._context(proj['id'], fn['unit'])['version'],
                                      compiled=False, via='permuter')
-                    with self.net.store.tx() as db:
+                    with self.net.project_store(proj['id']).tx() as db:
                         current = self.net._function(fn['name'], proj['slug'])
                         unchanged = (current['status'] == 'open' and current['best_source'] == fn['best_source']
                                      and all(current[k] == fn[k] for k in ('best_score', 'target', 'relocs', 'vram'))
@@ -610,7 +612,7 @@ class Search(Permuter):
     def _recent_key(self, proj, fn, source, fork):
         # Imported files can change outside the database, so keep their full dependency scan.
         if fork or self.measuring_baseline:return None
-        if not hasattr(self.net.store, 'read_version'):return None
+        if not hasattr(self.net.project_store(proj['id']), 'read_version'):return None
         from .. import claim_stalls
         from ..candidate_work import remember
         from ..match_bundle import compiler_identity
@@ -628,7 +630,7 @@ class Search(Permuter):
         ctx = context(self.net, proj, fn['unit'])
         if not compiler._stable_inputs([source.encode(), (ctx['header'] if ctx else '').encode()]):return None
         rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
-        return (self.net.store.read_version('inputs', proj['id']),
+        return (self.net.project_store(proj['id']).read_version('inputs', proj['id']),
                 hashlib.sha256(repr((dict(proj), dict(fn), source, compiler_identity(own), rules,
                                      sorted(os.environ.items()))).encode()).digest())
 
@@ -650,7 +652,7 @@ class Search(Permuter):
                 keys.append('deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest())
         for at in range(0, len(keys), 64):
             group = keys[at:at+64]
-            rows = self.net.store.all(
+            rows = self.net.project_store(proj['id']).all(
                 'SELECT signature,feedback FROM reuse_trials WHERE function_id=? AND signature IN ('+
                 ','.join('?' for _ in group)+')', fn['id'], *group)
             found = {row['signature']: row['feedback'] for row in rows}
@@ -686,10 +688,10 @@ class Search(Permuter):
         scope = getattr(self, '_primed_scopes', {}).get(recent_key) if recent_key is not None else None
         if scope is None:scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
         key = 'deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest()
-        pending = trial_bookkeeping.lookup(self.net.store, ('reuse_trials', fn['id'], key))
+        pending = trial_bookkeeping.lookup(self.net.project_store(proj['id']), ('reuse_trials', fn['id'], key))
         primed = getattr(self, '_primed_trials', {})
         cached = ({'feedback':pending} if pending is not None else
-                  {'feedback':primed[fn['id'], key]} if (fn['id'], key) in primed else self.net.store.one(
+                  {'feedback':primed[fn['id'], key]} if (fn['id'], key) in primed else self.net.project_store(proj['id']).one(
                       'SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key))
         feedback = json.loads(cached['feedback']) if cached and cached['feedback'] else None
         score = feedback.get('score') if isinstance(feedback, dict) else feedback
@@ -729,8 +731,9 @@ class Search(Permuter):
                             and (best <= score <= best*1.25 or permuter_focus.classify(own[0]) != policy_focus or
                                  best <= score <= best*2 and search_frontier.structure_recovery(rows,own[0],proj['arch'])) else score)
                 if isinstance(feedback,dict):feedback['output']=getattr(self,'_trial_output',None)
-                packed_feedback = json.dumps(feedback)
-                trial_bookkeeping.submit(self.net.store, [(
+                from .search_history import feedback as compact_feedback
+                packed_feedback = json.dumps(compact_feedback(feedback),separators=(',',':'))
+                trial_bookkeeping.submit(self.net.project_store(proj['id']), [(
                     'INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                     (fn['id'], key, 'miss', 'deep function search; path: '+ ' → '.join((current_trial() or {}).get('lineage', [])),
                      packed_feedback))], memo=(('reuse_trials', fn['id'], key), packed_feedback))
@@ -760,7 +763,7 @@ class Search(Permuter):
                 self.winner_locations = getattr(self,'_trial_locations',None)
                 self.winner_scope = scope
         if (recent_key is not None and isinstance(score, int) and score > 0 and score >= best
-                and self.net.store.read_version('inputs', proj['id']) == recent_key[0]):
+                and self.net.project_store(proj['id']).read_version('inputs', proj['id']) == recent_key[0]):
             if recent is None:self._recent_candidates = recent = OrderedDict()
             rows = self._cached_rows if reused else (feedback.get('rows', []) if isinstance(feedback, dict) else [])
             if len(rows) <= 256:
@@ -841,7 +844,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     try:
         # Explicitly configured local source carries real records/macros and original line breaks.
         # Try it before mutating an accumulated machine draft; never fetch a reference automatically.
-        if (lane is None or lane.index == 0) and hasattr(net, '_comparison_digest') and not net.store.one(
+        if (lane is None or lane.index == 0) and hasattr(net, '_comparison_digest') and not net.project_store(proj['id']).one(
                 'SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
             search.check()
             from . import source_preparation

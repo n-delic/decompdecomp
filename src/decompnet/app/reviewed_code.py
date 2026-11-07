@@ -23,11 +23,11 @@ def _plans(net,proj,changes,image):
         if type(end) is not int or fn['vram'] is None or not fn['vram']+fn['size']<end<=fn['vram']+0x10000 or end%4:
             raise NetworkError('The reviewed end must be an aligned extension of at most 64 KiB.')
         if fn['status']=='matched':raise NetworkError('A matched function cannot be extended.')
-        if net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):raise NetworkError('Release the function claim before changing its extent.')
+        if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):raise NetworkError('Release the function claim before changing its extent.')
         start=fn['rom_offset'];size=end-fn['vram']
         if start is None or start<0 or start+size>len(image) or image[start:start+fn['size']]!=fn['target']:
             raise NetworkError('The stored prefix does not describe unchanged original image bytes.')
-        peers=net.store.all(f'SELECT id,vram,rom_offset,size FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id'])
+        peers=net.project_store(proj['id']).all(f'SELECT id,vram,rom_offset,size FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id'])
         if any(p['id']!=fn['id'] and ((p['rom_offset'] is not None and p['rom_offset']<start+size and start<p['rom_offset']+p['size']) or
                (p['vram'] is not None and p['vram']<end and fn['vram']<p['vram']+p['size'])) for p in peers):
             raise NetworkError('The reviewed extent overlaps another function; use a reviewed join instead.')
@@ -82,7 +82,7 @@ def run(net,slug,changes,log=print):
         original=Path(proj['root'])/program
         if not original.is_file() or hashlib.sha1(original.read_bytes()).hexdigest()!=cfg['rom']['sha1']:
             raise NetworkError('The original cartridge does not match its recorded hash.')
-    known={r['vram']:dict(r) for r in net.store.all(f'SELECT vram,size FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id']) if r['vram'] is not None}
+    known={r['vram']:dict(r) for r in net.project_store(proj['id']).all(f'SELECT vram,size FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id']) if r['vram'] is not None}
     known.update({p['vram']:p for p in plans})
     config=extend_config(split_config,list(known.values()))
     log('Staging reviewed original ranges; no live targets have changed.')
@@ -93,12 +93,12 @@ def run(net,slug,changes,log=print):
     targets=[net._make_target(proj,p['split'],syms) for p in plans]
     # Recheck input identities and claims after the external analysis; publishing
     # participates in the same saved-progress locking as other layout corrections.
-    with net.progress.rebuilding(slug),net.store.tx() as db:
+    with net.progress.rebuilding(slug),net.project_store(proj['id']).tx() as db:
         fresh=net.project_row(slug)
         if fresh['config']!=proj['config']:raise NetworkError('Project settings changed during analysis; run recovery again.')
         for p in plans:
             current=dict(net._function(p['name'],slug))
-            if current!=p['row'] or net.store.one('SELECT 1 FROM claims WHERE function_id=?',current['id']):
+            if current!=p['row'] or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',current['id']):
                 raise NetworkError('A function or its claim changed during analysis; run recovery again.')
         _plans(net,fresh,changes,image)
         for p,target in zip(plans,targets):

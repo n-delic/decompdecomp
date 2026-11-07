@@ -11,7 +11,7 @@ def caller(net,proj,fn):
     if not return_contract_repairs.witness(asm,proj['arch']):return ''
     addresses=sorted(net.xrefs(proj).get('called_by',{}).get(fn['vram'],()))[:8]
     for address in addresses:
-        row=net.store.one('SELECT * FROM functions WHERE project_id=? AND vram=?',proj['id'],address)
+        row=net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND vram=?',proj['id'],address)
         if row:
             text=net._asm_text(row,proj)
             proof=return_contract_repairs.witness(asm,proj['arch'],text,fn['name'])
