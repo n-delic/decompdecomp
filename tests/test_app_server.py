@@ -2961,3 +2961,20 @@ def test_agent_metric_reset_runs_off_event_loop_and_returns_boundary(app, monkey
     assert response.status_code==200
     assert response.json()=={'reset':True,'metrics_since':123,'metrics_after':456}
     assert calls==['selected']
+
+
+def test_single_function_profile_response_does_not_restore_project(app, monkeypatch):
+    client, net, *_ = app
+    slug = 'single-profile-apply'
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)', (slug,'Profile','.','{}'))
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('must not restore whole project'))
+    calls = []
+    def apply(*args, **kwargs):
+        calls.append(args)
+        return {'matched':True}
+    monkeypatch.setattr(net, 'apply_function_compiler', apply)
+    response = client.post('/api/compiler', json={'slug':slug,'function':'only',
+                           'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}, headers={'X-Decomp':'1'})
+    assert response.status_code == 200 and response.json() == {'matched':True}
+    assert calls == [(slug,'only','gcc-2.7.2-kmc',['-O2'])]
