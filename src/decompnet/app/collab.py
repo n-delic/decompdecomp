@@ -77,6 +77,20 @@ class Room:
         self._members: tuple[float, list] = (0.0, [])  # cached: every member polls, the list changes slowly
 
     @property
+    def store(self):
+        return self.net.project_store(self.proj['id'])
+
+    def _credited(self, sql, *args, require_agent=False):
+        """Read project rows and resolve their author labels from the shared registry."""
+        rows = [dict(row) for row in self.store.all(sql, *args)]
+        ids = sorted({row['agent_id'] for row in rows if row['agent_id'] is not None})
+        names = {row['id']: row['name'] for row in self.net.store.all(
+            'SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))', json.dumps(ids))} if ids else {}
+        for row in rows:
+            row['agent'] = names.get(row.pop('agent_id'))
+        return [row for row in rows if row['agent'] is not None] if require_agent else rows
+
+    @property
     def settings(self) -> dict:
         """visibility: private (an invite link is needed) or public (the room's address is enough); approve: the
         host lets each new member in."""
@@ -92,7 +106,7 @@ class Room:
             c["visibility"] = visibility
         if approve is not None:
             c["approve"] = bool(approve)
-        with self.net.store.tx() as db:
+        with self.store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE slug=?", (json.dumps(cfg), self.slug))
         return self.settings
 
@@ -127,7 +141,7 @@ class Room:
         code = old.get("code") if keep and old.get("code") else secrets.token_urlsafe(16)
         cfg["collab"] = {**old, **where, "invite": _hash(code), "code": code, "open": True,
                          "since": old.get("since") or time.time()}
-        with self.net.store.tx() as db:
+        with self.store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE slug=?", (json.dumps(cfg), self.slug))
         return code
 
@@ -148,7 +162,7 @@ class Room:
         cfg = self.cfg
         if "collab" in cfg:
             cfg["collab"]["open"] = False
-            with self.net.store.tx() as db:
+            with self.store.tx() as db:
                 db.execute("UPDATE projects SET config=? WHERE slug=?", (json.dumps(cfg), self.slug))
 
     def invite_ok(self, code: str) -> bool:
@@ -185,7 +199,7 @@ class Room:
         # Older/fork attempts lack the recorded verdict: compare their score with
         # the preceding project-wide history, never just that member's attempts.
         from .history_summary import summary as history_summary
-        history = history_summary(self.net.store, self.proj['id'])['agents']
+        history = history_summary(self.store, self.proj['id'])['agents']
         improvements = {}
         children = self.net.store.all('SELECT id,name,owner FROM agents WHERE origin=? AND owner IS NOT NULL', self.origin)
         by_owner = {}
@@ -193,12 +207,12 @@ class Room:
             by_owner.setdefault(agent['owner'], []).append(agent)
             improvements.setdefault(agent['owner'], set()).update(history.get(agent['id'], {}).get('verified_improved', ()))
         ids_json = json.dumps([a['id'] for a in children])
-        matched_by_agent = {r['matched_agent_id']:r['n'] for r in self.net.store.all(
+        matched_by_agent = {r['matched_agent_id']:r['n'] for r in self.store.all(
             'SELECT matched_agent_id,COUNT(*) AS n FROM functions WHERE project_id=? AND matched_agent_id IN '
             '(SELECT value FROM json_each(?)) GROUP BY matched_agent_id', self.proj['id'], ids_json)}
         working_by_agent = {}
-        for claim in self.net.store.all('SELECT c.agent_id,f.name FROM claims c JOIN functions f ON f.id=c.function_id '
-                                       'WHERE c.agent_id IN (SELECT value FROM json_each(?))', ids_json):
+        for claim in self.store.all('SELECT c.agent_id,f.name FROM claims c JOIN functions f ON f.id=c.function_id '
+                                       'WHERE f.project_id=? AND c.agent_id IN (SELECT value FROM json_each(?))', self.proj['id'], ids_json):
             working_by_agent.setdefault(claim['agent_id'], []).append(claim['name'])
         out = []
         for r in rows:
@@ -290,13 +304,13 @@ class Room:
         """The events after the guest's cursor, a page at a time, and how many more wait (`behind`: the guest's
         "getting the host's work" counts it down). A guest that just joined (`fresh`) starts at the newest: the
         room's whole history landed in its feed and notifications as if it had all just happened."""
-        pid, store = self.proj["id"], self.net.store
+        pid, store = self.proj["id"], self.store
         if fresh:
             last = store.one("SELECT COALESCE(MAX(id), 0) AS m FROM events WHERE project_id=?", pid)["m"]
             return {"e": last, "events": [], "behind": 0}
-        events = [dict(ev) for ev in store.all(
-            "SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
-            "ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id LIMIT ?", pid, e, EVENTS_PAGE)]
+        events = self._credited(
+            "SELECT id,kind,detail,created_at,agent_id FROM events "
+            "WHERE project_id=? AND id>? ORDER BY id LIMIT ?", pid, e, EVENTS_PAGE)
         last = events[-1]["id"] if events else e
         behind = store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND id>?", pid, last)["n"] \
             if len(events) == EVENTS_PAGE else 0
@@ -308,7 +322,7 @@ class Room:
             return self._fork_state(e, member, fresh)
         pid = self.proj["id"]
         net = self.net
-        with net.store.tx() as db:
+        with self.store.tx() as db:
             net._expire_claims(db)
         out: dict = self._events(e, fresh)
         events = out["events"]
@@ -318,8 +332,8 @@ class Room:
         if first or fresh or names:
             narrowed = not (first or fresh)
             condition = " AND f.name IN (SELECT value FROM json_each(?))" if narrowed else ""
-            rows = net.store.all("SELECT f.name, f.vram, f.rom_offset, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
-                                 "ON a.id=f.matched_agent_id WHERE f.project_id=? AND f.status='matched'" + condition,
+            rows = self._credited("SELECT f.name,f.vram,f.rom_offset,f.matched_source,f.matched_agent_id AS agent_id "
+                                 "FROM functions f WHERE f.project_id=? AND f.status='matched'" + condition,
                                  pid, *([json.dumps(sorted(names))] if narrowed else []))
             out["matched"] = [dict(r) for r in rows]
         if first or fresh or names or kinds & {'compiler','context'}:
@@ -328,40 +342,40 @@ class Room:
             units=net._unit_contexts(pid)
             narrowed = bool(names) and not (first or fresh or kinds & {'compiler','context'})
             condition = " AND name IN (SELECT value FROM json_each(?))" if narrowed else ""
-            context_rows = net.store.all('SELECT vram,rom_offset,name,unit FROM functions WHERE project_id=?' + condition,
+            context_rows = self.store.all('SELECT vram,rom_offset,name,unit FROM functions WHERE project_id=?' + condition,
                                          pid, *([json.dumps(sorted(names))] if narrowed else []))
             out['function_contexts']=[{'vram':r['vram'],'rom_offset':r['rom_offset'],'name':r['name'],'header':net._context(pid,r['unit'])['header']}
                                       for r in context_rows if r['unit'] and r['unit'] in units]
         # Capture the upper bound before reading updates: a concurrent insert must be
         # delivered next poll, never hidden by advancing the cursor after the query.
-        upper = max(a, net.store.one("SELECT MAX(id) AS m FROM attempts")["m"] or 0)
+        upper = max(a, self.store.one("SELECT MAX(id) AS m FROM attempts")["m"] or 0)
         fields = "f.name,f.vram,f.rom_offset,f.best_score,f.best_source"
         if a == 0:
-            best = net.store.all(f"SELECT {fields} FROM functions f WHERE f.project_id=? "
+            best = self.store.all(f"SELECT {fields} FROM functions f WHERE f.project_id=? "
                                  "AND f.status='open' AND f.best_source IS NOT NULL",pid)
         else:
-            best = net.store.all(f"SELECT {fields} FROM functions f WHERE f.id IN "
+            best = self.store.all(f"SELECT {fields} FROM functions f WHERE f.id IN "
                                  "(SELECT function_id FROM attempts WHERE id>? AND id<=?) "
                                  "AND f.project_id=? AND f.status='open' AND f.best_source IS NOT NULL",a,upper,pid)
         out["best"] = [{"name": r["name"], "vram": r["vram"], "rom_offset":r['rom_offset'], "score": r["best_score"], "source": r["best_source"]} for r in best]
         out["a"] = upper
         if first or kinds & {"rename", "split"}:
-            out["symbols"] = [dict(r) for r in net.store.all(
+            out["symbols"] = [dict(r) for r in self.store.all(
                 "SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid) if not AUTO_NAME.match(r["name"])]
         if first or fresh or kinds & {"rename", "split"}:
             # fresh: a guest sharing saved work asks for the layout without the room's whole history
-            out["functions"] = [dict(r) for r in net.store.all(
+            out["functions"] = [dict(r) for r in self.store.all(
                 "SELECT name, vram, rom_offset, size FROM functions WHERE project_id=? ORDER BY vram", pid)]
         ctx = net._context(pid)
         if ctx["version"] != ctx_version:
             out["context"] = {"version": ctx["version"], "header": ctx["header"]}
         if first or kinds & {"note"}:
-            out["notes"] = [dict(r) for r in net.store.all(
-                "SELECT n.id, n.text, n.score_before, n.score_after, n.created_at, f.vram, a.name AS agent FROM notes n LEFT JOIN functions f ON f.id=n.function_id "
-                "LEFT JOIN agents a ON a.id=n.agent_id WHERE n.project_id=? ORDER BY n.id", pid)]
-        out["claims"] = [dict(r) for r in net.store.all(
-            "SELECT f.name, f.vram, a.name AS agent FROM claims c JOIN functions f ON f.id=c.function_id JOIN agents a "
-            "ON a.id=c.agent_id WHERE f.project_id=?", pid)]
+            out["notes"] = self._credited(
+                "SELECT n.id,n.text,n.score_before,n.score_after,n.created_at,f.vram,n.agent_id "
+                "FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)
+        out["claims"] = self._credited(
+            "SELECT f.name,f.vram,c.agent_id FROM claims c JOIN functions f ON f.id=c.function_id "
+            "WHERE f.project_id=?", pid, require_agent=True)
         out["members"] = self.members()
         return out
 
@@ -369,22 +383,22 @@ class Room:
         """A git project's room: events, matches (by name), claims and notes; the tree itself travels as bundles
         (GET /collab/bundle) when `head` moves."""
         pid, net = self.proj["id"], self.net
-        with net.store.tx() as db:
+        with self.store.tx() as db:
             net._expire_claims(db)
         out: dict = self._events(e, fresh)
         events = out["events"]
         names = {ev["detail"] for ev in events if ev["kind"] == "match"}
         if e == 0 or fresh or names:
-            rows = net.store.all("SELECT f.name, a.name AS agent FROM functions f LEFT JOIN agents a ON a.id=f.matched_agent_id "
-                                 "WHERE f.project_id=? AND f.status='matched'", pid)
+            rows = self._credited("SELECT name,matched_agent_id AS agent_id FROM functions "
+                                 "WHERE project_id=? AND status='matched'", pid)
             out["matched"] = [dict(r) for r in rows if e == 0 or fresh or r["name"] in names]
         if e == 0 or any(ev["kind"] == "note" for ev in events):
-            out["notes"] = [dict(r) for r in net.store.all(
-                "SELECT n.id, n.text, n.score_before, n.score_after, n.created_at, f.name AS function, a.name AS agent FROM notes n LEFT JOIN functions f "
-                "ON f.id=n.function_id LEFT JOIN agents a ON a.id=n.agent_id WHERE n.project_id=? ORDER BY n.id", pid)]
-        out["claims"] = [dict(r) for r in net.store.all(
-            "SELECT f.name, f.vram, a.name AS agent FROM claims c JOIN functions f ON f.id=c.function_id JOIN agents a "
-            "ON a.id=c.agent_id WHERE f.project_id=?", pid)]
+            out["notes"] = self._credited(
+                "SELECT n.id,n.text,n.score_before,n.score_after,n.created_at,f.name AS function,n.agent_id "
+                "FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)
+        out["claims"] = self._credited(
+            "SELECT f.name,f.vram,c.agent_id FROM claims c JOIN functions f ON f.id=c.function_id "
+            "WHERE f.project_id=?", pid, require_agent=True)
         out["head"] = forkroom.head(Path(self.proj["root"]))
         out["branch"] = forkroom.branch(Path(self.proj["root"]))
         out["members"] = self.members()
@@ -462,7 +476,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
             net.set_selection(room.slug, agent.name, d["selection"])
         from ..permuter_claims import clear, nonexclusive
         if nonexclusive(agent):
-            with net.store.tx() as db:clear(db)
+            with room.store.tx() as db:clear(db)
             fn=net._function(str(d.get('function') or ''),room.slug)
             return {'function':fn['name'] if fn['status']=='open' else None,
                     'vram':fn['vram'], 'claim_token':''}
@@ -502,7 +516,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         agent = room.agent_for(member, d.get("agent"))
         from ..permuter_claims import clear, nonexclusive
         if nonexclusive(agent):
-            with net.store.tx() as db:clear(db)
+            with room.store.tx() as db:clear(db)
             return {'text':'Permutation workers do not reserve functions.'}
         from ..release_receipts import transport_release
         return {"text": transport_release(net, agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
@@ -563,9 +577,12 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         return Response(data, media_type="application/octet-stream", status_code=200 if data else 204)
 
     def leave(room, member, d):
-        with net.store.tx() as db:
-            db.execute("DELETE FROM claims WHERE agent_id IN (SELECT id FROM agents WHERE owner=? AND origin=?)",
-                       (member.name, room.origin))
+        children = [row['id'] for row in net.store.all('SELECT id FROM agents WHERE owner=? AND origin=?',
+                                                     member.name, room.origin)]
+        with room.store.tx() as db:
+            db.execute("DELETE FROM claims WHERE agent_id IN (SELECT value FROM json_each(?)) AND "
+                       "function_id IN (SELECT id FROM functions WHERE project_id=?)",
+                       (json.dumps(children), room.proj['id']))
         return {"ok": True}
 
     routes = [
@@ -676,7 +693,7 @@ def _drop_old_saved_progress(net, proj, db=None) -> None:
     if db is not None:
         db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
         return
-    with net.store.tx() as tx:
+    with net.project_store(proj["id"]).tx() as tx:
         tx.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
 
 
@@ -685,13 +702,13 @@ def _queued_saved_progress(net, proj, info: dict, room: str, url: str) -> tuple[
     into the table once here so an in-flight queue from before the update isn't lost. A queue for another room
     stays with that room (the old config queue was dropped the same way when the link changed)."""
     old = info.get("saved_progress")
-    store = getattr(net, "store", None)
     try:
         pid = proj["id"]
     except (KeyError, IndexError, TypeError):
         pid = None
-    if pid is None or store is None or not hasattr(store, "all"):
+    if pid is None:
         return (list(old["candidates"]), bool(old.get("best_comparable"))) if old and old.get("candidates") else None
+    store = net.project_store(pid)
     rows = store.all("SELECT name, kind, source, score, vram, size, best_comparable, room, url FROM saved_progress "
                      "WHERE project_id=? ORDER BY name", pid)
     if rows and (rows[0]["room"] != room or rows[0]["url"] != url):
@@ -858,10 +875,11 @@ class Link:
         restarted while waiting can still send it."""
         with self._lock:
             proj = self.net.project_row(self.slug)
-            cfg = json.loads(proj["config"])
-            if "link" not in cfg:
-                return
-            with self.net.store.tx() as db:
+            with self.net.project_store(self.slug).tx() as db:
+                row = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
+                cfg = json.loads(row['config']) if row else {}
+                if 'link' not in cfg:
+                    return
                 db.execute("DELETE FROM saved_progress WHERE project_id=?", (proj["id"],))
                 if self.saved_progress:
                     candidates, best_comparable = self.saved_progress
@@ -877,7 +895,7 @@ class Link:
         still waits. A transport failure leaves it for the next sync."""
         with self._saved_progress_lock:
             pid = self.project_id if self.project_id is not None else self.net.project_row(self.slug)["id"]
-            with self.net.store.tx() as db:
+            with self.net.project_store(self.slug).tx() as db:
                 db.execute("DELETE FROM saved_progress WHERE project_id=? AND name=?", (pid, name))
             if self.saved_progress:
                 candidates, best_comparable = self.saved_progress
@@ -886,12 +904,17 @@ class Link:
 
     def _save_cursor(self) -> None:
         proj = self.net.project_row(self.slug)
-        cfg = json.loads(proj["config"])
-        if "link" in cfg:  # (left the room meanwhile: nothing to keep)
-            cfg["link"]["cursor"] = self.saved = dict(self.cursor)
-            cfg["link"]["cached"] = self.cached
-            with self.net.store.tx() as db:
+        cursor = dict(self.cursor)
+        with self.net.project_store(self.slug).tx() as db:
+            row = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
+            cfg = json.loads(row['config']) if row else {}
+            if "link" in cfg:  # (left the room meanwhile: nothing to keep)
+                cfg["link"]["cursor"] = cursor
+                cfg["link"]["cached"] = self.cached
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+            else:
+                return
+        self.saved = cursor
 
     def status(self) -> dict:
         """What the guest's screen says: waiting to be let in, out of the room, getting the host's work (how far),
@@ -921,10 +944,10 @@ class Link:
             net.apply_remote_context(slug, st["context"]["header"], st["context"]["version"])
             self.cursor["v"] = st["context"]["version"]
         _in_batches(net, st.get("matched") or [], lambda m: net.apply_remote_match(
-            slug, m["vram"], m["matched_source"], m["agent"] or "host",rom_offset=m.get('rom_offset')))
-        _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"],rom_offset=b.get('rom_offset')))
+            slug, m["vram"], m["matched_source"], m["agent"] or "host",rom_offset=m.get('rom_offset')), project=slug)
+        _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"],rom_offset=b.get('rom_offset')), project=slug)
         _in_batches(net, st.get("notes") or [], lambda n: net.apply_remote_note(
-            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after")))
+            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after")), project=slug)
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "rename", "split", "collab", "polish", "readable") and not (ev["agent"] or "").startswith(mine):
                 net.remote_event(pid, ev["kind"], ev["detail"], ev["agent"] or "host", ev["created_at"])
@@ -1035,8 +1058,20 @@ def _hello(http: httpx.Client, link: str) -> tuple[str, str, dict]:
     return url, code, hello
 
 
+def _project_configs(net, slug=None):
+    """Discover catalog slugs; operational configuration belongs to each project."""
+    for row in net.store.all('SELECT slug, config FROM projects'):
+        if slug is not None and row['slug'] != slug:
+            continue
+        store = net.project_store(row['slug'])
+        current = row if store is net.store else store.one('SELECT slug,config FROM projects WHERE slug=?', row['slug'])
+        if current is None:
+            raise NetworkError(f"Project {row['slug']!r} is missing from its database. Restore it from backup.")
+        yield current
+
+
 def _linked_project(net, sha1: str | None, room: str):
-    for p in net.store.all("SELECT slug, config FROM projects"):
+    for p in _project_configs(net):
         cfg = json.loads(p["config"])
         if forkroom.project_identity(cfg) == sha1 and (cfg.get("link") or {}).get("room") == room:
             return p["slug"], cfg["link"]
@@ -1046,9 +1081,7 @@ def _linked_project(net, sha1: str | None, room: str):
 def _saved_progress(net, *, slug: str | None = None, identity: str | None = None,
                     room: str | None = None, url: str | None = None) -> list[dict]:
     candidates = []
-    for project in net.store.all("SELECT slug, config FROM projects"):
-        if slug is not None and project["slug"] != slug:
-            continue
+    for project in _project_configs(net, slug):
         cfg = json.loads(project["config"])
         if identity is not None and forkroom.project_identity(cfg) != identity:
             continue
@@ -1058,7 +1091,7 @@ def _saved_progress(net, *, slug: str | None = None, identity: str | None = None
             if linked["room"] != room or (url is not None and linked_url != url.rstrip("/")):
                 continue
         proj = net.project_row(project["slug"])
-        candidates.extend(dict(row) for row in net.store.all(
+        candidates.extend(dict(row) for row in net.project_store(proj['id']).all(
             "SELECT f.name, f.vram, f.size, f.status, f.matched_source, f.best_score, f.best_source "
             "FROM functions f WHERE f.project_id=? AND "
             "((f.status='matched' AND f.matched_source IS NOT NULL) OR "
@@ -1089,7 +1122,7 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
     local_names = set()
     if fork:
         proj = net.project_row(slug)
-        local_names = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", proj["id"])}
+        local_names = {row["name"] for row in net.project_store(proj['id']).all("SELECT name FROM functions WHERE project_id=?", proj["id"])}
 
     def done(candidate: dict) -> None:
         if forget is not None:
@@ -1206,13 +1239,22 @@ def reconnect(net, slug: str, link: str, log=print, client: httpx.Client | None 
     return slug
 
 
-def _in_batches(net, items: list, apply_one, size: int = 500) -> None:
+def _in_batches(net, items: list, apply_one, size: int = 500, *, project: str) -> None:
     """What the host sent, a few hundred at a time: each batch is one commit, and the database isn't held for a whole
-    room's worth at once. If a batch fails it is all undone (the next sync does it again)."""
+    room's worth at once. Failed project edits roll back together (the next sync does them again)."""
+    if not items:
+        return
+    store = net.project_store(project)
     for at in range(0, len(items), size):
+        batch = items[at:at + size]
+        if store is not net.store:
+            # Shared identities cannot be created inside a project transaction.
+            # The legacy file retains its original all-or-nothing batch rollback.
+            for name in sorted({item['agent'] or 'host' for item in batch if 'agent' in item}):
+                net._remote_agent(name)
         try:
-            with net.store.tx():
-                for item in items[at:at + size]:
+            with store.tx():
+                for item in batch:
                     apply_one(item)
         except BaseException:
             net._remote_ids.clear()  # (a member made in the batch that was undone)

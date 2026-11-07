@@ -425,7 +425,7 @@ def sync_inputs(net,slug,state):
     contexts=state.get('function_contexts') or []
     if not profiles and not contexts:return
     proj=net.project_row(slug)
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         if profiles:
             cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=?',(proj['id'],)).fetchone()['config'])
             cfg['compiler']=profiles['compiler'];cfg['compiler_ranges']=profiles.get('compiler_ranges',[])
