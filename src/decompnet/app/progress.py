@@ -998,51 +998,63 @@ class Progress:
                                 self.checked[slug] = time.monotonic()
                                 self.stamps[slug] = self._stamp(folder)
                                 return False
-                # Unchanged inputs need no compiler/verification slot. Keep the project
-                # lock for those checks; serialize actual imports and judging as before.
-                with timed_lock(self.verification_slot, 'progress_verification_wait'):
-                    if logger is not None:getattr(logger, "check_cancel", lambda: None)()
-                    self._check_paused(slug)
-                    if self._batching(slug):
-                        return False
-                    # Another project may have changed shared state while we waited.
-                    # _sync reloads its inputs too; post-sync acknowledgement uses fresh metadata.
-                    proj = self.net._project(slug)
-                    rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
-                    cached_signature = self.signatures.get(slug)
-                    self._activity(slug, phase="Comparing saved files")
-                    result = self._sync(slug, logger)
-                    if rom and result:
-                        self.prune_matched_drafts(slug)
-                    self.checked[slug] = time.monotonic()
-                    self.sync_changes[slug] = store.conn.total_changes
-                    if rom:
-                        folder = saves.default_folder(self.net, slug)
-                        # After a real write, make sure the folder is exactly what this sync rendered and wrote. An edit
-                        # that arrived meanwhile must not be acknowledged (and so missed forever) by the cache.
-                        signature = self._signature(folder)
-                        touched = self.published.pop(slug, None)
-                        acknowledged = True
-                        if result:
-                            baseline = self._baseline(proj["id"])
-                            if cached_signature is not None and touched is not None:
-                                expected = self._expected_signature(folder, cached_signature, touched)
-                                acknowledged = (expected == signature
-                                                and self._touched_acknowledged(folder, touched, baseline))
-                            else:
-                                acknowledged = (baseline is not None
-                                                and _Snapshot.of(_read(folder)).files == baseline.disk.files)
-                        stable = signature == self._signature(folder)
-                        if acknowledged and stable:
-                            self.signatures[slug] = signature
-                            self.stamps[slug] = self._stamp(folder)
+                cached_signature = self.signatures.get(slug)
+                result = None
+                if (rom and state is not None and changed_db and cached_signature is not None
+                        and self.net._context(pid) is not None):
+                    saves._check_progress_folder(folder, chosen=bool(self.net.cfg(proj).get("progress_folder")))
+                    baseline = self._baseline(pid)
+                    # Publishing local database work needs no global compiler lane,
+                    # but only with the same deep file signature as the acknowledged
+                    # baseline. Imports and racing edits still wait below.
+                    if baseline is not None and self._signature(folder) == cached_signature:
+                        if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+                        self._check_paused(slug)
+                        result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
+                        if result is not None:self.blocked.pop(slug, None)
+                if result is None:
+                    with timed_lock(self.verification_slot, 'progress_verification_wait'):
+                        if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+                        self._check_paused(slug)
+                        if self._batching(slug):
+                            return False
+                        # Another project may have changed shared state while we waited.
+                        # _sync reloads its inputs too; post-sync acknowledgement uses fresh metadata.
+                        proj = self.net._project(slug)
+                        rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
+                        self._activity(slug, phase="Comparing saved files")
+                        result = self._sync(slug, logger)
+                if rom and result:
+                    self.prune_matched_drafts(slug)
+                self.checked[slug] = time.monotonic()
+                self.sync_changes[slug] = store.conn.total_changes
+                if rom:
+                    folder = saves.default_folder(self.net, slug)
+                    # After a real write, make sure the folder is exactly what this sync rendered and wrote. An edit
+                    # that arrived meanwhile must not be acknowledged (and so missed forever) by the cache.
+                    signature = self._signature(folder)
+                    touched = self.published.pop(slug, None)
+                    acknowledged = True
+                    if result:
+                        baseline = self._baseline(proj["id"])
+                        if cached_signature is not None and touched is not None:
+                            expected = self._expected_signature(folder, cached_signature, touched)
+                            acknowledged = (expected == signature
+                                            and self._touched_acknowledged(folder, touched, baseline))
                         else:
-                            self.signatures.pop(slug, None)
-                            self.stamps.pop(slug, None)
-                    if not self.blocked.get(slug):
-                        self.errors.pop(slug, None)
-                    self.failed.pop(slug, None)
-                    return result
+                            acknowledged = (baseline is not None
+                                            and _Snapshot.of(_read(folder)).files == baseline.disk.files)
+                    stable = signature == self._signature(folder)
+                    if acknowledged and stable:
+                        self.signatures[slug] = signature
+                        self.stamps[slug] = self._stamp(folder)
+                    else:
+                        self.signatures.pop(slug, None)
+                        self.stamps.pop(slug, None)
+                if not self.blocked.get(slug):
+                    self.errors.pop(slug, None)
+                self.failed.pop(slug, None)
+                return result
             except _StillFailing:
                 raise  # (when it failed stays when it first did: a read every second mustn't put the next try off)
             except (OSError, UnicodeError, json.JSONDecodeError) as e:
