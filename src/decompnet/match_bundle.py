@@ -114,11 +114,32 @@ def portable(net, project_id):
     store = net.project_store(project_id)
     if not store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
         return {}
+    # Group physical text/hash references before the detail view decodes them.
+    # In particular, a large shared header must not be fetched once per match.
+    # One statement keeps records and their distinct text in the same snapshot.
+    rows = store.all('''WITH selected AS MATERIALIZED (
+        SELECT b.function_id,f.name,
+            min(b.function_id) OVER (PARTITION BY b.source) AS source_id,
+            min(b.function_id) OVER (PARTITION BY b.header) AS header_id
+        FROM main.verified_matches b JOIN functions f ON f.id=b.function_id WHERE f.project_id=?)
+        SELECT 'match' AS kind,s.function_id,s.name,b.details AS value,s.source_id,s.header_id
+        FROM selected s JOIN verified_matches b ON b.function_id=s.function_id
+        UNION ALL
+        SELECT 'source',b.function_id,NULL,b.source,NULL,NULL FROM verified_matches b
+        JOIN (SELECT DISTINCT source_id FROM selected) s ON b.function_id=s.source_id
+        UNION ALL
+        SELECT 'header',b.function_id,NULL,b.header,NULL,NULL FROM verified_matches b
+        JOIN (SELECT DISTINCT header_id FROM selected) s ON b.function_id=s.header_id
+        ORDER BY kind,function_id''', project_id)
+    text = {'source':{}, 'header':{}}
+    for row in rows:
+        if row['kind'] != 'match':text[row['kind']][row['function_id']] = row['value']
     sources, headers, matches = {}, {}, {}
-    for row in store.all('SELECT b.*,f.name FROM verified_matches b JOIN functions f ON f.id=b.function_id WHERE f.project_id=?',project_id):
-        details = json.loads(row['details'])
-        sources[details['source_sha256']] = row['source']
-        if details['header_sha256']: headers[details['header_sha256']] = row['header']
+    for row in rows:
+        if row['kind'] != 'match':continue
+        details = json.loads(row['value'])
+        sources[details['source_sha256']] = text['source'][row['source_id']]
+        if details['header_sha256']: headers[details['header_sha256']] = text['header'][row['header_id']]
         matches[row['name']] = details
     return {'matches':matches,'sources':sources,'headers':headers} if matches else {}
 
