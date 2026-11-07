@@ -7,7 +7,12 @@ checksummed `text_payloads` store with attempt source and repair evidence. Ident
 text, including the disk/projected copies of a manifest, has one compressed payload.
 Small text, metadata, keys, scores, target bytes and foreign keys remain in place.
 No source, evidence, conversations or lifetime metrics are discarded by compression.
-The independent match library also compresses its already deduplicated text.
+The independent match library keeps fingerprints, compiler metadata and project/name/address references.
+It does not keep C or headers: reuse loads the current verified inputs from an available donor project.
+Indexing and compression maintenance remove legacy source/header copies in cancellable batches;
+Compact database file returns the freed pages to disk. Removed donors remain visible as references,
+but cannot supply candidates until their project is available again. Structural fingerprint/symbol
+metadata can still be deduplicated and compressed.
 
 ## Existing databases
 

@@ -1,4 +1,4 @@
-"""Private, deduplicated verified C and game membership, independent of project lifetimes.
+"""Private verified-function index. Source and headers stay in their donor projects.
 
 Fingerprints find candidates, never grant a match. Every transfer uses the destination's
 ordinary compiler and byte/object judge. No ROM or object bytes are stored here.
@@ -17,7 +17,7 @@ from ..network import NetworkError
 
 log = logging.getLogger(__name__)
 ARCHIVE_BATCH = 256
-ARCHIVE_VERSION = 2  # Bump when the archived representation changes, not for unrelated app updates.
+ARCHIVE_VERSION = 3  # Bump when the archived representation changes, not for unrelated app updates.
 SCHEMA = '''
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS functions(
@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS occurrences(
  print TEXT NOT NULL, symbols TEXT NOT NULL, seen REAL NOT NULL,
  UNIQUE(game_id,solution_id,name,print,symbols));
 CREATE INDEX IF NOT EXISTS occurrences_solution ON occurrences(solution_id);
+CREATE INDEX IF NOT EXISTS occurrences_print ON occurrences(print);
+CREATE INDEX IF NOT EXISTS occurrences_symbols ON occurrences(symbols);
 CREATE TABLE IF NOT EXISTS preferred_names(function_id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS locations(
  function_id INTEGER NOT NULL, game_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -180,18 +182,23 @@ class Library:
         for item in rows:
             for kind in ('source','header','print','symbols'):
                 value=item[kind]
-                if value not in prepared:prepared[value]=(hashlib.sha256(value.encode()).hexdigest(),packed_text(value))
+                if value not in prepared:prepared[value]=(hashlib.sha256(value.encode()).hexdigest(),None)
+                if kind in ('print','symbols') and prepared[value][1] is None:
+                    prepared[value]=(prepared[value][0],packed_text(value))
         with self.connect(write=True) as db:
             texts, functions, solutions, games = {}, {}, {}, set()
+            stored=set()
             for item in rows:
                 hashes = {}
                 for kind in ('source','header','print','symbols'):
                     value = item[kind]
                     digest = texts.get(value)
                     if digest is None:
-                        digest,content=prepared[value]
-                        db.execute('INSERT OR IGNORE INTO texts VALUES(?,?)',(digest,content))
+                        digest,_=prepared[value]
                         texts[value] = digest
+                    if kind in ('print','symbols') and digest not in stored:
+                        db.execute('INSERT OR IGNORE INTO texts VALUES(?,?)',(digest,prepared[value][1]))
+                        stored.add(digest)
                     hashes[kind] = digest
                 identity = tuple(item[k] for k in ('arch','big','fingerprint','size'))
                 fid = functions.get(identity)
@@ -288,6 +295,7 @@ class Library:
         return encoded([ARCHIVE_VERSION,str(self.net.store.path),proj['id'],proj['slug'],revisions,proj['config'],proj['root'],proj['name']])
 
     def backfill(self, log=None, *, only_changed=False):
+        self.prune_payloads(log)
         failures=[]
         if log:log.progress({'phase':'Counting verified matches','done':0,'total':0})
         projects=[]
@@ -368,8 +376,9 @@ class Library:
         for row in rows:
             r=dict(row);proj=projects.get(r['game_id']);r['available']=False
             if r['vram']==-1:r['vram']=None
-            if proj:
+            if proj and Path(proj['root']).is_dir():
                 fn=self.net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],r['name'])
+                if fn and fn['status']!='matched':fn=None
                 if fn:
                     if proj['id'] not in prints:prints[proj['id']]=self.net.twins.prints(proj)
                     proof=prints[proj['id']].get(fn['id'])
@@ -385,11 +394,11 @@ class Library:
         games={r['game_id'] for r in occurrences}
         for proj in project_rows:
             game=self.game_key(proj)
-            if game not in games:continue
+            if game not in games or not Path(proj['root']).is_dir():continue
             if proj['id'] not in prints:prints[proj['id']]=self.net.twins.prints(proj)
             ids=[key for key,p in prints[proj['id']].items()
                  if p.key==item['fingerprint'] and p.size==item['size'] and key not in available]
-            for fn in self.net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
+            for fn in self.net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND id IN (SELECT value FROM json_each(?))",
                                          proj['id'],encoded(ids)):
                 fn=dict(fn)
                 occurrences.append({'game_id':game,'game':proj['name'],'slug':proj['slug'],'name':fn['name'],
@@ -441,7 +450,8 @@ class Library:
     def pack(self, log):
         """Bounded legacy conversion; readers stay available and content hashes stay stable."""
         from .maintenance import checkpoint
-        cursor=0;done=0
+        done=self.prune_payloads(log)
+        cursor=0
         while True:
             log.check_cancel()
             log.progress({'phase':'Packing match library','done':done})
@@ -467,17 +477,64 @@ class Library:
         return done
 
     def candidates(self, processor, big, fingerprint, size, exclude=()):
+        """Resolve a compact reference only when its donor is still locally available.
+
+        Never fall back to historical library source. Names/addresses locate the function,
+        and its current matched fingerprint must still agree before loading its inputs.
+        """
         with self.connect() as db:
-            rows=db.execute('''SELECT s.id,s.compiler,library_text(src.hash,src.text) source,library_text(h.hash,h.text) header,
-                library_text(p.hash,p.text) print,library_text(y.hash,y.text) symbols,
-                o.name,o.mode,g.name game,g.slug source_slug FROM functions f JOIN solutions s ON s.function_id=f.id
+            refs=db.execute("""SELECT o.name,g.id game_id,g.slug,l.vram,l.rom_offset,l.unit
+                FROM functions f JOIN solutions s ON s.function_id=f.id
                 JOIN occurrences o ON o.solution_id=s.id JOIN games g ON g.id=o.game_id
-                JOIN texts src ON src.hash=s.source JOIN texts h ON h.hash=s.header
-                JOIN texts p ON p.hash=o.print JOIN texts y ON y.hash=o.symbols
+                JOIN locations l ON l.function_id=f.id AND l.game_id=g.id AND l.name=o.name
                 WHERE f.arch=? AND f.big=? AND f.fingerprint=? AND f.size=?
                 AND g.id NOT IN (SELECT value FROM json_each(?))
-                GROUP BY s.id ORDER BY o.seen DESC LIMIT 16''',(processor,int(big),fingerprint,size,encoded(list(exclude)))).fetchall()
-            return [dict(r) for r in rows]
+                GROUP BY g.id,l.name,l.vram,l.rom_offset,l.unit ORDER BY MAX(o.seen) DESC""",
+                (processor,int(big),fingerprint,size,encoded(list(exclude)))).fetchall()
+        results=[];seen=set()
+        with self.net.progress.view():
+            for ref in refs:
+                donor=self.net.store.one('SELECT id FROM projects WHERE slug=?',ref['slug'])
+                if donor is None:continue
+                store=self.net.project_store(donor['id'])
+                proj=store.one('SELECT * FROM projects WHERE id=?',donor['id'])
+                if proj is None or self.game_key(proj)!=ref['game_id'] or not Path(proj['root']).is_dir():continue
+                # ROM offset disambiguates overlays; unit disambiguates imported objects.
+                rows=store.all("SELECT id,name FROM functions WHERE project_id=? AND status='matched' "
+                               "AND vram IS ? AND rom_offset IS ? AND COALESCE(unit,'')=? ORDER BY name=? DESC",
+                               donor['id'],None if ref['vram']==-1 else ref['vram'],ref['rom_offset'],ref['unit'],ref['name'])
+                if len(rows)!=1:rows=[r for r in rows if r['name']==ref['name']]
+                if len(rows)!=1:continue
+                fn=rows[0]
+                key=(donor['id'],fn['id'])
+                if key in seen:continue
+                seen.add(key)
+                item=self.snapshot(proj,fn['id'])
+                if item is None or item['arch']!=processor or item['big']!=int(big) or item['fingerprint']!=fingerprint or item['size']!=size:continue
+                results.append({**item,'id':fn['id'],'game':proj['name'],'source_slug':proj['slug']})
+                if len(results)>=16:break
+        return results
+
+    def prune_payloads(self, log=None):
+        """Remove legacy source/header copies in bounded, cancellable transactions.
+
+        Keep hashes and donor references. Freed pages are reused; explicit database
+        compaction returns them to disk without blocking ordinary startup on VACUUM.
+        """
+        from .maintenance import checkpoint
+        done=0;cursor=0
+        while True:
+            if log:log.check_cancel()
+            with self.connect(write=True,wait=log.check_cancel if log else None) as db:
+                rows=db.execute("SELECT rowid,hash FROM texts WHERE rowid>? AND hash NOT IN (SELECT print FROM occurrences) "
+                                "AND hash NOT IN (SELECT symbols FROM occurrences) ORDER BY rowid LIMIT 256",(cursor,)).fetchall()
+                if not rows:break
+                cursor=rows[-1]['rowid']
+                db.executemany('DELETE FROM texts WHERE hash=?',[(r['hash'],) for r in rows])
+            done+=len(rows)
+            if log:log.progress({'phase':'Removing legacy library source copies','done':done})
+            checkpoint()
+        return done
 
     def available(self, processor, big, fingerprints, exclude=()):
         """Metadata-only shortlist; source/header blobs are fetched only for actual shared code."""
