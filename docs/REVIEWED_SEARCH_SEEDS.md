@@ -73,7 +73,7 @@ adoption. A signature-changing exact diagnostic receives no adopted match or reb
 On a private N64 GCC 2.7.2 checkpoint (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`), saved score 215,
 a reviewed scoped partial-return alternative scored 60. A cold replay found linked exact bytes with
 one existing quotient scope in **4 search compiles** (2 phase-capture builds and 2 candidate builds),
-plus **2 setup checks**, in **3.07 seconds**, using **0 model tokens**. It correctly stopped at the
+plus **2 setup checks**, in **3.10 seconds**, using **0 model tokens**. It correctly stopped at the
 interface-review boundary, left the original saved source unchanged and did not run a full rebuild.
 This is rediscovery of a known repair with a supplied reviewed root, not evidence that the system
 can independently infer that root or that a smaller model is already faster on unseen functions.

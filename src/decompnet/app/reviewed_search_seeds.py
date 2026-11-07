@@ -4,7 +4,8 @@ import json
 import math
 import time
 
-from .. import candidate_scope, toolchains
+from .. import candidate_scope
+from ..match_bundle import compiler_identity
 from ..network import NetworkError
 from ..project import compiler_for
 from .source_next_steps import signatures
@@ -19,7 +20,7 @@ def supported(net, proj):
 
 def scope(net, proj, fn, source):
     """Include selected callers as well as the candidate's compiler, target and dependencies."""
-    callers = net.store.all("SELECT id,matched_source,best_source FROM functions WHERE project_id=? AND id!=? "
+    callers = net.project_store(proj["id"]).all("SELECT id,matched_source,best_source FROM functions WHERE project_id=? AND id!=? "
                             "AND (instr(matched_source,?)>0 OR instr(best_source,?)>0) ORDER BY id",
                             proj['id'], fn['id'], fn['name'], fn['name'])
     evidence = [(r['id'], hashlib.sha256((r['matched_source'] or r['best_source'] or '').encode()).hexdigest())
@@ -27,20 +28,21 @@ def scope(net, proj, fn, source):
     fn = dict(fn) | {'best_source':source, 'seed':None}
     profile = compiler_for(net.cfg(proj),fn['vram'],fn)
     return hashlib.sha256(repr((candidate_scope.key(net, proj, fn), evidence,
-                               toolchains.installed(profile.get('toolchain','')))).encode()).hexdigest()
+                               compiler_identity(profile))).encode()).hexdigest()
 
 
-def ensure(net):
-    with net.store.tx() as db:
+def ensure(net, project):
+    with net.project_store(project).tx() as db:
         db.execute('CREATE TABLE IF NOT EXISTS reviewed_search_seeds('
                    'trial_id TEXT PRIMARY KEY,function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,'
                    'scope TEXT NOT NULL,reviewer INTEGER,review_note TEXT NOT NULL,enabled INTEGER NOT NULL,created_at REAL NOT NULL)')
 
 
 def record(net, fn, trial_id):
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'"):
+    store = net.project_store(fn['project_id'])
+    if not store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'"):
         raise NetworkError('Run compiler_experiments first and retain its trial ID.')
-    row = net.store.one('SELECT record FROM compiler_trial_evidence WHERE id=? AND function_id=? AND project_id=?',
+    row = store.one('SELECT record FROM compiler_trial_evidence WHERE id=? AND function_id=? AND project_id=?',
                         trial_id, fn['id'], fn['project_id'])
     if not row:
         raise NetworkError('Choose a diagnostic trial from this project and function.')
@@ -85,16 +87,17 @@ def review(net, agent, slug, function, trial_id, review_note='', enabled=True):
     proj, fn = net.project_row(slug), net._function(function, slug)
     if type(enabled) is not bool:
         raise NetworkError('Choose whether this reviewed seed is enabled with a boolean.')
-    ensure(net)
+    ensure(net,fn['project_id'])
+    store = net.project_store(fn['project_id'])
     if not enabled:
-        with net.store.tx() as db:
+        with store.tx() as db:
             db.execute('UPDATE reviewed_search_seeds SET enabled=0 WHERE trial_id=? AND function_id=?', (trial_id, fn['id']))
         return 'Diagnostic seed disabled. Saved C and compiler settings are unchanged.'
     if not isinstance(review_note, str) or not 12 <= len(review_note.strip()) <= 1000:
         raise NetworkError('Add a short review note explaining the source change and caller/interface checks (12–1,000 characters).')
     trial = record(net, fn, trial_id)
     if reason := eligible(net, proj, fn, trial):raise NetworkError(reason)
-    with net.store.tx() as db:
+    with store.tx() as db:
         db.execute('INSERT OR REPLACE INTO reviewed_search_seeds VALUES(?,?,?,?,?,?,?)',
                    (trial_id, fn['id'], trial['seed_scope'], agent.id, review_note.strip(), 1, time.time()))
     mode = ('Signature differs or is uncertain: search stays diagnostic-only, even if exact; reconcile callers and submit normally.'
@@ -103,9 +106,9 @@ def review(net, agent, slug, function, trial_id, review_note='', enabled=True):
 
 
 def selected(net, proj, fn):
-    if not supported(net, proj) or not net.store.one("SELECT 1 FROM sqlite_master WHERE name='reviewed_search_seeds'"):
+    if not supported(net, proj) or not net.project_store(proj['id']).one("SELECT 1 FROM sqlite_master WHERE name='reviewed_search_seeds'"):
         return []
-    rows = net.store.all('SELECT * FROM reviewed_search_seeds WHERE function_id=? AND enabled=1 ORDER BY created_at DESC LIMIT ?',
+    rows = net.project_store(proj['id']).all('SELECT * FROM reviewed_search_seeds WHERE function_id=? AND enabled=1 ORDER BY created_at DESC LIMIT ?',
                          fn['id'], LIMIT)
     result = []
     for row in rows:

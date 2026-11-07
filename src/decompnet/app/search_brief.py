@@ -20,7 +20,7 @@ def read(net, agent, slug, function):
             proof = allocation_search.saved(net,proj,fn,alternative['source']) or {}
             hint = allocation_targeting.brief(alternative['source'],alternative['header'],proof.get('rows',[]),proof,proj['arch'])
             if hint:lines.append('Reviewed root '+alternative['trial_id']+': '+hint)
-        callers = net.store.all('SELECT name FROM functions WHERE project_id=? AND id!=? '
+        callers = net.project_store(proj['id']).all('SELECT name FROM functions WHERE project_id=? AND id!=? '
             'AND (instr(matched_source,?)>0 OR instr(best_source,?)>0) ORDER BY name LIMIT 5',
             proj['id'],fn['id'],fn['name'],fn['name'])
         lines.append('Source references: '+(', '.join(r['name'] for r in callers) or 'none found')+
