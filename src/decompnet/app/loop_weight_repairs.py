@@ -1,15 +1,17 @@
 """Bounded legacy-GCC allocation hypotheses; the ordinary judge remains authoritative.
 
 One-shot scopes can change loop-weighted pseudo references without adding a runtime
-iteration. Only plain scalar updates are wrapped, so control transfers cannot change target.
+iteration. Only plain scalar updates or single pointer loads are wrapped, so control transfers
+cannot change target.
 """
 import re
 
 from .equal_value_flow import macros_safe
-from .integer_repair_support import IDENT, edit, locals_for, view
+from .integer_repair_support import IDENT, INTEGER, edit, locals_for, view
 
 FAMILIES = ('loop_weight_scope', 'equal_value_increment')
-LIMIT = 12
+UPDATE_LIMIT = 12
+LIMIT = 18
 
 
 def variants(source, name, header=''):
@@ -18,7 +20,10 @@ def variants(source, name, header=''):
         return []
     # Unknown macros can hide control transfers, writes or address escapes.
     declarations = {d['name']:d['type'] for d in locals_for(part)}
-    if not macros_safe(source,header,part.body,declarations):return []
+    load_declarations = set(declarations)
+    for decl in re.finditer(rf'(?<=[;{{}}])\s*{INTEGER}\s+(?P<name>{IDENT})\s*=',part.clean[part.opening:part.end]):
+        load_declarations.add(decl['name'])
+    if not macros_safe(source,header,part.body,load_declarations):return []
     updates = []
     pattern = rf'(?<=[;{{}}])\s*(?:\+\+(?P<pre>{IDENT})|(?P<post>{IDENT})\+\+|(?P<add>{IDENT})\s*\+=\s*(?P<rhs>{IDENT}|1)|(?P<self>{IDENT})\s*=\s*(?P=self)\s*\+\s*(?P<value>{IDENT}|1))\s*;'
     for hit in re.compile(pattern).finditer(part.clean,part.opening,part.end-1):
@@ -46,4 +51,19 @@ def variants(source, name, header=''):
             continue
         replacement = f'/*__repair_equal_value*/\n{earlier} = {current}; {current} = {earlier} + 1;'
         out.insert(0,(FAMILIES[1],edit(source,[(hit.start(),hit.end(),replacement)])))
-    return list(dict.fromkeys(out))[:LIMIT]
+    # A load into a real scalar can change reference weights independently of
+    # the following pointer chain. Keep it isolated: no calls, macros, labels,
+    # indexing, compound expressions or declarations inside the new scope.
+    loads = []
+    cast = rf'(?:\(\s*(?:{IDENT}\s+)*{IDENT}\s*\*\s*\)\s*)?'
+    pattern = rf'(?<=[;{{}}])\s*(?P<dest>{IDENT})\s*=\s*\*\s*{cast}(?P<pointer>{IDENT})\s*;'
+    for hit in re.compile(pattern).finditer(part.clean,part.opening,part.end-1):
+        prefix = part.clean[part.opening:hit.start()]
+        if hit['dest'] not in load_declarations or prefix.count('(')!=prefix.count(')') or prefix.count('[')!=prefix.count(']'):
+            continue
+        for depth in (1,2,3):
+            wrapper = '/*__repair_loop_weight*/'+'do {'*depth+source[hit.start():hit.end()]+'} while (0);'*depth
+            loads.append((FAMILIES[0],edit(source,[(hit.start(),hit.end(),wrapper)])))
+        if len(loads) >= 6:
+            break
+    return list(dict.fromkeys(out))[:UPDATE_LIMIT]+list(dict.fromkeys(loads))[:LIMIT-UPDATE_LIMIT]

@@ -5421,3 +5421,23 @@ unchanged. This corrects a diagnostic explanation, not an automatic matching
 rule or proof that every GCC release uses this formula. Do not invent references,
 parameters or work to manipulate the score; investigate real lifetimes and
 verify ordinary linked output before accepting any source repair.
+
+
+## Isolating a consumed pointer load's reference weight (7 November 2026)
+
+Pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: two nested
+one-shot scopes around an existing scalar pointer load improved a private
+120-byte function from score40 to35 (the separate-result seed scored60).
+Actual references5→9/lifetime14 gave priority19285, between result20000 and
+root15000, recovering the target global assignments. Local scratch assignments
+and load scheduling still differed: this is a verified improvement, not a match.
+Ordinary/diagnostic builds and independent relinks agreed; all2,077 selected
+matches remained unchanged. Evidence remains in the private
+`func80049DB0/current40-contract-phase-nov7` capture and the game repository's
+investigation. No game source is included here.
+
+The existing scope generator only covered increments and depths1/3. It now also
+proposes isolated plain scalar pointer loads at depths1/2/3, at most two loads
+and six additional candidates. No following pointer chain is grouped implicitly.
+These are bounded hypotheses judged normally, not a replacement for inspecting
+local allocation, preferences or source validity.

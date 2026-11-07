@@ -1251,3 +1251,11 @@ field expression. `(u8)word_field` takes the low byte of the integer; a byte
 dereference at that address reads the high byte on big-endian N64. Use the
 target's actual load address and width. The refined draft can propose this
 correction for direct incoming-argument addresses; it still needs the exact judge.
+
+
+For a register-only near miss, `loop_weight_scope` also tries isolated scalar
+pointer loads at depths 1/2/3. A measured two-level load scope recovered global
+assignments but left local scratch and scheduling differences (40→35, not exact).
+Keep the following pointer chain outside the scope when testing this hypothesis;
+wrapping both can change the competing values' weights together. The generator
+adds no runtime operations, and the ordinary linked-byte judge decides acceptance.
