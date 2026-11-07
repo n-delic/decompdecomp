@@ -18,6 +18,8 @@ def test_find_better_settings_is_local_and_report_only(tmp_path, monkeypatch):
                          ("demo", "Demo", str(tmp_path), json.dumps(cfg))).lastrowid
         db.execute("INSERT INTO functions(project_id,name,vram,n_insns,status,best_score,best_source) "
                    "VALUES(?,?,?,?,?,?,?)", (pid, "f", 0x80010000, 16, "open", 160, source))
+        db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
+                   "VALUES(?,?,?,?,?,?,?)", (pid, 1, "int shared_value;", None, "test", "2026-01-01", ""))
     monkeypatch.setattr(toolchains, "installed", lambda tc: {"installed": True} if tc == "gcc-2.7.2-psx" else None)
     monkeypatch.setattr(toolchains, "get", lambda tc: SimpleNamespace(supported=True, name=tc, flags=["-O2", "-G8"]))
     monkeypatch.setattr(toolchains, "runtime_error", lambda tc: None)

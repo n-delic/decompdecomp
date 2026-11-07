@@ -756,6 +756,9 @@ $("testInstalledCompilers").onclick = async () => {
   const slug = S.slug, log = $("installedCompilerLog");
   showJobError(log, "");
   $("compilerLogDetails").hidden = false;
+  $("compilerFollowLog").checked = false;
+  log._followTail = false;
+  log.textContent = "";
   try {
     const {job} = await api("/api/compilermap", {method: "POST", body: {slug, find_better_settings: true,
       flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked,
@@ -763,8 +766,19 @@ $("testInstalledCompilers").onclick = async () => {
     followCompilerComparison(job, slug);
   } catch (e) { $("compilerLogDetails").open = true; showJobError(log, e.message); }
 };
-$("compilerFollowLog").onchange = () => { $("installedCompilerLog")._followTail = $("compilerFollowLog").checked; };
+$("compilerFollowLog").onchange = () => {
+  const log = $("installedCompilerLog");
+  log._followTail = $("compilerFollowLog").checked;
+  if (log._followTail) log.scrollTop = log.scrollHeight;
+};
 $("installedCompilerLog")._followTail = false;
+$("installedCompilerLog").onscroll = () => {
+  const log = $("installedCompilerLog");
+  if (log.scrollHeight - log.clientHeight - log.scrollTop >= 32) {
+    log._followTail = false;
+    $("compilerFollowLog").checked = false;
+  }
+};
 $("compilerImprovements").onclick = async (e) => {
   const button = e.target.closest("[data-apply-function]");
   if (!button || button.disabled) return;

@@ -184,7 +184,8 @@ class CompilerMixin:
 
     def _compiler_comparison_digest(self, proj, fn, source, profiles):
         cfg = self.cfg(proj)
-        header = (self._context(proj["id"], fn["unit"]) or {}).get("header", "")
+        context = self._context(proj["id"], fn["unit"])
+        header = context["header"] if context is not None else ""
         inputs = [source, header, fn["target"].hex() if fn["target"] else None,
                   fn["relocs"], fn["vram"], cfg.get("gp"), cfg.get("big_endian"),
                   compiler_for(cfg, fn["vram"]), profiles]
