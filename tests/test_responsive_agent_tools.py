@@ -291,6 +291,8 @@ def test_mcp_transcripts_include_accumulated_sql_phases_on_success_and_error(tmp
     assert record['timings']['progress_sync_ms'] >= 0
     assert record['timings']['progress_project_lock_wait_ms'] == 0
     assert record['timings']['progress_verification_wait_ms'] == 0
+    for phase in ('stat','files','manifest','render','import','saved_judge','publish'):
+        assert record['timings']['progress_'+phase+'_ms'] >= 0
     for key, expected in [('connection', 30.), ('lock_wait', 60.), ('execute', 90.), ('fetch', 120.)]:
         assert record['timings']['sql_' + key + '_ms'] == expected
     assert all(isinstance(v, (float, int)) for v in record['timings'].values())

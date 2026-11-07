@@ -89,3 +89,13 @@ def span(key):
         yield
     finally:
         metrics[key] = metrics.get(key, 0.) + max(0., time.monotonic() - began)
+
+
+def phase(key):
+    """Measure a named synchronous phase only when this request captures timings."""
+    def decorate(function):
+        @functools.wraps(function)
+        def run(*args,**kwargs):
+            with span(key):return function(*args,**kwargs)
+        return run
+    return decorate

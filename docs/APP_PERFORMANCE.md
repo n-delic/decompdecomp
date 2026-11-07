@@ -117,6 +117,19 @@ help distinguish waiting behind another saved-progress check from work in the
 current check; they do not establish the owner or cause of every dispatch delay.
 
 
+Synchronization transcripts also expose `progress_stat_ms` (file stat checks),
+`progress_files_ms` (saved-file capture),
+`progress_manifest_ms` (manifest validation), `progress_render_ms` (database render),
+`progress_import_ms` (context/layout application), `progress_publish_ms` (file publication),
+and `progress_saved_judge_ms`
+(saved verification, including waiting for its worker). These phases are inclusive
+and can overlap nested operations; do not add them to `progress_sync_ms` or interpret
+them as CPU time. The saved-judge worker has its own execution context, so its SQL
+reads are not included in the request's coordinator SQL counters. This separates a
+long recheck from slow file capture/rendering without suppressing either operation.
+No source, filenames or manifest contents are added to the timing fields.
+
+
 ### Unchanged progress checks
 
 Saved-progress synchronization keeps its per-project lock while checking dirty

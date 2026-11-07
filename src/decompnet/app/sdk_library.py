@@ -51,8 +51,8 @@ def state(net, slug=None):
         console = net.console(proj)
         arch = proj['arch'] or console.arch
         big = proj['big_endian'] if proj['arch'] else console.big_endian
-        for row in net.store.all('SELECT DISTINCT corpus,fingerprint FROM sdk_signatures WHERE arch=? AND big_endian=?',
-                                 arch, big):
+        for row in net.store.all('SELECT DISTINCT corpus,fingerprint FROM sdk_signatures WHERE arch=? AND big_endian=? '
+                                 'AND fingerprint IN (SELECT value FROM json_each(?))', arch, big, json.dumps(sorted(keys))):
             if row['fingerprint'] in keys:
                 detected.setdefault(row['corpus'], set()).add(row['fingerprint'])
     for row in libraries:

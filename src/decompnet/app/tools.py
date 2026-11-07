@@ -743,7 +743,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                      'before_dispatch_ms':round((dispatch-started)*1000,2)}
             timings.update({phase+'_ms':round(metrics.get(phase,0.)*1000,2)
                             for phase in ('sql_connection','sql_lock_wait','sql_execute','sql_fetch',
-                                          'progress_project_lock_wait','progress_verification_wait','progress_sync')})
+                                          'progress_project_lock_wait','progress_verification_wait','progress_sync',
+                                          'progress_stat','progress_files','progress_manifest','progress_render','progress_import',
+                                          'progress_saved_judge','progress_publish')})
             if observe:
                 payload={'name':name,'call_id':call_id,'timings':timings}
                 payload['error' if error else 'content']=str(error) if error else result

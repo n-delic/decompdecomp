@@ -29,6 +29,7 @@ from pathlib import Path
 from .. import compiler, consoles, toolchains
 from ..hostenv import NO_WINDOW, stop_process_tree
 from ..network import NetworkError
+from ..request_timing import phase
 from ..rom.symbols import AUTO_NAME
 from ..scoring import percent_text
 from . import save_readme
@@ -173,6 +174,7 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             progress.local.busy = was_busy
 
 
+@phase('progress_publish')
 def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
              expected: dict[str, str] | None = None, *, chosen: bool = False) -> bool:
     """Only change owned files whose contents changed; keep git and contributors' other files intact.
@@ -493,6 +495,7 @@ def _source_files(rows) -> dict[str, str]:
     return files
 
 
+@phase('progress_render')
 def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None = None,
             readme_key: tuple | None = None) -> tuple[dict[str, str], dict]:
     proj = net._project(slug)
@@ -514,6 +517,7 @@ def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None =
     return files, {"matched": matched, "best": len(functions) - matched}
 
 
+@phase('progress_render')
 def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool = False,
                     readme_key: tuple | None = None) -> tuple[dict[str, str], dict]:
     """Render the manifest and only the named functions' files (plus every header when one changed).
@@ -815,6 +819,7 @@ def _context_agents(net, store, manifest: dict, check_cancel=lambda: None, *, re
     return agents
 
 
+@phase('progress_import')
 def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
                    files: dict[str, str] | None = None, *, restore_notes: bool = True,
                    agents: dict[str, int] | None = None) -> tuple[dict, dict]:

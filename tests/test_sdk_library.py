@@ -95,3 +95,32 @@ def test_imported_projects_use_console_architecture_when_database_fields_are_uns
         db.execute("UPDATE projects SET arch='',big_endian=0 WHERE slug='destination'")
     monkeypatch.setattr(pair.twins, 'prints', lambda proj: {2: Print('exact', [], 64)})
     assert sdk.state(pair, 'destination')['libraries'][0]['detected'] == 1
+
+
+def test_detection_fetches_only_project_fingerprints_and_keeps_distinct_counts(pair,monkeypatch):
+    from decompnet.app.twins import Print
+    with pair.store.tx() as db:
+        db.executemany('INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES(?,?,?,?,?,?)',
+            [('inventory','mips',1,f'unrelated{i}',f'other{i}',64) for i in range(2000)]+[
+                ('inventory','mips',1,'first','selected',64),
+                ('inventory','mips',1,'alias','selected',64),
+                ('second library','mips',1,'same','selected',64),
+                ('wrong arch','arm',1,'same','selected',64),
+                ('wrong endian','mips',0,'same','selected',64),
+                ('small only','mips',1,'small','small',16)])
+    monkeypatch.setattr(pair.twins,'prints',lambda proj:{1:Print('selected',[],64),2:Print('small',[],16)})
+    reads=[];original=pair.store.all
+    def read(sql,*args):
+        rows=original(sql,*args)
+        if sql.startswith('SELECT DISTINCT corpus,fingerprint'):reads.append(len(rows))
+        return rows
+    monkeypatch.setattr(pair.store,'all',read)
+    found={r['corpus']:r for r in sdk.state(pair,'destination')['libraries']}
+    assert reads==[2]
+    assert found['inventory']['signatures']==2002 and found['inventory']['detected']==1
+    assert found['second library']['detected']==1
+    assert all(found[name]['detected']==0 for name in ('wrong arch','wrong endian','small only'))
+    # A later project fingerprint set is queried again, not cached as an old verdict.
+    monkeypatch.setattr(pair.twins,'prints',lambda proj:{1:Print('other1',[],64)})
+    found={r['corpus']:r for r in sdk.state(pair,'destination')['libraries']}
+    assert reads==[2,1] and found['inventory']['detected']==1 and found['second library']['detected']==0

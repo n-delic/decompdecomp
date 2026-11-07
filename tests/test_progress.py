@@ -2364,3 +2364,17 @@ def test_cold_project_file_baseline_uses_its_owner_without_verifier(project,monk
         assert not net.progress.sync('game',force=True)
         if local_change:assert (folder/'best/f.c').read_text()=='local project draft\n'
     finally:close(net)
+
+
+def test_saved_import_reports_request_phases_without_changing_verdict(project):
+    from decompnet import request_timing
+    net,folder,judged=project
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good imported source')
+    with request_timing.capture() as metrics:
+        assert net.progress.sync('game',force=True)
+    assert judged==[('f','good imported source')]
+    for phase in ('progress_stat','progress_files','progress_manifest','progress_render','progress_import','progress_saved_judge','progress_publish'):
+        assert metrics[phase]>0
+        assert metrics[phase]<=metrics['progress_sync']
+    assert request_timing._current.get() is None

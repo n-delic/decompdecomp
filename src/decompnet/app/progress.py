@@ -30,6 +30,7 @@ from pathlib import Path
 
 from .. import compiler, toolchains
 from ..network import NetworkError
+from ..request_timing import phase
 from ..rom.symbols import ASM_LOCAL, IDENT
 from ..store import in_transaction
 
@@ -112,6 +113,7 @@ class _StillFailing(NetworkError):
     """The last sync's failure again, nothing it reads having changed since (RETRY_FAILED_SECONDS)."""
 
 
+@phase('progress_files')
 def _read(folder: Path, *, cache=None) -> dict[str, str]:
     # A git/editor update can remove a file between glob, lstat and read. Retry
     # only this read-only capture; never apply a partial snapshot or replay writes.
@@ -188,6 +190,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     return disk
 
 
+@phase('progress_manifest')
 def _manifest(files: dict[str, str], cfg: dict) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
@@ -436,6 +439,7 @@ class Progress:
         self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
 
     @staticmethod
+    @phase('progress_stat')
     def _signature(folder: Path, *, deep: bool = True) -> tuple:
         """What a check compares: the manifest and three folders always, and with `deep` every file too.
 
@@ -799,6 +803,7 @@ class Progress:
         if pending and self._signature(pending.folder) != pending.signature:
             raise NetworkError('Saved files changed during the recheck. Wait for synchronization, then read the function and retry.')
 
+    @phase('progress_saved_judge')
     def _judge_saved(self, slug, *args, **kwargs):
         """Wait without owning the project lock while saved functions compile and publish one at a time.
 

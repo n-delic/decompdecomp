@@ -63,3 +63,20 @@ def test_failed_database_reads_retain_phase_time(tmp_path, monkeypatch, phase):
     assert metrics['sql_' + phase] == (2. if phase == 'connection' else 4.)
     assert request_timing._current.get() is None
     store.conn.close()
+
+
+def test_phase_retains_failure_timing_and_does_not_read_clock_when_disabled(monkeypatch):
+    clock=[0.]
+    monkeypatch.setattr(request_timing.time,'monotonic',lambda:clock[0])
+    @request_timing.phase('progress_files')
+    def work(fail=False):
+        clock[0]+=2.
+        if fail:raise ValueError('synthetic read failure')
+        return 7
+    with request_timing.capture() as metrics:
+        assert work()==7
+        with pytest.raises(ValueError,match='synthetic read failure'):work(True)
+        assert metrics['progress_files']==4.
+    assert request_timing._current.get() is None
+    monkeypatch.setattr(request_timing.time,'monotonic',lambda:pytest.fail('disabled capture must not use clock'))
+    assert work()==7
