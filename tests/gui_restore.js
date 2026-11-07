@@ -54,7 +54,9 @@ async function main() {
   elements.rsOwn.onchange();
   reopen();
   assert.equal(elements.rsGo.disabled, false);
+  elements.rsGame.value = ""; elements.rsGame.oninput();
   const work = elements.rsGo.onclick();
+  assert.equal(requests.find(([url]) => url === "/api/restore")[1].body.path, "");
   assert.equal(elements.rsWork.hidden, false);
   assert.match(elements.rsStatus.textContent, /Opening saved project/);
   await elements.rsCancel.onclick();

@@ -314,9 +314,10 @@ def register(app: App) -> None:
         data = await body(request)
         if not data.get("confirmed"):
             return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
-        source, game = str(data.get("source") or "").strip(), hostenv.local_path(str(data.get("path") or ""))
-        if not source or not await app.call(lambda: game.is_file()):
-            return fail(ValueError("pick the saved project (a folder or a git address) and your copy of the game"))
+        source, path = str(data.get("source") or "").strip(), str(data.get("path") or "").strip()
+        game = hostenv.local_path(path) if path else None
+        if not source or (game is not None and not await app.call(lambda: game.is_file())):
+            return fail(ValueError("Choose the saved project and a valid game file, or leave the game field blank to find a matching local copy."))
         return JSONResponse({"job": jobs.start("restore", lambda log: saves.restore(net, source, game, log=log))})
 
     @mcp.custom_route("/api/pick", methods=["POST"])

@@ -3044,3 +3044,22 @@ def test_github_owner_discovery_is_project_scoped(app, monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.json()['owners'] == ['person','Studio']
     assert calls == [tmp_path/'game']
+
+
+def test_restore_accepts_optional_local_game_but_keeps_confirmation(app, monkeypatch):
+    from decompnet.app import saves
+    client, net, _ = app
+    calls = []
+    def restore(net, source, game, log):
+        calls.append((source,game))
+        return {'slug':'game'}
+    monkeypatch.setattr(saves, 'restore', restore)
+    data = {'source':'/local/checkout', 'path':''}
+    assert client.post('/api/restore', json=data, headers={'X-Decomp':'1'}).status_code == 400
+    response = client.post('/api/restore', json={**data,'confirmed':True}, headers={'X-Decomp':'1'})
+    assert response.status_code == 200
+    for _ in range(100):
+        job=client.get('/api/job?id='+response.json()['job']).json()
+        if job['state'] != 'running':break
+        time.sleep(.01)
+    assert job['state'] == 'done' and calls == [('/local/checkout',None)]
