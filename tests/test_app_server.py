@@ -2932,3 +2932,18 @@ def test_synchronous_compiler_map_updates_still_sync_saved_files(app, monkeypatc
     response = client.post('/api/compilermap', json={'slug':slug}, headers={'X-Decomp':'1'})
     assert response.status_code == 200 and response.json() == {'checked':True}
     assert saves == [((slug,), {'force':True})]
+
+
+def test_agent_metric_reset_runs_off_event_loop_and_returns_boundary(app, monkeypatch):
+    import asyncio
+    client, net, manager = app
+    calls=[]
+    def reset(sid):
+        with pytest.raises(RuntimeError,match='no running event loop'):asyncio.get_running_loop()
+        calls.append(sid)
+        return {'metrics_since':123,'metrics_after':456}
+    monkeypatch.setattr(manager,'reset_metrics',reset)
+    response=client.post('/api/agents/reset-metrics',json={'id':'selected'},headers={'X-Decomp':'1'})
+    assert response.status_code==200
+    assert response.json()=={'reset':True,'metrics_since':123,'metrics_after':456}
+    assert calls==['selected']

@@ -294,10 +294,10 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         try:
-            manager.reset_metrics(str(data.get('id', '')))
+            reset = await call(lambda: manager.reset_metrics(str(data.get('id', ''))))
         except ValueError as e:
             return fail(e)
-        return JSONResponse({'reset': True})
+        return JSONResponse({'reset': True, **(reset or {})})
 
     @mcp.custom_route("/api/agents/rename", methods=["POST"])
     async def api_agents_rename(request: Request) -> Response:

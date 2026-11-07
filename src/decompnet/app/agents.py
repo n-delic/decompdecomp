@@ -1110,9 +1110,9 @@ class Manager:
                 continue
         return out
 
-    def reset_metrics(self, sid: str) -> None:
+    def reset_metrics(self, sid: str) -> dict:
         from .agent_metrics import reset
-        reset(self, sid)
+        return reset(self, sid)
 
     def snapshot(self, since: dict | None = None, *, project: str | None = None) -> list[dict]:
         from .agent_metrics import results
@@ -1140,21 +1140,8 @@ class Manager:
             row = s.snapshot(int(since.get(s.id, 0)))
             from . import session_history
             history_version, records = session_history.records(self.net,s.id,s.agent_name)
-            def history_costs(records=records, kind=s.kind):
-                estimates = [agents.get(kind).estimate_cost(r["model"], {
-                    k: r[k + "_tokens"] for k in TOKEN_KINDS} | {"tokens": r["tokens"]}) for r in records if r["tokens"]]
-                return estimates, sum(r['tokens'] for r in records), {r['id'] for r in records}
-            saved_costs, recorded_tokens, session_ids = self.net.store.read_cache.get(
-                ('helper-history-cost',s.id,s.agent_name,s.kind),history_version,history_costs)
-            estimates = list(saved_costs)  # Active usage is live, never appended to the cached completed totals.
-            if s.record and s.session_id not in session_ids and s.usage["tokens"]:
-                active = self.net.store.one("SELECT model FROM helper_sessions WHERE id=?", s.session_id)
-                model = active["model"] if active else s.model
-                estimates.append(agents.get(s.kind).estimate_cost(model, s.usage))
-            if s.record and s.session_id not in session_ids:
-                recorded_tokens += s.usage["tokens"]
-            row["estimated_cost"] = (sum(estimates) if estimates and all(x is not None for x in estimates)
-                                     and recorded_tokens == s.tokens else None)
+            from .agent_metrics import lifetime_cost
+            row["estimated_cost"] = lifetime_cost(self, s, history_version, records)
             baseline = s.options.get('_metrics', {})
             row['metrics'] = board.get(s.agent_name, {})
             row['metrics_since'] = baseline.get('at')

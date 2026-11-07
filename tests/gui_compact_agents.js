@@ -81,3 +81,13 @@ agent.provider_retry_requested=true;c.renderSessions([agent]);html=elements.get(
 assert(html.includes('Provider retry requested…'));assert(/data-retry-provider="test"[^>]*disabled/.test(html));
 
 assert.match(c.helperState({state:'working',startup_stage:'Checking local tools',startup_stage_at:Date.now()/1000-10}), /Starting: Checking local tools · 10s/);
+
+// A poll started before reset must not restore old counters; newer usage is authoritative.
+vm.runInContext(source.slice(source.indexOf('function clearedAgentMetrics(')),c);
+c.resetExample={...agent,tokens:99,metrics:{matched:8,improved:7},metrics_since:0};
+vm.runInContext("agentMetricResets.set('test',{metrics_since:10,metrics_after:20});renderSessions([resetExample]);",c);
+assert(!elements.get('sessions').html.includes('99 reported tokens'));
+c.resetExample={...c.resetExample,tokens:123,metrics_since:10};
+c.renderSessions([c.resetExample]);
+assert(elements.get('sessions').html.includes('123 reported tokens'));
+assert.equal(vm.runInContext('agentMetricResets.size',c),0);
