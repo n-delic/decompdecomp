@@ -1394,7 +1394,7 @@ def test_deep_permuter_route_starts_a_cancellable_job_for_one_function(app, monk
     client, _, _ = app
     checked = []
     monkeypatch.setattr(deep_permuter, 'validate', lambda *args: checked.append(args[1:]))
-    def run(net, slug, name, minutes, variants, log, compiler_profiles=1, threads_per_function=1):
+    def run(net, slug, name, minutes, variants, log, compiler_profiles=1, threads_per_function=1, **throughput):
         assert compiler_profiles == 2 and threads_per_function == 3
         log('Testing only '+name)
         log.progress({'tested':1, 'skipped':0, 'phase':'local repairs'})
@@ -1423,7 +1423,7 @@ def test_function_deep_job_can_be_reattached_and_duplicate_start_is_reused(app, 
     monkeypatch.setattr(deep_permuter, 'validate', lambda *args: None)
     monkeypatch.setattr(net, 'function_detail', lambda slug, name, **kwargs: {'name': name})
 
-    def run(net, slug, name, minutes, variants, log, compiler_profiles=1, threads_per_function=1):
+    def run(net, slug, name, minutes, variants, log, compiler_profiles=1, threads_per_function=1, **throughput):
         assert compiler_profiles == 1
         calls.append(name)
         log('Search still running')
@@ -1460,9 +1460,9 @@ def test_deep_sweep_routes_validate_start_stop_and_status(app, monkeypatch):
     monkeypatch.setattr(net.deep_sweeps, 'reset_metrics', lambda slug: {'reset':slug})
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'reset-metrics'}, headers={'X-Decomp':'1'}).json() == {'reset':'example'}
     response = client.post('/api/permuter/pass', json={'slug':'example','minutes':7,'max_variants':99,'repeat':True}, headers={'X-Decomp':'1'})
-    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False,1)]
+    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False,1,False,0)]
     client.post('/api/permuter/pass', json={'slug':'example','threads':2,'threads_per_function':4}, headers={'X-Decomp':'1'})
-    assert calls[-1] == ('example',5,10000,False,2,1,False,4)
+    assert calls[-1] == ('example',5,10000,False,2,1,False,4,False,0)
     assert not client.post('/api/permuter/pass', json={'slug':'example','action':'stop'}, headers={'X-Decomp':'1'}).json()['enabled']
     assert client.post('/api/permuter/pass', json={'slug':'example','repeat':'yes'}, headers={'X-Decomp':'1'}).status_code == 400
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'unknown'}, headers={'X-Decomp':'1'}).status_code == 400
@@ -3063,3 +3063,29 @@ def test_restore_accepts_optional_local_game_but_keeps_confirmation(app, monkeyp
         if job['state'] != 'running':break
         time.sleep(.01)
     assert job['state'] == 'done' and calls == [('/local/checkout',None)]
+
+
+def test_deep_maximum_options_reach_jobs_and_reject_invalid_limits(app, monkeypatch):
+    from decompnet.app import deep_permuter
+    client,net,_=app
+    received=[]
+    monkeypatch.setattr(deep_permuter,'validate',lambda *args:None)
+    def run(*args,**kwargs):
+        received.append(kwargs)
+        return {'tested':0,'reason':'finished'}
+    monkeypatch.setattr(deep_permuter,'run',run)
+    payload={'slug':'maximum-game','function':'maximum-function','maximum_throughput':True,'compile_slots':10}
+    response=client.post('/api/permuter/function',json=payload,headers={'X-Decomp':'1'})
+    assert response.status_code==200
+    for _ in range(100):
+        job=client.get('/api/job',params={'id':response.json()['job']}).json()
+        if job['state']!='running':break
+        time.sleep(.01)
+    assert job['state']=='done' and received[0]['maximum_throughput'] is True
+    assert received[0]['compile_slots']==10
+    for change in ({'compile_slots':257},{'maximum_throughput':'yes'}):
+        assert client.post('/api/permuter/function',json=payload|change,headers={'X-Decomp':'1'}).status_code==400
+    starts=[]
+    monkeypatch.setattr(net.deep_sweeps,'start',lambda *args:starts.append(args) or {'job':'maximum-pass'})
+    assert client.post('/api/permuter/pass',json=payload,headers={'X-Decomp':'1'}).status_code==200
+    assert starts[0][-2:]==(True,10)

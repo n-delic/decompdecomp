@@ -1914,6 +1914,7 @@ async function renderDeepSweep() {
     panel.dataset.slug = slug;
     deepSweepProjectVersion++;
     deepSweepSnapshot = null;
+    $("deepSweepThroughput").hidden = true; $("deepSweepThroughput").textContent = "";
     deepMetricRows = [];
     renderDeepMetricDrawer();
     delete panel.dataset.loadedSlug;
@@ -1956,6 +1957,8 @@ async function renderDeepSweep() {
       $("deepSweepProfiles").value = status.compiler_profiles || 1;
       $("deepSweepThreads").value = status.threads || "";
       $("deepSweepFunctionThreads").value = status.threads_per_function || 1;
+      $("deepSweepMaximum").checked = !!status.maximum_throughput;
+      $("deepSweepCompileSlots").value = status.compile_slots || "";
       $("deepSweepRepeat").checked = false;
       $("deepSweepLoop").checked = !!status.loop;
     }
@@ -2061,7 +2064,7 @@ $("deepSweepStart").onclick = async () => {
   let job = null;
   const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
   try {
-    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0, threads_per_function:Number($("deepSweepFunctionThreads").value)}});
+    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0, threads_per_function:Number($("deepSweepFunctionThreads").value), maximum_throughput:$("deepSweepMaximum").checked, compile_slots:Number($("deepSweepCompileSlots").value) || 0}});
     job = result.job;
     if (S.slug === slug) renderDeepQueueState(result);
   } catch (error) {

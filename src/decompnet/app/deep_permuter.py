@@ -12,7 +12,7 @@ import threading
 import time
 from collections import OrderedDict
 
-from .. import scoring
+from .. import compiler, scoring
 from ..candidate_work import scope as candidate_work_scope
 from ..candidate_work import trial
 from ..compile_sessions import batched
@@ -27,6 +27,7 @@ from . import (
     allocation_search,
     deep_compilation,
     deep_repair_feedback,
+    deep_throughput,
     draft_repairs,
     permuter_focus,
     permuter_local,
@@ -162,7 +163,8 @@ class Search(Permuter):
             if score is None or self.max_score is None:
                 return None
             return 100.0 if score == 0 else min(99.9, int(max(0, 100*(1-score/self.max_score))*10)/10)
-        return {'starting_score': self.starting_score, 'starting_percent': percent(self.starting_score),
+        throughput = self.compile_pool.metrics.snapshot() if getattr(self, 'compile_pool', None) else {}
+        return {**({'throughput':throughput} if throughput else {}), 'starting_score': self.starting_score, 'starting_percent': percent(self.starting_score),
                 'best_score': self.best, 'best_percent': percent(self.best), 'improvements': self.improvements,
                 'local_search': self.local_status, 'reviewed_seeds':self.reviewed_seed_result,
                 'allocation_trials':self.allocation_trials,
@@ -662,6 +664,8 @@ class Search(Permuter):
     def _score_current(self, agent, proj, fn, source, best, fork):
         self.check()
         self.visited += 1
+        from .. import compile_timing
+        compile_timing.add('considered', 1)
         recent_key = self._recent_key(proj, fn, source, fork)
         recent = getattr(self, '_recent_candidates', None)
         duplicate = recent.get(recent_key) if recent is not None and recent_key is not None else None
@@ -773,7 +777,9 @@ class Search(Permuter):
         return score
 
 
-def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1):
+def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):
+    deep_throughput.options(maximum_throughput, compile_slots)
+    if maximum_throughput and getattr(log, 'compile_pool', None) is None and threads_per_function == 1:threads_per_function = min(max_variants, deep_throughput.width(True, compile_slots))
     from .deep_parallel import validate_threads
     validate_threads(threads_per_function)
     # One explicit deep search per function, including credential issuance. Agents may keep working.
@@ -782,20 +788,28 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
     if not lock.acquire(blocking=False):
         raise NetworkError('A deep search is already running for this function.')
     previous_pool = getattr(log, 'compile_pool', None)
-    pool = deep_compilation.Pool()
+    pool = previous_pool or deep_compilation.Pool(deep_throughput.width(maximum_throughput, compile_slots), maximum=maximum_throughput)
     log.compile_pool = pool
+    admission = compiler._SLOTS.capacity(pool.count)
+    admission.__enter__()
     try:
         if threads_per_function > 1:
             from .deep_parallel import run as parallel
-            return parallel(net, slug, name, minutes, max_variants, log, compiler_profiles, threads_per_function)
-        return _run(net, slug, name, minutes, max_variants, log, compiler_profiles)
+            result = parallel(net, slug, name, minutes, max_variants, log, compiler_profiles, threads_per_function)
+        else:
+            result = _run(net, slug, name, minutes, max_variants, log, compiler_profiles)
+        result['throughput'] = pool.metrics.snapshot()
+        return result
     finally:
-        try:pool.close()
+        try:
+            if previous_pool is None:pool.close()
         finally:
+            admission.__exit__(None,None,None)
             log.compile_pool = previous_pool
             lock.release()
 
 
+@deep_throughput.search
 @deep_compilation.shared
 @buffered
 @batched

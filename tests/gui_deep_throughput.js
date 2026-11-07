@@ -1,0 +1,16 @@
+'use strict';
+const fs=require('node:fs'), vm=require('node:vm'), assert=require('node:assert/strict');
+const elements=new Map();
+const get=id=>{if(!elements.has(id))elements.set(id,{dataset:{},textContent:'',hidden:false});return elements.get(id);};
+const ctx=vm.createContext({$:get});
+vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/deep-progress.js','utf8'),ctx);
+const render=ctx.deepProgressView();
+render({throughput:{active_compiles:8,compile_slots:10,candidates_per_second:123.45,compiles_per_second:98.76,compiler_queue_seconds:1.2,compiler_setup_seconds:.3,app_cpu_percent:150}});
+assert.equal(get('fnDeepThroughput').hidden,false);
+assert.match(get('fnDeepThroughput').textContent,/8\/10 compiles active/);
+assert.match(get('fnDeepThroughput').textContent,/123.5 candidates\/s/);
+assert.match(get('fnDeepThroughput').textContent,/98.8 compiles\/s/);
+assert.match(get('fnDeepThroughput').textContent,/compiler processes excluded/);
+render({});assert.equal(get('fnDeepThroughput').hidden,true);
+const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
+for(const id of ['fnDeepMaximum','deepSweepMaximum','fnDeepCompileSlots','deepSweepCompileSlots'])assert.ok(html.includes(`id="${id}"`));
