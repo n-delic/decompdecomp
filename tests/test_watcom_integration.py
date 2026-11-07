@@ -126,3 +126,26 @@ def test_splitting_a_source_keeps_its_calling_convention_flags(tmp_path):
     changed = scratch.split_unit(tmp_path, "v", "src/auto/unit.c", second, "src/auto/next.c")
     assert folder / "file_flags.json" in changed
     assert scratch.file_flags(tmp_path, "v")["src/auto/next.c"] == ["-3s"]
+
+
+@pytest.mark.parametrize("dos", [False, True])
+def test_per_file_watcom_choice_uses_the_executable_target(tmp_path, dos):
+    import json
+    import shutil
+    import subprocess
+    import sys
+
+    shutil.copytree(Path(scratch.__file__).with_name("project_template") / "tools", tmp_path / "tools")
+    (tmp_path / "src/auto").mkdir(parents=True)
+    (tmp_path / "src/auto/one.c").write_text("int f(void) { return 1; }\n")
+    config = tmp_path / "config/v/functions.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"exe": "orig/game.exe", "format": "LE" if dos else "PE", "units": {"one": []}}))
+    config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/one.c": "watcom-test"}))
+    subprocess.run([sys.executable, str(tmp_path / "tools/configure.py"), "v",
+                    "--own", "watcom-test=none,unused.exe", "--watcom", "watcom-test=unused"],
+                   cwd=tmp_path, check=True, capture_output=True, timeout=30)
+    ninja = (tmp_path / "build.ninja").read_text()
+    assert ("-bt=dos4g" if dos else "-bt=nt") in ninja
+    assert "baseflags = /nologo" not in ninja
+    assert "tools/segments.py" in ninja.split("build all_source:")[0]
