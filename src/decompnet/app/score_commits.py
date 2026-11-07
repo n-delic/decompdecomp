@@ -6,7 +6,15 @@ import uuid
 
 from ..network import NetworkError
 from ..project import compiler_for, function_compiler_key
-from . import auto_push, match_commits, repository_git, repository_progress, repository_sync, saves
+from . import (
+    auto_push,
+    match_commits,
+    repository_git,
+    repository_operations,
+    repository_progress,
+    repository_sync,
+    saves,
+)
 
 # Lower judge distance is better; exact matches have their own commit pipeline.
 PENDING = """SELECT f.id,f.name,f.unit,f.vram,f.rom_offset,f.best_score,b.score AS baseline_score
@@ -41,10 +49,10 @@ def configure(net, slug, enabled, threshold=10, folder=''):
             db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), proj['id']))
             db.execute('DELETE FROM score_commit_baselines WHERE project_id=?', (proj['id'],))
         return status(net, net.store.one('SELECT * FROM projects WHERE id=?', proj['id']))
-    if not repository_sync._LOCK.acquire(blocking=False):
-        raise NetworkError('Another repository operation is running. Wait for it to finish and retry.')
-    try:
-        with net.progress._project_lock(slug):
+    with net.progress._project_lock(slug):
+        with repository_operations.operation(folder, slug, 'Configuring improvement commits', lambda _: None) as operation:
+            if operation is None:
+                raise NetworkError('Another operation or queued push is using this repository. Wait for it to finish and retry.')
             previous = net.cfg(proj).get('score_commits', {})
             if enabled:
                 root, branch = match_commits.checkout_settings(net, slug, folder)
@@ -62,8 +70,6 @@ def configure(net, slug, enabled, threshold=10, folder=''):
                 cfg['score_commits'] = settings
                 db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), proj['id']))
         return status(net, net.store.one('SELECT * FROM projects WHERE id=?', proj['id']))
-    finally:
-        repository_sync._LOCK.release()
 
 
 def _change(net, slug, token, **values):
@@ -130,9 +136,12 @@ def process(net, slug, output=lambda message: None):
     if not settings.get('enabled') or settings.get('retry_at', 0) > time.time():return
     rows = net.store.all(PENDING, proj['id'])
     if len(rows) < settings['threshold']:return
-    if not repository_sync._LOCK.acquire(blocking=False):return
+    project_lock = net.progress._project_lock(slug)
+    if not project_lock.acquire(blocking=False):return
     try:
-        with net.progress._project_lock(slug):
+        with repository_operations.operation(settings['folder'], slug, 'Committing improved drafts', output) as log:
+            if log is None:return
+            output = log
             root = repository_sync.checkout(settings['folder'], clean=False)
             if not repository_sync.progress_checkout(net, slug, root) or repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD') != settings['branch']:
                 raise NetworkError('The progress checkout or branch changed. Disable and re-enable score-improvement commits.')
@@ -160,4 +169,4 @@ def process(net, slug, output=lambda message: None):
         _change(net, slug, settings['token'], error=str(error) if isinstance(error, NetworkError) else
                 'Could not capture improved drafts. Review saved progress and Git setup, then retry.', retry_at=time.time()+15)
     finally:
-        repository_sync._LOCK.release()
+        project_lock.release()

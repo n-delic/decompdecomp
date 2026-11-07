@@ -9,18 +9,16 @@ import shutil
 import signal
 import subprocess
 import tempfile
-import threading
 import time
 from pathlib import Path
 
 from .. import hostenv, limits, toolchains
 from ..network import NetworkError
 from ..project import compiler_for
-from . import repository_sync_build
+from . import repository_operations, repository_sync_build
 
 STATE = 'decompdecomp-sync.json'
 MAX_CHECKOUT_CHANGES = 40
-_LOCK = threading.Lock()
 
 
 def digest(path):
@@ -304,9 +302,11 @@ def integrate(net, proj, root, stage, log):
 
 def run(net, slug, folder, log=print, *, commit_push=False):
     """Stage, verify and publish commit-ready source additions; preserve the live checkout on failure."""
-    if not _LOCK.acquire(blocking=False):
-        raise NetworkError('Another repository sync is running. Wait for it to finish.')
-    try:
+    root=checkout(folder, clean=False)
+    with repository_operations.operation(root, slug, 'Syncing saved progress', log) as output:
+        if output is None:
+            raise NetworkError('Another operation or queued push is using this repository. Wait for it to finish.')
+        log = output
         proj=net.project_row(slug)
         if not net.is_rom(proj):
             raise NetworkError('This project already works in its checkout. Commit its source there; no export sync is needed.')
@@ -363,8 +363,6 @@ def run(net, slug, folder, log=print, *, commit_push=False):
         if commit_push:
             result.update(repository_git.finish(root, files, upstream, log))
         return result
-    finally:
-        _LOCK.release()
 
 
 def update_objdiff(stage, manifest):

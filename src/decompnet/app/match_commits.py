@@ -10,7 +10,7 @@ import uuid
 
 from ..network import NetworkError
 from ..project import function_compiler_key
-from . import match_commit_notes, repository_git, repository_progress, repository_sync, saves
+from . import match_commit_notes, repository_git, repository_operations, repository_progress, repository_sync, saves
 
 log = logging.getLogger('decompdecomp')
 
@@ -163,23 +163,25 @@ def process(net, slug, output=log.info):
     proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None or not net.cfg(proj).get('auto_commit_matches'):
         return
-    if not repository_sync._LOCK.acquire(blocking=False):
-        return
-    try:
-        for job in net.store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY created_at LIMIT 20", proj['id'], time.time()):
-            check = getattr(output, 'check_cancel', None)
-            if check:check()
-            proj = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
-            if proj is None:
-                return
-            cfg = net.cfg(proj)
-            if not cfg.get('auto_commit_matches'):
-                return
-            try:
+    for job in net.store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY created_at LIMIT 20", proj['id'], time.time()):
+        check = getattr(output, 'check_cancel', None)
+        if check:check()
+        proj = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
+        if proj is None:return
+        cfg = net.cfg(proj)
+        if not cfg.get('auto_commit_matches'):return
+        project_lock = net.progress._project_lock(slug)
+        if not project_lock.acquire(blocking=False):return
+        try:
+            root = repository_sync.checkout(cfg['auto_commit_folder'], clean=False)
+            with repository_operations.operation(root, slug, 'Committing a verified match', output) as log:
+                if log is None:return
+                # Another autosave worker may have completed this job while we read the queue.
+                pending = net.store.one("SELECT 1 FROM auto_match_commits WHERE id=? AND state='pending'", job['id'])
+                if not pending:continue
                 note = net.store.one('SELECT text FROM notes WHERE function_id=? AND agent_id=? AND created_at>=? ORDER BY id DESC LIMIT 1',
                                      job['function_id'], job['agent_id'], job['notes_after'])
                 message = match_commit_notes.message(net, job, note)
-                root = repository_sync.checkout(cfg['auto_commit_folder'], clean=False)
                 if not repository_sync.progress_checkout(net, slug, root):
                     raise NetworkError('The linked progress checkout changed. Disable and re-enable automatic commits for the new folder.')
                 branch = repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD')
@@ -192,17 +194,20 @@ def process(net, slug, output=log.info):
                 if existing:
                     commit = existing
                 else:
-                    files, paths, head = scoped_snapshot(net, proj, root, job, output)
-                    # Disabling while the snapshot was prepared cancels publication too.
+                    log('Preparing saved files for '+json.loads(job['snapshot'])['name']+'…')
+                    files, paths, head = scoped_snapshot(net, proj, root, job, log)
+                    # Disabling or moving the checkout cancels publication too.
                     fresh = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
-                    if fresh is None or not net.cfg(fresh).get('auto_commit_matches'):
+                    fresh_cfg = net.cfg(fresh) if fresh else {}
+                    if not fresh_cfg.get('auto_commit_matches') or any(fresh_cfg.get(key) != cfg.get(key)
+                            for key in ('auto_commit_folder', 'auto_commit_branch')):
                         return
-                    commit = repository_progress.commit_snapshot(root, files, paths, output, expected_head=head,
+                    commit = repository_progress.commit_snapshot(root, files, paths, log, expected_head=head,
                              expected_branch=branch, message=message, allow_empty=True)
                 with net.store.tx() as db:
                     db.execute("UPDATE auto_match_commits SET state='done',commit_sha=?,error=NULL WHERE id=?", (commit, job['id']))
-            except (NetworkError, OSError, ValueError, KeyError) as error:
-                with net.store.tx() as db:
-                    db.execute('UPDATE auto_match_commits SET error=?,retry_at=? WHERE id=?', (str(error) if isinstance(error, NetworkError) else 'Could not read the progress checkpoint. Check its files and Git setup, then retry.', time.time()+15, job['id']))
-    finally:
-        repository_sync._LOCK.release()
+        except (NetworkError, OSError, ValueError, KeyError) as error:
+            with net.store.tx() as db:
+                db.execute('UPDATE auto_match_commits SET error=?,retry_at=? WHERE id=?', (str(error) if isinstance(error, NetworkError) else 'Could not read the progress checkpoint. Check its files and Git setup, then retry.', time.time()+15, job['id']))
+        finally:
+            project_lock.release()

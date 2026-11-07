@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from ..network import NetworkError
-from . import repository_git, repository_progress, repository_sync, saves
+from . import repository_git, repository_operations, repository_progress, repository_sync, saves
 
 git = repository_git.git
 # An allowlist also protects game images with unfamiliar extensions or names.
@@ -60,11 +60,12 @@ def bind(net, slug, path, proj):
 
 
 def run(net, slug, action, origin, log):
-    if not repository_sync._LOCK.acquire(blocking=False):
-        raise NetworkError('Another repository operation is running. Wait for it to finish, then retry.')
-    try:
-        path, proj = folder(net, slug)
-        with net.progress._project_lock(slug):
+    path, proj = folder(net, slug)
+    with net.progress._project_lock(slug):
+        with repository_operations.operation(root_at(path) or path, slug, 'Setting up progress repository', log) as output:
+            if output is None:
+                raise NetworkError('Another operation or queued push is using this repository. Wait for it to finish.')
+            log = output
             root = root_at(path)
             if action == 'init':
                 if not net.is_rom(proj):raise NetworkError('Imported projects use their existing source checkout.')
@@ -118,5 +119,3 @@ def run(net, slug, action, origin, log):
                 log('Saved progress commit '+commit[:12]+'. Nothing was pushed.')
             else:raise NetworkError('Choose Create repository, Add origin or Commit saved progress.')
         return status(net, slug)
-    finally:
-        repository_sync._LOCK.release()

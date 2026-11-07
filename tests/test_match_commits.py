@@ -287,3 +287,49 @@ def test_blank_notes_use_fallback_and_remove_draft(automatic):
     assert git(root, 'log', '-1', '--format=%s') == 'Match f'
     assert not (root/'best/f.c').exists()
     assert 'best/f.c' in git(root, 'show', '--format=', '--name-only', 'HEAD')
+
+
+def test_waiting_push_interrupts_match_batch_after_current_commit(automatic, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_push
+
+    from .test_repository_push import QueueLog
+    net, root, remote, _ = automatic
+    enable(automatic)
+    match(automatic, 'f', 'first match')
+    match(automatic, 'g', 'second match')
+    output = QueueLog()
+    pushing, release = threading.Event(), threading.Event()
+    original_commit = repository_progress.commit_snapshot
+    original_git = repository_push.git
+    future = []
+    def git_push(path, *args, **kwargs):
+        if args[0] == 'push':
+            pushing.set()
+            assert release.wait(10)
+        return original_git(path, *args, **kwargs)
+    monkeypatch.setattr(repository_push, 'git', git_push)
+    with ThreadPoolExecutor(1) as pool:
+        def commit_and_queue(*args, **kwargs):
+            result = original_commit(*args, **kwargs)
+            if not future:
+                future.append(pool.submit(repository_push.run, net, 'game', str(root), output))
+                assert output.queued.wait(5)
+            return result
+        monkeypatch.setattr(repository_progress, 'commit_snapshot', commit_and_queue)
+        try:
+            match_commits.process(net, 'game')
+            assert pushing.wait(5)
+            assert match_commits.status(net, net.project_row('game'))['pending'] == 1
+        finally:
+            release.set()
+        assert future[0].result(timeout=10)['pushed']
+    pushed = git(remote, 'rev-parse', 'HEAD')
+    manifest = json.loads(git(remote, 'show', 'HEAD:decompdecomp.json'))
+    assert 'matched_by' in manifest['functions']['f']
+    assert 'matched_by' not in manifest['functions']['g']
+    match_commits.process(net, 'game')
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    assert git(root, 'rev-parse', 'HEAD^') == pushed

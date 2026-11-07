@@ -259,14 +259,21 @@ are not copied into commit messages.
 
 **Push commits to origin** refreshes origin, checks for divergence, then sends the
 existing commits from the current branch. It does not commit or stage working files.
-New commits created after the push begins remain for the next push. Imported build
+New commits created after the push gets its repository turn remain for the next push. Imported build
 projects can use the same push-only control for their existing source commits.
+
+A busy repository queues the push with Stop available. Queued pushes receive the next turn
+before automatic commits; automatic match batches yield after each completed commit and
+retain the rest for a later autosave. The panel reports the blocking operation, project,
+latest step and elapsed wait. Independent repositories do not block one another; linked
+worktrees share a queue because they share Git metadata. Automatic commits leave work
+pending while a local progress save is busy rather than holding the repository while waiting.
 
 ### Set up Git for a portable save
 
 Save location and Git settings share one panel. Save now remembers the folder; Create Git repository initializes it and adds progress-only `.gitignore` rules while preserving existing rules without staging or committing files. Commit saved progress creates a local checkpoint of manifest-listed C, headers and portable metadata. It leaves unrelated files out, refuses staged changes and never pushes. This checkpoint enables future automatic match commits. Adding origin is separate and never contacts the remote. A remembered backup becomes the ongoing progress folder only when its saved content agrees with the current progress (save timestamps and revision counters can differ). Review differing edits before adopting it. Separate rebuildable-export synchronization remains under Advanced; imported projects retain their source checkout for origin and push.
 
-`GET /api/repository-setup?slug=...` reads local save/repository state; authenticated `POST /api/repository-setup` accepts `slug`, `action` (`init`, `checkpoint`, `origin`) and an `origin` address for the last action. Mutations run as background jobs under the shared repository lock.
+`GET /api/repository-setup?slug=...` reads local save/repository state; authenticated `POST /api/repository-setup` accepts `slug`, `action` (`init`, `checkpoint`, `origin`) and an `origin` address for the last action. Mutations run as jobs under the same per-repository coordinator used by sync, commits and queued pushes.
 
 ### Automatic pushes
 
