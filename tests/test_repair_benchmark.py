@@ -1,6 +1,30 @@
 import time
 
+import pytest
+
 from decompnet.app import iterative_repairs, repair_benchmark
+
+
+def test_rendered_feedback_cannot_silently_become_zero_instruction_diagnostics():
+    with pytest.raises(ValueError,match='structured diff rows'):
+        repair_benchmark.run('seed',10,lambda s:{'score':10,'matched':False,'rows':'r | target | candidate'},
+                             lambda s:[],trials=2,deadline=time.monotonic()+2)
+    absent=repair_benchmark.diagnostics({'score':10})
+    assert not absent['available'] and absent['category']=='unknown'
+    assert 'target_instructions' not in absent
+    assert not repair_benchmark.diagnostics({'rows':()})['available']
+    with pytest.raises(ValueError,match='structured diff rows'):
+        repair_benchmark.diagnostics({'rows':[([], 'target', 'candidate')]})
+
+
+def test_complete_rows_feed_baseline_and_trial_diagnostics():
+    rows=[('r','move $s0, $a0','move $s1, $a0')]
+    result=repair_benchmark.run('seed',10,
+        lambda s:dict(score=10,matched=False,outcome='scored',rows=rows),
+        lambda s:[('test','next')] if s=='seed' else [],trials=1,deadline=time.monotonic()+2,arch='mips')
+    assert result['residual_diagnosis']['available']
+    assert result['residual_diagnosis']['target_instructions']==1
+    assert result['trials'][0]['diagnostics']['candidate_instructions']==1
 
 
 def test_collect_exact_keeps_intermediates_and_explores_sibling_combinations():

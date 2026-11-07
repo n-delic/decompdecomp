@@ -309,9 +309,11 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     storage=targeted_storage_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
     from . import scalar_storage_reuse
     reuse=scalar_storage_reuse.variants(source,fn['name'],header,arch,report.get('repair_locations'))
+    from . import loop_storage_shapes
+    loops=loop_storage_shapes.variants(source,fn['name'],header,arch,report.get('repair_locations'))
     from . import scan_load_repairs
     scans=scan_load_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
-    operand_focused = reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    operand_focused = loops + reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
     labels.update({text: family for family, text in operand_focused})
     for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):
@@ -336,7 +338,13 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     tagged = repair_localisation.proposals(source,tagged,report.get("repair_locations"))
     # Retain established operand-supported focus. Broad reordering needs held-out replay evidence.
     use_focus=focused and bool(operand_focused or report.get('broad_focus_approved'))
-    return first_difference.order(source,tagged,report.get('rows')) if use_focus else tagged
+    tagged=first_difference.order(source,tagged,report.get('rows')) if use_focus else tagged
+    near_loops=loop_storage_shapes.variants(source,fn['name'],header,arch,report.get('repair_locations'),mapped_only=True)
+    # A small source-mapped prefix avoids an unrelated loop consuming the first
+    # compile. Broad families remain in the page and the ordinary judge is unchanged.
+    from .repair_ranking import GUARDED
+    guarded=[item for item in tagged if item[0] in GUARDED]
+    return list(dict.fromkeys(guarded+near_loops[:3]+tagged))
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,

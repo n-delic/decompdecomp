@@ -5869,3 +5869,32 @@ Search feedback now prefers fingerprints of all allocatable sections, BSS sizes 
 relocations. Equivalent failed outputs may defer redundant families, with periodic retries;
 unknown object formats provide no full-output equivalence evidence. Compiler/header/target/
 symbol/rule changes invalidate persisted search scopes. No compiler settings change is implied.
+
+### Replay the earlier checkpoint, and separate independent edit checks
+
+The same pinned KMC GCC 2.7.2 profile (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
+now has a replay with complete structured diff rows rather than a rendered listing. The
+score-270 control has 395 target/candidate instructions, 15 changed rows and matching 88-byte
+frames; these are real diagnostics, not zero counts inferred from missing evidence. The source
+SHA256 is `dd3457f8888250718bbcf73953d6f1623866bcc4ec8e6a7e8c9191c9470a58a5`.
+Source-hash-bound line guidance ranks the affected row-counter loop before an unrelated loop.
+An equal 12-candidate-budget replay changed exact recovery from trial 2 to trial 1 (three
+compiler invocations including baseline became two). Observed times were 0.98 and 1.38 seconds:
+this saves a compile in this controlled case, not demonstrated wall-clock improvement.
+
+The earlier score-565 source, SHA256
+`6ed43a854dbff1896d1279f58447fd6c939881b3a97f2d952e1b401823587296`,
+also has 395 instructions per side and matching 88-byte frames, but 21 changed rows, branch
+targets and delay-slot differences. The normal targeted beam did not improve it in 64
+candidate compiles (57.4 seconds, 120-second allowance). Thus the near-checkpoint success
+does not show automatic rediscovery of the whole sequence. Both cases keep the same frozen
+header, target, symbols and compiler inputs; no live source or match record is changed.
+
+Post-match analysis now removes each captured token edit independently from the complete
+successful source. An unchanged output means that edit can be undone in that context;
+a failed compile or changed output does not prove semantic necessity. Untested edits remain
+explicit. Individually removable edits must not be removed together without another check.
+The scalar-reuse control illustrates the limitation: the whole before-source is also exact,
+while all five partial token reversions changed output or failed. Those token edits are coupled,
+and this is not evidence that all five are required. Equivalent complete controls no longer
+produce a source-only recipe candidate. Analysis remains bounded and never adopts reduced code.

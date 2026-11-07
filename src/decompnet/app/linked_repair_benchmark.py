@@ -78,7 +78,7 @@ def evaluator(root, name, header):
                 from .repair_localisation import bind
                 rows=scoring.diff(linked_target,raw).rows
                 result = dict(score=score,rows=rows,matched=linked.exact,
-                              repair_locations=bind(source,mismatches(built.obj,name,rows,source)),
+                              repair_locations=bind(source,mismatches(built.obj,name,rows,source,arch=console.arch)),
                               outcome='exact_linked' if linked.exact else 'scored',
                               candidate_target=hashlib.sha256(linked.linked_code).hexdigest(),
                               candidate_relocs=repr(linked.problems))

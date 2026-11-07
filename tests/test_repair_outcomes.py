@@ -14,7 +14,9 @@ def test_background_analysis_saves_evidence_without_adopting_or_reviewing(setup,
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
     queue=[]
     monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
-    monkeypatch.setattr(repair_outcomes,'analyze',lambda example:{'minimization':{'source':'private reduced C','reverted':2}})
+    monkeypatch.setattr(repair_outcomes,'analyze',lambda example:{'baseline_output_equivalent':True,
+        'minimization':{'source':'private reduced C','reverted':2,
+                        'individual_checks':{'output_preserved':[0,1],'output_not_preserved':[],'untested':[2]}}})
     repair_outcomes.schedule(net.repair_feedback,case_id)
     repair_outcomes.schedule(net.repair_feedback,case_id)
     assert len(queue)==1
@@ -25,6 +27,8 @@ def test_background_analysis_saves_evidence_without_adopting_or_reviewing(setup,
     assert result['status']=='new' and dict(fn(net,fid))==original
     summary=net.repair_feedback.detail('demo',case_id,include_source=False)
     assert 'source' not in summary['automatic_analysis']['report']['minimization']
+    assert summary['automatic_analysis']['report']['minimization']['individual_checks']['untested']==[2]
+    assert summary['automatic_analysis']['report']['baseline_output_equivalent']
     assert 'private reduced C' not in ''.join(net.repair_feedback.export('demo'))
 
 

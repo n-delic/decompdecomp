@@ -93,6 +93,31 @@ def test_recorded_control_must_reproduce_a_difference():
     assert result['trials']==[] and 'no isolated regression' in result['skipped']
 
 
+def test_equivalent_baseline_still_gets_independent_checks_when_requested():
+    result=replay.replay(case(),measure=lambda source:{'object':obj(1)},minimize=True,ablation_only=True,trials=4)
+    assert result['baseline_output_equivalent']
+    assert result['minimization']['individual_checks']['output_preserved']
+    assert result['recipe_candidate'] is None
+    assert not result.get('skipped') and result['remaining']==0
+
+
+def test_cli_exposes_independent_checks_without_replacing_minimization(tmp_path,monkeypatch):
+    import json
+    import sys
+
+    export=tmp_path/'evidence.json';output=tmp_path/'report.json'
+    export.write_text(json.dumps(case()))
+    calls=[]
+    monkeypatch.setattr(replay,'replay',lambda case,**kwargs:calls.append(kwargs) or {'id':case['id']})
+    monkeypatch.setattr(sys,'argv',['replay',str(export),'--output',str(output),'--independent-edits','--trials','8'])
+    replay.main()
+    assert calls[0]['minimize'] and calls[0]['ablation_only'] and calls[0]['trials']==8
+    assert json.loads(output.read_text())['examples']==[{'id':7}]
+    monkeypatch.setattr(sys,'argv',['replay',str(export),'--output',str(output),'--minimize'])
+    replay.main()
+    assert calls[1]['minimize'] and not calls[1]['ablation_only']
+
+
 def test_equal_instructions_with_different_constant_data_do_not_recover_control(monkeypatch):
     def variants(source,name,arch,asm,flags,labels,**kwargs):
         labels['candidate']='test'

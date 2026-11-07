@@ -1,5 +1,26 @@
 # Learned repair search
 
+## Replay evidence and independent edit checks
+
+Replay evaluators must return complete `diff.rows`, not `diff.render()` or a shortened listing.
+Rendered/malformed rows are rejected; absent rows produce explicitly unavailable diagnostics,
+not a misleading zero-instruction result. Baseline and candidate reports retain structural
+counts so an earlier unresolved checkpoint can be compared with a near-match checkpoint.
+The private frozen-case manifest supports multiple checkpoints of one function using distinct
+case ids. Keep source/header/target/compiler hashes and equal budgets; report failed recoveries too.
+
+Automatic post-match analysis uses its existing four-trial budget to undo captured token edits
+one at a time from the complete successful source. The repair dialog and summary export show
+which individual reversions preserved output, which changed output or failed compilation, and
+which remain untested. Independent reversions do not prove a combined reversion works, or that
+retained edits are semantically necessary. Compiler-output evidence is separate from the normal
+linked/objdiff judge. Selected source is never changed by this analysis.
+
+If the complete before and after sources already produce the same output, record that fact and
+do not propose a source-only learned recipe. Context changes or coupled edits can explain an
+apparent final fix. Manual replay can use `--independent-edits --trials 24` for a larger independent
+check budget; `--minimize` retains its existing subset/deletion search. Automatic work remains bounded.
+
 The app records short repair sequences when a connected chain of tested candidates ends in an
 ordinary exact judgment. It stores family names, compiler/build profile, initial mismatch kind
 and success count, not game source. Chains of two to four steps can rank applicable families

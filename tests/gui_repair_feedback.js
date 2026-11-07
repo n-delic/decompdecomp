@@ -16,7 +16,7 @@ class Element {
   remove() { this.isConnected = false; }
 }
 const body = new Element('body'), button = new Element('button');
-let triage = false;
+let triage = false, automatic = false;
 let state = 'new', qualityPending = true, confirmed = false, configFails = false;
 const row = () => ({id: 42, project: '<b>demo</b>', function: 'target', category: 'types', status: state});
 const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => new Element(tag)}, $: () => button,
@@ -42,6 +42,8 @@ const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => ne
     if (opts?.method === 'POST') { state = opts.body.status; return {message: 'Saved'}; }
     const query = new URL(url, 'http://test').searchParams;
     if (query.get('id')) return {...row(), explanation: 'Changed a type.', automation: 'Try signedness.',
+      ...(automatic ? {automatic_analysis:{state:'done',report:{baseline_output_equivalent:true,
+        minimization:{edits:4,reverted:1,individual_checks:{output_preserved:[0],output_not_preserved:[1],untested:[2,3]}}}}} : {}),
       evidence: {source_change_label: 'C tokens changed', diff: '- old\n+ <script>neverExecute()</script>', after: {source: '<script>neverExecute()</script>'}}, review_note: ''};
     return {examples: triage ? ['source','first','context','build'].map((review_group,index) => ({...row(),id:42+index,review_group})) : [row()], categories: ['unclassified', 'types'], states: ['new', 'reviewed'],
       total: 100, groups: [{category: 'types', status: state, count: 1}], more: false};
@@ -135,5 +137,11 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/stati
     assert.equal(dialog.querySelector(`[data-${group}-reports]`).hidden,false);
   }
   assert.equal(dialog.querySelector('[data-count]').textContent,'— Showing 4/100');
+  automatic=true;triage=false;await dialog.querySelector('[data-refresh]').onclick();
+  const analyzed=list.children[0];analyzed.open=true;await analyzed.listeners.toggle();
+  const textOf=node=>node.textContent+' '+node.children.map(textOf).join(' ');
+  assert(textOf(analyzed).includes('1 edits could be undone; 1 changed output or failed to compile; 2 remain untested'));
+  assert(textOf(analyzed).includes('does not mean they can be undone together'));
+  assert(textOf(analyzed).includes('already produce the same frozen output'));
   console.log('Repair evidence rendering, review, filtering and explicit source export passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

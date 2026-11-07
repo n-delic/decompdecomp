@@ -109,7 +109,9 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
     target = control['object']
     baseline_score = scoring.diff(target, baseline['object']).score
     report.update(baseline_score=baseline_score, verdict='compiler-output regression only; no linked/objdiff match adoption')
-    if target.fingerprint() == baseline['object'].fingerprint() and baseline.get('data') == control.get('data'):
+    equivalent=target.fingerprint() == baseline['object'].fingerprint() and baseline.get('data') == control.get('data')
+    report['baseline_output_equivalent']=equivalent
+    if equivalent and not minimize:
         return report | {'skipped':'Failed and successful sources produce the same normalized control output; no isolated regression.'}
     if diagnostics and time.monotonic()<deadline:
         from .compiler_diagnostics import compare, diagnose
@@ -133,13 +135,17 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
             return bool(not measured.get('error') and measured['object'].fingerprint()==target.fingerprint()
                         and measured.get('data')==control.get('data'))
         report['minimization'] = ablate(before['source'],after['source'],preserves,
-                                       trials=trials if ablation_only else max(1,trials//2),stopped=lambda:time.monotonic()>=deadline)
+                                       trials=trials if ablation_only else max(1,trials//2),stopped=lambda:time.monotonic()>=deadline,
+                                       individual=ablation_only)
         from .expression_recipes import template
-        report['recipe_candidate']=template(before['source'],report['minimization']['source'])
-        report['recipe_status']='Review candidate only; independent held-out exact validation required before learning.'
+        report['recipe_candidate']=None if equivalent else template(before['source'],report['minimization']['source'])
+        report['recipe_status']=('No source-only regression; no recipe candidate.' if equivalent else
+                                 'Review candidate only; independent held-out exact validation required before learning.')
         for row in report['minimization']['trials']:
             forward = row.get('direction')=='forward'
             outcome = ('subset_preserved' if row['preserves_output'] else 'subset_failed') if forward else ('edit_reverted' if row['preserves_output'] else 'edit_retained')
+            if row.get('direction')=='individual':
+                outcome='individually_dispensable' if row['preserves_output'] else 'individual_output_changed_or_failed'
             report['trials'].append({'family':'captured_edit_subset' if forward else 'revert_captured_edit','outcome':outcome,**row})
             counts[outcome] += 1
     if ablation_only:
@@ -239,12 +245,15 @@ def main():
     parser.add_argument('--trials',type=int,default=24)
     parser.add_argument('--seconds',type=int,default=120)
     parser.add_argument('--minimize',action='store_true',help='Use up to half the trial budget to revert captured edits while preserving the full allocated control output.')
+    parser.add_argument('--independent-edits',action='store_true',help='Use the trial budget to undo captured edits independently from the successful source; no family search or code adoption.')
     parser.add_argument('--diagnostics',action='store_true',help='Opt in to two additional native GCC runs and a bounded phase summary; no tool downloads.')
     parser.add_argument('--combinations',action='store_true',help='Benchmark bounded multi-step repairs, stopping at control-output recovery; reports compiles, path and elapsed time.')
     parser.add_argument('--min-failed-score',type=int,default=0,help='Select harder captures using their recorded failed score, before running either policy.')
     parser.add_argument('--min-instructions',type=int,default=0,help='Minimum captured function instruction count.')
     parser.add_argument('--distinct-functions',action='store_true',help='Keep one capture per target/compiler/context scope, in input order.')
     args = parser.parse_args()
+    if args.independent_edits and (args.minimize or args.combinations):
+        parser.error('Choose independent edit checks, minimization or combination search.')
     if not 1 <= args.limit <= 100:
         parser.error('Use --limit 1–100.')
     if args.min_failed_score<0 or args.min_instructions<0:
@@ -260,7 +269,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='decomp-repair-replay-') as root:
         for case in selected:
             try:
-                results.append(replay(case,trials=args.trials,seconds=args.seconds,root=root,minimize=args.minimize,diagnostics=args.diagnostics,combinations=args.combinations))
+                results.append(replay(case,trials=args.trials,seconds=args.seconds,root=root,minimize=args.minimize or args.independent_edits,
+                                      ablation_only=args.independent_edits,diagnostics=args.diagnostics,combinations=args.combinations))
             except (ValueError,KeyError,OSError,toolchains.ToolchainError) as error:
                 results.append({'id':case.get('id'),'skipped':str(error)[:500]})
     args.output.write_text(json.dumps({'schema_version':1,'cohort':manifest,'selection':dict(min_failed_score=args.min_failed_score,

@@ -122,6 +122,9 @@ $("repairExamples").onclick = async () => {
           raw.append(analysis);
           const report=data.automatic_analysis.report;
           if(report.minimization) change.textContent+=` Automatic analysis reverted ${report.minimization.reverted} of ${report.minimization.edits} captured edits without changing frozen compiler output. Selected source is unchanged.`;
+          const independent=report.minimization?.individual_checks;
+          if(independent) change.textContent+=` Tested separately: ${independent.output_preserved.length} edits could be undone; ${independent.output_not_preserved.length} changed output or failed to compile; ${independent.untested.length} remain untested. This does not mean they can be undone together.`;
+          if(report.baseline_output_equivalent) change.textContent+=' The before and after sources already produce the same frozen output; no isolated source-only improvement was established.';
           else if(report.context_trials) change.textContent+=' Context isolation: '+report.context_trials.filter(trial => !['before','after'].includes(trial.combination)).map(trial => `${trial.combination}: ${trial.error ? 'compile failed' : trial.control_output_recovered ? 'reproduced successful output' : 'did not reproduce output'}`).join('; ')+'. No settings applied.';
           else if(report.skipped) change.textContent+=' Automatic analysis: '+report.skipped;
         }

@@ -1,7 +1,7 @@
 """Optional loop/counter representations for matching; the original draft remains available."""
 import re
 
-from . import integer_abi, local_flow
+from . import integer_abi, local_flow, repair_localisation
 from .allocator_call_guards import dominators
 from .integer_repair_support import edit, refs
 from .pattern_repairs import close
@@ -15,7 +15,7 @@ def fresh(source, header, stem):
     return stem
 
 
-def variants(source, name, header='', arch=None):
+def variants(source, name, header='', arch=None, locations=None, *, mapped_only=False):
     flow=local_flow.analyze(source,name)
     if not flow:return []
     part=flow.part
@@ -23,7 +23,11 @@ def variants(source, name, header='', arch=None):
     from .equal_value_flow import macros_safe
     if not macros_safe(source,header,part.body,{d['name']:d['type'] for d in flow.locals}):return []
     if re.search(r'\b(?:__LINE__|__COUNTER__|__FILE__)\b',source+'\n'+header):return []
+    relevant=repair_localisation.lines(source,locations)
     result=[]
+    def offer(family,text,start,end):
+        lines=range(source.count('\n',0,start)+1,source.count('\n',0,end)+2)
+        result.append((not bool(relevant.intersection(lines)),family,text))
     for hit in re.finditer(r'\bdo\s*{',part.body):
         start=part.opening+1+hit.start();opening=part.opening+hit.end()
         end=close(part.clean,opening,'{','}')
@@ -37,8 +41,7 @@ def variants(source, name, header='', arch=None):
         if not semi or re.search(r'\b(?:break|continue|goto|case|default)\b|(?<!:):(?!:)',body):continue
         label=fresh(source,header,'__repair_rows')
         text=label+': '+source[opening:end]+'\nif ('+source[cond+1:stop-1]+') goto '+label+';'
-        result.append((FAMILIES[0],edit(source,[(start,stop+semi.end(),text)])))
-        if len(result)>=2:break
+        offer(FAMILIES[0],edit(source,[(start,stop+semi.end(),text)]),start,stop)
     for label,index in flow.labels.items():
         jumps=[flow.nodes[i] for i,key in flow.gotos if key==label]
         if len(jumps)!=1:continue
@@ -75,6 +78,15 @@ def variants(source, name, header='', arch=None):
                      (lo,hi,next_value+' = '+counter+' + 1;'),
                      (start,start,counter+' = '+next_value+';\n        ')]
             changes += [(m.start(),m.end(),next_value) for m in refs(part,decl) if hi<=m.start()<start]
-            result.append((FAMILIES[1],edit(source,changes)))
-            if len(result)>=LIMIT:return list(dict.fromkeys(result))
-    return list(dict.fromkeys(result))
+            offer(FAMILIES[1],edit(source,changes),lo,start)
+    # Rank whole loop hypotheses, never split edits or infer a match from a line.
+    # Stable sorting preserves broad order when mappings are absent or stale.
+    selected=[];broad_backedges=0
+    for broad,family,text in sorted(result,key=lambda item:item[0]):
+        if mapped_only and broad:continue
+        if broad and family==FAMILIES[0]:
+            if broad_backedges>=2:continue  # keep counter proposals in the unguided shortlist too
+            broad_backedges+=1
+        if (family,text) not in selected:selected.append((family,text))
+        if len(selected)==LIMIT:break
+    return selected

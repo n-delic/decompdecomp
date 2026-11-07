@@ -17,6 +17,10 @@ initialization; it does not force registers. Optional `explicit_loop_backedge` a
 `row_number_staging` alternatives can compose with it, without replacing the original draft.
 Keep a candidate with few differing instruction positions beside the lowest-score candidate.
 An exact linked-byte judge is still required; see the compiler learnings for measured replay limits.
+Fresh compiled-line mappings now rank the affected counter loop before unrelated loop repairs.
+One controlled replay saved one candidate compile; the earlier checkpoint still failed to improve
+within 64 trials. Check complete before/after output and independent reversions before attributing
+a match to the final edit. Partially undoing a coupled rename can fail without proving it necessary.
 
 Keep the compiler, flags, header and symbol addresses fixed while comparing source repairs.
 

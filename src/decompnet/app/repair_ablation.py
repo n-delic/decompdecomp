@@ -6,7 +6,7 @@ from itertools import combinations, zip_longest
 from .repair_tokens import tokens
 
 
-def minimize(before, after, preserves, *, trials=12, stopped=lambda:False):
+def minimize(before, after, preserves, *, trials=12, stopped=lambda:False, individual=False):
     if not 1 <= trials <= 128:
         raise ValueError('Use 1–128 ablation trials.')
     left, right = tokens(before), tokens(after)
@@ -19,6 +19,27 @@ def minimize(before, after, preserves, *, trials=12, stopped=lambda:False):
             pieces += right[c:d] if index in keep else left[a:b]
             cursor = b
         return ''.join(pieces+left[cursor:])
+    if individual:
+        # Each trial starts from the complete successful edit set. Greedy deletion
+        # answers a different question and can misattribute interacting edits.
+        checked=[]; reduced=after
+        for index in range(len(edits)):
+            if len(checked)>=trials or stopped():break
+            candidate=materialize(set(range(len(edits)))-{index})
+            ok=bool(preserves(candidate))
+            checked.append({'edit':index,'direction':'individual','preserves_output':ok,
+                            'source_sha256':hashlib.sha256(candidate.encode()).hexdigest()})
+            if ok and reduced==after:
+                reduced=candidate;retained.remove(index)
+        return {'source':reduced,'edits':len(edits),'retained':sorted(retained),
+                'reverted':len(edits)-len(retained),'trials':checked,'sufficient_recipes':[],
+                'individual_checks':{'output_preserved':[r['edit'] for r in checked if r['preserves_output']],
+                                     'output_not_preserved':[r['edit'] for r in checked if not r['preserves_output']],
+                                     'untested':list(range(len(checked),len(edits)))},
+                'exhausted':len(checked)<len(edits),
+                'granularity':'C tokens (including whitespace and comments)',
+                'verdict':'Each edit removed independently from the complete successful source; not semantic necessity. '
+                          'Independent dispensability does not prove edits can be removed together; selected source is unchanged.'}
     tested = []; seen = set(); changed = True
     # Forward subsets find a small sufficient recipe that greedy deletion can miss
     # when two edits cancel each other. Reserve at least half the budget for deletion.

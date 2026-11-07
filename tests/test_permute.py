@@ -40,6 +40,7 @@ class FakeNet:
 
     def __init__(self):
         self.store = Store(IN_MEMORY)
+        self._project_files = None  # This in-memory fixture uses the legacy store, not migrated project files.
         self._generation = {}
         with self.store.tx() as db:
             db.execute("INSERT INTO projects(id, slug, name, arch, root, config) VALUES(1, 'game', 'Game', 'mips', '.', ?)",

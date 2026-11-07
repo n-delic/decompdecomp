@@ -50,8 +50,9 @@ def result(feedback,case_id,include_source=True):
         # Compiler errors/dumps can quote source too. Summary exports retain only counts.
         minimized=report.get('minimization') or {}
         report={'summary':report.get('summary',{}),'minimization':{k:minimized[k] for k in
-                ('edits','retained','reverted','exhausted') if k in minimized},
-                'baseline_score':report.get('baseline_score'),'skipped':bool(report.get('skipped'))}
+                ('edits','retained','reverted','exhausted','individual_checks') if k in minimized},
+                'baseline_score':report.get('baseline_score'),'baseline_output_equivalent':report.get('baseline_output_equivalent'),
+                'skipped':bool(report.get('skipped'))}
     return {'state':row['state'],'report':report}
 
 

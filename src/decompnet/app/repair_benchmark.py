@@ -7,6 +7,17 @@ from itertools import zip_longest
 from . import allocation_evidence, iterative_repairs, paired_local_repairs, repair_selection
 
 
+def diagnostics(report, arch=None):
+    """Rendered/truncated listings cannot stand in for a complete instruction stream."""
+    rows=report.get('rows')
+    if rows is None or (isinstance(rows,(list,tuple)) and not rows):
+        return {'available':False,'category':'unknown','reason':'No structured instruction rows supplied.'}
+    if (not isinstance(rows,(list,tuple)) or any(not isinstance(r,(list,tuple)) or len(r)!=3
+            or not all(isinstance(v,str) for v in r) or r[0] not in {' ','<','>','|','o','r','s','i'} for r in rows)):
+        raise ValueError('Replay needs complete structured diff rows, not rendered or truncated output.')
+    return {'available':True,**allocation_evidence.plan(rows,arch)}
+
+
 def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_cancel=lambda: None,
         progress=lambda value: None, collect_exact=False, generate_report=False, arch=None, paired_search=True, output_diversity=True, header=''):
     """Measure rediscovery effort, including failures; evaluator must supply its exact control verdict."""
@@ -16,18 +27,21 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
     results = []
     check_cancel()
     baseline = evaluate(source)
+    baseline_diagnostics=diagnostics(baseline,arch)
 
     def judge(candidate):
         check_cancel()
         # The baseline is already compiled by replay, and callers pass its frozen report.
         trial_started = time.monotonic()
         report = baseline if candidate == source else evaluate(candidate)
+        measured_diagnostics=diagnostics(report,arch)
         check_cancel()
         if candidate != source:
             node = state['pending'][0]
             row = {'path': node.get('path', []), 'family': node.get('path', ['baseline'])[-1],
                    'source_sha256': hashlib.sha256(candidate.encode()).hexdigest(),
                    'outcome': report['outcome'], 'score': report.get('score'), 'exact': bool(report.get('matched')),
+                   'diagnostics':measured_diagnostics,
                    'elapsed_seconds': time.monotonic()-trial_started}
             results.append(row)
             progress({'tested': len(results), 'budget': trials, **row})
@@ -64,7 +78,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             'no_effect_families':sum(n>=2 for n in state.get('family_no_effect',{}).values()), 'deferred_pages':len(state.get('deferred',[])), 'paired_proposals':state.get('paired_trials',0), 'paired_evaluations':state.get('counts',{}).get('paired_evaluations',0),
             'search_policy':dict(paired_search=paired_search,output_diversity=output_diversity),
             'pair_coverage':paired_local_repairs.coverage(source,header),
-            'residual_diagnosis':allocation_evidence.plan(baseline.get('rows'),arch)}
+            'residual_diagnosis':baseline_diagnostics}
 
 
 def batch(cases, evaluate, generate, *, trials=32, seconds=30, check_cancel=lambda: None, generate_report=False):

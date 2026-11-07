@@ -1,4 +1,4 @@
-from decompnet.app import loop_storage_shapes
+from decompnet.app import loop_storage_shapes, repair_localisation
 
 SOURCE='void f(void) { unsigned int i; i=0; do { use(i); i++; use(i); } while(i<4); }'
 
@@ -30,3 +30,29 @@ def test_loop_directed_transfers_and_macros_are_not_reinterpreted():
 def test_counter_staging_rejects_entry_bypassing_new_definition():
     source='void f(int x) { unsigned int i; i=0; if(x) goto middle; rows: { i++; middle: use(i); } if(i<4) goto rows; }'
     assert not loop_storage_shapes.variants(source,'f',arch='mips')
+
+
+def test_fresh_lines_rank_relevant_counter_before_unrelated_loops():
+    source='void f(int x) {\n unsigned int i;\n'+('do { use(x); } while(x);\n'*5)+'\n\n i=0;\n rows: {\n i++;\n use(i);\n }\n if(i<4) goto rows;\n}'
+    broad=loop_storage_shapes.variants(source,'f',arch='mips')
+    line=source[:source.index('use(i)')].count('\n')+1
+    evidence=repair_localisation.bind(source,{'available':True,'lines':[{'line':line}]})
+    ranked=loop_storage_shapes.variants(source,'f',arch='mips',locations=evidence)
+    assert broad[0][0]=='explicit_loop_backedge'
+    assert any(family=='row_number_staging' for family,_ in broad)
+    assert ranked[0][0]=='row_number_staging'
+    assert any(family=='explicit_loop_backedge' for family,_ in ranked)
+    assert loop_storage_shapes.variants(source,'f',arch='mips',locations=evidence,mapped_only=True)==ranked[:1]
+    evidence['source_sha256']='stale'
+    assert loop_storage_shapes.variants(source,'f',arch='mips',locations=evidence)==broad
+    assert not loop_storage_shapes.variants(source,'f',arch='mips',locations=evidence,mapped_only=True)
+
+
+def test_integrated_targeted_search_keeps_mapped_counter_in_first_page():
+    from decompnet.app import iterative_repairs
+    source='void f(int x) {\n unsigned int i;\n do { use(x); } while(x);\n\n\n i=0;\n rows: {\n i++;\n use(i);\n }\n if(i<4) goto rows;\n}'
+    line=source[:source.index('use(i)')].count('\n')+1
+    evidence=repair_localisation.bind(source,{'available':True,'lines':[{'line':line}]})
+    proposals=iterative_repairs.targeted_variants(source,{'rows':[],'repair_locations':evidence},
+        {'name':'f','asm':''},'mips',[],tagged=True,limit=2)
+    assert proposals[0][0]=='row_number_staging'
