@@ -664,6 +664,8 @@ class Permuter:
                     measured_rows = repair_ranking.evidence(self.net, fn['id'], agent.id)
                     frontier.offer(cand, score, measured_rows, arch=proj['arch'], baseline=rows, baseline_score=best)
                     if score < best:
+                        from .deep_compilation import discard
+                        discard(self)
                         best, best_src = score, cand
                         st.add(improved=1)
                         if best > 0:
@@ -695,10 +697,11 @@ class Permuter:
     def _stream_variants(self, chunks, agent, proj, fn, fork):
         try:
             for chunk in chunks:
+                sources = [m2cfix.static_helpers(cand) for cand in chunk]
                 if hasattr(self, '_prime_trials'):
-                    self._prime_trials(agent, proj, fn,
-                                       [m2cfix.static_helpers(cand) for cand in chunk], fork)
-                yield from chunk
+                    self._prime_trials(agent, proj, fn, sources, fork)
+                from .deep_compilation import chunk as compile_chunk
+                with compile_chunk(self, agent, proj, fn, sources, fork):yield from chunk
         finally:
             chunks.close()
 
@@ -822,6 +825,7 @@ class Permuter:
 
     def _score_work(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         self._trial_outcome = 'unscored'
+        self._compact_trial = False
         self._trial_output = None
         self._trial_locations = None
         self._trial_output_granularity = None
@@ -866,7 +870,8 @@ class Permuter:
                     changed.append('symbols or layout')
                 if changed:
                     raise NetworkError('Search inputs changed while compiling ('+', '.join(changed)+'); the saved result was left untouched. Retry the function.')
-        result = self.net._compile(proj, ctx["header"], source, fn)
+        compile_candidate = getattr(self.net, "_attempt_compilation", self.net._compile)
+        result = compile_candidate(proj, ctx["header"], source, fn)
         if not result.ok:
             self._trial_outcome = 'compile_failed'
             if 'Compiler or build process exceeded' in getattr(result, 'log', ''):
@@ -893,10 +898,15 @@ class Permuter:
             # Winners and baselines feed subsequent local repairs and saved evidence.
             # Ordinary misses skip export/address reports; search feedback remains available.
             self.net._evaluate(fn, proj, result.obj)
-        with compile_timing.phase('search_diagnostics'):
-            self._trial_locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
-                filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
-        rows = self.net._search_rows(fn,proj,result.obj,d.rows) if hasattr(self.net,'_search_rows') else d.rows
+        from ..repair_feedback import current_trial
+        self._compact_trial = ((current_trial() or {}).get('kind') == 'random rewrite'
+                               and source != fn['best_source'] and d.score >= best and not d.bytes_match)
+        if not self._compact_trial:
+            with compile_timing.phase('search_diagnostics'):
+                self._trial_locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
+                    filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
+        rows = (self.net._search_rows(fn,proj,result.obj,d.rows)
+                if not self._compact_trial and hasattr(self.net,'_search_rows') else d.rows)
         self.net.keep_diff(agent.id, fn['id'], rows)
         if not hasattr(self.net, '_agent_outcomes'):
             self.net._agent_outcomes = {}

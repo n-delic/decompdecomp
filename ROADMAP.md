@@ -3091,3 +3091,8 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 
 - Done: stream random variants in bounded chunks while compilation runs; batch deep-search miss lookups for captured ROM inputs; reuse bounded advisory comparisons of identical machine output; identify driver environment, launch and explicit assembly-stage timings.
 - Planned: batch imported/custom-build trial preparation once external dependency revisions can be checked without repeating filesystem scans. These builds retain the ordinary fresh dependency checks and per-candidate lookups meanwhile; streaming and advisory comparison reuse still apply where their shared pipeline is used.
+
+### Deep-permuter throughput
+
+- Done: bounded concurrent compile-ahead for captured ROM random trials with ordered fresh judging; successful object and non-exact baseline evidence sharing across lanes; warning preflight only in the preparation owner; compact ordinary random-miss diagnostics and effect spans; one allocation diagnosis per family ranking. Existing budgets, cancellation, compiler limits and winner publication gates remain in force.
+- Planned: independent build workspaces/dependency snapshots before enabling speculative compilation for imported/custom builds; profile-aware reservation before scheduling multiple compiler profiles speculatively. These retain their current build/lane paths meanwhile.

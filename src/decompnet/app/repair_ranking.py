@@ -15,6 +15,7 @@ def order(families, rows):
     from .permuter_focus import classify, normalized
     rows = normalized(rows)
     focus = classify(rows)
+    diagnosis = diagnose(rows)
     markers = {row[0] for row in rows if row[0] != ' '}
     from .matching_investigations import paired_loads
     from .normalization_repairs import frame_gap
@@ -27,14 +28,14 @@ def order(families, rows):
             'block_accumulator_lifetime', 'inline_copy_loop', 'typed_command_record', 'pointer_index_scope', 'pointer_index_order', 'store_value_lifetime', 'assignment_chain_lifetime', 'shared_branch_locals', 'loop_exit_value', 'success_pointer_update', 'float_call_staging', 'inline_scalar_chain', 'paired_operand_reuse', 'cfg_equal_value_increment', 'equal_value_increment', 'loop_weight_scope', 'decision_address_bundle', 'qualified_selector_load', 'selector_address_staging', 'single_case_switch', 'halfword_arithmetic', 'branch_pointer_lifetimes', 'branch_pointer_declarations', 'typed_clamp_load', 'typed_pointer_load', 'loop_update_order', 'pointer_argument_alias', 'allocation_schedule_bridge', 'allocation_initialization_order', 'byte_fill_constant', 'spill_declaration_order', 'record_value_forwarding', 'narrow_definition_lifetime', 'sink_zero_initialization', 'structured_backedge', 'pointer_call_staging', 'pointer_load_inline', 'word_zero_test_reuse', 'pointer_capture_reuse', 'pointer_local_reuse', 'independent_field_store_order', 'paired_pointer_declarations', 'copy_register_reuse', 'constant_index_temporary', 'balanced_call_references', 'balanced_pointer_calls', 'call_return_normalization', 'split_narrow_lifetime', 'combined_call_lifetimes', 'branch_tail_lifetimes', 'staged_call_arguments', 'single_field_record', 'record_access_shape', 'split_call_result', 'direct_mask_condition', 'inline_scalar_shape', 'expression_placement', 'scalar_schedule_order', 'combined_scheduling', 'direct_compound_store', 'address_association', 'masked_value_reuse', 'paired_integer_lifetimes', 'split_integer_phase', 'cfg_integer_lifetimes', 'constant_register_reuse', 'last_shift_reuse', 'unsigned_assignment_reuse', 'table_slot_lifetime', 'store_address_lifetime', 'pointer_cast_inline', 'comparison_reuse', 'macro_byte_address_order', 'integer_address_order',
             'comparison_operand_order', 'integer_product_order', 'arithmetic_operand_order', 'typed_temporary', 'value_lifetime', 'split_integer_lifetime', 'merge_integer_lifetimes',
             'split_scalar_lifetime', 'array_index_width', 'local_width', 'declaration_order')
-    if diagnose(rows)['register_cycles']:
+    if diagnosis['register_cycles']:
         preferred = ('later_local_reuse','pointer_integer_phase_union','paired_integer_lifetimes','split_integer_lifetime',
                      'merge_integer_lifetimes','block_accumulator_lifetime','local_declaration_order') + register_priority
-    elif diagnose(rows)['register_chains'] and diagnose(rows)['register_only']:
+    elif diagnosis['register_chains'] and diagnosis['register_only']:
         preferred = ('pointer_capture_reuse', 'pointer_local_reuse','pointer_load_inline','pointer_argument_alias','paired_pointer_declarations',
                      'copy_register_reuse','split_integer_lifetime','merge_integer_lifetimes','local_declaration_order') + register_priority
-    elif focus=='control' and (diagnose(rows)['branch_target'] or
-            (diagnose(rows)['delay_slot'] and not diagnose(rows)['scheduling'])):
+    elif focus=='control' and (diagnosis['branch_target'] or
+            (diagnosis['delay_slot'] and not diagnosis['scheduling'])):
         preferred = ('unsigned_countdown_guard','structured_backedge','guard_forward_jump','branch_orientation','loop_update_order',
                      'goto_leaf','shared_return_tail','redundant_loop_guard','combined_scheduling')
     elif paired_loads(rows):
@@ -45,12 +46,12 @@ def order(families, rows):
     elif frame_gap(rows):
         preferred = ('argument_home_slot', 'callee_array_extent', 'spill_normalization', 'split_narrow_lifetime', 'call_return_normalization',
                      'stack_address_temporary', 'combined_scheduling', 'stack_padding')
-    elif diagnose(rows)['register_only'] or diagnose(rows)['copy_near_miss']:
+    elif diagnosis['register_only'] or diagnosis['copy_near_miss']:
         preferred = ('later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse','cfg_equal_value_increment','equal_value_increment','loop_weight_scope',
                      'shared_branch_locals','paired_operand_reuse','allocation_schedule_bridge','copy_register_reuse','masked_value_reuse') + register_priority
-    elif diagnose(rows)['scheduling']:
+    elif diagnosis['scheduling']:
         preferred = ('inline_byte_address_bundle', 'inline_byte_address', 'debug_branch_scope', 'loaded_byte_compound', 'unsigned_byte_increment','embedded_call_assignment','inline_call_count','typed_pointer_snapshot','call_one_shot_scope', 'debug_initialization_group', 'debug_constant_initialization', 'typed_global_identity', 'block_accumulator_lifetime', 'shared_branch_locals', 'loop_exit_value', 'success_pointer_update', 'affine_counter_guard', 'affine_counter', 'initialization_cluster','allocation_initialization_order','byte_fill_constant','scalar_schedule_order','combined_scheduling')
-    elif diagnose(rows)['allocation_schedule']:
+    elif diagnosis['allocation_schedule']:
         preferred = ('inline_byte_address_bundle', 'inline_byte_address', 'debug_branch_scope', 'loaded_byte_compound', 'unsigned_byte_increment','narrow_call_destination','branch_scalar_lifetime','inline_call_count','embedded_call_assignment','typed_pointer_snapshot','call_one_shot_scope', 'debug_initialization_group', 'paired_operand_reuse', 'affine_counter_guard', 'affine_counter',
                      'allocation_initialization_order', 'scalar_schedule_order', 'combined_scheduling')
     elif focus == 'call':
@@ -70,10 +71,10 @@ def order(families, rows):
         preferred = ('known_address_alias', 'target_call_argument', 'target_local_bundle', 'local_widening', 'macro_byte_address_order', 'integer_address_order', 'signedness', 'narrowing', 'constant_local')
     else:
         preferred=()
-    preferred=(('debug_conversion_tail',) if focus=='control' else ())+(('delayed_narrow_capture','shared_shift_mask') if focus in {'register','call'} or diagnose(rows)['scheduling'] else ())+('plain_float_slots','return_contract','narrow_expression_inline')+preferred
-    if diagnose(rows)['register_only']:
+    preferred=(('debug_conversion_tail',) if focus=='control' else ())+(('delayed_narrow_capture','shared_shift_mask') if focus in {'register','call'} or diagnosis['scheduling'] else ())+('plain_float_slots','return_contract','narrow_expression_inline')+preferred
+    if diagnosis['register_only']:
         preferred = ('dead_copy_source','divisor_normalization_copy', 'divisor_value_scope', 'divisor_flag_split', 'regional_load_reuse') + preferred
-    elif diagnose(rows)['scheduling'] or diagnose(rows)['delay_slot']:
+    elif diagnosis['scheduling'] or diagnosis['delay_slot']:
         preferred = ('debug_statement_boundary',) + preferred
     preferred=('hazard_statement_lines','known_zero_mask','post_call_narrow_capture')+preferred
 
@@ -82,7 +83,7 @@ def order(families, rows):
     preferred=GUARDED+('m2c_refinement',)+STRUCTURAL+('mapped_spill_storage','mapped_register_lifetime')+preferred
     ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
     from .trial_evidence import order as evidence_order
-    return evidence_order(ranked,rows)
+    return evidence_order(ranked,rows,evidence=diagnosis)
 
 
 def evidence(net, function_id, agent_id):

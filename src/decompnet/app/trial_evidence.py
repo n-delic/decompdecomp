@@ -2,10 +2,10 @@
 BROAD_LINES={'debug_statement_boundary','source_lines','cpu-statement-lines','cpu-statement-lines-body'}
 
 
-def order(families,rows):
+def order(families,rows, *, evidence=None):
     if not rows or any(not isinstance(row,(tuple,list)) or len(row)!=3 or not all(isinstance(x,str) for x in row) for row in rows):return families
     from .allocation_evidence import diagnose
-    evidence=diagnose(rows)
+    if evidence is None:evidence=diagnose(rows)
     # Branch-label and delay-slot misses can be debug-line sensitive. Do not require
     # proof that line changes will work; this is ranking, never an equivalence verdict.
     if evidence['scheduling'] or evidence['allocation_schedule'] or evidence['branch_target'] or evidence['delay_slot']:
