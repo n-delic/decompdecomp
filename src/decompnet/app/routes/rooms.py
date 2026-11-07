@@ -352,9 +352,20 @@ def register(app: App) -> None:
         return JSONResponse({"ok": True})
 
     def shutdown_rooms() -> None:
+        net.shutting_down = True
+        for server, _ in list(share["servers"].values()):server.should_exit = True
         if share["tunnel"] is not None:
             share["tunnel"].stop()
-        for link in list(net.links.values()):
-            link.stop()
+        links=list(net.links.values())
+        for link in links:link.stop()
+        # One authenticated lease release per room, concurrently; an offline host
+        # must not cost a timeout for every saved helper on this client.
+        def release(link):
+            try:link._req('POST','/collab/leave')
+            except Exception:jobs.logger.warning('Could not notify room %s of shutdown; remote leases will expire.',link.slug)
+        threads=[threading.Thread(target=release,args=(link,),daemon=True,name='room-shutdown-'+link.slug) for link in links]
+        for thread in threads:thread.start()
+        deadline=time.monotonic()+2
+        for thread in threads:thread.join(max(0,deadline-time.monotonic()))
 
     manager.on_stop = shutdown_rooms

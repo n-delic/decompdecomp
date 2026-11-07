@@ -14,6 +14,7 @@ import json
 import os
 import secrets
 import threading
+import time
 from pathlib import Path
 
 import anyio
@@ -28,8 +29,8 @@ from ..network import NetworkError
 from . import agents, collab, maintenance, routes, saves, tools, updates, window, workers
 from .engine import RomNetwork
 from .routes import browser_bridge, forks, life, pages, projects, repair_feedback, repository_sync, rooms, setup, state
+from .shutdown_progress import RUNTIME_STOP_SECONDS, SHUTDOWN_SECONDS, terminal_note
 from .shutdown_progress import Progress as ShutdownProgress
-from .shutdown_progress import terminal_note
 from .support import Jobs, Settings, session_options
 
 
@@ -61,27 +62,46 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         quit_app()
 
     def stop_workers(status, *, close_window=False):
-        status.step('Stopping startup maintenance',startup.close)
-        if getattr(net,'autosave',None):status.step('Stopping project autosave workers',net.autosave.close)
-        if close_window:status.step('Closing the app window',window.close_app)
-        status.step('Stopping deep searches and queued repairs',net.deep_sweeps.shutdown)
-        status.step('Stopping the permuter process',net.permuter.close)
-        status.step('Stopping agent processes and room connections',manager.shutdown)
-        status.step('Saving remaining project progress',lambda:flush_progress(status))
+        deadline=time.monotonic()+SHUTDOWN_SECONDS
+        # No persistence or mutex acquisition may precede these cancellation signals.
+        net.shutting_down=True
+        jobs.shutdown()
+        status.step('Signalling all agent processes',manager.request_shutdown)
+        def bounded(label, action, limit):
+            remaining=max(0,deadline-time.monotonic())
+            if not remaining:
+                status.note('Skipping '+label.lower()+': shutdown deadline reached; database work remains recoverable.')
+                return False
+            return status.bounded_step(label,action,min(limit,remaining))
+        bounded('Stopping room connections',lambda _:manager.close_rooms(),3)
+        bounded('Stopping startup maintenance',lambda _:startup.close(),3)
+        if getattr(net,'autosave',None):bounded('Stopping project autosave workers',lambda _:net.autosave.close(),3)
+        if close_window:bounded('Closing the app window',lambda _:window.close_app(),3)
+        bounded('Stopping deep searches and queued repairs',lambda _:net.deep_sweeps.shutdown(),5)
+        bounded('Stopping the permuter process',lambda _:net.permuter.close(),5)
+        stopped=bounded('Saving agent recovery and releasing claims',lambda notify:manager.shutdown(notify=notify),30)
+        if stopped:
+            bounded('Saving remaining project progress',lambda notify:flush_progress(status,notify),max(0,deadline-time.monotonic()))
+        else:
+            status.note('Deferring final progress-folder sync until restart because agent recovery cleanup did not finish. '
+                        'Already committed matches, drafts and notes remain in the database.')
+
+    shutdown_lock=threading.Lock()
 
     def quit_app() -> None:
         """Quit means quit; keep terminal users informed before each potentially slow step."""
+        if not shutdown_lock.acquire(blocking=False):return
         with ShutdownProgress(jobs.logger) as status:
             status.note('Shutting down decompdecomp; preserving saved work.')
             stop_workers(status,close_window=True)
-            status.step('Stopping the Wine compiler runtime',wine.stop)
+            status.bounded_step('Stopping the Wine compiler runtime',lambda _:wine.stop(),RUNTIME_STOP_SECONDS)
             status.note('Shutdown complete. Exiting.')
         os._exit(0)
 
-    def flush_progress(status) -> None:
+    def flush_progress(status, notify=None) -> None:
         """Try every final save and report blocked progress folders in the terminal too."""
         try:
-            for slug,error in net.progress.flush(notify=lambda slug:status.update(f'Saving project {slug}')).items():
+            for slug,error in net.progress.flush(notify=lambda slug:(notify or status.update)(f'Saving project {slug}')).items():
                 status.note(f'Could not save project {slug}: {error}')
                 jobs.logger.error('could not save %s before exit: %s',slug,error)
         except Exception:  # shutdown must continue even if the progress store itself is damaged
@@ -295,10 +315,14 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         return JSONResponse({"error": str(e)}, status_code=code)
 
     def before_restart() -> None:
-        with ShutdownProgress(jobs.logger) as status:
-            status.note('Preparing decompdecomp to restart; preserving saved work.')
-            stop_workers(status)
-            status.note('Shutdown preparation complete. Ready to restart.')
+        if not shutdown_lock.acquire(blocking=False):
+            raise NetworkError('decompdecomp is already shutting down. Reopen it before updating.')
+        try:
+            with ShutdownProgress(jobs.logger) as status:
+                status.note('Preparing decompdecomp to restart; preserving saved work.')
+                stop_workers(status)
+                status.note('Shutdown preparation complete. Ready to restart.')
+        finally:shutdown_lock.release()
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use

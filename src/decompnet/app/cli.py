@@ -22,11 +22,12 @@ from pathlib import Path
 
 from .. import hostenv
 from . import edition, tray, window
+from .shutdown_progress import RUNTIME_STOP_SECONDS, SHUTDOWN_SECONDS
 
 PORTS_TO_TRY = 50
 OLD_COOKIE = "decomp_live"  # 1.0.2 and older took the secret in this cookie
 HEALTH_TIMEOUT_SECONDS = 1.5
-QUIT_WAIT_SECONDS = 10
+QUIT_WAIT_SECONDS = SHUTDOWN_SECONDS + RUNTIME_STOP_SECONDS + 10
 QUIT_POLL_SECONDS = 0.1
 READY_WAIT_SECONDS = 20
 READY_POLL_SECONDS = 0.2
