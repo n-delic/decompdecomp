@@ -1255,8 +1255,9 @@ class Autosave:
             # Keep the existing single cached query in the legacy layout. After
             # the split, worker policy and paths come from the operational store,
             # not an older catalog snapshot of its configuration.
-            current = row if selected is store else selected.one(
-                'SELECT slug,root,config FROM projects WHERE slug=?', row['slug'])
+            current = row if selected is store else selected.read_cache.get(
+                ('autosave-project',row['slug']),selected.read_version('project_list'),
+                lambda selected=selected,slug=row['slug']: selected.one('SELECT slug,root,config FROM projects WHERE slug=?',slug))
             if current is None:
                 raise NetworkError(f"Project {row['slug']!r} is missing from its database. Restore it from backup.")
             projects.append(current)

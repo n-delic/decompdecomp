@@ -11,6 +11,7 @@ function renderBackgroundWork(data){
   $('backgroundThreads').textContent=data.threads.length.toLocaleString();
   $('backgroundCount').textContent=`— ${data.items.length} active jobs & services`;
   $('backgroundCpuNote').textContent=data.cpu_note;
+  $('backgroundLatency').textContent=(data.slow_operations || []).slice(-20).reverse().map(row=>`${row.kind} ${row.route || ''}: ${row.seconds.toFixed(2)}s`).join(' · ') || 'No slow operations recorded.';
   backgroundThreadDetails=mergeBackgroundActivity(data);
   renderBackgroundActivity();
 }

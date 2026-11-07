@@ -107,7 +107,8 @@ class Monitor:
                                  if t['native_id'] is not None and t['native_id'] in ids and t['native_id'] not in claimed]
             claimed.update(row['thread_ids'])
         threads = [t['name'] for t in thread_details]
-        return dict(items=rows, cpu_percent=percent, cores=os.cpu_count() or 1, threads=threads, thread_details=thread_details,
+        from ..ui_diagnostics import snapshot
+        return dict(slow_operations=snapshot(),items=rows, cpu_percent=percent, cores=os.cpu_count() or 1, threads=threads, thread_details=thread_details,
                     workers=workers.WORKERS, default_workers=workers.default_workers(),
                     cpu_note='App Python process only; 100% means one CPU core. Compiler subprocesses and the window are excluded. Jobs share threads and cannot be assigned accurate individual CPU percentages.')
 

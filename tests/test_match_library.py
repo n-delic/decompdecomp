@@ -612,3 +612,42 @@ def test_legacy_payload_cleanup_is_resumable_and_preserves_index(library):
     assert lib.prune_payloads()==344
     assert lib.summary()['occurrences']==2
     assert len(lib.candidates('mips',1,'same-code',32))==2
+
+
+def test_incremental_archive_only_rebuilds_changed_function(library, monkeypatch):
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.kind','rom')")
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,matched_source) VALUES(1,'another',4,1,'matched','int another(void){return 1;}')")
+    lib.backfill(only_changed=True)
+    calls=[]
+    original=lib._snapshot
+    def snapshot(proj,fid,**kwargs):
+        calls.append(fid)
+        return original(proj,fid,**kwargs)
+    monkeypatch.setattr(lib,'_snapshot',snapshot)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='int f1(void){return 99;}' WHERE id=1")
+    lib.backfill(only_changed=True)
+    assert calls==[1]
+    calls.clear()
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.instructions','new compiler context') WHERE id=1")
+    lib.backfill(only_changed=True)
+    assert len(calls)==2
+
+
+def test_archive_receipt_not_acknowledged_when_library_write_fails(library,monkeypatch):
+    net,lib=library
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.kind','rom')")
+    original=lib.write
+    def fail(*args):raise OSError('archive disk unavailable')
+    monkeypatch.setattr(lib,'write',fail)
+    with pytest.raises(Exception,match='archive disk unavailable'):lib.backfill(only_changed=True)
+    with lib.connect() as db:
+        assert db.execute('SELECT COUNT(*) FROM archive_receipts').fetchone()[0]==0
+    monkeypatch.setattr(lib,'write',original)
+    lib.backfill(only_changed=True)
+    with lib.connect() as db:
+        assert db.execute('SELECT COUNT(*) FROM archive_receipts').fetchone()[0]==2

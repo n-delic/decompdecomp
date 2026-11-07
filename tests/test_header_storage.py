@@ -229,3 +229,19 @@ def test_cleanup_waits_for_other_sqlite_writer_and_can_cancel(tmp_path,cancel):
         assert not errors
         assert net.store.one('SELECT COUNT(*) n FROM context_history')['n']<count
     assert net.store.one('PRAGMA foreign_key_check') is None
+
+
+def test_catalog_only_compaction_leaves_project_files_and_recovery_backup(tmp_path,monkeypatch):
+    catalog=Store(tmp_path/'catalog.db')
+    recovery=tmp_path/'catalog.db.before-project-databases.sqlite3'
+    recovery.write_bytes(b'recovery unchanged')
+    net=SimpleNamespace(store=catalog)
+    monkeypatch.setattr('decompnet.app.storage_files.all_files',lambda _:pytest.fail('Catalog compaction enumerated projects'))
+    calls=[]
+    def compact(net,store,log,*,shared=False):
+        calls.append((store,shared))
+        return {'before_bytes':100,'after_bytes':10,'reclaimed_bytes':90}
+    monkeypatch.setattr(header_cleanup,'_compact_store',compact)
+    assert header_cleanup.compact(net,Log(),catalog_only=True)['reclaimed_bytes']==90
+    assert calls==[(catalog,False)]
+    assert recovery.read_bytes()==b'recovery unchanged'

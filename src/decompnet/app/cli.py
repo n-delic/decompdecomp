@@ -223,6 +223,8 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     net = RomNetwork(internal / "decomp.db", home,project_databases=True)
     mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if headless else {}))
     app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
+    from ..ui_diagnostics import Diagnostics
+    app = Diagnostics(app)
     # with a tray icon, helpers kept working without the window have a way back to it
     window.IN_TRAY = False if headless else tray.start(window.open_app, quit_app)
     print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"

@@ -121,9 +121,10 @@ def _prune_store(net,store,log, *, legacy=False):
     return {'removed_versions': done, 'removed_contents': contents, 'headers': header_storage.stats(store)}
 
 
-def compact(net, log):
+def compact(net, log, *, catalog_only=False):
     from .storage_files import all_files
-    results = [_compact_store(net,store,log,shared=store is net.store) for store in all_files(net)]
+    stores=[net.store] if catalog_only else all_files(net)
+    results = [_compact_store(net,store,log,shared=store is net.store and not catalog_only) for store in stores]
     return {key:sum(row[key] for row in results) for key in ('before_bytes','after_bytes','reclaimed_bytes')}
 
 
@@ -185,7 +186,7 @@ def disk_bytes(path):
 
 
 def start(net, jobs, action):
-    if action not in ('headers', 'compact'): raise ValueError('Choose header cleanup or database compaction.')
+    if action not in ('headers', 'compact', 'compact-catalog'): raise ValueError('Choose header cleanup or database compaction.')
     with jobs._lock:
         active = next((job for job in jobs.jobs.values() if job['kind'] in ('C header cleanup', 'Database compaction') and job['state']=='running'), None)
         if active:
@@ -197,6 +198,6 @@ def start(net, jobs, action):
             from .maintenance import slot
             with slot(log.cancel_event) as acquired:
                 if not acquired: log.check_cancel()
-                return prune(net, log) if action == 'headers' else compact(net, log)
+                return prune(net, log) if action == 'headers' else compact(net, log,catalog_only=action=='compact-catalog')
         return jobs.start('C header cleanup' if action=='headers' else 'Database compaction', work,
                           cancel_message='Database maintenance stopped. Completed cleanup is retained; interrupted compaction rolls back.')

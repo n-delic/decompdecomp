@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS locations(
  vram INTEGER, rom_offset INTEGER, unit TEXT, source_path TEXT,
  UNIQUE(function_id,game_id,name,vram,unit));
 CREATE TABLE IF NOT EXISTS startup_scans(game_id TEXT PRIMARY KEY, stamp TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS archive_receipts(game_id TEXT NOT NULL,function_id INTEGER NOT NULL,
+ stamp TEXT NOT NULL,PRIMARY KEY(game_id,function_id));
 '''
 
 
@@ -245,7 +247,7 @@ class Library:
         except Exception:  # archiving must never turn a committed exact verdict into a judge failure
             log.exception('Could not snapshot verified match for the local library')
 
-    def archive_project(self, proj, log=None, *, rows=None, progress=None):
+    def archive_project(self, proj, log=None, *, rows=None, progress=None, incremental=False):
         if rows is None:
             rows=self.net.project_store(proj['id']).all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
         def report(done, phase, name=''):
@@ -263,6 +265,14 @@ class Library:
             # data. Never hold a main-database transaction while writing the library.
             with self.net.progress.view():
                 current=self.net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
+                # Capture dependency revisions before reading inputs. A racing context edit
+                # then makes this receipt stale instead of acknowledging old data as new.
+                dependency = self._startup_stamp(current)
+                if dependency is not None:
+                    value=json.loads(dependency)
+                    value[4][0]=None  # broad inputs also includes unrelated attempts and matches
+                    value[4][3]=None  # matched_evidence is represented by each function/proof below
+                    dependency=encoded(value)
                 inputs=self._inputs(current)
                 ids=[row['id'] for row in rows[start:start+ARCHIVE_BATCH]]
                 marks=','.join('?' for _ in ids)
@@ -273,17 +283,33 @@ class Library:
                 proofs={row['function_id']:row for row in self.net.project_store(proj['id']).all(
                     f'SELECT function_id,source,header,details FROM verified_matches WHERE function_id IN ({marks})',
                     *ids)} if inputs['proofs'] else {}
-                batch=[]
+                # Match-only changes need not tokenize, normalize and compress every old match.
+                # Include all project dependencies except the match revision itself; a header,
+                # symbol, compiler or fingerprint change still invalidates every receipt.
+                with self.connect() as db:
+                    receipts={r['function_id']:r['stamp'] for r in db.execute(
+                        'SELECT function_id,stamp FROM archive_receipts WHERE game_id=? AND function_id IN ('+marks+')',
+                        (inputs['game'],*ids))} if incremental and dependency else {}
+                batch=[]; acknowledged=[]
                 for offset,row in enumerate(rows[start:start+ARCHIVE_BATCH]):
                     checkpoint()
                     report(start+offset,'Reading verified matches',row['name'])
                     fn=functions.get(row['id'])
                     if fn is not None:
+                        proof=proofs.get(row['id'])
+                        stamp=hashlib.sha256(encoded([dependency,dict(fn),dict(proof) if proof else None]).encode()).hexdigest()
+                        if incremental and dependency and receipts.get(row['id'])==stamp:continue
                         item=self._snapshot(current,row['id'],inputs=inputs,fn=fn,proof=proofs.get(row['id']))
-                        if item:batch.append(item)
+                        if item:
+                            batch.append(item)
+                            if dependency:acknowledged.append((inputs['game'],row['id'],stamp))
             if batch:
                 report(start+len(ids)-1,'Writing matches to library',rows[start+len(ids)-1]['name'])
                 self.write(batch)
+                # Publish receipts only after the archive write succeeds. Interrupted runs replay safely.
+                if acknowledged:
+                    with self.connect(write=True) as db:
+                        db.executemany('INSERT OR REPLACE INTO archive_receipts VALUES(?,?,?)',acknowledged)
         report(len(rows),'Game indexed')
         return len(rows)
 
@@ -324,7 +350,7 @@ class Library:
                               'game_index':game_index,'games_total':len(projects),
                               'done':offset+value['done'],'total':total})
             try:
-                self.archive_project(proj,log,rows=rows,progress=progress)
+                self.archive_project(proj,log,rows=rows,progress=progress,incremental=only_changed)
                 if log:log.check_cancel()
                 if stamp is not None and stamp == self._startup_stamp(self.net.project_row(proj['slug'])):
                     with self.connect(write=True) as db:

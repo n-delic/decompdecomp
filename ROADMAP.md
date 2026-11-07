@@ -3129,3 +3129,8 @@ Done: bounded MIPS return-register reaching definitions (including branch-likely
 
 - Done: host-requested ROM match inventories, target/location comparison, missing source/header/compiler bundle transfer, host byte verification, per-client/function outcomes, stale pending cleanup, Stop and drawer reattachment. Online clients advertise support through the independent heartbeat; offline/older clients are reported.
 - Planned: equivalent reconciliation for imported source-tree rooms using their build and objdiff verification. ROM portable bundles cannot substitute for those source trees.
+
+### Maintenance performance
+
+- Done: incremental saved-file content reuse and per-function match archive receipts;
+  bounded UI request/event-loop delay history; explicit post-migration catalog-only compaction.

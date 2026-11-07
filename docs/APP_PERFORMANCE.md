@@ -236,3 +236,31 @@ A copied caller with corrected byte parameters went from 825 to exact without
 an agent edit using this family. This is a controlled replay of an existing
 match, not a new game match or a claim about agent token savings. Ordinary and
 diagnostic outputs agreed. Search budgets and exact acceptance remain unchanged.
+
+### Routine maintenance after project database migration
+
+- Saved-file reconciliation caches at most 8 MiB of validated UTF-8 contents. It still
+  checks filesystem identity, size, modification/change times and file type before
+  reuse. Changed files are read and validated; deletions and symbolic links retain
+  their existing handling. Publication acknowledgements still reread disk contents.
+- Automatic match-library indexing keeps per-function receipts. Match-only changes
+  skip normalization, tokenization and archive writes for unchanged functions.
+  Compiler configuration, context, symbol and fingerprint changes invalidate receipts;
+  explicit indexing still rebuilds every eligible function. Imported projects retain
+  their file-based checks. Receipts are published after successful archive writes.
+- **Header maintenance → Reclaim catalog space after migration** compacts only the
+  catalog. It does not open project databases or compact the shared archives. The
+  original pre-migration recovery backup is retained. Compaction remains an explicit,
+  cancellable job: catalog writers wait during VACUUM; ordinary startup does not.
+
+### Always-on UI delay history
+
+**Background work → Recent UI delays** shows the latest twenty recorded slow operations.
+The server retains at most 100 request/stall samples in memory, discarded on restart.
+Requests and event-loop delays of at least 500 ms are recorded. Request durations include
+worker waits and response delivery; they do not identify CPU cost. Event-loop sampling
+runs once per second and stops with the server. Log messages are limited to one per
+route/type per minute. Only registered route templates, durations and timestamps are
+kept, never URLs with query values, room invites, SQL or source text. The authenticated
+`/api/performance` endpoint exposes the same bounded history for local diagnostics.
+Use the opt-in timing diagnostics above to break down queue, SQL and encoding costs.

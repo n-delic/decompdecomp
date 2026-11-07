@@ -5,7 +5,7 @@ const requests=[];let finish,progress,failure=false;
 const data={versions:100,contents:38,logical_bytes:10485760,stored_bytes:2097152,unused_versions:12};
 const ctx={$:el,Number,api:async(path,options)=>{
  requests.push([path,options]);if(failure)throw Error('Database is busy');
- if(['headers','compact'].includes(options?.body.action))return {job:'maintenance'};
+ if(['headers','compact','compact-catalog'].includes(options?.body.action))return {job:'maintenance'};
  return data;
 },beginWork:(log,label,controls)=>{controls.forEach(x=>x.disabled=true);return()=>controls.forEach(x=>x.disabled=false);},
  showJobError:(log,msg)=>log.textContent=msg,updateWorkProgress:(log,p)=>log.progress=p,
@@ -26,6 +26,9 @@ vm.createContext(ctx);vm.runInContext(fs.readFileSync('src/decompnet/app/static/
  work=el('headerStorageCompact').onclick();await new Promise(resolve=>setImmediate(resolve));
  assert.equal(requests.at(-1)[1].body.action,'compact');finish({reclaimed_bytes:1048576});await work;
  assert.match(el('headerStorageEstimate').textContent,/1 MiB/);
+ work=el('headerStorageCatalogCompact').onclick();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(requests.at(-1)[1].body.action,'compact-catalog');finish({reclaimed_bytes:2097152});await work;
+ assert.match(el('headerStorageEstimate').textContent,/2 MiB/);
  failure=true;await el('headerStorageStart').onclick();assert.match(el('headerStorageLog').textContent,/Database is busy/);
  assert.equal(el('headerStorageStart').disabled,false);
 })().catch(error=>{console.error(error);process.exitCode=1;});

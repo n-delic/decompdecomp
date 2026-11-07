@@ -112,18 +112,18 @@ class _StillFailing(NetworkError):
     """The last sync's failure again, nothing it reads having changed since (RETRY_FAILED_SECONDS)."""
 
 
-def _read(folder: Path) -> dict[str, str]:
+def _read(folder: Path, *, cache=None) -> dict[str, str]:
     # A git/editor update can remove a file between glob, lstat and read. Retry
     # only this read-only capture; never apply a partial snapshot or replay writes.
     for attempt in range(3):
         try:
-            return _read_once(folder)
+            return _read_once(folder, cache=cache)
         except FileNotFoundError:
             if attempt == 2:
                 raise
 
 
-def _read_once(folder: Path) -> dict[str, str]:
+def _read_once(folder: Path, *, cache=None) -> dict[str, str]:
     files = {}
     for directory in ("src", "best", "include"):
         path = folder / directory
@@ -132,14 +132,18 @@ def _read_once(folder: Path) -> dict[str, str]:
     for pattern in (saves.MANIFEST, "src/*.c", "best/*.c", "include/*.h"):
         for path in folder.glob(pattern):
             relative = path.relative_to(folder).as_posix()
-            mode = path.lstat().st_mode
+            info = path.lstat()
+            mode = info.st_mode
             if stat.S_ISLNK(mode):
                 raise NetworkError(f"Progress file {relative!r} is a symbolic link. Replace it with a regular file and try again.")
             if not stat.S_ISREG(mode):
                 raise NetworkError(f"Progress path {relative!r} is not a regular file. Move the conflicting path and try again.")
-            text = path.read_text(encoding="utf-8")
-            if any(line.startswith(("<<<<<<<", "=======", ">>>>>>>")) for line in text.splitlines()):
-                raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
+            text = cache.get(path,info) if cache is not None else None
+            if text is None:
+                text = path.read_text(encoding="utf-8")
+                if any(line.startswith(("<<<<<<<", "=======", ">>>>>>>")) for line in text.splitlines()):
+                    raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
+                if cache is not None and info == path.lstat():cache.put(path,info,text)
             files[path.relative_to(folder).as_posix()] = text
     return files
 
@@ -411,6 +415,8 @@ class Progress:
         self.paused: set[str] = set()
         self.batches: dict[str, int] = {}
         self.verification_slot = threading.Semaphore(1)
+        from .progress_file_cache import FileCache
+        self.file_cache = FileCache()
         self.disk: dict[str, dict[str, str]] = {}
         self.projected: dict[str, dict[str, str]] = {}
         self.checked: dict[str, float] = {}
@@ -441,13 +447,13 @@ class Progress:
             path = folder / name
             try:
                 info = os.stat(path, follow_symlinks=False)
-                items.append((name, info.st_mtime_ns, info.st_size, info.st_mode))
+                items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
                 if deep and stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
                     with os.scandir(path) as entries:
                         children = sorted(entries, key=lambda entry: entry.name)
                     for child in children:
                         info = child.stat(follow_symlinks=False)
-                        items.append((f"{name}/{child.name}", info.st_mtime_ns, info.st_size, info.st_mode))
+                        items.append((f"{name}/{child.name}", info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
             except OSError:
                 items.append((name, None))
         return tuple(items)
@@ -471,7 +477,7 @@ class Progress:
             except OSError:
                 items.append((name, None))
                 continue
-            items.append((name, info.st_mtime_ns, info.st_size, info.st_mode))
+            items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
             if name == saves.MANIFEST or not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
                 continue
             with os.scandir(path) as entries_in_dir:
@@ -487,7 +493,7 @@ class Progress:
                 key = prefix + child.name
                 if key in touched or key not in entries:
                     child_info = child.stat(follow_symlinks=False)
-                    items.append((key, child_info.st_mtime_ns, child_info.st_size, child_info.st_mode))
+                    items.append((key, child_info.st_mtime_ns, child_info.st_size, child_info.st_mode, child_info.st_ctime_ns, child_info.st_ino))
                 else:
                     items.append(entries[key])
         return tuple(items)
@@ -1230,7 +1236,7 @@ class Progress:
             result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
             if result is not None:
                 return result
-        disk = _read(folder)
+        disk = _read(folder,cache=self.file_cache)
         snapshot = _Snapshot.of(disk)
         if baseline is not None and snapshot.files == baseline.disk.files:
             if not db_changed and not config_changed:

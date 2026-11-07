@@ -30,17 +30,17 @@ async function runHeaderStorage(action,existing=null) {
   if(headerStorageJob)return;
   headerStorageJob='starting';
   const log=$('headerStorageLog'),stop=$('headerStorageStop');showJobError(log,'');
-  const done=beginWork(log,action==='compact'?'Preparing database compaction':'Clearing unused C headers',
-    ['headerStorageStart','headerStoragePreview','headerStorageCompact','databaseStorageCompact'].map($),'Database maintenance complete');
+  const done=beginWork(log,action.startsWith('compact')?'Preparing database compaction':'Clearing unused C headers',
+    ['headerStorageStart','headerStoragePreview','headerStorageCompact','databaseStorageCompact','headerStorageCatalogCompact'].map($),'Database maintenance complete');
   try{
     const job=existing?.id || (await api('/api/header-storage',{method:'POST',body:{action}})).job;
     headerStorageJob=job;stop.hidden=false;
     $('headerStoragePanel').open=true;
-    $('headerStorageContext').textContent=action==='compact'?'— Database compaction running':'— Header cleanup running';
+    $('headerStorageContext').textContent=action.startsWith('compact')?'— Database compaction running':'— Header cleanup running';
     if(existing?.progress)updateWorkProgress(log,existing.progress);
     const result=await followJob(job,log,(_lines,state)=>updateWorkProgress(log,state.progress));
     if(result?.headers)renderHeaderStorage(result.headers);
-    if(result)$('headerStorageEstimate').textContent=action==='compact'
+    if(result)$('headerStorageEstimate').textContent=action.startsWith('compact')
       ? `Compaction reclaimed ${headerStorageSize(result.reclaimed_bytes)} on disk.`
       : `Removed ${Number(result.removed_versions || 0).toLocaleString()} unused versions and ${Number(result.removed_contents || 0).toLocaleString()} unreferenced contents. Current and referenced headers kept.`;
   }catch(error){showJobError(log,error.message);}
@@ -57,3 +57,5 @@ $('headerStorageStop').onclick=async()=>{
   try{await api('/api/job/cancel',{method:'POST',body:{id:headerStorageJob}});}
   catch(error){$('headerStorageStop').disabled=false;showJobError($('headerStorageLog'),error.message);}
 };
+
+$('headerStorageCatalogCompact').onclick=()=>{closeHeaderStorageMenu($('headerStorageCatalogCompact'));return runHeaderStorage('compact-catalog');};

@@ -109,6 +109,12 @@ def register(app: App) -> None:
             return JSONResponse({'job':database_storage.start(net,jobs,data['action'],data)})
         except (NetworkError,ValueError) as error:return fail(error)
 
+    @mcp.custom_route('/api/performance', methods=['GET'])
+    async def api_performance(request):
+        if bad := guard(request):return bad
+        from ...ui_diagnostics import snapshot
+        return JSONResponse({'slow_operations':snapshot()})
+
     @mcp.custom_route('/api/header-storage', methods=['GET','POST'])
     async def api_header_storage(request):
         from .. import header_cleanup
