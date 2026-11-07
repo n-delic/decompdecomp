@@ -403,3 +403,38 @@ def test_each_installed_pack_is_known_as_itself():
             checked += 1
     if not checked:
         pytest.skip("needs a ROM console's compiler pack")
+
+
+@pytest.mark.parametrize("layout", [
+    "VC/bin/amd64", "VC/bin/x86_amd64",
+    "VC/Tools/MSVC/14.44/bin/Hostx64/x64", "VC/Tools/MSVC/14.44/bin/Hostx86/x64",
+])
+def test_an_x64_only_copy_is_discovered_without_an_x86_compiler(tmp_path, layout):
+    copy = make_vc(tmp_path / "vs", "19.44.35229.0", layout)
+    kit = kits.get("visualcpp")
+    assert kit.locate(copy) == copy.resolve()
+    assert kit.locate(tmp_path / "vs") == copy.resolve()
+    [own] = kit.compilers(copy)
+    assert own.version == "own-19.44.35229-x64" and own.runner == "wine"
+    assert own.exe == tmp_path / "vs" / layout / "cl.exe"
+    assert own.build == kit.build(copy) == "19.44.35229.0"
+
+
+def test_one_registered_copy_keeps_both_targets_and_reads_their_own_builds(tmp_path, monkeypatch):
+    _setup(monkeypatch, tmp_path)
+    copy = make_vc(tmp_path / "vs", "19.16.27054.0", "VC/bin/Hostx64/x86")
+    make_vc(tmp_path / "vs", "19.16.27055.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    own = kits.compilers(("visualcpp",))
+    assert {c.version for c in own} == {"own-19.16.27054", "own-19.16.27055-x64"}
+    choices = {c.id: c.target for c in consoles.get("pc").compilers}
+    assert choices["MSVC/own-19.16.27054"] == "x86"
+    assert choices["MSVC/own-19.16.27055-x64"] == "x64"
+    assert all(c.runner == "wine" for c in own)
+
+
+def test_duplicate_x64_hosts_provide_one_target_and_old_x64_tools_use_wine(tmp_path):
+    copy = make_vc(tmp_path, "15.0.30729.1", "VC/bin/amd64")
+    make_vc(tmp_path, "15.0.30729.1", "VC/bin/x86_amd64")
+    [own] = kits.get("visualcpp").compilers(copy)
+    assert own.version == "own-15.0.30729-x64" and own.runner == "wine"

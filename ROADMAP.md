@@ -668,6 +668,9 @@ naming its SDK in `headers`), and goes into `RICH_BUILDS`, so its games build wi
   file with /GL and linking it with /LTCG against stubs; until then a mostly-/GL game isn't started.
 - **Visual C++ 2017 on Windows, and /Zi under wine.** On a Windows computer the 2017 pack is untested. Under wine,
   /Zi with /FS fails (C1902: no mspdbsrv), which no project's build uses.
+- **Own x64 compilers (done).** Setup reads x86 and x64 targets from the same Visual C++ copy, or an x64-only
+  copy, with distinct ids and target-filtered choices. User-supplied Wine compilers receive the build environment
+  even without a downloaded compiler pack. This prepares the compiler side of F; it does not enable PE32+ import.
 - **F, 64-bit.** Read PE32+ programs and delink their relocations (nearly all relative), with the x64 calling
   convention. A 64-bit program lists every function's start and end in its exception directory (`.pdata`), so
   functions come from the program, not Ghidra's guess. Done when a 64-bit demo, then a real game, imports and

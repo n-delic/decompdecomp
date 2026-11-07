@@ -450,14 +450,19 @@ def rich_version(build: str) -> tuple[str, int]:
     return ("5.0" if major == 11 else f"{major - 6}.0"), number
 
 
-def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None:
+def own_copy(version: str | None, number: int | None, target: str = "x86") -> kits.OwnCompiler | None:
     """The user's own Visual C++ that should build a game the packs have no exact build for: the copy of its build,
     else the nearest build of the same version (Visual Studio's, "9.0"); none: they have no copy of that version.
-    A game that names only its linker's version (number None) takes the newest copy of it."""
-    if version is None or (version, number) in RICH_BUILDS:
+    Only copies for the requested target participate. A game that names only its linker's version (number None)
+    takes the newest copy of it."""
+    if target not in ("x86", "x64"):
+        return None
+    builds = {key: name for key, name in RICH_BUILDS.items()
+              if target == "x86" or name + "-x64" in _pack()}
+    if version is None or (version, number) in builds:
         return None
     same = [(rich_version(c.build)[1], c) for c in kits.compilers((KIT,)) if c.build
-            and rich_version(c.build)[0] == version]
+            and c.version.endswith("-x64") == (target == "x64") and rich_version(c.build)[0] == version]
     if not same:
         return None
     return (min(same, key=lambda nc: (abs(nc[0] - number), -nc[0])) if number else max(same, key=lambda nc: nc[0]))[1]
@@ -1817,7 +1822,7 @@ def builds_md(pe: PE, compiler: str) -> bool:
     """Whether a program's files build with /MD: it imports its C runtime from DLLs (dll_runtime), and it builds
     with Visual C++ 2015 or newer, a pack's or the user's own (DLL_RUNTIME_FROM: older ones' runtimes, msvcrt and
     msvcr71, aren't yet)."""
-    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)", compiler or ""):  # (a copy's: its cl.exe's, "own-19.29.30137")
+    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)(?:-x64)?", compiler or ""):  # (a copy's: its cl.exe's, "own-19.29.30137")
         version = rich_version(own.group(1))[0]
     else:
         version = m.group() if (m := re.match(r"\d+\.\d+", compiler or "")) else None

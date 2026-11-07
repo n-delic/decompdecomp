@@ -157,7 +157,9 @@ class WindowsPC(Console):
     def kit_compilers(self) -> tuple[Compiler, ...]:
         from ... import kits
 
-        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy") for c in kits.compilers(self.kits))
+        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy",
+                              target="x64" if c.version.endswith(X64_SUFFIX) else "x86")
+                     for c in kits.compilers(self.kits))
 
     def build_env(self) -> dict[str, str]:
         """Where wine and the app's prefix are, which tools/compile.py reads when a Visual C++ 2015+ file builds: read
