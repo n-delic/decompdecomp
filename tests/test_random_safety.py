@@ -17,7 +17,7 @@ def test_nested_compound_mutation_is_rejected_but_independent_updates_are_not():
 
 def test_first_search_checkpoint_survives_better_scores_and_restart(tmp_path):
     net=RomNetwork(tmp_path/'app.db',tmp_path)
-    fn={'id':17,'best_source':'initial C','best_score':90}
+    fn={'id':17,'project_id':1,'best_source':'initial C','best_score':90}
     random_safety.checkpoint(net,fn)
     for n in range(5):
         random_safety.checkpoint(net,dict(fn,best_source='exploratory '+str(n),best_score=80-n))

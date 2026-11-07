@@ -109,17 +109,17 @@ def run(twins, slug, job):
     matched = 0
     sdk_maps = {}
     by_fingerprint = {}
-    names = net.store.all('SELECT id,vram,name FROM functions WHERE project_id=?', proj['id'])
+    names = net.project_store(proj['id']).all('SELECT id,vram,name FROM functions WHERE project_id=?', proj['id'])
     function_names = {r['vram']: r['name'] for r in names}
     names_by_id = {r['id']: r['name'] for r in names}
     for fid, fingerprint in prints.items():
         if fid in names_by_id:
             by_fingerprint.setdefault(fingerprint.key, set()).add(names_by_id[fid])
-    symbols = [(r['name'], r['address']) for r in net.store.all('SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+    symbols = [(r['name'], r['address']) for r in net.project_store(proj['id']).all('SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     # Leave half of the remaining wall time for wider cross-project discovery. Cached template/address
     # work must not prevent that phase from ever starting; both still share the original compile budget.
     phase_deadline = time.monotonic() + max(0, job.reuse_deadline-time.monotonic()) / 2
-    functions = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY size,id", proj['id'])
+    functions = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY size,id", proj['id'])
     with reuse_traversal.rotating(net, proj['id'], functions,
                                   ready=lambda: not exhausted(job) and time.monotonic() < phase_deadline) as rows:
         from .cross_game_progress import report as publish_progress
@@ -127,7 +127,7 @@ def run(twins, slug, job):
             publish_progress(job, 'Checking reusable source candidates', function=fn['name'], done=index, total=len(functions))
             if exhausted(job) or time.monotonic() >= phase_deadline:
                 break
-            if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
+            if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
                 continue
             fingerprint = prints.get(fn['id'])
             if fingerprint is None or fingerprint.asm:
@@ -160,7 +160,7 @@ def run(twins, slug, job):
             # Typed local SDK source is a hypothesis even when compiler flags changed its fingerprint.
             # The ordinary byte judge, not its name or library signature, decides whether it matches.
             candidates = sdk_candidates + candidates
-            misses = {r['signature']: r for r in net.store.all(
+            misses = {r['signature']: r for r in net.project_store(proj['id']).all(
                 "SELECT signature,feedback FROM reuse_trials WHERE function_id=? AND outcome='miss' AND length(signature)=64", fn['id'])}
             for kind, origin, source in candidates:
                 if exhausted(job) or time.monotonic() >= phase_deadline:
@@ -190,7 +190,7 @@ def run(twins, slug, job):
                     continue  # busy work remains retryable
                 outcome = 'match' if result['matched'] else 'miss'
                 reason = origin + '; ' + ('byte match' if result['matched'] else f"score {result.get('score')}")
-                with net.store.tx() as db:
+                with net.project_store(proj['id']).tx() as db:
                     db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                                (fn['id'], key, outcome, reason, json.dumps(result)))
                     db.execute('INSERT INTO free_match_attempts(project_id,function_id,strategy,outcome,reason,created_at) VALUES(?,?,?,?,?,?)',

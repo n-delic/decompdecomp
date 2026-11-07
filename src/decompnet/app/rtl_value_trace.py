@@ -92,7 +92,7 @@ def saved(net, proj, fn, source, header):
 
     from ..project import compiler_for
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):return {},[]
-    row=net.store.one('SELECT state FROM repair_frontiers WHERE function_id=?',fn['id'])
+    row=net.project_store(fn['project_id']).one('SELECT state FROM repair_frontiers WHERE function_id=?',fn['id'])
     if not row:return {},[]
     try:state=json.loads(row['state'])
     except (ValueError,TypeError):return {},[]

@@ -26,11 +26,11 @@ def after_tool(net,agent,slug,name,args,text):
         with net.attempt_turn(agent,fn):
             source,revision=agent_tokens.candidate(net,agent,slug,function)
             if measured['source']!=source:return text
-            before=net.store.one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
+            before=net.project_store(fn['project_id']).one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
             local_experiments.run(net,agent,slug,function,revision,max_trials=config['trials'],seconds=config['seconds'],
                                   provenance_kind='automatic agent local pass')
             chosen,current=agent_tokens.candidate(net,agent,slug,function)
-            trials=net.store.one('SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND id>?',fn['id'],before)['n']
+            trials=net.project_store(fn['project_id']).one('SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND id>?',fn['id'],before)['n']
             changed=chosen!=source
             status=net._function(function,slug)['status']
             # The final revision/budget replaces the pre-pass lines rather than contradicting them.

@@ -44,12 +44,12 @@ def best(search, link, agent, fn, source, score):
     key=f'deep-room-best:{fn["project_id"]}:{fn["id"]}'
     item={'function':fn['name'],'agent':agent.name,'source':source,'score':score,
           'evidence':room_matches.packet(net,link.slug,fn['name'],source),'room':link.url+'/'+link.room,'updated_at':time.time()}
-    with net.store.tx() as db:db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(item)))
+    with net.project_store(link.slug).tx() as db:db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(item)))
     if not offline(link):
         try:
             result=link._req('POST','/collab/best',item)
             if result.get('ok'):
-                with net.store.tx() as db:db.execute('DELETE FROM settings WHERE key=? AND value=?',(key,json.dumps(item)))
+                with net.project_store(link.slug).tx() as db:db.execute('DELETE FROM settings WHERE key=? AND value=?',(key,json.dumps(item)))
         except NetworkError as error:disconnected(search,link,error)
 
 
@@ -67,14 +67,14 @@ def comparable(net, slug, function, evidence):
 def pump(link):
     proj=link.net.project_row(link.slug)
     prefix=f'deep-room-best:{proj["id"]}:'
-    rows=link.net.store.all('SELECT key,value FROM settings WHERE key LIKE ? ORDER BY json_extract(value,\'$.updated_at\') LIMIT 8',prefix+'%')
+    rows=link.net.project_store(link.slug).all('SELECT key,value FROM settings WHERE key LIKE ? ORDER BY json_extract(value,\'$.updated_at\') LIMIT 8',prefix+'%')
     for row in rows:
         item=json.loads(row['value'])
         if item['room']!=link.url+'/'+link.room:continue
         result=link._req('POST','/collab/best',item)
         if result.get('ok'):
-            with link.net.store.tx() as db:db.execute('DELETE FROM settings WHERE key=? AND value=?',(row['key'],row['value']))
+            with link.net.project_store(link.slug).tx() as db:db.execute('DELETE FROM settings WHERE key=? AND value=?',(row['key'],row['value']))
         else:
             item.update(updated_at=time.time(),reason=result.get('reason','Host inputs differ; local candidate retained.'))
-            with link.net.store.tx() as db:
+            with link.net.project_store(link.slug).tx() as db:
                 db.execute('UPDATE settings SET value=? WHERE key=? AND value=?',(json.dumps(item),row['key'],row['value']))

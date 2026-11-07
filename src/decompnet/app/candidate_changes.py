@@ -16,24 +16,26 @@ def describe(net, agent, fn, source):
     origin=getattr(net,'_candidate_origins',{}).get((agent.id,fn['id']),{})
     if origin.get('revision')!=revision:
         origin={}
-    row=net.store.one('SELECT a.id,a.source,a.score,a.score_before,a.score_improved,a.via,g.name AS writer '
-                      'FROM attempts a LEFT JOIN agents g ON g.id=a.agent_id WHERE a.function_id=? AND a.id=?',
+    row=net.project_store(fn['project_id']).one('SELECT a.id,a.source,a.score,a.score_before,a.score_improved,a.via,a.agent_id '
+                      'FROM attempts a WHERE a.function_id=? AND a.id=?',
                       fn['id'],origin.get('attempt')) if origin.get('attempt') else None
     if row is None:
         # Saved-best lookups use the score index; arbitrary revisions search only recent history.
         score=0 if source==fn['matched_source'] else fn['best_score'] if source==fn['best_source'] else None
-        columns='a.id,a.source,a.score,a.score_before,a.score_improved,a.via,g.name AS writer '
+        columns='a.id,a.source,a.score,a.score_before,a.score_improved,a.via,a.agent_id '
         if score is not None:
-            row=net.store.one('SELECT '+columns+'FROM attempts a LEFT JOIN agents g ON g.id=a.agent_id '
+            row=net.project_store(fn['project_id']).one('SELECT '+columns+'FROM attempts a '
                               'WHERE a.function_id=? AND a.score=? AND a.source=? ORDER BY a.id DESC LIMIT 1',
                               fn['id'],score,source)
         else:
-            row=net.store.one('SELECT '+columns+'FROM (SELECT * FROM attempts WHERE function_id=? '
-                              'ORDER BY id DESC LIMIT 128) a LEFT JOIN agents g ON g.id=a.agent_id '
+            row=net.project_store(fn['project_id']).one('SELECT '+columns+'FROM (SELECT * FROM attempts WHERE function_id=? '
+                              'ORDER BY id DESC LIMIT 128) a '
                               'WHERE a.source=? ORDER BY a.id DESC LIMIT 1',fn['id'],source)
     parts=[origin['selection']] if origin.get('selection') else []
     if row is not None and row['source']==source:
-        who='you' if row['writer']==agent.name else (row['writer'] or 'an unrecorded agent')
+        from .project_labels import names
+        writer = names(net,[row['agent_id']]).get(row['agent_id'])
+        who='you' if writer==agent.name else (writer or 'an unrecorded agent')
         text=f"Recorded attempt: {who}; attempt {row['id']}"
         if row['via']:
             text+='; via '+str(row['via'])[:80]
@@ -44,7 +46,7 @@ def describe(net, agent, fn, source):
         else:
             text+='; did not compile'
         parts.append(text)
-        provenance=net.store.one('SELECT provenance FROM repair_attempt_provenance WHERE attempt_id=?',row['id'])
+        provenance=net.project_store(fn['project_id']).one('SELECT provenance FROM repair_attempt_provenance WHERE attempt_id=?',row['id'])
         if provenance:
             p=json.loads(provenance['provenance'])
             expected=p.get('source_sha256')

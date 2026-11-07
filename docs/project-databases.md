@@ -143,6 +143,14 @@ late transcript callbacks after removal. Restart recovery closes interrupted
 sessions in each operational file. Model filters resolve shared agent IDs before
 querying project attempts; no copied identity labels are needed.
 
+Deep and background permutation searches now select their project for trial
+caches, buffered bookkeeping, pass signatures, metrics, input-effect costs and
+paused-run controls. Offline deep-room delivery queues follow the room project.
+Shared SDK corpora and toolchain capability records remain global. Game knowledge,
+its model support, evidence and review queues are project-owned; display names
+still resolve from the shared registry. Source recovery, candidate-origin reports,
+random-search checkpoints and bounded proposal cursors use the same explicit scope.
+
 ## Ownership for the completed split
 
 | Storage | Contents |

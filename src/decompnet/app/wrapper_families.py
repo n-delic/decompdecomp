@@ -38,7 +38,7 @@ def shape(fn, big):
 def index(net,proj):
     if proj['arch']!='mips':return {}
     groups={}
-    for row in net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL AND size<=? ORDER BY id",proj['id'],MAX_BYTES):
+    for row in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL AND size<=? ORDER BY id",proj['id'],MAX_BYTES):
         key=shape(row,bool(proj['big_endian']))
         if key:
             group=groups.setdefault(key[0],[])

@@ -307,13 +307,13 @@ class Permuter:
     def candidates(self, proj, limit: int | None = None) -> list:
         limit = limit or max(CANDIDATES, 2 * workers.WORKERS)  # (a worker for each, and the next ones waiting)
         from . import permuter_inputs
-        rows = self.net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' "
+        rows = self.net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' "
                                   "AND best_source IS NOT NULL AND best_score>0 AND best_score<=n_insns*100*? "
                                   "AND n_insns<=?", proj['id'], NEAR, self.max_insns)
         permuter_inputs.refresh(self.net, proj, rows)
         from .boundary_repairs import blocked
         held=blocked(self.net,proj)
-        candidates=self.net.store.all(
+        candidates=self.net.project_store(proj['id']).all(
             "SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
             "AND best_score > 0 AND best_score <= n_insns * 100 * ? AND n_insns <= ? AND permuted < ? "
             "AND id NOT IN (SELECT function_id FROM claims) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY CAST(best_score AS REAL) / (n_insns * 100) LIMIT ?",
@@ -369,20 +369,20 @@ class Permuter:
         configuration gets another chance. This uses the same judge for ROM and imported project modes.
         """
         key = f"draft-repair-cursor:{proj['id']}"
-        saved = self.net.store.one("SELECT value FROM settings WHERE key=?", key)
+        saved = self.net.project_store(proj['id']).one("SELECT value FROM settings WHERE key=?", key)
         cursor = int(saved['value']) if saved else 0
-        todo = self.net.store.all(
+        todo = self.net.project_store(proj['id']).all(
             "SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
             "AND best_score>0 AND n_insns<=? AND (? IS NULL OR id=?) AND id NOT IN (SELECT function_id FROM claims) "
             "ORDER BY (id<=?), id LIMIT ?", proj['id'], REPAIR_MAX_INSNS, function_id, function_id, cursor, CANDIDATES)
         deadline, attempts = time.monotonic() + seconds, 0
         fork = self.net.fork_slug(proj['slug'])
-        symbols = [tuple(row) for row in self.net.store.all(
+        symbols = [tuple(row) for row in self.net.project_store(proj['id']).all(
             "SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name", proj['id'])]
         for fn in todo:
             if st.stop.is_set() or attempts >= budget or time.monotonic() >= deadline:
                 break
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 db.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, str(fn['id'])))
             try:
                 context = self.net._context(proj['id'], fn['unit'])
@@ -404,7 +404,7 @@ class Permuter:
                     continue
                 attempts+=paired['tested'];st.add(variants=paired['tested'],repairs=paired['tested'])
                 proj=self.net.project_row(proj['slug'])
-                fn=self.net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+                fn=self.net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
                 if fn['status']=='matched':
                     st.add(improved=int(bool(paired.get('applied'))),matched=int(bool(paired.get('applied'))))
                     continue
@@ -422,7 +422,7 @@ class Permuter:
                 continue
             st.holding(fn['name'], True)
             try:
-                current = self.net.store.one("SELECT * FROM functions WHERE id=?", fn['id'])
+                current = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fn['id'])
                 if current['status'] != 'open' or current['best_source'] != fn['best_source']:
                     continue
                 header = (self.net.forks.permuter_header(fork, fn['name']) if fork else
@@ -455,7 +455,7 @@ class Permuter:
                         break
                     digest = hashlib.sha256((context + candidate).encode()).hexdigest()
                     trial = f"draft-repair-v15:{fn['id']}:{digest}"
-                    cached = self.net.store.one("SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?", fn['id'], trial)
+                    cached = self.net.project_store(proj['id']).one("SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?", fn['id'], trial)
                     # A reopened or restored draft may need an old winner again. Cache hits can
                     # avoid misses, but never substitute for rejudging a possible improvement.
                     if cached and (not cached['outcome'].isdecimal() or int(cached['outcome']) >= best):
@@ -476,7 +476,7 @@ class Permuter:
                     measured=getattr(self.net,'_agent_outcomes',{}).get((agent.id,fn['id']))
                     if measured and measured.get('source')==candidate:
                         repair_ranking.remember(self.net,effect_scope,labels.get(candidate,'draft_repair'),baseline,measured)
-                    with self.net.store.tx() as db:
+                    with self.net.project_store(proj['id']).tx() as db:
                         db.execute("INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)",
                                    (fn['id'], trial, str(score), "targeted draft repair"))
                     if score is not None and score < best:
@@ -498,7 +498,7 @@ class Permuter:
             self._permute(agent, proj, fn, st)
         except NetworkError as e:  # the project refused its source (a helper the file hasn't): an answer, not a crash
             log.info("permuter: %s: %s (left to agents)", fn["name"], str(e).splitlines()[0])
-            with self.net.store.tx() as db:  # the same best attempt is refused every time: no more turns on it
+            with self.net.project_store(proj['id']).tx() as db:  # the same best attempt is refused every time: no more turns on it
                 db.execute("UPDATE functions SET permuted=MAX(permuted, ?) WHERE id=?", (self.max_turns, fn["id"]))
         except Exception as e:  # one odd function must not stop the rest
             log.info("permuter: %s: %s", fn["name"], e, exc_info=True)
@@ -712,13 +712,13 @@ class Permuter:
         """
         if not hasattr(self.net, '_judge_with'):
             return 0
-        current = self.net.store.one("SELECT * FROM functions WHERE id=?", fn['id'])
+        current = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fn['id'])
         if current['status'] != 'open' or not current['best_score'] or current['best_score'] > current['n_insns'] * 2:
             return 0
         own = compiler_for(self.net.cfg(proj), fn['vram'], fn)
         ctx = self.net._context(proj['id'], fn['unit'])
         count = 0
-        symbols = [tuple(row) for row in self.net.store.all('SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+        symbols = [tuple(row) for row in self.net.project_store(proj['id']).all('SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
         choices = [f for f in self.net.debug_flag_variants(own['toolchain'], list(own['flags'])) if f != own['flags']]
         if hasattr(self.net, 'flag_variants'):
             choices += [f for f in self.net.flag_variants(own['toolchain'], list(own['flags']))
@@ -729,12 +729,12 @@ class Permuter:
             digest = hashlib.sha256(repr((current['target'], current['relocs'], current['best_source'],
                                           ctx['header'], self.net.cfg(proj), symbols, flags)).encode()).hexdigest()
             key = 'draft-flags-v2:' + digest
-            if self.net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key):
+            if self.net.project_store(proj['id']).one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key):
                 continue
             count += 1
             st.add(variants=1, repairs=1)
             exact, _, _ = self.net._judge_with(proj, current, own['toolchain'], flags, current['best_source'])
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                            (fn['id'], key, 'match' if exact else 'miss', 'near-miss compiler flag probe'))
             if exact:
@@ -768,12 +768,12 @@ class Permuter:
             if st.stop.is_set() or time.monotonic() >= deadline:
                 break
             key = 'local-order-v1:' + hashlib.sha256(repr((state, candidate)).encode()).hexdigest()
-            if self.net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key):
+            if self.net.project_store(proj['id']).one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key):
                 continue
             st.add(variants=1, repairs=1)
             with repair_trial({'kind': 'local order before permutation', 'family': family}):
                 score = self._score(agent, proj, fn, candidate, best, fork)
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                            (fn['id'], key, str(score), family))
             if score is not None and score < best:
@@ -854,8 +854,8 @@ class Permuter:
             build = build_settings(proj)
             generation = self.net._generation.get(proj['id'], 0)
             def guard():
-                current = self.net.store.one('SELECT * FROM functions WHERE id=?', fn['id'])
-                project = self.net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
+                current = self.net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?', fn['id'])
+                project = self.net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?', proj['id'])
                 header = self.net._context(proj['id'], current['unit']) if current else None
                 if not current or not project or current['status'] != 'open' or not header:
                     raise NetworkError('Search inputs changed while compiling; the function is no longer open.')
@@ -914,7 +914,7 @@ class Permuter:
         if d.score < best or (d.bytes_match and fn['status'] != 'matched'):
             self._accept_candidate(agent, proj, fn, source, d)
             from .trial_bookkeeping import flush
-            flush(self.net.store)
+            flush(self.net.project_store(proj['id']))
             self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter", effective_settings=getattr(result,"effective_settings",None),
                              **({"before_record": guard} if guard else {}))
         return 0 if d.bytes_match else max(1, d.score)

@@ -20,9 +20,9 @@ def candidates(net, proj, fn, source, header):
     addresses=set(re.findall(r'\bD_[0-9A-Fa-f]{8}\b',fn['asm'] or ''))
     if not types or not (calls or addresses):
         return []
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
+    if not net.project_store(proj['id']).one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
         return []
-    rows = net.store.all("SELECT f.*,v.header AS verified_header FROM functions f JOIN verified_matches v ON v.function_id=f.id "
+    rows = net.project_store(proj['id']).all("SELECT f.*,v.header AS verified_header FROM functions f JOIN verified_matches v ON v.function_id=f.id "
                          "WHERE f.project_id=? AND f.status='matched' AND f.best_score=0 AND v.source=f.matched_source "
                          "AND f.id!=? AND f.vram BETWEEN ? AND ? ORDER BY ABS(f.vram-?) LIMIT ?",
                          proj['id'], fn['id'], fn['vram']-65536, fn['vram']+65536, fn['vram'], MAX_NEIGHBOURS)

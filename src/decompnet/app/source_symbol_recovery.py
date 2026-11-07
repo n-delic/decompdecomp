@@ -41,12 +41,12 @@ def helpers(net, proj, fn, obj):
         result = {}
         for name,(section,start,size) in bodies.items():
             if name == fn['name'] or not 0 < size <= MAX_HELPER_BYTES:continue
-            if net.store.one('SELECT 1 FROM functions WHERE project_id=? AND name=?',proj['id'],name):continue
+            if net.project_store(proj['id']).one('SELECT 1 FROM functions WHERE project_id=? AND name=?',proj['id'],name):continue
             if any(start <= relocation['r_offset'] < start+size
                    for table in elf.iter_sections() if isinstance(table,RelocationSection) and table['sh_info']==section
                    for relocation in table.iter_relocations()):continue
             code = elf.get_section(section).data()[start:start+size]
-            rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND size=? AND target=? LIMIT 2",
+            rows = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND size=? AND target=? LIMIT 2",
                                  proj['id'],size,code)
             if len(rows) != 1:continue
             row = rows[0]

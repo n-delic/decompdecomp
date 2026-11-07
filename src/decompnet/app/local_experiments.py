@@ -116,7 +116,7 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         for (family,candidate),measured in zip(selected,observations):
             if not measured or measured.get('score') is None:
                 continue
-            with net.store.tx() as db:
+            with net.project_store(fn['project_id']).tx() as db:
                 db.execute('INSERT OR IGNORE INTO agent_family_targets VALUES(?,?,?,?)',
                            (fn['id'],scope,'local:'+family,hashlib.sha256(candidate.encode()).hexdigest()))
         current=net._function(function,slug)
@@ -310,10 +310,10 @@ def summary(net, agent, slug, fn, source, revision):
         failure_key=agent_evidence.scope(net,agent,fn)+(hashlib.sha256(source.encode()).hexdigest(),)
         failure=getattr(net,'_baseline_failures',{}).get(failure_key)
         if failure:
-            latest=net.store.one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
+            latest=net.project_store(fn['project_id']).one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
             if latest <= failure.get('after_attempt',0):
                 return f'Remaining local repairs [{revision}]: baseline blocked. Fix C/build inputs or redraft before variants.'
-        count = net.store.one('SELECT COUNT(*) AS n FROM agent_family_targets WHERE function_id=?',fn['id'])['n']
+        count = net.project_store(fn['project_id']).one('SELECT COUNT(*) AS n FROM agent_family_targets WHERE function_id=?',fn['id'])['n']
         measured = getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         evidence = hashlib.sha256(repr((measured.get('score'),measured.get('rows')) if measured and measured.get('source')==source else None).encode()).hexdigest()
         from . import rtl_value_trace, verified_unit_context
