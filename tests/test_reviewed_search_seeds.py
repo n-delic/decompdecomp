@@ -162,3 +162,45 @@ def test_replay_refuses_live_or_unmarked_homes(monkeypatch,tmp_path):
     with pytest.raises(NetworkError,match='disposable'):
         reviewed_seed_benchmark.run(net,'game','f',net.function()['best_source'],trial['source'],
                                    'Reviewed the caller.',tmp_path,Log())
+
+
+def test_allocation_cache_tracks_symbols_used_only_by_alternative(monkeypatch):
+    net,trial=prepare(monkeypatch)
+    proj,fn=net.project_row('game'),net.function()
+    source=trial['source']+'\nextern int other;\n'
+    with net.store.tx() as db:db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,'other',4096,4,'data')")
+    before=allocation_search.key(net,proj,fn,source)
+    with net.store.tx() as db:db.execute("UPDATE symbols SET address=8192 WHERE name='other'")
+    assert allocation_search.key(net,proj,fn,source)!=before
+
+
+@pytest.mark.parametrize('mode',['fork','room'])
+def test_unsupported_seed_modes_leave_ordinary_search_available(monkeypatch,mode):
+    net,trial=prepare(monkeypatch)
+    if mode=='fork':net.fork_slug=lambda slug:'fork'
+    else:net.links={'game':object()}
+    assert not seeds.selected(net,net.project_row('game'),net.function())
+    with pytest.raises(NetworkError,match='local ROM'):
+        seeds.review(net,AGENT,'game','f','trial','Review callers and declaration.')
+
+
+def test_mapped_targeting_runs_before_broad_generators(monkeypatch):
+    net,trial=prepare(monkeypatch,True)
+    calls=[]
+    def judge(*args):
+        calls.append(args[-1]);return (True,None,'') if len(calls)>1 else (False,SimpleNamespace(score=10,rows=ROWS),'')
+    net._judge_with=judge
+    monkeypatch.setattr(allocation_search,'saved',lambda *a:{'skipped':'test capture'})
+    monkeypatch.setattr(allocation_targeting,'proposals',lambda *a:[('loop_weight_scope',trial['source']+'\n')])
+    monkeypatch.setattr(draft_repairs,'variants',lambda *a,**kw:pytest.fail('mapped shortlist must precede broad generation'))
+    search=deep_permuter.Search(net,1,20,Log(),net.function())
+    result=reviewed_seed_search.run(search,AGENT,net.project_row('game'),net.function())
+    assert len(calls)==2 and result['diagnostic_exact']
+
+
+def test_cancellation_does_not_compile_or_adopt(monkeypatch):
+    net,trial=prepare(monkeypatch,True);log=Log();log.cancelled=True
+    net._judge_with=lambda *a:pytest.fail('cancelled search compiled')
+    with pytest.raises(RuntimeError,match='cancelled'):
+        reviewed_seed_search.run(deep_permuter.Search(net,1,20,log,net.function()),AGENT,net.project_row('game'),net.function())
+    assert net.function()['status']=='open'

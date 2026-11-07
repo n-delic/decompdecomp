@@ -3,7 +3,7 @@ import hashlib
 import time
 
 from ..network import NetworkError
-from . import allocation_search, compiler_experiments, draft_repairs, reviewed_search_seeds
+from . import allocation_search, allocation_targeting, compiler_experiments, draft_repairs, reviewed_search_seeds
 
 TRIAL_LIMIT = 12
 SECONDS = 30
@@ -57,10 +57,12 @@ def run(search, agent, proj, fn):
                 and search.tested-initial_tested+3 <= TRIAL_LIMIT and time.monotonic()+3 < deadline):
             evidence = allocation_search.capture(net, proj, fn, root['source'],
                 on_compile=lambda:charge(True), rows=baseline['rows'])
-        labels = {}
-        choices = draft_repairs.variants(root['source'], fn['name'], proj['arch'], fn['asm'] or '',
-            profile['flags'], labels=labels, limit=None, header=header)
-        guided = allocation_search.proposals(root['source'], fn['name'], proj['arch'], baseline['rows'], choices, labels, evidence, header)
+        labels, choices = {}, []
+        guided = allocation_targeting.proposals(root['source'],fn['name'],header,baseline['rows'],evidence,proj['arch'])
+        if not baseline['exact'] and not guided:
+            choices = draft_repairs.variants(root['source'], fn['name'], proj['arch'], fn['asm'] or '',
+                profile['flags'], labels=labels, limit=None, header=header)
+            guided = allocation_search.proposals(root['source'], fn['name'], proj['arch'], baseline['rows'], choices, labels, evidence, header)
         pool = [('reviewed_seed', root['source'], baseline)]
         pool += [(family, source, None) for family, source in guided[:6]]
         # Unsupported allocation diagnostics still get a bounded diverse local lane.

@@ -623,6 +623,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Reviewed diagnostic-root deep lane | ✓ local ROM | ✓ shared ROM lane | ✓ shared ROM lane | ✓ shared ROM lane | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot |
 | Typed later-local reuse and bounded residual follow-ups | ✓ | ✓ | ✓ 32-bit scalars | ✓ | ✓ 32-bit scalars | ✓ 32-bit scalars | ✓ | ✓ by target ABI |
 | Frozen multi-case exported-ROM repair CLI | ✓ MIPS | ✓ MIPS | ✓ MIPS | ✓ MIPS | — copied evaluator | — copied evaluator | — copied evaluator | — copied evaluator |
 | Local register-chain and jump/delay-slot search hints | ✓ | ✓ | ✓ | ✓ | — reader planned | — reader planned | — reader planned | ✓ MIPS; other readers planned |

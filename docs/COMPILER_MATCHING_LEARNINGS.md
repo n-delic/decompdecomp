@@ -5796,7 +5796,7 @@ A private N64 GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`) replay starts from 
 score 215 and an explicitly reviewed scoped partial-return alternative scoring 60. Actual native
 GCC allocation evidence prioritized a loop-weight scope around the existing quotient. The cold
 real-linker replay found exact bytes in 4 search builds (2 diagnostic captures, 2 candidate builds)
-plus 2 setup checks, 5.33 seconds, zero model tokens. This is known-repair regression evidence,
+plus 2 setup checks, 3.07 seconds, zero model tokens. This is known-repair regression evidence,
 not a held-out discovery or proof of smaller-model speedup. The changed interface stayed diagnostic-only;
 no saved-source replacement, adopted match credit or full rebuild occurred in this replay.
 See [reviewed search seeds](REVIEWED_SEARCH_SEEDS.md) for input/caller invalidation and separate metrics.

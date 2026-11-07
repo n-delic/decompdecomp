@@ -21,7 +21,7 @@ def allowance(diagnosis):
 def key(net, proj, fn, source):
     profile = compiler_for(net.cfg(proj),fn['vram'], fn)
     installed = toolchains.installed(profile.get('toolchain',''))
-    return VERSION+':'+hashlib.sha256(repr((candidate_scope.key(net,proj,fn),source,installed)).encode()).hexdigest()
+    return VERSION+':'+hashlib.sha256(repr((candidate_scope.key(net,proj,dict(fn,best_source=source,seed=None)),source,installed)).encode()).hexdigest()
 
 
 def saved(net, proj, fn, source):

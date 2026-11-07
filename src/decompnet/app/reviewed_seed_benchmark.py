@@ -56,6 +56,7 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
 def main():
     import argparse
     import json
+    import os
 
     from .engine import RomNetwork
     parser=argparse.ArgumentParser(description=__doc__)
@@ -73,6 +74,9 @@ def main():
     if (not (root/'.reviewed-search-replay').is_file() or not args.database.resolve().is_relative_to(root)
             or not args.database.is_file()):
         parser.error('Choose an existing disposable database under a marked isolated home.')
+    os.environ['DECOMP_HOME']=str(root)
+    os.environ['DECOMP_WINDOW']='0'
+    os.environ['DECOMP_TRAY']='0'
     class Log:
         def __call__(self,text):print(text)
         def check_cancel(self):pass
