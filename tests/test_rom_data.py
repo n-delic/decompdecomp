@@ -144,3 +144,70 @@ def test_own_data_in_another_layout_matches(game):
 def test_wrong_data_is_caught(game, change):
     for name, linked in judge(game, **change).items():
         assert not linked.exact and linked.problems, (name, change)
+
+
+@pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None, reason="needs ee-gcc-2.96 for $gp-relative code")
+def test_gp_rel_in_a_defined_region_is_relocated(tmp_path):
+    """A region the candidate defines (a static clone of a matched callee) can hold a $gp-relative instruction.
+    verify_data must apply that GPREL16 relocation (immediate = address - $gp) before comparing with the ROM;
+    otherwise the clone's gp-relative half-word compares as the assembler's unrelocated 0 and the match is lost
+    at score 1 though every byte that matters is right (setup issue #494)."""
+    from elftools.elf.relocation import RelocationSection
+    d = str(toolchains.require("ee-gcc-2.96")); cc = f"{d}/bin/ee-gcc"
+    TEXT, FCLONE, G, GP = 0x80010000, 0x80010100, 0x80017F00, 0x80018000
+    named = {"caller": TEXT, "clone": FCLONE, "g": G}
+    sec_base = {".text": TEXT, ".fclone": FCLONE}
+    (tmp_path / "c.c").write_text(
+        "extern int g;\n"
+        "int clone(void) __attribute__((section(\".fclone\")));\n"
+        "int clone(void){ return g; }\n"
+        "int caller(void){ return clone(); }\n")
+    subprocess.run([cc, "-c", "-O2", "-G8", "-o", str(tmp_path / "cand.o"), str(tmp_path / "c.c")], check=True)
+    cobj = (tmp_path / "cand.o").read_bytes()
+    ce = ELFFile(BytesIO(cobj)); symtab = ce.get_section_by_name(".symtab")
+
+    def resolve(sym):  # a symbol -> its ROM address (named thing, or a section + offset)
+        if sym.name in named:
+            return named[sym.name]
+        sh = sym["st_shndx"]
+        if isinstance(sh, int) and ce.get_section(sh).name in sec_base:
+            return sec_base[ce.get_section(sh).name] + sym["st_value"]
+        return None
+
+    def relocs_of(name):  # (offset, type, target ROM address) of the relocations inside one section
+        idx = next(i for i, s in enumerate(ce.iter_sections()) if s.name == name)
+        out = []
+        for s in ce.iter_sections():
+            if isinstance(s, RelocationSection) and s["sh_info"] == idx:
+                for r in s.iter_relocations():
+                    a = resolve(symtab.get_symbol(r["r_info_sym"]))
+                    if a is not None:
+                        out.append((r["r_offset"], r["r_info_type"], a))
+        return out
+
+    def apply(name):  # raw MIPS ABI relocation, an oracle independent of match.py
+        data = bytearray(ce.get_section_by_name(name).data())
+        for off, typ, a in relocs_of(name):
+            word = int.from_bytes(data[off:off + 4], "little")
+            if typ == 2:    word = a
+            elif typ == 4:  word = (word & ~0x03FFFFFF) | (((a + ((word & 0x03FFFFFF) << 2)) >> 2) & 0x03FFFFFF)
+            elif typ == 7:  word = (word & ~0xFFFF) | ((a - GP) & 0xFFFF)
+            elif typ == 5:  word = (word & ~0xFFFF) | (((a + 0x8000) >> 16) & 0xFFFF)
+            elif typ == 6:  word = (word & ~0xFFFF) | (a & 0xFFFF)
+            data[off:off + 4] = word.to_bytes(4, "little")
+        return bytes(data)
+
+    assert any(t == match.R_MIPS_GPREL16 for _, t, _ in relocs_of(".fclone")), "fixture lost its GPREL16 reloc"
+    image = {TEXT: apply(".text"), FCLONE: apply(".fclone"), G: (0x12345678).to_bytes(4, "little")}
+
+    def read(a, n):
+        for base, data in image.items():
+            if base <= a and a + n <= base + len(data):
+                return data[a - base:a - base + n]
+        return None
+
+    target = match.RomTarget("caller", TEXT, image[TEXT], relocs_of(".text"), big_endian=False, gp=GP)
+    table = SymbolTable([Symbol("caller", TEXT, 0, "func"), Symbol("clone", FCLONE, 0, "func"),
+                         Symbol("g", G, 4, "data")])
+    res = match.link(cobj, "caller", target, table, read)
+    assert res.exact, res.problems
