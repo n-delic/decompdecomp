@@ -2801,12 +2801,12 @@ def test_tools_catalog_exposes_wibo_on_mac(app, monkeypatch):
 
 
 def test_push_is_queued_behind_sync_deduplicated_and_discoverable(app, monkeypatch):
-    from decompnet.app import repository_push, repository_push_queue, repository_sync
+    from decompnet.app import repository_operations, repository_push, repository_push_queue, repository_sync
     client, net, _ = app
     syncing, release, queued = threading.Event(), threading.Event(), threading.Event()
     monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
     def sync(net, slug, folder, log):
-        with repository_sync._LOCK:
+        with repository_operations.operation(folder, slug, 'Syncing saved progress', log):
             syncing.set()
             assert release.wait(10)
         return {'synced':True}
@@ -2816,7 +2816,7 @@ def test_push_is_queued_behind_sync_deduplicated_and_discoverable(app, monkeypat
             log(line)
             queued.set()
         output.progress = log.progress
-        with repository_push_queue.turn(output, log.check_cancel):
+        with repository_push_queue.turn(folder, slug, output, log.check_cancel):
             pushed.append(slug)
         return {'pushed':True}
     monkeypatch.setattr(repository_sync, 'run', sync)
