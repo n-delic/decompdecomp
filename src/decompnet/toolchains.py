@@ -147,6 +147,17 @@ def registry() -> dict[str, Toolchain]:
     return {tid: Toolchain(id=tid, **spec) for tid, spec in _registry_data().items()}
 
 
+def compiler_family(tid: str) -> str:
+    """Backend family for display grouping; unknown custom tools keep their own identity."""
+    declared = _registry_data().get(tid, {}).get("family")
+    if declared:
+        return declared
+    for family in ("gcc", "ido", "sn64", "metrowerks", "msvc"):
+        if family in tid.split("-"):
+            return family
+    return tid
+
+
 def known(tid: str) -> bool:
     """Whether the registry has this toolchain id. A project's config can name one it doesn't: the project was made
     with another tool (#118: a Windows project named a 64-bit Visual C++ one), and it must still open."""

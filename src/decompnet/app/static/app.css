@@ -1011,3 +1011,79 @@ details.more[open] > summary::before { content: "− "; }
 .copy-path { overflow-wrap: anywhere; }
 .local-form { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .local-form input[type=text] { width: 100%; box-sizing: border-box; }
+
+.compiler-view-controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.compiler-view-controls label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; min-width: 150px; }
+.compiler-profile { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0; }
+.compiler-profile > summary { padding: 12px; cursor: pointer; }
+.compiler-profile-count { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.compiler-arguments, .pad code.compiler-arguments { display: inline; white-space: normal; overflow-wrap: anywhere; font-size: 12px; font-weight: 400; line-height: 1.6; margin: 0; padding: 0; color: var(--muted); background: none; border: 0; border-radius: 0; }
+.compiler-profile code.compiler-arguments { margin-inline-start: .5em; }
+.compiler-default-functions { padding: 0 12px 12px; }
+.compiler-default-functions > p { margin: 0; }
+.compiler-range-list { list-style: none; margin: 0; padding: 0; }
+.compiler-range { padding: 10px 12px; border-top: 1px solid var(--line); }
+.compiler-range-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.compiler-range-heading button { margin-left: auto; }
+.compiler-range-heading code { overflow-wrap: anywhere; }
+.compiler-range-reason { margin-top: 6px; }
+.compiler-range-reason summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.compiler-function-links { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; max-height: 240px; overflow: auto; }
+.compiler-function-links button { font-size: 12px; }
+.compiler-profile-card { position: relative; margin: 10px 0; }
+.compiler-profile-card > .compiler-profile { margin: 0; }
+.compiler-profile-card.has-actions > .compiler-profile > summary { padding-right: 48px; }
+.compiler-profile-card > .compiler-profile-menu { position: absolute; top: 8px; right: 8px; }
+.compiler-profile-menu .agent-menu-items { width: min(300px, calc(100vw - 80px)); min-width: 0; }
+.compiler-profile-menu .agent-menu-items button { white-space: normal; line-height: 1.45; }
+.compiler-profile-menu button:disabled { opacity: .5; cursor: not-allowed; }
+.compiler-profile-action { padding: 10px 12px; border-top: 1px solid var(--line); }
+
+
+.default-profile-test { margin:24px 0 18px; padding:20px 0 0; border:0; border-top:1px solid var(--line); display:grid; gap:14px; }
+.default-profile-test p { margin:0; }
+.default-profile-counts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }
+.default-profile-counts dt { font-size:12px; color:var(--ink-2); margin-bottom:6px; }
+.default-profile-counts dd { margin:0; font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; }
+.compiler-profile-action > button + button { margin-left:8px; }
+@media(max-width:540px) { .compiler-profile-action > button { margin-bottom:8px; } .compiler-profile-action > button + button { margin-left:0; } }
+
+
+.agent-menu { position: relative; flex-shrink: 0; }
+.agent-menu > summary { display: grid; place-items: center; cursor: pointer; list-style: none; width: 28px; height: 28px; font-size: 23px; border-radius: var(--r-sm); }
+.agent-menu > summary::-webkit-details-marker { display: none; }
+.agent-menu > summary:hover, .agent-menu[open] > summary { background: var(--bg-alt); }
+.agent-menu-items { position: absolute; right: 0; top: 32px; z-index: 20; min-width: 190px; padding: 5px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 6px 20px #0002; }
+.agent-menu-items button { display: block; width: 100%; padding: 9px 10px; text-align: left; font-size: 12px; border-radius: var(--r-sm); }
+.agent-menu-items button:hover { background: var(--bg-alt); }
+.agent-menu-items .agent-menu-reset { border-top: 1px solid var(--line); border-radius: 0; margin-top: 4px; }
+.agent-menu summary:focus-visible, .agent-details summary:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
+.profile-failure-list { margin-top:12px; }
+.profile-failure-body { padding:16px; }
+.profile-range-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:16px; }
+.profile-range-toolbar p { flex:1 1 280px; margin:0; line-height:1.6; }
+.profile-failure-cards { display:grid; gap:12px; }
+.profile-failure-card { padding:14px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel); }
+.profile-failure-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.profile-failure-heading > button { font-weight:600; }
+.profile-failure-card > p { margin:10px 0 6px; }
+.profile-related-functions { display:flex; flex-wrap:wrap; gap:6px 14px; }
+.profile-failure-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.profile-failure-card button.link { overflow-wrap:anywhere; text-align:left; }
+.profile-failure-card [data-blocker-result]:empty { display:none; }
+.profile-test-intro { margin:0 0 18px; line-height:1.6; }
+.profile-test-selection { display:grid; gap:6px; margin-bottom:14px; }
+.profile-test-selection .compiler-arguments { margin:2px 0 0; overflow-wrap:anywhere; white-space:normal; }
+.profile-test-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.profile-test-heading > p { font-weight:650; }
+.profile-test-current:empty, .profile-test-verdict:empty { display:none; }
+.default-profile-counts > div + div { border-left:1px solid var(--line-soft); padding-left:16px; }
+.profile-test-log { border-top:1px solid var(--line); margin-top:20px; padding-top:14px; font-size:12px; color:var(--muted); }
+.profile-test-log > summary { cursor:pointer; }
+.profile-test-verdict { font-size:13px; line-height:1.7; }
+.settings-disclosure { margin-bottom: 20px; }
+.settings-disclosure > summary { cursor: pointer; list-style: none; justify-content: flex-start; text-align: left; flex-wrap: nowrap; }
+.settings-disclosure > summary::-webkit-details-marker { display: none; }
+.settings-disclosure > summary::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); flex: none; }
+.settings-disclosure[open] > summary::before { transform: rotate(45deg); }
+.settings-disclosure > summary:focus-visible { outline: 2px solid var(--hl); outline-offset: -3px; }
