@@ -1071,7 +1071,8 @@ class Twins:
                                                        "source_function_id": row["id"], "source_name": name})
             except (NetworkError, OSError, ValueError):
                 continue  # moved or incompletely prepared donor
-        rows = self.net.store.all("SELECT * FROM functions WHERE project_id=?", proj["id"])
+        # Naming needs no C or disassembly; resolving packed payloads here can stall reuse.
+        rows = self.net.store.all("SELECT id,name,meta FROM functions WHERE project_id=?", proj["id"])
         taken = {r["name"] for r in rows}
         candidates = []
         for row in rows:
