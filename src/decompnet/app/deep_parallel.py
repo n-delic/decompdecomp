@@ -68,6 +68,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
         def output(line):
             with lock:
                 log(f'Thread {index+1}/{count}: {line}')
+        output.compile_pool = getattr(log, "compile_pool", None)
         output.check_cancel = check
         output.progress = lambda update: publish(index, update)
         output.maximum_seconds = max(0, deadline-time.monotonic())

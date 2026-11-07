@@ -376,7 +376,9 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
             if result is not None:
                 compile_timing.add('cache_hits', 1)
             elif session:
-                result = build()
+                from .compile_sharing import current as shared_group
+                group = shared_group()
+                result = group.run(key, build, _CANCEL_CHECK.get()) if group else build()
                 if check := _CANCEL_CHECK.get():check()
                 session.put(key, result)
             else:

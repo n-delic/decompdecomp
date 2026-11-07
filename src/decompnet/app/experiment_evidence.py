@@ -58,9 +58,10 @@ def output(candidate):
                                sorted(r.key() for r in candidate.relocs))).encode()).hexdigest()
 
 
-def record(net, fn, key, family, before, after, baseline, score, prior_output, measured_output, elapsed_ms):
+def record(net, fn, key, family, before, after, baseline, score, prior_output, measured_output, elapsed_ms, *, compact=False):
     prepare(net)
-    changes = edits(before, after)
+    changes = ([{'before_start':0, 'before_end':len(before), 'after_start':0, 'after_end':len(after)}]
+               if compact and before != after else [] if compact else edits(before, after))
     improved = score is not None and score < baseline
     same = prior_output is not None and prior_output == measured_output
     trial_bookkeeping.submit(net.store, [(
@@ -124,7 +125,7 @@ def measured(permuter, agent, proj, fn, source, best, fork):
         score = None
     else:
         score = permuter._score_work(agent,proj,fn,source,best,fork)
-    if not no_edit and score is not None:
+    if not no_edit and score is not None and not getattr(permuter, '_compact_trial', False):
         from .search_evidence import remember
         remember(net,agent,proj,fn,source,score)
     measured_output = getattr(permuter,'_trial_output',None)
@@ -134,5 +135,5 @@ def measured(permuter, agent, proj, fn, source, best, fork):
             del cache[next(iter(cache))]
     if family:
         record(net,fn,key,family,before,source,best,score,previous[1] if previous else None,
-               measured_output,(time.monotonic()-started)*1000)
+               measured_output,(time.monotonic()-started)*1000, compact=getattr(permuter, '_compact_trial', False))
     return score

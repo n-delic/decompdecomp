@@ -25,6 +25,7 @@ from . import (
     agent_tokens,
     allocation_evidence,
     allocation_search,
+    deep_compilation,
     deep_repair_feedback,
     draft_repairs,
     permuter_focus,
@@ -121,6 +122,17 @@ class Search(Permuter):
                 link.sync()
             self._trial_outcome = 'scored' if score is not None else 'compile_failed'
             return 0 if verdict.get('matched') else max(1, score) if score is not None else None
+        ticket = getattr(self, '_ahead_current', None)
+        if ticket is not None:
+            key = self._recent_key(proj, fn, source, fork)
+            header = self.net._context(proj['id'], fn['unit'])['header']
+            # Another function's score can advance the project input revision without
+            # changing these compiler inputs. Linking/recording still use fresh guards.
+            if (key is None or ticket.key != key[1]
+                    or ticket.snapshot != self.net._compile_snapshot(proj, fn, header, source)):
+                raise SearchLimit('Inputs changed during queued compilation; saved improvements are preserved.')
+            with self.net.compiled_ahead((ticket.snapshot, ticket.future)):
+                return super()._score_work(agent, proj, fn, source, best, fork)
         return super()._score_work(agent, proj, fn, source, best, fork)
 
     def _accept_candidate(self, agent, proj, fn, source, diff):
@@ -257,6 +269,10 @@ class Search(Permuter):
         return fresh['best_score']
 
     def _baseline(self, agent, proj, fn, state, fork):
+        return deep_compilation.baseline(self, agent, proj, fn, state, fork,
+                                        lambda:self._baseline_work(agent, proj, fn, state, fork))
+
+    def _baseline_work(self, agent, proj, fn, state, fork):
         # Baseline evidence must come from today's compiler/header, including score-zero open rows.
         self.measuring_baseline = True
         try:
@@ -561,6 +577,7 @@ class Search(Permuter):
                         'source': self.winner_source, 'score': self.best, 'rows': self.winner_diff[0]}
             self.phase = previous
 
+    @deep_compilation.prepared
     def _score(self, agent, proj, fn, source, best, fork):
         from . import deep_profiles
         if self.measuring_baseline or not hasattr(self, 'compiler_profiles') or fork:
@@ -686,18 +703,19 @@ class Search(Permuter):
             self.skipped += 1
         else:
             self.tested += 1
+            if ticket := getattr(self, '_ahead_current', None):ticket.counted = True
             self.current_family = (current_trial() or {}).get('family', 'baseline' if self.measuring_baseline else 'unattributed')
             self.last_outcome, self.last_score = 'compiling', None
             self.report()
             self._trial_outcome = 'unscored'
-            rows = getattr(self,'_parent_rows',repair_ranking.evidence(self.net, fn['id'], agent.id))
+            rows = self._parent_rows if hasattr(self, '_parent_rows') else repair_ranking.evidence(self.net, fn['id'], agent.id)
             policy_focus = permuter_focus.classify(rows)
             policy_profile = adaptive_repairs.profile(self.net, proj, fn)
             started = time.monotonic()
             score = super()._score(agent, proj, fn, source, best, fork)
             elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
             if getattr(self, '_trial_outcome', '') == 'no_edit':
-                self.tested -= 1
+                if getattr(self, '_ahead_current', None) is None:self.tested -= 1
                 self.skipped += 1
             if not self.measuring_baseline and getattr(self, '_trial_outcome', '') != 'no_edit':
                 adaptive_repairs.record(self.net, policy_profile, policy_focus, self.current_family, best, score, elapsed_ms, origin="deep permuter")
@@ -759,15 +777,22 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
     lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())
     if not lock.acquire(blocking=False):
         raise NetworkError('A deep search is already running for this function.')
+    previous_pool = getattr(log, 'compile_pool', None)
+    pool = deep_compilation.Pool()
+    log.compile_pool = pool
     try:
         if threads_per_function > 1:
             from .deep_parallel import run as parallel
             return parallel(net, slug, name, minutes, max_variants, log, compiler_profiles, threads_per_function)
         return _run(net, slug, name, minutes, max_variants, log, compiler_profiles)
     finally:
-        lock.release()
+        try:pool.close()
+        finally:
+            log.compile_pool = previous_pool
+            lock.release()
 
 
+@deep_compilation.shared
 @buffered
 @batched
 def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None):
@@ -782,6 +807,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     if compiler_profiles > 1 and net.fork_slug(slug):
         raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
     search = Search(net, minutes, max_variants, log, fn)
+    search.compile_pool = getattr(log, 'compile_pool', None)
     if lane is not None:
         search.deadline = lane.deadline
         search.random_salt = f"-lane-{lane.index}"
@@ -803,7 +829,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         log('Room search: permutation does not reserve functions; exact matches require host confirmation. '
             + ('The host builds imported-project drafts.' if net.fork_slug(slug) else 'Candidates compile locally; improvements are shared with the host.'))
     from .compiler_preflight import warnings
-    warning = warnings(net, proj, fn)
+    warning = warnings(net, proj, fn) if lane is None or lane.index == 0 else ''
     if warning:
         log('Compiler preflight (advisory): '+warning)
     log(f'Searching {name}: {minutes} minutes, up to {max_variants:,} compiled candidates. Checking the saved baseline first.')
