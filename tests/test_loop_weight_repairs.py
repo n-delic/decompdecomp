@@ -46,3 +46,31 @@ def test_synthetic_candidates_preserve_execution(tmp_path):
         binary = tmp_path/f'case{index}'
         subprocess.run([compiler,'-O2',str(path),'-o',str(binary)],check=True,timeout=20,capture_output=True)
         subprocess.run([str(binary)],check=True,timeout=5)
+
+
+def test_pointer_load_scope_isolated_from_following_chain_and_control():
+    source = 'int f(int *q){int p;int result;p=1;if(p){p=*(int*)q;result=*q;}else{result=0;}return result;}'
+    proposals = loop_weight_repairs.variants(source,'f')
+    assert len(proposals)==3
+    assert len(loop_weight_repairs.variants(source.replace('int p;','int p=0;'),'f'))==3
+    assert any('do {do {p=*(int*)q;} while (0);} while (0);result=*q;' in text for _,text in proposals)
+    assert all(not loop_weight_repairs.variants(text,'f') for _,text in proposals)
+    for replacement in ('p=load(p);','p=({break; 1;});','p=*(int*)p + 1;'):
+        assert not loop_weight_repairs.variants(source.replace('p=*(int*)q;',replacement),'f')
+    assert not loop_weight_repairs.variants(source,'f','#define p hidden')
+    assert not loop_weight_repairs.variants('int f(int *p){int value;for(;value=*p;){break;}return 0;}','f')
+
+
+def test_pointer_load_scopes_preserve_memory_effects_and_loop_control(tmp_path):
+    compiler=shutil.which('cc')
+    if not compiler:
+        pytest.skip('Host C compiler unavailable')
+    source='int f(int *p){int value;int sum;sum=0;for(int i=0;i<4;i++){value=*p;sum+=value;if(i==1)continue;*p+=1;}return sum;}\nint main(void){int n=2;int r=f(&n);return r!=12 || n!=5;}'
+    proposals=loop_weight_repairs.variants(source,'f')
+    loads=[text for _,text in proposals if 'do {value=*p;' in text]
+    assert len(loads)==3
+    for index,text in enumerate([source]+loads):
+        path=tmp_path/f'load{index}.c';path.write_text(text)
+        binary=tmp_path/f'load{index}'
+        subprocess.run([compiler,'-O2',str(path),'-o',str(binary)],check=True,timeout=20,capture_output=True)
+        subprocess.run([str(binary)],check=True,timeout=5)
