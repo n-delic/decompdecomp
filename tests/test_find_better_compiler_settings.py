@@ -35,6 +35,7 @@ def test_find_better_settings_is_local_and_report_only(tmp_path, monkeypatch):
     assert result["tried"] == 1
     assert result["results"][0]["best"] == 100.0
     assert result["results"][0]["profile"] == ["gcc-2.7.2-psx", ["-O3", "-G8"]]
+    assert result["results"][0]["before_profile"] == ["gcc-2.7.2-psx", ["-O2", "-G8"]]
     assert all(tc == "gcc-2.7.2-psx" and candidate == source for tc, _, candidate in judged)
     assert json.loads(net._project("demo")["config"]) == cfg
     assert net.compiler_comparison_results("demo")[0]["stale"] is False

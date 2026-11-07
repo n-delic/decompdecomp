@@ -690,6 +690,7 @@ function renderCompilerResults() {
   const box = $("dialogBody");
   if (!compilerHasRun) { box.innerHTML = '<p class="small muted">No comparison results yet.</p>'; return; }
   const openFunctions = new Set([...box.querySelectorAll("details.compiler-result[open]")].map(el => el.dataset.function));
+  const openAlternatives = new Set([...box.querySelectorAll("details.compiler-alternatives[open]")].map(el => el.dataset.function));
   const scrollTop = box.scrollTop;
   const filtered = compilerRows.filter(r =>
     compilerResultFilter === "all" || compilerResultFilter === "improved" && r.improved || compilerResultFilter === "exact" && r.exact);
@@ -698,8 +699,22 @@ function renderCompilerResults() {
     : sort === "recent" ? (b.completed_at || 0) - (a.completed_at || 0)
       : (b.best ?? -1) - (a.best ?? -1));
   box.innerHTML = (compilerRows.length ? `<label class="field compiler-result-sort"><span>Sort results</span><select id="compilerResultSort"><option value="best">Best score</option><option value="name">Function</option><option value="recent">Most recent</option></select></label>` : "")
-    + (ordered.length ? ordered.map(r => `<details class="compiler-result" data-function="${esc(r.function)}"${openFunctions.has(r.function) ? " open" : ""}><summary><button class="compiler-function-link" type="button" data-open-compiler-function="${esc(r.function)}" title="Open function ${esc(r.function)}">${esc(r.function)}</button> · ${r.before == null ? "no previous score" : r.before.toFixed(2) + "%"} → ${r.best == null ? "no result" : r.best.toFixed(2) + "%"}${r.exact ? " · exact match" : ""}${r.applied ? " · applied" : ""}${r.stale ? " · inputs changed: retest" : ""}</summary>
-      <div class="compiler-result-actions">${(r.ranked || []).filter(p => p.percent != null && (p.exact || r.before == null || p.percent > r.before + .001)).slice(0, 12).map(p => `<button class="ghost small-btn" type="button" data-apply-function="${esc(r.function)}" data-apply-toolchain="${esc(p.toolchain)}" data-apply-flags="${esc(JSON.stringify(p.flags))}"${r.stale || r.applied ? " disabled" : ""}>${esc(p.toolchain)} ${esc(p.flags.join(" "))} · ${p.percent.toFixed(2)}%${p.exact ? " exact" : ""}</button>`).join("")}</div>${r.apply_error ? `<p class="err-msg">${esc(r.apply_error)}</p>` : ""}</details>`).join("") : `<p class="small muted">${compilerRows.length ? "No results in this view." : "No eligible saved C attempts were compared yet."}</p>`);
+    + (ordered.length ? ordered.map(r => {
+      const score = value => value == null ? "—" : `${value.toFixed(2)}%`;
+      const profile = value => value ? `${esc(value[0])} ${esc(value[1].join(" "))}` : "Unavailable for earlier comparisons";
+      const delta = r.before == null || r.best == null ? "" : ` (${r.best - r.before >= 0 ? "+" : ""}${(r.best - r.before).toFixed(2)} points)`;
+      const alternatives = (r.ranked || []).filter(p => p.percent != null && (!r.profile || p.toolchain !== r.profile[0] || JSON.stringify(p.flags) !== JSON.stringify(r.profile[1]))).slice(0, 12);
+      const apply = p => `<button class="ghost small-btn" type="button" data-apply-function="${esc(r.function)}" data-apply-toolchain="${esc(p.toolchain)}" data-apply-flags="${esc(JSON.stringify(p.flags))}"${r.stale || r.applied ? " disabled" : ""}>Apply these settings</button>`;
+      const winner = (r.ranked || []).find(p => r.profile && p.toolchain === r.profile[0] && JSON.stringify(p.flags) === JSON.stringify(r.profile[1]));
+      return `<details class="compiler-result" data-function="${esc(r.function)}"${openFunctions.has(r.function) ? " open" : ""}><summary><button class="compiler-function-link" type="button" data-open-compiler-function="${esc(r.function)}" title="Open function ${esc(r.function)}">${esc(r.function)}</button> · ${score(r.before)} → ${score(r.best)}${delta}${r.exact ? " · byte identical" : ""}</summary>
+        <div class="compiler-result-detail"><p><b>Score:</b> ${score(r.before)} → ${score(r.best)}${delta}${r.exact ? ' <span class="compiler-exact-badge">Byte identical</span>' : ""}</p>
+        <p><b>Previous settings:</b> <code>${profile(r.before_profile)}</code></p>
+        <p><b>Best tested settings:</b> <code>${profile(r.profile || r.before_profile)}</code></p>
+        <p><b>Status:</b> ${r.stale ? "Inputs changed; retest before applying" : r.applied ? "Applied and rechecked" : r.apply_error ? "Could not apply" : r.improved ? "Ready to apply" : "No better settings found"}</p>
+        ${r.apply_error ? `<p class="err-msg">${esc(r.apply_error)}</p>` : ""}
+        ${r.improved && !r.applied && !r.stale && winner ? apply(winner) : ""}
+        ${alternatives.length ? `<details class="compiler-alternatives" data-function="${esc(r.function)}"${openAlternatives.has(r.function) ? " open" : ""}><summary>Show other candidates (${alternatives.length})</summary><div class="compiler-result-actions">${alternatives.map(p => `<div><code>${esc(p.toolchain)} ${esc(p.flags.join(" "))}</code> · ${score(p.percent)}${p.exact ? " · byte identical" : ""} ${!r.applied && !r.stale && (p.exact || r.before == null || p.percent > r.before + .001) ? apply(p) : ""}</div>`).join("")}</div></details>` : ""}</div></details>`;
+    }).join("") : `<p class="small muted">${compilerRows.length ? "No results in this view." : "No eligible saved C attempts were compared yet."}</p>`);
   if (compilerRows.length) { $("compilerResultSort").value = sort; $("compilerResultSort").onchange = renderCompilerResults; }
   if (compilerRows.some(r => r.improved && !r.stale && !r.applied && r.profile)) {
     box.insertAdjacentHTML("afterbegin", '<button class="ghost small-btn" type="button" id="applyAllCompilerResults">Apply all improvements</button>');

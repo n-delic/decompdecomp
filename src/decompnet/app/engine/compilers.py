@@ -256,7 +256,9 @@ class CompilerMixin:
                           "results": results})
             ranked.sort(key=lambda r: (not r["exact"], r["percent"] is None,
                                        -(r["percent"] or 0), r["toolchain"], r["flags"]))
+            own = compiler_for(self.cfg(proj), fn["vram"])
             result = {"function": fn["name"], "before": baseline, "best": best,
+                      "before_profile": [own["toolchain"], list(own["flags"])],
                       "profile": best_profile, "improved": best_profile is not None,
                       "exact": any(r["exact"] for r in ranked), "ranked": ranked,
                       "candidates": [[tc, list(flags)] for tc, flags in candidates],
