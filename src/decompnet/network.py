@@ -615,9 +615,18 @@ class Network:
         """Shared identity IDs, resolved before a separate project transaction."""
         return {row['id'] for row in self.store.all('SELECT id FROM agents WHERE name IN (?,?)', *MACHINE_AGENTS)}
 
-    def _expire_claims(self, db, *, machine_ids=None) -> None:
+    def _nonexclusive_agent_ids(self):
+        """Resolve legacy speculative leases from the shared identity registry."""
+        from types import SimpleNamespace
+
+        from .permuter_claims import nonexclusive
+        return {row['id'] for row in self.store.all(
+            "SELECT id,name,owner FROM agents WHERE name LIKE '%permuter%'")
+                if nonexclusive(SimpleNamespace(**dict(row)))}
+
+    def _expire_claims(self, db, *, machine_ids=None, nonexclusive_ids=None) -> None:
         from .permuter_claims import clear
-        clear(db)
+        clear(db, agent_ids=nonexclusive_ids)
         now = time.time()
         own = (machine_ids if machine_ids is not None else
                {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)})

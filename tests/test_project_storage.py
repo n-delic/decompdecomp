@@ -861,3 +861,52 @@ def test_room_member_rollups_combine_shared_members_with_project_history(scoped,
     assert board[0]['improved'] == 1 and board[0]['matched'] == 0
     assert board[0]['working'] == ['same_name']
     assert net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == 0
+
+
+def test_local_worker_claims_use_project_and_shared_lease_identities(scoped):
+    from types import SimpleNamespace
+
+    from decompnet import permuter_claims
+    from decompnet.app import local_claims
+    net, stores = scoped
+    with net.store.tx() as db:
+        db.execute("INSERT INTO agents(id,name,token_hash) VALUES(2,'permuter-2','speculative')")
+    # The project has no copy of this identity. Its old speculative lease must
+    # disappear without counting an abandonment before exclusive work starts.
+    with stores[1].tx() as db:
+        db.execute('INSERT INTO claims VALUES(10,2,0,1)')
+    fn = net._function('same_name', 'first')
+    worker = SimpleNamespace(id=1, name='worker')
+    assert local_claims.hold(net, worker, fn, 30)
+    assert stores[1].one('SELECT agent_id FROM claims')['agent_id'] == 1
+    assert stores[1].one('SELECT abandons,permuted FROM functions')[:] == (0, 1)
+    assert not local_claims.hold(net, worker, fn, 30)
+    local_claims.release(net, SimpleNamespace(id=2), fn)
+    assert stores[1].one('SELECT 1 FROM claims')
+    local_claims.release(net, worker, fn)
+    assert permuter_claims.hold(net, SimpleNamespace(id=2, name='permuter-2'), fn, 30)
+    assert stores[1].one('SELECT permuted FROM functions')['permuted'] == 2
+    assert not stores[1].one('SELECT 1 FROM claims')
+    assert stores[2].one('SELECT permuted FROM functions')['permuted'] == 0
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_permutation_input_refresh_rejects_mixed_projects(scoped, tmp_path):
+    from decompnet.app import permuter_inputs
+    net, stores = scoped
+    _saved_projects(net, stores, tmp_path)
+    net.fork_slug = lambda slug: None
+    original_cfg = net.cfg
+    net.cfg = lambda proj: {**original_cfg(proj), 'compiler': {'toolchain': 'test', 'flags': []}}
+    proj = net._project('first')
+    fn = net._function('same_name', 'first')
+    assert permuter_inputs.refresh(net, proj, [fn]) == []
+    with stores[1].tx() as db:
+        db.execute('UPDATE functions SET permuted=4')
+        db.execute("UPDATE context_versions SET header='int changed;'")
+    assert permuter_inputs.refresh(net, proj, [fn]) == [10]
+    assert stores[1].one('SELECT permuted FROM functions')['permuted'] == 0
+    assert not stores[2].one("SELECT 1 FROM settings WHERE key LIKE 'permuter-inputs%'")
+    assert not net.store.one("SELECT 1 FROM settings WHERE key LIKE 'permuter-inputs%'")
+    with pytest.raises(ValueError, match='selected project'):
+        permuter_inputs.refresh(net, proj, [fn, net._function('same_name', 'second')])

@@ -17,9 +17,13 @@ def build_state(proj):
 
 def refresh(net, proj, rows):
     """Adopt existing counters on first observation; later context/target/build changes reopen only idle work."""
+    rows = list(rows)
+    if any(fn['project_id'] != proj['id'] for fn in rows):
+        raise ValueError('Permutation inputs must belong to the selected project')
+    store = net.project_store(proj['id'])
     cfg = net.cfg(proj)
     fork = net.fork_slug(proj['slug'])
-    symbols = [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+    symbols = [tuple(r) for r in store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     build = build_state(proj) if fork else []
     changed = []
     for fn in rows:
@@ -28,7 +32,7 @@ def refresh(net, proj, rows):
         fields = (header, own, symbols, build, fn['unit'], fn['vram'], fn['target'], fn['relocs'], fn['name'])
         digest = hashlib.sha256(repr(fields).encode()).hexdigest()
         key = f'permuter-inputs-v1:{fn["id"]}'
-        with net.store.tx() as db:
+        with store.tx() as db:
             old = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
             if old and old['value'] != digest:
                 if db.execute('SELECT 1 FROM claims WHERE function_id=?', (fn['id'],)).fetchone():

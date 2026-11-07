@@ -98,6 +98,12 @@ snapshot use the same project storage; the linked-byte verdict and atomic
 profile/header/source publication are unchanged. Room claim expiry resolves
 machine identity IDs from the catalog before a separate project transaction.
 
+Local worker holds and releases, speculative permutation turn accounting and
+permutation-input renewal now select the owning project. Separate-store expiry
+resolves machine and legacy speculative identities before entering the project
+writer transaction, without depending on stale project copies of agent names.
+Input renewal rejects mixed-project batches before writing fingerprints.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
