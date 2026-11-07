@@ -171,6 +171,7 @@ $("repositoryAutoCommit").onchange = async () => {
   } finally {
     repositoryAutoCommitBusy = false; finish();
     if (S.slug !== slug) renderRepositoryAutoCommit(S.ov?.auto_commit);
+    if (typeof refreshRepositorySetup === "function") { repositorySetupChecked = 0; refreshRepositorySetup(); }
   }
 };
 
