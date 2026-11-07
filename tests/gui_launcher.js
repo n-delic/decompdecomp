@@ -258,23 +258,28 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   ctx.renderLauncher(box);
   requireOk(box.html.includes("Account removed"), "a removed saved account must require an explicit new choice");
 
-  const accountBox = new Box(); nodes.set("agentAccounts", accountBox);
+  const accountBox = new Box(); nodes.set("agentAccounts-claude", accountBox);
   ctx.money = (value) => `$${value}`;
   ctx.plural = (count, noun) => `${count} ${noun}s`;
   ctx.cmdBox = (command) => `<pre>${command}</pre>`;
   ctx.loadState = async () => {};
+  ctx.S.st.settings.agent_accounts.push({ id: "other", kind: "manual", name: "Other agent account" });
   ctx.S.st.account_usage = [{ kind: "claude", account_id: "a1", name: "Personal", tokens: 100, usd: 0.25, sessions: 2 },
     { kind: "claude", account_id: "old", name: "Previous", tokens: 200, usd: 0.5, sessions: 1 }];
   const pages = fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "js", "pages.js"), "utf8");
-  vm.runInContext(pages.slice(pages.indexOf("function renderAgentAccounts()"), pages.indexOf('$("agRefresh").onclick')), ctx);
-  ctx.renderAgentAccounts();
+  vm.runInContext(pages.slice(pages.indexOf("function renderAgentAccounts(kind)"), pages.indexOf('$("agRefresh").onclick')), ctx);
+  ctx.renderAgentAccounts("claude");
   requireOk(accountBox.html.includes("100 tokens") && accountBox.html.includes("Previous") && accountBox.html.includes("(removed)"),
     "account management must show separate totals and retain removed account history");
+  requireOk(!accountBox.html.includes("Other agent account") && !accountBox.querySelector("[data-account-kind]"),
+    "account settings must belong to their agent without another agent picker");
+  requireOk(pages.includes("<summary>Additional accounts</summary>") && pages.includes('a.uses_accounts ? `<details'),
+    "only agents supporting accounts should have the inline setting");
   ctx.api = async (url, options) => { calls.push({ url, body: options.body }); return ctx.S.st.settings; };
   accountBox.querySelector("[data-account-name]").value = "New account";
   accountBox.querySelector("[data-account-dir]").value = "/tmp/new account";
   await accountBox.querySelector("[data-account-add]").onclick();
-  requireOk(calls.at(-1).url === "/api/agent-accounts" && calls.at(-1).body.name === "New account" &&
+  requireOk(calls.at(-1).url === "/api/agent-accounts" && calls.at(-1).body.kind === "claude" && calls.at(-1).body.name === "New account" &&
     calls.at(-1).body.config_dir === "/tmp/new account", "adding an account must submit its name and directory");
   await accountBox.querySelector('[data-account-remove="a2"]').onclick();
   requireOk(calls.at(-1).body.remove === "a2", "removing an account must target its saved id");

@@ -365,7 +365,7 @@ function renderLauncher(box, compact = true) {
     body = `<label class="field"><span>Account</span><select data-f="account"><option value="" ${!LZ.account ? "selected" : ""}>Default sign-in</option>
       ${missing ? `<option value="${esc(LZ.account)}" selected>Account removed — choose another</option>` : ""}
       ${accounts.map((p) => `<option value="${esc(p.id)}" ${p.id === LZ.account ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
-      <span class="muted small">Add and sign in to accounts on Agents &amp; models. Start another group to use a different account.</span></label>` + body;
+      <span class="muted small">Add accounts under ${esc(a.name)} → Additional accounts on Agents &amp; models. Start another group to use a different account.</span></label>` + body;
   }
   const ready = a.installed;
   // helpers can also polish matched C (app/readable.py), once half the game matches

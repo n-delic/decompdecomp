@@ -115,7 +115,7 @@ Where to start on a gap:
   for by name still comes, and the release, waiting and model-routing rules stay ahead of it. ROM and project mode
   alike, rooms through their host, and saves and progress folders keep the choice.
 
-- **Named Claude accounts (#45).** Add accounts in Agents & models, sign in to each with its own configuration
+- **Named Claude accounts (#45).** Add accounts under Claude Code → Additional accounts in Agents & models, sign in with a separate configuration
   directory, and choose the account when starting helpers. Restarts retain the assignment. Finished sessions keep
   their account identity and recorded usage across projects, including after a helper or account is removed.
   Remaining subscription allowance and automatic account switching are separate work.
