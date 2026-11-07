@@ -38,7 +38,8 @@ window.addEventListener("pywebviewready", () => {
    presses one of its buttons swallows the click (Dismiss on a suggestion did nothing while 8 agents worked). */
 const setHtml = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const hex8 = (n) => "0x" + (n >>> 0).toString(16).toUpperCase().padStart(8, "0");
+// (an address above 4 GB, a 64-bit PC game's, keeps its digits: 0x140001000)
+const hex8 = (n) => "0x" + (n > 0xffffffff ? n.toString(16) : (n >>> 0).toString(16)).toUpperCase().padStart(8, "0");
 const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const pctOf = (best, insns) => (best == null ? null : Math.max(0, 1 - best / Math.max(1, insns * 100)));
 /* A match percentage that never reads 100% before the function really matches (99.6% stays 99.6%). */

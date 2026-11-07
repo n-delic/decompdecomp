@@ -23,6 +23,11 @@ With 14.16 (the `msvc2015` pack) it's Demo Quest as a game of 2017-2019: compile
 own linker (only it writes 2017's Rich entry for itself, its file alignment and debug directory), both run through
 wine on Linux and macOS (wibo can't run them): `build.py 14.16` -> build/14.16/demoquest.exe.
 
+With 14.16-x64 it's Demo Quest as a 64-bit game (x64): compiled by Visual C++ 2017's 64-bit compiler and linked by
+its linker at x64's usual 0x140000000, again without relocations: `build.py 14.16-x64` -> build/14.16-x64/demoquest.exe.
+Every function that calls another or touches the stack has its .pdata entry (its start, end and unwind information),
+as x64 programs have; the leaf functions have none.
+
 --pdb builds it as a game that shipped its program database: compiled with /Zi, linked with /DEBUG (a PDB 2.0, as
 Visual C++ 6.0 wrote them). Only 6.0's: under wibo 1.2.0, 7.1's linker stops at lstrcmpiA with /DEBUG, and 2005's and
 later compilers at NdrClientCall2 with /Zi (their PDB server), so MSF 7.00 PDBs are tests/test_pc_debug.py's own.
@@ -93,9 +98,10 @@ def msvc_bin() -> Path:
 def write_key() -> None:
     """build/demo.json: the game this build made and the address of every symbol in the linker's map, so
     tests/test_consoles.py knows which of the project's functions is which."""
-    # (2017's linker lists the compiler's local labels too, $LN14 and the like: no function of the game's)
+    # (2017's linker lists the compiler's local labels too, $LN14 and the like: no function of the game's; a 64-bit
+    # program's map has 16-digit addresses)
     symbols = {m.group(1): int(m.group(2), 16)
-               for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", (BUILD / "symbols.map").read_text(), re.M)
+               for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8,16}) ", (BUILD / "symbols.map").read_text(), re.M)
                if not m.group(1).startswith("$")}
     (BUILD / "demo.json").write_text(json.dumps({"game": "demoquest.exe", "symbols": symbols}, indent=1), encoding="utf-8")
 
@@ -118,7 +124,8 @@ def main() -> None:
     debug = (["/Zi", "/Fdvc60.pdb"], ["/DEBUG", "/PDB:demoquest.pdb"]) if PDB else ([], [])
     for src in ("game.c", "pcmain.c"):
         run([*runs, next(p for p in (cl / "CL.EXE", cl / "cl.exe") if p.exists()), *CFLAGS, *debug[0], src], env=env)
-    run([*link, "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE", "/FIXED", "/OPT:NOREF",
+    machine = ["/MACHINE:X64"] if VERSION.endswith("-x64") else []
+    run([*link, "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE", "/FIXED", "/OPT:NOREF", *machine,
          *debug[1], "/MAP:symbols.map", "/OUT:demoquest.exe", "pcmain.obj", "game.obj"], env=env)
     if DLL:
         objs = BUILD / "dll_objs"  # (a folder without a program of its own: the import looks in it, and finds .obj)
