@@ -195,6 +195,7 @@ def source_text(source, old, new):
 
 def integrate(net, proj, root, stage, log):
     """Check additions independently; preserve curated C and update only files owned by a prior sync."""
+    store = net.project_store(proj['id'])
     manifest_path = stage/'build.json'
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     cfg = net.cfg(proj)
@@ -217,7 +218,7 @@ def integrate(net, proj, root, stage, log):
     previous = json.loads((stage/STATE).read_text(encoding='utf-8')) if (stage/STATE).exists() else {'owned':{}}
     owned = previous.get('owned',{})
     functions = {f['vram']:f for f in manifest['functions']}
-    rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL ORDER BY vram",proj['id'])
+    rows = store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL ORDER BY vram",proj['id'])
     skipped=[];accepted=[];files=set();rollbacks={}
     for index,row in enumerate(rows):
         progress=getattr(log,'progress',None)
@@ -281,9 +282,9 @@ def integrate(net, proj, root, stage, log):
             trial.setdefault('function_compilers',{})[profile_key]={**profile,'vram':fn['vram'],'function':fn['name']}
         else:
             trial.setdefault('compiler_ranges',[]).insert(0,{**profile,'start':row['vram'],'end':row['vram']+1})
-        for symbol in net.store.all('SELECT name,address FROM symbols WHERE project_id=?',proj['id']):
+        for symbol in store.all('SELECT name,address FROM symbols WHERE project_id=?',proj['id']):
             trial['symbols'].setdefault(symbol['name'],symbol['address'])
-        for symbol in net.store.all('SELECT name,vram FROM functions WHERE project_id=?',proj['id']):
+        for symbol in store.all('SELECT name,vram FROM functions WHERE project_id=?',proj['id']):
             trial['symbols'].setdefault(symbol['name'],symbol['vram'])
         manifest_path.write_text(json.dumps(trial,indent=1)+'\n',encoding='utf-8')
         log('Checking '+row['name']+' in the repository build…')
@@ -302,6 +303,7 @@ def integrate(net, proj, root, stage, log):
 
 def run(net, slug, folder, log=print, *, commit_push=False):
     """Stage, verify and publish commit-ready source additions; preserve the live checkout on failure."""
+    store = net.project_store(slug)
     root=checkout(folder, clean=False)
     with repository_operations.operation(root, slug, 'Syncing saved progress', log) as output:
         if output is None:
@@ -337,7 +339,7 @@ def run(net, slug, folder, log=print, *, commit_push=False):
                     owned[name]=digest(inside(stage,name))
             previous=json.loads((stage/STATE).read_text(encoding='utf-8')) if (stage/STATE).exists() else {}
             report={'format':1,'owned':owned,'accepted':sorted(set(previous.get('accepted',[])+accepted)),'skipped':skipped,
-                    'verified_build':bool(accepted) or previous.get('verified_build',False),'matched_app':net.store.one("SELECT COUNT(*) n FROM functions WHERE project_id=? AND status='matched'",proj['id'])['n']}
+                    'verified_build':bool(accepted) or previous.get('verified_build',False),'matched_app':store.one("SELECT COUNT(*) n FROM functions WHERE project_id=? AND status='matched'",proj['id'])['n']}
             (stage/STATE).write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8');files.add(STATE)
             if commit_push:
                 from . import saves

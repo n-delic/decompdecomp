@@ -24,31 +24,33 @@ PENDING = """SELECT f.id,f.name,f.unit,f.vram,f.rom_offset,f.best_score,b.score 
 
 
 def status(net, proj):
+    store = net.project_store(proj['id'])
     cfg = net.cfg(proj).get('score_commits', {})
     state = {key: cfg.get(key, default) for key, default in
              (('enabled', False), ('threshold', 10), ('error', ''), ('last_commit', ''))}
-    state['pending'] = net.store.one('SELECT COUNT(*) AS n FROM ('+PENDING+')', proj['id'])['n'] if state['enabled'] else 0
+    state['pending'] = store.one('SELECT COUNT(*) AS n FROM ('+PENDING+')', proj['id'])['n'] if state['enabled'] else 0
     if state['enabled']:
         state['items'] = [{'name':row['name'], 'before':row['baseline_score'], 'score':row['best_score']}
-                          for row in net.store.all(PENDING+' ORDER BY f.name LIMIT 20', proj['id'])] if state['pending'] else []
+                          for row in store.all(PENDING+' ORDER BY f.name LIMIT 20', proj['id'])] if state['pending'] else []
     return state
 
 
 def configure(net, slug, enabled, threshold=10, folder=''):
+    store = net.project_store(slug)
     if not isinstance(enabled, bool):raise NetworkError('Choose score-improvement commits with a boolean value.')
     if isinstance(threshold, bool) or not isinstance(threshold, int) or not 1 <= threshold <= 10000:
         raise NetworkError('Choose a batch size from 1 to 10,000 improved functions.')
-    proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+    proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None:raise NetworkError('Open a project before configuring score-improvement commits.')
     settings = dict(enabled=enabled, threshold=threshold, token=uuid.uuid4().hex, error='')
     if not enabled:
         # Opting out must not wait for a build, source recheck or a queued push.
-        with net.store.tx() as db:
+        with store.tx() as db:
             row = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
             cfg = json.loads(row['config']);cfg['score_commits'] = settings
             db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), proj['id']))
             db.execute('DELETE FROM score_commit_baselines WHERE project_id=?', (proj['id'],))
-        return status(net, net.store.one('SELECT * FROM projects WHERE id=?', proj['id']))
+        return status(net, store.one('SELECT * FROM projects WHERE id=?', proj['id']))
     with net.progress._project_lock(slug):
         with repository_operations.operation(folder, slug, 'Configuring improvement commits', lambda _: None) as operation:
             if operation is None:
@@ -60,7 +62,7 @@ def configure(net, slug, enabled, threshold=10, folder=''):
                 if previous.get('enabled') and any(previous.get(key) != settings[key] for key in ('folder', 'branch')):
                     raise NetworkError('The progress checkout or branch changed. Disable and re-enable score-improvement commits.')
             # Baselines and preference change together; merely changing the threshold keeps pending improvements.
-            with net.store.tx() as db:
+            with store.tx() as db:
                 row = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
                 cfg = json.loads(row['config'])
                 if not enabled or not previous.get('enabled'):
@@ -69,7 +71,7 @@ def configure(net, slug, enabled, threshold=10, folder=''):
                         db.execute('INSERT INTO score_commit_baselines(project_id,function_id,score) SELECT project_id,id,best_score FROM functions WHERE project_id=?', (proj['id'],))
                 cfg['score_commits'] = settings
                 db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), proj['id']))
-        return status(net, net.store.one('SELECT * FROM projects WHERE id=?', proj['id']))
+        return status(net, store.one('SELECT * FROM projects WHERE id=?', proj['id']))
 
 
 def _change(net, slug, token, **values):
@@ -78,15 +80,16 @@ def _change(net, slug, token, **values):
     auto_push._change(net, slug, apply)
 
 
-def _acknowledge(net, rows):
-    with net.store.tx() as db:
+def _acknowledge(net, rows, *, project_id):
+    with net.project_store(project_id).tx() as db:
         for row in rows:
             db.execute('INSERT INTO score_commit_baselines(project_id,function_id,score) '
-                       'SELECT project_id,id,? FROM functions WHERE id=? '
-                       'ON CONFLICT(project_id,function_id) DO UPDATE SET score=excluded.score', (row['best_score'], row['id']))
+                       'SELECT project_id,id,? FROM functions WHERE id=? AND project_id=? '
+                       'ON CONFLICT(project_id,function_id) DO UPDATE SET score=excluded.score', (row['best_score'], row['id'], project_id))
 
 
 def scoped_snapshot(net, proj, root, rows, output):
+    store = net.project_store(proj['id'])
     files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, allow_unrelated_edits=True)
     prefix = saves.default_folder(net, proj['slug']).resolve().relative_to(root).as_posix()
     prefix = '' if prefix == '.' else prefix + '/'
@@ -97,7 +100,7 @@ def scoped_snapshot(net, proj, root, rows, output):
         raise NetworkError('Commit a manual progress checkpoint after game or function-layout changes, then retry improvement commits.')
     # Synchronization may have judged contributions; select only still-improved open functions.
     wanted = {row['id'] for row in rows}
-    rows = [row for row in net.store.all(PENDING, proj['id']) if row['id'] in wanted]
+    rows = [row for row in store.all(PENDING, proj['id']) if row['id'] in wanted]
     chosen, needed = {}, []
     names = {row['name'] for row in rows}
     for row in rows:
@@ -131,10 +134,11 @@ def scoped_snapshot(net, proj, root, rows, output):
 
 
 def process(net, slug, output=lambda message: None):
-    proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+    store = net.project_store(slug)
+    proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
     settings = net.cfg(proj).get('score_commits', {}) if proj else {}
     if not settings.get('enabled') or settings.get('retry_at', 0) > time.time():return
-    rows = net.store.all(PENDING, proj['id'])
+    rows = store.all(PENDING, proj['id'])
     if len(rows) < settings['threshold']:return
     project_lock = net.progress._project_lock(slug)
     if not project_lock.acquire(blocking=False):return
@@ -152,17 +156,17 @@ def process(net, slug, output=lambda message: None):
                 raise NetworkError('Commit a manual checkpoint after game or function-layout changes, then retry improvement commits.')
             # Recover a commit completed before acknowledgement, or a user's manual checkpoint.
             acknowledged = [row for row in rows if base.get('functions', {}).get(row['name'], {}).get('best_score', float('inf')) <= row['best_score']]
-            _acknowledge(net, acknowledged)
+            _acknowledge(net, acknowledged, project_id=proj['id'])
             rows = [row for row in rows if row['id'] not in {item['id'] for item in acknowledged}]
             if len(rows) < settings['threshold']:return
             files, selected, head = scoped_snapshot(net, proj, root, rows, output)
             if len(selected) < settings['threshold']:return
-            fresh = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
+            fresh = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
             if net.cfg(fresh).get('score_commits', {}).get('token') != settings['token']:return
             details = '\n'.join(f"{row['name']}: distance {row['baseline_score'] if row['baseline_score'] is not None else 'unscored'} -> {row['best_score']}" for row in selected)
             commit = repository_progress.commit_snapshot(root, files, set(files), output, expected_head=head,
                 expected_branch=settings['branch'], message=f'Improve drafts for {len(selected)} functions\n\n'+details)
-            _acknowledge(net, selected)
+            _acknowledge(net, selected, project_id=proj['id'])
             _change(net, slug, settings['token'], error='', last_commit=commit, retry_at=0)
             output(f'Committed improved drafts for {len(selected)} functions. Automatic push uses its own commit threshold.')
     except (NetworkError, OSError, ValueError, KeyError) as error:

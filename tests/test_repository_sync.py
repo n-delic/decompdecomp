@@ -59,6 +59,7 @@ if (r/'fail-full').exists():sys.exit(1)
                         _update_cfg=lambda slug,fn:fn(cfg),_compile=lambda *args:SimpleNamespace(ok=True,obj=b'fake object'),
                         _evaluate=lambda *args:(object(),True,[]),
                         _candidate_checks=lambda *args:{'export':{'ready':True}})
+    net.project_store = lambda _: net.store
     return root,net,rows
 
 

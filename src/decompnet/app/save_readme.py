@@ -35,7 +35,8 @@ def _replace(text, name, content):
 
 def update(net, proj, folder, initial, best, details=None):
     """Refresh counts and graphics in both save modes; create the guide only on the first save."""
-    rows = net.store.all(f"SELECT name, status, best_score, {SET_ASIDE} AS aside FROM functions "
+    store = net.project_store(proj['id'])
+    rows = store.all(f"SELECT name, status, best_score, {SET_ASIDE} AS aside FROM functions "
                          f"WHERE project_id=? AND {IN_BUILD} ORDER BY vram, unit, name", proj["id"])
     states = [(r["name"], "aside" if r["aside"] else "matched" if r["status"] == "matched" else
                "attempt" if r["best_score"] is not None else "open") for r in rows]

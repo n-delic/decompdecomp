@@ -21,14 +21,20 @@ def layout_shape(manifest):
 
 def status(net, proj):
     """Keep background failures visible without interrupting matching or opening a notification banner."""
+    store = net.project_store(proj['id'])
     cfg = net.cfg(proj)
     enabled = bool(cfg.get('auto_commit_matches'))
     if not enabled:
         return {'enabled': False, 'pending': 0, 'error': '', 'last_commit': ''}
-    pending = net.store.one("SELECT COUNT(*) n FROM auto_match_commits WHERE project_id=? AND state='pending'", proj['id'])['n']
-    error = net.store.one("SELECT error FROM auto_match_commits WHERE project_id=? AND state='pending' AND error IS NOT NULL ORDER BY created_at DESC LIMIT 1", proj['id'])
-    last = net.store.one("SELECT commit_sha FROM auto_match_commits WHERE project_id=? AND state='done' ORDER BY created_at DESC LIMIT 1", proj['id'])
-    items = [dict(row) for row in net.store.all("SELECT f.name,q.error,a.name AS agent,t.via AS method FROM auto_match_commits q JOIN functions f ON f.id=q.function_id LEFT JOIN agents a ON a.id=q.agent_id LEFT JOIN attempts t ON t.id=q.attempt_id WHERE q.project_id=? AND q.state='pending' ORDER BY q.created_at LIMIT 20", proj['id'])]
+    pending = store.one("SELECT COUNT(*) n FROM auto_match_commits WHERE project_id=? AND state='pending'", proj['id'])['n']
+    error = store.one("SELECT error FROM auto_match_commits WHERE project_id=? AND state='pending' AND error IS NOT NULL ORDER BY created_at DESC LIMIT 1", proj['id'])
+    last = store.one("SELECT commit_sha FROM auto_match_commits WHERE project_id=? AND state='done' ORDER BY created_at DESC LIMIT 1", proj['id'])
+    items = [dict(row) for row in store.all("SELECT f.name,q.error,q.agent_id,t.via AS method FROM auto_match_commits q JOIN functions f ON f.id=q.function_id LEFT JOIN attempts t ON t.id=q.attempt_id WHERE q.project_id=? AND q.state='pending' ORDER BY q.created_at LIMIT 20", proj['id'])]
+    names = {row['id']: row['name'] for row in net.store.all(
+        'SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))',
+        json.dumps(sorted({item['agent_id'] for item in items if item['agent_id'] is not None})))}
+    for item in items:
+        item['agent'] = names.get(item.pop('agent_id'))
     return {'enabled': enabled, 'pending': pending, 'items': items, 'error': error['error'] if error else '',
             'last_commit': last['commit_sha'] if last else ''}
 
@@ -58,6 +64,7 @@ def checkout_settings(net, slug, folder):
 
 def configure(net, slug, enabled, folder=''):
     """Checking the box authorizes future local commits only; disabling cancels uncommitted work."""
+    store = net.project_store(slug)
     if not isinstance(enabled, bool):
         raise NetworkError('Choose automatic commits with a boolean value.')
     proj = net.project_row(slug)
@@ -67,27 +74,28 @@ def configure(net, slug, enabled, folder=''):
         values.update(auto_commit_folder=str(root), auto_commit_branch=branch)
     net._update_cfg(slug, lambda cfg: cfg.update(values))
     if not enabled:
-        with net.store.tx() as db:
+        with store.tx() as db:
             db.execute("UPDATE auto_match_commits SET state='cancelled',error=NULL WHERE project_id=? AND state='pending'", (proj['id'],))
-    return status(net, net.store.one('SELECT * FROM projects WHERE id=?', proj['id']))
+    return status(net, store.one('SELECT * FROM projects WHERE id=?', proj['id']))
 
 
 def enqueue(net, proj, function_id, *, restored=False):
     """Queue a transition into matched, after its normal exact-verdict record has committed."""
+    store = net.project_store(proj['id'])
     try:
         if not net.cfg(proj).get('auto_commit_matches') or not net.is_rom(proj):
             return
-        if restored and net.store.one("SELECT 1 FROM auto_match_commits WHERE function_id=? AND state='pending'", function_id):
+        if restored and store.one("SELECT 1 FROM auto_match_commits WHERE function_id=? AND state='pending'", function_id):
             return
-        row = net.store.one('SELECT f.name,f.vram,f.status,f.readable,f.matched_agent_id,v.attempt_id,v.details,v.source,v.header,a.created_at FROM functions f '
+        row = store.one('SELECT f.name,f.vram,f.status,f.readable,f.matched_agent_id,v.attempt_id,v.details,v.source,v.header,a.created_at FROM functions f '
                             'JOIN verified_matches v ON v.function_id=f.id JOIN attempts a ON a.id=v.attempt_id WHERE f.id=?', function_id)
         if row is None or row['status'] != 'matched':
             return
         agent = net.store.one('SELECT name FROM agents WHERE id=?', row['matched_agent_id'])
         snapshot = {'details': json.loads(row['details']), 'source': row['source'], 'header': row['header'],
                     'name': row['name'], 'info': {'vram': row['vram'], 'matched_by': agent['name'] if agent else '', 'readable': bool(row['readable'])}}
-        snapshot['origin'] = match_commit_notes.origin(net, row['attempt_id'], snapshot['info']['matched_by'], restored=restored)
-        with net.store.tx() as db:
+        snapshot['origin'] = match_commit_notes.origin(net, row['attempt_id'], snapshot['info']['matched_by'], restored=restored, project_id=proj['id'])
+        with store.tx() as db:
             fresh = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
             if fresh is None or not json.loads(fresh['config']).get('auto_commit_matches'):
                 return
@@ -100,6 +108,7 @@ def enqueue(net, proj, function_id, *, restored=False):
 
 def scoped_snapshot(net, proj, root, job, output):
     """Advance only one function in the committed manifest, retaining its exact context and evidence."""
+    store = net.project_store(proj['id'])
     head = repository_git.git(root, 'rev-parse', 'HEAD')
     files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, allow_unrelated_edits=True)
     folder = saves.default_folder(net, proj['slug']).resolve()
@@ -107,7 +116,7 @@ def scoped_snapshot(net, proj, root, job, output):
     prefix = '' if prefix == '.' else prefix + '/'
     manifest_path = prefix + saves.MANIFEST
     base = json.loads(repository_git.git(root, 'show', 'HEAD:' + manifest_path))
-    fn = net.store.one('SELECT * FROM functions WHERE id=?', job['function_id'])
+    fn = store.one('SELECT * FROM functions WHERE id=?', job['function_id'])
     if fn is None or fn['status'] != 'matched':
         raise NetworkError('The queued function no longer matches. Review it before retrying automatic commits.')
     name = fn['name']
@@ -160,13 +169,14 @@ def scoped_snapshot(net, proj, root, job, output):
 
 def process(net, slug, output=log.info):
     """Retry durable pending commits from the autosave worker; never push or block a compiler caller."""
-    proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+    store = net.project_store(slug)
+    proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None or not net.cfg(proj).get('auto_commit_matches'):
         return
-    for job in net.store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY created_at LIMIT 20", proj['id'], time.time()):
+    for job in store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY created_at LIMIT 20", proj['id'], time.time()):
         check = getattr(output, 'check_cancel', None)
         if check:check()
-        proj = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
+        proj = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
         if proj is None:return
         cfg = net.cfg(proj)
         if not cfg.get('auto_commit_matches'):return
@@ -177,9 +187,9 @@ def process(net, slug, output=log.info):
             with repository_operations.operation(root, slug, 'Committing a verified match', output) as log:
                 if log is None:return
                 # Another autosave worker may have completed this job while we read the queue.
-                pending = net.store.one("SELECT 1 FROM auto_match_commits WHERE id=? AND state='pending'", job['id'])
+                pending = store.one("SELECT 1 FROM auto_match_commits WHERE id=? AND state='pending'", job['id'])
                 if not pending:continue
-                note = net.store.one('SELECT text FROM notes WHERE function_id=? AND agent_id=? AND created_at>=? ORDER BY id DESC LIMIT 1',
+                note = store.one('SELECT text FROM notes WHERE function_id=? AND agent_id=? AND created_at>=? ORDER BY id DESC LIMIT 1',
                                      job['function_id'], job['agent_id'], job['notes_after'])
                 message = match_commit_notes.message(net, job, note)
                 if not repository_sync.progress_checkout(net, slug, root):
@@ -197,17 +207,17 @@ def process(net, slug, output=log.info):
                     log('Preparing saved files for '+json.loads(job['snapshot'])['name']+'…')
                     files, paths, head = scoped_snapshot(net, proj, root, job, log)
                     # Disabling or moving the checkout cancels publication too.
-                    fresh = net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
+                    fresh = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
                     fresh_cfg = net.cfg(fresh) if fresh else {}
                     if not fresh_cfg.get('auto_commit_matches') or any(fresh_cfg.get(key) != cfg.get(key)
                             for key in ('auto_commit_folder', 'auto_commit_branch')):
                         return
                     commit = repository_progress.commit_snapshot(root, files, paths, log, expected_head=head,
                              expected_branch=branch, message=message, allow_empty=True)
-                with net.store.tx() as db:
+                with store.tx() as db:
                     db.execute("UPDATE auto_match_commits SET state='done',commit_sha=?,error=NULL WHERE id=?", (commit, job['id']))
         except (NetworkError, OSError, ValueError, KeyError) as error:
-            with net.store.tx() as db:
+            with store.tx() as db:
                 db.execute('UPDATE auto_match_commits SET error=?,retry_at=? WHERE id=?', (str(error) if isinstance(error, NetworkError) else 'Could not read the progress checkpoint. Check its files and Git setup, then retry.', time.time()+15, job['id']))
         finally:
             project_lock.release()

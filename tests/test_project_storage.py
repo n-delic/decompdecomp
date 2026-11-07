@@ -321,3 +321,219 @@ def test_implicit_claim_packet_recovers_project_scope_from_claim_label(scoped, m
     text = '## CLAIMED: first/same_name\nCandidate C'
     assert agent_tokens.claim_packet(net, agent, None, text) == text
     assert 'No new functions were claimed' in agent_tokens.claim_packet(net, agent, None, text)
+
+
+def _saved_projects(net, stores, tmp_path):
+    import json
+
+    from decompnet.app.engine.core import Core
+    from decompnet.app.knowledge import SCHEMA
+    from decompnet.app.progress import Progress
+
+    net.cfg = Core.cfg
+    net.is_rom = Core.is_rom.__get__(net)
+    for pid, slug in ((1, 'first'), (2, 'second')):
+        folder = tmp_path / slug
+        folder.mkdir()
+        cfg = {'kind': 'rom', 'platform': 'n64', 'rom': {'sha1': f'synthetic-{pid}'}}
+        with stores[pid].tx() as db:
+            db.execute('UPDATE projects SET root=?,config=?', (str(folder), json.dumps(cfg)))
+            db.execute(SCHEMA[0])
+    net.progress = Progress(net)
+    return net.progress
+
+
+def test_progress_sync_and_manual_save_only_publish_the_selected_project(scoped, tmp_path, monkeypatch):
+    import json
+
+    from decompnet.app import saves
+
+    net, stores = scoped
+    progress = _saved_projects(net, stores, tmp_path)
+    with stores[1].tx() as db:
+        db.execute("UPDATE functions SET best_source='int first_draft;',best_score=10,best_agent_id=1")
+        db.execute("INSERT INTO notes(project_id,function_id,agent_id,text) VALUES(1,10,1,'first note')")
+        # Agent identity is catalog-owned even if a stale local copy remains.
+        db.execute("UPDATE agents SET name='stale identity'")
+    with stores[2].tx() as db:
+        db.execute("UPDATE functions SET best_source='int second_draft;',best_score=11,best_agent_id=1")
+    original = net.store.all
+
+    def identities_only(sql, *args):
+        assert sql.startswith('SELECT id,name FROM agents')
+        return original(sql, *args)
+
+    monkeypatch.setattr(net.store, 'all', identities_only)
+    assert progress.sync('first', force=True)
+    assert progress.sync('second', force=True)
+    one, two = saves.default_folder(net, 'first'), saves.default_folder(net, 'second')
+    assert (one/'best/same_name.c').read_text() == 'int first_draft;\n'
+    assert (two/'best/same_name.c').read_text() == 'int second_draft;\n'
+    first = json.loads((one/saves.MANIFEST).read_text())
+    second = json.loads((two/saves.MANIFEST).read_text())
+    assert first['notes'][0]['by'] == 'worker'
+    assert first['notes'][0]['text'] == 'first note' and second['notes'] == []
+    assert first['functions']['same_name']['best_by'] == 'worker'
+    assert stores[1].one('SELECT project_id FROM progress_state')['project_id'] == 1
+    assert stores[2].one('SELECT project_id FROM progress_state')['project_id'] == 2
+    assert net.store.one('SELECT COUNT(*) n FROM progress_state')['n'] == 0
+    before = (two/saves.MANIFEST).read_bytes()
+    result = saves.save(net, 'first', tmp_path/'backup')
+    assert result['best'] == 1
+    assert (tmp_path/'backup/best/same_name.c').read_text() == 'int first_draft;\n'
+    assert (two/saves.MANIFEST).read_bytes() == before
+    assert saves.save_folder(net, 'first') == (tmp_path/'backup').resolve()
+    assert saves.save_folder(net, 'second') == two
+
+
+def test_autosave_discovers_operational_paths_and_policy_not_catalog_copies(scoped, tmp_path):
+    import json
+
+    from decompnet.app.saves import Autosave
+
+    net, stores = scoped
+    _saved_projects(net, stores, tmp_path)
+    auto = Autosave(net)
+    rows = auto._projects()
+    assert [r['root'] for r in rows] == [str(tmp_path/'first'), str(tmp_path/'second')]
+    with stores[2].tx() as db:
+        cfg = json.loads(db.execute('SELECT config FROM projects').fetchone()['config'])
+        cfg['auto_commit_matches'] = True
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+    assert json.loads(auto._projects()[1]['config'])['auto_commit_matches']
+    assert net.store.one('SELECT config FROM projects WHERE id=2')['config'] == '{}'
+
+
+def test_transaction_fence_covers_nested_stores_rollback_and_callbacks(scoped):
+    from decompnet.store import in_transaction
+
+    net, stores = scoped
+    seen = []
+    assert not in_transaction()
+    with pytest.raises(RuntimeError, match='cancel'):
+        with stores[1].tx():
+            assert in_transaction()
+            with stores[1].tx():
+                assert in_transaction()
+            with stores[2].try_tx() as db:
+                assert db is not None and in_transaction()
+                stores[2].after_commit(lambda: seen.append(in_transaction()))
+            assert seen == [True]  # the first project's outer transaction remains open
+            with net.store.tx():
+                assert in_transaction()
+            raise RuntimeError('cancel')
+    assert not in_transaction()
+    with stores[1].tx():
+        stores[1].after_commit(lambda: seen.append(in_transaction()))
+    assert seen == [True, False]
+
+
+def test_transaction_fence_is_thread_local_and_defers_other_project_sync(scoped, tmp_path):
+    from decompnet.store import in_transaction
+
+    net, stores = scoped
+    progress = _saved_projects(net, stores, tmp_path)
+
+    def other_thread():
+        before = in_transaction()
+        with stores[2].tx():
+            during = in_transaction()
+        return before, during, in_transaction()
+
+    with stores[1].tx():
+        assert progress.sync('second', force=True) is False
+        assert not (tmp_path/'second/progress').exists()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(other_thread).result(timeout=5) == (False, True, False)
+        assert in_transaction()
+    assert not in_transaction()
+    assert progress.sync('second', force=True)
+
+
+def test_progress_policy_and_score_acknowledgements_use_the_selected_store(scoped, tmp_path):
+    from decompnet.app import auto_push, score_commits
+
+    net, stores = scoped
+    _saved_projects(net, stores, tmp_path)
+    auto_push._change(net, 'second', lambda cfg: cfg.update(instructions='second project'))
+    assert net.cfg(net._project('second'))['instructions'] == 'second project'
+    assert 'instructions' not in net.cfg(net._project('first'))
+    score_commits._acknowledge(net, [{'id':10, 'best_score':8}, {'id':20, 'best_score':9}], project_id=2)
+    assert [tuple(r) for r in stores[2].all('SELECT project_id,function_id,score FROM score_commit_baselines')] == [(2, 20, 9)]
+    assert stores[1].one('SELECT COUNT(*) n FROM score_commit_baselines')['n'] == 0
+    assert net.store.one('SELECT COUNT(*) n FROM score_commit_baselines')['n'] == 0
+    assert net.store.one('SELECT config FROM projects WHERE id=2')['config'] == '{}'
+
+
+def test_saved_verification_history_stays_project_local_and_never_awards_a_match(scoped):
+    from decompnet import match_bundle
+
+    net, stores = scoped
+    first = net._function('same_name', 'first')
+    source = 'int same_name(void) { return 0; }'
+    net._record(first, Agent(1, 'worker', None), 0, source, 1, matched=True)
+    bundle = match_bundle.portable(net, 1)
+    assert bundle['matches']['same_name']['verdict'] == 'exact'
+    assert not match_bundle.portable(net, 2)
+    match_bundle.restore_evidence_many(net, 2, [('same_name', 'same_name')], {'verification': bundle})
+    restored = match_bundle.portable(net, 2)
+    assert restored['matches']['same_name']['imported']
+    assert source in restored['sources'].values()
+    assert stores[2].one('SELECT status,best_source FROM functions')['status'] == 'open'
+    assert stores[2].one('SELECT status,best_source FROM functions')['best_source'] is None
+    assert net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'") is None
+
+
+def test_autosave_legacy_catalog_fast_path_does_not_add_per_project_queries(scoped, monkeypatch):
+    from decompnet.app.saves import Autosave
+    from decompnet.network import Network
+    from decompnet.request_timing import capture
+
+    net, _ = scoped
+    monkeypatch.setattr(net, 'project_store', Network.project_store.__get__(net))
+    auto = Autosave(net)
+    auto._projects()  # warm the existing catalog revision cache
+    with capture() as timing:
+        assert len(auto._projects()) == 2
+    assert timing['queries'] == 1  # the catalog revision token, no N+1 path/config lookups
+
+
+def test_shutdown_flush_discovers_dirty_state_in_each_project_store(scoped, tmp_path, monkeypatch):
+    net, stores = scoped
+    progress = _saved_projects(net, stores, tmp_path)
+    progress.sync('first', force=True)
+    progress.sync('second', force=True)
+    with stores[1].tx() as db:
+        db.execute("UPDATE functions SET best_source='int changed;' WHERE id=10")
+    seen = []
+    monkeypatch.setattr(progress, 'sync', lambda slug, **kw: seen.append(slug))
+    assert progress.flush() == {}
+    assert seen == ['first']
+
+
+def test_match_commit_attribution_reads_project_attempts_and_shared_identities(scoped, tmp_path):
+    import json
+
+    from decompnet.app import match_commit_notes, match_commits
+
+    net, stores = scoped
+    _saved_projects(net, stores, tmp_path)
+    fn = net._function('same_name', 'second')
+    net._record(fn, Agent(1, 'worker', None), 5, 'int candidate;', 1, via='permuter')
+    aid = stores[2].one('SELECT id FROM attempts')['id']
+    with stores[2].tx() as db:
+        db.execute("UPDATE agents SET name='stale local name'")
+        db.execute("INSERT INTO repair_examples(project_id,function_id,created_at,category,status,explanation,evidence,attempt_id) "
+                   "VALUES(2,20,0,'types','accepted','Scoped repair',?,?)",
+                   (json.dumps({'after': {'source_sha256': 'source'}}), aid))
+        db.execute("UPDATE projects SET config=json_set(config,'$.auto_commit_matches',json('true'))")
+        db.execute('INSERT INTO auto_match_commits(id,project_id,function_id,attempt_id,agent_id,created_at,notes_after,snapshot) '
+                   "VALUES('job',2,20,?,1,0,0,?)", (aid, json.dumps({
+                       'name': 'same_name', 'info': {}, 'details': {'source_sha256': 'source'}})))
+    assert match_commit_notes.origin(net, aid, '', project_id=2) == {'agent': 'worker', 'method': 'permuter'}
+    state = match_commits.status(net, net._project('second'))
+    assert state['pending'] == 1 and state['items'][0]['agent'] == 'worker'
+    job = stores[2].one('SELECT * FROM auto_match_commits')
+    message = match_commit_notes.message(net, job, None)
+    assert 'Matched by: worker' in message and 'Repair explanation: Scoped repair' in message
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == 0

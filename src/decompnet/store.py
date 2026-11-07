@@ -15,6 +15,19 @@ from pathlib import Path
 
 from .read_cache import ReadCache
 
+_transactions = threading.local()
+
+
+def in_transaction() -> bool:
+    """Whether this thread holds a write transaction on any application Store.
+
+    Long file synchronization must not run inside another project's transaction:
+    acquiring a second project's locks there can invert the lock order. This is a
+    transaction fence only; project/database selection remains explicit.
+    """
+    return bool(getattr(_transactions, 'depth', 0))
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents(
   id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, owner TEXT, token_hash TEXT UNIQUE NOT NULL,
@@ -647,6 +660,7 @@ class Store:
                 if not busy:
                     self._local.in_tx = True
                     self._local.after_commit = []
+                    _transactions.depth = getattr(_transactions, 'depth', 0) + 1
                     try:
                         yield self.conn
                         self.conn.execute("COMMIT")
@@ -656,6 +670,7 @@ class Store:
                         raise
                     finally:
                         self._local.in_tx = False
+                        _transactions.depth -= 1
                     callbacks.extend(self._local.after_commit)
                     self._local.after_commit = []
             if not busy:break
