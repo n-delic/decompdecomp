@@ -123,8 +123,12 @@ Saved-progress synchronization keeps its per-project lock while checking dirty
 state, configuration and existing file signatures. If those checks establish an
 unchanged project, it returns without taking the shared verification slot. This
 also applies to forced checks that verify an unchanged full file signature.
-Actual imports, progress writes and verification still acquire that shared slot;
-project metadata, pause and cancellation state are rechecked after waiting.
+After a restart, there is no in-memory signature: the check instead reads and
+hashes all saved files against the durable baseline. An identical snapshot can
+return or publish local database changes through the existing guarded publisher
+without waiting for another project's bulk recheck. Changed snapshots still enter
+the shared import/verification lane; project metadata, pause and cancellation state
+are rechecked after waiting.
 This removes an unrelated-project queue from no-op checks. It does not bypass
 same-project synchronization or guarantee that a real import/full recheck is fast.
 

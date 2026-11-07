@@ -1102,7 +1102,7 @@ def test_read_only_view_does_not_bypass_judging_synchronization(project, monkeyp
 
 
 def test_sync_activity_is_project_scoped_and_cleared_on_failure(project, monkeypatch):
-    net, _, _ = project
+    net, folder, _ = project
     slug = "game"
     entered, release = threading.Event(), threading.Event()
     errors = []
@@ -1114,6 +1114,7 @@ def test_sync_activity_is_project_scoped_and_cleared_on_failure(project, monkeyp
         raise RuntimeError('verification failed')
     monkeypatch.setattr(net.progress, '_sync', blocked_sync)
     net.progress.signatures.clear()
+    manifest(folder,instructions="external edit requires synchronization")
     def run():
         try:
             net.progress.sync(slug, force=True)
@@ -1557,6 +1558,7 @@ def test_background_checks_are_quiet_until_a_full_recheck_is_known(project, monk
         return original_sync(*args)
     monkeypatch.setattr(net.progress, '_sync', sync)
     net.progress.signatures.clear()
+    manifest(folder,instructions="external edit requires synchronization")
     net.progress.sync('game', force=True)
     assert initial and initial[0]['phase'] == 'Comparing saved files'
     assert initial[0]['full_recheck'] is False
@@ -2257,3 +2259,108 @@ def test_verification_wait_is_cancellable_without_releasing_someone_elses_slot(p
     assert busy==[False]
     worker.resume('game')
     assert worker.sync('game',force=True)
+
+
+@pytest.mark.parametrize('change', ['none', 'local', 'same-bytes'])
+def test_cold_unchanged_progress_does_not_wait_for_another_projects_verifier(project, change):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net,folder,judged=project
+    if change=='local':
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='local draft',best_score=50 WHERE name='f'")
+    elif change=='same-bytes':
+        path=folder/saves.MANIFEST
+        path.write_text(path.read_text())
+    # A fresh app has the durable baseline but no acknowledged in-memory signature.
+    worker=net.progress=Progress(net)
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(worker.sync,'game',force=True)
+        try:
+            result=future.result(timeout=2)
+            assert result==(change=='local')
+            assert not worker.verification_slot.acquire(blocking=False)
+            assert not judged
+            assert worker.signatures.get('game') is not None
+            if change=='local':assert (folder/'best/f.c').read_text()=='local draft\n'
+        finally:worker.verification_slot.release()
+        future.result(timeout=5)
+    assert not worker.sync('game',force=True)
+
+
+def test_cold_changed_progress_still_waits_then_judges_latest_source(project,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net,folder,judged=project
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good external source')
+    worker=net.progress=Progress(net);slot=worker.verification_slot;waiting=threading.Event()
+    class Slot:
+        def acquire(self,*,blocking):
+            acquired=slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+    monkeypatch.setattr(worker,'verification_slot',Slot())
+    slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(worker.sync,'game',force=True)
+        try:
+            assert waiting.wait(2)
+            assert not future.done() and not judged
+            (folder/'src/f.c').write_text('good newer external source')
+        finally:slot.release()
+        assert future.result(timeout=5)
+    assert judged==[('f','good newer external source')]
+    assert net._function('f','game')['matched_source']=='good newer external source'
+
+
+def test_cold_noop_does_not_acknowledge_an_edit_arriving_after_snapshot(project,monkeypatch):
+    net,folder,judged=project
+    worker=net.progress=Progress(net)
+    signature=worker._signature;calls=[]
+    def racing_signature(path):
+        calls.append(1)
+        # Before final acknowledgement: the initial read and its stability check
+        # both saw the old files. This new source must be found next time.
+        if len(calls)==4:
+            (folder/'src').mkdir(exist_ok=True)
+            (folder/'src/f.c').write_text('good racing source')
+        return signature(path)
+    monkeypatch.setattr(worker,'_signature',racing_signature)
+    assert not worker.sync('game',force=True)
+    assert 'game' not in worker.signatures and not judged
+    assert worker.sync('game',force=True)
+    assert judged==[('f','good racing source')]
+
+
+@pytest.mark.parametrize('local_change', [False,True])
+def test_cold_project_file_baseline_uses_its_owner_without_verifier(project,monkeypatch,local_change):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app.agents import SCHEMA
+    from tests.test_project_database_migration import close
+    net,folder,_=project
+    root=folder.parent.parent
+    with net.store.tx() as db:
+        for sql in SCHEMA:db.execute(sql)
+    close(net)
+    net=RomNetwork(root/'app.db',root,project_databases=True)
+    store=net.project_store('game')
+    try:
+        if local_change:
+            with store.tx() as db:
+                db.execute("UPDATE functions SET best_source='local project draft',best_score=50 WHERE name='f'")
+        monkeypatch.setattr(net,'attempt',lambda *a,**k:pytest.fail('unchanged files must not be rejudged'))
+        slot=net.progress.verification_slot;slot.acquire()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future=pool.submit(net.progress.sync,'game',force=True)
+            try:
+                assert future.result(timeout=2)==local_change
+                assert not slot.acquire(blocking=False)
+            finally:slot.release()
+            future.result(timeout=5)
+        assert not net.progress.sync('game',force=True)
+        if local_change:assert (folder/'best/f.c').read_text()=='local project draft\n'
+    finally:close(net)

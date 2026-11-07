@@ -1033,18 +1033,26 @@ class Progress:
                                 return False
                 cached_signature = self.signatures.get(slug)
                 result = None
-                if (rom and state is not None and changed_db and cached_signature is not None
-                        and self.net._context(pid) is not None):
-                    saves._check_progress_folder(folder, chosen=bool(self.net.cfg(proj).get("progress_folder")))
+                verified_signature = None
+                if rom and state is not None and self.net._context(pid) is not None:
                     baseline = self._baseline(pid)
-                    # Publishing local database work needs no global compiler lane,
-                    # but only with the same deep file signature as the acknowledged
-                    # baseline. Imports and racing edits still wait below.
-                    if baseline is not None and self._signature(folder) == cached_signature:
-                        if logger is not None:getattr(logger, "check_cancel", lambda: None)()
-                        self._check_paused(slug)
-                        result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
-                        if result is not None:self.blocked.pop(slug, None)
+                    if baseline is not None:
+                        saves._check_progress_folder(folder, chosen=bool(self.net.cfg(proj).get("progress_folder")))
+                        # A restart has no in-memory signature. Compare all saved bytes
+                        # with the durable baseline before queueing behind another game's
+                        # bulk verification. Changed files still need the import lane.
+                        signature = self._signature(folder)
+                        unchanged = cached_signature is not None and signature == cached_signature
+                        if not unchanged:
+                            unchanged = (_Snapshot.of(_read(folder, cache=self.file_cache)).files == baseline.disk.files
+                                         and signature == self._signature(folder))
+                        if unchanged:
+                            verified_signature = cached_signature = signature
+                            if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+                            self._check_paused(slug)
+                            result = (self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
+                                      if changed_db else False)
+                            if result is not None:self.blocked.pop(slug, None)
                 if result is None:
                     with self._verification(slug, logger):
                         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
@@ -1069,7 +1077,7 @@ class Progress:
                     # that arrived meanwhile must not be acknowledged (and so missed forever) by the cache.
                     signature = self._signature(folder)
                     touched = self.published.pop(slug, None)
-                    acknowledged = True
+                    acknowledged = verified_signature is None or signature == verified_signature
                     if result:
                         baseline = self._baseline(proj["id"])
                         if cached_signature is not None and touched is not None:
