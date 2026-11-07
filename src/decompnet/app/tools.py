@@ -18,7 +18,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from .. import __version__, agents, candidate_quality, consoles
 from ..network import Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
-from . import agent_tokens, boundary_investigations, claim_state, compiler_experiments, local_experiments
+from . import (
+    agent_tokens,
+    boundary_investigations,
+    claim_state,
+    compiler_experiments,
+    local_experiments,
+    reviewed_search_seeds,
+    search_brief,
+)
 from .engine import RomNetwork
 
 
@@ -489,6 +497,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "compile_variants": agent_tokens.variants,
     "compiler_experiments": compiler_experiments.run,
     "get_compiler_trial": compiler_experiments.retrieve,
+    "review_search_seed": reviewed_search_seeds.review,
+    "get_search_brief": search_brief.read,
     "try_local_repairs": lambda net,agent,slug,function,revision,families=None,max_trials=6:
         local_experiments.run(net,agent,slug,function,revision,families,max_trials),
     "compile_family": agent_tokens.local_family,
@@ -549,11 +559,11 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-READ_ONLY = frozenset({"get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
-ROM_ONLY = {"get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -826,6 +836,16 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     async def get_compiler_trial(ctx: Context, function: str, trial_id: str, include_header: bool = False) -> str:
         """Retrieve an exact experimental C/compiler/flags pair and its diagnostic result for this worker. In-memory, bounded history; no compile or application."""
         return await run(ctx,'get_compiler_trial',function=function,trial_id=trial_id,include_header=include_header)
+
+    @tool
+    async def review_search_seed(ctx: Context, function: str, trial_id: str, review_note: str = '', enabled: bool = True) -> str:
+        """Explicitly review a current-profile compiler diagnostic for the next bounded deep search. Record why it is promising and caller checks. Saved C is unchanged; changed/unknown signatures stay diagnostic-only even if exact. enabled=false disables the seed."""
+        return await run(ctx,'review_search_seed',function=function,trial_id=trial_id,review_note=review_note,enabled=enabled)
+
+    @tool
+    async def get_search_brief(ctx: Context, function: str) -> str:
+        """Read a compact current-input packet: allocation source lines/priorities, negative experiments, reviewed roots and source references. No compiler runs or source adoption."""
+        return await run(ctx,'get_search_brief',function=function)
 
     @tool
     async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6) -> str:

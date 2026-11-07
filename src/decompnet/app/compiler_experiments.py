@@ -10,8 +10,9 @@ from ..project import compiler_for
 from . import agent_targets, agent_tokens
 
 
-def trial_table(net):
-    with net.store.tx() as db:
+def trial_table(net, project=None):
+    store = net.project_store(project) if project is not None else net.store
+    with store.tx() as db:
         db.execute('CREATE TABLE IF NOT EXISTS compiler_trial_evidence('
                    'id TEXT PRIMARY KEY,project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,'
                    'function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,'
@@ -21,8 +22,8 @@ def trial_table(net):
 
 
 def save_trial(net,fn,key,record):
-    trial_table(net)
-    with net.store.tx() as db:
+    trial_table(net,fn['project_id'])
+    with net.project_store(fn['project_id']).tx() as db:
         db.execute('INSERT OR IGNORE INTO compiler_trial_evidence VALUES(?,?,?,?,?,?)',
                    (key,fn['project_id'],fn['id'],record['agent'],json.dumps(record),time.time()))
 
@@ -62,7 +63,7 @@ def run(net,agent,slug,function,revision,trials):
                 t={**t,'compiler':compiler,'flags':' '.join(flags)}
             planned.append((t,text))
         scope=hashlib.sha256(repr((agent_tokens.target_scope(net,fn,revision),dict(fn),
-            [dict(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])],
+            [dict(r) for r in net.project_store(fn['project_id']).all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])],
             net._generation.get(fn['project_id'],0))).encode()).hexdigest()
         began=time.monotonic();out=[];seen=set();promotion_hint=''
         ledger=getattr(net,'_compiler_trials',{})
@@ -70,7 +71,10 @@ def run(net,agent,slug,function,revision,trials):
         for i,(t,text) in enumerate(planned,1):
             if out and time.monotonic()-began>=60:
                 out.append('60-second budget reached; remaining profiles untested.');break
-            key=hashlib.sha256(repr((agent.id,slug,fn['id'],scope,text,t['compiler'],t.get('flags',''))).encode()).hexdigest()[:20]
+            from . import reviewed_search_seeds
+            seed_scope = (reviewed_search_seeds.scope(net,proj,fn,text)
+                          if reviewed_search_seeds.supported(net,proj) else None)
+            key=hashlib.sha256(repr((agent.id,slug,fn['id'],scope,seed_scope,text,t['compiler'],t.get('flags',''))).encode()).hexdigest()[:20]
             if key in seen:
                 continue
             seen.add(key)
@@ -84,7 +88,7 @@ def run(net,agent,slug,function,revision,trials):
                 ledger[key]={'agent':agent.id,'slug':slug,'function':fn['name'],'source':text,'compiler':t['compiler'],
                              'flags':t.get('flags',''),'revision':revision,'scope':scope,'project_config':cfg,'flags_source':'project build owns per-file flags' if fork else 'explicit effective flags','result':result}
                 header = (net._context(fn['project_id'],fn['unit']) or {'header':''})['header']
-                ledger[key].update(header=header,source_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                ledger[key].update(seed_scope=seed_scope,header=header,source_sha256=hashlib.sha256(text.encode()).hexdigest(),
                                    header_sha256=hashlib.sha256(header.encode()).hexdigest())
                 save_trial(net,fn,key,ledger[key])
                 while len(ledger)>64:
@@ -113,8 +117,9 @@ def run(net,agent,slug,function,revision,trials):
 def retrieve(net,agent,slug,function,trial_id,include_header=False):
     fn=net._function(function,slug)
     row = None
-    if hasattr(net,'store') and net.store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'"):
-        row=net.store.one('SELECT record FROM compiler_trial_evidence WHERE id=? AND project_id=? AND function_id=?',
+    store = net.project_store(fn['project_id']) if hasattr(net,'store') else None
+    if store is not None and store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'"):
+        row=store.one('SELECT record FROM compiler_trial_evidence WHERE id=? AND project_id=? AND function_id=?',
                           trial_id,fn['project_id'],fn['id'])
     record=json.loads(row['record']) if row else getattr(net,'_compiler_trials',{}).get(trial_id)
     if (not record or (record['slug'],record['function'])!=(slug,fn['name'])

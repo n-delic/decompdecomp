@@ -21,13 +21,13 @@ def allowance(diagnosis):
 def key(net, proj, fn, source):
     profile = compiler_for(net.cfg(proj),fn['vram'], fn)
     installed = toolchains.installed(profile.get('toolchain',''))
-    return VERSION+':'+hashlib.sha256(repr((candidate_scope.key(net,proj,fn),source,installed)).encode()).hexdigest()
+    return VERSION+':'+hashlib.sha256(repr((candidate_scope.key(net,proj,dict(fn,best_source=source,seed=None)),source,installed)).encode()).hexdigest()
 
 
 def saved(net, proj, fn, source):
     if not net.cfg(proj).get('compiler'):
         return None
-    row = net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',
+    row = net.project_store(proj['id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',
                         fn['id'],key(net,proj,fn,source))
     try:
         value = json.loads(row['feedback']) if row else None
@@ -49,15 +49,15 @@ def capture(net, proj, fn, source, *, on_compile, rows=()):
     evidence = ({'allocation':result.get('allocation',{}),'value_trace':result.get('value_trace',{})}
                 if result.get('output_unchanged') and not result.get('skipped') else
                 {'skipped':result.get('skipped') or 'Diagnostic output changed; evidence ignored.'})
-    current_proj = net.store.one('SELECT * FROM projects WHERE id=?',proj['id'])
-    current_fn = net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+    current_proj = net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id'])
+    current_fn = net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
     if current_proj is None or current_fn is None or key(net,current_proj,current_fn,source) != scope_key:
         return {'skipped':'Compiler inputs changed during capture; evidence ignored.'}
     evidence['rows'] = list(rows)
     # Transient build errors are retryable; a supported unchanged capture or an unsupported adapter
     # can be remembered. A changed compiler installation changes the input key.
     if result.get('output_unchanged') or (result.get('skipped') and 'error' not in result):
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                        (fn['id'],scope_key,'diagnostic',VERSION,json.dumps(evidence)))
     return evidence
@@ -83,7 +83,10 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
                'pointer_index_scope','pointer_argument_alias','paired_pointer_declarations','copy_register_reuse',
                'spill_declaration_order','pointer_index_order','dead_pointer_clear'}
     selected = [(labels.get(c,''),c) for c in choices if labels.get(c) in allowed]
-    selected = extra+selected
+    from . import allocation_targeting
+    targeted = allocation_targeting.proposals(source,name,header,rows,evidence,arch)
+    for family,candidate in targeted:labels[candidate]=family
+    selected = targeted+extra+selected
     lines = rtl_value_trace.focus(trace,source,rows,header)
     if lines:
         selected.sort(key=lambda pair:not value_trace_repairs.touches(source,value_trace_repairs.changes(source,pair[1]),lines,1))
@@ -98,6 +101,7 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
         pools={}
         for item in selected:pools.setdefault(item[0],[]).append(item)
         selected=[p for row in zip_longest(*pools.values()) for p in row if p]
+    selected = targeted+[item for item in selected if item not in targeted]
     return selected[:budget]
 
 
@@ -107,4 +111,7 @@ def brief(net, proj, fn, source, rows):
         return ''
     # Reading an agent brief never starts compiler tools.
     evidence = saved(net,proj,fn,source) or {}
-    return gcc_allocation.brief(evidence.get('allocation'),allocation_evidence.diagnose(rows,proj['arch'])['register_cycles'])
+    from . import allocation_targeting
+    header = (net._context(proj['id'],fn['unit']) or {'header':''})['header']
+    return '\n'.join(filter(None, (gcc_allocation.brief(evidence.get('allocation'),allocation_evidence.diagnose(rows,proj['arch'])['register_cycles']),
+                                  allocation_targeting.brief(source,header,rows,evidence,proj['arch']))))

@@ -624,6 +624,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Reviewed diagnostic-root deep lane | ✓ local ROM | ✓ shared ROM lane | ✓ shared ROM lane | ✓ shared ROM lane | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot |
 | Typed later-local reuse and bounded residual follow-ups | ✓ | ✓ | ✓ 32-bit scalars | ✓ | ✓ 32-bit scalars | ✓ 32-bit scalars | ✓ | ✓ by target ABI |
 | Frozen multi-case exported-ROM repair CLI | ✓ MIPS | ✓ MIPS | ✓ MIPS | ✓ MIPS | — copied evaluator | — copied evaluator | — copied evaluator | — copied evaluator |
 | Local register-chain and jump/delay-slot search hints | ✓ | ✓ | ✓ | ✓ | — reader planned | — reader planned | — reader planned | ✓ MIPS; other readers planned |
@@ -2397,6 +2398,11 @@ Only improvements update the best attempt; claims remain owned by the agent unti
 Compiler/private-header preparation waits until the claim is free. One deep search per function
 prevents duplicate worker credentials. Room hosts use the local path; room guests still need the
 host lease. Concurrent guest proposals without a lease remain planned protocol work.
+
+### Reviewed diagnostic search roots
+
+- Done: explicitly reviewed local-ROM compiler diagnostics, bounded shared-budget deep search, caller/input/installation invalidation, diagnostic-only signature changes, compact source/priority/negative-experiment briefs and isolated real-target replay metrics. See docs/REVIEWED_SEARCH_SEEDS.md.
+- Planned: immutable per-file PROJECT diagnostic snapshots and host-authorized room guest roots (—); the ordinary PROJECT/room search paths remain available. Native GCC allocation targeting is advisory; other compiler/processor capture adapters and held-out smaller-model evaluations remain planned.
 
 ### Register-cycle lifetime search
 

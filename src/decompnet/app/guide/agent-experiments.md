@@ -84,3 +84,5 @@ fingerprints stay unknown. Repeatedly inert families receive fewer early slots; 
 remain available, with exploration and complementary-pair slots reserved. Region advice
 names improved/regressed target blocks, not inferred C blocks. Preserve useful regional
 progress and inspect regressions before requesting another full assembly dump.
+
+Use get_search_brief(function) before long searches. Explicitly review promising current-profile diagnostics with review_search_seed; changed/unknown interfaces remain diagnostic-only even when exact. Review callers and submit normally. Never add dummy uses.

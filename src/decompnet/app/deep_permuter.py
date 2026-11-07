@@ -98,6 +98,7 @@ class Search(Permuter):
         self.last_outcome = ''
         self.last_score = None
         self.local_status = {}
+        self.reviewed_seed_result = {}
         self.allocation_trials = 0
         self.allocation_captures = 0
         self.allocation_diagnostic_compiles = 0
@@ -162,7 +163,7 @@ class Search(Permuter):
             return 100.0 if score == 0 else min(99.9, int(max(0, 100*(1-score/self.max_score))*10)/10)
         return {'starting_score': self.starting_score, 'starting_percent': percent(self.starting_score),
                 'best_score': self.best, 'best_percent': percent(self.best), 'improvements': self.improvements,
-                'local_search': self.local_status,
+                'local_search': self.local_status, 'reviewed_seeds':self.reviewed_seed_result,
                 'allocation_trials':self.allocation_trials,
                 'allocation_diagnostic_compiles':self.allocation_diagnostic_compiles}
 
@@ -850,13 +851,26 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
             search.improvements += preparation['improved']
             proj, fn = net.project_row(slug), net._function(name, slug)
             search.best = fn['best_score']
-        search._compiler_preflight(proj, fn, state, search.deadline)
+        # Reviewed alternatives have a bounded share of the same global allowance.
+        # Their ABI-changing exact results are evidence, never permission to publish.
+        if lane is None or lane.index == 0:
+            from . import reviewed_seed_search
+            outcome = reviewed_seed_search.run(search, agent, proj, fn)
+            search.reviewed_seed_result = outcome
+            if lane is not None:lane.preparation.update(outcome)
+        else:
+            outcome = lane.preparation
+        review_boundary = bool(outcome.get('diagnostic_exact')) and not outcome.get('matched')
+        if review_boundary:
+            reason = 'Exact diagnostic needs ordinary review'
+        elif not outcome.get('matched'):
+            search._compiler_preflight(proj, fn, state, search.deadline)
         if lane is not None:
             lane.prepared()
         proj, fn = net.project_row(slug), net._function(name, slug)
         if fn['status'] == 'matched':
             reason = 'Matched'
-        if reason != 'Matched':
+        if reason not in ('Matched', 'Exact diagnostic needs ordinary review'):
             if not search._hold(agent, fn, count_turn=False):
                 raise NetworkError('This function was claimed meanwhile; try again after it is released.')
             try:
@@ -883,7 +897,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         reason = 'Matched'
             finally:
                 search._let_go(agent, fn)
-        if reason != 'Matched':
+        if reason not in ('Matched', 'Exact diagnostic needs ordinary review'):
             search.check()
             search.phase = 'random rewrites'
             search.log('Local repairs finished; generating random rewrites and judging each compiled candidate.')
