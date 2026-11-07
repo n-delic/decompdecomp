@@ -758,7 +758,9 @@ naming its SDK in `headers`), and goes into `RICH_BUILDS`, so its games build wi
   /Zi with /FS fails (C1902: no mspdbsrv), which no project's build uses.
 - **F, 64-bit games, what's left** (64-bit games start: Recently done). Each Visual Studio version's own 64-bit
   compiler, with its pack (2017's builds every 64-bit game until then); your own Visual C++ copies (the `visualcpp` kit)
-  are read for their 32-bit compiler only, so they don't build 64-bit games yet. Visual C++ 2019 and newer write a
+  are now read for both their 32-bit and 64-bit compilers, including an x64-only copy, with distinct ids and
+  target-filtered choices (user-supplied Wine compilers get the build environment even without a downloaded pack).
+  Visual C++ 2019 and newer write a
   64-bit C++ function's exception data in another form (`__CxxFrameHandler4`'s, their default), which `funclets_x64`
   doesn't read yet: such a game's funclets stay functions of their own, which no C makes. Autopilot's exact drafts of
   tiny shapes (`drafts.exact`) read 32-bit code only: a 64-bit game gets Ghidra's drafts. PDBs and maps of 64-bit games
