@@ -156,8 +156,9 @@ def test_recovered_failed_drafts_get_a_compile_even_without_an_attempt(previous,
     net = SimpleNamespace(store=SimpleNamespace(one=one), links={'demo': object()} if joined else {},
                           fork_slug=lambda slug: False, _seed_for=lambda *args: current,
                           _autopilot_one=lambda *args: calls.append(args) or 'far')
+    net.project_store = lambda _: net.store
     state = drafts.State()
-    drafts.Drafter(net)._one(SimpleNamespace(id=1), {'slug': 'demo'}, 1, state)
+    drafts.Drafter(net)._one(SimpleNamespace(id=1), {'id': 1, 'slug': 'demo'}, 1, state)
     assert len(calls) == state.retried == expected
     assert state.made == 1
 

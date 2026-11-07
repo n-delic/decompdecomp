@@ -37,7 +37,7 @@ class BriefMixin:
     def _layout_key(self, proj) -> tuple:
         """Which functions a game has and their sizes, summed up: a split or a cut changes it, a match doesn't. What a
         brief reads from the whole game (look-alikes, twins) is built again only when it changes."""
-        row = self.store.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, COALESCE(SUM(size), 0) AS bytes "
+        row = self.project_store(proj['id']).one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, COALESCE(SUM(size), 0) AS bytes "
                              "FROM functions WHERE project_id=?", proj["id"])
         return tuple(row)
 
@@ -79,7 +79,7 @@ class BriefMixin:
             return []
         if twin_id is None:
             return []
-        a = self.store.one("SELECT * FROM functions WHERE id=?", twin_id)
+        a = self.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", twin_id)
         source = self.twins.source_for(proj, a, fn)
         out = ["", f"### Identical code: {a['name']} is the same machine code and already matches"]
         if source and len(source) < 6000:
@@ -134,7 +134,7 @@ class BriefMixin:
         bindings = [(name,self.symbols(proj['id']).resolve(name)) for name in sorted(roots)]
         from ..draft_reports import generation
         inputs = [DRAFT_REVISION, self.cfg(proj).get("draft_generation", 0), hashlib.sha256((fn["asm"] or "").encode()).hexdigest(), fn["name"], target, own["toolchain"], own.get("flags", []), sorted(roots), bindings, context]
-        if refresh := generation(self,fn['id']):
+        if refresh := generation(self,fn['id'],project_id=proj['id']):
             inputs.append(('regeneration',refresh))
         key = hashlib.sha1(json.dumps(inputs).encode()).hexdigest()[:16]
         return key, own["toolchain"], context
@@ -149,7 +149,7 @@ class BriefMixin:
         if fn["seed"] is not None and fn["seed_key"] == key:
             return fn["seed"]
         with self._draft_locks.setdefault(fn["id"], threading.Lock()):
-            row = self.store.one("SELECT seed, seed_key FROM functions WHERE id=?", fn["id"])
+            row = self.project_store(proj['id']).one("SELECT seed, seed_key FROM functions WHERE id=?", fn["id"])
             if row is None or (row["seed"] is not None and row["seed_key"] == key):  # made meanwhile
                 return row["seed"] if row else None
             data_asm = "\n".join(self._jtbl_asm(proj, fn))
@@ -168,9 +168,9 @@ class BriefMixin:
                     except seeds.DraftError as fallback_error:
                         draft_reports.failure(report, 'generation', 'without_context', fallback_error)
             if report['failures']:
-                draft_reports.save(self, fn['id'], report)
+                draft_reports.save(self, fn['id'], report, project_id=proj['id'])
             text = f"{DRAFT_NOTE}\n{seeds.M2C_MACROS}\n{draft}" if draft else ""
-            with self.store.tx() as db:
+            with self.project_store(proj['id']).tx() as db:
                 db.execute("UPDATE functions SET seed=?, seed_key=? WHERE id=?", (text, key, fn["id"]))
         return text
 
@@ -184,7 +184,7 @@ class BriefMixin:
         names = self._asm_names.setdefault(proj["id"], {})
         # Return-contract evidence needs the name and assembly too; partial rows stopped
         # the whole background drafter before any stale seed could be regenerated.
-        rows = self.store.all("SELECT id, name, size, unit, vram, rom_offset, asm, meta, seed, seed_key FROM functions WHERE project_id=? "
+        rows = self.project_store(proj['id']).all("SELECT id, name, size, unit, vram, rom_offset, asm, meta, seed, seed_key FROM functions WHERE project_id=? "
                               "AND status='open' ORDER BY n_insns, vram", proj["id"])
         from ..boundary_repairs import blocked
         held = blocked(self,proj)
@@ -203,8 +203,8 @@ class BriefMixin:
         """What drafts are made from, summed up: a new header version, compiler, rename or split changes it."""
         if self.fork_slug(proj["slug"]):
             return self.forks.draft_mark(proj)
-        version = self.store.one("SELECT MAX(version) AS v FROM context_versions WHERE project_id=?", proj["id"])["v"]
-        event = self.store.one("SELECT MAX(id) AS e FROM events WHERE project_id=? AND kind IN "
+        version = self.project_store(proj['id']).one("SELECT MAX(version) AS v FROM context_versions WHERE project_id=?", proj["id"])["v"]
+        event = self.project_store(proj['id']).one("SELECT MAX(id) AS e FROM events WHERE project_id=? AND kind IN "
                                "('context', 'compiler', 'rename', 'split', 'sync', 'import')", proj["id"])["e"]
         return version, event, self._layout_key(proj), self.cfg(proj).get('draft_generation', 0)
 
@@ -265,9 +265,9 @@ class BriefMixin:
             return claim_state.brief(self,fn,agent,header)
         from .. import draft_reports
         from ..search_evidence import brief as search_brief
-        initial_report = draft_reports.read(self,fn['id'])
+        initial_report = draft_reports.read(self,fn['id'],project_id=fn['project_id'])
         header_report = draft_reports.summary(initial_report)
-        proj = self.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+        proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?',fn['project_id'])
         warning=self.console(proj).boundary_reason(fn['target'] or b'') if fn['status']!='matched' else None
         review='\n\nBoundary review before tuning:\n'+warning if warning else ''
         if header_report:review += '\n\n'+header_report
@@ -313,7 +313,7 @@ class BriefMixin:
         """calls / called_by / uses / used_by, all keyed by address."""
         if proj["id"] in self._xrefs:
             return self._xrefs[proj["id"]]
-        funcs = self.store.all("SELECT name, vram, size, relocs FROM functions WHERE project_id=?", proj["id"])
+        funcs = self.project_store(proj['id']).all("SELECT name, vram, size, relocs FROM functions WHERE project_id=?", proj["id"])
         starts = {f["vram"] for f in funcs}
         calls, called_by, uses, used_by = {}, {}, {}, {}
         for f in funcs:
@@ -336,7 +336,7 @@ class BriefMixin:
             return None
         x = self.xrefs(proj)
         if "classes" not in x:
-            rows = self.store.all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL",
+            rows = self.project_store(proj['id']).all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL",
                                   proj["id"])
             x["classes"] = classes.recover(((r["vram"], r["target"], json.loads(r["relocs"])) for r in rows),
                                            self.reader(proj), bool(self.cfg(proj).get("big_endian", True)))
@@ -356,7 +356,7 @@ class BriefMixin:
         m = _ADDRESS.match(what)
         addr = int(m.group(1), 16) if m else syms.resolve(what)
         if addr is None:
-            fn = self.store.one("SELECT vram FROM functions WHERE project_id=? AND name=?", proj["id"], what)
+            fn = self.project_store(proj['id']).one("SELECT vram FROM functions WHERE project_id=? AND name=?", proj["id"], what)
             addr = fn["vram"] if fn else None
         hits = found.find(addr) if addr is not None else []
         if not hits:
@@ -465,7 +465,7 @@ class BriefMixin:
         used = sorted(x["uses"].get(fn["vram"], ()))
         if used:
             lines += ["", "### Data it uses (declare what you need as extern in your source, or in context.h)"]
-            prev = {r["name"]: r for r in self.store.all("SELECT name, kind, size, preview FROM symbols WHERE project_id=?", proj["id"])}
+            prev = {r["name"]: r for r in self.project_store(proj['id']).all("SELECT name, kind, size, preview FROM symbols WHERE project_id=?", proj["id"])}
             for a in used[:40]:
                 name, off = syms.name_at(a)
                 r = prev.get(name)
@@ -492,7 +492,7 @@ class BriefMixin:
             lines += ["", "### Looks like (already matched; read with get_function)",
                       ", ".join(f"{r['name']} ({sim * 100:.0f}% similar)" for r, sim in alike)]
             r, sim = alike[0]
-            src = self.store.one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], r["name"])
+            src = self.project_store(proj['id']).one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], r["name"])
             if sim >= 0.8 and src and src["matched_source"] and len(src["matched_source"]) <= 3000:
                 # nearly the same code: its matching C is the best starting point there is (saves a tool call)
                 lines += [f"Matching C of {r['name']} ({sim * 100:.0f}% similar): start from this",
@@ -511,7 +511,7 @@ class BriefMixin:
         if known and known[0] == layout:
             return known[1]
         cache = dict(known[1]) if known else {}  # a new dict: a reader of the old one never sees it change
-        rows = self.store.all("SELECT vram, size, target FROM functions WHERE project_id=? AND target IS NOT NULL", proj["id"])
+        rows = self.project_store(proj['id']).all("SELECT vram, size, target FROM functions WHERE project_id=? AND target IS NOT NULL", proj["id"])
         live = set()
         for r in rows:
             key = (r["vram"], r["size"])
@@ -537,7 +537,7 @@ class BriefMixin:
         # with 8 agents at once, briefs waited on each other row by row (8 agents briefing 24 functions: 5.9 s; with
         # only these rows, 1.4-1.9 s)
         vrams = [int(key.split(":")[0]) for key, _ in ranked]
-        rows = {(r["vram"], r["size"]): r for r in self.store.all(
+        rows = {(r["vram"], r["size"]): r for r in self.project_store(proj['id']).all(
             f"SELECT name, vram, size, n_insns, status, best_score FROM functions WHERE project_id=? AND vram IN "
             f"({','.join('?' * len(vrams))})", proj["id"], *vrams)} if vrams else {}
         out = []
@@ -567,7 +567,7 @@ class BriefMixin:
                       for h in cross]
         best = next((r for r, _ in hits if r["status"] == "matched"), None)
         if best is not None:
-            src = self.store.one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], best["name"])
+            src = self.project_store(proj['id']).one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], best["name"])
             if src and src["matched_source"]:
                 lines += ["", f"Matching C of {best['name']}:", "```c", src["matched_source"].strip()[:4000], "```"]
         return "\n".join(lines)
@@ -578,7 +578,7 @@ class BriefMixin:
         proj = self._project(project)
         where = "" if status == "all" else " AND f.status=?"
         args = [proj["id"]] + ([] if status == "all" else [status])
-        rows = self.store.all(
+        rows = self.project_store(proj['id']).all(
             f"SELECT f.name, f.vram, f.n_insns, f.status, f.best_score, a.name AS claimed_by FROM functions f "
             f"LEFT JOIN claims c ON c.function_id=f.id LEFT JOIN agents a ON a.id=c.agent_id "
             f"WHERE f.project_id=?{where} ORDER BY f.vram LIMIT ?", *args, limit)

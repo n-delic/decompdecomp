@@ -42,7 +42,7 @@ class GuiMixin:
 
         proj = self._project(slug)
         res = self.console(proj).export_project(self, slug, Path(proj["root"]) / "source", log=log)
-        with self.store.tx() as db:  # shown on the project page: what's in the tree and whether it rebuilds
+        with self.project_store(proj['id']).tx() as db:  # shown on the project page: what's in the tree and whether it rebuilds
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             cfg["export"] = {"t": time.time(), "path": str(res["path"]), "identical": res.get("identical"),
                              "matched": res.get("matched"), "functions": res.get("functions"),
@@ -63,20 +63,18 @@ class GuiMixin:
                            'auto_commit':match_commits.status(self, proj), 'auto_push':auto_push.status(self, proj), 'score_commits':score_commits.status(self, proj),
                            'auto_compiler':self.auto_adjusts(proj), 'progress_syncing':self.progress.syncing(slug),
                            'progress_sync':self.progress.status(slug)}
-        last = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
+        last = self.project_store(proj['id']).one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
         from .. import function_profile_suggestions
         cfg = self.cfg(proj)
         from ..view_snapshots import cache
-        revision = self.store.one('SELECT map_revision FROM project_totals WHERE project_id=?', proj['id'])
+        revision = self.project_store(proj['id']).one('SELECT map_revision FROM project_totals WHERE project_id=?', proj['id'])
         def diagnostics():
             from ..libultra import report
             from ..source_assembly import breakdown
             return {'status_breakdown':breakdown(self,proj), 'libultra':report(self,proj),
                     'readable':self.readability.counts(proj)['readable'],
-                    'helper_matches':self.store.one(
-                        "SELECT COUNT(*) AS n FROM functions f JOIN agents a ON a.id=f.matched_agent_id WHERE f.project_id=? "
-                        "AND f.status='matched' AND a.origin='local' AND a.name NOT IN ('you','autopilot')", proj['id'])['n']}
-        details = diagnostics() if getattr(self.store._local, 'in_tx', False) else cache(self).get(
+                    'helper_matches':self._helper_match_count(proj)}
+        details = diagnostics() if getattr(self.project_store(proj['id'])._local, 'in_tx', False) else cache(self).get(
             ('overview',slug,revision['map_revision'] if revision else proj['config']),diagnostics,ttl=5)
         twins = self.twins.jobs.get(proj["slug"])
         base = self._overview(slug, proj, room_members=room_members)
@@ -88,7 +86,7 @@ class GuiMixin:
                            k: getattr(twins, k) for k in ("state", "progress", "pairs", "tried", "matched", "asm",
                                                         "cross_candidates", "cross_tried", "cross_matched")},
                        "cross_game": self.twins.cross_game_results(slug),
-                       "free_search": dict(self.store.one('SELECT * FROM reuse_runs WHERE project_id=? ORDER BY id DESC LIMIT 1', proj['id']) or {}),
+                       "free_search": dict(self.project_store(proj['id']).one('SELECT * FROM reuse_runs WHERE project_id=? ORDER BY id DESC LIMIT 1', proj['id']) or {}),
                        "auto_commit": match_commits.status(self, proj), "auto_push": auto_push.status(self, proj), "score_commits":score_commits.status(self, proj),
                        "progress_syncing": self.progress.syncing(slug),
                        "progress_sync": self.progress.status(slug),
@@ -103,11 +101,18 @@ class GuiMixin:
                        "compiler_ranges": base.get("compiler_ranges") or self._range_rows(cfg),
                        "auto_compiler": self.auto_adjusts(proj)}
 
+    def _helper_match_count(self, proj):
+        ids = [r['id'] for r in self.store.all(
+            "SELECT id FROM agents WHERE origin='local' AND name NOT IN ('you','autopilot')")]
+        return self.project_store(proj['id']).one(
+            "SELECT COUNT(*) n FROM functions WHERE project_id=? AND status='matched' "
+            "AND matched_agent_id IN (SELECT value FROM json_each(?))", proj['id'], json.dumps(ids))['n']
+
     def _overview(self, slug: str, proj, *, room_members=True, quick=False) -> dict:
         if (fork := self.fork_slug(slug)):
             return self.forks.overview(fork, room_members=room_members, quick=quick)
         cfg = self.cfg(proj)
-        agg = self.store.one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
+        agg = self.project_store(proj['id']).one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
             ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes','attempts'), 0)
         # a project made with a compiler decompdecomp doesn't have still opens: the page says so, and its Settings
         # let the user pick one that's here (#118)
@@ -131,7 +136,7 @@ class GuiMixin:
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
-            "context_version": (self.store.one("SELECT version FROM context_versions WHERE project_id=? AND unit='' ORDER BY version DESC LIMIT 1", proj["id"]) or {'version':0})['version'],
+            "context_version": (self.project_store(proj['id']).one("SELECT version FROM context_versions WHERE project_id=? AND unit='' ORDER BY version DESC LIMIT 1", proj["id"]) or {'version':0})['version'],
             "folder": proj["root"],
             "coverage_notes": cfg.get('coverage_notes', []),
             "export": cfg.get("export"),
@@ -143,9 +148,16 @@ class GuiMixin:
     def summary_batch(self):
         local = self.__dict__.setdefault('_summary_local', threading.local())
         previous = getattr(local, 'rows', None)
-        rows = self.store.all("SELECT p.*,t.total,t.matched,t.bytes,t.matched_bytes,t.set_aside,t.set_aside_bytes, "
-                              "(SELECT MAX(created_at) FROM events e WHERE e.project_id=p.id) AS last_activity "
-                              "FROM projects p LEFT JOIN project_totals t ON t.project_id=p.id ORDER BY p.id DESC")
+        query = ("SELECT p.*,t.total,t.matched,t.bytes,t.matched_bytes,t.set_aside,t.set_aside_bytes, "
+                 "(SELECT MAX(created_at) FROM events e WHERE e.project_id=p.id) AS last_activity "
+                 "FROM projects p LEFT JOIN project_totals t ON t.project_id=p.id")
+        catalog = self.store.all(query + ' ORDER BY p.id DESC')
+        if all(self.project_store(row['id']) is self.store for row in catalog):
+            rows = catalog
+        else:
+            rows = [self.project_store(row['id']).one(query + ' WHERE p.id=?', row['id']) for row in catalog]
+            if any(row is None for row in rows):
+                raise RuntimeError('A project database is missing its summary; reopen the project.')
         local.rows = {row['slug']:dict(row) for row in rows}
         try:
             yield rows
@@ -159,7 +171,7 @@ class GuiMixin:
         batch = getattr(getattr(self, '_summary_local', None), 'rows', None)
         proj = batch[slug] if batch is not None and slug in batch else Network._project(self, slug)
         cfg = self.cfg(proj)
-        agg = proj if batch is not None and slug in batch else self.store.one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
+        agg = proj if batch is not None and slug in batch else self.project_store(proj['id']).one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
             ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes'), 0)
         console = self.console(proj)
         if cfg.get("kind") == "fork":
@@ -173,7 +185,7 @@ class GuiMixin:
                 "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
                 "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
                 "set_aside_bytes": agg["set_aside_bytes"] or 0,
-                "last_activity": proj['last_activity'] if batch is not None and slug in batch else self.store.one(
+                "last_activity": proj['last_activity'] if batch is not None and slug in batch else self.project_store(proj['id']).one(
                     "SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj['id'])['t'],
                 "room": 'guest' if slug in self.links else 'host' if slug in self.rooms else None,
                 "autopilot": (self.autopilots.get(slug) or {}).get("state") or ("done" if cfg.get("autopilot") else None),
@@ -195,12 +207,13 @@ class GuiMixin:
         proj = self._project(slug)
         subset = " AND f.id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""
         args = (proj['id'], json.dumps(function_ids)) if function_ids is not None else (proj['id'],)
-        rows = self.store.all(
+        rows = self.project_store(proj['id']).all(
             "SELECT f.id, f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
             "f.readable, "
-            "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
-            "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
+            "c.agent_id, f.matched_agent_id FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             f"WHERE f.project_id=? AND f.{IN_BUILD}" + subset + " ORDER BY f.vram, f.unit, f.id", *args)
+        from ..project_labels import label
+        rows = label(self, rows, {'agent':'agent_id', 'matched_by':'matched_agent_id'})
         link = self.links.get(slug)
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
@@ -209,7 +222,7 @@ class GuiMixin:
         searching = {r['name']:r['agent'] for r in activity(self,proj)}
         from ..function_names import state as name_state
         from ..history_summary import recency as map_recency
-        recency = map_recency(self.store, proj['id'], function_ids)
+        recency = map_recency(self.project_store(proj['id']), proj['id'], function_ids)
         from ..view_snapshots import cross_project_ids
         cross_project = cross_project_ids(self, proj)
         from ..code_coverage import boundaries
@@ -260,9 +273,9 @@ class GuiMixin:
         edits invalidate the snapshot even when aggregate totals happen to remain identical.
         """
         proj = self._project(slug)
-        revision = self.store.one("SELECT map_revision FROM project_totals WHERE project_id=?", proj['id'])
-        layout = self.store.one("SELECT revision FROM layout_revision WHERE id=1")['revision']
-        changed = self.store.one('SELECT COALESCE(MAX(revision),0) AS n FROM map_changes WHERE project_id=?', proj['id'])['n']
+        revision = self.project_store(proj['id']).one("SELECT map_revision FROM project_totals WHERE project_id=?", proj['id'])
+        layout = self.project_store(proj['id']).one("SELECT revision FROM layout_revision WHERE id=1")['revision']
+        changed = self.project_store(proj['id']).one('SELECT COALESCE(MAX(revision),0) AS n FROM map_changes WHERE project_id=?', proj['id'])['n']
         return f"{proj['id']}.{layout}.{revision['map_revision'] if revision else 'empty'}.{changed}"
 
     def function_diff(self, slug: str, name: str, which: str = "latest") -> dict:
@@ -271,8 +284,8 @@ class GuiMixin:
         if (fork := self.fork_slug(slug)):
             return self.forks.function_diff(fork, name)
         fn = self._function(name, slug)
-        proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
-        latest = self.store.one("SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) "
+        proj = self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+        latest = self.project_store(fn['project_id']).one("SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) "
                                 "ORDER BY id DESC LIMIT 1", fn["id"])
         picks = [("matched", fn["matched_source"]), ("best", fn["best_source"]),
                  ("latest", latest["source"] if latest else None)]
@@ -319,12 +332,12 @@ class GuiMixin:
         """The drawer's first paint reads one function, never generates drafts or inspects whole projects."""
         from ..function_names import state as name_state
         fn = self._function(name, slug)
-        proj = self.store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+        proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?', fn['project_id'])
         cfg = self.cfg(proj)
         source = fn['matched_source'] or fn['best_source']
         kind = 'matched' if fn['matched_source'] else 'best' if fn['best_source'] else None
         if not source:
-            latest = self.store.one('SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1', fn['id'])
+            latest = self.project_store(fn['project_id']).one('SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1', fn['id'])
             source = latest['source'] if latest else fn['seed']
             kind = 'latest' if latest else 'draft' if fn['seed'] else None
         return {'id':fn['id'], **name_state(fn), **set_aside(fn), 'name': fn['name'], 'unit': fn['unit'],
@@ -344,11 +357,11 @@ class GuiMixin:
         fn = self._function(name, slug)
         deep_pass = sweep.history(slug, fn) if sweep else {'state': 'not tried', 'completed': False}
         if (fork := self.fork_slug(slug)):
-            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'id':fn['id'], 'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'])}
-        proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'id':fn['id'], 'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'],project_id=fn['project_id'])}
+        proj = self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         from ..function_history import history
-        saved_history = history(self.store, fn)
-        latest = None if fn['matched_source'] or fn['best_source'] else self.store.one(
+        saved_history = history(self.project_store(fn['project_id']), fn, net=self)
+        latest = None if fn['matched_source'] or fn['best_source'] else self.project_store(fn['project_id']).one(
             "SELECT source, score FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC LIMIT 1", fn['id'])
         x = self.xrefs(proj)
         syms = self.symbols(proj["id"])
@@ -356,7 +369,7 @@ class GuiMixin:
             self._seed_for(fn, proj)  # (made again first when what it's made from changed)
             fn = self._function(fn["name"], slug)
         from ..source_assembly import detail as assembly_detail
-        initial_report = draft_report(self,fn['id'])
+        initial_report = draft_report(self,fn['id'],project_id=fn['project_id'])
         return {
             "assembly_verification":assembly_detail(proj,fn),
             "machine_draft_report": initial_report,
@@ -384,20 +397,20 @@ class GuiMixin:
         pid = self._project(slug)["id"]
         now = time.time()
         from ..history_summary import summary as history_summary
-        history = history_summary(self.store, pid)['agents']
+        history = history_summary(self.project_store(pid), pid)['agents']
         names = {r['id']: r['name'] for r in self.store.all('SELECT id,name FROM agents')}
         rows = [{'agent': names[aid], 'compiles': r['compiles'], 'worked': len(r['worked']), 'last': r['last']}
                 for aid, r in history.items() if aid in names]
-        matched = {r["agent"]: r["n"] for r in self.store.all(
-            "SELECT a.name AS agent, COUNT(*) AS n FROM functions f JOIN agents a ON a.id=f.matched_agent_id "
-            "WHERE f.project_id=? AND f.status='matched' GROUP BY a.id", pid)}
+        matched = {names[r['agent_id']]: r['n'] for r in self.project_store(pid).all(
+            "SELECT matched_agent_id AS agent_id,COUNT(*) n FROM functions WHERE project_id=? "
+            "AND status='matched' GROUP BY matched_agent_id", pid) if r['agent_id'] in names}
         board = [{"agent": r["agent"], "compiles": r["compiles"], "worked": r["worked"], "matched": matched.pop(r["agent"], 0), "last": r["last"]}
                  for r in rows]
         board += [{"agent": a, "compiles": 0, "matched": n, "last": None} for a, n in matched.items()]
         # Only accepted rewrites emit readable events, in ROM and project mode alike.
-        polished = {r["agent"]: r["n"] for r in self.store.all(
-            "SELECT a.name AS agent, COUNT(DISTINCT e.detail) AS n FROM events e "
-            "JOIN agents a ON a.id=e.agent_id WHERE e.project_id=? AND e.kind='readable' GROUP BY a.id", pid)}
+        polished = {names[r['agent_id']]: r['n'] for r in self.project_store(pid).all(
+            "SELECT agent_id,COUNT(DISTINCT detail) n FROM events WHERE project_id=? "
+            "AND kind='readable' GROUP BY agent_id", pid) if r['agent_id'] in names}
         for row in board:
             row["polished"] = polished.pop(row["agent"], 0)
         board += [{"agent": a, "compiles": 0, "matched": 0, "polished": n, "last": None}
@@ -409,10 +422,10 @@ class GuiMixin:
             row["improved"] = improved.get(row["agent"], 0)
         board.sort(key=lambda r: (-r["matched"], -r["compiles"]))
         per_hour = [0] * 24
-        for r in self.store.all("SELECT matched_at FROM functions WHERE project_id=? AND status='matched' AND matched_at > ?",
+        for r in self.project_store(pid).all("SELECT matched_at FROM functions WHERE project_id=? AND status='matched' AND matched_at > ?",
                                 pid, now - 86400):
             per_hour[23 - min(23, max(0, int((now - r["matched_at"]) // 3600)))] += 1  # (one matched since `now`: this hour)
-        compiles = self.store.one("SELECT COUNT(*) AS n FROM attempts t JOIN functions f ON f.id=t.function_id "
+        compiles = self.project_store(pid).one("SELECT COUNT(*) AS n FROM attempts t JOIN functions f ON f.id=t.function_id "
                                   "WHERE f.project_id=? AND t.created_at > ?", pid, now - 3600)["n"]
         # Agent cards and sorting need every worker, including fresh helpers below the historical leaders.
         # The overview limits its leaderboard in the GUI; truncating here makes active cards show zero.
@@ -426,55 +439,66 @@ class GuiMixin:
         pid=self._project(slug)['id']
         before=max(0,int(before))
         after=max(0,int(after))
+        identity = self.store.one('SELECT id FROM agents WHERE name=?', agent)
+        if identity is None:return {'functions':[], 'more':False}
+        agent = identity['id']
         fields='f.id,f.name,f.status,f.best_score,f.n_insns'
         if kind=='worked':
-            rows=self.store.all('SELECT DISTINCT '+fields+' FROM attempts t JOIN functions f ON f.id=t.function_id '
-                                'JOIN agents a ON a.id=t.agent_id WHERE f.project_id=? AND a.name=? '
+            rows=self.project_store(pid).all('SELECT DISTINCT '+fields+' FROM attempts t JOIN functions f ON f.id=t.function_id '
+                                'WHERE f.project_id=? AND t.agent_id=? '
                                 'AND t.id>? AND (?=0 OR f.id<?) ORDER BY f.id DESC LIMIT 101',pid,agent,after,before,before)
         elif kind=='matched':
-            rows=self.store.all('SELECT '+fields+' FROM functions f JOIN agents a ON a.id=f.matched_agent_id '
-                                "WHERE f.project_id=? AND a.name=? AND f.status='matched' AND (?=0 OR f.id<?) "
-                                'AND (?=0 OR EXISTS (SELECT 1 FROM attempts t WHERE t.function_id=f.id AND t.agent_id=a.id '
+            rows=self.project_store(pid).all('SELECT '+fields+' FROM functions f '
+                                "WHERE f.project_id=? AND f.matched_agent_id=? AND f.status='matched' AND (?=0 OR f.id<?) "
+                                'AND (?=0 OR EXISTS (SELECT 1 FROM attempts t WHERE t.function_id=f.id AND t.agent_id=f.matched_agent_id '
                                 'AND t.compiled AND t.score=0 AND t.id>?)) '
                                 'ORDER BY f.id DESC LIMIT 101',pid,agent,before,before,after,after)
         else:
             # Do not filter the worker before the window: every earlier contributor establishes the
             # running best. Ties, failed compiles and 0%-only initial attempts earn no improvement.
-            rows=self.store.all(
+            rows=self.project_store(pid).all(
                 'WITH history AS (SELECT t.id,t.agent_id,t.function_id,t.score,t.compiled,f.n_insns, '
                 'MIN(CASE WHEN t.compiled THEN t.score END) OVER (PARTITION BY t.function_id ORDER BY t.id '
                 'ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous '
                 'FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?) '
                 'SELECT DISTINCT '+fields+' FROM history h JOIN functions f ON f.id=h.function_id '
-                'JOIN agents a ON a.id=h.agent_id WHERE a.name=? AND h.compiled AND h.score>=0 '
+                'WHERE h.agent_id=? AND h.compiled AND h.score>=0 '
                 'AND h.score<COALESCE(h.previous,h.n_insns*100) AND h.id>? AND (?=0 OR f.id<?) '
                 'ORDER BY f.id DESC LIMIT 101',pid,agent,after,before,before)
         return {'functions':[dict(r) for r in rows[:100]],'more':len(rows)>100}
 
     def live(self, slug: str, since_event: int = 0, since_attempt: int = 0) -> dict:
         proj = self._project(slug)
+        from ..local_claims import expiry_ids
+        from ..project_labels import label
+        store = self.project_store(proj['id'])
+        hidden = json.dumps([r['id'] for r in self.store.all(
+            "SELECT id FROM agents WHERE name IN ('progress-judge','@progress-judge')")])
         # the GUI asks every second: the writer's lock only when a claim really ran out, not on every poll
-        if self.store.one("SELECT 1 FROM claims WHERE expires_at < ? LIMIT 1", time.time()):
-            with self.store.tx() as db:
-                self._expire_claims(db)
-        events = self.store.all(
-            "SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
-            f"ON a.id=e.agent_id WHERE {MATCHER_ACTIVITY} AND e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT {LIVE_EVENTS}", proj["id"],
-            since_event)
-        attempts = self.store.all(
-            "SELECT t.id, t.score, t.score_before, t.score_improved, t.compiled, t.created_at, f.name AS function, f.n_insns, a.name AS agent "
-            "FROM attempts t JOIN functions f ON f.id=t.function_id LEFT JOIN agents a ON a.id=t.agent_id "
-            f"WHERE {MATCHER_ACTIVITY} AND f.project_id=? AND t.id>? ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj["id"], since_attempt)
-        claims = self.store.all(
-            "SELECT f.name, f.n_insns, f.best_score, f.attempts, a.name AS agent, c.claimed_at FROM claims c "
-            f"JOIN functions f ON f.id=c.function_id JOIN agents a ON a.id=c.agent_id WHERE {MATCHER_ACTIVITY} AND f.project_id=?", proj["id"])
-        claims = [dict(c) for c in claims]
+        if store.one("SELECT 1 FROM claims WHERE expires_at < ? LIMIT 1", time.time()):
+            identities = expiry_ids(self, store)
+            with store.tx() as db:
+                self._expire_claims(db, **identities)
+        events = label(self, store.all(
+            "SELECT id,kind,detail,created_at,agent_id FROM events "
+            f"WHERE project_id=? AND id>? AND COALESCE(agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
+            f"ORDER BY id DESC LIMIT {LIVE_EVENTS}", proj['id'], since_event, hidden), {'agent':'agent_id'})
+        attempts = label(self, store.all(
+            "SELECT t.id,t.score,t.score_before,t.score_improved,t.compiled,t.created_at,"
+            "f.name AS function,f.n_insns,t.agent_id FROM attempts t JOIN functions f ON f.id=t.function_id "
+            "WHERE f.project_id=? AND t.id>? AND COALESCE(t.agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
+            f"ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj['id'], since_attempt, hidden), {'agent':'agent_id'})
+        claims = label(self, store.all(
+            "SELECT f.name,f.n_insns,f.best_score,f.attempts,c.agent_id,c.claimed_at FROM claims c "
+            "JOIN functions f ON f.id=c.function_id WHERE f.project_id=? "
+            "AND c.agent_id NOT IN (SELECT value FROM json_each(?))", proj['id'], hidden),
+            {'agent':'agent_id'}, require=('agent',))
         if slug in self.links:
             link = self.links[slug]
             key = 'name' if link.fork else 'vram'
             remote = link.claims
             if remote:
-                rows = self.store.all(f"SELECT name,n_insns,best_score,attempts,{key} AS lookup FROM functions "
+                rows = store.all(f"SELECT name,n_insns,best_score,attempts,{key} AS lookup FROM functions "
                                       f"WHERE project_id=? AND {key} IN (SELECT value FROM json_each(?)) ORDER BY id",
                                       proj['id'],json.dumps([c[key] for c in remote]))
                 by_key = {}
@@ -518,5 +542,5 @@ class GuiMixin:
         proj = self.store.one("SELECT id FROM projects WHERE slug=?", slug)
         agent = self.store.one("SELECT id FROM agents WHERE name=?", agent_name) if agent_name else None
         if proj is not None:
-            with self.store.tx() as db:
+            with self.project_store(proj["id"]).tx() as db:
                 self._event(db, proj["id"], agent["id"] if agent else None, kind, detail)

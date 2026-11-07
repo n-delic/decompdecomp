@@ -105,7 +105,7 @@ class LayoutMixin:
             return None
         x = self.xrefs(proj)
         if "structs" not in x:
-            rows = self.store.all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL",
+            rows = self.project_store(proj['id']).all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL",
                                   proj["id"])
             syms = self.symbols(proj["id"])
             read = functools.partial(arch.get(self.console(proj).arch).field_accesses,
@@ -160,7 +160,7 @@ class LayoutMixin:
         vrams = sorted({f for f, _ in takes})
         if not vrams:
             return []
-        rows = self.store.all(f"SELECT name, vram, matched_source FROM functions WHERE project_id=? AND status='matched' "
+        rows = self.project_store(proj['id']).all(f"SELECT name, vram, matched_source FROM functions WHERE project_id=? AND status='matched' "
                               f"AND vram IN ({','.join('?' * len(vrams))})", proj["id"], *vrams)
         by_vram = {r["vram"]: r for r in rows}
         seen: dict[str, list[str]] = {}

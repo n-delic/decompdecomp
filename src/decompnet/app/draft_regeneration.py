@@ -24,9 +24,9 @@ def has_compiling_c(net, fn):
     """A saved scored source or an unscorable source retained after a successful compile is a baseline."""
     if fn['best_source'] and fn['best_score'] is not None:
         return True
-    if net.store.one("SELECT 1 FROM attempts WHERE function_id=? AND compiled=1 AND length(trim(source))>0 LIMIT 1",fn['id']):
+    if net.project_store(fn['project_id']).one("SELECT 1 FROM attempts WHERE function_id=? AND compiled=1 AND length(trim(source))>0 LIMIT 1",fn['id']):
         return True
-    report = draft_reports.read(net, fn['id'])
+    report = draft_reports.read(net, fn['id'], project_id=fn['project_id'])
     return bool(report.get('compiled') and report.get('compiled_source'))
 
 
@@ -39,15 +39,15 @@ def thread_count(value=0):
 def generate(net, proj, fn, fork):
     """Generate exactly one fresh draft; no context fallback or repaired variants."""
     if fork:
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('UPDATE functions SET seed_key=NULL WHERE id=?', (fn['id'],))
-        return net.forks.background_draft(proj, net.store.one('SELECT * FROM functions WHERE id=?',fn['id']))
+        return net.forks.background_draft(proj, net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id']))
     key, toolchain, context = net._draft_plan(fn, proj)
     draft = seeds.generate_from_asm(net._asm_text(fn,proj), fn['name'], toolchain, context,
                                     '\n'.join(net._jtbl_asm(proj,fn)), valid=True, strict=True, timeout=20)
     from .engine.briefs import DRAFT_NOTE
     source = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'+draft if draft else ''
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.execute('UPDATE functions SET seed=?,seed_key=? WHERE id=?',(source,key,fn['id']))
     return source
 
@@ -55,8 +55,11 @@ def generate(net, proj, fn, fork):
 def trial(net, agent, proj, fid, source, fork, stop=None):
     """Compile the draft, then bounded private repairs only if it fails; keep the ordinary judge."""
     now = time.time()
-    with net.store.tx() as db:
-        net._expire_claims(db)
+    from .local_claims import expiry_ids
+    store = net.project_store(proj['id'])
+    identities = expiry_ids(net, store)
+    with store.tx() as db:
+        net._expire_claims(db, **identities)
         fn = db.execute('SELECT * FROM functions WHERE id=?',(fid,)).fetchone()
         if not fn or fn['status']!='open' or db.execute('SELECT 1 FROM claims WHERE function_id=?',(fid,)).fetchone():
             return 'skip', {}
@@ -111,10 +114,10 @@ def trial(net, agent, proj, fid, source, fork, stop=None):
                         report.update(scored=True,matched=diff.bytes_match)
                     break
         report['complete']=True
-        draft_reports.save(net,fid,report)
+        draft_reports.save(net,fid,report,project_id=proj['id'])
         return ('match' if report['matched'] else 'near' if report['scored'] else 'fail'), report
     finally:
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(fid,agent.id))
 
 
@@ -125,7 +128,7 @@ def run(net, slug, log, *, include_all=False, threads=0):
     agent, _ = net.local_agent('autopilot')
     from .boundary_repairs import blocked
     held = blocked(net,proj)
-    rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns,id",proj['id'])
+    rows = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns,id",proj['id'])
     if not include_all:
         rows = [fn for fn in rows if not has_compiling_c(net,fn)]
     stop = getattr(log, 'cancel_event', threading.Event())
@@ -135,16 +138,16 @@ def run(net, slug, log, *, include_all=False, threads=0):
             active[fid] = (phase, time.monotonic())
     result = {'completed':0, 'total':len(rows), 'compiled':0, 'matched':0, 'skipped':0, 'failed':0}
     def one(fid, slot):
-        if stop.is_set() or fid in held or net.store.one('SELECT 1 FROM claims WHERE function_id=?', fid):
+        if stop.is_set() or fid in held or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', fid):
             return 'skip', {}
-        fn = net.store.one('SELECT * FROM functions WHERE id=?',fid)
+        fn = net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fid)
         if fn is None or fn['status'] != 'open' or (not include_all and has_compiling_c(net,fn)):
             return 'skip', {}
         link = net.links.get(slug)
         if link and any(c['name'] == fn['name'] for c in link.claims):
             return 'skip', {}
         # Only work that actually starts invalidates its receipt, never skipped or cancelled functions.
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             key = draft_reports.GENERATION_PREFIX+str(fid)
             db.execute("INSERT INTO settings VALUES(?, '1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1",(key,))
         fork = net.fork_slug(slug)
@@ -154,7 +157,7 @@ def run(net, slug, log, *, include_all=False, threads=0):
         except seeds.DraftError as error:
             report = {'compiled':False,'trials':0,'failures':[],'complete':True}
             draft_reports.failure(report,'generation','raw_m2c',error)
-            draft_reports.save(net,fid,report)
+            draft_reports.save(net,fid,report,project_id=proj['id'])
             return 'fail', report
         if not source:
             return 'fail', {}
@@ -173,7 +176,7 @@ def run(net, slug, log, *, include_all=False, threads=0):
             stage(fid, 'Checking compiling C')
             outcome, report = trial(net,worker,proj,fid,source,fork,stop)
             if link and not fork:
-                current = net.store.one('SELECT * FROM functions WHERE id=?',fid)
+                current = net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fid)
                 if outcome == 'match':
                     report['host_confirmed'] = False
                     try:
@@ -184,7 +187,7 @@ def run(net, slug, log, *, include_all=False, threads=0):
                             draft_reports.failure(report,'host confirmation','room',verdict.get('reason') or 'The host has not confirmed this local match; saved evidence is available for retry.')
                     except NetworkError as error:
                         draft_reports.failure(report,'host confirmation','room',error)
-                    draft_reports.save(net,fid,report)
+                    draft_reports.save(net,fid,report,project_id=proj['id'])
                 elif current['best_source'] and current['best_score'] is not None and (
                         fn['best_score'] is None or current['best_score'] < fn['best_score']):
                     try:
@@ -192,7 +195,7 @@ def run(net, slug, log, *, include_all=False, threads=0):
                         link.call('/collab/best',worker,function=fn['name'],source=current['best_source'],score=current['best_score'])
                     except NetworkError as error:
                         draft_reports.failure(report,'room sharing','room',error)
-                        draft_reports.save(net,fid,report)
+                        draft_reports.save(net,fid,report,project_id=proj['id'])
                         log(fn['name']+': improved local C saved; room sharing failed: '+str(error)[:300])
             confirmed = bool(report.get('host_confirmed'))
             if link and outcome == 'match' and not confirmed:

@@ -4,13 +4,18 @@ import time
 HOLD_SPARE_SECONDS = 120
 
 
-def hold(net, agent, fn, seconds, *, count_turn=True):
-    now = time.time()
-    store = net.project_store(fn['project_id'])
-    identities = {} if store is net.store else {
+def expiry_ids(net, store):
+    """Read shared identities before acquiring a separate project's write lock."""
+    return {} if store is net.store else {
         'machine_ids': net._machine_agent_ids(),
         'nonexclusive_ids': net._nonexclusive_agent_ids(),
     }
+
+
+def hold(net, agent, fn, seconds, *, count_turn=True):
+    now = time.time()
+    store = net.project_store(fn['project_id'])
+    identities = expiry_ids(net, store)
     with store.tx() as db:
         if not db.execute('SELECT 1 FROM functions WHERE id=? AND project_id=?',
                           (fn['id'], fn['project_id'])).fetchone():

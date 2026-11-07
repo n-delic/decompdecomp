@@ -1295,7 +1295,7 @@ class Network:
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
             if notes.strip() and notes.strip() != "Deep permutation turn ended; improvements shared.":
-                agent_notes.save(db, fn["project_id"], fn["id"], agent.id, notes.strip())
+                agent_notes.save(db, fn["project_id"], fn["id"], agent.id, notes.strip(), agent_name=agent.name)
             self._event(db, fn["project_id"], agent.id, "release", fn["name"])
             said = self._not_c(db, fn, agent, notes.strip()) if not_c else ""
         from . import claim_stalls
@@ -2072,7 +2072,7 @@ class Network:
                     db.execute('UPDATE notes SET text=?,created_at=?,score_before=?,score_after=? WHERE id=?',
                                (text.strip()[:NOTE_CHARS], time.time(), *(measured or agent_notes.current_scores(db, fn['id'], time.time())), row['id']))
                     return 'Updated the deep permuter summary.'
-            agent_notes.save(db, proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS], measured=measured)
+            agent_notes.save(db, proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS], measured=measured, agent_name=agent.name)
         return "Noted. Other agents will see it" + (f" when they open {fn['name']}." if fn else " in their briefings.")
 
     def search_notes(self, project: str | None, query: str) -> str:

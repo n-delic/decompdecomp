@@ -8,7 +8,7 @@ NOTE_PAGE = 40
 CHART_BUCKETS = 160  # At most five points per bucket, preserving failures and extrema.
 
 
-def notes_page(store, fn, cursor=None):
+def notes_page(store, fn, cursor=None, *, net=None):
     before = ''
     args = [fn['id']]
     if cursor:
@@ -23,15 +23,21 @@ def notes_page(store, fn, cursor=None):
         else:
             before = ' AND (n.created_at IS NULL OR (n.created_at,n.id)<(?,?))'
             args.extend((at,note_id))
-    rows = store.all('SELECT n.*,a.name AS agent FROM notes n LEFT JOIN agents a ON a.id=n.agent_id '
+    columns = 'n.*' if net is not None else 'n.*,a.name AS agent'
+    join = '' if net is not None else ' LEFT JOIN agents a ON a.id=n.agent_id'
+    rows = store.all('SELECT '+columns+' FROM notes n'+join+' '
                      'WHERE n.function_id=?' + before +
                      ' ORDER BY n.created_at DESC,n.id DESC LIMIT ?', *args, NOTE_PAGE + 1)
+    if net is not None:
+        from .project_labels import names
+        labels = names(net, (row['agent_id'] for row in rows))
+        rows = [dict(row) | {'agent':labels.get(row['agent_id'])} for row in rows]
     page = rows[:NOTE_PAGE]
     next_cursor = json.dumps([page[-1]['created_at'], page[-1]['id']]) if len(rows) > NOTE_PAGE else None
     return {'notes': agent_notes.grouped(store, useful(page), fn['project_id']), 'notes_next': next_cursor}
 
 
-def history(store, fn):
+def history(store, fn, *, net=None):
     bounds = store.one('SELECT COUNT(*) AS n,MIN(id) AS lo,MAX(id) AS hi FROM attempts WHERE function_id=?', fn['id'])
     args = [fn['id']]
     selection = ''
@@ -55,6 +61,11 @@ def history(store, fn):
              UNION SELECT worst FROM selected UNION SELECT failed FROM selected) ORDER BY t.id'''
     else:
         selection = 'SELECT t.score,t.created_at,a.name AS agent,t.id FROM attempts t LEFT JOIN agents a ON a.id=t.agent_id WHERE t.function_id=? ORDER BY t.id'
+    if net is not None:
+        selection = selection.replace('a.name AS agent', 't.agent_id').replace('LEFT JOIN agents a ON a.id=t.agent_id', '')
     points = store.all(selection, *args)
+    if net is not None:
+        from .project_labels import label
+        points = label(net, points, {'agent':'agent_id'})
     return {'scores': [{'score': p['score'], 't': p['created_at'], 'agent': p['agent'], 'id': p['id']} for p in points],
-            'scores_total': bounds['n'], 'scores_sampled': len(points) < bounds['n'], **notes_page(store, fn)}
+            'scores_total': bounds['n'], 'scores_sampled': len(points) < bounds['n'], **notes_page(store, fn, net=net)}

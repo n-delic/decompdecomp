@@ -53,7 +53,7 @@ class AutopilotMixin:
                 tc = self.cfg(proj)["compiler"]["toolchain"]
                 if not seeds.m2c_target(tc):
                     raise NetworkError("m2c can't read this project's code (no draft decompiler for it yet)")
-                ids = [r["id"] for r in self.store.all("SELECT id FROM functions WHERE project_id=? AND status='open' "
+                ids = [r["id"] for r in self.project_store(proj['id']).all("SELECT id FROM functions WHERE project_id=? AND status='open' "
                                                        "ORDER BY n_insns, vram", proj["id"])]
                 try_one = self._autopilot_one
             no_drafts = ""
@@ -102,7 +102,7 @@ class AutopilotMixin:
         except Exception as e:
             logging.getLogger("decompdecomp").info("autopilot twins: %s", e)
         state["phase"] = "drafts"
-        ids = [fid for fid in ids if (r := self.store.one("SELECT status FROM functions WHERE id=?", fid)) and r["status"] == "open"]
+        ids = [fid for fid in ids if (r := self.project_store(proj['id']).one("SELECT status FROM functions WHERE id=?", fid)) and r["status"] == "open"]
         state["total"] = len(ids)
 
         def one(fid: int) -> None:
@@ -123,14 +123,14 @@ class AutopilotMixin:
         finally:
             state["state"] = "stopped" if state["stop"].is_set() else "done"
             state["finished_at"] = time.time()
-            with self.store.tx() as db:
+            with self.project_store(proj['id']).tx() as db:
                 cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
                 cfg["autopilot"] = {k: state.get(k) for k in ("total", "tried", "matched", "near", "twins", "started_at",
                                                               "finished_at", "no_drafts")}
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
             drafts = state["matched"] - state.get("twins", 0)
             if drafts:  # (twins announce their own)
-                with self.store.tx() as db:
+                with self.project_store(proj['id']).tx() as db:
                     self._event(db, proj["id"], agent.id, "autopilot",
                                 f"{drafts} of {state['tried']} functions matched from machine drafts")
 
@@ -165,7 +165,7 @@ class AutopilotMixin:
     def _try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
         from ..boundary_repairs import blocked
         if fn["id"] in blocked(self,proj):raise NetworkError("Review this function boundary before starting a local search.")
-        fn = self.store.one("SELECT * FROM functions WHERE id=?", fn["id"])
+        fn = self.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fn["id"])
         if fn is None or fn["status"] != "open":
             raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")
         if exact_only:
@@ -178,16 +178,19 @@ class AutopilotMixin:
                         project['arch'],project['big_endian'])
             expected = signature(proj,fn)
             def validate():
-                latest=self.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
-                current=self.store.one('SELECT * FROM projects WHERE id=?',proj['id'])
+                latest=self.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
+                current=self.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id'])
                 if (latest is None or latest['status']!='open' or current is None
                         or signature(current,latest)!=expected):
                     raise NetworkError('Function or build inputs changed during exact verification. Recheck the match.')
                 if before_record is not None:before_record()
         else:
             now = time.time()
-            with self.store.tx() as db:
-                self._expire_claims(db)
+            store = self.project_store(proj['id'])
+            identities = {} if store is self.store else {
+                'machine_ids': self._machine_agent_ids(), 'nonexclusive_ids': self._nonexclusive_agent_ids()}
+            with store.tx() as db:
+                self._expire_claims(db, **identities)
                 if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                     raise NetworkError(f"{fn['name']} is claimed")
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
@@ -217,7 +220,7 @@ class AutopilotMixin:
                     "candidate_relocs": json.dumps([(r.offset, r.type, 0) for r in cand.relocs])}
         finally:
             if not exact_only:
-                with self.store.tx() as db:
+                with self.project_store(proj['id']).tx() as db:
                     db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
 
     def _autopilot_one(self, agent, proj, fid: int) -> str:
@@ -229,8 +232,11 @@ class AutopilotMixin:
 
     def _autopilot_one_work(self, agent, proj, fid: int) -> str:
         now = time.time()
-        with self.store.tx() as db:
-            self._expire_claims(db)
+        store = self.project_store(proj['id'])
+        identities = {} if store is self.store else {
+            'machine_ids': self._machine_agent_ids(), 'nonexclusive_ids': self._nonexclusive_agent_ids()}
+        with store.tx() as db:
+            self._expire_claims(db, **identities)
             fn = db.execute("SELECT * FROM functions WHERE id=?", (fid,)).fetchone()
             if fn is None or fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fid,)).fetchone():
                 return "skip"
@@ -244,7 +250,7 @@ class AutopilotMixin:
             target_asm = self._asm_text(fn, proj)
             from .. import draft_reports, initial_draft_repairs
             input_key = draft_reports.key(plan, ctx['header'], data_asm, fn)
-            previous = draft_reports.read(self, fid)
+            previous = draft_reports.read(self, fid, project_id=proj['id'])
             external_inputs = own.get('cmd') or own.get('ro_paths') or any(flag.startswith(('-I','-include','-imacros')) for flag in own.get('flags',[]))
             if not external_inputs and previous.get('key') == input_key and previous.get('complete'):
                 return 'skip'
@@ -252,7 +258,7 @@ class AutopilotMixin:
             report = {'key': input_key, 'seed_key':plan, 'data_key':data_key, 'compiled': False, 'scored': False, 'matched': False, 'trials': 0, 'failures': []}
             from .briefs import DRAFT_NOTE
             prefix = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'
-            seed_row = self.store.one('SELECT seed_key FROM functions WHERE id=?',fid)
+            seed_row = self.project_store(proj['id']).one('SELECT seed_key FROM functions WHERE id=?',fid)
             if (seed and seed.startswith(prefix) and seed_row and seed_row['seed_key'] == plan
                     and previous.get('data_key',data_key) == data_key):
                 draft = seed[len(prefix):]
@@ -267,7 +273,7 @@ class AutopilotMixin:
                     draft = None
             if not draft:
                 report['complete'] = True
-                draft_reports.save(self, fid, report)
+                draft_reports.save(self, fid, report, project_id=proj['id'])
                 return 'fail'
             # (its compiler named in it: the same draft is worth judging again with another compiler)
             note = f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
@@ -354,8 +360,8 @@ class AutopilotMixin:
                 if d.bytes_match:
                     break
             report['complete'] = True
-            draft_reports.save(self, fid, report)
+            draft_reports.save(self, fid, report, project_id=proj['id'])
             return min(outcomes or ['fail'], key=("match", "near", "far", "skip", "fail").index)
         finally:
-            with self.store.tx() as db:
+            with self.project_store(proj['id']).tx() as db:
                 db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fid, agent.id))

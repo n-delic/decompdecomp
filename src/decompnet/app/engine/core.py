@@ -106,10 +106,12 @@ class Core(Network):
         folder copied to another computer, user name or Linux keeps its projects (their folders were stored as
         absolute paths: /home/decomp/Decomp/... inside the old Windows install's WSL)."""
         moved = []
-        for row in self.store.all("SELECT id, slug, root FROM projects"):
+        for catalog in self.store.all("SELECT id, slug, root FROM projects"):
+            store = self.project_store(catalog['id'])
+            row = catalog if store is self.store else store.one('SELECT id,slug,root FROM projects WHERE id=?', catalog['id'])
             here = self.workspace / row["slug"]
             if row["root"] and not Path(row["root"]).exists() and here.is_dir():
-                with self.store.tx() as db:
+                with store.tx() as db:
                     cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (row["id"],)).fetchone()["config"])
                     old_root = Path(row["root"])
                     for key in ("progress_folder", "save_folder"):
@@ -150,10 +152,10 @@ class Core(Network):
             return f'{reconsidered} obsolete tooling verdicts reconsidered with supported C' if reconsidered else None
         if self.is_rom(row):
             self.rangechecks.reopen(slug)
-        last = self.store.one("SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE project_id=?", row["id"])["id"]
+        last = self.project_store(row['id']).one("SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE project_id=?", row["id"])["id"]
         self.console(row).on_start(self, slug, log=log)
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
-        done = [r["detail"] for r in self.store.all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
+        done = [r["detail"] for r in self.project_store(row['id']).all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
                                                      "kind='analysis' ORDER BY id", row["id"], last)]
         reconsidered = assembly_reconsideration.run(self, self.project_row(slug), log)
         if reconsidered:
@@ -163,7 +165,7 @@ class Core(Network):
         if n:
             done.append(f"{n} more function{'' if n == 1 else 's'} set aside, as no C makes them")
         said = "; ".join(done) or "nothing new"
-        with self.store.tx() as db:
+        with self.project_store(row['id']).tx() as db:
             self._event(db, row["id"], None, "analysis", f"decompdecomp {__version__}: {said}")
         return said
 
@@ -311,8 +313,13 @@ class Core(Network):
             return self._function(name, project)["name"]
         except NetworkError:
             rows = self._loose_functions(name, project) if name else []
-            held = self.store.all("SELECT f.id, f.unit FROM claims c JOIN functions f ON f.id=c.function_id "
-                                  "WHERE c.agent_id=?", agent.id) if agent else []
+            held = []
+            if agent:
+                # Loose-name candidates already identify the relevant projects.
+                for pid in {row['project_id'] for row in rows}:
+                    held.extend(self.project_store(pid).all(
+                        'SELECT f.id,f.unit FROM claims c JOIN functions f ON f.id=c.function_id '
+                        'WHERE c.agent_id=? AND f.project_id=?', agent.id, pid))
             if held and len(rows) > 1:  # one it holds, else the one in the file (or module) it works in
                 ids, units = {h["id"] for h in held}, {h["unit"] for h in held}
                 modules = {u.split("/", 1)[0] for u in units}
