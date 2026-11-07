@@ -731,7 +731,8 @@ class Search(Permuter):
                             and (best <= score <= best*1.25 or permuter_focus.classify(own[0]) != policy_focus or
                                  best <= score <= best*2 and search_frontier.structure_recovery(rows,own[0],proj['arch'])) else score)
                 if isinstance(feedback,dict):feedback['output']=getattr(self,'_trial_output',None)
-                packed_feedback = json.dumps(feedback)
+                from .search_history import feedback as compact_feedback
+                packed_feedback = json.dumps(compact_feedback(feedback),separators=(',',':'))
                 trial_bookkeeping.submit(self.net.project_store(proj['id']), [(
                     'INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                     (fn['id'], key, 'miss', 'deep function search; path: '+ ' → '.join((current_trial() or {}).get('lineage', [])),

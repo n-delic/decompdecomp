@@ -143,7 +143,7 @@ class RepairFeedback:
                               (attempt_id,)).fetchone() if attempt_id else None
         current = json.loads(recorded['settings']) if recorded else _settings(proj, fn)
         comparable = db.execute('SELECT a.*,s.settings AS recorded_settings FROM attempts a JOIN repair_attempt_settings s ON s.attempt_id=a.id '
-                                'WHERE a.function_id=? AND a.compiled=1 AND a.score>0 AND (? IS NULL OR a.id<?) ORDER BY a.score,a.id DESC LIMIT 100',
+                                'WHERE a.function_id=? AND a.compiled=1 AND a.score>0 AND (a.source_hash IS NOT NULL OR a.source IS NOT NULL) AND (? IS NULL OR a.id<?) ORDER BY a.score,a.id DESC LIMIT 100',
                                 (fn['id'],attempt_id,attempt_id)).fetchall()
         comparable = next((r for r in comparable if not settings_differences(json.loads(r['recorded_settings']),current)),None)
         if comparable:
@@ -155,7 +155,7 @@ class RepairFeedback:
             if not row:
                 return None
             settings = db.execute('SELECT settings FROM repair_attempt_settings WHERE attempt_id=?',(row['id'],)).fetchone()
-            return {'attempt_id':row['id'],'source_sha256':hashlib.sha256((row['source'] or '').encode()).hexdigest(),
+            return {'attempt_id':row['id'],'source_sha256':row['source_digest'] or row['source_hash'] or hashlib.sha256((row['source'] or '').encode()).hexdigest(),
                     'score':row['score'],'context_version':row['context_version'],'agent_id':row['agent_id'],
                     'settings':json.loads(settings['settings']) if settings else None}
         provenance = db.execute('SELECT provenance FROM repair_attempt_provenance WHERE attempt_id=?',(attempt_id,)).fetchone()

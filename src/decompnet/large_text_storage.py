@@ -53,6 +53,8 @@ def _install(conn, tables=None):
             conn.execute(f'DROP VIEW IF EXISTS packed_{table}')
             conn.execute(ddl)
         for field in fields:
+            from .payload_links import install as install_links
+            install_links(conn,table,field,blob=True)
             condition=f"typeof(NEW.{field})='text' AND length(CAST(NEW.{field} AS BLOB))>={MIN_BYTES}"
             put=(f'INSERT OR IGNORE INTO text_payloads SELECT payload_digest(NEW.{field}),'
                  f'payload_pack(NEW.{field}),length(CAST(NEW.{field} AS BLOB)) '
