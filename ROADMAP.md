@@ -34,8 +34,10 @@
   Host room snapshots/event pages/member rollups, client queues/cursors and
   reconnect discovery now select project storage. Snapshot labels stay shared;
   guest batches resolve identities before taking a separate project write lock.
-  Cursor/config writes preserve concurrent edits. Host membership mutations and
-  pending-verification services still gate migration activation.
+  Cursor/config writes preserve concurrent edits. Host membership uses durable
+  catalog-to-project handoffs with replay receipts; pending verification and
+  prepared compiler/header publication select project storage. Remaining service
+  conversion and recoverable migration still gate activation.
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

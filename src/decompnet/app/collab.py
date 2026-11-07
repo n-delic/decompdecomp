@@ -37,7 +37,7 @@ from decompnet.hostenv import NO_WINDOW
 from .. import toolchains
 from ..network import Agent, NetworkError, hash_token
 from ..rom.symbols import AUTO_NAME
-from . import forkroom
+from . import forkroom, room_membership
 
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
 MAX_BODY = 2 * 1024 * 1024
@@ -75,10 +75,14 @@ class Room:
         self.fork = bool(net.fork_slug(slug))  # a git source tree (forkroom.py)
         self._hits: dict[str, deque] = defaultdict(lambda: deque(maxlen=900))
         self._members: tuple[float, list] = (0.0, [])  # cached: every member polls, the list changes slowly
+        self._drain_membership()
 
     @property
     def store(self):
         return self.net.project_store(self.proj['id'])
+
+    def _drain_membership(self):
+        room_membership.drain(self.net, self.store, self.proj['id'])
 
     def _credited(self, sql, *args, require_agent=False):
         """Read project rows and resolve their author labels from the shared registry."""
@@ -89,6 +93,12 @@ class Room:
         for row in rows:
             row['agent'] = names.get(row.pop('agent_id'))
         return [row for row in rows if row['agent'] is not None] if require_agent else rows
+
+    def _expire_claims(self):
+        store = self.store
+        own = None if store is self.net.store else self.net._machine_agent_ids()
+        with store.tx() as db:
+            self.net._expire_claims(db, machine_ids=own)
 
     @property
     def settings(self) -> dict:
@@ -115,18 +125,19 @@ class Room:
             "SELECT name, created_at FROM agents WHERE origin=? AND owner IS NULL ORDER BY created_at", self.origin + ":pending")]
 
     def approve(self, name: str, ok: bool = True) -> None:
+        store = self.store
         with self.net.store.tx() as db:
             row = db.execute("SELECT id FROM agents WHERE name=? AND origin=?", (name, self.origin + ":pending")).fetchone()
             if row is None:
                 raise NetworkError(f"nobody called {name} is waiting")
             if ok:
                 db.execute("UPDATE agents SET origin=? WHERE id=?", (self.origin, row["id"]))
-                self.net._event(db, self.proj["id"], None, "collab", f"{name} joined")
+                room_membership.enqueue(self.net, store, db, self.proj['id'], f'{name} joined')
             else:
                 db.execute("UPDATE agents SET origin=?, token_hash=? WHERE id=?",
                            (self.origin + ":declined", "declined:" + secrets.token_hex(16), row["id"]))
         self._members = (0.0, [])
-        self._members_lock = threading.Lock()
+        self._drain_membership()
 
     @property
     def cfg(self) -> dict:
@@ -147,16 +158,17 @@ class Room:
 
     def remove(self, name: str) -> None:
         """Take a member out of the room: their token stops working and their claims are freed."""
+        store = self.store
         with self.net.store.tx() as db:
             row = db.execute("SELECT id FROM agents WHERE name=? AND origin=? AND owner IS NULL", (name, self.origin)).fetchone()
             if row is None:
                 raise NetworkError(f"{name} isn't a member of this room")
             db.execute("UPDATE agents SET token_hash=? WHERE id=?", ("removed:" + secrets.token_hex(16), row["id"]))
-            db.execute("DELETE FROM claims WHERE agent_id IN (SELECT id FROM agents WHERE owner=? AND origin=?)",
-                       (name, self.origin))
+            children = [row['id'] for row in db.execute('SELECT id FROM agents WHERE owner=? AND origin=?', (name, self.origin))]
             db.execute("UPDATE agents SET origin=? WHERE id=?", (self.origin + ":removed", row["id"]))
-            self.net._event(db, self.proj["id"], None, "collab", f"{name} was removed from the room")
+            room_membership.enqueue(self.net, store, db, self.proj['id'], f'{name} was removed from the room', children)
         self._members = (0.0, [])
+        self._drain_membership()
 
     def close(self) -> None:
         cfg = self.cfg
@@ -189,6 +201,7 @@ class Room:
             return out
 
     def _members_now(self) -> list[dict]:
+        self._drain_membership()
         # in the order they joined: each member's colour on every computer's screen (agents.js: computerColour)
         rows = self.net.store.all("SELECT id, name, created_at, last_seen FROM agents WHERE origin=? AND owner IS NULL "
                                   "ORDER BY created_at, id", self.origin)
@@ -236,6 +249,15 @@ class Room:
                                f"game ({what}, same version)")
         token = "dn_" + secrets.token_urlsafe(24)
         waiting = self.settings["approve"]
+        store = self.store
+        # A room member who never connected cannot submit work without a child
+        # identity. Preflight old direct credits outside the catalog writer;
+        # the child/last_seen checks remain inside the identity transaction.
+        checked = self.net.store.one(
+            "SELECT id FROM agents WHERE lower(name)=lower(?) AND owner IS NULL AND last_seen IS NULL "
+            "AND origin IN (?,?)", name, self.origin, self.origin+':pending') if store is not self.net.store else None
+        credited = bool(checked and store.one('SELECT 1 FROM functions WHERE project_id=? AND matched_agent_id=? LIMIT 1',
+                                             self.proj['id'], checked['id']))
         with self.net.store.tx() as db:
             # #80: a join that stopped after the host registered it (an import failed, or the app quit) left its
             # member behind with a token nobody kept. The next join with that name takes the empty member over
@@ -244,10 +266,15 @@ class Room:
             reuse = db.execute(
                 "SELECT id, name FROM agents WHERE lower(name)=lower(?) AND owner IS NULL AND last_seen IS NULL "
                 "AND origin IN (?, ?)", (name, self.origin, self.origin + ":pending")).fetchone()
-            if reuse is not None and (
-                    db.execute("SELECT 1 FROM agents WHERE origin=? AND owner=?", (self.origin, reuse["name"])).fetchone()
-                    or db.execute("SELECT 1 FROM functions WHERE matched_agent_id=?", (reuse["id"],)).fetchone()):
-                reuse = None
+            if reuse is not None:
+                has_work = db.execute("SELECT 1 FROM agents WHERE origin=? AND owner=?", (self.origin, reuse["name"])).fetchone()
+                if not has_work:
+                    if store is self.net.store:
+                        has_work = db.execute("SELECT 1 FROM functions WHERE matched_agent_id=?", (reuse["id"],)).fetchone()
+                    else:
+                        has_work = not checked or checked['id'] != reuse['id'] or credited
+                if has_work:
+                    reuse = None
             base, n = name, 2
             if reuse is not None:
                 name = reuse["name"]
@@ -262,10 +289,11 @@ class Room:
                 db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
                            (name, None, hash_token(token), time.time(), self.origin + (":pending" if waiting else "")))
             if waiting:
-                self.net._event(db, self.proj["id"], None, "collab", f"{name} asks to join")
+                room_membership.enqueue(self.net, store, db, self.proj['id'], f'{name} asks to join')
             else:
-                self.net._event(db, self.proj["id"], None, "collab", f"{name} joined")
+                room_membership.enqueue(self.net, store, db, self.proj['id'], f'{name} joined')
         self._members = (0.0, [])
+        self._drain_membership()
         return token, name
 
     def member(self, request: Request) -> Agent:
@@ -284,10 +312,12 @@ class Room:
         hits.append(now)
         if len(hits) == hits.maxlen and now - hits[0] < 60:
             raise NetworkError("slow down")
+        self._drain_membership()
         return agent
 
     def agent_for(self, member: Agent, label: str) -> Agent:
         """The host-side identity of one of a member's agents, e.g. alex.claude-1."""
+        self._drain_membership()
         label = re.sub(r"[^A-Za-z0-9_-]", "", str(label or "agent"))[:24] or "agent"
         name = f"{member.name}.{label}"
         row = self.net.store.one("SELECT id, owner, origin FROM agents WHERE name=?", name)
@@ -295,15 +325,18 @@ class Room:
             raise NetworkError("That worker name belongs to another connection. Join with a different member name.")
         if row is None:
             with self.net.store.tx() as db:
-                aid = db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
-                                 (name, member.name, "remote:" + secrets.token_hex(16), time.time(), self.origin)).lastrowid
-            return Agent(aid, name, member.name, True)
+                db.execute("INSERT OR IGNORE INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
+                           (name, member.name, "remote:" + secrets.token_hex(16), time.time(), self.origin))
+                row = db.execute('SELECT id,owner,origin FROM agents WHERE name=?', (name,)).fetchone()
+            if row['owner'] != member.name or row['origin'] != self.origin:
+                raise NetworkError('That worker name belongs to another connection. Join with a different member name.')
         return Agent(row["id"], name, member.name, True)
 
     def _events(self, e: int, fresh: bool) -> dict:
         """The events after the guest's cursor, a page at a time, and how many more wait (`behind`: the guest's
         "getting the host's work" counts it down). A guest that just joined (`fresh`) starts at the newest: the
         room's whole history landed in its feed and notifications as if it had all just happened."""
+        self._drain_membership()
         pid, store = self.proj["id"], self.store
         if fresh:
             last = store.one("SELECT COALESCE(MAX(id), 0) AS m FROM events WHERE project_id=?", pid)["m"]
@@ -322,8 +355,7 @@ class Room:
             return self._fork_state(e, member, fresh)
         pid = self.proj["id"]
         net = self.net
-        with self.store.tx() as db:
-            net._expire_claims(db)
+        self._expire_claims()
         out: dict = self._events(e, fresh)
         events = out["events"]
         kinds = {ev["kind"] for ev in events}
@@ -382,9 +414,8 @@ class Room:
     def _fork_state(self, e: int, member: Agent, fresh: bool = False) -> dict:
         """A git project's room: events, matches (by name), claims and notes; the tree itself travels as bundles
         (GET /collab/bundle) when `head` moves."""
-        pid, net = self.proj["id"], self.net
-        with self.store.tx() as db:
-            net._expire_claims(db)
+        pid = self.proj["id"]
+        self._expire_claims()
         out: dict = self._events(e, fresh)
         events = out["events"]
         names = {ev["detail"] for ev in events if ev["kind"] == "match"}

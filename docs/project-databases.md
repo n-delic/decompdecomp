@@ -81,12 +81,29 @@ legacy layout retains its transactional identity rollback. Room discovery reads
 operational link configuration after catalog slug discovery, without adding
 per-project configuration queries to the legacy single-store path.
 
+Host membership changes now keep identity mutations in the catalog. When project
+storage is separate, the same catalog transaction queues project claim cleanup
+and its membership event in `room_membership_effects`. Delivery commits the
+project changes with a small receipt before acknowledging the catalog queue.
+Receipts prevent duplicated events if delivery is interrupted or two readers
+replay the same item. Missing project state leaves the handoff queued. Delivery
+defers while the caller holds any Store transaction and resumes on subsequent
+room reads or restart. The legacy file still applies membership changes and
+effects in one transaction without creating an outbox or receipts.
+
+Pending room submissions, packet/baseline reads, retry claims, queue status and
+legacy recovery now use their project store. Queue updates and resends validate
+the explicit project scope. Prepared-bundle verification and its build-input
+snapshot use the same project storage; the linked-byte verdict and atomic
+profile/header/source publication are unchanged. Room claim expiry resolves
+machine identity IDs from the catalog before a separate project transaction.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
 | --- | --- |
-| Shared catalog | App settings, global agent identities, project IDs/slugs and database locations |
-| One operational database per project | Project configuration, functions, claims, attempts, notes, headers, compiler trials, progress, project-specific settings and evidence review/index state |
+| Shared catalog | App settings, global agent identities, project IDs/slugs, database locations and durable membership handoffs |
+| One operational database per project | Project configuration, functions, claims, attempts, notes, headers, compiler trials, progress, project-specific settings, membership delivery receipts and evidence review/index state |
 | Existing repair evidence database | Immutable captured repair cases and content blobs |
 | Existing match library database | Verified reusable functions shared between games |
 
@@ -101,10 +118,9 @@ need explicit ownership during the project split.
    to explicit project storage. Separate global settings from the project-owned
    keys that currently share the `settings` table. Audit remaining shared identity
    writes for lock ordering; saved-progress restoration now resolves them before
-   separate project transactions. Host membership approval/join/removal still mix
-   catalog identity changes with operational event/claim writes and need explicit
-   coordination. Claim-expiry machine identity reads, pending match verification,
-   provider services and other room helpers also remain to be converted.
+   separate project transactions. Host membership and room verification now have
+   explicit boundaries; other claim-expiry callers, provider services, source
+   preparation workers, compiler services and repair indexes still need conversion.
 2. Replace cross-project operational SQL joins with bounded queries to individual
    project stores. Keep cross-game matching and activity feeds complete without
    loading every project's full history. Preserve global identity and cursor

@@ -611,11 +611,16 @@ class Network:
             relocs=[Reloc.from_json(r) for r in json.loads(fn["relocs"])],
         )
 
-    def _expire_claims(self, db) -> None:
+    def _machine_agent_ids(self):
+        """Shared identity IDs, resolved before a separate project transaction."""
+        return {row['id'] for row in self.store.all('SELECT id FROM agents WHERE name IN (?,?)', *MACHINE_AGENTS)}
+
+    def _expire_claims(self, db, *, machine_ids=None) -> None:
         from .permuter_claims import clear
         clear(db)
         now = time.time()
-        own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
+        own = (machine_ids if machine_ids is not None else
+               {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)})
         for row in db.execute("SELECT c.function_id, c.agent_id, f.project_id, f.name FROM claims c "
                               "JOIN functions f ON f.id=c.function_id WHERE c.expires_at < ?", (now,)).fetchall():
             if row["agent_id"] in own:  # decompdecomp's own tries (cut short by a restart): nobody gave up on it
