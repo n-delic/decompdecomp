@@ -65,6 +65,9 @@ class Program:
 
     def __init__(self, info: dict, exe: bytes):
         self.exe = exe
+        segments = _delink().segments
+        self.segment_proofs = {fn["name"]: {segments.marker(fn["name"], site) for site in fn.get("segments", [])}
+                               for fns in info["units"].values() for fn in fns}
         at = struct.unpack_from("<I", exe, 0x3C)[0]
         count, opt = struct.unpack_from("<H", exe, at + 6)[0], struct.unpack_from("<H", exe, at + 20)[0]
         base = struct.unpack_from("<I", exe, at + 24 + 28)[0]
@@ -158,7 +161,13 @@ def from_c(program: Program, obj: bytes, extents: dict[str, int]) -> dict[str, b
                      if s == section and lo <= offset < hi), None)
 
     out = {}
+    try:
+        proof = _delink().segments.proofs(obj)
+    except (ValueError, struct.error):
+        return out
     for name, (section, lo, hi) in mine.items():
+        if proof.get(name, set()) != program.segment_proofs.get(name, set()):
+            continue
         sec, at, size = sections[section - 1], program.where[name], extents[name]
         relocs = [r for r in sec["relocs"] if lo <= r[0] < hi]
         body = sec["data"][lo:hi]
@@ -234,7 +243,8 @@ def rebuild(config: Path, build: Path, root: Path = Path(".")) -> dict:
 def _rebuild_program(info: dict, root: Path, build: Path, folder: str, path: str, base: int | None, delink) -> dict:
     """One program rebuilt from its source files (a DLL's: those in its folder) and compared with your copy of it."""
     original = (root / path).read_bytes()
-    exe = original if base is None else delink.rebase(original, base)  # (at the address the project gives it)
+    le = delink.linear.Linear(original) if delink.linear.header(original) is not None else None
+    exe = le.view() if le is not None else original if base is None else delink.rebase(original, base)
     program = Program(info, exe)
     sizes = {fn["name"]: fn["size"] for fns in info["units"].values() for fn in fns}
     out, placed, differ, c = bytearray(exe), [], [], []
@@ -270,6 +280,8 @@ def _rebuild_program(info: dict, root: Path, build: Path, folder: str, path: str
     output.parent.mkdir(parents=True, exist_ok=True)
     if base is not None:  # back at its own address, as your copy is
         out = bytearray(delink.rebase(bytes(out), struct.unpack_from("<I", original, _image_base_at(original))[0]))
+    if le is not None:
+        out = bytearray(le.restore(bytes(out)))
     output.write_bytes(out)
     if out[XBE_MARK:XBE_MARK + 4] == b"XBEH":  # an Xbox game's program, made a Windows one: the XBE is inside it
         at, size = struct.unpack_from("<II", out, XBE_MARK + 4)

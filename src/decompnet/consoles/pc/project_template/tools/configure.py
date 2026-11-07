@@ -37,13 +37,14 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 parser = argparse.ArgumentParser(description="Writes build.ninja and objdiff.json")
 parser.add_argument("version", help="game version (a directory in config/)")
-parser.add_argument("--msvc", required=True, action="append",
+parser.add_argument("--msvc", default=[], action="append",
                     help="Visual C++ directory (holds 6.0/Bin/CL.EXE, 10.0SP1/Bin/cl.exe, ...); several: the first "
                          "with MSVC_VERSION")
 parser.add_argument("--wibo", default="", help="runs the Windows compilers on Linux and macOS")
 parser.add_argument("--own", default=[], action="append",
                     help="a compiler of the user's own (a kit: decompdecomp's kits/): VERSION=RUNNER,CL[,INCLUDE...], "
                          "RUNNER wibo, wine or none")
+parser.add_argument("--watcom", default=[], action="append", help="Watcom VERSION=ROOT for an --own compiler")
 args = parser.parse_args()
 WINE_FROM = 14  # without $DECOMPNET_WINE_PACKS: the first Visual C++ wibo can't run (2015 and newer), which wine runs
 # the --msvc folders whose compilers run through wine, not wibo (decompdecomp sets it from its toolchains' `wine`, as
@@ -55,6 +56,14 @@ VERSION = args.version
 # the user's own compilers by version: [runner, compiler, header folders...] (decompdecomp names those its kits have;
 # a version no --own names is in the --msvc folders)
 OWN = {own.split("=", 1)[0]: own.split("=", 1)[1].split(",") for own in args.own}
+WATCOM = dict(item.split("=", 1) for item in args.watcom)
+WATCOM_FLAGS = ["-bt=nt", "-mf", "-3r", "-ox"]
+MSVC_FLAGS = ["/nologo", "/c", "/O2", "/W3", "/GX"]
+
+
+def compiler_flags(version: str) -> list[str]:
+    """A file switched between compiler families cannot receive the other family's command-line flags."""
+    return CL_FLAGS if (version in WATCOM) == (MSVC_VERSION in WATCOM) else WATCOM_FLAGS if version in WATCOM else MSVC_FLAGS
 CONFIG = Path("config") / VERSION / "functions.json"
 FILE_COMPILERS = CONFIG.parent / "file_compilers.json"  # {"src/auto/text_00401000.cpp": "7.1"}: files built with another
 FILE_FLAGS = CONFIG.parent / "file_flags.json"  # {"src/auto/text_00401000.cpp": ["/Oy-"]}: files built with more flags
@@ -139,6 +148,7 @@ def source_of(unit: str) -> str:
 
 def main() -> None:
     info = json.loads(CONFIG.read_text(encoding="utf-8"))
+    WATCOM_FLAGS[0] = "-bt=dos4g" if info.get("format") == "LE" else "-bt=nt"
     units = info["units"]
     headers = [p.as_posix() for p in files("include", (".h", ".hpp"))]
     # written aside and put in place whole: a configure that stops half way (a driver it can't read) leaves the last
@@ -150,11 +160,11 @@ def main() -> None:
         # The runner invokes the compiler and names.py separately: cmd /c misparsed quoted compiler paths.
         # $runner: what runs the file's compiler (wibo, wine or nothing: runner())
         n.rule("cl", q(compiler).replace("$", "$$") + " $runner --compiler $cl $includes --output $out "
-               "--source $in -- " + q(CL_FLAGS).replace("$", "$$") + " $cflags")
+               "--source $in $family -- $baseflags $cflags")
         n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
 
         targets = [(BUILD / "target" / f"{u}.obj").as_posix() for u in units]
-        n.build(targets, "delink", [CONFIG.as_posix(), "tools/delink.py"])
+        n.build(targets, "delink", [CONFIG.as_posix(), "tools/delink.py", "tools/linear.py", "tools/segments.py"])
         objs = []
         versions, more = file_compilers(), file_flags()
         harness, harness_files = set(), []
@@ -177,10 +187,13 @@ def main() -> None:
             src_posix = src.as_posix()
             version = versions.get(src_posix, MSVC_VERSION)
             cl, includes = msvc(version)
-            n.build(obj, "cl", src_posix, implicit=[*headers, CONFIG.as_posix(), "tools/compile.py", "tools/names.py"],
+            n.build(obj, "cl", src_posix, implicit=[*headers, CONFIG.as_posix(), "tools/compile.py", "tools/names.py",
+                                                   *(["tools/omf.py", "tools/segments.py", "tools/linear.py"] if version in WATCOM else [])],
                     variables={"cl": q([cl]).replace("$", "$$"),
                                "includes": q([a for d in includes for a in ("--include", d)]).replace("$", "$$"),
                                "runner": q(runner(version)).replace("$", "$$"),
+                               "family": q(["--family", "watcom", "--watcom-root", WATCOM[version]]).replace("$", "$$") if version in WATCOM else "",
+                               "baseflags": q(compiler_flags(version)).replace("$", "$$"),
                                "cflags": q(more.get(src_posix, [])).replace("$", "$$")})
             objs.append(obj)
         n.build("all_source", "phony", objs)
@@ -193,7 +206,7 @@ def main() -> None:
                     for exe in exes]
         n.rule("rebuild", f"{PY} tools/rebuild.py {CONFIG.as_posix()} {BUILD.as_posix()}")
         n.build(programs, "rebuild", [*targets, *objs],
-                implicit=[CONFIG.as_posix(), *exes, "tools/rebuild.py", "tools/delink.py"])
+                implicit=[CONFIG.as_posix(), *exes, "tools/rebuild.py", "tools/delink.py", "tools/linear.py", "tools/segments.py"])
         n.build("rebuild", "phony", programs)
         n.build("build.ninja", "configure", ["tools/configure.py", CONFIG.as_posix(), *headers,
                                              *[s.as_posix() for s in files("src", (".c", ".cpp"))],

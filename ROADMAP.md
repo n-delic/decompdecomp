@@ -32,9 +32,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | ✓ import stubs (NIDs) and `sc` calls | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
-| Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | ✓ | ✓ | — | ✓ your Visual C++ | ✓ your XDK | — | the project's own build |
+| Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | ✓ | ✓ | — | ✓ your Visual C++ or Watcom (PE / DOS LE) | ✓ your XDK | — | the project's own build |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | ✓ | — | the project's build | per source file (/Oy-, /O1, /Ob1) | per source file | the project's build | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | ✓ | — | the project's build | per source file (MSVC /Oy-, /O1, /Ob1; Watcom -3r/-3s) | per source file | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ over source files | ✓ | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ (named by RTTI where the program has it) | ✓ (RTTI where the program has it) | — | — |
@@ -552,6 +552,47 @@ Where to start on a gap:
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### Watcom and other PC compiler families (#81)
+
+✓ Your own Watcom copy is selectable in Setup and Windows PE / flat DOS LE import (drop and path), and in per-file compiler
+settings. No MSVC pack is required. The kit identifies compiler bodies by SHA-256 and keeps C/C++ and each build
+separate. BINB (10.0a) and BINW (10.5) layouts are read in place. The PC build runs the Windows loader through
+pinned wibo and converts its flat USE32 OMF to COFF before the unchanged judge. C imports use .c files and their
+header doesn't assume MSVC's __int64. Exported projects carry the converter, never the proprietary compiler.
+
+Checked on the homemade PE with real 10.0a C and C++, Ghidra and objdiff, through engine/network calls in a scratch
+home: import, rebuild, claims/briefs, wrong and correct attempts, per-file compiler trials, register/stack flag
+search, polishing, real names and Check again. Addition matches independent target bytes; subtraction doesn't.
+Compiler/conversion failure preserves the previous object. GUI tests cover local-copy consent; source splits
+keep the file's flags. A user-supplied DOS LE game also imports and rebuilds byte-identically in a scratch home;
+no game data is in the repository. See docs/WATCOM.md to reproduce the compiler and DOS linker runs.
+
+✓ Flat little-endian 386/486 LE loads through a reversible PE memory view: object/page mapping, internal 32-bit
+absolute and relative fixups, and original LE export with its DOS stub, tables and overlays intact. LE fixups,
+not guesses from integer values, identify absolute pointers. Selector/16-bit offset code fixups with external
+symbol targets are verified against their LE object and full offset; proof symbols prevent literal placeholders
+or stale objects passing the judge, progress report or export. Old automatic DOS set-asides return to agents
+on the tools update; other assembly decisions stay. Real 10.0a C/C++ tests cover this migration and selector matching.
+The homemade LE is exercised through the engine with 10.0a C and C++, including wrong/correct attempts,
+polishing, rename, Check again, reimport and byte-identical export. DOSBox is not needed by this pipeline.
+
+The Windows PC column above primarily describes the Visual C++ path; these Watcom gaps are planned, not checked:
+
+| Watcom gap | Status / next work |
+| --- | --- |
+| Other DOS formats and further segmented LE | — LX, 16-bit MZ/NE, other extenders, internal segment/group OMF targets, segmented data initializers, LE imports/far pointers/chains/iterated pages |
+| COMDATs, fixup threads, iterated data and further OMF frames/directives | — implement with independent relocation tests; reject them today |
+| Complete C++ methods and virtual tables | — finish the OMF records above and Watcom RTTI/debug formats |
+| Automatic compiler/version survey | — identify Watcom independently; never infer it from MSVC's linker-version table |
+| Machine drafts of register prototypes and 64-bit operations | — recover Watcom arguments; 10.0a has no 64-bit scalar type |
+| Full feature checklist on a larger demo and a retail game | — twins, permuter, rooms, structs/classes and boundary changes still need a Watcom-specific real run |
+| Linux and native Windows | — validate the runners; only Apple Silicon was run |
+
+The old 10.5 C body supplied locally fails with a loader read error in both wibo and DOSBox and isn't offered;
+10.0a's complete C body works in both. 10.5 C++ runs through wibo. The original DOS linker works under DOSBox
+Staging 0.83.0 on this Mac (a demo-building tool, not required by the app's matching/rebuild pipeline). Versions
+remain separate even where a small probe matches. #81 remains open for the other DOS formats and broader compiler scope.
 
 ### Your own compiler for GameCube, Wii and DS
 

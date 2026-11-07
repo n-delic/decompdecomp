@@ -38,6 +38,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -147,6 +148,9 @@ class PE:
     sections: list[Section]
     imports: dict[int, str] = field(default_factory=dict)  # import address table slot -> "Sleep"
     dlls: list[str] = field(default_factory=list)  # the DLLs it imports from, as it names them ("KERNEL32.dll")
+    segment_fixups: list[tuple[int, int]] = field(default_factory=list)  # LE selectors/16-bit offsets: no flat C
+    loader_fixups: set[int] | None = None  # LE's authoritative pointer sites; PE's heuristic remains unchanged
+    segment_targets: dict[int, tuple] = field(default_factory=dict)
 
     def section_at(self, addr: int) -> Section | None:
         return next((s for s in self.sections if s.va <= addr < s.va + max(s.vsize, s.size)), None)
@@ -235,7 +239,25 @@ def is_pe(head: bytes) -> bool:
         struct.unpack_from("<H", head, at + OPTIONAL_HEADER_AT)[0] == PE32_MAGIC
 
 
+def is_le(head: bytes) -> bool:
+    """The MZ header points to an LE executable, rather than just a 16-bit DOS stub."""
+    if len(head) < DOS_HEADER_BYTES or head[:2] != b"MZ":
+        return False
+    at = struct.unpack_from("<I", head, PE_OFFSET_AT)[0]
+    return at >= DOS_HEADER_BYTES and head[at:at + 2] == b"LE"
+
+
 def read_pe(data: bytes) -> PE:
+    if is_le(data):
+        try:
+            loaded = _template_tool("linear").Linear(data)
+            pe = read_pe(loaded.view())
+            pe.segment_fixups = loaded.segment_fixups
+            pe.segment_targets = loaded.segment_targets
+            pe.loader_fixups = {loaded.objects[obj][0] + at for obj, at in loaded.fixups}
+            return pe
+        except ValueError as exc:
+            raise ForkError(str(exc)) from exc
     at = _pe_header(data)
     if at is None or not is_pe(data[:max(PE_PROBE_BYTES, at + PE_HEADERS_BYTES)]):
         raise ForkError("this isn't a 32-bit Windows program (.exe): PC games start from their x86 .exe")
@@ -465,7 +487,7 @@ def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None
 
 def is_windows_program(head: bytes) -> bool:
     """Any Windows program: the console takes them all, so one it can't start is told exactly why (Build.blockers)."""
-    return _pe_header(head) is not None
+    return _pe_header(head) is not None or is_le(head)
 
 
 def describe(data: bytes) -> Build:
@@ -539,6 +561,16 @@ def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
 def game_info(path: Path) -> dict:
     """The game's facts, after its headers say decompdecomp can start it (a ForkError says why not)."""
     data = path.read_bytes()
+    if is_le(data):
+        pe = read_pe(data)
+        copies = [c for c in kits.compilers(("watcom",)) if c.family == "Watcom"]
+        chosen = next((c for c in copies if "-c-" in c.version), next(iter(copies), None))
+        return {"platform": "pc", "id": re.sub(r"[^a-z0-9]+", "", path.stem.lower()) or "game",
+                "title": path.stem, "region": "DOS", "sha1": hashlib.sha1(data).hexdigest(),
+                "timestamp": 0, "compiler": chosen.version if chosen else "watcom-unconfigured",
+                "compiler_why": "LE does not identify the compiler build; choose your own Watcom copy",
+                "summary": "32-bit DOS-extender LE program", "cannot_match": [], "exact": False,
+                "target": "x86", "format": "LE", "entry": pe.entry}
     built = describe(data)
     if why := built.blockers():
         raise ForkError(f"decompdecomp can't start this program: {'; and '.join(why)}.")
@@ -685,10 +717,11 @@ def program_in(folder: Path) -> Path | None:
     for path in sorted(folder.glob("*")):
         if path.suffix.lower() == ".exe" and path.is_file():
             with open(path, "rb") as f:
-                head = f.read(PE_PROBE_BYTES)
+                head = f.read(0x10000)  # DOS extenders have a real-mode stub larger than PE's 4 KiB probe
             if is_windows_program(head):
                 data = path.read_bytes()
-                found.append((not is_pe(head) or bool(describe(data).blockers()), -len(data), path))
+                found.append((False if is_le(data) else
+                              not is_pe(head) or bool(describe(data).blockers()), -len(data), path))
     return min(found)[2] if found else None
 
 
@@ -864,7 +897,7 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
     return code_end, data_end, entries
 
 
-def analyse(pe: PE, found: list[dict]) -> list[Function]:
+def analyse(pe: PE, found: list[dict], *, msvc: bool = True) -> list[Function]:
     """Every function's extent, name and relocations, from Ghidra's function list."""
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
@@ -914,8 +947,11 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
     for start, r in rows.items():
         base = r.get("name", "")
         named = r.get("source") in ("IMPORTED", "USER_DEFINED") and _IDENT.fullmatch(base) and base != "entry"
-        names[start] = decorate(base if named else f"func_{start:08X}", r.get("convention", ""),
-                                int(r.get("purge") or 0), int(r.get("params") or 0))
+        name = base if named else f"func_{start:08X}"
+        # #139 makes Ghidra's Windows ABI inference work on Macs. Watcom's eax/edx register convention must
+        # not become Microsoft's ecx/edx __fastcall decoration just because the analysis uses a PE view.
+        names[start] = decorate(name, r.get("convention", ""), int(r.get("purge") or 0), int(r.get("params") or 0)) \
+            if msvc else "_" + name
     for start, r in rows.items():  # an import thunk by its import's name (`_RtlUnwind@16`), once
         if r.get("thunk") and (symbol := _thunk_symbol(import_thunk(pe, start), r)) not in names.values():
             names[start] = symbol
@@ -962,10 +998,12 @@ def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[
                 relocs.append((at + ins.size - 4, REL32, name, 0))
             continue
         for op in ins.operands:
-            if op.type == x86.X86_OP_MEM and ins.disp_size == 4 and pe.contains(op.mem.disp & 0xFFFFFFFF):
+            if op.type == x86.X86_OP_MEM and ins.disp_size == 4 and pe.contains(op.mem.disp & 0xFFFFFFFF) and \
+                    (pe.loader_fixups is None or ins.address + ins.disp_offset in pe.loader_fixups):
                 name, addend = symbol(op.mem.disp & 0xFFFFFFFF)
                 relocs.append((at + ins.disp_offset, DIR32, name, addend))
-            elif op.type == x86.X86_OP_IMM and ins.imm_size == 4 and pe.contains(op.imm & 0xFFFFFFFF):
+            elif op.type == x86.X86_OP_IMM and ins.imm_size == 4 and pe.contains(op.imm & 0xFFFFFFFF) and \
+                    (pe.loader_fixups is None or ins.address + ins.imm_offset in pe.loader_fixups):
                 name, addend = symbol(op.imm & 0xFFFFFFFF)
                 relocs.append((at + ins.imm_offset, DIR32, name, addend))
     for off in entries:
@@ -1246,8 +1284,10 @@ def _source_units(functions: list[Function], pe: PE | None, sources: dict[int, s
 
 def _entry(pe: PE, f: Function) -> dict:
     """A function as functions.json keeps it (tools/delink.py cuts it out of the program by its offset)."""
+    segmented = [[at - f.addr, *target] for at, target in sorted(pe.segment_targets.items()) if f.addr <= at < f.addr + f.size]
     return {"name": f.name, "addr": f.addr, "offset": pe.offset(f.addr), "size": f.size,
-            "relocs": [list(r) for r in f.relocs]}
+            "relocs": [list(r) for r in f.relocs],
+            **({"segments": segmented} if segmented else {})}
 
 
 def _project_functions(root: Path, version: str) -> tuple[Path, dict, dict[str, PE], list[Function]]:
@@ -1563,13 +1603,16 @@ def reanalyse_program(root: Path, version: str, found: dict[str, list[dict]], ke
     (in its program's folder). A program not in `found` keeps its functions. The real names and each file's compiler
     stay. Returns what changed, as a sentence; None: nothing did."""
     path, info, pes, old = _project_functions(root, version)
+    manifest = root / ".decomp.wtf.json"
+    selected = json.loads(manifest.read_text(encoding="utf-8")).get("compiler", "") if manifest.exists() else ""
+    watcom = selected.startswith("Watcom/")
     # matched functions, and those of a program not analysed again, stay as they are, in their files
     kept = [f for f in old if f.name in keep or unit_module(f.unit) not in found]
     new = []
     for program, rows in found.items():
         pe = pes[program]
-        fresh = analyse(pe, rows)
-        stubs = exception_stubs(pe, [(f.addr, f.size) for f in fresh])
+        fresh = analyse(pe, rows, msvc=not watcom)
+        stubs = exception_stubs(pe, [(f.addr, f.size) for f in fresh]) if not watcom else set()
         fresh = merge_pieces(pe, fresh, keep={f.name for f in fresh if f.addr in stubs}, log=lambda *_: None)[0]
         own_symbols(fresh, {f.name for f in old if unit_module(f.unit) != program} | {f.name for f in new})
         new += fresh
@@ -1592,14 +1635,16 @@ def reanalyse_program(root: Path, version: str, found: dict[str, list[dict]], ke
     for unit, fns in added.items():
         for f in fns:
             f.unit = unit
-        src = root / "src" / "auto" / f"{unit}.cpp"
+        suffix = ".c" if watcom and "-c-" in selected else ".cpp"
+        src = root / "src" / "auto" / f"{unit}{suffix}"
         src.parent.mkdir(parents=True, exist_ok=True)
         src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from 0x{fns[0].addr:08X}, found by a new "
                        "analysis. */\n#include \"common.h\"\n", encoding="utf-8")
     info["units"] = {**{u: fns for u, fns in info["units"].items() if any(f.unit == u for f in new)},
                      **{u: [] for u in added}}
     _save_functions(path, info, pes, new)
-    mark_exception_stubs(root, version)
+    if not watcom:
+        mark_exception_stubs(root, version)
     name_import_thunks(root, version, keep)
     before = {(f.addr, f.size) for f in old}
     changed = sum((f.addr, f.size) not in before for f in new)
@@ -1647,6 +1692,10 @@ def split_unit(root: Path, version: str, source: str, at: str, new: str) -> dict
     if source in (own := file_compilers(root, version)):
         saved[compilers] = compilers.read_text(encoding="utf-8")
         _write_compilers(compilers, {**own, new: own[source]})
+    flags = flags_file(root, version)
+    if source in (more := file_flags(root, version)):
+        saved[flags] = flags.read_text(encoding="utf-8")
+        _write_compilers(flags, {**more, new: more[source]})
     return saved
 
 
@@ -1668,12 +1717,20 @@ def _write_compilers(path: Path, found: dict[str, str]) -> None:
     tmp.replace(path)
 
 
+def compiler_version(compiler: str) -> str:
+    return compiler.split("/", 1)[-1]
+
+
+def compiler_id(version: str) -> str:
+    return f"{'Watcom' if version.startswith('watcom-') else 'MSVC'}/{version}"
+
+
 def set_file_compiler(root: Path, version: str, source: str, compiler: str, default: str) -> None:
     """Build `source` with `compiler` ("MSVC/7.1"); the project's own (`default`) needs no line."""
     found = file_compilers(root, version)
     found.pop(source, None)
-    if compiler.removeprefix("MSVC/") != default.removeprefix("MSVC/"):
-        found[source] = compiler.removeprefix("MSVC/")
+    if compiler_version(compiler) != compiler_version(default):
+        found[source] = compiler_version(compiler)
     _write_compilers(compilers_file(root, version), found)
 
 
@@ -1687,15 +1744,20 @@ def file_ranges(root: Path, version: str) -> dict[str, list[tuple[int, int]]]:
 def set_own_compiler(root: Path, manifest: dict, compiler: str, sources: list[str]) -> list[str]:
     """`compiler` ("MSVC/7.1") as the project's own (tools/configure.py's MSVC_VERSION and the manifest's), every
     source file keeping the version it has: the map then names the files built with another."""
-    version, new = manifest["version"], compiler.removeprefix("MSVC/")
+    version, new = manifest["version"], compiler_version(compiler)
     found = file_compilers(root, version)
-    old = manifest.get("compiler", f"MSVC/{MSVC_DEFAULT}").removeprefix("MSVC/")
+    old = compiler_version(manifest.get("compiler", f"MSVC/{MSVC_DEFAULT}"))
     has = {s: found.get(s, old) for s in sources}
     path = compilers_file(root, version)
     _write_compilers(path, {s: v for s, v in has.items() if v != new})
     cfg = root / "tools" / "configure.py"
-    cfg.write_text(re.sub(r'^MSVC_VERSION = "[^"]*"', f'MSVC_VERSION = "{new}"', cfg.read_text(encoding="utf-8"),
-                          count=1, flags=re.M), encoding="utf-8")
+    text = re.sub(r'^MSVC_VERSION = "[^"]*"', f'MSVC_VERSION = "{new}"', cfg.read_text(encoding="utf-8"), count=1, flags=re.M)
+    if new.startswith("watcom-") != old.startswith("watcom-"):
+        info = root / "config" / version / "functions.json"
+        dos = info.exists() and json.loads(info.read_text(encoding="utf-8")).get("format") == "LE"
+        flags = ["-bt=dos4g" if dos else "-bt=nt", "-mf", "-3r", "-ox"] if new.startswith("watcom-") else ["/nologo", "/c", "/O2", "/W3", "/GX"]
+        text = re.sub(r"^CL_FLAGS = \[[^\]]*\]", f"CL_FLAGS = {json.dumps(flags)}", text, count=1, flags=re.M)
+    cfg.write_text(text, encoding="utf-8")
     (root / ".decomp.wtf.json").write_text(json.dumps({**manifest, "compiler": compiler}, indent=2), encoding="utf-8")
     return [path.relative_to(root).as_posix(), "tools/configure.py", ".decomp.wtf.json"]
 
@@ -1848,6 +1910,8 @@ def tools_version() -> str:
     digest = hashlib.sha1()
     for src in sorted((TEMPLATE / "tools").glob("*.py")):
         digest.update(src.name.encode() + b"\0" + src.read_bytes())
+    digest.update(b"omf.py\0" + Path(__file__).parents[2].joinpath("arch/x86_omf.py").read_bytes())
+    digest.update(b"segments.py\0" + Path(__file__).parents[2].joinpath("arch/x86_segments.py").read_bytes())
     return digest.hexdigest()[:12]
 
 
@@ -1859,16 +1923,19 @@ def write_tools(root: Path, version: str) -> list[str]:
     cfg = root / "tools" / "configure.py"
     now = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
     changed = []
-    for src in sorted((TEMPLATE / "tools").glob("*.py")):
+    sources = [(src.name, src) for src in sorted((TEMPLATE / "tools").glob("*.py")) if src.name != "segments.py"]
+    sources.append(("omf.py", Path(__file__).parents[2] / "arch/x86_omf.py"))
+    sources.append(("segments.py", Path(__file__).parents[2] / "arch/x86_segments.py"))
+    for name, src in sources:
         text = src.read_text(encoding="utf-8")
-        if src.name == "configure.py":
+        if name == "configure.py":
             for setting in KEPT_SETTINGS:
                 if m := re.search(setting, now, re.M):
                     text = re.sub(setting, lambda _: m.group(0), text, count=1, flags=re.M)
-        dest = root / "tools" / src.name
+        dest = root / "tools" / name
         if not dest.exists() or dest.read_text(encoding="utf-8") != text:
             dest.write_text(text, encoding="utf-8")
-            changed.append(f"tools/{src.name}")
+            changed.append(f"tools/{name}")
     for kept in (compilers_file(root, version), flags_file(root, version)):  # (configure.py's build reads them)
         if changed and not kept.exists():
             kept.write_text("{}\n", encoding="utf-8")
@@ -1883,20 +1950,26 @@ def tool_args(kit_ids=()) -> list[str]:
     Nothing about wine: a 2017 file finds it when it builds (WindowsPC.build_env), so no configure.py, older or
     new, is given an argument it doesn't know."""
     packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None]
-    if not packs:
-        raise ForkError("PC games are built with Microsoft Visual C++, which is proprietary: install it in Setup "
-                        "(Visual C++) if you accept that, then try again")
+    copies = kits.compilers(kit_ids)
+    if not packs and not copies:
+        raise ForkError("PC games need a compiler: in Setup, add your own Visual C++ or Watcom copy, or install a "
+                        "Visual C++ pack if you accept its proprietary licence. Keep a configured compiler folder "
+                        "or CD mounted at the path you selected, then try again.")
     args = [arg for p in packs for arg in ("--msvc", str(toolchains.path(p)))]
     if toolchains.get("wibo").supported and sys.platform != "win32":
         toolchains.ensure("wibo", log=lambda *_: None)
         args += ["--wibo", str(toolchains.binary("wibo"))]
-    return [*args, *own_compiler_args(kits.compilers(kit_ids))]
+    return [*args, *own_compiler_args(copies)]
 
 
 def own_compiler_args(compilers) -> list[str]:
     """configure.py's arguments for compilers of the user's own (kits.OwnCompiler: a kit's, not a pack's)."""
-    return [arg for c in compilers for arg in ("--own", ",".join([f"{c.version}={c.runner or 'none'}", str(c.exe),
-                                                                  *map(str, c.includes)]))]
+    out = []
+    for c in compilers:
+        out += ["--own", ",".join([f"{c.version}={c.runner or 'none'}", str(c.exe), *map(str, c.includes)])]
+        if c.family == "Watcom":
+            out += ["--watcom", f"{c.version}={c.root}"]
+    return out
 
 
 def own_versions(args: list[str]) -> set[str]:
@@ -1904,12 +1977,13 @@ def own_versions(args: list[str]) -> set[str]:
     return {args[i + 1].split("=", 1)[0] for i, a in enumerate(args[:-1]) if a == "--own"}
 
 
-TYPES_H = """/* Basic types for this decompilation (32-bit x86, Visual C++, written in C++). Agents add structs, classes and
+TYPES_H = """/* Basic types for this decompilation (32-bit x86, C or C++). Agents add structs, classes and
  * prototypes here or in new headers next to it.
  *
  * The game's functions are func_<address> and its data D_<address>: write them as free functions or as a class's
  * methods (`void Town::func_0041B470(int id)`), with the original's calling convention (methods: this in ecx; free
- * functions: __cdecl, __stdcall or __fastcall, as the code shows). The build gives what they compile to the
+ * functions: __cdecl, __stdcall or __fastcall, as the code shows). Watcom uses its own __watcall register
+ * convention by default: read guide("watcom") before writing its prototypes. The build gives what they compile to the
  * original's symbol names, so any C++ name mangling pairs with the game's code. Data: `extern int D_00402034;`. */
 #ifndef COMMON_H
 #define COMMON_H
@@ -1920,8 +1994,10 @@ typedef signed short s16;
 typedef unsigned short u16;
 typedef signed int s32;
 typedef unsigned int u32;
+#ifndef __WATCOMC__ /* Watcom 10.0a has no 64-bit scalar; don't invent one with another size. */
 typedef __int64 s64;
 typedef unsigned __int64 u64;
+#endif
 typedef float f32;
 typedef double f64;
 typedef int BOOL;
@@ -2074,6 +2150,29 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
 
 
 CODE_SHOWN = 5  # functions a rebuild that differs names
+LEGACY_SEGMENTS = "DOS selector or 16-bit offset fixups: keep as assembly until segmented addressing is supported"
+
+
+def update_segments(root: Path, version: str) -> bool:
+    """Give existing LE functions their verified fixup context and retire only our obsolete automatic set-aside."""
+    path = root / "config" / version / "functions.json"
+    info = json.loads(path.read_text(encoding="utf-8"))
+    original = (root / info["exe"]).read_bytes()
+    if not is_le(original):
+        return False
+    pe, changed = read_pe(original), False
+    for fs in info["units"].values():
+        for fn in fs:
+            sites = [[at - fn["addr"], *target] for at, target in sorted(pe.segment_targets.items())
+                     if fn["addr"] <= at < fn["addr"] + fn["size"]]
+            if sites and fn.get("segments") != sites:
+                fn["segments"], changed = sites, True
+            if fn.get("generated") == LEGACY_SEGMENTS:
+                del fn["generated"]
+                changed = True
+    if changed:
+        path.write_text(json.dumps(info, indent=1), encoding="utf-8")
+    return changed
 
 
 def _template_tool(name: str):
@@ -2113,13 +2212,13 @@ def check_code(root: Path, version: str, log=print) -> dict:
             "what": "The game's program, rebuilt from the project,"}
 
 
-def _program_units(pe: PE, found: list[dict], log, sources: dict[int, str] | None = None) -> dict[str, list[Function]]:
+def _program_units(pe: PE, found: list[dict], log, sources: dict[int, str] | None = None, *, msvc: bool = True) -> dict[str, list[Function]]:
     """One program's functions (from Ghidra's rows, `found`), its exception-handling stubs kept whole and the
     pieces Ghidra cut off joined to their function, in source files (the game's own, where its debug information
     names them: `sources`)."""
-    functions = analyse(pe, found)
+    functions = analyse(pe, found, msvc=msvc)
     # the stubs first, as a project made before gets them (WindowsPC.on_start): no join takes one
-    stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions])
+    stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions]) if msvc else set()
     functions, _ = merge_pieces(pe, functions, keep={f.name for f in functions if f.addr in stubs}, log=log)
     return units(functions, pe, sources)
 
@@ -2146,6 +2245,33 @@ def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
              "source": "DEFAULT"} for r in ghidra.functions(module)]
 
 
+def ensure_ghidra(log) -> None:
+    """#139: imports and reimports repair Ghidra installs missing the host's native decompiler."""
+    from ...forks import ghidra
+
+    if ghidra.available():
+        return
+    if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
+        log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
+        toolchains.ensure("jdk", log=log)
+    if toolchains.installed("ghidra") is None:
+        log("installing Ghidra (540 MB, once): it finds a PC game's functions and drafts")
+        toolchains.ensure("ghidra", log=log)
+
+
+def program_rows(game: Path) -> list[dict]:
+    """Ghidra analyses DOS LE through the same relocated memory view used by the judge and rebuild."""
+    from ...forks import ghidra
+
+    data = game.read_bytes()
+    if not is_le(data):
+        return ghidra.functions(game)
+    with tempfile.TemporaryDirectory(prefix="decomp-le-") as tmp:
+        view = Path(tmp) / "program.exe"
+        view.write_bytes(read_pe(data).data)
+        return ghidra.functions(view)
+
+
 def _run(cmd: list[str], root: Path, what: str, log, platform: str = "pc") -> None:
     """A step of the import's, before the project's manifest names its console (`platform`: what its builds need,
     Console.build_env: an Xbox game's link-time code generation runs Visual C++'s linker through wine)."""
@@ -2169,21 +2295,38 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
 
     info = info or game_info(game)
     version = info["id"]
-    compiler = (compiler or f"MSVC/{info['compiler']}").removeprefix("MSVC/")
+    compiler = compiler_version(compiler or f"MSVC/{info['compiler']}")
     from . import X64_SUFFIX, WindowsPC
+
+    watcom = next((c for c in kits.compilers(WindowsPC.kits) if c.version == compiler and c.family == "Watcom"), None)
+    dos = info.get("format") == "LE"
+    if dos and not watcom:
+        raise ForkError("This DOS LE game needs your own Watcom compiler. Add its WATCOM folder in Setup, then select Watcom when importing.")
+    if compiler.startswith("watcom-") and watcom is None:
+        raise ForkError("This Watcom copy is no longer available. Set up its compiler folder in Setup, then try again.")
+    compiler_name = watcom.name if watcom else f"Visual C++ {compiler}"
+    if watcom:
+        info = {**info, "compiler_why": f"you selected {watcom.name}; verify it against the game's code",
+                "summary": f"32-bit {'DOS LE' if dos else 'Windows'} program; compiler selected by you",
+                "cannot_match": [], "exact": False}
+        cl_flags = list(watcom.flags)
+        if dos:
+            cl_flags = ["-bt=dos4g" if flag == "-bt=nt" else flag for flag in cl_flags]
 
     target = info.get("target", "x86")  # (another console's info may not say: its programs are 32-bit x86 ones)
     if (theirs := "x64" if compiler.endswith(X64_SUFFIX) else "x86") != target:
         # (review of #138: the import's list offered MSVC/14.16-x64 for a 32-bit game, whose project then built x64
         # objects that can never match its code)
-        raise ForkError(f"Visual C++ {compiler} makes {theirs} code, and this game is an {target} program: none of "
+        raise ForkError(f"{compiler_name} makes {theirs} code, and this game is an {target} program: none of "
                         f"its functions could match. Choose a compiler for {target} (or let decompdecomp pick from "
                         "the program)")
     log(f"the program: {info['summary']}")
     for why in info["cannot_match"]:
         log(f"what can't match: {why}")
     own = compiler in own_versions(args or ())  # (a compiler of the user's own: in a kit, not a pack)
-    if not info["cannot_match"]:
+    if watcom:
+        log(info["compiler_why"])
+    elif not info["cannot_match"]:
         # (a console that doesn't track "exact" (consoles/xbox: always its own compiler) gets the plain word; a
         # copy of the user's own that's another build of the game's version says so whole in compiler_why)
         log(f"it can match: decompdecomp builds with Visual C++ {compiler}" if info.get("exact", True) else
@@ -2196,30 +2339,24 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     if not own and (problem := toolchains.runtime_error(pack)):  # (2017's runs through wine off Windows)
         raise ForkError(f"this game builds with Visual C++ {compiler}, which needs what this computer lacks: {problem}")
     args = args or tool_args()
-    if not ghidra.available():
-        if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
-            log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
-            toolchains.ensure("jdk", log=log)
-        if toolchains.installed("ghidra") is None:
-            log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
-            toolchains.ensure("ghidra", log=log)
+    ensure_ghidra(log)
     pe = read_pe(game.read_bytes())
-    modules, left_out = find_modules(game, pe)
+    modules, left_out = ([], []) if dos else find_modules(game, pe)
     if modules or left_out:
         log(f"the game's own DLLs beside {game.name}: {', '.join(m.rel for m in modules) or 'none'}")
     for line in left_out_lines(left_out):
         log(line)
     log(f"analysing {game.name} with Ghidra (finds every function; a big game takes a few minutes)")
-    found = ghidra.functions(game)
+    found = program_rows(game)
     if not found:
         why = (info["cannot_match"] or ["a program that is packed or protected in a way decompdecomp doesn't recognise "
                                         "shows none: decompdecomp never unpacks or gets around protection"])[0]
         raise ForkError(f"Ghidra found no functions in this program: {why}.")
-    debug = debuginfo.find(game, pe.data, HEADER_NAMES, log=log)
+    debug = None if dos else debuginfo.find(game, pe.data, HEADER_NAMES, log=log)
     if debug is not None:
         log(f"{debug.source}: {debug.info.summary()}")
-    groups = _program_units(pe, found, log, debug.info.units if debug is not None else None)
-    log(f"{sum(map(len, groups.values()))} functions; {info['compiler_why']}: Visual C++ {compiler}")
+    groups = _program_units(pe, found, log, debug.info.units if debug is not None else None, msvc=not watcom)
+    log(f"{sum(map(len, groups.values()))} functions; {info['compiler_why']}: {compiler_name}")
     plan = plan(pe, [f for fns in groups.values() for f in fns]) if plan is not None else {}
     cl_flags = plan.get("cl_flags", cl_flags)
     pes, own = {"": pe}, {}
@@ -2240,7 +2377,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
             log(f"{m.rel}: {found_debug.source}: {found_debug.info.summary()}")
             debugs.append(found_debug.info)
         made = {f"{m.name}/{u}": fns for u, fns in _program_units(
-            m.pe, rows, log, found_debug.info.units if found_debug is not None else None).items()}
+            m.pe, rows, log, found_debug.info.units if found_debug is not None else None, msvc=not watcom).items()}
         own_symbols([f for fns in made.values() for f in fns], symbols)
         groups.update(made)
         starts = {f.addr for fns in made.values() for f in fns}
@@ -2259,7 +2396,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
                 taken.add(real_name)
                 named += key.startswith("func_")
         version_of = m.built.pack_version
-        if version_of != compiler:  # a DLL built by another Visual C++ than the program builds with its own
+        if not watcom and version_of != compiler:  # a DLL built by another Visual C++ than the program builds with its own
             if version_of in own_versions(args) or (toolchains.path(compiler_pack(version_of)) / version_of).is_dir():
                 own.update({f"src/auto/{u}.cpp": version_of for u in made})
             else:
@@ -2271,6 +2408,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
             + ("debug information and " if found_debug is not None else "") + "exports")
 
     shutil.copytree(TEMPLATE, root)
+    shutil.copyfile(Path(__file__).parents[2] / "arch/x86_omf.py", root / "tools/omf.py")
+    shutil.copyfile(Path(__file__).parents[2] / "arch/x86_segments.py", root / "tools/segments.py")
     (root / "orig").mkdir()
     for source, dest in ((game, root / "orig" / f"{version}.exe"), *((m.path, root / "orig" / m.rel) for m in modules)):
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -2279,7 +2418,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         except OSError:
             shutil.copyfile(source, dest)
     (root / "include").mkdir()
-    (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
+    types = TYPES_H
+    (root / "include" / "common.h").write_text(types, encoding="utf-8")
     cfg = root / "tools" / "configure.py"
     cfg.write_text(configure_settings(cfg.read_text(encoding="utf-8"), compiler, pe, log=log, modules=modules,
                                       ehsc=pack != "msvc" or info.get("modern_eh"), cl_flags=cl_flags),
@@ -2288,6 +2428,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({
         "exe": f"orig/{version}.exe", "sha1": info["sha1"], "image_base": pe.image_base,
+        **({"format": "LE"} if info.get("format") == "LE" else {}),
         **({"modules": [{"name": m.name, "exe": f"orig/{m.rel}", "sha1": hashlib.sha1(m.path.read_bytes()).hexdigest(),
                          "image_base": m.pe.image_base, "preferred_base": m.preferred} for m in modules]}
            if modules else {}),
@@ -2303,17 +2444,18 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         write_debug(root, version, debugs[0])
     _write_compilers(compilers_file(root, version), own)  # (the DLLs built by another Visual C++; the rest: its own)
     _write_compilers(flags_file(root, version), {})  # (set_frame_flags below: once the thunks are functions)
-    if stubs := mark_exception_stubs(root, version):
+    if not watcom and (stubs := mark_exception_stubs(root, version)):
         log(f"{stubs} of them are exception-handling code Visual C++ makes from the function they belong to: set aside")
     if thunks := name_import_thunks(root, version):
         log(f"{thunks} of them are import thunks the linker adds for calls to DLLs' functions: named after the "
             "function each calls, and set aside")
-    if frames := set_frame_flags(root, version):
+    if not watcom and (frames := set_frame_flags(root, version)):
         log(f"{frames} of {len(groups)} source files keep an ebp frame in most of their functions: they build "
             f"with {FRAME_FLAG} (Visual C++ keeps the frame pointer)")
     sources = {addr: source for known in debugs for addr, source in known.units.items()}
     for u, fns in groups.items():
-        src = root / "src" / "auto" / f"{u}.cpp"  # C++, as PC games of the time were written (C compiles too)
+        suffix = ".c" if watcom and "-c-" in watcom.version else ".cpp"
+        src = root / "src" / "auto" / f"{u}{suffix}"
         src.parent.mkdir(parents=True, exist_ok=True)
         named = next((sources[f.addr] for f in fns if f.addr in sources), "") \
             if not u.rsplit("/", 1)[-1].startswith("text_") else ""
@@ -2329,16 +2471,16 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     _run([sys.executable, "tools/configure.py", version, *args], root, "the first build", log, platform)
     if (root / "include" / DEBUG_TYPES).exists() and \
             not _header_compiles(root, version, next(iter(groups)), log, platform):
-        log(f"the game's types don't compile with Visual C++ {compiler} as written: they're in include/{DEBUG_TYPES} "
+        log(f"the game's types don't compile with {compiler_name} as written: they're in include/{DEBUG_TYPES} "
             "for agents to fix, and common.h doesn't include it yet")
-        (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
+        (root / "include" / "common.h").write_text(types, encoding="utf-8")
     _run(["ninja", "prepare"], root, "the first build", log, platform)
     if not (root / "objdiff.json").exists():
         raise ForkError("the first build finished without writing objdiff.json")
     rebuild = check_code(root, version, log=log)
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
-        "created": "from scratch", "platform": platform, "version": version, "compiler": f"MSVC/{compiler}",
+        "created": "from scratch", "platform": platform, "version": version, "compiler": compiler_id(compiler),
         "analysis": WindowsPC.ANALYSIS,  # (all of it: nothing to repair, stubs set aside, pieces joined, thunks named...)
         "tools": tools_version(),
         "game": {"what": what, "path": f"orig/{version}.exe", "sha1": info["sha1"]},
@@ -2347,20 +2489,27 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     }, indent=2), encoding="utf-8")
     (root / ".gitignore").write_text("# made from your copy of the game, or by the build\norig/\nbuild/\nbuild.ninja\n"
                                      ".ninja_*\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
+    setup_line = f"python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]"
+    setup_note = ("A file built with Visual C++ 2017 on Linux or macOS runs through wine: set DECOMPNET_WINE and "
+                  "DECOMPNET_WINE_PREFIX (a prefix of its own) first.")
+    if watcom:
+        setup_line = (f'python tools/configure.py {version} --own "{compiler}=wibo,<compiler .exe>,<headers>" '
+                      f'--watcom "{compiler}=<Watcom root>" [--wibo <wibo>]')
+        setup_note = ("Replace the placeholders with your own compiler and H folder. Supply --own and --watcom "
+                      "for every Watcom copy named by file_compilers.json. Native Windows needs no wibo; other "
+                      "hosts use the pinned runner. Compiler files are never part of this project.")
     (root / "README.md").write_text(f"""# {info['title']} decompilation
 
 Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp): the game's functions, found by Ghidra, are cut out of your
 copy of its program and compared with what `src/` compiles to, function by function, with objdiff.
 
 1. {game_step or f"Put your own copy of the game's program here as `orig/{version}.exe`"} (never commit it).
-2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`. A file built with
-   Visual C++ 2017 on Linux or macOS runs it through wine: set `DECOMPNET_WINE` (or have wine on the PATH) and
-   `DECOMPNET_WINE_PREFIX` (a wine prefix of its own) first.
+2. `{setup_line}`, then `ninja`. {setup_note}
 3. Decompiled code goes in `src/`; `objdiff.json` shows each function's progress in [objdiff](https://github.com/encounter/objdiff).
 4. `ninja rebuild` puts the whole program back together in `build/{version}/{version}.exe`, each function from its C
    where that compiles to the game's code (else from your copy's), and says whether it's your copy, byte for byte.
 
-Compiler: Visual C++ {compiler} (change `MSVC_VERSION` and `CL_FLAGS` in tools/configure.py if the game was built
+Compiler: {compiler_name} (change `MSVC_VERSION` and `CL_FLAGS` in tools/configure.py if the game was built
 with another version or other flags; `config/{version}/file_compilers.json` names the files built with another
 version). `config/{version}/functions.json` holds what the analysis found: every function's address, size, symbol
 and relocations, by source file.
@@ -2376,5 +2525,5 @@ one) is moved by its base relocations at build time, as Windows moves it.
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",
                      f"Start the {info['title']} decompilation (decompdecomp, Ghidra)"]):
             subprocess.run(cmd, cwd=root, capture_output=True, creationflags=NO_WINDOW)
-    return {"platform": platform, "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
+    return {"platform": platform, "id": version, "title": info["title"], "compiler": compiler_id(compiler),
             "sources": len(groups), "sha1": info["sha1"]}

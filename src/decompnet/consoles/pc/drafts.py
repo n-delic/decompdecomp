@@ -387,7 +387,9 @@ typedef unsigned char undefined1;
 typedef unsigned short undefined2;
 typedef unsigned int undefined3;
 typedef unsigned int undefined4;
+#ifndef __WATCOMC__
 typedef unsigned __int64 undefined8;
+#endif
 typedef unsigned char byte;
 typedef unsigned char uchar;
 typedef unsigned short ushort;
@@ -396,12 +398,18 @@ typedef unsigned int uint;
 typedef unsigned int uint3;
 typedef unsigned long ulong;
 typedef unsigned int dword;
+#ifndef __WATCOMC__
 typedef __int64 longlong;
 typedef unsigned __int64 ulonglong;
 typedef unsigned __int64 qword;
+#endif
 typedef double longdouble;  /* (Visual C++'s long double is a double) */
 typedef double float10;
+#ifdef __cplusplus
 typedef int code(...);
+#else
+typedef int code();
+#endif
 
 #define CONCAT11(a, b) ((unsigned short)(((unsigned short)(unsigned char)(a) << 8) | (unsigned char)(b)))
 #define CONCAT22(a, b) ((unsigned int)(((unsigned int)(unsigned short)(a) << 16) | (unsigned short)(b)))

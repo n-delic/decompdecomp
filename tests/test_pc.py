@@ -2334,7 +2334,7 @@ def test_a_project_made_before_gets_the_newest_build_tools_once(tmp_path, monkey
     pid = net.project_row("p")["id"]
     said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)]
     assert said == ["its build has the fixes decompdecomp's has had since the project was made (tools/compile.py, "
-                    "tools/configure.py, tools/names.py, config/game/file_compilers.json, "
+                    "tools/configure.py, tools/names.py, tools/omf.py, tools/segments.py, config/game/file_compilers.json, "
                     "config/game/file_flags.json)"]
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert log.count("Analyse the game again") == 1
