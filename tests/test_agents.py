@@ -1644,3 +1644,27 @@ def test_remote_and_imported_unit_matches_handoff_displaced_worker(tmp_path,quie
     assert net._function('f0','game')['status']=='matched'
     assert not net.store.one('SELECT 1 FROM claims WHERE agent_id=?',owner.id)
     assert s.rotated and net.claim_row(owner,'game',None)['name']=='f1'
+
+
+def test_reset_metrics_does_not_snapshot_other_agents_or_scan_project_results(tmp_path, quiet, monkeypatch):
+    from decompnet.app import agent_metrics
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    sid = manager.start('codex','game',options={'model':'gpt-6-luna'})[0]
+    monkeypatch.setattr(manager,'snapshot',lambda *a,**kw:pytest.fail('reset must not build all agent snapshots'))
+    monkeypatch.setattr(agent_metrics,'results',lambda *a:pytest.fail('reset must not scan project attempts for card results'))
+    reset = manager.reset_metrics(sid)
+    assert reset['metrics_since'] > 0 and reset['metrics_after'] == 0
+    assert manager.sessions[sid].options['_metrics']['at'] == reset['metrics_since']
+
+
+def test_failed_metric_reset_preserves_previous_boundary(tmp_path, quiet, monkeypatch):
+    net = _game(tmp_path)
+    manager = agents.Manager(net,tmp_path,URL)
+    sid = manager.start('codex','game')[0]
+    previous = {'at':1,'attempt':0,'tokens':0}
+    manager.sessions[sid].options['_metrics'] = previous
+    def fail_save(session):raise OSError('save failed')
+    monkeypatch.setattr(manager,'_save',fail_save)
+    with pytest.raises(OSError,match='save failed'):manager.reset_metrics(sid)
+    assert manager.sessions[sid].options['_metrics'] is previous

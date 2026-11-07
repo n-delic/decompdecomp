@@ -1654,18 +1654,80 @@ def test_real_progress_edit_still_waits_for_shared_verification(project, monkeyp
 
 
 
-def test_database_changes_cannot_take_the_unchanged_fast_path(project, monkeypatch):
-    net, _, _ = project
+@pytest.mark.parametrize('force', [False, True])
+@pytest.mark.parametrize('change', ['best', 'match', 'metadata'])
+def test_local_publication_does_not_wait_for_unrelated_verification(project, force, change):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    net, folder, judged = project
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET best_source='good new source' WHERE name='f'")
-    class RequiredSlot:
+        if change == 'metadata':
+            db.execute("INSERT INTO notes(project_id,function_id,text,created_at) SELECT project_id,id,'new note',1 "
+                       "FROM functions WHERE name='f'")
+        else:
+            db.execute("UPDATE functions SET best_source='good new source',best_score=10 WHERE name='f'")
+            if change == 'match':
+                db.execute("UPDATE functions SET status='matched',matched_source='good new source' WHERE name='f'")
+    worker = net.progress
+    worker.blocked['game'] = (None, None, None)
+    worker.errors['game'] = 'Previous compiler gate'
+    worker.verification_slot.acquire()
+    blocked = False
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(worker.sync, 'game', force=force)
+        try:
+            try:
+                result = future.result(timeout=2)
+            except TimeoutError:
+                blocked = True
+        finally:
+            worker.verification_slot.release()
+        if blocked:future.result(timeout=5)
+    assert not blocked, 'Local publishing waited behind another project while owning its project lock'
+    assert result is True and not judged
+    assert 'game' not in worker.blocked and 'game' not in worker.errors
+    if change == 'metadata':
+        assert json.loads((folder/saves.MANIFEST).read_text())['notes'][0]['text'] == 'new note'
+    else:
+        assert (folder/('src' if change=='match' else 'best')/'f.c').read_text() == 'good new source\n'
+    assert not worker.sync('game', force=True)  # publication acknowledged the actual files and dirty tokens
+
+
+def test_racing_edit_during_local_publication_falls_back_to_verification(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good local',best_score=10 WHERE name='f'")
+    original = saves._render_partial
+    edited = False
+    def render(*args, **kwargs):
+        nonlocal edited
+        result = original(*args, **kwargs)
+        if not edited:
+            edited = True
+            (folder/'best').mkdir(exist_ok=True)
+            (folder/'best/f.c').write_text('good editor')
+        return result
+    monkeypatch.setattr(saves, '_render_partial', render)
+    entered = threading.Event()
+    slot = net.progress.verification_slot
+    class Slot:
         def __enter__(self):
-            raise RuntimeError('verification slot required')
-        def __exit__(self, *args):
-            pass
-    monkeypatch.setattr(net.progress, 'verification_slot', RequiredSlot())
-    with pytest.raises(RuntimeError, match='verification slot required'):
-        net.progress.sync('game')
+            entered.set()
+            slot.acquire()
+        def __exit__(self, *args):slot.release()
+    monkeypatch.setattr(net.progress, 'verification_slot', Slot())
+    slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert entered.wait(2)
+            assert not future.done() and not judged
+            assert (folder/'best/f.c').read_text() == 'good editor'
+        finally:
+            slot.release()
+        assert future.result(timeout=5)
+    assert ('f', 'good editor') in judged
+    assert net._function('f','game')['matched_source'] == 'good editor'
 
 
 def test_progress_rejected_link_names_the_relative_path_without_following_it(tmp_path):
