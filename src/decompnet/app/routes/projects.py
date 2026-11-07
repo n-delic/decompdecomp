@@ -64,7 +64,10 @@ def register(app: App) -> None:
                     # A scheduled comparison must return its job ID before any saved-file
                     # synchronization, so the UI can follow progress and offer Stop immediately.
                     comparison_started = request.url.path == "/api/compilermap" and data.get("all_installed")
-                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    # The per-function publisher uses current DB inputs with exact/revision
+                    # guards. Let autosave export it rather than blocking the response on a full import.
+                    function_profile = request.url.path == '/api/compiler' and data.get('function')
+                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call

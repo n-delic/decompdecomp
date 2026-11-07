@@ -156,10 +156,10 @@ class AutopilotMixin:
             self.rangechecks.recheck(proj["slug"])  # a neighbour of a suggested range may have spoken
 
     @trial
-    def try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
+    def try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False, synchronize=True) -> dict:
         """Judge a scoped candidate. Exact-only rechecks may supersede a claim after an exact save;
         ordinary autopilot attempts acquire their own short claim. {"matched", "score"}."""
-        with self.progress.judging(proj["slug"]) if hasattr(self, "progress") else nullcontext():
+        with self.progress.judging(proj["slug"], **({"synchronize":False} if not synchronize else {})) if hasattr(self, "progress") else nullcontext():
             return AutopilotMixin._try_quietly(self, agent, proj, fn, source, **({'before_record': before_record} if before_record is not None else {}), exact_only=exact_only)
 
     def _try_quietly(self, agent, proj, fn, source: str, before_record=None, *, exact_only=False) -> dict:
