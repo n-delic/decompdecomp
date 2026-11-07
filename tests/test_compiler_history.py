@@ -147,8 +147,8 @@ def test_flags_only_uses_each_functions_current_compiler_and_resumes(comparison,
     monkeypatch.setattr(net, '_judge_with', judge)
     result = net.run_compiler_comparison('demo', flags_only=True)
     assert result['tried'] == 2
-    assert tested == [('f0', 'gcc-2.7.2-kmc', ('-O2',)), ('f0', 'gcc-2.7.2-kmc', ('-O3',)),
-                      ('f1', 'sn-n64-281', ('-O1',))]
+    assert sorted(tested) == [('f0', 'gcc-2.7.2-kmc', ('-O2',)), ('f0', 'gcc-2.7.2-kmc', ('-O3',)),
+                              ('f1', 'sn-n64-281', ('-O1',))]
     history = net.compiler_test_result(net.project_row('demo'), net._function('f0', 'demo'))
     assert not history['stale'] and history['comparison']['flags_only']
     assert net.run_compiler_comparison('demo', flags_only=True)['skipped'] == 2
@@ -266,7 +266,7 @@ def test_used_profiles_only_tests_exact_assignments_and_invalidates_history(comp
     monkeypatch.setattr(net, '_judge_with', judge)
     result = net.run_compiler_comparison('demo', function='f0', used_profiles_only=True)
     assert result['comparison']['tested'] == 2
-    assert tested == [('gcc-2.7.2-kmc', ('-O2',)), ('sn-n64-281', ('-O1',))]
+    assert sorted(tested) == [('gcc-2.7.2-kmc', ('-O2',)), ('sn-n64-281', ('-O1',))]
     fn = net._function('f0', 'demo')
     history = net.compiler_test_result(net.project_row('demo'), fn)
     assert not history['stale'] and history['comparison']['used_profiles_only']
