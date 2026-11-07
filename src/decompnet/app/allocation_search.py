@@ -102,7 +102,10 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
         for item in selected:pools.setdefault(item[0],[]).append(item)
         selected=[p for row in zip_longest(*pools.values()) for p in row if p]
     selected = targeted+[item for item in selected if item not in targeted]
-    return selected[:budget]
+    # A real selector/pointer/sentinel bundle needs no optional compiler capture.
+    # Reserve its finite prefix inside this lane's existing compile allowance.
+    scratch=[(labels[c],c) for c in choices if labels.get(c)=='scratch_role_reuse'] if diagnosis['register_only'] else []
+    return list(dict.fromkeys(scratch+selected))[:budget]
 
 
 def brief(net, proj, fn, source, rows):

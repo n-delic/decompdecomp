@@ -5,6 +5,12 @@
   cached skips and bounded compatible-output duplicates; saved results keep family/path data.
   Frozen distinct-function holdouts and pre-page family ablations measure transfer without live adoption.
 
+- Done: bounded scratch-role reuse reaches shared ROM/PROJECT repairs, autopilot,
+  iterative search and deep search on known 32-bit ABIs. Agent briefs explain the
+  applicable selector/pointer/sentinel plan beside current-build failed trials.
+  A private original-checkpoint replay recovered exact linked output on its first
+  generated combined candidate; broader transfer and model-token savings are unmeasured.
+
 - Done: bounded dead-parameter storage permutations and safe narrow-load subtraction proposals
   reach shared ROM/PROJECT local repairs. Scheduling-to-allocation bridges retain a bounded
   frontier slot; unconstrained native variable removal is disabled. A frozen known-checkpoint
