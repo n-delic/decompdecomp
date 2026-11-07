@@ -10,7 +10,7 @@ assert.equal(get('fnDeepThroughput').hidden,false);
 assert.match(get('fnDeepThroughput').textContent,/8\/10 compiles active/);
 assert.match(get('fnDeepThroughput').textContent,/123.5 candidates\/s/);
 assert.match(get('fnDeepThroughput').textContent,/98.8 compiles\/s/);
-assert.match(get('fnDeepThroughput').textContent,/compiler processes excluded/);
+assert.match(get('fnDeepThroughput').textContent,/compiler and generator processes excluded/);
 render({});assert.equal(get('fnDeepThroughput').hidden,true);
 const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
 for(const id of ['fnDeepMaximum','deepSweepMaximum','fnDeepCompileSlots','deepSweepCompileSlots'])assert.ok(html.includes(`id="${id}"`));

@@ -353,9 +353,29 @@ mode, then flush on exit or cancellation. Verified improvements retain immediate
 publication through the ordinary current-input and byte-verification guards.
 
 The live strip shows active compiler slots, considered candidates/sec (including
-cache hits and rejected candidates), actual compiler invocations/sec, cumulative
+cache hits and rejected candidates) and actual compiler invocations/sec over a rolling
+five-second window, cumulative
 compiler queue/setup and advisory-history write time, and app-process CPU averaged over the run. CPU excludes
 compiler/generator child processes; use Activity Monitor for the machine's total CPU.
 Counters contain numbers only and are scoped to the shared search pool. Imported
 builds still own their build system and may serialize internally; maximum mode cannot
 guarantee full CPU utilization for those projects or I/O-bound workloads.
+
+
+#### Local-repair candidate supply
+
+Maximum mode also runs the pure targeted-repair generator in persistent private Python
+processes. These workers receive captured source, header, assembly, flags, table,
+callee and profile evidence over pipes; they never open the project database, invoke
+compilers or publish a result. Identical requests across parallel paths share one
+future and bounded raw-proposal cache (16 completed batches / 32 MiB). All candidates
+still pass the parent's ordinary current-input checks, compiler and exact judge.
+Active proposal workers are shown separately from active compiles. App CPU excludes
+both kinds of child process.
+
+Partition initial local proposal queues by search path before expensive feedback
+ranking, rather than making each path sort and discard every other path's work.
+New feedback-generated children retain the existing ownership guard. Worker waiting
+checks cancellation and the original search deadline; shutdown terminates proposal
+processes and releases their pipes. Specialized cooperative generation sessions retain
+their in-process path so family/budget filters are unchanged.

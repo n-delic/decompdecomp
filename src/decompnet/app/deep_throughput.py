@@ -3,6 +3,7 @@ import functools
 import os
 import threading
 import time
+from collections import deque
 from contextlib import ExitStack, contextmanager
 
 from .. import compile_timing, compiler
@@ -24,26 +25,42 @@ class Metrics:
     def __init__(self):
         self.lock = threading.Lock()
         self.values = {}
+        self.rates = deque(maxlen=26)
         self.started = time.monotonic()
         self.cpu = time.process_time()
 
     def add(self, key, value):
-        with self.lock:self.values[key] = self.values.get(key, 0) + value
+        with self.lock:
+            self.values[key] = self.values.get(key, 0) + value
+            if key in {'considered','generated','invocations','requests'}:
+                tick=int(time.monotonic()*5)
+                if not self.rates or self.rates[-1][0]!=tick:self.rates.append((tick,{}))
+                bucket=self.rates[-1][1]
+                bucket[key]=bucket.get(key,0)+value
 
     def snapshot(self):
-        elapsed = max(.001, time.monotonic()-self.started)
-        with self.lock:values = dict(self.values)
+        now=time.monotonic()
+        elapsed = max(.001, now-self.started)
+        with self.lock:
+            values = dict(self.values)
+            recent={}
+            for tick,bucket in self.rates:
+                if tick/5 >= now-5:
+                    for key,value in bucket.items():recent[key]=recent.get(key,0)+value
+        rate_seconds=min(5,elapsed)
         gate = getattr(self,'gate',None)
-        return {'active_compiles':gate.active if gate else 0,
+        return {'active_proposal_workers':getattr(getattr(self,'proposals',None),'running',0),
+                'active_compiles':gate.active if gate else 0,
                 'compile_slots':gate.limit if gate else 0,
                 'maximum_throughput':getattr(self,'maximum',False),
-                'candidates_per_second':values.get('considered',0)/elapsed,
-                'generated_per_second':values.get('generated',0)/elapsed,
-                'compiles_per_second':values.get('invocations',0)/elapsed,
-                'compile_requests_per_second':values.get('requests',0)/elapsed,
+                'candidates_per_second':recent.get('considered',0)/rate_seconds,
+                'generated_per_second':recent.get('generated',0)/rate_seconds,
+                'compiles_per_second':recent.get('invocations',0)/rate_seconds,
+                'compile_requests_per_second':recent.get('requests',0)/rate_seconds,
                 'compiler_queue_seconds':values.get('queue',0),
                 'compiler_setup_seconds':values.get('setup',0),
                 'generation_seconds':values.get('generation',0),
+                'local_generation_wait_seconds':values.get('local_generation',0),
                 'history_write_seconds':values.get('history_write',0),
                 'app_cpu_percent':max(0, 100*(time.process_time()-self.cpu)/elapsed)}
 
