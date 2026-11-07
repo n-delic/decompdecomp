@@ -135,12 +135,14 @@ class Jobs:
         self.closing=True
         for cancel in list(self.cancel_events.values()):cancel.set()
 
-    def start(self, kind: str, fn, *, foreground=True, cancel_message="Opening the saved project was cancelled.") -> str:
+    def start(self, kind: str, fn, *, foreground=True, project=None, cancel_message="Opening the saved project was cancelled.") -> str:
         """Start a user job immediately; automatic callers opt into background scheduling."""
         with self._lock:
             self.check_start()
             jid = uuid.uuid4().hex[:JOB_ID_CHARS]
             job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+            from .project_activity import current_project
+            job['activity_project'] = project or current_project.get()
             interactive=self.foreground_events[jid]=threading.Event()
             if foreground:interactive.set()
             job["foreground"]=foreground

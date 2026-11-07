@@ -198,6 +198,13 @@ linting). In short:
 
 ## Shared UI and UX patterns
 
+- Saved/sidebar projects are not active work. Routine per-project maintenance must use
+  `app/project_activity.py`: recently viewed projects, live managed agents, and explicitly started
+  project jobs may run; idle projects must not open operational stores or start scans merely because
+  they exist. Preserve explicit jobs across navigation. Scope new jobs with `project=slug` when they
+  can start outside a project route. Lightweight room heartbeats may retain membership while bulk
+  synchronization sleeps. Explicit donor searches may read idle projects without activating them.
+
 - User-started project tasks should process all eligible work in one run, with visible Stop and durable progress. Do not impose a fixed per-run function batch that requires repeated clicks. Internal database paging and bounded per-function searches remain appropriate.
 
 - Reuse the app's existing components before adding markup or CSS. Project tools and settings use

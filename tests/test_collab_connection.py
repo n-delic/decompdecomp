@@ -303,3 +303,16 @@ def test_gateway_failure_keeps_saved_candidate_until_retry_succeeds(connection, 
     assert not any("refused" in line for line in log)
     upload()
     assert forgotten == ["saved"] and calls == 2
+
+
+def test_idle_room_sleeps_bulk_sync_but_keeps_heartbeat(connection):
+    alive, synced = threading.Event(), threading.Event()
+    link = connection(lambda _: alive.set() or httpx.Response(200, json={}))
+    engaged = threading.Event()
+    link.net.project_activity = SimpleNamespace(active=lambda slug: engaged.is_set())
+    link.sync = synced.set
+    link.run(every=.01)
+    assert alive.wait(1)
+    assert not synced.wait(.05)
+    engaged.set()
+    assert synced.wait(1)

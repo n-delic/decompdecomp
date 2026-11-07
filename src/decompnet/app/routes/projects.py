@@ -73,7 +73,13 @@ def register(app: App) -> None:
                 reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
                 from ...request_timing import response
                 def respond():
-                    return response(perform, started, JSONResponse, request.url.path)
+                    from ..project_activity import current_project
+                    token = current_project.set(slug)
+                    try:
+                        policy = getattr(net, 'project_activity', None)
+                        if policy is not None:policy.touch(slug)
+                        return response(perform, started, JSONResponse, request.url.path)
+                    finally:current_project.reset(token)
                 return await ((reader or call) if request.method == "GET" else call)(respond)
             except (NetworkError, ValueError, toolchains.ToolchainError, OSError) as e:
                 return fail(e)

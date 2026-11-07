@@ -73,7 +73,7 @@ class Cascade:
             else:intervals.append([start,end])
         names=[r['name'] for r in rows if r['status']=='matched' and named_donors.meaningful(r['name'])]
         from .shared_reuse import compatible
-        projects=[p for p in compatible(self.net,donor) if self.net.project_store(p['id']).one(
+        projects=[p for p in compatible(self.net,donor,active_only=True) if self.net.project_store(p['id']).one(
             "SELECT 1 FROM functions WHERE project_id=? AND status IN ('open','nosource') AND "
             "(name IN (SELECT value FROM json_each(?)) OR EXISTS(SELECT 1 FROM json_each(?) w "
             "WHERE size BETWEEN json_extract(w.value,'$[0]') AND json_extract(w.value,'$[1]'))) LIMIT 1",
@@ -102,7 +102,8 @@ class Cascade:
                         break
                     slug = sorted(self.pending)[0]
                     self.pending.remove(slug)
-                    if slug in self.paused:
+                    from .project_activity import active
+                    if slug in self.paused or not active(self.net,slug):
                         continue
                 # An active autopilot already owns this project's pass. Its later matches can trigger another wave.
                 with self.net.twins._lock:

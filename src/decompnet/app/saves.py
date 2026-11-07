@@ -1252,7 +1252,7 @@ class Autosave:
             if self.stop.is_set():raise _AutosavePaused("Automatic pushing stopped")
         while not self.stop.is_set():
             try:
-                rows = self._projects()
+                rows = self._projects(active_only=True)
             except Exception:
                 if self.stop.is_set():return
                 log.exception("Could not read projects for automatic Git push")
@@ -1301,7 +1301,7 @@ class Autosave:
                 self.settings.data['autosave_paused'] = sorted(self.paused)
                 self.settings.save()
 
-    def _projects(self):
+    def _projects(self, *, active_only=False):
         store = self.net.store
         if hasattr(store, 'read_cache'):
             rows = store.read_cache.get('autosave-projects', store.read_version('project_list'),
@@ -1309,7 +1309,9 @@ class Autosave:
         else:
             rows = store.all("SELECT slug,root,config FROM projects")
         projects = []
+        from .project_activity import active
         for row in rows:
+            if active_only and not active(self.net, row['slug']):continue
             selected = self.net.project_store(row['slug'])
             # Keep the existing single cached query in the legacy layout. After
             # the split, worker policy and paths come from the operational store,
@@ -1324,7 +1326,7 @@ class Autosave:
 
     def _reconcile(self):
         projects = {}
-        for row in self._projects():
+        for row in self._projects(active_only=True):
             cfg = json.loads(row['config'])
             if cfg.get('kind') == 'rom' and cfg.get('rom', {}).get('sha1'):
                 projects[row['slug']] = row
@@ -1348,6 +1350,8 @@ class Autosave:
         lower_priority()
         while not self.stop.is_set():
             try:
+                policy = getattr(self.net, 'project_activity', None)
+                if policy is not None:policy.retire()
                 self._reconcile()
                 retention=getattr(self.net,'database_retention',None)
                 if retention is not None:retention.tick()
@@ -1359,7 +1363,8 @@ class Autosave:
         from .workers import lower_priority
         lower_priority()
         def check_cancel():
-            if self.stop.is_set() or worker['cancel'].is_set():
+            from .project_activity import active
+            if self.stop.is_set() or worker['cancel'].is_set() or not active(self.net, slug):
                 raise _AutosavePaused('Background autosave paused')
         def report(message):
             check_cancel()
@@ -1393,7 +1398,7 @@ class Autosave:
         Explicit callers retain forced checks, including external edits with unchanged directory timestamps.
         """
         saved = []
-        projects = self._projects() if rows is None else rows
+        projects = self._projects(active_only=not force) if rows is None else rows
         for row in projects:
             if time.monotonic() < self.retry_after.get(row['slug'], 0):
                 continue

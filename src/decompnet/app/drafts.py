@@ -55,7 +55,7 @@ class Drafter:
 
     def start(self, slug: str) -> State:
         with self._lock:
-            if (st := self.jobs.get(slug)) is not None and st.state in ("running", "update_wait"):
+            if (st := self.jobs.get(slug)) is not None and st.state in ("running", "update_wait", "idle"):
                 return st
             st = self.jobs[slug] = State()
         threading.Thread(target=self._loop, args=(slug, st), daemon=True, name=f"drafts-{slug}").start()
@@ -69,6 +69,12 @@ class Drafter:
         mark = None
         try:
             while not st.stop.is_set():
+                from .project_activity import active
+                if not active(self.net, slug):
+                    st.state = "idle"
+                    st.stop.wait(2)
+                    continue
+                st.state = "running"
                 from .source_runtime import checkpoint, idle_wait
                 checkpoint(self.net, st)
                 if st.stop.is_set():
@@ -92,9 +98,9 @@ class Drafter:
                     if todo:
                         agent, _ = self.net.local_agent("autopilot")
                         for start in range(0,len(todo),DRAFT_BATCH):
-                            if st.stop.is_set():break
+                            if st.stop.is_set() or not active(self.net, slug):break
                             wait([workers.pool().submit(self._one, agent, proj, fid, st) for fid in todo[start:start+DRAFT_BATCH]])
-                    mark = now  # (what changed while the pass ran is seen at the next look)
+                    mark = now if active(self.net, slug) else None  # (what changed while the pass ran is seen at the next look)
                 idle_wait(self.net, st, POLL_SECONDS)
         except Exception:  # background work: it never stands in the way, and says why it stopped
             log.exception("machine drafts for %s stopped", slug)
@@ -102,7 +108,8 @@ class Drafter:
             st.state = "stopped" if st.stop.is_set() else "done"
 
     def _one(self, agent, proj, fid: int, st: State) -> None:
-        if st.stop.is_set():
+        from .project_activity import active
+        if st.stop.is_set() or not active(self.net, proj['slug']):
             return
         try:
             fn = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fid)

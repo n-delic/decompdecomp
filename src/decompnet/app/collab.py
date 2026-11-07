@@ -472,7 +472,12 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
                 room = room_for(request)
                 data = await body(request) if request.method == "POST" else dict(request.query_params)
                 member = await anyio.to_thread.run_sync(room.member, request) if auth else None
-                result = await anyio.to_thread.run_sync(lambda: fn(room, member, data))
+                def perform():
+                    policy = getattr(net, 'project_activity', None)
+                    # Heartbeats keep membership alive; substantive client work owns activity.
+                    if policy is not None and auth and fn is not whoami:policy.touch(room.slug)
+                    return fn(room, member, data)
+                result = await anyio.to_thread.run_sync(perform)
                 return JSONResponse(result, headers={"Cache-Control": "no-store"})
             except NetworkError as e:
                 return JSONResponse({"error": str(e)}, status_code=400)
@@ -1046,8 +1051,9 @@ class Link:
                     if r.status_code != 200:
                         raise NetworkError(f"host answered {r.status_code}")
                     self.last_contact = time.time()
+                    from .project_activity import active
                     from .room_reconcile import launch
-                    launch(self, r.json().get("reconcile"))
+                    if active(self.net, self.slug):launch(self, r.json().get("reconcile"))
                 except Exception as e:
                     current = type(e).__name__ if isinstance(e, httpx.HTTPError) else str(e)
                     if current != problem:
@@ -1063,6 +1069,10 @@ class Link:
             problem = ""
             while not self._stop.is_set():
                 try:
+                    from .project_activity import active
+                    if not active(self.net, self.slug):
+                        self._stop.wait(every)
+                        continue
                     self.sync()
                 except NetworkError as e:
                     current = str(e)
