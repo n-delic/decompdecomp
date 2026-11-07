@@ -150,6 +150,47 @@ def test_startup_probes_are_bounded_before_opening_transport(tmp_path,monkeypatc
     assert manager._tool_startup_slots.acquire(False) and manager._tool_startup_slots.acquire(False)
 
 
+@pytest.mark.parametrize('kind', ['rom', 'fork'])
+def test_tool_discovery_reads_metadata_without_progress_rechecks(tmp_path, monkeypatch, kind):
+    net, agent, _ = game(tmp_path)
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?', (json.dumps({'kind':kind}),))
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('Tool discovery rechecked saved code'))
+    monkeypatch.setattr(net.forks, 'get', lambda *a: pytest.fail('Community tool list hydrated imported tree'))
+    assert set(tools.project_tools(net, 'game', agent, include_disabled=True)) == set(tools.tool_names(kind == 'fork'))
+    assert tools.project_tools(net, 'removed-project', agent) == []
+
+
+def test_rom_tool_discovery_retains_worker_and_global_tool_policy(tmp_path, monkeypatch):
+    from decompnet.app import tool_policy
+    net, agent, _ = game(tmp_path)
+    tool_policy.set_global(net, 'add_note', False)
+    net.set_selection('game', agent.name, {'disabled_tools':['get_assembly']})
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('Discovery rechecked saved code'))
+    names = tools.project_tools(net, 'game', agent)
+    assert 'add_note' not in names and 'get_assembly' not in names
+    assert tool_policy.REQUIRED <= set(names)
+
+
+@pytest.mark.parametrize('ltcg', [False, True])
+def test_scratch_tool_discovery_reads_manifest_without_importing_or_writing_state(tmp_path, monkeypatch, ltcg):
+    from decompnet import consoles
+    from decompnet.forks.project import STATE
+    net, agent, _ = game(tmp_path)
+    root = tmp_path/'scratch';root.mkdir()
+    (root/'.decomp.wtf.json').write_text(json.dumps({'ltcg':ltcg}))
+    cfg = {'kind':'fork', 'origin':'scratch', 'platform':'pc'}
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET root=?,config=?', (str(root), json.dumps(cfg)))
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('Discovery rechecked code'))
+    monkeypatch.setattr(net.forks, 'get', lambda *a: pytest.fail('Discovery imported project tree'))
+    names = tools.project_tools(net, 'game', agent, include_disabled=True)
+    assert set(names) == set(tools.tool_names(True, consoles.of(cfg), ltcg))
+    assert ('standins_for' in names) is ltcg
+    assert not (root/STATE).exists()
+
+
+
 def test_mcp_health_bypasses_busy_work_pool_and_records_numeric_timing(tmp_path,monkeypatch):
     net,agent,fn=game(tmp_path)
     monkeypatch.setattr(Context,'headers',property(lambda self:{'x-decomp-connection-check':'1'}))
