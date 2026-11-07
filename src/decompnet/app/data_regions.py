@@ -22,7 +22,11 @@ def stamp(rows):
 
 def records(net, pid):
     store = net.project_store(pid)
-    return [(r['key'], json.loads(r['value'])) for r in store.all('SELECT key,value FROM settings WHERE key LIKE ?', PREFIX+str(pid)+':%')]
+    # These keys are written in this canonical namespace. Bound it on the primary
+    # key: default SQLite LIKE cannot use its binary index and scans all settings.
+    stem = PREFIX+str(pid)
+    return [(r['key'], json.loads(r['value'])) for r in store.all(
+        'SELECT key,value FROM settings WHERE key>=? AND key<?', stem+':', stem+';')]
 
 
 def blocked(net, proj):
