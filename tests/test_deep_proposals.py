@@ -8,12 +8,13 @@ from decompnet.app import deep_proposals, draft_repairs
 
 
 def request():
-    return ('int f(int x) { return x + 1; }','f','mips','',[]),dict(limit=None,header='',tables=[],callees='',entry_scope={})
+    return ('int f(int x) { int y; y=x+1; return y; }','f','mips','',[]),dict(limit=None,header='',tables=[],callees='',entry_scope={})
 
 
 def test_real_worker_matches_in_process_proposals_and_reuses_process():
     args,kwargs=request()
     labels={};expected=draft_repairs.variants(*args,labels=labels,**kwargs)
+    assert expected and labels
     pool=deep_proposals.Pool(2)
     try:
         choices,got,_=pool.generate(args,kwargs,lambda:None)
