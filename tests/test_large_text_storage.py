@@ -153,7 +153,7 @@ def test_pack_then_compact_reclaims_space_without_losing_content(data):
         install(db,('functions',))
     import hashlib
 
-    from decompnet.app.match_library import Library, read_text
+    from decompnet.app.match_library import Library
     library=Library(net)
     library_text='archived verified C\n'*100000
     key=hashlib.sha256(library_text.encode()).hexdigest()
@@ -165,8 +165,8 @@ def test_pack_then_compact_reclaims_space_without_losing_content(data):
     assert after < before/2 and result['reclaimed_bytes']>0
     assert net.store.one('SELECT asm FROM functions WHERE id=?',fid)[0]==text
     with library.connect() as db:
-        raw=db.execute('SELECT text FROM texts WHERE hash=?',(key,)).fetchone()[0]
-        assert read_text(key,raw)==library_text
+        # The library now retains references, while project source stays intact.
+        assert db.execute('SELECT text FROM texts WHERE hash=?',(key,)).fetchone() is None
 
 
 def test_backfill_compression_holds_no_writer_and_preserves_concurrent_edits(data,monkeypatch):

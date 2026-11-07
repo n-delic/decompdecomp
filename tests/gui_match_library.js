@@ -18,7 +18,7 @@ vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('async functio
  assert.match(el('matchLibraryItems').innerHTML,/shared_function/);
  ctx.S={};ctx.beginWork=()=>()=>{};ctx.showJobError=()=>assert.fail('Unexpected drawer error');
  ctx.dialog=(title,html,kind='')=>{ctx.S.dialogKind=kind;el('dialog').hidden=false;el('dialogBody').innerHTML=html;return el('dialogBody');};
- const detail={id:7,name:'shared_function',occurrences:[{game:'Example game',name:'func_123',available:true,slug:'example',vram:4096,rom_offset:128,unit:'src/example.c'}]};
+ const detail={id:7,name:'shared_function',occurrences:[{game:'Example game',name:'func_123',available:true,slug:'example',vram:4096,rom_offset:128,unit:'src/example.c'},{game:'Missing donor',name:'old_func',available:false,vram:8192}]};
  let saved;
  ctx.api=async(url,options)=>{if(options){saved=options.body;return {name:'new_name'};}return url.includes('?id=')?detail:{functions:0,games:0,solutions:0,items:[]};};
  await ctx.openLibraryFunction(7);
@@ -26,6 +26,8 @@ vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('async functio
  assert.match(el('libraryLocations').innerHTML,/src\/example.c/);
  assert.match(el('libraryLocations').innerHTML,/0x1000/);
  assert.match(el('libraryLocations').innerHTML,/data-library-fn="func_123"/);
+ assert.match(el('libraryLocations').innerHTML,/Project required/);
+ assert.doesNotMatch(el('libraryLocations').innerHTML,/data-library-fn="old_func"/);
  el('libraryName').value='new_name';el('libraryApply').checked=false;
  await el('librarySave').onclick();
  assert.equal(saved.action,'name');assert.equal(saved.name,'new_name');
