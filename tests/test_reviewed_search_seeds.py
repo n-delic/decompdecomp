@@ -220,3 +220,18 @@ def test_small_api_schema_retains_all_tools_semantics_and_constraints():
     variants=next(t for t in compact if t['function']['name']=='compiler_experiments')
     assert variants['function']['parameters']['properties']['trials']['maxItems']==6
     assert compact_tool_schema(schema,131072,[]) is schema
+
+
+def test_diagnostic_capture_cannot_start_second_build_after_phase_deadline(monkeypatch):
+    net,trial=prepare(monkeypatch,True);clock=[0.]
+    monkeypatch.setattr(reviewed_seed_search.time,'monotonic',lambda:clock[0])
+    net._judge_with=lambda *a:(False,SimpleNamespace(score=10,rows=ROWS),'')
+    monkeypatch.setattr(allocation_search,'saved',lambda *a:None)
+    def capture(*args,on_compile,**kwargs):
+        on_compile();clock[0]=20.;on_compile()
+        pytest.fail('second build should not start after the 15-second phase deadline')
+    monkeypatch.setattr(allocation_search,'capture',capture)
+    search=deep_permuter.Search(net,1,20,Log(),net.function())
+    result=reviewed_seed_search.run(search,AGENT,net.project_row('game'),net.function())
+    assert result['diagnostic_compiles']==1 and search.tested==2
+    assert not result['matched'] and net.function()['status']=='open'

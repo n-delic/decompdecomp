@@ -9,6 +9,10 @@ TRIAL_LIMIT = 12
 SECONDS = 30
 
 
+class PhaseLimit(Exception):
+    """Stop this optional lane without consuming the broad search remainder."""
+
+
 def run(search, agent, proj, fn):
     net = search.net
     roots = reviewed_search_seeds.selected(net, proj, fn)
@@ -28,6 +32,7 @@ def run(search, agent, proj, fn):
         search.check()
         return True
     def charge(diagnostic=False):
+        if not check():raise PhaseLimit
         search.check()
         search.tested += 1
         result['diagnostic_compiles' if diagnostic else 'candidate_compiles'] += 1
@@ -55,8 +60,10 @@ def run(search, agent, proj, fn):
         # Two bounded captures only when a judge trial still fits in both allowances.
         if (not baseline['exact'] and not evidence and search.tested+3 <= search.limit
                 and search.tested-initial_tested+3 <= TRIAL_LIMIT and time.monotonic()+3 < deadline):
-            evidence = allocation_search.capture(net, proj, fn, root['source'],
-                on_compile=lambda:charge(True), rows=baseline['rows'])
+            try:
+                evidence = allocation_search.capture(net, proj, fn, root['source'],
+                    on_compile=lambda:charge(True), rows=baseline['rows'])
+            except PhaseLimit:break
         labels, choices = {}, []
         guided = allocation_targeting.proposals(root['source'],fn['name'],header,baseline['rows'],evidence,proj['arch'])
         if not baseline['exact'] and not guided:

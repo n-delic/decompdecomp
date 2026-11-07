@@ -963,7 +963,7 @@ def test_the_api_agent_stays_within_a_small_local_context(app, monkeypatch):
         if request.url.path == "/props":
             return httpx.Response(200, json={"default_generation_settings": {"n_ctx": 16384}})
         size = len(request.content)
-        if size > 30000 and not refused:  # once: the server counts tokens its own way
+        if not refused:  # Force one server-side refusal even when compact schemas shrink below 30 KB.
             refused.append(size)
             return httpx.Response(400, json={"error": {"message": "the request exceeds the available context size"}})
         sizes.append(size)
