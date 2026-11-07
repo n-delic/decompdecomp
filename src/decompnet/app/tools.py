@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from importlib import resources
 from typing import Callable, Literal
 
@@ -617,6 +617,22 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
     return args
 
 
+@contextmanager
+def _tool_foreground(net, slug, name, args):
+    # Only ordinary candidate judgements and notes/lease releases can use context
+    # already installed by a saved recheck. Settings/layout/prerequisite changes
+    # still serialize behind the complete import.
+    allowed = name in {'compile_and_diff','compile_patch','compile_variants','add_note'} or (
+        name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
+    notes = allowed and name in {'add_note','release_function'}
+    # Keep note writes and their publication marker together: the saved worker
+    # must not finish and acknowledge dirty state between those two steps.
+    with (net.progress.foreground() if allowed else nullcontext(),
+          net.progress._project_lock(slug) if notes else nullcontext()):
+        yield
+        if notes:net.progress.foreground_changed(slug)
+
+
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
     if boundary_investigations.scope(net,agent):
@@ -624,11 +640,13 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
     if (name == 'project_info' and not args.get('detail', False)
             and (agent.id, slug) in getattr(net, '_pending_tool_handshakes', set())):
         return _dispatch(net, agent, slug, name, args)
-    net.progress.sync(slug, force=True)
-    result = _dispatch(net,agent,slug,name,args)
-    if name not in READ_ONLY:
+    # Enter before this wrapper's sync, not only inside the engine's attempt.
+    with _tool_foreground(net, slug, name, args):
         net.progress.sync(slug, force=True)
-    return result
+        result = _dispatch(net,agent,slug,name,args)
+        if name not in READ_ONLY:
+            net.progress.sync(slug, force=True)
+        return result
 
 
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
@@ -731,7 +749,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                         Network._project(net,slug)
                         result=f'Authenticated tools ready for {slug}. App-only connection check; project facts are supplied separately.'
                     else:
-                        result=_dispatch(net,agent,slug,name,args,count_usage=True)
+                        # Name resolution also reads the project before the engine
+                        # judge enters its own foreground scope.
+                        with _tool_foreground(net, slug, name, args):
+                            result=_dispatch(net,agent,slug,name,args,count_usage=True)
                 except Exception as exc:
                     error=exc
                 elapsed=time.monotonic()-dispatch

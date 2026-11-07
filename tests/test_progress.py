@@ -2378,3 +2378,115 @@ def test_saved_import_reports_request_phases_without_changing_verdict(project):
         assert metrics[phase]>0
         assert metrics[phase]<=metrics['progress_sync']
     assert request_timing._current.get() is None
+
+
+@pytest.mark.parametrize('transport', ['direct','mcp'])
+@pytest.mark.parametrize('tool', ['compile_and_diff','compile_patch','compile_variants','add_note','release_function'])
+def test_tool_entry_uses_foreground_lane_during_saved_verification(project,monkeypatch,tool,transport):
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from types import MethodType
+
+    from decompnet.app import tools
+    net,folder,judged=project
+    ordinary_attempt=net.attempt
+    monkeypatch.setattr(net,'attempt',MethodType(RomNetwork.attempt,net))
+    monkeypatch.setattr(net,'_attempt',ordinary_attempt)
+    waiting,compilation=threading.Event(),Future()
+    def checks(*args):
+        waiting.set()
+        yield 'f',{'matched_by':'helper'},'src','good saved','f',('compile',compilation)
+    monkeypatch.setattr(saves,'_saved_checks',checks)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('good saved')
+    agent,_=net.local_agent('you')
+    def dispatch(net,agent,slug,name,args,**kwargs):
+        # Real _dispatch resolves named inputs through _project before its handler.
+        net._project(slug)
+        if name in {'add_note','release_function'}:
+            net.add_note(agent,slug,'fresh foreground findings','g')
+            return 'findings saved'
+        assert net.attempt(agent,'f','good foreground',slug)['matched']
+        return 'judged foreground'
+    monkeypatch.setattr(tools,'_dispatch',dispatch)
+    arguments={'function':'f',**{
+        'compile_and_diff':{'source':'good foreground'},
+        'compile_patch':{'revision':'synthetic','old':'saved','new':'foreground'},
+        'compile_variants':{'revision':'synthetic','patches':[]},
+        'add_note':{'text':'fresh foreground findings'},
+        'release_function':{'notes':'fresh foreground findings'}}[tool]}
+    def invoke():return tools.call(net,agent,'game',tool,arguments)
+    if transport=='mcp':
+        import anyio
+        from mcp.server.mcpserver import Context
+        monkeypatch.setattr(Context,'headers',property(lambda self:{}))
+        server=tools.build_mcp(net,lambda ctx:(agent,'game'))
+        async def request():return await server.call_tool(tool,arguments)
+        def invoke():return anyio.run(request)
+    with ThreadPoolExecutor(2) as pool:
+        background=pool.submit(net.progress.sync,'game',force=True)
+        try:
+            assert waiting.wait(5)
+            foreground=pool.submit(invoke)
+            expected='findings saved' if tool in {'add_note','release_function'} else 'judged foreground'
+            assert expected in str(foreground.result(timeout=2))
+            assert not background.done()
+        finally:compilation.set_result(None)
+        assert background.result(timeout=5)
+    assert not getattr(net.progress.local,'foreground',False)
+    if tool in {'add_note','release_function'}:
+        saved=json.loads((folder/saves.MANIFEST).read_text())
+        assert any(n['text']=='fresh foreground findings' for n in saved['notes'])
+    else:
+        assert judged==[('f','good foreground')]
+        assert (folder/'src/f.c').read_text()=='good foreground\n'
+
+
+def test_tool_foreground_scope_resets_on_dispatch_error_and_keeps_sync_outside_rechecks(project,monkeypatch):
+    from decompnet.app import tools
+    net,folder,judged=project
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('good external import')
+    agent,_=net.local_agent('you')
+    def dispatch(*args):
+        assert judged==[('f','good external import')]
+        raise NetworkError('synthetic tool failure')
+    monkeypatch.setattr(tools,'_dispatch',dispatch)
+    with pytest.raises(NetworkError,match='synthetic tool failure'):
+        tools._invoke(net,agent,'game','compile_and_diff',{'function':'f'})
+    assert not getattr(net.progress.local,'foreground',False)
+
+
+@pytest.mark.parametrize('tool,args', [('compile_and_diff',{}),('release_function',{'needs':'g'}),
+                                     ('release_function',{'not_c':True}),('edit_context',{})])
+def test_tool_entry_waits_for_unready_evidence_and_keeps_other_mutations_serialized(project,monkeypatch,tool,args):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+    from decompnet.app import tools
+    from decompnet.app.progress import _Recheck
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('you')
+    active=_Recheck(folder,worker._signature(folder),ready=tool!='compile_and_diff')
+    worker.rechecking['game']=active
+    dispatched=[]
+    monkeypatch.setattr(tools,'_dispatch',lambda *a:dispatched.append(1) or 'finished')
+    with ThreadPoolExecutor(1) as pool:
+        future=pool.submit(tools._invoke,net,agent,'game',tool,{'function':'f',**args})
+        try:
+            with pytest.raises(TimeoutError):future.result(timeout=.15)
+            assert not dispatched
+        finally:
+            with worker._project_lock('game'):worker.rechecking.pop('game',None)
+        assert future.result(timeout=3)=='finished'
+
+
+def test_tool_entry_rejects_saved_file_edit_during_recheck_before_dispatch(project,monkeypatch):
+    from decompnet.app import tools
+    from decompnet.app.progress import _Recheck
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('you')
+    worker.rechecking['game']=_Recheck(folder,worker._signature(folder),ready=True)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('changed during recheck')
+    monkeypatch.setattr(tools,'_dispatch',lambda *a:pytest.fail('stale imported context reached tool'))
+    try:
+        with pytest.raises(NetworkError,match='Saved files changed during the recheck'):
+            tools._invoke(net,agent,'game','compile_and_diff',{'function':'f'})
+    finally:worker.rechecking.pop('game',None)
+    assert not getattr(worker.local,'foreground',False)

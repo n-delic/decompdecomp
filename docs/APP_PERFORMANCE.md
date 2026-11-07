@@ -281,3 +281,18 @@ route/type per minute. Only registered route templates, durations and timestamps
 kept, never URLs with query values, room invites, SQL or source text. The authenticated
 `/api/performance` endpoint exposes the same bounded history for local diagnostics.
 Use the opt-in timing diagnostics above to break down queue, SQL and encoding costs.
+
+### Foreground tools during a saved recheck
+
+Direct API and MCP tool entry both enter the existing foreground scope before
+synchronization or named-input resolution for ordinary submitted compiles, patches,
+variants, notes and plain lease releases. They can proceed only after the recheck
+has installed its context and verification evidence, and only while the captured
+saved-file signature is unchanged. The normal engine judge still records every
+candidate result. Notes and their publication marker share the project lock so a
+finishing recheck cannot acknowledge a note without saving it.
+
+Context/layout edits, prerequisite pivots and no-C verdict releases still wait for
+the full import. Outside an active ready recheck, the usual synchronization runs.
+This removes a wrapper-level queue; it does not skip imports or speed up the bulk
+verification itself.
