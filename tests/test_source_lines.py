@@ -10,6 +10,14 @@ import pytest
 from decompnet import source_lines
 
 
+def test_scalar_register_hints_include_matching_lines_but_drop_ambiguous_lines():
+    rows=[(' ','move $s0, $a0','move $s1, $a0'),
+          ('r','move $s2, $a1','move $s3, $a1'),
+          ('r','move $s3, $a2','move $s4, $a2')]
+    assert source_lines.scalar_registers(rows,[0,4,8],[(0,4,1),(4,12,2)],'a\nb','mips')=={1:'$s0'}
+    assert source_lines.scalar_registers(rows,[0,4,8],[(0,12,1)],'a','arm')=={}
+
+
 def test_associations_use_candidate_offsets_not_target_gaps_and_red_wins():
     rows = [('r','lw v0, 0(a0)','lw v1, 0(a0)'), ('<','nop',''),
             ('>','','sw v0, 4(sp)'), (' ','jr ra','jr ra')]

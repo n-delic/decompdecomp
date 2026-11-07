@@ -24,6 +24,11 @@ arithmetic are usually right; its types and names usually wrong. Start from it a
   register allocation differs.
 
 Machine drafts preserve exact call addresses: an interior `function+offset` is not a C callee.
+The initial draft search also tries a bounded optional explicit backedge for eligible do/while
+loops; the raw m2c draft remains available. Shared repair search can stage an unsigned row counter
+and reuse disjoint scalar storage with conversion boundaries preserved. These are compiler-matching
+hypotheses, not evidence of the original source. Loops with unsafe transfers or ambiguous
+initialization stay unchanged, and only the ordinary compiler/judge can establish a match.
 Partial m2c output and `M2C_ERROR` placeholders are reported as generation failures.
 Draft regeneration tries bounded private callback/frame repairs after compilation fails;
 only the ordinary compiler and exact judge can establish a match. Missing delay slots

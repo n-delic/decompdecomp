@@ -2,6 +2,41 @@
 from decompnet.app import compiler_diagnostics as diagnostics
 
 
+def test_unknown_output_format_has_no_equivalence_fingerprint():
+    assert diagnostics.output_fingerprint(b'not an ELF object') is None
+
+
+def test_output_fingerprint_includes_named_relocations_and_data(monkeypatch):
+    class Section(dict):
+        name='.data'
+        def data(self):return self['data']
+    class Relocations(dict):
+        def iter_relocations(self):return iter(self['relocations'])
+    class Relocation(dict):
+        @property
+        def entry(self):return self
+    class Symbol:
+        def __init__(self,name):self.name=name
+    from types import SimpleNamespace
+    data=Section(sh_flags=2,sh_size=4,sh_type='SHT_PROGBITS',data=b'abcd')
+    bss=Section(sh_flags=2,sh_size=8,sh_type='SHT_NOBITS');bss.name='.bss'
+    relocation=Relocation(r_offset=0,r_info_type=1,r_info_sym=1,r_addend=0)
+    relocs=Relocations(sh_flags=0,sh_link=1,sh_info=2,relocations=[relocation])
+    symbol=Symbol('first')
+    elf=SimpleNamespace(iter_sections=lambda:iter([data,bss,relocs]),
+                        get_section=lambda i:SimpleNamespace(get_symbol=lambda _:symbol) if i==1 else data)
+    monkeypatch.setattr(diagnostics,'ELFFile',lambda _:elf)
+    monkeypatch.setattr(diagnostics,'RelocationSection',Relocations)
+    original=diagnostics.output_fingerprint(b'object')
+    assert original==diagnostics.output_fingerprint(b'another debug/source spelling')
+    symbol.name='second'
+    assert original!=diagnostics.output_fingerprint(b'object')
+    symbol.name='first';data['data']=b'abce'
+    assert original!=diagnostics.output_fingerprint(b'object')
+    data['data']=b'abcd';bss['sh_size']=12
+    assert original!=diagnostics.output_fingerprint(b'object')
+
+
 def test_phase_summary_reports_removed_pseudos_without_claiming_spills(tmp_path):
     (tmp_path/'func.c.flow').write_text('Register 203 used 8 times across 19 insns; crosses 1 call; pointer.\n(reg/v:SI 203) (reg:SI 204)')
     (tmp_path/'func.c.combine').write_text('(reg:SI 204)')

@@ -117,7 +117,7 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         measured={'score':0 if exact else max(1,diff.score),'rows':diff.rows,'source':source,'verified':True,'exact':bool(exact),'legend':scoring.LEGEND}
         from ..source_lines import mismatches, render
         mapped = mismatches(compiled.obj, fn['name'], diff.rows, source,
-                            filename='func.cpp' if getattr(compiled,'language','c') == 'c++' else 'func.c')
+                            filename='func.cpp' if getattr(compiled,'language','c') == 'c++' else 'func.c',arch=proj['arch'])
         from .repair_localisation import bind
         measured['repair_locations']=bind(source,mapped)
         measured['line_note'] = render(mapped, source, limit=4)

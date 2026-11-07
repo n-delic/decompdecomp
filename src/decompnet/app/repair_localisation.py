@@ -17,6 +17,9 @@ INDEPENDENT = {'narrow_call_destination', 'address_or_literal'}
 def bind(source, mapping):
     compact=dict(available=bool(mapping and mapping.get('available')),
                  lines=[{'line':e['line']} for e in (mapping or {}).get('lines',[]) if type(e.get('line')) is int])
+    registers=(mapping or {}).get('scalar_registers')
+    if isinstance(registers,dict):
+        compact['scalar_registers']={str(k):v for k,v in registers.items() if str(k).isdigit() and isinstance(v,str)}
     return dict(source_sha256=hashlib.sha256(source.encode()).hexdigest(),mapping=compact)
 
 
@@ -25,6 +28,8 @@ def rebase(source, extracted, mapping):
     if not extracted or source.count(extracted)!=1:return None
     offset=source[:source.index(extracted)].count('\n')
     adjusted={**mapping,'lines':[dict(line=e['line']+offset) for e in mapping.get('lines',[]) if type(e.get('line')) is int]}
+    if isinstance(mapping.get('scalar_registers'),dict):
+        adjusted['scalar_registers']={str(int(k)+offset):v for k,v in mapping['scalar_registers'].items() if str(k).isdigit()}
     return bind(source,adjusted)
 
 

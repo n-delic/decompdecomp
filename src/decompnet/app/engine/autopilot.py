@@ -203,8 +203,10 @@ class AutopilotMixin:
             from ...source_lines import mismatches
             from ..repair_localisation import bind
             locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
-                filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
+                filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c',arch=proj['arch']))
+            from ..compiler_diagnostics import output_fingerprint
             return {"repair_locations":locations,"matched": d.bytes_match, "score": d.score, "max_score": d.max_score,
+                    "output_fingerprint":output_fingerprint(result.obj),
                     "percent": d.percent, "rows": self._search_rows(fn,proj,result.obj,d.rows),
                     "candidate_target": cand.code.hex(),
                     "candidate_relocs": json.dumps([(r.offset, r.type, 0) for r in cand.relocs])}
@@ -268,6 +270,9 @@ class AutopilotMixin:
             # (its compiler named in it: the same draft is worth judging again with another compiler)
             note = f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
             candidates = [('raw_m2c', f"{note}{seeds.M2C_MACROS}\n{draft}\n")]
+            from ..loop_storage_shapes import variants as loop_shapes
+            for family,source in loop_shapes(draft,fn['name'],ctx['header'],proj['arch'])[:2]:
+                candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
             if (seeds.m2c_target(toolchain) or "").startswith("mips"):
                 # next to m2c's own draft, the same with its usual mistakes undone (m2cfix.py): few lines change
                 refined = m2cfix.refine_draft(draft, fn["name"], target_asm)

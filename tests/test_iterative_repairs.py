@@ -1,6 +1,8 @@
 """Bounded search can chain edits and resume without accepting a heuristic score as a match."""
 import json
 
+import pytest
+
 from decompnet.app import iterative_repairs as search
 from decompnet.app.twins import Job
 
@@ -204,6 +206,8 @@ def test_output_duplicates_bound_expansion_but_preserve_two_source_shapes():
     assert len(state['outputs'])==2
     assert max(state['outputs'].values())==2
     assert search.output_key({'rows':[]}) is None
+    assert search.output_key({'candidate_target':'00','candidate_relocs':'[]','output_fingerprint':'named-reloc-a'})=='named-reloc-a'
+    assert search.output_key({'candidate_target':'00','candidate_relocs':'[]','output_fingerprint':None}) is None
     assert search.output_key({'candidate_target':'00','candidate_relocs':'[]'}) != search.output_key(
         {'candidate_target':'00','candidate_relocs':'[1]'})
 
@@ -479,7 +483,8 @@ def test_promising_diagnostics_charge_actual_compiles_once_without_adopting(pair
     assert pair._function('new','destination')['status']=='open'
 
 
-def test_scope_detour_beyond_scalar_cutoff_gets_lifetime_followup():
+@pytest.mark.parametrize('family',['loop_weight_scope','scalar_storage_reuse','row_number_staging','explicit_loop_backedge'])
+def test_scope_detour_beyond_scalar_cutoff_gets_lifetime_followup(family):
     state=dict(pending=[dict(source='seed',depth=0,ceiling=275)],next=[],seen=['seed'])
     before=[(' ','addiu $sp, $sp, -32','addiu $sp, $sp, -32'),('r','move $s1, $a0','move $s2, $a0')]
     after=[(' ','addiu $sp, $sp, -32','addiu $sp, $sp, -32'),('r','move $s1, $a0','move $s3, $a0')]
@@ -488,7 +493,7 @@ def test_scope_detour_beyond_scalar_cutoff_gets_lifetime_followup():
         calls.append(source)
         return dict(score={'seed':275,'scope':390,'exact':0}[source],matched=source=='exact',rows=before if source=='seed' else after)
     def variants(source,report):
-        return {'seed':[('loop_weight_scope','scope')],'scope':[('cfg_equal_value_increment','exact')]}.get(source,[])
+        return {'seed':[(family,'scope')],'scope':[('cfg_equal_value_increment','exact')]}.get(source,[])
     assert search.advance(state,judge,variants,lambda:False,arch='mips')
     assert calls==['seed','scope','exact']
     assert state['allocation_bursts']==1
