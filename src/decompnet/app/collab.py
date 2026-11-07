@@ -1051,8 +1051,9 @@ class Link:
                     if r.status_code != 200:
                         raise NetworkError(f"host answered {r.status_code}")
                     self.last_contact = time.time()
+                    from .project_activity import active
                     from .room_reconcile import launch
-                    launch(self, r.json().get("reconcile"))
+                    if active(self.net, self.slug):launch(self, r.json().get("reconcile"))
                 except Exception as e:
                     current = type(e).__name__ if isinstance(e, httpx.HTTPError) else str(e)
                     if current != problem:
