@@ -5811,3 +5811,14 @@ final verification (7 total), zero model tokens. Cold diagnostic-cache replays t
 This is known-case regression evidence; final signature remains diagnostic-only and no new full
 rebuild was claimed. Mixed exit-register definitions do not imply a defined C return on every path.
 The +2-weighted-reference-per-scope estimate ranks trials only; it is not a general GCC rule.
+
+## Discarded MIPS call results across unrelated stores
+
+**Controlled reader regression, 7 November 2026:** the N64 GCC 2.7.2 KMC caller
+(`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`) stores unrelated loop state after a call
+and later overwrites `v0` with `sltiu`. Stopping on every store incorrectly classifies
+this use as unknown. The bounded reader now crosses known stores that do not read
+`v0`; a store of `v0` is still consumption. Synthetic instruction tests cover both.
+This is a reader correction, not a new compiler scheduling rule. Automatic
+return-type publication additionally needs reconciled caller declarations, ordinary
+byte/data verdicts and a complete image rebuild; caller evidence alone is insufficient.

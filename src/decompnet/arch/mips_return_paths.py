@@ -113,6 +113,6 @@ def caller_use(asm,name):
                 if 'v0' in regs[1:]:status='consumed';break
                 if regs and regs[0]=='v0':status='discarded';break
             elif op in flow.JUMPS|flow.CONDITIONAL:break
-            elif op!='nop':break
+            elif op not in flow.STORES|{'nop','mtc1'}:break
         out.append(dict(call=i,use=status))
     return out[:8]

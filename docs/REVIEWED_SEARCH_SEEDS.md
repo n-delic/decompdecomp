@@ -19,7 +19,8 @@ that evidence separate from the saved winner.
    global compile/time allowance. The phase runs once before parallel paths. Actual allocation
    captures consume the same allowance. No model is called by this phase.
 5. Inspect the returned `reviewed_seeds` metrics and diagnostic trial IDs. A changed or unrecognized
-   signature stays diagnostic-only even when exact. Review declarations, observed return use and
+   signature from a manually reviewed root stays diagnostic-only even when exact. Generated narrow
+   return hypotheses can use the staged automatic application described below. Review declarations, observed return use and
    callers, then submit through the ordinary judge. A review note is not permission to change ABI.
    An unchanged signature can be adopted only after ordinary exact re-verification; diagnostic
    near misses never replace saved C. Exact diagnostics stop broad search for review.
@@ -65,8 +66,8 @@ python -m decompnet.app.reviewed_seed_benchmark \
 
 The report separates setup judge calls (one in discovery mode, two with a supplied root), search candidate builds, allocation-diagnostic builds,
 ordinary promotion and independent verification builds, CPU-only model tokens (zero) and elapsed time. Full-rebuild verification
-and duration remain `null` unless a rebuild callback is supplied and actually runs after ordinary
-adoption. A signature-changing exact diagnostic receives no adopted match or rebuild credit.
+and duration remain `null` unless staged automatic application or an explicit rebuild callback
+actually runs. Manual signature-changing diagnostics receive no adopted match or rebuild credit.
 
 ### Measured regression, 7 November 2026
 
@@ -94,11 +95,11 @@ prove indirect-call closure or a defined return value on every path.
 The initial C generator deliberately covers one narrow shape: a final braced signed 32-bit scalar
 guard in a void function. It tests the partial-return hypothesis, then a separate lexical lifetime
 for that existing tail scalar **even when the first edit scores worse**. Shared prototypes and
-callers are not rewritten. Existing own prototypes, recursion, volatile/assembly and control
+callers are unchanged during discovery. Existing own prototypes, recursion, volatile/assembly and control
 transfers in the proposed shape decline generation. Unknown processor readers also decline.
 
-Generated roots use the same 12-slot/30-second/global-budget limits as reviewed roots and always
-remain diagnostic-only, including exact results. Current-input failed scored diagnostics are reused;
+Generated roots use the same 12-slot/30-second/global-budget limits as reviewed roots. Exact
+results can enter staged automatic application; other diagnostics never replace saved C. Current-input failed scored diagnostics are reused;
 compile failures remain retryable. Relevant quotient sites can include middle assignments: up to six
 mapped sites, with depths 1–3 visited across sites before increasing depth. Estimated weighted-reference
 crossings rank depths; the approximate +2 references per level is only a search heuristic, never
@@ -127,3 +128,34 @@ independent verification builds/time, model tokens and full-rebuild time separat
 Planned gaps: analogous return-path readers for non-MIPS processors, broader source shapes with
 immutable private prototype snapshots, imported-project diagnostic roots and room guest storage.
 Ordinary search remains available in those modes.
+
+## Automatic application through existing autopilot
+
+Autopilot and Deep permuter now share the generated return lane; there are no new controls.
+Autopilot checks saved-source hypotheses before the completed-draft cache, so an older machine
+draft report does not hide this repair. A generated exact candidate is applied only when:
+
+- Only a void-to-signed-32-bit return changes; ANSI parameters stay identical.
+- All recorded target references are decoded direct calls whose results are discarded. All
+  affected callers already have matched C. Consuming or unknown calls, address-taking, possible
+  pointer-table entries, conflicting prototypes and recursive references decline adoption.
+- Simple caller declarations can be reconciled without changing caller bodies or shared headers.
+  Each changed header remains private to its function through ordinary exact-match input capture.
+- Every affected source passes the ordinary linked byte/data judge in a temporary ROM project.
+- The complete exported image equals the original private input byte for byte. No previously
+  matched C may fall back to assembly or disappear from that build.
+- Sources, contexts, targets, symbols, compiler installations, project settings, ROM/config files
+  and claims are still current when all normal match records commit in one transaction. A failure
+  rolls back the bundle; cancellation before publication leaves saved source unchanged.
+
+This is a conservative check of recorded direct references, source uses and embedded pointers,
+not proof that every dynamically computed indirect call has been discovered. Ambiguous cases
+stay diagnostic. Imported builds, room guests, overlapping overlays and external compiler inputs
+need a separate staging implementation; ordinary matching remains available.
+
+The bounded candidate search and the full-image verification have separate costs. Once an exact
+candidate is found, verification can exceed the short search budget: it rechecks affected functions
+and recompiles all matched C during export and the full build. No model tokens are used. Stop is
+checked between verification phases and before commit; the exporter's in-flight build can finish
+before cancellation takes effect. Application metrics report the affected judge builds, full-build
+source rechecks, image hash and rebuild duration separately from search candidate counts.

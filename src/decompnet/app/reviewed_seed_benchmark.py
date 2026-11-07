@@ -1,7 +1,7 @@
 """Replay discovery from an original checkpoint, or an optional reviewed root, in an isolated copy.
 
 Unlike normalized-output repair replays, this calls the ROM engine's real linker judge.
-No model is invoked. A changed signature ends at a diagnostic review boundary, not match credit.
+No model is invoked. Generated return changes need staged caller and full-image verification before match credit.
 """
 import hashlib
 import time
@@ -52,6 +52,11 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
         **outcome,search_compiles=search.tested,total_judge_or_diagnostic_compiles=setup_compiles+search.tested,verification_compiles=0,
         diagnostic_verification_seconds=None,diagnostic_verified=None,
         rebuild_seconds=None,rebuild_verified=None)
+    application=outcome.get('application',{})
+    if application.get('matched'):
+        report.update(rebuild_verified=application['rebuild_verified'],rebuild_seconds=application['rebuild_seconds'])
+        report['total_judge_or_diagnostic_compiles']+=application['judge_compiles']
+        report['full_build_source_rechecks']=application['matched_source_rechecks']
     if outcome['diagnostic_exact']:
         hit=outcome['diagnostic_exact'][0]
         record=reviewed_search_seeds.record(net,fn,hit['trial_id'])
@@ -62,7 +67,7 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
     if outcome['matched'] and rebuild is not None:
         began=time.monotonic();report['rebuild_verified']=bool(rebuild());report['rebuild_seconds']=time.monotonic()-began
     report['elapsed_seconds']=time.monotonic()-start
-    report['verification']='Real target linker; a diagnostic exact is not adopted match credit. Rebuild is unmeasured unless explicitly supplied and run.'
+    report['verification']='Real target linker; adopted return bundles also verify affected source and the complete rebuilt image. Rebuild verification is null when not run. Full-build source rechecks are separate from search/individual judge calls.'
     return report
 
 
