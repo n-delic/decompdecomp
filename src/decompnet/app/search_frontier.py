@@ -86,7 +86,7 @@ def structure_recovery(before, after, arch=None):
 def allocation_bridge(before, after, arch=None):
     """A scheduled sequence with only register differences earns the next bounded lane."""
     a=allocation_evidence.diagnose(before,arch)
-    return bool(a['scheduling'] and a['target_frame'] is not None
+    return bool((a['scheduling'] or a['copy_near_miss']) and a['target_frame'] is not None
                 and a['target_frame']==a['candidate_frame'] and structure_recovery(before,after,arch))
 
 

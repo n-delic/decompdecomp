@@ -1453,3 +1453,20 @@ all read order, pointer-width assumptions and the existing function contract.
 Do not add dummy values to reserve a register. This is a measured source-storage
 hypothesis, not a rule that naming locals alike always fixes allocation; rejudge
 normally and distinguish function equality from complete-image acceptance.
+
+### Dead assignments, narrow coordinates and scheduling
+
+For a register/scheduling miss, inspect `box.y = (half = y + half + 1)` when `half`
+is dead on every outgoing CFG path. A scoped `s16 next_y = y + half + 1` before
+adjacent independent stores can change local coalescing and scheduling. A measured
+386-instruction case moved from score 410 to 5 this way; an `s32` temporary did not.
+Removing the dead write alone was worse. Keep a few distinct allocation alternatives.
+
+Three consecutive field updates can also obscure the final operand order:
+`box.x = half; box.x = x + box.x; box.x = box.x + 1;`.
+A bounded repair folds these into `box.x = (s16)(x + half) + 1`, preserving the
+intermediate narrowing after proving the seed fits and the signed additions are
+bounded. This recovered the final instruction and exact linked bytes in that case.
+Do not apply this to volatile fields, calls, unknown aliases/types or unproven ranges.
+The app exposes these as ordinary-judge candidates, including a small combined trial;
+source form and displayed allocation clues alone never establish a match.
