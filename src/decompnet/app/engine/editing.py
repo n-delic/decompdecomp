@@ -236,7 +236,12 @@ class EditMixin:
                     s = trial.by_name[new]
                     db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                                (proj["id"], new, s.address, s.size, s.kind))
-                db.execute("UPDATE functions SET name=? WHERE project_id=? AND (name=? OR vram=?)", (new, proj["id"], old, addr))
+                # By name: an address overlays share names one of their functions, never all of them (#107 review).
+                # A name only the symbols had (a function whose row kept its address's name) goes by the address.
+                if not db.execute("UPDATE functions SET name=? WHERE project_id=? AND name=?",
+                                  (new, proj["id"], old)).rowcount:
+                    db.execute("UPDATE functions SET name=? WHERE project_id=? AND vram=? AND (SELECT COUNT(*) FROM "
+                               "functions WHERE project_id=? AND vram=?)=1", (new, proj["id"], addr, proj["id"], addr))
             for u, header in changed.items():
                 version = self._next_version(db, proj["id"])
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
