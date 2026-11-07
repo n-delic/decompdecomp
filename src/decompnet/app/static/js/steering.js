@@ -157,6 +157,7 @@ $("repositoryAutoCommit").onchange = async () => {
   const field = $("repositoryAutoCommit"), slug = S.slug, enabled = field.checked;
   repositoryAutoCommitBusy = true;
   const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [field], "Automatic commit preference saved.");
+  showJobError($("repositoryAutoCommitLog"), "");
   try {
     if (enabled && typeof prepareRepositoryCommits === "function") await prepareRepositoryCommits(slug, $("repositoryAutoCommitLog"));
     const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:(typeof repositorySaveRoot === "undefined" ? "" : repositorySaveRoot) || $("repositoryFolder").value.trim()}});
