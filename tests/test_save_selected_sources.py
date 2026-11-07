@@ -38,7 +38,7 @@ def saved_sources(tmp_path):
 def test_render_reads_only_selected_source_once(saved_sources):
     store,net = saved_sources
     original = [dict(r) for r in store.all(
-        "SELECT name,vram,size,status,matched_source,matched_agent_id,best_source,best_score,best_agent_id,readable,meta,"
+        "SELECT name,unit,vram,size,status,matched_source,matched_agent_id,best_source,best_score,best_agent_id,readable,meta,"
         "CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched,"
         "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best "
         "FROM functions WHERE project_id=1 ORDER BY vram")]
