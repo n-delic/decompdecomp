@@ -60,5 +60,10 @@ function windowFor(jobs){
  assert.equal(failure.el('headerStorageStart').disabled,false);assert.equal(failure.el('headerStorageStop').hidden,true);
  assert.match(failure.el('headerStorageLog').error,/Disk full/);
  // Completed jobs aren't returned by discovery; no spinner/follower is invented.
+ const partial=windowFor({});const originalApi=partial.ctx.api;
+ partial.ctx.api=async(path,options)=>({...await originalApi(path,options),statistics_complete:false});
+ await partial.ctx.loadDatabaseStorage();
+ assert.match(partial.el('databaseStorageSize').textContent,/incomplete/);
+ assert.match(partial.el('databaseStorageEstimate').textContent,/indexed content only.*Compress existing records/);
  const idle=windowFor({storage:null,headers:null,cleanup:null});await idle.ctx.restoreSettingsJobs();assert.equal(idle.followers.size,0);
 })().catch(error=>{console.error(error);process.exitCode=1;});

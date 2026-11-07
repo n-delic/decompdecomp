@@ -130,6 +130,8 @@ class Connection(sqlite3.Connection):
 
 def install(conn,table='attempts'):
     conn.execute('CREATE TABLE IF NOT EXISTS text_payloads(hash TEXT PRIMARY KEY,payload BLOB NOT NULL,raw_bytes INTEGER NOT NULL)')
+    from .payload_sizes import install as install_sizes
+    install_sizes(conn)
     field,ref,view=('source','source_hash','attempt_details') if table=='attempts' else ('evidence','evidence_hash','repair_details')
     columns=[r[1] for r in conn.execute('PRAGMA table_info('+table+')')]
     if ref not in columns:

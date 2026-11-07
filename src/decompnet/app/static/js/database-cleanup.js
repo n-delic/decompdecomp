@@ -77,8 +77,9 @@ async function loadDatabaseStorage() {
   const data=await api('/api/database-storage');
   if(databaseStorageJob)return;
   const size=n=>`${(Number(n)/1048576).toLocaleString(undefined,{maximumFractionDigits:1})} MiB`;
-  $('databaseStorageSize').textContent=`— ${size(data.stored_bytes)} shared content`;
-  $('databaseStorageEstimate').textContent=`${size(data.logical_bytes)} of shared text stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database. Repair evidence: ${size(data.repair_archive_bytes)} in its separate database.`;
+  const incomplete=data.statistics_complete===false;
+  $('databaseStorageSize').textContent=incomplete?'— Storage totals incomplete':`— ${size(data.stored_bytes)} shared content`;
+  $('databaseStorageEstimate').textContent=(incomplete?'Totals cover indexed content only. Use Compress existing records to finish indexing in stoppable batches. ':'')+`${size(data.logical_bytes)} of shared text stored in ${size(data.stored_bytes)}. ${size(data.free_bytes)} reusable inside the database. Repair evidence: ${size(data.repair_archive_bytes)} in its separate database.`;
   $('repairEvidenceEnabled').checked=data.repair_evidence.enabled;
   $('repairEvidenceAutomatic').value=data.repair_evidence.automatic_limit;
   $('repairEvidenceManual').value=data.repair_evidence.manual_limit;

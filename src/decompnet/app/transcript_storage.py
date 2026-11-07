@@ -22,6 +22,8 @@ class TranscriptStore(Store):
             CREATE TABLE IF NOT EXISTS read_revisions(kind TEXT PRIMARY KEY,revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS text_payloads(hash TEXT PRIMARY KEY,payload BLOB NOT NULL,raw_bytes INTEGER NOT NULL);
         ''')
+        from ..payload_sizes import install
+        install(self.conn)
         self.lock = threading.RLock()
         self._local = threading.local()
         self._slow_queries = {}

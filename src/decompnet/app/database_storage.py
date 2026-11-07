@@ -14,16 +14,19 @@ def stats(net):
     from ..repair_corpus import read_options
     from .storage_files import all_files
     store=net.store
+    complete=True
     totals = dict.fromkeys(('contents','logical_bytes','stored_bytes','allocated_bytes','free_bytes'),0)
     for selected in all_files(net):
         page=selected.one('PRAGMA page_size')[0]
         totals['allocated_bytes'] += page*selected.one('PRAGMA page_count')[0]
         totals['free_bytes'] += page*selected.one('PRAGMA freelist_count')[0]
-        blobs=selected.one('SELECT COUNT(*) contents,COALESCE(SUM(raw_bytes),0) logical_bytes,COALESCE(SUM(length(payload)),0) stored_bytes FROM text_payloads')
+        from ..payload_sizes import stats as payload_stats
+        blobs=payload_stats(selected)
+        complete = complete and blobs['complete']
         for key in ('contents','logical_bytes','stored_bytes'):totals[key] += blobs[key]
     row=store.one('SELECT value FROM settings WHERE key=?',KEY)
     path=Path(store.conn.repair_archive.path)
-    return {'repair_archive_bytes':path.stat().st_size if path.is_file() else 0,**totals,
+    return {'statistics_complete':complete,'repair_archive_bytes':path.stat().st_size if path.is_file() else 0,**totals,
             'repair_evidence':read_options(store),
             'retention':json.loads(row['value']) if row else {'days':0,'automatic':False},
             'history_plan':[r['detail'] for r in store.all('EXPLAIN QUERY PLAN SELECT id,score,compiled,created_at FROM main.attempts WHERE function_id=? AND id<? ORDER BY id DESC LIMIT 101',0,9223372036854775807)]}
@@ -65,7 +68,9 @@ def pack(net,log):
 
 
 def _pack_store(net,store,log):
+    from ..payload_sizes import backfill
     from ..repair_archive import migrate
+    backfill(store,log)
     from .maintenance import checkpoint
     done=migrate(net,log,store=store) if store.one("SELECT 1 FROM sqlite_master WHERE name='repair_examples'") else 0
     from ..large_text_storage import FIELDS, MIN_BYTES
