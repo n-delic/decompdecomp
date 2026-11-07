@@ -13,6 +13,10 @@ class Log:
     def __init__(self):
         self.lines = []
         self.cancelled = False
+        self.snapshot = None
+
+    def progress(self, values):
+        self.snapshot = values
 
     def __call__(self, line):
         self.lines.append(line)
@@ -62,6 +66,10 @@ def test_variant_limit_is_checked_before_another_compile(tmp_path, monkeypatch):
     with pytest.raises(deep_permuter.SearchLimit, match="Variant limit"):
         search._score(agent, net.project_row("game"), fn, "candidate two", 20, None)
     assert len(calls) == 1
+    assert search.log.snapshot["starting_score"] == 40
+    assert search.log.snapshot["best_score"] == 20
+    assert search.log.snapshot["tested"] == 1
+    assert search.log.snapshot["history"] == [{"tested": 0, "score": 40}, {"tested": 1, "score": 20}]
 
 
 def test_search_stops_at_variant_limit_and_keeps_a_verified_improvement(tmp_path, monkeypatch):

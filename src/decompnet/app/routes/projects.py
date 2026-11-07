@@ -223,10 +223,9 @@ def register(app: App) -> None:
     def p_deep_permuter(slug, request, data):
         if request.method == "GET":
             name = request.query_params.get("name", "")
-            active = next((job for job in jobs.jobs.values() if job["kind"] == "deep-permuter"
-                           and job.get("slug") == slug and job.get("function") == name
-                           and job["state"] == "running"), None)
-            return {"job": active["id"] if active else None}
+            latest = next((job for job in reversed(list(jobs.jobs.values())) if job["kind"] == "deep-permuter"
+                           and job.get("slug") == slug and job.get("function") == name), None)
+            return {"job": latest["id"] if latest and latest["state"] == "running" else None, "last": latest}
         name = str(data.get("name", ""))
         minutes = data.get("minutes", 10)
         variants = data.get("variants", 500)

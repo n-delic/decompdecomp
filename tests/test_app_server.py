@@ -48,6 +48,7 @@ def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monke
     monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
 
     def run(net, slug, name, minutes, variants, log):
+        log.progress({"tested": 2, "starting_score": 40, "best_score": 20})
         started.set()
         release.wait(2)
         log.check_cancel()
@@ -60,7 +61,9 @@ def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monke
         assert response.status_code == 200, response.text
         jid = response.json()["job"]
         assert started.wait(1)
-        assert client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json() == {"job": jid}
+        found = client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json()
+        assert found["job"] == jid and found["last"]["function"] == "f"
+        assert found["last"]["progress"]["tested"] == 2
         again = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload)
         assert again.json()["job"] == jid
         other = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json={**payload, "name": "g"})
@@ -68,6 +71,14 @@ def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monke
         assert client.post("/api/job/cancel", headers={"X-Decomp": "1"}, json={"id": jid}).json() == {"cancelled": True}
     finally:
         release.set()
+    for _ in range(100):
+        state = client.get("/api/job", params={"id": jid}).json()["state"]
+        if state != "running":
+            break
+        time.sleep(.01)
+    found = client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json()
+    assert found["job"] is None and found["last"]["state"] == "cancelled"
+    assert found["last"]["progress"]["best_score"] == 20
 
 
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):

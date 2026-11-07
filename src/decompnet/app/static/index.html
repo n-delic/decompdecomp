@@ -484,7 +484,8 @@
       <div class="row">
         <span class="badge" id="fnStatus"></span>
         <button class="ghost small-btn pin" id="fnPin" type="button" title="Agents take this function next">★ Next</button>
-        <button class="ghost small-btn" id="fnSetAside" type="button" hidden title="You know no C makes this function (hand-written assembly, a piece of another function): set it aside now, without waiting for agents to agree. It turns red, leaves agents' work and the percentage, and Give it back to the agents undoes it.">Set aside: no C makes it</button>
+        <details class="fn-menu" id="fnActionsMenu"><summary class="ghost icon" aria-label="More function actions" title="More actions">⋯</summary><div class="fn-menu-body"><button class="ghost small-btn" id="fnSetAside" type="button" hidden>Set aside: no C makes it</button></div></details>
+        <button class="ghost icon" id="fnExpand" type="button" aria-label="Expand function view" aria-pressed="false" title="Expand function view">⤢</button>
         <button class="ghost icon" id="fnPrev" type="button" aria-label="Previous function" title="Previous function (K)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.3 2.7 11.4 3.8 7.2 8l4.2 4.2-1.1 1.1L5 8z"/></svg></button>
         <button class="ghost icon" id="fnNext" type="button" aria-label="Next function" title="Next function (J)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 2.7 4.6 3.8 8.8 8l-4.2 4.2 1.1 1.1L11 8z"/></svg></button>
         <button class="ghost icon" data-close type="button" aria-label="Close" title="Close (Esc)">✕</button>
@@ -496,6 +497,8 @@
         <div class="tabs" role="tablist" aria-label="Function view">
           <button role="tab" class="tab on" data-ftab="diff" type="button">Diff</button>
           <button role="tab" class="tab" data-ftab="code" type="button">Edit</button>
+          <button role="tab" class="tab" data-ftab="deep" type="button">Deep permuter <span id="deepTabState"></span></button>
+          <button role="tab" class="tab" data-ftab="history" type="button">History</button>
         </div>
         <div class="seg small" id="diffWhich" hidden><button type="button" data-which="latest" class="on">Latest attempt</button><button type="button" data-which="best">Best</button></div>
       </div>
@@ -517,21 +520,33 @@
             <span class="muted small" id="tryHint">Ctrl+Enter · edit it yourself: you're judged like an agent</span>
           </div>
           <p class="try-msg" id="tryMsg" hidden></p>
-          <div class="note-box" id="deepPermuterPanel">
-            <p class="col-title">Deep permuter</p>
-            <p class="muted small">Spend more local compiler time on this saved C candidate. No AI tokens are used.</p>
-            <div class="row">
-              <label>Minutes <input id="deepMinutes" type="number" min="1" max="120" value="10"></label>
-              <label>Max variants <input id="deepVariants" type="number" min="1" max="1000000" value="500"></label>
-            </div>
-            <div class="row">
-              <button class="ghost small-btn" id="deepStart" type="button">Deep permute this function</button>
-              <button class="ghost small-btn" id="deepStop" type="button" hidden>Stop search</button>
-            </div>
-            <pre class="code" id="deepLog" aria-live="polite"></pre>
-          </div>
         </div>
       </div>
+      <section id="deepPermuterPanel" class="deep-panel" hidden aria-labelledby="deepTitle">
+        <div class="deep-heading"><div><h3 id="deepTitle">Find a closer match</h3><p class="muted">Try local C rewrites with your game's compiler. Improvements are saved as they are verified.</p></div><span class="badge">Local CPU · No AI tokens</span></div>
+        <div class="deep-controls">
+          <label class="field"><span>Time limit (minutes)</span><input id="deepMinutes" type="number" min="1" max="120" value="10"></label>
+          <label class="field"><span>Variant limit</span><input id="deepVariants" type="number" min="1" max="1000000" value="500"></label>
+          <button class="primary" id="deepStart" type="button">Start search</button>
+          <button class="ghost" id="deepStop" type="button" hidden>Stop search</button>
+        </div>
+        <p class="muted small" id="deepEligibility" hidden></p>
+        <div id="deepResults" class="deep-results" hidden>
+          <div class="deep-status-row"><strong id="deepStatus" role="status"></strong><span id="deepTiming" class="muted small"></span></div>
+          <progress id="deepProgress" max="100" value="0" aria-label="Candidates tested"></progress>
+          <div class="deep-metrics">
+            <div><span>Starting match</span><strong id="deepStarting">—</strong></div>
+            <div><span>Best match</span><strong id="deepBest">—</strong><small id="deepGain"></small></div>
+            <div><span>Candidates tested</span><strong id="deepTested">0</strong><small id="deepLimit"></small></div>
+          </div>
+          <div class="row deep-result-actions"><button class="ghost small-btn" id="deepViewDiff" type="button">View best diff</button></div>
+          <div class="deep-run-chart fn-chart"><p class="col-title">Match progress in this run</p><svg id="deepChart" role="img" aria-label="Best match during this search"></svg></div>
+          <p class="muted small" id="deepError" hidden></p>
+          <details class="deep-output"><summary>Detailed output</summary><pre class="code" id="deepLog"></pre></details>
+        </div>
+        <div id="deepEmpty" class="deep-empty"><strong>Give this function a little more time.</strong><p>Set a budget above to search its saved C. Progress and improvements will appear here.</p></div>
+      </section>
+      <section id="fnHistoryView" class="fn-history" hidden aria-label="Function history and notes">
       <div class="fn-chart" id="fnChartWrap"><svg id="fnChart" aria-label="Match per compile"></svg><div class="fn-chart-note" id="fnChartNote"></div></div>
       <div class="xref" id="fnXref"></div>
       <div id="fnNotes"></div>
@@ -540,6 +555,7 @@
           <textarea id="noteText" rows="2" placeholder="e.g. this is the player's update loop; the struct at 0x8004AE34 is the player"></textarea></label>
         <div class="row"><button class="ghost small-btn" id="noteAdd" type="button">Add note</button></div>
       </div>
+      </section>
     </div>
   </div>
 </div>
@@ -565,6 +581,7 @@
 <script src="/assets/js/map.js"></script>
 <script src="/assets/js/agents.js"></script>
 <script src="/assets/js/function.js"></script>
+<script src="/assets/js/deep-permuter.js"></script>
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/pages.js"></script>
 </body>

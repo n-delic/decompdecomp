@@ -41,6 +41,19 @@ class Search(Permuter):
         self.log = log
         self.tested = 0
         self.turns = 0
+        self.seed = time.time_ns()
+        self.started = time.monotonic()
+        self.starting_score = self.best_score = None
+        self.history = []
+
+    def report(self):
+        getattr(self.log, "progress", lambda values: None)({
+            "tested": self.tested, "variant_limit": self.limit,
+            "starting_score": self.starting_score, "best_score": self.best_score,
+            "elapsed": round(time.monotonic() - self.started),
+            "seconds_left": max(0, round(self.deadline - time.monotonic())),
+            "history": list(self.history),
+        })
 
     def _hold(self, agent, fn):
         # A manual search must not exhaust the automatic permuter's turn allowance.
@@ -48,7 +61,7 @@ class Search(Permuter):
 
     def _random_seed(self, fn):
         self.turns += 1
-        return f"{fn['id']}-deep-{self.turns}"
+        return f"{fn['id']}-deep-{self.seed}-{self.turns}"
 
     def _turn_deadline(self):
         return min(super()._turn_deadline(), self.deadline)
@@ -61,6 +74,15 @@ class Search(Permuter):
             raise SearchLimit("Variant limit reached")
         self.tested += 1
         score = super()._score(agent, proj, fn, source, best, fork)
+        if self.starting_score is None:
+            self.starting_score = self.best_score = best
+            self.history = [{"tested": 0, "score": best}]
+        if score is not None and score < self.best_score:
+            self.best_score = score
+            self.history.append({"tested": self.tested, "score": score})
+            if len(self.history) > 200:
+                self.history = self.history[:1] + self.history[2:-1:2] + self.history[-1:]
+        self.report()
         if self.tested == 1 or self.tested % 25 == 0:
             self.log(f"Tested {self.tested} candidates; best score {min(best, score) if score is not None else best}.")
         return score
@@ -69,6 +91,9 @@ class Search(Permuter):
 def run(net, slug: str, name: str, minutes: int, max_variants: int, log):
     proj, fn = validate(net, slug, name, minutes, max_variants)
     search = Search(net, minutes, max_variants, log)
+    search.starting_score = search.best_score = fn["best_score"]
+    search.history = [{"tested": 0, "score": fn["best_score"]}]
+    search.report()
     state = State()
     agent, _ = net.local_agent("permuter")
     reason = "Search ended"
@@ -89,6 +114,8 @@ def run(net, slug: str, name: str, minutes: int, max_variants: int, log):
             reason = "Variant limit reached" if search.tested >= search.limit else "Time limit reached"
     except SearchLimit as error:
         reason = str(error)
+    finally:
+        search.report()
     current = net._function(name, slug)
     if current["status"] == "matched":
         reason = "Matched"

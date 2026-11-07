@@ -41,7 +41,14 @@ function showFnTab(tab) {
   document.querySelectorAll("[data-ftab]").forEach((b) => b.classList.toggle("on", b.dataset.ftab === tab));
   $("fnDiffView").hidden = tab !== "diff";
   $("fnCodeView").hidden = tab !== "code";
+  $("deepPermuterPanel").hidden = tab !== "deep";
+  $("fnHistoryView").hidden = tab !== "history";
+  document.querySelectorAll("[data-ftab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.ftab === tab)));
+  const d = S.fnDetail;
+  $("diffWhich").hidden = tab !== "diff" || !d || d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
   if (tab === "diff") loadDiff();
+  if (tab === "history" && d) renderFnChart(d);
+  if (tab === "deep") renderDeepSearch();
 }
 document.querySelectorAll("[data-ftab]").forEach((b) => { b.onclick = () => { S.ftab = b.dataset.ftab; showFnTab(S.ftab); }; });
 document.querySelectorAll("#diffWhich [data-which]").forEach((b) => {
@@ -66,7 +73,9 @@ async function refreshFn(first) {
     $("fnName").textContent = d.name;
     fnBadge(d);
     $("fnSetAside").hidden = d.status !== "open";
+    $("fnActionsMenu").hidden = d.status !== "open";
     $("fnSetAside").onclick = async () => {
+      $("fnActionsMenu").open = false;
       const why = prompt(`Why does no C make ${d.name}? (optional: agents and you read it on its page)`, "hand-written assembly");
       if (why === null) return;
       try {
@@ -106,12 +115,10 @@ async function refreshFn(first) {
     const kinds = { matched: "Matching C", best: "Best attempt so far", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt", draft: "Machine draft (m2c)" };
     $("fnSrcKind").textContent = kinds[d.source_kind] || "No C yet";
     if (!S.editDirty || first) setEditor(d.source || "", d);
-    $("deepStart").disabled = d.status !== "open" || !d.source || d.best == null || deepFollowing != null;
-    $("deepPermuterPanel").hidden = d.status === "matched" || d.status === "asm";
+    renderDeepSearch();
     reconnectDeepSearch(d.name);
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
-    $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
     const xr = [];
     if (d.calls.length) xr.push(`<div><b>calls</b>${d.calls.map(fnLink).join("")}</div>`);
     if (d.called_by.length) xr.push(`<div><b>called by</b>${d.called_by.map(fnLink).join("")}</div>`);
@@ -156,60 +163,6 @@ $("fnEdit").addEventListener("keydown", (e) => {
 });
 $("tryBtn").onclick = () => tryIt();
 
-let deepFollowing = null;
-async function followDeepSearch(id, name) {
-  if (deepFollowing === id) return;
-  deepFollowing = id;
-  const log = $("deepLog");
-  const finish = beginWork(log, "Deep permuting", [$("deepStart")], "Deep search finished.");
-  $("deepStop").hidden = false;
-  try {
-    const result = await followJob(id, log);
-    if (S.fn === name) {
-      log.textContent += `\n${result.reason}: ${result.tested} variants tested.`;
-      S.diffKey = null;
-      await refreshFn(false);
-      await refreshMap(true);
-    }
-  } catch (error) {
-    if (S.fn === name) showJobError(log, error.message);
-  } finally {
-    deepFollowing = null;
-    finish();
-    $("deepStop").hidden = true;
-    if (S.fn === name && S.fnDetail) {
-      $("deepStart").disabled = S.fnDetail.status !== "open" || !S.fnDetail.source || S.fnDetail.best == null;
-    }
-  }
-}
-
-async function reconnectDeepSearch(name) {
-  try {
-    const { job } = await api(`/api/deep-permuter?slug=${encodeURIComponent(S.slug)}&name=${encodeURIComponent(name)}`);
-    if (job && S.fn === name) followDeepSearch(job, name);
-  } catch (error) { console.warn("Deep search status unavailable", error); }
-}
-
-$("deepStart").onclick = async () => {
-  const name = S.fn;
-  if (!name || $("deepStart").disabled) return;
-  $("deepStart").disabled = true;
-  const log = $("deepLog");
-  showJobError(log, "");
-  try {
-    const { job } = await api("/api/deep-permuter", { method: "POST", body: {
-      slug: S.slug, name, minutes: Number($("deepMinutes").value), variants: Number($("deepVariants").value),
-    } });
-    $("deepStart").disabled = false;
-    followDeepSearch(job, name);
-  } catch (error) {
-    showJobError(log, error.message);
-    $("deepStart").disabled = false;
-  }
-};
-$("deepStop").onclick = async () => {
-  if (deepFollowing) await api("/api/job/cancel", { method: "POST", body: { id: deepFollowing } });
-};
 
 async function tryIt() {
   const name = S.fn, source = $("fnEdit").value, msg = $("tryMsg");
