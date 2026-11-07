@@ -1,8 +1,56 @@
 """Shared fingerprint indexing must not wait on another thread's progress synchronization."""
 import json
 import threading
+from contextlib import nullcontext
+from types import SimpleNamespace
+
+import pytest
 
 from decompnet.app.engine import RomNetwork
+
+
+@pytest.mark.parametrize('kind', ['rom', 'fork'])
+def test_source_matches_reuse_target_prints_without_progress_sync(monkeypatch, kind):
+    from decompnet.app import twins
+    from decompnet.read_cache import ReadCache
+
+    clock = [1000.]
+    monkeypatch.setattr('decompnet.read_cache.time.monotonic', lambda: clock[0])
+    monkeypatch.setattr(twins.time, 'sleep', lambda _: None)
+    monkeypatch.setattr('decompnet.app.workers.lower_priority', lambda: None)
+    monkeypatch.setattr('decompnet.app.maintenance.slot', lambda: nullcontext())
+    class InlineThread:
+        def __init__(self, *, target, **kwargs):self.target = target
+        def start(self):self.target()
+    monkeypatch.setattr(twins.threading, 'Thread', InlineThread)
+    store = SimpleNamespace(_local=threading.local(), read_cache=ReadCache(), read_version=lambda *a: 1)
+    net = SimpleNamespace(store=store, links={}, cfg=lambda proj: {'kind':kind},
+                          fork_slug=lambda *a: pytest.fail('A source-only match looked up and synchronized its project'))
+    worker = twins.Twins(net)
+    proj = {'id':1, 'slug':'example'}
+    builds = []
+    def build(proj):
+        builds.append(proj['id'])
+        return {1:twins.Print('same-target', [], 4)}
+    monkeypatch.setattr(worker, '_fork_prints', build)
+    monkeypatch.setattr(worker, '_rom_prints', build)
+    batches = []
+    def pairs(proj, batch):
+        batches.append(set(batch))
+        assert worker.prints(proj)[1].key == 'same-target'
+        return []
+    monkeypatch.setattr(worker, 'pairs', pairs)
+    worker.prints(proj)  # target fingerprints were already read before these source-only matches
+    for fid in (1,2,3):worker.after_match(proj, fid)
+    assert builds == [1]
+    assert batches == [{1},{2},{3}]
+    # Layout/target invalidations still force a refresh, and imported targets retain their bounded expiry.
+    worker.forget(proj)
+    worker.prints(proj)
+    assert builds == [1,1]
+    clock[0] += twins.FORK_PRINTS_TTL + 1
+    worker.prints(proj)
+    assert len(builds) == (3 if kind == 'fork' else 2)
 
 
 def test_rom_index_does_not_sync_progress_while_holding_shared_index_lock(tmp_path, monkeypatch):

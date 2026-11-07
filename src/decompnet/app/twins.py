@@ -1370,8 +1370,9 @@ class Twins:
                         if not batch:
                             self._busy.discard(proj["id"])
                             return
-                    if self.net.fork_slug(proj["slug"]):
-                        self.forget(proj)  # matched code may have changed the objects' builds; targets stay
+                    # A successful source build does not change the original target fingerprints. Keep their
+                    # cache (and its normal target-object expiry); layout edits explicitly call forget(). Looking
+                    # the kind up here also used to synchronize saved progress before every propagation batch.
                     try:
                         from . import maintenance
                         with maintenance.slot():
