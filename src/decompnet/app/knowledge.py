@@ -18,6 +18,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import threading
 import time
 
 from ..network import Agent, NetworkError
@@ -81,9 +82,20 @@ def _words(text: str) -> list[str]:
 class Knowledge:
     def __init__(self, net):
         self.net = net
-        with net.store.tx() as db:
-            for sql in SCHEMA:
-                db.execute(sql)
+        self.lock = threading.RLock()
+        self.ready = set()
+        self._prepare(net.store)
+
+    def _prepare(self, store):
+        with self.lock:
+            if store in self.ready:return store
+            with store.tx() as db:
+                for sql in SCHEMA:db.execute(sql)
+            self.ready.add(store)
+        return store
+
+    def _store(self, project):
+        return self._prepare(self.net.project_store(project))
 
     def _model_of(self, agent: Agent) -> str:
         """The model behind a helper (its record), or its own name when the app doesn't know one."""
@@ -102,7 +114,7 @@ class Knowledge:
         self.net._update_cfg(slug, lambda cfg: cfg.__setitem__("knowledge_auto", bool(on)))
         if on:
             proj = self.net._project(slug)
-            with self.net.store.tx() as db:
+            with self._store(slug).tx() as db:
                 db.execute("UPDATE knowledge SET status=?, decided_at=? WHERE project_id=? AND status=?",
                            (ACCEPTED, time.time(), proj["id"], AGREED))
 
@@ -112,7 +124,7 @@ class Knowledge:
         evidence = " ".join(str(evidence).split())[:2000]
         if supports:
             result = self._support(agent, proj, int(supports))
-            self._evidence(int(supports),agent,evidence)
+            self._evidence(proj,int(supports),agent,evidence)
             return result
         text = " ".join(text.split())[:4000]
         original = text
@@ -155,26 +167,26 @@ class Knowledge:
                 return (f"A proposal like it is open already, #{row['id']}: \"{row['text']}\". If it says the same, "
                         f"back it: share_knowledge(supports={row['id']}). If yours says something else, say what "
                         f"differs.")
-        with self.net.store.tx() as db:
+        with self._store(slug).tx() as db:
             kid = db.execute("INSERT INTO knowledge(project_id, text, status, created_at) VALUES(?,?,?,?)",
                              (proj["id"], text, PROPOSED, time.time())).lastrowid
         self._support(agent, proj, kid)
-        self._evidence(kid,agent,evidence)
+        self._evidence(proj,kid,agent,evidence)
         return (f"Proposed as #{kid}. It reaches every agent once a helper running another model backs it "
                 f"(and the user accepts it, unless the project adds agreed knowledge by itself).")
 
-    def _evidence(self, kid, agent, evidence):
+    def _evidence(self, proj, kid, agent, evidence):
         if evidence:
-            with self.net.store.tx() as db:
+            with self._store(proj['id']).tx() as db:
                 db.execute('INSERT OR IGNORE INTO knowledge_evidence(knowledge_id,agent_id,text,created_at) VALUES(?,?,?,?)',
                            (kid,agent.id,evidence,time.time()))
 
     def _support(self, agent: Agent, proj, kid: int) -> str:
-        row = self.net.store.one("SELECT * FROM knowledge WHERE id=? AND project_id=?", kid, proj["id"])
+        row = self._store(proj['id']).one("SELECT * FROM knowledge WHERE id=? AND project_id=?", kid, proj["id"])
         if row is None:
             raise NetworkError(f"no proposal #{kid} on this project")
         model = self._model_of(agent)
-        with self.net.store.tx() as db:
+        with self._store(proj['id']).tx() as db:
             db.execute("INSERT OR IGNORE INTO knowledge_support(knowledge_id, agent_id, model, created_at) VALUES(?,?,?,?)",
                        (kid, agent.id, model, time.time()))
             models = {r["model"] for r in db.execute("SELECT model FROM knowledge_support WHERE knowledge_id=?", (kid,))}
@@ -189,20 +201,20 @@ class Knowledge:
         return f"Backed #{kid}. It still needs a helper running a model other than {model}."
 
     def _open(self, proj) -> list:
-        return self.net.store.all("SELECT * FROM knowledge WHERE project_id=? AND status=? ORDER BY id DESC",
+        return self._store(proj['id']).all("SELECT * FROM knowledge WHERE project_id=? AND status=? ORDER BY id DESC",
                                   proj["id"], PROPOSED)
 
     def decide(self, slug: str, kid: int, accept: bool) -> None:
         """The user may accept any proposal, or reject/take back one, independently of model consensus."""
         proj = self.net._project(slug)
-        with self.net.store.tx() as db:
+        with self._store(slug).tx() as db:
             db.execute("UPDATE knowledge SET status=?, decided_at=? WHERE id=? AND project_id=?",
                        (ACCEPTED if accept else REJECTED, time.time(), int(kid), proj["id"]))
 
     def forget(self, slug: str) -> None:
         """A deleted project's knowledge goes with it (its id may be a new project's later)."""
         pid = self.net._project(slug)["id"]
-        with self.net.store.tx() as db:
+        with self._store(pid).tx() as db:
             db.execute("DELETE FROM knowledge_support WHERE knowledge_id IN (SELECT id FROM knowledge WHERE project_id=?)",
                        (pid,))
             db.execute("DELETE FROM knowledge WHERE project_id=?", (pid,))
@@ -210,20 +222,25 @@ class Knowledge:
     def listing(self, slug: str) -> dict:
         """For the GUI: every proposal not rejected, with the models behind it, and the project's setting."""
         proj = self.net._project(slug)
-        rows = self.net.store.all("SELECT * FROM knowledge WHERE project_id=? AND status != ? ORDER BY id DESC",
+        rows = self._store(slug).all("SELECT * FROM knowledge WHERE project_id=? AND status != ? ORDER BY id DESC",
                                   proj["id"], REJECTED)
         support = {}
-        for r in self.net.store.all("SELECT s.knowledge_id, s.model FROM knowledge_support s JOIN knowledge k "
+        for r in self._store(slug).all("SELECT s.knowledge_id, s.model FROM knowledge_support s JOIN knowledge k "
                                     "ON k.id=s.knowledge_id WHERE k.project_id=?", proj["id"]):
             support.setdefault(r["knowledge_id"], set()).add(r["model"])
         return {"auto": self.auto(proj), "models_to_agree": MODELS_TO_AGREE,
                 "items": [{"id": r["id"], "text": r["text"], "status": r["status"], "t": r["created_at"],
                            "models": sorted(support.get(r["id"], ())),
                            "verification": self._verification(proj['id'],r['id']),
-                           "evidence": [dict(e) for e in self.net.store.all('SELECT e.text,a.name AS agent FROM knowledge_evidence e LEFT JOIN agents a ON a.id=e.agent_id WHERE e.knowledge_id=? ORDER BY e.id',r['id'])]} for r in rows]}
+                           "evidence": self._evidence_rows(proj,r['id'])} for r in rows]}
+
+    def _evidence_rows(self, proj, kid):
+        from .project_labels import label
+        rows = self._store(proj['id']).all('SELECT text,agent_id FROM knowledge_evidence WHERE knowledge_id=? ORDER BY id',kid)
+        return label(self.net,rows,{'agent':'agent_id'})
 
     def _verification(self, pid, kid):
-        row = self.net.store.one('SELECT value FROM settings WHERE key=?',f'knowledge-review:{pid}:{kid}')
+        row = self._store(pid).one('SELECT value FROM settings WHERE key=?',f'knowledge-review:{pid}:{kid}')
         return json.loads(row['value']) if row else None
 
     def request_verification(self, slug, kid, sessions):
@@ -242,7 +259,7 @@ class Knowledge:
             session = min(eligible, key=lambda s: s.id)
             model = model_for(session)
             key = f'knowledge-review:{proj["id"]}:{kid}'
-            with self.net.store.tx() as db:
+            with self._store(slug).tx() as db:
                 db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (key, json.dumps({'model':model,'agent':session.agent_name})))
             return {'message':f'Queued for {session.label} ({model}) at its next session. It must independently verify examples before backing the proposal.', 'model':model}
 
@@ -250,7 +267,7 @@ class Knowledge:
         """What every agent starts with: the accepted knowledge, then the open proposals it can back."""
         proj = self.net._project(slug)
         out, used = [], 0
-        for r in self.net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status=? ORDER BY id DESC",
+        for r in self._store(slug).all("SELECT text FROM knowledge WHERE project_id=? AND status=? ORDER BY id DESC",
                                     proj["id"], ACCEPTED):
             if self._rule_mentions(proj, r["text"]):
                 continue
@@ -260,9 +277,9 @@ class Knowledge:
             used += len(r["text"])
         text = ("Accepted matching knowledge for this game (user-approved or model consensus):\n" + "\n".join(out)) if out else ""
         model = self._model_of(agent) if agent else None
-        supported = {r['knowledge_id'] for r in self.net.store.all('SELECT knowledge_id FROM knowledge_support WHERE model=?',model)} if model else set()
+        supported = {r['knowledge_id'] for r in self._store(slug).all('SELECT knowledge_id FROM knowledge_support WHERE model=?',model)} if model else set()
         queued = {}
-        for r in self.net.store.all('SELECT key,value FROM settings WHERE key LIKE ?',f'knowledge-review:{proj["id"]}:%'):
+        for r in self._store(slug).all('SELECT key,value FROM settings WHERE key LIKE ?',f'knowledge-review:{proj["id"]}:%'):
             item = json.loads(r['value'])
             if item['model'] == model and agent and item['agent'] == agent.name:
                 queued[int(r['key'].rsplit(':',1)[1])] = item
@@ -276,7 +293,7 @@ class Knowledge:
         if assigned:
             text += '\nRequested independent verification (do not assume earlier claims are true):'
             for row in assigned:
-                evidence = self.net.store.all('SELECT text FROM knowledge_evidence WHERE knowledge_id=? ORDER BY id DESC LIMIT 3',row['id'])
+                evidence = self._store(slug).all('SELECT text FROM knowledge_evidence WHERE knowledge_id=? ORDER BY id DESC LIMIT 3',row['id'])
                 text += f"\n- #{row['id']}: inspect cited functions and reproduce the relevant compile/diff evidence. Back with share_knowledge(supports=N, evidence=...) only if your own results support the rule; otherwise report the counterexample."
                 text += ''.join('\n  Prior example to verify: '+e['text'][:1000] for e in evidence)
         return text.strip()
@@ -292,13 +309,13 @@ class Knowledge:
 
     def _function_mentions(self, proj, text):
         words = set(re.findall(r'[A-Za-z_]\w*', text))
-        return [r['name'] for r in self.net.store.all('SELECT name FROM functions WHERE project_id=?', proj['id'])
+        return [r['name'] for r in self._store(proj['id']).all('SELECT name FROM functions WHERE project_id=?', proj['id'])
                 if r['name'] in words]
 
     def for_function(self, fn):
         """Retain legacy function-specific knowledge at its relevant function, without editing user data."""
         out = []
-        for row in self.net.store.all('SELECT text,status FROM knowledge WHERE project_id=? AND status IN (?,?) ORDER BY id DESC',
+        for row in self._store(fn['project_id']).all('SELECT text,status FROM knowledge WHERE project_id=? AND status IN (?,?) ORDER BY id DESC',
                                       fn['project_id'], ACCEPTED, PROPOSED):
             if fn['name'] in set(re.findall(r'[A-Za-z_]\w*', row['text'])):
                 out.append(f"{row['status']}: {row['text'][:600]}")

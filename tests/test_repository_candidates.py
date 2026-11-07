@@ -19,6 +19,7 @@ def test_isolation_keeps_line_numbers_target_literals_and_real_prototypes(monkey
 def test_recorded_context_is_only_a_hypothesis_and_current_is_first():
     net=SimpleNamespace(_context=lambda *args:{'header':'current'},
                         store=SimpleNamespace(one=lambda *args:{'header':'historic'}))
+    net.project_store = lambda project:net.store
     assert list(candidates.contexts(net,{'id':1},{'id':2,'unit':'segment','matched_source':'C'}))==['current','historic']
 
 
@@ -29,6 +30,7 @@ def test_historical_compile_still_needs_exact_byte_and_layout_verification(monke
                         _compile=lambda p,h,*args:SimpleNamespace(ok=h=='historic',obj=b'obj',log='missing type'),
                         _evaluate=lambda *args:(None,False,['wrong bytes']),
                         _candidate_checks=lambda *args:{'export':{'state':'unmatched','ready':False}})
+    net.project_store = lambda project:net.store
     row={'id':2,'unit':'segment','name':'entry','matched_source':'C'}
     assert candidates.select(net,{'id':1},row)[0] is None
     net._evaluate=lambda *args:(None,True,[])

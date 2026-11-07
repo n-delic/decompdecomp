@@ -834,19 +834,25 @@ class Progress:
         return result, active
 
     @contextmanager
-    def judging(self, slug: str):
-        """Compiles may run together, but a result from before a pull must never replace its contribution."""
+    def judging(self, slug: str, *, synchronize: bool = True):
+        """Compiles may run together, but a result from before a pull must never replace its contribution.
+
+        Scoped DB publishers can leave file imports/exports to the watcher with synchronize=False;
+        revision and active saved-file recheck guards still apply to their ordinary recorder.
+        """
         if self.applying:
             yield
             return
-        self.sync(slug, force=True)
+        if synchronize:
+            self.sync(slug, force=True)
         previous = getattr(self.local, "judging", None)
         self.local.judging = (slug, self.revisions.get(slug, 0))
         try:
             yield
         finally:
             self.local.judging = previous
-        self.sync(slug, force=True)
+        if synchronize:
+            self.sync(slug, force=True)
 
     def check_result(self) -> None:
         pending = getattr(self.local, "judging", None)

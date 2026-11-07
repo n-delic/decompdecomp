@@ -16,7 +16,7 @@ def contexts(net, proj, row):
     """
     current=net._context(proj['id'],row['unit'])['header']
     yield current
-    prior=net.store.one('SELECT c.header FROM attempts a JOIN context_versions c '
+    prior=net.project_store(proj['id']).one('SELECT c.header FROM attempts a JOIN context_versions c '
                         'ON c.project_id=? AND c.version=a.context_version '
                         'WHERE a.function_id=? AND a.score=0 AND a.compiled=1 AND a.source=? ORDER BY a.id DESC LIMIT 1',
                         proj['id'],row['id'],row['matched_source'])

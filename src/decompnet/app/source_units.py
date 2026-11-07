@@ -169,7 +169,7 @@ def matched_owners(net, proj, fn, source, header):
     Every resulting body is still independently rejudged by compiler_context.
     """
     if not getattr(net,'is_rom',lambda p:False)(proj) or net.fork_slug(proj['slug']) or proj['arch']!='mips':return []
-    rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND id!=? "
+    rows=net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND id!=? "
                        "AND instr(matched_source,?)>0 ORDER BY ABS(vram-?) LIMIT 32",
                        proj['id'],fn['id'],fn['name'],fn['vram'])
     from .function_names import canonical_source

@@ -588,8 +588,8 @@ def connection_retry_delay(failures, worker_id):
 class Manager:
     def __init__(self, net: RomNetwork, home: Path, mcp_url: str):
         self.net, self.home, self.mcp_url = net, home, mcp_url
-        from .transcripts import Transcripts
-        self.transcripts = Transcripts(net.store)
+        from .transcripts import service
+        self.transcripts = service(net)
         self.sessions: dict[str, Session] = {}
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.RLock()
@@ -627,6 +627,12 @@ class Manager:
         with net.store.tx() as db:
             db.execute("UPDATE helper_sessions SET ended_at=?, outcome='interrupted' WHERE ended_at IS NULL",
                        (time.time(),))
+        from .session_storage import prepare as session_store
+        for store, projects in net.project_stores():
+            if store is net.store:continue
+            for pid in projects:session_store(net, pid)
+            with store.tx() as db:
+                db.execute("UPDATE helper_sessions SET ended_at=?,outcome='interrupted' WHERE ended_at IS NULL", (time.time(),))
         self._restore()
         self.refresh_detected()
 
@@ -683,8 +689,11 @@ class Manager:
             return s
         with self.net.store.tx() as db:
             # helper_sessions survives Remove; never recycle its helper_id for a new record.
-            rid = db.execute("SELECT MAX(id) + 1 FROM (SELECT id FROM helpers UNION ALL "
-                             "SELECT helper_id AS id FROM helper_sessions)").fetchone()[0] or 1
+            latest = db.execute("SELECT MAX(id) FROM (SELECT id FROM helpers UNION ALL "
+                                "SELECT helper_id AS id FROM helper_sessions)").fetchone()[0] or 0
+            floor = db.execute("SELECT value FROM settings WHERE key='helper-id-floor'").fetchone()
+            rid = max(latest, int(floor['value']) if floor else 0) + 1
+            db.execute("INSERT OR REPLACE INTO settings VALUES('helper-id-floor',?)", (str(rid),))
             db.execute("INSERT INTO helpers(id, project, kind, model, name, label, options, state, started_at) "
                              "VALUES(?,?,?,?,?,?,?,?,?)", (rid, slug, kind, str(options.get("model") or ""), name, label,
                                                          json.dumps(kept), "starting", time.time()))
@@ -748,6 +757,8 @@ class Manager:
                 reserved = self._taken() | {x.agent_name for x in self.sessions.values()}
                 reserved |= {r['name'] for r in self.net.store.all('SELECT name FROM agents')}
                 reserved |= {r['agent'] for r in self.net.store.all('SELECT DISTINCT agent FROM helper_sessions')}
+                reserved |= {r['key'].removeprefix('helper-name:') for r in self.net.store.all(
+                    "SELECT key FROM settings WHERE key LIKE 'helper-name:%'")}
                 name = helper_name(kind, model, reserved)
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
@@ -870,7 +881,7 @@ class Manager:
         row=self.net.store.one('SELECT name FROM agents WHERE id=?',agent_id)
         proj=self.net.store.one('SELECT slug FROM projects WHERE id=?',project_id)
         if not row or not proj:return
-        if self.net.store.one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id "
+        if self.net.project_store(project_id).one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id "
                               "WHERE c.agent_id=? AND f.status='open'",agent_id):
             return  # the worker already moved on; do not interrupt its new function
         from .session_recovery import completed
@@ -1014,8 +1025,14 @@ class Manager:
         # Backfill lifetime tool counters before dropping the older exchanges they may still depend on.
         from . import tool_policy
         tool_policy.ensure(self.net)
+        split = session is not None and self.net.project_store(session.slug) is not self.net.store
+        if split:
+            # Commit the removal marker before dropping shared configuration. If
+            # the catalog write fails, retrying Remove is safe and late callbacks
+            # remain blocked. Never acquire a project writer inside the catalog's.
+            self.transcripts.clear_helper(sid,session.slug,session.agent_name)
         with self.net.store.tx() as db:
-            if session is not None:
+            if session is not None and not split:
                 self.transcripts.clear_helper(sid,session.slug,session.agent_name)
             db.execute("DELETE FROM helpers WHERE id=?", (sid,))
             db.execute("DELETE FROM settings WHERE key=?", ("helper-conversation:" + sid,))
@@ -1040,8 +1057,9 @@ class Manager:
                  "matches, SUM(compiles) AS compiles, SUM(input_tokens) AS input_tokens, SUM(cache_read_tokens) AS cache_read_tokens, "
                  "SUM(cache_write_tokens) AS cache_write_tokens, SUM(output_tokens) AS output_tokens FROM helper_sessions WHERE project=? AND started_at >= ? {} "
                  "GROUP BY kind, model")
-        rows = self.net.store.all(query.format(""), slug, 0)
-        recent = [dict(r) for r in self.net.store.all(query.format("AND task NOT IN ('readable','boundary')"), slug,
+        self.transcripts.for_project(slug)
+        rows = self.net.project_store(slug).all(query.format(""), slug, 0)
+        recent = [dict(r) for r in self.net.project_store(slug).all(query.format("AND task NOT IN ('readable','boundary')"), slug,
                                                       time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
         out = []
@@ -1127,7 +1145,7 @@ class Manager:
                 key = tuple((s.id, s.agent_name, s.options.get('_metrics', {}).get('attempt', 0),
                              s.options.get('_metrics', {}).get('event', 0)) for s in selected)
                 pid = self.net.project_row(slug)['id']
-                revision = self.net.store.one('SELECT revision FROM history_revisions WHERE project_id=?', pid)
+                revision = self.net.project_store(pid).one('SELECT revision FROM history_revisions WHERE project_id=?', pid)
                 signature = revision['revision'] if revision else 0
                 old = cache.get(slug)
                 if old is None or old[0] != (key, signature) or time.monotonic() - old[1] > 5:
@@ -1139,13 +1157,13 @@ class Manager:
         for s in sessions:
             row = s.snapshot(int(since.get(s.id, 0)))
             from . import session_history
-            history_version, records = session_history.records(self.net,s.id,s.agent_name)
+            history_version, records = session_history.records(self.net,s.id,s.agent_name,project=s.slug)
             from .agent_metrics import lifetime_cost
             row["estimated_cost"] = lifetime_cost(self, s, history_version, records)
             baseline = s.options.get('_metrics', {})
             row['metrics'] = board.get(s.agent_name, {})
             row['metrics_since'] = baseline.get('at')
-            row['efficiency']=session_history.efficiency(self.net,s.id,s.agent_name,history_version,baseline.get('at',0),records)
+            row['efficiency']=session_history.efficiency(self.net,s.id,s.agent_name,history_version,baseline.get('at',0),records,project=s.slug)
             row['metrics_after'] = baseline.get('attempt', 0)
             row['lifetime_tokens'] = s.tokens
             for key in ('tokens', 'usd', 'runs', 'restarts'):
@@ -1197,9 +1215,10 @@ class Manager:
 
     # -- the loop
 
-    def _progress(self, agent_id: int) -> int:
+    def _progress(self, agent_id: int, *, project=None) -> int:
         """Recorded attempts plus completed diagnostic builds; administrative events are not compilation."""
-        row = self.net.store.one(
+        store = self.net.project_store(project) if project is not None else self.net.store
+        row = store.one(
             "SELECT COUNT(*) AS n FROM attempts WHERE agent_id=?", agent_id)
         return row["n"] + getattr(self.net, "_session_diagnostic_compiles", {}).get(agent_id, 0)
 
@@ -1209,7 +1228,7 @@ class Manager:
         proj = self.net.project_row(slug)
         if task == "readable":
             return self.net.readability.left(proj)
-        row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
+        row = self.net.project_store(proj["id"]).one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
 
     def account(self, s: Session, usage: dict) -> None:
@@ -1351,14 +1370,14 @@ class Manager:
             counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in {"readable", "boundary"} else None
             policy = self.net.selection(s.slug, agent.name)
             if counts is not None and (policy.get("match_below") is not None or policy.get("max_tries") or policy.get("model_untried")):
-                if not counts["selected"] and not self.net.store.one(
+                if not counts["selected"] and not self.net.project_store(s.slug).one(
                         "SELECT 1 FROM claims WHERE agent_id=?", agent.id):
                     below = policy.get("match_below")
                     why = f"no functions remain below {below:g}% match" if below is not None else "no functions remain unchecked by this model" if policy.get("model_untried") else "no functions remain within max tries"
                     self._pause(s, why + " for this worker (unscored functions also count)",
                                 "Change Work selection, then press Start again.")
                     break
-            if not s.options.get('focus_id') and task not in {'readable', 'boundary'} and not counts['available'] and not self.net.store.one(
+            if not s.options.get('focus_id') and task not in {'readable', 'boundary'} and not counts['available'] and not self.net.project_store(s.slug).one(
                     'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
                 why, todo = self.net.selection_wait_reason(s.slug, agent, counts=counts)
                 self._wait(s, why, time.time()+30, todo)
@@ -1388,8 +1407,8 @@ class Manager:
                     continue
                 self._set(s, "working")
             began = time.time()
-            before = self._progress(agent.id)
-            activity_before = self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] if task == 'readable' else 0
+            before = self._progress(agent.id, project=s.slug)
+            activity_before = self.net.project_store(s.slug).one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] if task == 'readable' else 0
             agent_startup.stage(s, "Preparing session records and prompt settings")
             row = self._session_begin(s)
             kind = agents.get(s.kind)
@@ -1447,8 +1466,8 @@ class Manager:
                 completed(s, self.net)
                 self._save(s)
             connection_failures = transport_failures = 0
-            compiled = self._progress(agent.id) - before
-            investigation = session_followups.investigation_outcome(self.net, agent, began) if compiled == 0 else None
+            compiled = self._progress(agent.id, project=s.slug) - before
+            investigation = session_followups.investigation_outcome(self.net, agent, began, project=s.slug) if compiled == 0 else None
             if task == 'boundary' and boundary_investigations.reported(self.net,s):
                 ok = True
                 investigation = 'Boundary recommendation submitted'
@@ -1459,7 +1478,7 @@ class Manager:
                 s.continuation_attempts += 1
                 s.continuation_note = session_followups.CONTINUATION
                 s.push('info', 'Session ended early; continuing once with explicit compilation guidance.')
-            readable_progress = task == 'readable' and self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
+            readable_progress = task == 'readable' and self.net.project_store(s.slug).one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
             work_remains = task != "boundary" and self._left(s.slug,task) > 0
             if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
                 s.error = "the session ended without compiling anything (its messages are in its details)"
@@ -1553,7 +1572,7 @@ class Manager:
                 return
             agent = network.Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
         agent_id = agent.id
-        held = self.net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
+        held = self.net.project_store(s.slug).one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                                   agent_id)
         link = self.net.links.get(s.slug)
         if held and link is not None:
@@ -1569,20 +1588,23 @@ class Manager:
         s.prompt_config = effective(self.net, s.options)
         s.startup_context = None
         s.usage = _fresh_usage()
+        self.transcripts.for_project(s.slug)
         with self.net.store.tx() as db:
+            db.execute('INSERT OR IGNORE INTO settings VALUES(?,?)', ('helper-name:'+s.agent_name,'1'))
+        with self.net.project_store(s.slug).tx() as db:
             row = db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task) "
                               "VALUES(?,?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
                                                       s.agent_name, time.time(), s.options.get("task") or "")).lastrowid
         from .session_efficiency import context
         snapshot=context(self.net,s.slug,s.options)
-        with self.net.store.tx() as db:
+        with self.net.project_store(s.slug).tx() as db:
             db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',('session-efficiency:'+str(row),json.dumps(snapshot)))
         s.session_id = row
         from .session_budget import start
         agent_row=self.net.store.one('SELECT id FROM agents WHERE name=?',s.agent_name)
         s.context_budget=start(self.net,agent_row['id'],s.slug,s.options) if agent_row else None
         s.rotated=False
-        s.record = lambda kind, value: self.transcripts.append(row, kind, value, (s.options.get('api_key'),), helper=s.id)
+        s.record = lambda kind, value: self.transcripts.append(row, kind, value, (s.options.get('api_key'),), helper=s.id, project=s.slug)
         return row
 
     def record_agent(self, agent, slug, kind, value):
@@ -1594,7 +1616,7 @@ class Manager:
     def transcript(self, slug, helper, session=0, after=0, before=0, whole=False):
         result = self.transcripts.read(slug, helper, session, after, before, whole=whole)
         for live in list(self.sessions.values()):
-            if result['session'] and live.session_id == result['session']['id'] and live.record:
+            if result['session'] and live.slug == slug and live.session_id == result['session']['id'] and live.record:
                 for key in TOKEN_KINDS:
                     result['session'][key + '_tokens'] = live.usage[key]
                 result['session']['usd'] = live.usage['usd']
@@ -1602,27 +1624,27 @@ class Manager:
                 result['session']['usage_coverage'] = live.usage.get('coverage','unknown')
         if result.get('session'):
             from .session_efficiency import for_sessions
-            result['efficiency']=for_sessions(self.net,[result['session']]) if result['session']['ended_at'] else []
+            result['efficiency']=for_sessions(self.net,[result['session']],project=slug) if result['session']['ended_at'] else []
         return result
 
     def _session_end(self, s: Session, row: int, agent, began: float, outcome: str) -> None:
         """What a session did and spent, on its row: to compare models on cost per match."""
-        compiles = self.net.store.one("SELECT COUNT(*) AS n FROM attempts WHERE agent_id=? AND created_at>=?",
+        compiles = self.net.project_store(s.slug).one("SELECT COUNT(*) AS n FROM attempts WHERE agent_id=? AND created_at>=?",
                                       agent.id, began)["n"]
-        matches = self.net.store.one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='match' AND "
+        matches = self.net.project_store(s.slug).one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='match' AND "
                                      "created_at>=?", agent.id, began)["n"]
         from .session_handoffs import capture
         handoff = capture(self.net, agent, s.slug, began, session=row)
         if s.record:
             s.record('handoff', handoff)
         u = s.usage
-        with self.net.store.tx() as db:
+        with self.net.project_store(s.slug).tx() as db:
             db.execute("UPDATE helper_sessions SET ended_at=?, outcome=?, usd=?, input_tokens=?, output_tokens=?, "
                        "cache_read_tokens=?, cache_write_tokens=?, tokens=?, turns=?, tool_calls=?, compiles=?, "
                        "matches=? WHERE id=?", (time.time(), outcome, u["usd"], u["input"], u["output"],
                                                 u["cache_read"], u["cache_write"], u["tokens"], u["turns"],
                                                 u["tool_calls"], compiles, matches, row))
-        with self.net.store.tx() as db:
+        with self.net.project_store(s.slug).tx() as db:
             db.execute('UPDATE helper_sessions SET usage_coverage=? WHERE id=?', (s.usage.get('coverage','unknown'),row))
         from .session_efficiency import finish
         finish(self.net,agent,s.slug,row,began)
@@ -1632,7 +1654,7 @@ class Manager:
                        f"matched{spent}")
         self._save(s)
         from .. import agent_notes
-        with self.net.store.tx() as db:
+        with self.net.project_store(s.slug).tx() as db:
             agent_notes.finish(db, row)
         s.record = None
 
@@ -1691,7 +1713,7 @@ class Manager:
             row = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
             agent = network.Agent(row['id'],row['name'],row['owner'],bool(row['trusted'])) if row else None
             if agent:
-                held = self.net.store.all('SELECT f.* FROM functions f JOIN claims c ON c.function_id=f.id '
+                held = self.net.project_store(s.slug).all('SELECT f.* FROM functions f JOIN claims c ON c.function_id=f.id '
                                           'JOIN projects p ON p.id=f.project_id WHERE c.agent_id=? AND p.slug=? LIMIT 6',agent.id,s.slug)
                 for fn in held:
                     source,revision = agent_tokens.candidate(self.net,agent,s.slug,fn['name'])

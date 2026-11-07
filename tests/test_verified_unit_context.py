@@ -26,6 +26,7 @@ def test_conflicts_addresses_nonstatic_and_preprocessor_dependencies_are_rejecte
 def test_unknown_units_and_stale_verified_inputs_do_not_supply_context(monkeypatch):
     fn=dict(unit='',vram=1,id=1,name='f')
     net=SimpleNamespace(is_rom=lambda p:True,fork_slug=lambda s:False)
+    net.project_store = lambda project:net.store
     assert context.donors(net,dict(slug='p'),fn,'')==[]
     fn['unit']='code'
     net.cfg=lambda p:{'compiler':{}}

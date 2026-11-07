@@ -20,7 +20,7 @@ def _adopt(net, slug, function, source_hash, attempt_id, agent):
         raise NetworkError('Refresh the quality report and choose one of its saved alternatives.')
     if attempt_id not in {ident for r in reports for ident in r['alternatives']}:
         raise NetworkError('Choose an alternative attached to this quality report.')
-    alternative = net.store.one('SELECT * FROM attempts WHERE id=? AND function_id=? AND compiled=1 AND score IS NOT NULL',
+    alternative = net.project_store(fn['project_id']).one('SELECT * FROM attempts WHERE id=? AND function_id=? AND compiled=1 AND score IS NOT NULL',
                                 attempt_id, fn['id'])
     if not alternative or not alternative['source']:
         raise NetworkError('This alternative is unavailable. Refresh the quality report.')
@@ -38,7 +38,7 @@ def _adopt(net, slug, function, source_hash, attempt_id, agent):
         result = net.attempt(agent, function, source, slug)
         if result['score'] is None:
             raise NetworkError('The alternative did not compile in the current context. Inspect its new attempt.')
-        with net.store.tx() as db:
+        with net.project_store(fn['project_id']).tx() as db:
             current = db.execute('SELECT * FROM functions WHERE id=?', (fn['id'],)).fetchone()
             config = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()['config']
             fresh_context = net._context(proj['id'], fn['unit'])
@@ -68,6 +68,6 @@ def _adopt(net, slug, function, source_hash, attempt_id, agent):
         claim_stalls.resume(net, net._function(function, slug))
         return {'selected': function, 'score': result['score'], 'matched': result['matched']}
     finally:
-        held = net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
+        held = net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
         if held:
             net.release(agent, function, '', slug)

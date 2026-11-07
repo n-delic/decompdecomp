@@ -11,7 +11,7 @@ from ..network import NetworkError
 
 def scope(net,agent,fn):
     from .agent_tokens import target_scope
-    claim=net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+    claim=net.project_store(fn['project_id']).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
     return (agent.id,fn['id'],claim['claimed_at'] if claim else None,target_scope(net,fn,''),
             hashlib.sha256(repr((fn['target'],fn['relocs'],fn['vram'],getattr(net,'_generation',{}).get(fn['project_id'],0))).encode()).hexdigest())
 
@@ -27,13 +27,13 @@ def baseline(net,agent,slug,fn,source):
 def build_key(net, fn):
     from ..candidate_scope import key
     from .baseline_status import revision
-    proj=net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    proj=net.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     return key(net,proj,fn),hashlib.sha256((fn['best_source'] or '').encode()).hexdigest(),revision()
 
 
 def shared_baseline(net, agent, slug, fn, source, diagnostic=False):
     """Recheck saved C once per input scope; misses/errors never become shared verdicts."""
-    if source!=fn['best_source'] or not source or not hasattr(net.store,'read_cache') or getattr(net.store._local,'in_tx',False):
+    if source!=fn['best_source'] or not source or not hasattr(net.project_store(fn['project_id']),'read_cache') or getattr(net.project_store(fn['project_id'])._local,'in_tx',False):
         return _baseline(net,agent,slug,fn,source,diagnostic)
     stamp=build_key(net,fn)
     class Unavailable(Exception):
@@ -46,12 +46,12 @@ def shared_baseline(net, agent, slug, fn, source, diagnostic=False):
         return result
     # Imported build files can change externally; key hashes them, expiry also bounds restoration state.
     try:
-        result=net.store.read_cache.get(('agent-saved-baseline',fn['id']),stamp,measure,ttl=10 if net.fork_slug(slug) else None)
+        result=net.project_store(fn['project_id']).read_cache.get(('agent-saved-baseline',fn['id']),stamp,measure,ttl=10 if net.fork_slug(slug) else None)
     except Unavailable as error:
         return error.report if diagnostic else None
     # Freeze the publication key before validation; a later input edit must not retag old rows.
     request_scope=scope(net,agent,fn)
-    fresh=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+    fresh=net.project_store(fn['project_id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
     if not fresh or build_key(net,fresh)!=stamp:
         return None  # Inputs changed during the diagnostic; no comparable score is inferred.
     saved=net.__dict__.setdefault('_saved_rechecks',{})
@@ -77,13 +77,13 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
     failures=getattr(net, '_baseline_failures', {})
     net._baseline_failures=failures
     if diagnostic and key in failures:
-        latest=net.store.one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
+        latest=net.project_store(fn['project_id']).one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
         if latest <= failures[key].get('after_attempt',0):
             return failures[key]
         del failures[key]  # an explicit compile may have fixed an external build/resource problem
     def failed(message):
         result={'score':None, 'source':source, 'rows':None, 'error':str(message)[:1000],
-                'after_attempt':net.store.one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0}
+                'after_attempt':net.project_store(fn['project_id']).one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0}
         restored_key=scope(net,agent,fn)+(hashlib.sha256(source.encode()).hexdigest(),)
         failures[restored_key]=result
         while len(failures)>64:
@@ -190,7 +190,7 @@ def track(net,agent,slug,fn):
         del states[next(iter(states))]
     limit=net.selection(slug,agent.name).get('unchanged_compiles',8)
     if limit and count>=limit and net._function(fn['name'],slug)['status']=='open':
-        held=net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+        held=net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
         if held:
             result=net.release(agent,fn['name'],f'Moved on after {count} trials returning previously seen scored instruction diffs. Best source retained.',slug)
             from .. import claim_stalls
@@ -240,7 +240,7 @@ def baseline_note(fn, measured, net=None):
     if saved_check and historical is not None and current!=historical:
         text+=' Historical score retained for reference; current comparisons use rechecked saved C.'
     if not saved_check and net is not None and historical is not None and current!=historical:
-        row=net.store.one('SELECT s.settings FROM attempts a JOIN repair_attempt_settings s ON s.attempt_id=a.id '
+        row=net.project_store(fn['project_id']).one('SELECT s.settings FROM attempts a JOIN repair_attempt_settings s ON s.attempt_id=a.id '
                           'WHERE a.function_id=? AND a.score=? AND a.source=? ORDER BY a.id DESC LIMIT 1',
                           fn['id'],historical,saved)
         old=json.loads(row['settings']) if row else {}

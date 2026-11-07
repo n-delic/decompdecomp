@@ -20,7 +20,7 @@ def _project_inputs(proj):
 
 def revision(net, proj, name):
     """Original layout and relevant entry states stay stable while unrelated agents improve C."""
-    rows = [dict(r) for r in net.store.all('SELECT id,name,vram,rom_offset,size,target,unit,status,meta '
+    rows = [dict(r) for r in net.project_store(proj['id']).all('SELECT id,name,vram,rom_offset,size,target,unit,status,meta '
             'FROM functions WHERE project_id=? ORDER BY id', proj['id'])]
     selected = next((r for r in rows if r['name'] == name), None)
     for row in rows:
@@ -29,7 +29,7 @@ def revision(net, proj, name):
         neighbour = selected and row['unit'] == selected['unit'] and row['vram'] is not None and selected['vram'] is not None and (
             row['vram'] + row['size'] == selected['vram'] or row['vram'] == selected['vram'] + selected['size'])
         if row['name'] != name and not neighbour: row.pop('status')
-    symbols = [dict(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+    symbols = [dict(r) for r in net.project_store(proj['id']).all('SELECT * FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     return repairs._digest([_project_inputs(net.project_row(proj['slug'])), rows, symbols])
 
 
@@ -102,7 +102,7 @@ def read(net, slug, name):
                 edges.append({'from': address, 'to': dest, 'function': row['name'],
                               'kind': 'call' if ins['call'] else 'branch', 'instruction': ins['instruction']})
         if limited: break
-    symbols = [dict(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? '
+    symbols = [dict(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? '
                  'AND address>=? AND address<=? ORDER BY address,name LIMIT 80', proj['id'], start-32, end+32)]
     if stamp != revision(net, proj, name) or _project_inputs(net.project_row(slug)) != _project_inputs(proj):
         raise NetworkError('The project changed while reading boundary evidence. Read the evidence again.')

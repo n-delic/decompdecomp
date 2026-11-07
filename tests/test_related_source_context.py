@@ -13,6 +13,7 @@ def test_neighbour_context_needs_same_project_exact_status_shared_records_and_ca
             return [donor]
     net=SimpleNamespace(store=Store(),is_rom=lambda p:True,fork_slug=lambda s:None,
                         _context=lambda *a:{'header':'typedef struct {int x,y;} Item;'})
+    net.project_store = lambda project:net.store
     proj={'id':7,'slug':'game','arch':'mips'};fn={'id':1,'vram':4096,'asm':'jal common\nnop'}
     found=related.candidates(net,proj,fn,'void f(Item *p){}','typedef struct {int x;} Item;')
     assert len(found)==1 and found[0]['function']=='nearby' and found[0]['types']==['Item']

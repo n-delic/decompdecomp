@@ -3,6 +3,7 @@
 The compiler still judges every source. A cursor is scheduling advice, never a cached verdict.
 """
 import hashlib
+import threading
 import time
 
 from . import debug_boundary_repairs, experiment_evidence
@@ -14,15 +15,21 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_proposal_progress(
 KEEP_SCOPES = 16
 
 
-def prepare(net):
-    if not getattr(net,'_proposal_progress_ready',False):
-        with net.store.tx() as db:db.execute(SCHEMA)
-        net._proposal_progress_ready = True
+def prepare(net, project=None):
+    store = net.project_store(project) if project is not None else net.store
+    lock = net.__dict__.setdefault('_proposal_progress_lock',threading.RLock())
+    with lock:
+        ready = net.__dict__.setdefault('_proposal_progress_stores',set())
+        if store not in ready:
+            with store.tx() as db:db.execute(SCHEMA)
+            ready.add(store)
+    return store
 
 
 class Cursor:
     def __init__(self, net, fn, scope, pool):
         self.net, self.function_id, self.scope = net, fn['id'], scope
+        self.store = prepare(net,fn['project_id'])
         self.hashes = {hashlib.sha256(source.encode()).hexdigest() for _,source in pool}
 
     def measured(self, family, source, score):
@@ -31,7 +38,7 @@ class Cursor:
         digest = hashlib.sha256(source.encode()).hexdigest()
         if digest not in self.hashes:
             return
-        with self.net.store.tx() as db:
+        with self.store.tx() as db:
             db.execute('INSERT OR REPLACE INTO repair_proposal_progress VALUES(?,?,?,?)',
                        (self.function_id,self.scope,digest,time.time()))
             db.execute('DELETE FROM repair_proposal_progress WHERE function_id=? AND scope NOT IN '
@@ -45,10 +52,10 @@ def order(net, proj, fn, source, tagged):
     pool = [item for item in tagged if item[0] == debug_boundary_repairs.FAMILY]
     if not pool:
         return tagged, None
-    prepare(net)
+    store = prepare(net,fn['project_id'])
     scope = hashlib.sha256((experiment_evidence.build_scope(net,proj,fn)+source+
                            repr([hashlib.sha256(s.encode()).hexdigest() for _,s in pool])).encode()).hexdigest()
-    row = net.store.one('SELECT last_source FROM repair_proposal_progress WHERE function_id=? AND scope=?',fn['id'],scope)
+    row = store.one('SELECT last_source FROM repair_proposal_progress WHERE function_id=? AND scope=?',fn['id'],scope)
     hashes = [hashlib.sha256(s.encode()).hexdigest() for _,s in pool]
     start = hashes.index(row['last_source'])+1 if row and row['last_source'] in hashes else 0
     rotated = iter(pool[start:]+pool[:start])

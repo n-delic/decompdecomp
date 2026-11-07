@@ -218,6 +218,7 @@ def test_macro_reached_application_type_can_reuse_verified_layout_without_shared
         def all(self,*a):return [{'name':'nearby','vram':4100,'asm':'lui $at, %hi(D_80004000)\njal different',
                                   'matched_source':'void nearby(void){}','verified_header':donor}]
     net=SimpleNamespace(store=Store(),is_rom=lambda p:True,fork_slug=lambda s:None)
+    net.project_store = lambda project:net.store
     found=related.candidates(net,{'id':1,'slug':'g','arch':'mips'},
                              {'id':1,'vram':4096,'asm':'lui $at, %hi(D_80004000)\njal another'},source,own)
     assert len(found)==1 and 'int gap;' in found[0]['header']
@@ -246,6 +247,7 @@ def test_target_table_reads_minus_one_lower_bound_and_both_byte_orders(big):
     data=b''.join(x.to_bytes(4,'big' if big else 'little') for x in (0x80001000,0x80001010,0x80001020))
     net=SimpleNamespace(is_rom=lambda p:True,symbols=lambda p:SimpleNamespace(resolve=lambda n:0x80004000),
                         reader=lambda *a:lambda address,size:data)
+    net.project_store = lambda project:net.store
     got=switch_tables.read(net,{'id':1,'arch':'mips','big_endian':big},
                            {'asm':asm,'vram':0x80001000,'size':0x40})
     assert got==[(-1,[0x80001000,0x80001010,0x80001020])]

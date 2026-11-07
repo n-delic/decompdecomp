@@ -50,7 +50,7 @@ def variants(net, proj, fn, source):
     names=list(prototypes(source))[:8]
     if not names:return []
     settings=compiler_for(net.cfg(proj),fn['vram'], fn)
-    rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND id!=? AND ("+
+    rows=net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND id!=? AND ("+
         ' OR '.join('instr(matched_source,?)>0' for _ in names)+') ORDER BY id DESC LIMIT 24',
         proj['id'],fn['id'],*names)
     donors=[]
@@ -66,8 +66,8 @@ def signature(net, proj, source=''):
     """Only relevant exact donors/header revisions invalidate an exhausted recipient frontier."""
     import hashlib
     names=list(prototypes(source))[:8]
-    if not names or not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return 'no-exact-donors'
-    rows=net.store.all("SELECT v.function_id,v.details,f.unit FROM verified_matches v JOIN functions f ON f.id=v.function_id WHERE f.project_id=? AND f.status='matched' AND ("+
+    if not names or not net.project_store(proj['id']).one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return 'no-exact-donors'
+    rows=net.project_store(proj['id']).all("SELECT v.function_id,v.details,f.unit FROM verified_matches v JOIN functions f ON f.id=v.function_id WHERE f.project_id=? AND f.status='matched' AND ("+
         ' OR '.join('instr(f.matched_source,?)>0' for _ in names)+') ORDER BY f.id DESC LIMIT 24',proj['id'],*names)
     units={r['unit'] for r in rows}
     contexts=[(unit,dict(net._context(proj['id'],unit) or {}).get('version')) for unit in sorted(units,key=str)]
