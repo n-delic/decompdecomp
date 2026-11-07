@@ -5938,3 +5938,34 @@ Two bounded page advances reach unseen families before a measured-inert queue dr
 Ineffective families retain periodic retries; changed compiler/header/target/rule scopes reset
 feedback. These are controlled efficiency observations, not a new match, held-out transfer
 or demonstrated general wall-clock speedup.
+
+## Reuse the actual mode scratch across pointer and sentinel phases
+
+**Verified function case, 7 November 2026:** a 30-instruction MIPS/O32 leaf compiled
+with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` had the correct instruction
+order and four remaining register operands (distance 20). Its target reused one
+register for a mode load, a later pointer-chain intermediate and a sentinel.
+
+Reusing a signed-word source scratch for the real mode load and pointer phase
+reduced the live app's saved distance to 10. Reusing that same scratch for the
+subsequent sentinel comparison and XOR recovered all 120 linked bytes. The exact
+submitted source, not a later generated substitute, became the saved match;
+a fresh ordinary API scratch compilation of that saved source again scored zero.
+The target assembly, selected compiler profile, no-argument signature, external
+array extents and actual memory-read set were retained. The pre-existing raw
+address/pointer representation remains a target memory model, not a new ISO C
+aliasing or portability proof.
+
+The successful change groups disjoint, genuinely consumed values; it adds no
+canceled operations, dummy references, fixed registers or extra memory effects.
+Separate distributed-load and wide-carrier controls did not improve the saved
+baseline. This supports trying source-level storage reuse across several real
+roles, including selector loads and constants, before treating each remaining
+local register difference independently. It does not prove a universal allocator
+rule or isolate every optimization phase. Only function bytes and standalone
+layout were verified here; no new complete-cartridge build is claimed.
+
+Private evidence: `func80049DB0/live-goal` under the task's Data-volume evidence
+root; saved source SHA-256
+`978ea35c532ffcdb12fc2d1626949c48d38cc4cfd2b948898d3368ce151857ef`.
+No game source, target assembly, ROM or database is included in this finding.
