@@ -233,15 +233,13 @@ class ImportMixin:
             workdir = root
         try:
             now = time.time()
-            with self.store.tx() as db:
+            with self.project_registration(slug=slug,name=info["title"],
+                    description=f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
+                    arch=console.arch,big_endian=picked.big_endian,root=workdir,config=cfg,
+                    existing=reimport["id"] if reimport is not None else None) as (db,pid):
                 if reimport is None:
-                    pid = db.execute(
-                        "INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                        (slug, info["title"], f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
-                         console.arch, int(picked.big_endian), str(workdir), json.dumps(cfg))).lastrowid
                     old_functions, gone, old_names = {}, {}, {}
                 else:
-                    pid = reimport["id"]
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
                     # A bank and address identify renamed functions. A bare address is safe only when
                     # unique on both sides; mutually exclusive overlays share their RAM slots.
@@ -409,7 +407,7 @@ class ImportMixin:
         picked = console.read_game(data, name)
         log("Game recognized; starting the replacement split.")
         self.import_split(console, picked, reimport_slug=slug, log=log)
-        counts = self.store.one(
+        counts = self.project_store(proj['id']).one(
             "SELECT COUNT(*) AS functions, SUM(status='matched') AS matched FROM functions WHERE project_id=?",
             proj["id"])
         log(f"Reimport complete: {counts['functions']} functions; {counts['matched'] or 0} still match.")
@@ -453,7 +451,7 @@ class ImportMixin:
         current = cfg["compiler"]["toolchain"]
         tcs = [t for t in compilers if toolchains.installed(t) is not None
                and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)]
-        rows = [r for r in self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
+        rows = [r for r in self.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
                                           "ORDER BY vram", proj["id"])
                 if compiler_for(cfg, r["vram"], r)["toolchain"] == current]
         rows = rows[::max(1, len(rows) // sample)][:sample]  # spread over the whole game, not one library

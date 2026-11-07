@@ -242,3 +242,9 @@ only one file writer at a time. Shared match/repair archives are maintained once
 from their existing catalog-relative/configured locations. Attempt history resolves
 shared author labels separately. ROM exports and console-specific saved-match,
 SDK/stub naming, focused-worker and paused-retry helpers now select project storage.
+
+New ROM imports, local checkouts and cloned/scratch projects now share one atomic
+registration boundary for the catalog identity and initial operational rows.
+Reimports select the existing project writer before entering their transaction;
+post-import counts and compiler samples read that same owner. The legacy creation
+transaction remains intact until recoverable file publication is implemented.

@@ -726,9 +726,8 @@ class ForkEngine:
         return slug
 
     def _register(self, slug: str, title: str, description: str, root: Path, cfg: dict, event: str) -> None:
-        with self.net.store.tx() as db:
-            pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                             (slug, title, description, "", 0, str(root), json.dumps(cfg))).lastrowid
+        with self.net.project_registration(slug=slug,name=title,description=description,
+                arch="",big_endian=False,root=root,config=cfg) as (db,pid):
             db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                        "VALUES(?,?,?,?,?,?,?)", (pid, 1, "", None, "projects keep their headers in the tree", time.time(), ""))
             self.net._event(db, pid, None, "fork", event)

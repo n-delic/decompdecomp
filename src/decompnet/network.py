@@ -435,6 +435,25 @@ class Network:
             raise ValueError("Project storage needs a positive catalog ID or a nonempty slug.")
         return self.store
 
+    @contextmanager
+    def project_registration(self, *, slug, name, description, arch, big_endian, root, config, existing=None):
+        """One registration boundary for imports and their initial operational rows.
+
+        Reimports already have an explicit owner. New registrations retain the
+        legacy atomic transaction until the migration coordinator can publish
+        complete files; callers never insert catalog identities themselves.
+        """
+        store = self.store if existing is None else self.project_store(existing)
+        with store.tx() as db:
+            pid = existing
+            if pid is not None and not db.execute('SELECT 1 FROM projects WHERE id=? AND slug=?',(pid,slug)).fetchone():
+                raise NetworkError('The project registration does not match its existing project.')
+            if pid is None:
+                pid = db.execute('INSERT INTO projects(slug,name,description,arch,big_endian,root,config) '
+                                 'VALUES(?,?,?,?,?,?,?)',
+                                 (slug,name,description,arch,int(big_endian),str(root),json.dumps(config))).lastrowid
+            yield db,pid
+
     def project_stores(self):
         """Discover operational owners explicitly; shared-layout callers still query once."""
         groups = {}
