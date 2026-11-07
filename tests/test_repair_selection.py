@@ -134,7 +134,7 @@ def test_unscored_comparisons_are_reported_without_numeric_claims():
 
 def test_proposal_cache_reuses_generation_but_not_changed_inputs(monkeypatch):
     calls=[]
-    def pool(source,report,fn,arch,flags,header,tables,callees,*,focused=True):
+    def pool(source,report,fn,arch,flags,header,tables,callees,*,focused=True,entry_scope=None):
         calls.append((source,header,flags))
         return [('f',str(i)) for i in range(25)]
     monkeypatch.setattr(search,'targeted_pool',pool)

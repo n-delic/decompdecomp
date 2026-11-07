@@ -55,10 +55,13 @@ Plausible original code beats contortions: games were written by people, quickly
 
 Before sending many hand-written variants, use `try_local_repairs` on the current revision. Its bounded
 families include `local_widening`, `callee_parameter_width`, `callee_return_width`, `split_integer_lifetime`,
-`merge_integer_lifetimes`, `branch_call`, `goto_leaf` and `switch_layout`. They can test lost coordinate bits,
+`merge_integer_lifetimes`, `cfg_equal_value_alias`, `branch_call`, `goto_leaf` and `switch_layout`. They can test lost coordinate bits,
 unwanted call conversions, integer register lifetimes and alternative dispatch layouts without model-written
 source variants. Candidate-owned prototypes change only in that candidate; confirm a discovered signature
-before suggesting a shared header edit. A lower score is useful evidence, not a proof of correctness.
+before suggesting a shared header edit. `cfg_equal_value_alias` can remove a redundant same-type
+scalar copy across supported control flow when every replaced read has proven equality and
+initialization; it leaves unsupported or escaped contexts alone. A lower score is useful evidence,
+not a proof of correctness.
 
 ## Register and spill plateaus
 

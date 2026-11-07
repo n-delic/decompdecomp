@@ -5472,3 +5472,35 @@ the inspected `true_dependence` calls `memrefs_conflict_p` first, and identical
 bases with disjoint fixed offsets can prove non-overlap independently of
 `MEM_IN_STRUCT`. Do not add volatile accesses, dummy references, artificial
 storage or a false alias contract to force a dependency.
+
+## Remove proven-equal scalar aliases across control flow (7 November 2026)
+
+With pinned KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, removing a
+redundant initialized `s32` copy from a 960-byte private draft improved score 1715
+to 1700 and reduced the linked body to 956 bytes, preserving its 80-byte frame.
+The original selector stayed read after the copy, so its lifetime overlapped
+the alias: a non-overlapping lifetime merge was insufficient. One global
+selector replaced a short local pseudo followed by a saved-register copy.
+Ordinary/diagnostic compilation and independent relinks agreed. The normal app
+judge retained the improvement; no new exact match is claimed. All 2,077 selected
+sources/profiles remained unchanged and the complete cartridge still matched.
+
+`cfg_equal_value_alias` reproduces that exact reviewed source. It extends the
+existing must-equal CFG facts to removing a one-assignment, same-type ordinary
+integer alias only when every replaced read has equality on every reachable
+incoming edge. A separate bounded must-initialization pass rejects paths that
+can read either local before assignment. The rule excludes escaped/shadowed or
+qualified locals, alias writes, source updates in the same expression, unsafe
+macros and unsupported control flow. Primitive typedefs must be visible; unresolved
+includes/conditional types, reference-capable contexts and unsupported extensions
+are skipped. Calls and explicit memory dereferences are not moved or removed. At most four candidates are proposed; the ordinary judge decides.
+The older straight-line copy reuse stops at loop/goto boundaries; these facts
+can cover an unchanged alias across those edges without guessing from text order.
+
+The generator's real-target replay reproduced score 1700/956 bytes, SHA-256
+`23d669f77eadaeea39d9e333aef312ae70c951d69d1e4e3fc84150454fb95304`,
+with paired and independent links under 20-second/2GiB watchdogs and no survivors.
+Synthetic tests exercise branches, loops, gotos, call effects, missing
+initialization, mutations, escapes, macros, shadows and shared architecture
+proposal paths. This is bounded supported-C analysis, not a semantic proof for
+arbitrary C or a replacement for linked-byte/data and full-cartridge gates.

@@ -1269,3 +1269,14 @@ overlap removed by flow analysis. Trace the actual phase that creates the
 conflict before another scope sweep. Raw field-address spelling does not block
 scheduling when GCC already proves the same-base fixed offsets disjoint. Keep
 memory effects and alias contracts honest; no volatile/dummy-work workaround.
+
+For an extra copy between a call result and a saved local, check whether two
+same-type scalar locals always hold the same initialized value. A redundant
+alias can split one selector into local and global allocation even while the
+original still has reads. `cfg_equal_value_alias` can remove such an alias across
+supported loops/joins/gotos when must-equal and initialization facts hold at every
+replaced read. One measured KMC draft improved 1715→1700 and removed one instruction;
+it was not exact. The rule never invents a lifetime-ending write or removes an
+pointer load or call, and the normal judge still decides whether to retain it.
+Primitive typedefs must be visible. Unresolved headers, reference-capable contexts
+and unsupported extensions yield no alias proposal; this is a bounded C rule.
