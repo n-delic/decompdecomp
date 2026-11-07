@@ -74,9 +74,9 @@ def test_quit_reports_stages_and_failed_project_saves_before_exit(tmp_path,monke
                             (net.autosave,'close','Stopping project autosave workers'),
                             (net.deep_sweeps,'shutdown','Stopping deep searches and queued repairs'),
                             (net.permuter,'close','Stopping the permuter process'),
-                            (manager,'shutdown','Stopping agent processes and room connections')):
+                            (manager,'shutdown','Saving agent recovery and releasing claims')):
         originals.append(getattr(obj,method))
-        def action(label=label):
+        def action(*args,label=label,**kwargs):
             assert label+'...' in terminal.getvalue()
             calls.append(label)
         monkeypatch.setattr(obj,method,action)
@@ -94,7 +94,7 @@ def test_quit_reports_stages_and_failed_project_saves_before_exit(tmp_path,monke
         for stop in originals:stop()
     assert calls==['Stopping startup maintenance','Stopping project autosave workers','window',
                    'Stopping deep searches and queued repairs','Stopping the permuter process',
-                   'Stopping agent processes and room connections','flush','wine',('exit',0)]
+                   'Saving agent recovery and releasing claims','flush','wine',('exit',0)]
     text=terminal.getvalue()
     assert 'Saving project example-game...' in text
     assert 'Could not save project example-game: folder is read-only' in text

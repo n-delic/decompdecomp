@@ -125,8 +125,15 @@ class Jobs:
     def check_start(self) -> None:
         """Reject work before receiving a large upload when a source update is taking over."""
         with self._lock:
+            if getattr(self, 'closing', False):
+                raise ValueError('decompdecomp is shutting down. Reopen the app before starting work.')
             if getattr(self, 'source_update_pending', False):
                 raise ValueError('A source update is queued. Wait for restart or cancel it before starting another job.')
+
+    def shutdown(self):
+        """Stop job admission and signal all jobs before any slow cleanup."""
+        self.closing=True
+        for cancel in list(self.cancel_events.values()):cancel.set()
 
     def start(self, kind: str, fn, *, foreground=True, cancel_message="Opening the saved project was cancelled.") -> str:
         """Start a user job immediately; automatic callers opt into background scheduling."""
@@ -139,6 +146,7 @@ class Jobs:
             job["foreground"]=foreground
             cancel = self.cancel_events[jid] = threading.Event()
             self.jobs[jid] = job
+            if getattr(self, "closing", False):cancel.set()  # admission may have closed during reservation
         logger = self.logger
         logger.info("job %s %s started", kind, jid)
 
@@ -163,6 +171,7 @@ class Jobs:
         def run():
             job["thread_id"] = threading.get_native_id()
             try:
+                check_cancel()
                 from ..compiler import background_thread
                 if not interactive.is_set():background_thread()
                 from . import maintenance

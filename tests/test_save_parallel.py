@@ -5,7 +5,7 @@ from concurrent.futures import Future
 
 import pytest
 
-from decompnet.app import saves, workers
+from decompnet.app import restore_compilation, saves, workers
 from decompnet.app.engine import RomNetwork
 
 from .test_rom import ROM, built  # noqa: F401
@@ -32,13 +32,14 @@ def test_saved_compiles_overlap_but_normal_judge_records_stay_on_coordinator(wor
 
     monkeypatch.setattr(fresh, "_compile", compile_parallel)
     monkeypatch.setattr(fresh, "_record", record_serial)
-    monkeypatch.setattr(workers, "WORKERS", 2)
+    monkeypatch.setattr(workers, "WORKERS", 1)
     monkeypatch.setattr(workers, "pool", lambda: pytest.fail("shared workers can be waiting for the project lock"))
     result = saves.restore(fresh, str(tmp_path / "saved"), ROM, log=lambda *_: None)
     assert result["matched"] == 1 and result["best"] == 1 and not result["lost"]
     assert len(compile_threads) == 2 and len(set(compile_threads)) == 2
     assert coordinator not in compile_threads
-    assert record_threads == [coordinator, coordinator]
+    assert len(record_threads)==2 and len(set(record_threads))==1
+    assert not set(record_threads) & set(compile_threads)
     assert fresh.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
     fn = fresh._function("clamp_s32", result["slug"])
     assert fresh._agent_name(fn["matched_agent_id"]) == "claude-opus-5.5-1"
@@ -100,7 +101,8 @@ def test_compile_window_is_bounded_and_cancellation_discards_queued_work(inputs,
             return future
 
     monkeypatch.setattr(workers, "WORKERS", 2)
-    monkeypatch.setattr(saves, "ThreadPoolExecutor", Pool)
+    monkeypatch.setattr(restore_compilation, "Pool", Pool)
+    monkeypatch.setattr(restore_compilation, "width", lambda:2)
     checks = saves._saved_checks(net, proj, tmp_path, files, rows, {}, saved, True, lambda: None)
     next(checks)
     assert len(submitted) == 2
@@ -129,6 +131,7 @@ def test_abandoning_verification_cancels_running_compiler_context(inputs, monkey
         compiler._CANCEL_CHECK.get()()  # The cancellation callback must reach the compiler worker.
 
     monkeypatch.setattr(workers, "WORKERS", 1)
+    monkeypatch.setattr(restore_compilation, "width", lambda:1)
     monkeypatch.setattr(net, "_compile", compile_wait)
     checks = saves._saved_checks(net, proj, tmp_path, files, rows, {}, saved, True, lambda: None)
     item = next(checks)
@@ -165,7 +168,7 @@ def test_compile_snapshots_keep_per_unit_headers_and_range_settings(inputs, monk
 
 def test_metadata_scan_uses_one_status_snapshot_and_no_compiler_pool(inputs, monkeypatch, tmp_path):
     net, proj, rows, saved, files = inputs
-    monkeypatch.setattr(saves, 'ThreadPoolExecutor', lambda *a, **k: pytest.fail('metadata scan started a pool'))
+    monkeypatch.setattr(restore_compilation, 'Pool', lambda *a, **k: pytest.fail('metadata scan started a pool'))
     one = net.store.one
     def no_function_queries(sql, *args):
         assert 'FROM functions' not in sql

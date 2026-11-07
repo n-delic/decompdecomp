@@ -1154,7 +1154,9 @@ def test_saved_judge_reports_counts_including_missing_sources(project):
                                 'g': {'vram': 4100, 'matched_by': 'autopilot'}}, report,
                                files={'src/f.c': 'good source'})
     assert result['matched'] == 1 and result['lost'] == ['g']
-    assert [(item['done'], item['total'], item['function']) for item in updates] == [
+    assert updates[0]['phase']=='Preparing saved verification'
+    assert [(item['done'], item['total'], item['function']) for item in updates
+            if item.get('phase') in (None,'Verifying saved functions')] == [
         (0, 2, 'f'), (1, 2, 'g'), (2, 2, None)]
 
 

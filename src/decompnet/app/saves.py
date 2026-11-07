@@ -22,7 +22,6 @@ import tempfile
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, nullcontext
 from pathlib import Path
 
@@ -32,6 +31,7 @@ from ..network import NetworkError
 from ..rom.symbols import AUTO_NAME
 from ..scoring import percent_text
 from . import save_readme
+from .restore_effects import batched as restore_batch
 
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
@@ -731,13 +731,11 @@ def _restore_counts(net, slug: str) -> dict:
     """Counts for a restore whose linked save already matches the project's known state."""
     store = net.project_store(slug)
     proj = store.one("SELECT id FROM projects WHERE slug=?", slug)
-    rows = store.all("SELECT status,matched_source,best_source,best_score FROM functions WHERE project_id=?", proj["id"])
-    return {
-        "matched": sum(row["status"] == "matched" and bool(row["matched_source"]) for row in rows),
-        "best": sum(row["status"] != "matched" and row["best_source"] is not None
-                    and row["best_score"] is not None for row in rows),
-        "lost": [],
-    }
+    row=store.one("SELECT COALESCE(SUM(status='matched' AND matched_source IS NOT NULL AND length(matched_source)>0),0) AS matched, "
+                  "COALESCE(SUM(status!='matched' AND best_source IS NOT NULL AND best_score IS NOT NULL),0) AS best "
+                  "FROM main.functions WHERE project_id=?",proj['id'])
+    return {'matched':row['matched'],'best':row['best'],'lost':[]}
+
 
 
 def _saved_source(folder: Path, files: dict[str, str] | None, name: str) -> str | None:
@@ -882,14 +880,15 @@ def _saved_name(old_name, info, by_name, by_vram):
 def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
     """Compile a bounded window ahead; only the caller may judge or change project state."""
     store = net.project_store(proj['id'])
-    from . import workers
+    from .restore_compilation import Pool
+    from .restore_compilation import width as compile_width
 
     pending = deque()
     entries = iter(saved.items())
-    width = workers.WORKERS if judge_code else 1
+    width = compile_width() if judge_code else 1
     # Shared background workers can be waiting for this project's lock. Never queue compiles
     # behind those tasks while holding that lock. Compiler._SLOTS still caps subprocesses globally.
-    pool = (ThreadPoolExecutor(width, thread_name_prefix="progress-compile", initializer=workers.lower_priority)
+    pool = (Pool(width)
             if judge_code else None)
     stopped = threading.Event()
 
@@ -940,6 +939,7 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
             pool.shutdown(wait=False, cancel_futures=True)
 
 
+@restore_batch
 def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
                  files: dict[str, str] | None = None, judge_code: bool = True) -> dict:
     store = net.project_store(slug)
@@ -952,6 +952,8 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
     matched, lost, best = 0, [], 0
     log(f"judging {len(saved)} saved functions again")
     update = getattr(log, "progress", lambda **fields: None)
+    if judge_code:
+        update(phase="Preparing saved verification",done=0,total=len(saved),function=None)
     from ..match_bundle import restore_evidence_many
     def evidence_names():
         for old_name, info in saved.items():
@@ -974,12 +976,16 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
     current_rows = None if judge_code else {row["name"]:row for row in store.all(
         "SELECT name,status FROM functions WHERE project_id=?", pid)}
     last_update = 0
+    judge_agent=None;credits={}
     checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel)
     with closing(checks):
         for index, (old_name, info, kind, text, name, prepared) in enumerate(checks):
             # Compile workers do no writes. Wait outside the lock so a slow compiler cannot
             # occupy the foreground judge's publication lane.
             if prepared is not None:
+                if not prepared[1].done():
+                    update(phase="Compiling saved functions",done=index,total=len(saved),function=old_name,
+                           matched=matched,best=best,lost=len(lost))
                 while not prepared[1].done():
                     check_cancel()
                     time.sleep(0.01)
@@ -1011,8 +1017,11 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                     else:
                         best += 1
                     continue
-                credit = net.attribution_agent(info.get("matched_by") or info.get("best_by") or "restored")
-                agent, _ = net.local_agent("progress-judge")
+                author=info.get("matched_by") or info.get("best_by") or "restored"
+                if author not in credits:credits[author]=net.attribution_agent(author)
+                credit=credits[author]
+                if judge_agent is None:judge_agent=net.local_agent("progress-judge")[0]
+                agent=judge_agent
                 try:
                     with net.compiled_ahead(prepared):
                         result = net.attempt(agent, name, text, slug)

@@ -3,6 +3,9 @@ import sys
 import threading
 import time
 
+SHUTDOWN_SECONDS = 60
+RUNTIME_STOP_SECONDS = 5
+
 
 def terminal_note(message, logger, *, prefix='shutdown', stream=None):
     line=f'[{prefix}] {message}'
@@ -44,6 +47,32 @@ class Progress:
             self.phase=None
             self.note(f'{label} complete ({self.clock()-started:.1f}s).')
         return result
+
+    def bounded_step(self, label, action, timeout):
+        """Never wait indefinitely on cleanup; SQLite retains committed work for restart recovery."""
+        self.update(label)
+        started=self.clock()
+        active=threading.Event();active.set()
+        errors=[]
+        def notify(message):
+            if active.is_set():self.update(message)
+        def work():
+            try:action(notify)
+            except BaseException as error:errors.append(error)
+        worker=threading.Thread(target=work,daemon=True,name='shutdown-'+label.lower().replace(' ','-'))
+        worker.start()
+        worker.join(max(0,timeout))
+        active.clear()
+        with self.lock:self.phase=None
+        if worker.is_alive():
+            self.note(f'Timed out while {label.lower()} after {self.clock()-started:.1f}s. '
+                      'Continuing shutdown; committed database work is kept and unfinished recovery resumes on startup.')
+            return False
+        if errors:
+            self.note(f'Could not finish {label.lower()}: {errors[0]}. Committed work is kept; recovery will retry on startup.')
+            return False
+        self.note(f'{label} complete ({self.clock()-started:.1f}s).')
+        return True
 
     def waiting(self):
         with self.lock:
