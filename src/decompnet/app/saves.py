@@ -3,7 +3,8 @@ owner changes Linux distributions now and then), to keep in git, or to start ove
 
 The progress folder is authoritative; progress.py keeps the engine's database in step with edits and git merges.
 It contains what people and agents made: the matched C, the best attempts, the shared headers, the names, the function
-splits, the notes, the instructions, what agents learned, the compiler and its ranges. Never the game: the save
+splits, the notes, the instructions, which functions helpers take first, what agents learned, the compiler and its
+ranges. Never the game: the save
 holds its fingerprint (sha1), and a restore asks for the user's own copy and checks it's the same game. Every
 matched function is judged again on the way in: a match counts because it matches, not because a file says so.
 
@@ -27,7 +28,7 @@ from pathlib import Path
 
 from .. import compiler, consoles, toolchains
 from ..hostenv import NO_WINDOW, stop_process_tree
-from ..network import NetworkError
+from ..network import CLAIM_ORDERS, NetworkError
 from ..rom.symbols import AUTO_NAME
 from ..scoring import percent_text
 from . import save_readme
@@ -72,6 +73,30 @@ def default_folder(net, slug: str) -> Path:
     return Path(net.cfg(proj).get("progress_folder") or Path(proj["root"]) / SAVE_FOLDER)
 
 
+def save_folder(net, slug: str) -> Path:
+    """The last successful manual save, or the linked progress folder for a project opened from a save.
+
+    This is a local preference, kept out of the shared manifest: another computer has its own paths.
+    Saving a backup elsewhere does not move the authoritative progress folder.
+    """
+    proj = net.store.one("SELECT * FROM projects WHERE slug=?", slug)
+    if proj is None:
+        raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
+    return Path(net.cfg(proj).get("save_folder") or default_folder(net, slug))
+
+
+def _remember_folder(net, project_id: int, folder: Path, *, chosen: bool) -> None:
+    # A rescue save must work even when synchronizing the authoritative folder fails. Only update local config.
+    with net.store.tx() as db:
+        row = db.execute("SELECT config FROM projects WHERE id=?", (project_id,)).fetchone()
+        cfg = json.loads(row["config"])
+        if chosen:
+            cfg["save_folder"] = str(folder)
+        else:
+            cfg.pop("save_folder", None)
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), project_id))
+
+
 def save(net, slug: str, folder: Path | None = None) -> dict:
     """Write the project's work to `folder` (default: progress/ in the project's folder). Returns what was saved.
 
@@ -91,7 +116,9 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
         proj = net._project(slug)
         _check_save_paths(target, chosen=chosen or bool(net.cfg(proj).get("progress_folder")))
         if not net.is_rom(proj):
-            return _save_best(net, proj, target)
+            result = _save_best(net, proj, target)
+            _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)
+            return result
         if chosen:
             files, result = _render(net, slug, target, chosen=True)
             previous = _read_owned(target)
@@ -114,7 +141,11 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
                 _remember_revision(net, slug, json.loads(files[MANIFEST]))
             else:
                 net.progress.sync(slug, force=True)  # a contributor wrote meanwhile: apply it, don't overwrite it
-        return result | {"folder": str(target)}
+        _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)
+        return result | {"folder": str(target.resolve())}
+    except OSError as e:
+        detail = e.strerror or str(e)
+        raise NetworkError(f"Couldn't save to {target}: {detail}. Choose a writable folder and try again.") from None
     finally:
         if chosen and progress is not None:
             progress.local.busy = was_busy
@@ -301,6 +332,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "game": {"sha1": cfg.get("rom", {}).get("sha1"), "file": cfg.get("rom", {}).get("file")},
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
         "instructions": cfg.get("instructions") or "", "knowledge": knowledge,
+        "claim_order": cfg.get("claim_order") or "",
         "priority": cfg.get("priority") or [],
         "auto_compiler": cfg.get("auto_compiler"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
@@ -371,7 +403,8 @@ src/<function>.c      each matched function's C, byte for byte
 best/<function>.c     the closest attempt so far at each function that doesn't match yet
 include/common.h      the shared header every function is compiled with (common_<part>.h: a part's own)
 {MANIFEST}     the game's fingerprint (its SHA-1, never the game), the compiler and its flags, the
-                      functions' layout and names, notes, instructions, what agents learned, who matched what
+                      functions' layout and names, notes, instructions, which functions helpers take first, what agents
+                      learned, who matched what
 README.md             this file
 ```
 
@@ -708,6 +741,8 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
                 f"0x{int(r.get('start') or 0):X}-0x{int(r.get('end') or 0):X} {r.get('toolchain')}" for r in gone))
         cfg["compiler_ranges"] = kept
         cfg["instructions"] = manifest.get("instructions") or ""
+        order = manifest.get("claim_order") or ""
+        cfg["claim_order"] = order if order in CLAIM_ORDERS else ""
         cfg["priority"] = manifest.get("priority") or []
         cfg["auto_compiler"] = manifest.get("auto_compiler")
         cfg["knowledge_auto"] = bool(manifest.get("knowledge_auto"))
