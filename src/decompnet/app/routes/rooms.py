@@ -96,7 +96,7 @@ def register(app: App) -> None:
             return link
 
     if any((json.loads(p['config']).get('collab') or {}).get('open')
-           for p in net.store.all('SELECT config FROM projects')):
+           for p in (net.project_row(row['slug']) for row in net.store.all('SELECT slug FROM projects'))):
         from ..hosted_rooms import restore
         def reopen(log):
             # Serialize startup with explicit stop/rotate so a closed room cannot reopen behind the user.

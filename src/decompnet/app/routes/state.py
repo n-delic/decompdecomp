@@ -179,7 +179,8 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         if request.query_params.get('brief') == '1':
-            return JSONResponse(await (app.ui_call or call)(lambda: [dict(r) for r in net.store.all("SELECT slug,name FROM projects ORDER BY id DESC")]))
+            from ..project_labels import projects
+            return JSONResponse(await (app.ui_call or call)(projects,net))
         return JSONResponse(await (app.fast_call or app.ui_call or call)(project_list))
 
     @mcp.custom_route("/api/state", methods=["GET"])

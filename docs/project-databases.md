@@ -210,3 +210,16 @@ then load target bytes only for that shortlist. Compiler range checks, profile
 cleanup, SDK naming revisions, address lookup and match reconciliation use explicit
 project storage. Repair schema initialization happens within an already admitted
 record transaction, preserving cancellable writer waits without recompiling.
+
+Private API tools, browser tasks and authenticated room-browser listings now read
+project-owned attempts, claims, diagnostics and symbols, with shared labels resolved
+separately. Catalog discovery uses current project titles without adding per-project
+queries to the legacy single-file sidebar path.
+
+Global notifications have a compact catalog metadata index and independent delivery
+IDs. Each source project advances its event cursor atomically with index insertion;
+duplicate delivery is harmless and a later event from a lower project-ID range cannot
+be skipped. Reads are bounded per project and exclude source/attempt payloads.
+Migration must bootstrap this index before workers start, preserving legacy cursor IDs
+and routine-event high-water marks. The production legacy feed retains its existing
+indexed path; a sharded feed with an uninitialized index reports incomplete migration.

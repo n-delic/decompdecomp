@@ -23,13 +23,15 @@ def routes(net, endpoint):
     lock_guard = threading.Lock()
 
     def functions(room, member, data):
-        with net.store.tx() as db:
-            net._expire_claims(db)
-        held = net.store.one(
-            'SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id JOIN agents a ON a.id=c.agent_id '
-            'WHERE f.project_id=? AND a.name=? AND a.owner=? AND a.origin=?',
-            room.proj['id'], member.name + '.browser', member.name, room.origin)
-        return {'functions': [dict(row) for row in net.store.all(
+        from .local_claims import expiry_ids
+        identities = expiry_ids(net,net.project_store(room.slug))
+        actor = net.store.one('SELECT id FROM agents WHERE name=? AND owner=? AND origin=?',
+                             member.name+'.browser',member.name,room.origin)
+        with net.project_store(room.slug).tx() as db:net._expire_claims(db,**identities)
+        held = net.project_store(room.slug).one(
+            'SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=? AND c.agent_id=?',
+            room.proj['id'],actor['id']) if actor else None
+        return {'functions': [dict(row) for row in net.project_store(room.slug).all(
             'SELECT name, status, best_score FROM functions WHERE project_id=? ORDER BY name', room.proj['id'])],
                 'held': held['name'] if held else None}
 
@@ -59,8 +61,10 @@ def routes(net, endpoint):
             raise NetworkError('Another browser check is running in this room. Try again when it finishes.')
         try:
             agent = room.agent_for(member, 'browser')
-            with net.store.tx() as db:
-                net._expire_claims(db)
+            from .local_claims import expiry_ids
+            identities = expiry_ids(net,net.project_store(room.slug))
+            with net.project_store(room.slug).tx() as db:
+                net._expire_claims(db,**identities)
                 other = db.execute('SELECT 1 FROM claims WHERE agent_id=? AND function_id<>?',
                                    (agent.id, fn['id'])).fetchone()
                 if other:

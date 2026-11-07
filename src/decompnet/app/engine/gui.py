@@ -519,6 +519,8 @@ class GuiMixin:
         first. With no `after` (the app's window just opened): nothing, only where the feed starts, so nothing that
         happened before is ever shown as news. Two games with agents at work flooded each project's own feed with
         what happened before it was opened. A range of the events' primary key: cheap however long the history."""
+        from .. import activity_index
+        if activity_index.selected(self):return activity_index.events_after(self,after,limit)
         last = self.store.one("SELECT COALESCE(MAX(id), 0) AS n FROM events")["n"]
         if after is None:
             return {"last": last, "events": []}
@@ -528,6 +530,8 @@ class GuiMixin:
 
     def recent_events(self, limit: int = EVENTS_PER_ASK) -> list[dict]:
         """The notification centre's history: the latest notable events of every project, newest first."""
+        from .. import activity_index
+        if activity_index.selected(self):return activity_index.recent_events(self,limit)
         # Bound each indexed kind before merging, rather than scanning through routine worker events.
         branches = ["SELECT id FROM (SELECT e.id FROM events e INDEXED BY idx_events_kind_id "
                     f"JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id WHERE {MATCHER_ACTIVITY} AND e.kind=? ORDER BY e.id DESC LIMIT ?)"

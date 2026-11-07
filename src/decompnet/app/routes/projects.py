@@ -283,7 +283,7 @@ def register(app: App) -> None:
         if request.method == 'POST':
             return net.compiler_answer(slug, check_now=True)
         project = net.store.one('SELECT id FROM projects WHERE slug=?', slug)
-        version = net.store.read_version('inputs', project['id'] if project else None)
+        version = net.project_store(slug).read_version('inputs', project['id'] if project else None)
         with compiler_maintenance_lock:
             previous = compiler_maintenance.get(slug)
             if previous is None or (not previous['running'] and (previous['version'] != version or time.monotonic()-previous['at'] > 60)):
@@ -412,7 +412,7 @@ def register(app: App) -> None:
             ids = data.get('ids')
             if not isinstance(ids, list) or not ids or len(ids) > 100 or any(type(i) is not int for i in ids):
                 raise ValueError('Choose a note to remove.')
-            with net.store.tx() as db:
+            with net.project_store(slug).tx() as db:
                 db.executemany('DELETE FROM notes WHERE id=? AND project_id=? AND function_id=?',
                                [(i, proj['id'], fn['id']) for i in ids])
             return {'message': 'Note removed.'}
@@ -551,7 +551,9 @@ def register(app: App) -> None:
         # Do not delay the core function response by repeating that cross-project search.
         detail = (net.function_preview(slug, name) if request.query_params.get('quick') == '1'
                   else net.function_detail(slug, name, include_hints=False))
-        claim = net.store.one('SELECT a.name FROM claims c JOIN agents a ON a.id=c.agent_id JOIN functions f ON f.id=c.function_id JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=? AND c.expires_at>?', slug, detail['name'], time.time())
+        claim = net.project_store(slug).one('SELECT c.agent_id FROM claims c JOIN functions f ON f.id=c.function_id JOIN projects p ON p.id=f.project_id '
+                                             'WHERE p.slug=? AND f.name=? AND c.expires_at>?',slug,detail['name'],time.time())
+        claim = net.store.one('SELECT name FROM agents WHERE id=?',claim['agent_id']) if claim else None
         detail['claim_owner'] = claim['name'] if claim else None
         detail['can_handover'] = bool(claim and claim['name'] == 'you')
 
@@ -630,8 +632,8 @@ def register(app: App) -> None:
             name = request.query_params.get('function')
             if name:
                 fn = net._function(name, slug)
-                return {'function':fn['name'], 'report':draft_reports.read(net,fn['id'])}
-            rows = net.store.all("SELECT value FROM settings WHERE key IN (SELECT ? || id FROM functions WHERE project_id=?)",
+                return {'function':fn['name'], 'report':draft_reports.read(net,fn['id'],project_id=proj['id'])}
+            rows = net.project_store(slug).all("SELECT value FROM settings WHERE key IN (SELECT ? || id FROM functions WHERE project_id=?)",
                                  draft_reports.PREFIX,proj['id'])
             reports = [json.loads(row['value']) for row in rows]
             return {'checked':len(reports), 'compiled':sum(bool(r.get('compiled')) for r in reports),

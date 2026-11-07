@@ -119,7 +119,7 @@ class Bridge:
 
     def listing(self, session, search):
         proj = self.project(session['slug'])
-        rows = self.net.store.all("SELECT id,name,size,best_score,n_insns FROM functions WHERE project_id=? "
+        rows = self.net.project_store(proj['id']).all("SELECT id,name,size,best_score,n_insns FROM functions WHERE project_id=? "
                                   "AND status='open' AND size BETWEEN 4 AND 16384 AND name LIKE ? "
                                   "ORDER BY size,id LIMIT 100",
                                   proj['id'], '%'+str(search)[:80]+'%')
@@ -141,7 +141,7 @@ class Bridge:
 
     def task(self, key, session, fid):
         proj = self.project(session['slug'])
-        fn = self.net.store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='open'", fid, proj['id'])
+        fn = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='open'", fid, proj['id'])
         if not fn or not re.fullmatch(r'[A-Za-z_]\w*', fn['name']) or not 0 < len(fn['target'] or b'') <= 16384:
             raise ValueError('Choose an open function in this project with a valid C name and at most 16 KiB of code.')
         # Reading a saved candidate does not acquire, release or replace an agent's claim.
@@ -167,7 +167,7 @@ class Bridge:
                   'romOffset': offset, 'vram': fn['vram'], 'targetSha256': digest(fn['target']),
                   'byteCount': len(fn['target']), 'compiler': {'id':'gcc-2.7.2-kmc', 'flags':flags},
                   'compilerVariants': self.compiler_variants(compiler),
-                  'symbols': {r['name']:r['address'] for r in self.net.store.all('SELECT name,address FROM symbols WHERE project_id=?', proj['id'])
+                  'symbols': {r['name']:r['address'] for r in self.net.project_store(proj['id']).all('SELECT name,address FROM symbols WHERE project_id=?', proj['id'])
                               if r['name'] != fn['name'] and re.fullmatch(r'[A-Za-z_]\w*', r['name'])}, 'expiresIn':300}
         if len(json.dumps(packet).encode()) > 256*1024:
             raise ValueError('This task has too many symbols for the initial browser bridge.')
@@ -200,7 +200,7 @@ class Bridge:
             if self.sessions.get(key) is not session:
                 raise PermissionError('Browser access expired or was revoked before the result could be saved.')
         proj = self.project(session['slug'])
-        fn = self.net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?', task['fid'], proj['id'])
+        fn = self.net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=? AND project_id=?', task['fid'], proj['id'])
         if not fn or fn['status'] != 'open' or self.snapshot(proj, fn) != task['snapshot']:
             raise ValueError('The function, context or compiler settings changed. Fetch a fresh task before submitting.')
         return proj, fn
@@ -217,7 +217,7 @@ class Bridge:
                 result=self.submit_variant(key, session, task, proj, fn, agent, source, variant)
             else:
                 result = self.net.try_quietly(agent, proj, fn, source, before_record=lambda: self.check(key, session, task))
-            current = self.net.store.one('SELECT best_score,status FROM functions WHERE id=?', fn['id'])
+            current = self.net.project_store(proj['id']).one('SELECT best_score,status FROM functions WHERE id=?', fn['id'])
             return {'matched': bool(result.get('matched')), 'score': result.get('score'), 'bestScore':current['best_score'],
                     'improved': result.get('score') is not None and (fn['best_score'] is None or current['best_score'] < fn['best_score']),
                     'hostVerified': True, 'function':fn['name']}

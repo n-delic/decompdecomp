@@ -305,7 +305,7 @@ def _compact_project_info(net, slug):
     """Indexed totals and saved metadata only: no overview, SDK, room or build scans."""
     proj=net._project(slug)
     cfg=net.cfg(proj)
-    totals=net.store.one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
+    totals=net.project_store(slug).one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
     profile=cfg.get('compiler') or {}
     platform=consoles.get(cfg.get('platform'))
     compiler=profile.get('toolchain') or 'set by the project build'
@@ -378,12 +378,12 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
         repair_category='other'
     if repair_note and len(names) != 1:
         raise NetworkError('Repair notes require one function and a valid category. Use report_repair after a batch.')
-    previous = net.store.one('SELECT MAX(id) AS id FROM repair_examples')['id'] or 0
+    previous = net.project_store(slug).one('SELECT MAX(id) AS id FROM repair_examples')['id'] or 0
     previous_diff = None
     previous_attempt = None
     if len(names) == 1:
         fn = net._function(names[0], slug)
-        previous_attempt = net.store.one('SELECT id,source FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
+        previous_attempt = net.project_store(slug).one('SELECT id,source FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
         kept = net._last_diffs.get((agent.id, fn['id']))
         previous_diff = list(kept[0]) if kept else None
     if len(names) <= 1:
@@ -400,7 +400,7 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
             result += '\n'+unchanged_note
         _, revision = agent_tokens.candidate(net, agent, slug, names[0])
         open_function = net._function(names[0],slug)['status']=='open'
-        held = net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+        held = net.project_store(slug).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
         if open_function and held:
             state = net.stall_status(fn['id'],agent.id)
             remaining = max(0,state['after']-state['no_better'])
@@ -426,7 +426,7 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
             while suffix<min(len(before),len(source))-prefix and before[-suffix-1]==source[-suffix-1]:
                 suffix += 1
             changed=max(len(before),len(source))-prefix-suffix
-            claim=net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+            claim=net.project_store(slug).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
             stamp=(agent.id,fn['id'],claim['claimed_at'] if claim else None)
             coached=getattr(net,'_patch_coached',set())
             if changed<=160 and len(source)>400 and stamp not in coached:
@@ -436,7 +436,7 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
                 result += '\nSmall edit: use compile_patch with revision, old and new next time; avoid resending the full C.'
     if repair_note:
         fn = net._function(names[0], slug)
-        case = net.store.one('SELECT e.id FROM repair_examples e JOIN attempts a ON a.id=e.attempt_id '
+        case = net.project_store(slug).one('SELECT e.id FROM repair_examples e JOIN attempts a ON a.id=e.attempt_id '
                              'WHERE e.function_id=? AND e.agent_id=? AND e.id>? AND a.source=? '
                              'ORDER BY e.id DESC LIMIT 1', fn['id'], agent.id, previous, source)
         if case:
@@ -466,7 +466,7 @@ def _redraft(net, slug, function, context, agent=None):
 
 def _get_context(net, agent, slug, function=""):
     if not function:
-        held = net.store.all('SELECT f.name FROM functions f JOIN claims c ON c.function_id=f.id '
+        held = net.project_store(slug).all('SELECT f.name FROM functions f JOIN claims c ON c.function_id=f.id '
                              'JOIN projects p ON p.id=f.project_id WHERE c.agent_id=? AND p.slug=?', agent.id, slug)
         if len(held) == 1:
             function = held[0]['name']
@@ -608,7 +608,7 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
             resolved = net.resolve_function(agent, slug, function)
         except NetworkError:
             address_like = re.fullmatch(r'(?:0[xX][0-9a-fA-F]+|(?:D_|func_)[0-9a-fA-F]{8,16})(?:\+(?:0x[0-9a-fA-F]+|[0-9]+))?',str(function))
-            symbol = net.store.one('SELECT 1 FROM symbols s JOIN projects p ON p.id=s.project_id WHERE p.slug=? AND s.name=?',slug,function)
+            symbol = net.project_store(slug).one('SELECT 1 FROM symbols s JOIN projects p ON p.id=s.project_id WHERE p.slug=? AND s.name=?',slug,function)
             if tool not in {"get_function", "get_assembly"} or not (address_like or symbol):
                 raise
             from .address_lookup import read_function

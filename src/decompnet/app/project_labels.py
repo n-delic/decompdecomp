@@ -20,3 +20,17 @@ def label(net, rows, columns, *, require=()):
         for field in set(columns.values()) - columns.keys():row.pop(field)
         result.append(row)
     return result
+
+
+def projects(net):
+    """Catalog discovery with canonical project titles; legacy needs only one read."""
+    rows = net.store.all('SELECT id,slug,name FROM projects ORDER BY id DESC')
+    result = []
+    for row in rows:
+        store = net.project_store(row['id'])
+        selected = row if store is net.store else store.one('SELECT slug,name FROM projects WHERE id=?',row['id'])
+        if selected is None:
+            from ..network import NetworkError
+            raise NetworkError('This project is missing from its database. Restore it from backup.')
+        result.append({'slug':selected['slug'],'name':selected['name']})
+    return result
