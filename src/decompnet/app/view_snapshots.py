@@ -1,4 +1,5 @@
 """Bounded, per-engine view snapshots; no source code or game bytes are retained here."""
+import hashlib
 import json
 import threading
 import time
@@ -58,8 +59,30 @@ def cache(net):
     return existing if existing is not None else net.__dict__.setdefault('_view_snapshots', Snapshots())
 
 
+def peer_revision(net):
+    projects = net.store.all('SELECT id FROM projects ORDER BY id')
+    if all(net.project_store(row['id']) is net.store for row in projects):
+        return net.store.read_version('targets')
+    return tuple((row['id'], net.project_store(row['id']).read_version('targets')) for row in projects)
+
+
 def cross_project_ids(net, proj):
-    revision = net.store.read_version('targets')
+    revision = peer_revision(net)
+    if net.project_store(proj['id']) is not net.store:
+        owners, own = {}, {}
+        for project in net.store.all('SELECT id FROM projects ORDER BY id'):
+            store = net.project_store(project['id'])
+            def fingerprints(store=store, project=project):
+                row = store.one('SELECT arch,big_endian FROM projects WHERE id=?', project['id'])
+                if row is None:raise RuntimeError('Missing project metadata while finding related functions.')
+                if (row['arch'], row['big_endian']) != (proj['arch'], proj['big_endian']):return {}
+                return {r['id']:hashlib.sha256(r['target']).hexdigest() for r in store.all(
+                    'SELECT id,target FROM functions WHERE project_id=? AND gone_mark IS NULL AND length(target)>0', project['id'])}
+            found = store.read_cache.get(('map-peer-fingerprints', project['id'], proj['arch'], proj['big_endian']),
+                                         store.read_version('targets'), fingerprints)
+            if project['id'] == proj['id']:own = found
+            for value in set(found.values()):owners[value] = owners.get(value, 0) + 1
+        return frozenset(fid for fid, value in own.items() if owners[value] > 1)
     def build():
         rows = net.store.all('SELECT f.id,f.project_id,f.target FROM functions f JOIN projects p ON p.id=f.project_id '
                              'WHERE p.arch=? AND p.big_endian=? AND f.gone_mark IS NULL AND length(f.target)>0',
@@ -75,19 +98,20 @@ def cross_project_ids(net, proj):
 
 
 def map_payload(net, slug, since=None, delta=False):
+    store = net.project_store(slug)
     sig = net.map_signature(slug)
     if since == sig:
         return {'sig':sig, 'same':True}
     snapshots = cache(net)
     # A direct SQL/transactional caller must never publish a snapshot that could roll back.
-    transactional = getattr(net.store._local, 'in_tx', False)
+    transactional = getattr(store._local, 'in_tx', False)
     if transactional:
         rows = net.function_map(slug)
     else:
-        freshness = net.store.one("SELECT COALESCE(h.revision,0),COALESCE(h.rewritten,0),COALESCE(t.attempts,0) "
+        freshness = store.one("SELECT COALESCE(h.revision,0),COALESCE(h.rewritten,0),COALESCE(t.attempts,0) "
                                   "FROM projects p LEFT JOIN history_revisions h ON h.project_id=p.id "
                                   "LEFT JOIN project_totals t ON t.project_id=p.id WHERE p.slug=?",slug)
-        claims = net.store.all("SELECT c.function_id,c.agent_id,c.expires_at FROM claims c JOIN functions f ON f.id=c.function_id "
+        claims = store.all("SELECT c.function_id,c.agent_id,c.expires_at FROM claims c JOIN functions f ON f.id=c.function_id "
                                 "JOIN projects p ON p.id=f.project_id WHERE p.slug=? ORDER BY c.function_id",slug)
         link = net.links.get(slug)
         from .function_searches import active
@@ -135,18 +159,19 @@ def incremental_map(net, slug):
     snapshots = cache(net)
     proj = net._project(slug)
     pid = proj['id']
+    store = net.project_store(pid)
     with snapshots.lock:
         lock = snapshots.map_locks.setdefault(pid, threading.Lock())
     with lock:
-        revision = net.store.one('SELECT revision FROM map_clock WHERE id=1')['revision']
-        shared = (net.store.read_version('targets'), net.store.read_version('fingerprints', pid),
-                  net.store.read_version('naming', pid), net.store.read_version('sdk_names'), proj['config'],
+        revision = store.one('SELECT revision FROM map_clock WHERE id=1')['revision']
+        shared = (peer_revision(net), store.read_version('fingerprints', pid),
+                  store.read_version('naming', pid), store.read_version('sdk_names'), proj['config'],
                   repr(net.links[slug].claims) if slug in net.links else '',
                   active(net,slug))
         old = snapshots.maps.get(pid)
         rows = None
         if old and old[0] == shared:
-            ids = [r['function_id'] for r in net.store.all(
+            ids = [r['function_id'] for r in store.all(
                 'SELECT function_id FROM map_changes WHERE project_id=? AND revision>?', pid, old[1])]
             positions = {r['id']: i for i, r in enumerate(old[2]) if 'id' in r}
             if len(positions) == len(old[2]) and len(ids) < max(1, len(old[2]) // 2):

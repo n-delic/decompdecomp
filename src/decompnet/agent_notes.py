@@ -2,13 +2,15 @@
 import time
 
 
-def session_for(db, project, agent, at):
+def session_for(db, project, agent, at, *, agent_name=None):
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
         return None
-    return db.execute('SELECT s.* FROM helper_sessions s JOIN projects p ON p.slug=s.project '
-                      'JOIN agents a ON a.name=s.agent WHERE p.id=? AND a.id=? AND s.started_at<=? '
+    join = ' JOIN agents a ON a.name=s.agent' if agent_name is None else ''
+    identity = 'a.id' if agent_name is None else 's.agent'
+    return db.execute('SELECT s.* FROM helper_sessions s JOIN projects p ON p.slug=s.project'+join+' '
+                      'WHERE p.id=? AND '+identity+'=? AND s.started_at<=? '
                       'AND (s.ended_at IS NULL OR s.ended_at>=?) ORDER BY s.id DESC LIMIT 1',
-                      (project, agent, at, at)).fetchone()
+                      (project, agent if agent_name is None else agent_name, at, at)).fetchone()
 
 
 def scores(db, function, agent, session):
@@ -44,9 +46,9 @@ def note_scores(db, function, agent, at):
     return current_scores(db, function, at) if measured == (None, None) else measured
 
 
-def save(db, project, function, agent, text, at=None, measured=None):
+def save(db, project, function, agent, text, at=None, measured=None, *, agent_name=None):
     at = time.time() if at is None else at
-    session = session_for(db, project, agent, at) if function else None
+    session = session_for(db, project, agent, at, agent_name=agent_name) if function else None
     if measured is not None:
         before, after = measured
     elif session:
@@ -71,7 +73,7 @@ def grouped(store, rows, project):
         db = store.conn
         for raw in rows:
             row = dict(raw)
-            session = session_for(db, project, row['agent_id'], row['created_at'])
+            session = session_for(db, project, row['agent_id'], row['created_at'], agent_name=row['agent'])
             key = (row['agent_id'], row.get('session_id') or (session['id'] if session else None))
             # Exact imported timestamps can identify a recording batch, but never imply a known session.
             if key[1] is None or row['agent'] == 'you':

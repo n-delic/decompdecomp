@@ -9,7 +9,7 @@ from ..network import NetworkError
 
 
 def validate(net, fn, need, agent=None):
-    proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    proj = net.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     if need['id'] in claim_stalls.blocked(net,proj,agent):
         raise NetworkError('needs: this candidate is paused after exhausting unchanged work. Release without needs; '
                            'automatic pivots cannot override pauses. The user can review it in Repair examples.')
@@ -29,22 +29,22 @@ def validate(net, fn, need, agent=None):
 
 
 def pivot_key(net, fn, need):
-    proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    proj = net.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     stamp = hashlib.sha256(repr((claim_stalls.signature(net,proj,fn),
                                 claim_stalls.signature(net,proj,need))).encode()).hexdigest()
     return f'dependency-pivot:{fn["id"]}:{need["id"]}',stamp
 
 
 def permitted(net, fn, need, agent=None):
-    proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    proj = net.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     if need['id'] in claim_stalls.blocked(net,proj,agent):
         return False
     key,stamp = pivot_key(net,fn,need)
-    row = net.store.one('SELECT value FROM settings WHERE key=?',key)
+    row = net.project_store(fn['project_id']).one('SELECT value FROM settings WHERE key=?',key)
     return not row or row['value'] != stamp
 
 
 def remember(net, fn, need):
     key,stamp = pivot_key(net,fn,need)
-    with net.store.tx() as db:
+    with net.project_store(fn['project_id']).tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,stamp))

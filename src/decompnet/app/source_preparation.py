@@ -516,7 +516,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 continue
             if st.stop.is_set() or report['tested'] >= budget or time.monotonic() >= deadline:
                 break
-            fn = net.store.one("SELECT * FROM functions WHERE project_id=? AND name=? AND (status='open' OR (? AND status='asm'))", proj['id'], mapping[0],bool(include_assembly and not fork))
+            fn = net.project_store(proj['id']).one("SELECT * FROM functions WHERE project_id=? AND name=? AND (status='open' OR (? AND status='asm'))", proj['id'], mapping[0],bool(include_assembly and not fork))
             if not fn or not permuter._hold(agent, fn, count_turn=False, seconds=seconds):
                 continue
             st.holding(fn['name'], True)
@@ -524,7 +524,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
             improved_source = False
             try:
                 fresh = net.project_row(proj['slug'])
-                fn = net.store.one('SELECT * FROM functions WHERE id=?', fn['id'])
+                fn = net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?', fn['id'])
                 if fn['status'] != 'open' and not (include_assembly and fn['status']=='asm'):
                     continue
                 if not fork and fn['status']=='open' and cfg.get('auto_exact'):
@@ -543,8 +543,8 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 log_line(fn['name'] + ': reading and preparing selected source context…')
                 from .source_lead_analysis import features
                 target_calls=features([line.split('*/',1)[-1].strip() for line in (fn['asm'] or '').splitlines()], fresh['arch'])['calls']
-                unit_cfg={'_compiler_units':not fork and fresh['arch']=='mips','_helper_units':not fork and fresh['arch']=='mips','_known_functions':[r['name'] for r in net.store.all('SELECT name FROM functions WHERE project_id=?',proj['id'])],
-                          '_matched_functions':[r['name'] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",proj['id'])]}
+                unit_cfg={'_compiler_units':not fork and fresh['arch']=='mips','_helper_units':not fork and fresh['arch']=='mips','_known_functions':[r['name'] for r in net.project_store(proj['id']).all('SELECT name FROM functions WHERE project_id=?',proj['id'])],
+                          '_matched_functions':[r['name'] for r in net.project_store(proj['id']).all("SELECT name FROM functions WHERE project_id=? AND status='matched'",proj['id'])]}
                 variants = prepare_variants(reader, {**cfg,**unit_cfg,'_build_owned':bool(fork),'_target_calls':target_calls}, mapping, aliases, fallback)
                 if time.monotonic() >= deadline:
                     log_line(fn['name'] + ': source preparation used this round’s time allowance before compilation. Use a smaller coherent header before retrying.')
@@ -599,7 +599,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                     if st.stop.is_set() or report['tested'] >= budget or time.monotonic() >= deadline:
                         break
                     fresh = net.project_row(proj['slug'])
-                    fn = net.store.one('SELECT * FROM functions WHERE id=?', fn['id'])
+                    fn = net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?', fn['id'])
                     if fn['status'] != 'open' and not (include_assembly and fn['status']=='asm'):
                         break
                     # Imported build files can change independently: retry on a new explicit pass/session.
@@ -614,7 +614,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                         if rejected(net,fn,destination(net,fresh,fn),source,header,lead,compiler_for(json.loads(fresh['config']),fn['vram'], fn)):
                             log_line(fn['name']+': retained rejected source lead; unchanged trial skipped.')
                             continue
-                    cached=net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], cache_key)
+                    cached=net.project_store(proj['id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], cache_key)
                     if cached:
                         if not fork:
                             from .cpu_source_recovery import extend
@@ -635,7 +635,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                                     and not retried and not st.stop.is_set() and time.monotonic()<deadline
                                     and report['tested']<budget):
                                 retried=True
-                                current_fn=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+                                current_fn=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
                                 fallback=net._context(proj['id'],current_fn['unit'])['header']
                                 rebuilt=prepare_variants(reader,{**cfg,'_build_owned':bool(fork)},mapping,aliases,fallback)
                                 variants.append(next((pair for pair in rebuilt if pair[0]==source),rebuilt[0]))
@@ -651,7 +651,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                             report['errors'].append(f'{fn["name"]}: {exc}')
                             log_line(report['errors'][-1])
                             if not str(exc).startswith(('The function, header or build inputs changed', 'The function claim changed')):
-                                with net.store.tx() as db:
+                                with net.project_store(proj['id']).tx() as db:
                                     db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                                                (fn['id'], cache_key, 'error', str(exc)[:1200]))
                                     db.execute('UPDATE reuse_trials SET feedback=? WHERE function_id=? AND signature=?',
@@ -671,7 +671,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                     if (not fork and score is not None and score != 0
                             and not pending(net,fn,state,cfg,variants,reader.origins,(source,header))):
                         private_profiles(net, fresh, fn, source, header, st, report, log_line, budget, deadline, lead)
-                    with net.store.tx() as db:
+                    with net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                                    (fn['id'], cache_key, str(score), 'local source preparation'))
                         db.execute('UPDATE reuse_trials SET feedback=? WHERE function_id=? AND signature=?',
@@ -682,7 +682,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 log_line(message)
                 # Compile failures are cached too, but a changed destination remains retryable.
                 if cache_key and not str(exc).startswith(('The function, header or build inputs changed', 'The function claim changed')):
-                    with net.store.tx() as db:
+                    with net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                                    (fn['id'], cache_key, 'error', str(exc)[:1200]))
             finally:
@@ -747,10 +747,10 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     def signature(flags, body=source, context=header):
         return 'local-source-profile-v3:'+hashlib.sha256(repr((expected,body,context,own['toolchain'],flags)).encode()).hexdigest()
     choices=untested_profiles(choices,own['flags'],signature,
-        lambda key:net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key))
+        lambda key:net.project_store(proj['id']).one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key))
     trials = [(flags,source,header,0) for flags in choices]
-    if hasattr(net.store,'all'):
-        for row in net.store.all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 128',fn['id'],'local-source-profile-v3:%'):
+    if hasattr(net.project_store(proj['id']),'all'):
+        for row in net.project_store(proj['id']).all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 128',fn['id'],'local-source-profile-v3:%'):
             saved = json.loads(row['feedback'] or '{}')
             retry = saved.get('cpu_retry')
             if retry and saved.get('cpu_parent') == parent:
@@ -759,7 +759,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
         flags,source,header,depth = trials.pop(0)
         if st.stop.is_set() or report['tested']>=budget or time.monotonic()>=deadline:return
         key=signature(flags,source,header)
-        if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
+        if net.project_store(proj['id']).one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
         private={**dict(proj),'config':json.dumps({**cfg,'compiler':{**own,'flags':flags},'compiler_ranges':[],'function_compilers':{}})}
         from .source_lead_analysis import destination, record
         scope=destination(net,proj,fn);started=time.monotonic()
@@ -785,7 +785,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
                    (time.monotonic()-started)*1000,error=str(result.log),scope=scope)
             feedback={**retry_evidence,'score':None,'exact':False,
                       'category':'compile_or_extra_body','diagnostic':str(result.log)[:2000]}
-            with net.store.tx() as db:
+            with net.project_store(proj['id']).tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                            (fn['id'],key,'failed','private-context compile failure',json.dumps(feedback)))
             continue
@@ -793,14 +793,14 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
         if candidate is None:
             record(net,private,fn,source,header,None,[],{**(lead or {}),'family':'compiler-profile'},
                    (time.monotonic()-started)*1000,error='; '.join(problems),scope=scope)
-            with net.store.tx() as db:
+            with net.project_store(proj['id']).tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                            (fn['id'],key,'failed','private-context link failure',json.dumps({**retry_evidence,'category':'link_error','diagnostic':'; '.join(problems),'exact':False})))
             continue
         diff=scoring.diff(net._target_obj(fn,proj),candidate)
         exact=verdict is True
         score=0 if exact else max(1,diff.score)
-        current=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+        current=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
         if inputs(net,net.project_row(proj['slug']),current)!=expected:return
         record(net,private,fn,source,header,score,diff.rows,{**(lead or {}),'family':'compiler-profile'},
                (time.monotonic()-started)*1000,scope=scope)
@@ -809,7 +809,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
         from .prepared_evidence import digest
         evidence['inputs']=digest(net,proj,fn)
         evidence['category']='exact' if exact else ('data' if diff.bytes_match else 'instructions')
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                        (fn['id'],key,str(score),'private-context compiler probe; review required',json.dumps(evidence)))
         log_line(f"{fn['name']}: prepared context with {' '.join(flags)} scored {score}; private source/header/profile evidence saved for review. Working settings unchanged.")

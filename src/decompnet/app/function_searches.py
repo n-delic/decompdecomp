@@ -23,7 +23,7 @@ def active(net, slug):
 def activity(net, proj):
     searches={name:(jid,started) for name,jid,started in active(net,proj['slug'])}
     if not searches:return []
-    rows=net.store.all('SELECT name,n_insns,best_score,attempts FROM functions '
+    rows=net.project_store(proj['id']).all('SELECT name,n_insns,best_score,attempts FROM functions '
                        f"WHERE project_id=? AND status='open' AND {IN_BUILD} "
                        'AND name IN (SELECT value FROM json_each(?))',proj['id'],json.dumps(list(searches)))
     return [dict(row) | {'agent':'permuter','claimed_at':searches[row['name']][1],

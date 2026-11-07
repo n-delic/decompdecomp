@@ -38,8 +38,9 @@
   catalog-to-project handoffs with replay receipts; pending verification and
   prepared compiler/header publication select project storage. Local worker claims,
   permutation input tracking, compiler comparisons and profile publication now
-  select project storage. Remaining service conversion and recoverable migration
-  still gate activation.
+  select project storage. Judge bookkeeping, drafts, source preparation, polishing,
+  function editing, coverage audits and local GUI views now select project storage.
+  Remaining service conversion and recoverable migration still gate activation.
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

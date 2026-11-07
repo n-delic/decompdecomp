@@ -680,6 +680,9 @@ def test_room_lease_can_infer_the_only_project_without_catalog_claims(scoped, tm
     net, stores = scoped
     _room_projects(net, stores, tmp_path)
     net._yield_autopilot = lambda *args: None
+    # This is a lease-selection test; explicitly retain the synthetic nop as code.
+    with stores[1].tx() as db:
+        db.execute('UPDATE functions SET meta=?', ('{"boundary_override":true}',))
     with net.store.tx() as db:
         db.execute('DELETE FROM projects WHERE id=2')
     fn = net._room_claim_row(Agent(1, 'worker', None), None, 'same_name', 'easiest')
@@ -910,3 +913,59 @@ def test_permutation_input_refresh_rejects_mixed_projects(scoped, tmp_path):
     assert not net.store.one("SELECT 1 FROM settings WHERE key LIKE 'permuter-inputs%'")
     with pytest.raises(ValueError, match='selected project'):
         permuter_inputs.refresh(net, proj, [fn, net._function('same_name', 'second')])
+
+
+def test_engine_source_fallback_and_draft_reports_use_owner(scoped):
+    from decompnet.app import draft_reports
+    from decompnet.app.engine.judging import JudgeMixin
+    net, stores = scoped
+    fn = net._function('same_name', 'first')
+    with stores[1].tx() as db:
+        db.execute('INSERT INTO attempts(function_id,agent_id,source) VALUES(10,1,?)', ('int same_name(void){return 1;}',))
+    assert 'return 1' in JudgeMixin._source_of(net, fn)
+    assert JudgeMixin._source_of(net, net._function('same_name', 'second')) is None
+    draft_reports.save(net, 10, {'compiled':True}, project_id=1)
+    assert draft_reports.read(net, 10, project_id=1)['compiled']
+    assert draft_reports.read(net, 10, project_id=2) == {}
+    assert draft_reports.read(net, 10) == {}
+
+
+def test_source_profile_evidence_and_draft_eligibility_use_owner(scoped):
+    from decompnet.app import candidate_rechecks, draft_regeneration
+    net, stores = scoped
+    fn = net._function('same_name', 'first')
+    candidate_rechecks.ensure(net, 1)
+    with stores[1].tx() as db:
+        aid = db.execute('INSERT INTO attempts(function_id,source,compiled,score) VALUES(10,?,1,10)',
+                         ('int same_name(void){return 1;}',)).lastrowid
+    report = {'source_hash':'different', 'alternatives':[aid]}
+    assert candidate_rechecks.alternatives(net, fn, report)[0]['id'] == aid
+    assert candidate_rechecks.alternatives(net, net._function('same_name', 'second'), report) == []
+    assert draft_regeneration.has_compiling_c(net, fn)
+    assert not draft_regeneration.has_compiling_c(net, net._function('same_name', 'second'))
+
+
+def test_gui_summaries_history_and_shared_labels_use_selected_files(scoped, tmp_path, monkeypatch):
+    from decompnet.app.engine.gui import GuiMixin
+    from decompnet.app.function_history import history
+    from decompnet.app.project_labels import label
+    from decompnet.app.view_snapshots import cross_project_ids
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    net.rooms = {};net.autopilots = {}
+    net.summary = GuiMixin.summary.__get__(net)
+    net.summary_batch = GuiMixin.summary_batch.__get__(net)
+    with stores[1].tx() as db:
+        db.execute("UPDATE projects SET name='Changed locally'")
+        db.execute("UPDATE functions SET status='matched',matched_agent_id=1,matched_at=123")
+        db.execute('INSERT INTO attempts(function_id,agent_id,score,created_at) VALUES(10,1,0,123)')
+    with net.store.tx() as db:db.execute("UPDATE agents SET name='current shared name' WHERE id=1")
+    with net.summary_batch():
+        first, second = net.summary('first'), net.summary('second')
+    assert first['title'] == 'Changed locally' and first['matched'] == 1
+    assert second['matched'] == 0
+    assert history(stores[1], net._function('same_name', 'first'), net=net)['scores'][0]['agent'] == 'current shared name'
+    assert label(net, [{'agent_id':1}], {'agent':'agent_id'}) == [{'agent':'current shared name'}]
+    assert cross_project_ids(net, net._project('first')) == {10}
+    with stores[2].tx() as db:db.execute('UPDATE functions SET target=?', (b'other',))
+    assert cross_project_ids(net, net._project('first')) == set()

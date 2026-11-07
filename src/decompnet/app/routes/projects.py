@@ -517,7 +517,7 @@ def register(app: App) -> None:
     def p_function_notes(slug, request, data):
         from ..function_history import notes_page
         fn = net._function(request.query_params.get('name', ''), slug)
-        return notes_page(net.store, fn, request.query_params.get('before'))
+        return notes_page(net.project_store(fn['project_id']), fn, request.query_params.get('before'), net=net)
 
     from ..function_searches import Searches
     function_searches = net.function_searches = Searches(jobs)

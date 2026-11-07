@@ -90,7 +90,7 @@ class Readability:
         a ROM project's C is the database's, one function at a time."""
         if self.net.is_rom(proj):
             return []
-        rows = self.net.store.all(
+        rows = self.net.project_store(proj['id']).all(
             "SELECT unit, COUNT(*) AS n FROM functions WHERE project_id=? AND unit != '' AND "
             f"{GAME_CODE} AND {IN_BUILD} GROUP BY unit HAVING SUM(status='matched' AND readable=1) = COUNT(*) "
             "AND unit NOT IN (SELECT detail FROM events WHERE project_id=? AND kind='tidied') "
@@ -100,7 +100,7 @@ class Readability:
 
     def _file_given_up(self, proj, unit: str) -> bool:
         """Whether a file was handed out POLISH_TRIES times without being tidied (rather than tidied while held)."""
-        row = self.net.store.one(
+        row = self.net.project_store(proj['id']).one(
             "SELECT SUM(kind='tidy') AS tried, SUM(kind='tidied') AS tidied FROM events "
             "WHERE project_id=? AND detail=? AND kind IN ('tidy', 'tidied')", proj["id"], unit)
         return (row["tried"] or 0) >= POLISH_TRIES and not row["tidied"]
@@ -114,14 +114,14 @@ class Readability:
 
     def counts(self, proj) -> dict:
         """The game's own code only (GAME_CODE): library code set aside is out of progress, so out of polishing too."""
-        row = self.net.store.one("SELECT SUM(status='matched') AS matched, SUM(status='matched' AND readable=1) AS readable "
+        row = self.net.project_store(proj['id']).one("SELECT SUM(status='matched') AS matched, SUM(status='matched' AND readable=1) AS readable "
                                  f"FROM functions WHERE project_id=? AND {GAME_CODE}", proj["id"])
         return {"matched": row["matched"] or 0, "readable": row["readable"] or 0}
 
     def left(self, proj) -> int:
         """How many functions polishing can still take, held ones included, and files to tidy: a polishing helper
         stops at none (a game with nothing left to decompile stopped its polishing helpers before they began)."""
-        return self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}",
+        return self.net.project_store(proj['id']).one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}",
                                   proj["id"], proj["id"])["n"] + len(self._untidy(proj))
 
     def _tidy_job(self, agent: Agent, proj) -> tuple[str | None, str | None]:
@@ -147,7 +147,7 @@ class Readability:
                     return None, left
             # taking a held file up again is a try too: one a helper never finished got it back every claim without a
             # try against it, so it never left and left() never reached 0, as a function did before #108
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 self.net._event(db, proj["id"], agent.id, "tidy", mine)
             self._tidying[(proj["id"], mine)] = (agent.id, now + CLAIM_SECONDS)
         fp = ForkProject(Path(proj["root"]))
@@ -192,7 +192,7 @@ class Readability:
             if held is None or held[0] != agent.id or held[1] <= time.time():
                 raise NetworkError(f"you aren't tidying {unit}: claim_readable gives you a file to tidy")
             del self._tidying[(proj["id"], unit)]
-        with self.net.store.tx() as db:
+        with self.net.project_store(proj['id']).tx() as db:
             self.net._event(db, proj["id"], agent.id, "tidied", unit)
             self.net._event(db, proj["id"], agent.id, "tidy_summary", f"{unit}: {summary.strip()[:500]}")
         return f"✅ {unit} is tidy. claim_readable for the next one."
@@ -202,8 +202,11 @@ class Readability:
         proj = self.net._project(slug)
         fork = not self.net.is_rom(proj)
         now = time.time()
-        with self.net.store.tx() as db:
-            self.net._expire_claims(db)
+        from .local_claims import expiry_ids
+        store = self.net.project_store(proj['id'])
+        identities = expiry_ids(self.net, store)
+        with store.tx() as db:
+            self.net._expire_claims(db, **identities)
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                               (agent.id,)).fetchone()
             fn = held if held is not None and held["status"] == "matched" else None
@@ -270,10 +273,12 @@ class Readability:
         stop, a helper left for good, and a function or file whose holder's claim then ran out had nobody to take it
         (#89)."""
         now = time.time()
-        held = [(r["name"], r["agent"], r["expires_at"]) for r in self.net.store.all(
-            "SELECT f.name, a.name AS agent, c.expires_at FROM claims c "
-            f"JOIN (SELECT id, name FROM functions WHERE project_id=? AND {TODO}) f ON f.id=c.function_id "
-            "LEFT JOIN agents a ON a.id=c.agent_id", proj["id"], proj["id"])]
+        from .project_labels import label
+        rows = self.net.project_store(proj['id']).all(
+            "SELECT f.name, c.agent_id, c.expires_at FROM claims c "
+            f"JOIN (SELECT id, name FROM functions WHERE project_id=? AND {TODO}) f ON f.id=c.function_id",
+            proj['id'], proj['id'])
+        held = [(r['name'], r['agent'], r['expires_at']) for r in label(self.net, rows, {'agent':'agent_id'})]
         with self._tidy_lock:
             files = [(u, who, until) for (pid, u), (who, until) in self._tidying.items()
                      if pid == proj["id"] and until > now]
@@ -297,7 +302,7 @@ class Readability:
         fn = self.net._function(function, proj["slug"])
         if fn["status"] != "matched":
             raise NetworkError(f"{fn['name']} isn't matched yet: compile_and_diff it first")
-        claim = self.net.store.one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
+        claim = self.net.project_store(proj['id']).one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
         if claim is not None and claim["agent_id"] != agent.id:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
         if " ".join(source.split()) == " ".join(self._matching_c(proj, fn).split()):
@@ -326,7 +331,7 @@ class Readability:
 
     def _readable(self, proj, fn, agent: Agent, source: str) -> str:
         """A rewrite that still matches: it's the function's C now, and the function counts as readable."""
-        with self.net.progress._project_lock(proj["slug"]), self.net.store.tx() as db:
+        with self.net.progress._project_lock(proj["slug"]), self.net.project_store(proj['id']).tx() as db:
             self.net.progress.check_result()
             db.execute("UPDATE functions SET matched_source=?, best_source=?, readable=1 WHERE id=?",
                        (source, source, fn["id"]))

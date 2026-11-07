@@ -110,6 +110,13 @@ Configuration changes still verify affected matches and reject concurrent input
 changes before publishing settings and rescored attempts together. Claim checks
 resolve shared identities before acquiring a separate project writer.
 
+Judge bookkeeping, local draft/source preparation, polishing, function editing,
+briefs, boundaries and coverage audits now select project storage. Project GUI
+maps, summaries, history and live activity read that same storage; public labels
+come from the shared agent registry. Separate-store peer indicators compare
+cached target fingerprints one project at a time. Global notifications, provider
+session routing, imports and cross-game services still need their remaining audit.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
