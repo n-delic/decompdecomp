@@ -5535,3 +5535,36 @@ External PROJECT/custom commands stay disabled until invocation language, intege
 width and preprocessing can be proved (see ROADMAP). Architecture routing tests
 do not establish eligibility or a benefit for another compiler. Every proposal
 still passes the existing destination judge.
+
+
+## Scheduled quantity births and scalar return modes (7 November 2026)
+
+Controlled negative evidence for KMC GCC2.7.2, flags
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`:
+
+- A rectangle draft's local halfword quantities had equal measured density.
+  Moving only one declaration changed pseudo IDs but reproduced the exact565/
+  1548-byte baseline. Moving its real independent height calculations before
+  width-position calculations gave3821/1448bytes, not a register-swap fix.
+  Per-pseudo lifetimes changed43/43 to45/39; these are not new measurements of
+  merged-quantity densities. Earlier birth may lower priority by lengthening an
+  interval. Local quantity IDs arise from scheduled births, not C declarations.
+- Ordinary and diagnostic pairs and four independent saved-object relinks agree.
+  Source effects/types/calls were preserved, no padding or synthetic dependency
+  was introduced. No match or selected-source change resulted. All2078 selected
+  sources/profiles and737 focal attempts were preserved.
+- A separate return-mode audit found genuine QI/HI comparison retagging in
+  `convert.c`145–153 and mode-preserving `FUNCTION_VALUE` in `mips.h`1906.
+  Nevertheless `stmt.c`2638/2853–2868 evaluates the scalar RHS with a null target
+  before the late return move; `expr.c`4110 strips hard targets for CSE regardless
+  of mode, and9891 creates a pseudo for a null store-flag target. Earlier valid
+  byte/halfword-return controls retained score40 and its local-v0 obstacle.
+  The staged score20 source does not establish a new interaction. No duplicate
+  compiler call was run just to obtain missing old narrow-mode dumps. The known
+  caller consumes a byte but declares s32; original type attribution is not proven.
+
+Evidence level: paired compiler/relink controls for declaration/computation order;
+compiler-source, retained older outputs and fresh read-only audit for return modes.
+Private receipts `quantity-order-controls-nov7` and `return-mode-nov7` retain full
+sources/context and limitations; no game data is published. These findings support
+better hypothesis selection, not a new general automatic repair or new coverage.

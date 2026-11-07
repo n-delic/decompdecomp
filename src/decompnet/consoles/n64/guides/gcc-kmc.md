@@ -1311,3 +1311,28 @@ External PROJECT/custom commands stay disabled until invocation language, intege
 width and preprocessing can be proved (see ROADMAP). Architecture routing tests
 do not establish eligibility or a benefit for another compiler. Every proposal
 still passes the existing destination judge.
+
+
+## Local quantity order is not declaration order
+
+When two local quantities have equal allocation priority, inspect scheduled
+first births and final uses. `local-alloc.c` creates a quantity in `reg_is_born`;
+its density comparator uses quantity number only to break an equal-priority tie.
+Moving a declaration can change pseudo identities without changing those births
+or final machine code. Moving real independent computations can instead lengthen
+one interval and shorten the other, losing the tie altogether.
+
+A controlled KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` rectangle draft
+stayed byte-identical at565 when a halfword declaration moved earlier. Moving
+its existing height calculations earlier worsened to3821 and changed late tail
+sharing. Ordinary/diagnostic builds and saved-object relinks agreed. Neither
+was a match. Do not invent extra uses, stores or barriers to reserve a register.
+
+Narrowing a Boolean return is also not a general way to reserve v0 early.
+This compiler preserves genuine QI/HI result modes, but `expand_return` evaluates
+the scalar expression into a pseudo before its late return move. CSE's
+hard-target stripping is not restricted to SI mode. Earlier valid byte/halfword
+return controls left the same allocation problem; a later staged-load draft
+provides no demonstrated interaction warranting a duplicate test. Keep caller
+prototypes consistent: a byte-consuming caller alone does not prove the original
+return declaration was a byte type.
