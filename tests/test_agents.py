@@ -959,6 +959,25 @@ def test_the_tests_never_run_an_agent_to_find_it(monkeypatch):
     assert {row["id"] for row in agents.detect()} == {a.id for a in kinds.AGENTS}
 
 
+def test_a_helper_stops_when_all_that_is_open_is_what_it_said_no_c_makes(tmp_path, monkeypatch):
+    """The claim order never hands an agent back a function it said no C makes, so with only those open a session
+    can only find nothing to do: the helper stops at once and says what the user can do, where its sessions failed
+    one after another into a pause. Another helper, which hasn't said so, still works."""
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta=? WHERE name='f0'",
+                   (json.dumps({"not_c": {"api-m-1": {"model": "m", "why": "hand-written", "t": 0}}}),))
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m"})
+    s.stop = Quick()
+    m._run(s)
+    assert s.state == "stopped" and s.stopped_by == agents.BY_ITSELF and s.runs == 0
+    assert "nothing left it can do: the 1 open function is one it found no C makes" in s.why
+    assert m._ruled_out("game", "api-m-2") == 0  # (another helper's sessions go on)
+
+
 def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monkeypatch):
     """Ridge Racer V's API helper used 240K tokens per match: it trimmed old tool output wherever the conversation grew,
     so every request changed near its start and the provider's prompt cache never served it. Now what led up to a
