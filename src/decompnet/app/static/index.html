@@ -384,6 +384,7 @@
               </div>
               <p id="compilerTestScope" class="muted small">All installed compilers and supported flag variations · new or changed attempts only.</p>
               <div class="row"><button class="primary" type="button" id="testInstalledCompilers">Find better settings</button></div>
+              <p class="err-msg" id="compilerTestError" hidden></p>
               <section id="compilerProgress" class="compiler-progress" aria-label="Compiler comparison progress" hidden>
                 <div class="compiler-queue-count"><span data-queue>Preparing eligibility checks…</span><progress data-queue-bar max="1" value="0" aria-label="Functions completed in this run"></progress></div>
                 <div class="compiler-progress-heading"><span class="small muted compiler-current-label">Current function</span><b class="mono" data-current>Preparing…</b></div>
@@ -397,11 +398,6 @@
                 </dl>
                 <p class="small muted compiler-progress-profile" data-profile>Comparing the saved C. Compiler settings stay unchanged.</p>
               </section>
-              <details class="more"><summary>What gets tested?</summary><div class="more-body small muted">All eligible unmatched functions in one run. Stop at any time; completed comparisons are saved so the next run can skip unchanged work. Tests supported optimization and small-data flag variants locally. This is a bounded search, not every possible flag combination.</div></details>
-              <details class="more" id="compilerLogDetails" hidden><summary>Detailed output</summary>
-                <label class="check"><input type="checkbox" id="compilerFollowLog"><span>Follow latest output</span></label>
-                <pre class="joblog" id="installedCompilerLog" aria-live="off"></pre>
-              </details>
             </div></details>
           <details class="more" id="compilerHow">
             <summary>How the app checks</summary>

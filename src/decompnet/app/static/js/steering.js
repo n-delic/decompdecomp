@@ -665,7 +665,9 @@ function renderCompilerProgress(p, finished = false) {
   const set = (name, value) => { box.querySelector(`[data-${name}]`).textContent = value; };
   const queueBar = box.querySelector("[data-queue-bar]"), bar = box.querySelector("[data-bar]");
   const completed = p.completed || 0, total = p.total || 0;
-  set("queue", p.phase === "eligibility" ? `Checking eligibility: ${p.checked || 0} / ${p.scan_total || 0}` :
+  set("queue", p.phase === "stopped" ? `Comparison stopped · ${completed} functions tested` :
+    p.phase === "failed" ? `Comparison interrupted · ${completed} functions tested` :
+    p.phase === "eligibility" ? `Checking eligibility: ${p.checked || 0} / ${p.scan_total || 0}` :
     p.phase === "applying" ? `Rechecking and applying settings for ${p.function}` :
       finished ? `Comparison finished · ${completed} functions tested` : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left`);
   queueBar.max = p.phase === "eligibility" ? p.scan_total || 1 : total || 1;
@@ -750,11 +752,12 @@ async function loadCompilerComparison() {
 async function followCompilerComparison(job, slug) {
   if (compilerJob === job && compilerJobSlug === slug) return;
   compilerJob = job; compilerJobSlug = slug;
-  const button = $("testInstalledCompilers"), log = $("installedCompilerLog");
+  const button = $("testInstalledCompilers"), error = $("compilerTestError");
   button.textContent = "Stop comparison"; $("compilerRunState").textContent = "· Running";
-  $("installedCompilerTest").open = true; $("compilerLogDetails").hidden = false;
+  $("installedCompilerTest").open = true;
+  error.hidden = true; error.textContent = "";
   try {
-    const result = await followJob(job, log, (_lines, snapshot) => {
+    const result = await followJob(job, null, (_lines, snapshot) => {
       if (S.slug === slug && snapshot.progress) renderCompilerProgress(snapshot.progress);
     });
     if (S.slug === slug) {
@@ -763,7 +766,19 @@ async function followCompilerComparison(job, slug) {
         applied: result.applied_count}, true);
       await loadCompilerComparison();
     }
-  } catch (e) { if (S.slug === slug) { $("compilerLogDetails").open = true; showJobError(log, e.message); } }
+  } catch (e) {
+    if (S.slug === slug) {
+      const stopped = e.job?.state === "cancelled";
+      const latest = e.job?.progress || {};
+      const completed = latest.completed ?? (Number($("compilerProgress").querySelector("[data-completed]").textContent) || 0);
+      renderCompilerProgress({...latest, phase: stopped ? "stopped" : "failed", completed,
+        total: latest.total ?? $("compilerProgress").querySelector("[data-queue-bar]").max,
+        improved: latest.improved ?? Number($("compilerProgress").querySelector("[data-improved]").textContent),
+        exact: latest.exact ?? Number($("compilerProgress").querySelector("[data-exact]").textContent)}, true);
+      if (!stopped) { error.textContent = e.message; error.hidden = false; }
+      await loadCompilerComparison();
+    }
+  }
   finally {
     if (compilerJob === job) { compilerJob = null; compilerJobSlug = null; }
     if (S.slug === slug) { button.disabled = false; button.textContent = "Find better settings"; $("compilerRunState").textContent = ""; }
@@ -774,34 +789,17 @@ $("testInstalledCompilers").onclick = async () => {
   if (compilerJob && compilerJobSlug === S.slug) {
     const button = $("testInstalledCompilers"); button.disabled = true; button.textContent = "Stopping…";
     try { await api("/api/job/cancel", {method: "POST", body: {id: compilerJob}}); }
-    catch (e) { showJobError($("installedCompilerLog"), e.message); button.disabled = false; button.textContent = "Stop comparison"; }
+    catch (e) { const error = $("compilerTestError"); error.textContent = e.message; error.hidden = false; button.disabled = false; button.textContent = "Stop comparison"; }
     return;
   }
-  const slug = S.slug, log = $("installedCompilerLog");
-  showJobError(log, "");
-  $("compilerLogDetails").hidden = false;
-  $("compilerFollowLog").checked = false;
-  log._followTail = false;
-  log.textContent = "";
+  const slug = S.slug, error = $("compilerTestError");
+  error.hidden = true; error.textContent = "";
   try {
     const {job} = await api("/api/compilermap", {method: "POST", body: {slug, find_better_settings: true,
       flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked,
       untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked}});
     followCompilerComparison(job, slug);
-  } catch (e) { $("compilerLogDetails").open = true; showJobError(log, e.message); }
-};
-$("compilerFollowLog").onchange = () => {
-  const log = $("installedCompilerLog");
-  log._followTail = $("compilerFollowLog").checked;
-  if (log._followTail) log.scrollTop = log.scrollHeight;
-};
-$("installedCompilerLog")._followTail = false;
-$("installedCompilerLog").onscroll = () => {
-  const log = $("installedCompilerLog");
-  if (log.scrollHeight - log.clientHeight - log.scrollTop >= 32) {
-    log._followTail = false;
-    $("compilerFollowLog").checked = false;
-  }
+  } catch (e) { error.textContent = e.message; error.hidden = false; }
 };
 $("dialogBody").addEventListener("click", (e) => {
   const button = e.target.closest("[data-open-compiler-function]");
