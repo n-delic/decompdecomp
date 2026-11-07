@@ -10,7 +10,7 @@ import secrets
 import time
 
 from ...network import NetworkError
-from ...rom.symbols import Symbol
+from ...rom.symbols import AUTO_NAME, Symbol
 
 
 class RoomMixin:
@@ -162,24 +162,45 @@ class RoomMixin:
         by_vram: dict[int, list] = {}
         for row in local.values():
             by_vram.setdefault(row["vram"], []).append(row)
+        # Every name a function gave up, as {name it had before this call: name it has now}. The C that says the
+        # old names (its own, its callers', the headers) is rewritten once at the end, from the database, so a
+        # function renamed twice in one call (stepped aside, then given the host's name) ends up right (#107 review).
+        moves: dict[str, str] = {}
 
-        def free_name(name: str, vram: int) -> None:
-            """#107: the host's layout is authoritative, so a local function holding `name` at another address is
-            renamed to its address's default name (its code and symbol follow) instead of failing the unique name."""
-            for row in [r for r in local.values() if r["name"] == name and r["vram"] != vram]:
-                new = f"func_{row['vram']:08X}"
-                if any(r["name"] == new for r in local.values()):
-                    new = f"{new}_local"
-                word = re.compile(rf"\b{re.escape(name)}\b")
+        def rename(row, new: str) -> None:
+            old = row["name"]
+            with self.store.tx() as db:
+                db.execute("UPDATE functions SET name=? WHERE id=?", (new, row["id"]))
+            followed = [k for k, v in moves.items() if v == old]
+            for k in followed:
+                moves[k] = new
+            if not followed:
+                moves[old] = new
+            local[row["id"]] = renamed = {**row, "name": new}
+            by_vram[row["vram"]] = [renamed if i["id"] == row["id"] else i for i in by_vram[row["vram"]]]
+            self._syms.pop(pid, None)
+
+        def free_name(name: str, keep_id: int | None) -> None:
+            """#107: the host's layout is authoritative, so another local function holding `name` steps aside to its
+            address's default name (func_XXXXXXXX, _2, _3... when an overlay twin has that) instead of failing the
+            unique name. Its symbol follows here, its C at the end."""
+            for row in [r for r in local.values() if r["name"] == name and r["id"] != keep_id]:
+                base = f"func_{row['vram']:08X}"
+                spare, n = base, 2
+                while any(r["name"] == spare for r in local.values()) or self.store.one(
+                        "SELECT 1 FROM symbols WHERE project_id=? AND name=?", pid, spare):
+                    spare, n = f"{base}_{n}", n + 1
                 with self.store.tx() as db:
-                    db.execute("UPDATE functions SET name=?, matched_source=?, best_source=? WHERE id=?",
-                               (new, word.sub(new, row["matched_source"]) if row["matched_source"] else None,
-                                word.sub(new, row["best_source"]) if row["best_source"] else None, row["id"]))
-                    db.execute("UPDATE symbols SET name=? WHERE project_id=? AND name=?", (new, pid, name))
-                local[row["id"]] = renamed = {**row, "name": new}
-                by_vram[row["vram"]] = [renamed if i["id"] == row["id"] else i for i in by_vram[row["vram"]]]
-                self._syms.pop(pid, None)
+                    db.execute("UPDATE symbols SET name=? WHERE project_id=? AND name=?", (spare, pid, name))
+                rename(row, spare)
 
+        try:
+            self._mirror_layout(proj, console, functions, symbols, local, by_vram, rename, free_name)
+        finally:
+            self._rename_in_code(pid, moves)
+
+    def _mirror_layout(self, proj, console, functions, symbols, local, by_vram, rename, free_name) -> None:
+        pid = proj["id"]
         for f in sorted(functions, key=lambda f: f["vram"]):
             at = by_vram.get(f["vram"], [])
             if any(row["name"] == f["name"] for row in at):
@@ -195,7 +216,7 @@ class RoomMixin:
                 head, tail = console.split_function(owner, f["vram"], f["name"])
             except ValueError:
                 continue
-            free_name(f["name"], f["vram"])
+            free_name(f["name"], None)
             syms = self.symbols(pid)
             syms.add(Symbol(f["name"], f["vram"], tail.size, "func"))
             th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
@@ -216,33 +237,63 @@ class RoomMixin:
             local[tail_id] = {**owner, "id": tail_id, "name": f["name"], "vram": f["vram"], "size": tail.size}
             by_vram.setdefault(f["vram"], []).append(local[tail_id])
         self._xrefs.pop(pid, None)
-        syms = self.symbols(pid)
         for sym in symbols:
             at = by_vram.get(sym["address"], [])
-            if any(row["name"] == sym["name"] for row in at):
+            twins = len(at) > 1
+            if twins:
+                # Overlays share the address: the host says which of them it named by its unit (layout_symbols). An
+                # older host doesn't, and renaming the address would rename all of them.
+                at = [row for row in at if sym.get("unit") is not None and row["unit"] == sym["unit"]]
+            if len(at) != 1 or at[0]["name"] == sym["name"]:
                 continue
-            if len(at) != 1:
-                # An overlay address names several functions; renaming the address would rename all of them.
-                continue
-            free_name(sym["name"], sym["address"])
-            syms = self.symbols(pid)
-            row = by_vram[sym["address"]][0]
-            current, off = syms.name_at(sym["address"])
-            if off == 0 and current == sym["name"]:
-                continue
-            old = current if off == 0 else f"D_{sym['address']:08X}"
-            word = re.compile(rf"\b{re.escape(old)}\b")
+            row = at[0]
+            free_name(sym["name"], row["id"])
+            old = row["name"]
+            stale = {old, sym["name"]}
+            if not twins:  # the one function's address: whatever symbol names it goes
+                current, off = self.symbols(pid).name_at(sym["address"])
+                if off == 0:
+                    stale.add(current)
             with self.store.tx() as db:
-                db.execute("DELETE FROM symbols WHERE project_id=? AND (name=? OR name=?)", (pid, old, sym["name"]))
+                db.executemany("DELETE FROM symbols WHERE project_id=? AND name=?", [(pid, n) for n in stale])
                 db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                            (pid, sym["name"], sym["address"], sym["size"], sym["kind"]))
-                db.execute("UPDATE functions SET name=?, matched_source=?, best_source=? WHERE id=?",
-                           (sym["name"],
-                            word.sub(sym["name"], row["matched_source"]) if row["matched_source"] else None,
-                            word.sub(sym["name"], row["best_source"]) if row["best_source"] else None, row["id"]))
-            renamed = {**row, "name": sym["name"]}
-            local[row["id"]] = renamed
-            by_vram[sym["address"]] = [renamed if item["id"] == row["id"] else item
-                                       for item in by_vram[sym["address"]]]
-            self._syms.pop(pid, None)
-            syms = self.symbols(pid)
+            rename(row, sym["name"])
+
+    def _rename_in_code(self, pid: int, moves: dict[str, str]) -> None:
+        """Rewrite every matched and best source, and every header, from the names functions had to the names they
+        have now: a function that stepped aside and its callers must say its new name, as rename_symbols does, or a
+        match is stale and a save writes the wrong C (#107 review)."""
+        moves = {old: new for old, new in moves.items() if old != new}
+        if not moves:
+            return
+        word = re.compile(r"\b[A-Za-z_]\w*\b")
+        swap = lambda text: word.sub(lambda m: moves.get(m.group(0), m.group(0)), text) if text else text
+        with self.store.tx() as db:
+            for r in db.execute("SELECT id, matched_source, best_source FROM functions WHERE project_id=? AND "
+                                "(matched_source IS NOT NULL OR best_source IS NOT NULL)", (pid,)).fetchall():
+                matched, best = swap(r["matched_source"]), swap(r["best_source"])
+                if (matched, best) != (r["matched_source"], r["best_source"]):
+                    db.execute("UPDATE functions SET matched_source=?, best_source=? WHERE id=?", (matched, best, r["id"]))
+            for unit in {""} | self._unit_contexts(pid):
+                last = db.execute("SELECT header FROM context_versions WHERE project_id=? AND unit=? "
+                                  "ORDER BY version DESC LIMIT 1", (pid, unit)).fetchone()
+                if last is None or swap(last["header"]) == last["header"]:
+                    continue
+                db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
+                           "VALUES(?,?,?,?,?,?,?)", (pid, self._next_version(db, pid), swap(last["header"]), None,
+                                                     "names follow the shared layout", time.time(), unit))
+
+    def layout_symbols(self, pid: int) -> list[dict]:
+        """The names given in a project, for a room's state and a save. A name one of several functions at an
+        address holds (overlays share addresses) also says that function's unit, so the other side names the same
+        one (#107 review); elsewhere the list is as it always was."""
+        twins = {r["name"]: r["unit"] for r in self.store.all(
+            "SELECT name, unit FROM functions WHERE project_id=? AND vram IN "
+            "(SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*) > 1)", pid, pid)}
+        out = []
+        for r in self.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid):
+            if AUTO_NAME.match(r["name"]):
+                continue
+            out.append(dict(r) | ({"unit": twins[r["name"]]} if r["name"] in twins else {}))
+        return out
