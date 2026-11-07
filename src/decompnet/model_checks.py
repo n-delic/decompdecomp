@@ -1,4 +1,6 @@
 """Function submissions attributed to recorded session models, never inferred from worker names."""
+import json
+
 from .network import NetworkError
 
 
@@ -12,13 +14,16 @@ def tried(net, project, agent):
     if not model:
         raise NetworkError('Choose an explicit model before using the never-tried-by-model filter; this worker has no recorded model ID.')
     matching = [r for r in rows if r['model'].split('#', 1)[0] == model]
-    # Sessions keep the model used at the time, even if a worker later switches models.
-    attempts = store.all('SELECT t.function_id,t.created_at,a.name AS agent FROM attempts t '
-                             'JOIN agents a ON a.id=t.agent_id JOIN functions f ON f.id=t.function_id '
-                             'JOIN projects p ON p.id=f.project_id WHERE p.slug=?', project)
-    by_agent = {}
-    for row in matching:
-        by_agent.setdefault(row['agent'], []).append((row['started_at'], row['ended_at']))
-    return {a['function_id'] for a in attempts if any(
-        a['created_at'] >= start and (end is None or a['created_at'] <= end)
-        for start, end in by_agent.get(a['agent'], []))}
+    if not matching:
+        return set()
+    # Sessions keep the model used at the time, even if a worker later switches models. Start with those
+    # windows so SQLite can use attempts(agent_id,created_at); do not transfer the project's entire attempt
+    # history into Python on every selection check. DISTINCT also collapses retries and overlapping sessions.
+    # An unended session has no upper bound; coalesce keeps closed windows indexable at both ends too.
+    windows = json.dumps([[r['agent'], r['started_at'], r['ended_at']] for r in matching])
+    attempts = store.all('''SELECT DISTINCT t.function_id FROM json_each(?) s
+        JOIN agents a ON a.name=json_extract(s.value,'$[0]')
+        JOIN attempts t ON t.agent_id=a.id AND t.created_at>=json_extract(s.value,'$[1]')
+            AND t.created_at<=coalesce(json_extract(s.value,'$[2]'),?)
+        JOIN functions f ON f.id=t.function_id JOIN projects p ON p.id=f.project_id WHERE p.slug=?''', windows, float('inf'), project)
+    return {row['function_id'] for row in attempts}
