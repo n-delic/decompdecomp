@@ -978,6 +978,14 @@ class CompilerMixin:
     def apply_function_compiler(self, slug: str, function: str, toolchain: str, flags: list[str],
                                 allow_non_improving: bool = False, preserve_other_profiles: bool = False) -> dict:
         """Revalidate a selected profile, apply one function's range, and recheck its C."""
+        # Saved-file watching owns imports. Applying one DB comparison must not restore
+        # the whole project through implicit _project reads or the judge's save wrapper.
+        with self.progress.view() if hasattr(self, 'progress') else nullcontext():
+            return self._apply_function_compiler(slug, function, toolchain, flags,
+                                                 allow_non_improving, preserve_other_profiles)
+
+    def _apply_function_compiler(self, slug, function, toolchain, flags,
+                                 allow_non_improving, preserve_other_profiles):
         self._rom_only(slug, "applying function compiler settings")
         proj = self._project(slug)
         fn = self._function(function, slug)
@@ -1013,7 +1021,11 @@ class CompilerMixin:
             # Compiler profiles are selected by function start address. Stop before
             # the next start, even when a legacy extent overlaps another overlay.
             end = min([max(fn['vram'] + 1, end)] + [row['vram'] for row in rows if row['vram'] > fn['vram']])
-        if fn['rom_offset'] is not None:
+        own = compiler_for(self.cfg(proj), fn['vram'], fn)
+        unchanged = own['toolchain'] == toolchain and list(own['flags']) == list(flags)
+        if unchanged:
+            pass  # Still byte-checked above; no project configuration write is needed.
+        elif fn['rom_offset'] is not None:
             from ..prepared_evidence import scoped_config
             self._apply_compiler_config(proj,scoped_config(proj,fn,{'toolchain':toolchain,'flags':list(flags)}))
         else:
@@ -1030,7 +1042,7 @@ class CompilerMixin:
         # An exact-only recheck may finish someone else's function without disturbing
         # unrelated claims. Misses never take over another worker's claim.
         self.try_quietly(agent, self._project(slug), self._function(function, slug), source,
-                         **({"exact_only":True} if ok else {}))
+                         synchronize=False, **({"exact_only":True} if ok else {}))
         fresh = self._function(function, slug)
         matched = fresh['status'] == 'matched'
         return {"said": (f"MATCH: {function} became byte-identical after applying compiler settings. Its verified C is saved."

@@ -48,7 +48,8 @@ def summarize(records,contexts):
     return sorted(groups.values(),key=lambda group:group['last_session_id'])
 
 
-def for_sessions(net,records):
+def for_sessions(net,records,*,project=None):
+    store = net.project_store(project) if project is not None else net.store
     if not records:
         return []
     ids=[r['id'] for r in records]
@@ -56,7 +57,7 @@ def for_sessions(net,records):
     rows=[]
     for at in range(0,len(keys),400):
         batch=keys[at:at+400]
-        rows.extend(net.store.all('SELECT key,value FROM settings WHERE key IN ('+','.join('?' for _ in batch)+')',*batch))
+        rows.extend(store.all('SELECT key,value FROM settings WHERE key IN ('+','.join('?' for _ in batch)+')',*batch))
     contexts={int(r['key'].rsplit(':',1)[1]):json.loads(r['value']) for r in rows}
     return summarize(records,contexts)
 
@@ -64,10 +65,10 @@ def for_sessions(net,records):
 def finish(net,agent,slug,sid,began):
     """Observe workload size so matching rates are not compared without difficulty context."""
     pid=net.project_row(slug)['id']
-    rows=net.store.all('SELECT f.id,f.n_insns FROM attempts a JOIN functions f ON f.id=a.function_id '
+    rows=net.project_store(pid).all('SELECT f.id,f.n_insns FROM attempts a JOIN functions f ON f.id=a.function_id '
                        'WHERE a.agent_id=? AND a.created_at>=? AND f.project_id=? GROUP BY f.id',agent.id,began,pid)
     key='session-efficiency:'+str(sid)
-    saved=net.store.one('SELECT value FROM settings WHERE key=?',key)
+    saved=net.project_store(pid).one('SELECT value FROM settings WHERE key=?',key)
     if not saved:
         return
     value=json.loads(saved['value'])
@@ -75,5 +76,5 @@ def finish(net,agent,slug,sid,began):
     value['workload']={'functions':len(rows),'known_sizes':len(sizes),'instructions':sum(sizes),
                        'small':sum(n<32 for n in sizes),'medium':sum(32<=n<128 for n in sizes),
                        'large':sum(n>=128 for n in sizes)}
-    with net.store.tx() as db:
+    with net.project_store(pid).tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))

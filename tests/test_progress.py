@@ -2126,3 +2126,25 @@ def test_final_flush_skips_projects_with_acknowledged_progress(tmp_path,monkeypa
         db.execute("INSERT INTO progress_dirty(project_id,token) VALUES(?,'acknowledged')",(pid,))
     monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:pytest.fail('clean project was synchronized'))
     assert net.progress.flush()=={}
+
+
+def test_scoped_judging_skips_imports_but_rejects_revision_changes(project, monkeypatch):
+    net, *_ = project
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('no project import'))
+    with net.progress.judging('game', synchronize=False):
+        net.progress.check_result()
+        net.progress.revisions['game'] = net.progress.revisions.get('game', 0) + 1
+        with pytest.raises(NetworkError, match='Progress changed'):
+            net.progress.check_result()
+    assert getattr(net.progress.local, 'judging', None) is None
+
+
+def test_scoped_judging_keeps_saved_file_change_guard(project, monkeypatch):
+    net, *_ = project
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('no project import'))
+    def changed(slug):
+        raise NetworkError('Saved files changed during the recheck.')
+    monkeypatch.setattr(net.progress, '_check_rechecking_files', changed)
+    with net.progress.judging('game', synchronize=False):
+        with pytest.raises(NetworkError, match='Saved files changed'):
+            net.progress.check_result()

@@ -114,8 +114,7 @@ Judge bookkeeping, local draft/source preparation, polishing, function editing,
 briefs, boundaries and coverage audits now select project storage. Project GUI
 maps, summaries, history and live activity read that same storage; public labels
 come from the shared agent registry. Separate-store peer indicators compare
-cached target fingerprints one project at a time. Global notifications, provider
-session routing, imports and cross-game services still need their remaining audit.
+cached target fingerprints one project at a time. Global notifications, imports and remaining cross-game services still need their audit.
 
 Imported-project runtime reads/writes now select project storage for file edits,
 score refreshes, local drafts, claims and inspector history. Compiler application
@@ -132,12 +131,25 @@ snapshots and publication callbacks follow the owning project transaction.
 Older ID-only provenance uses indexed project-owner discovery. Global ID
 allocation and migrated-schema validation remain prerequisites for activation.
 
+Helper session summaries, conversation resume state and efficiency snapshots
+use the owning project file. Large transcript messages, score-event receipts and
+transcript cleanup markers use a dedicated transcript database alongside each
+project file (`<project database>.transcripts.sqlite3`), with their own writer
+gate and compressed payloads. Transcript storage has no function/attempt tables.
+The production legacy layout is retained until automatic migration is ready. Helper identities/configuration and
+provider account cooldowns remain shared. Cleanup resolves shared identities
+before each project's transaction, retains lifetime session summaries and rejects
+late transcript callbacks after removal. Restart recovery closes interrupted
+sessions in each operational file. Model filters resolve shared agent IDs before
+querying project attempts; no copied identity labels are needed.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
 | --- | --- |
 | Shared catalog | App settings, global agent identities, project IDs/slugs, database locations and durable membership handoffs |
 | One operational database per project | Project configuration, functions, claims, attempts, notes, headers, compiler trials, progress, project-specific settings, membership delivery receipts and evidence review/index state |
+| One transcript database per project | Recorded agent messages, compressed conversation payloads and cleanup receipts |
 | Existing repair evidence database | Immutable captured repair cases and content blobs |
 | Existing match library database | Verified reusable functions shared between games |
 

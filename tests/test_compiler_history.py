@@ -83,7 +83,7 @@ def test_explicit_non_improving_choice_is_revalidated_and_rebases_score(comparis
     monkeypatch.setattr(net, '_judge_with', lambda *a: (False, SimpleNamespace(score=300), ''))
     applied = []
     monkeypatch.setattr(net, 'set_compiler_ranges', lambda *a: applied.append(a))
-    monkeypatch.setattr(net, 'try_quietly', lambda *a: None)
+    monkeypatch.setattr(net, 'try_quietly', lambda *a, **kw: None)
     net.apply_function_compiler('demo', 'f0', 'sn-n64-281', ['-O1'], allow_non_improving=True)
     assert applied[0][2:] == ('sn-n64-281', ['-O1'])
     fn = net._function('f0', 'demo')
@@ -235,7 +235,7 @@ def test_auto_apply_changes_only_function_ranges_and_rechecks_current_c(comparis
     monkeypatch.setattr(net,'_judge_with',lambda proj,fn,tc,flags,source:
                         (False,SimpleNamespace(percent=95 if tc=='sn-n64-281' else 50,score=20 if tc=='sn-n64-281' else 200),''))
     rechecked=[]
-    def recheck(agent,proj,fn,source):
+    def recheck(agent,proj,fn,source,**kwargs):
         assert compiler_for(net.cfg(proj),fn['vram'])=={'toolchain':'sn-n64-281','flags':['-O1']}
         rechecked.append(fn['name'])
         with net.store.tx() as db:db.execute('UPDATE functions SET best_score=20 WHERE id=?',(fn['id'],))
@@ -429,3 +429,37 @@ def test_continuous_task_can_stop_and_resume_saved_functions(comparison):
     assert net.store.one('SELECT COUNT(*) n FROM compiler_tests')['n'] == 1
     resumed = net.run_compiler_comparison('demo')
     assert resumed['tried'] == 1 and resumed['skipped'] == 1
+
+
+def test_single_apply_uses_current_database_without_project_restore(comparison, monkeypatch):
+    net, _, _, _ = comparison
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('single apply must not import saved files'))
+    monkeypatch.setattr(net, '_judge_with', lambda *a: (True, SimpleNamespace(score=0), ''))
+    monkeypatch.setattr(net, '_apply_compiler_config', lambda *a, **kw: pytest.fail('profile is already assigned'))
+    monkeypatch.setattr(net, 'set_compiler_ranges', lambda *a, **kw: pytest.fail('profile is already assigned'))
+    checked = []
+    def save(agent, proj, fn, source, **kwargs):
+        assert kwargs == {'exact_only': True, 'synchronize': False}
+        with net.progress.judging(proj['slug'], synchronize=kwargs['synchronize']):
+            net.progress.check_result()
+            checked.append(fn['name'])
+    monkeypatch.setattr(net, 'try_quietly', save)
+    net.apply_function_compiler('demo', 'f0', 'gcc-2.7.2-kmc', ['-O2'])
+    assert checked == ['f0']
+
+
+def test_already_matched_current_profile_is_reverified_without_config_write(comparison, monkeypatch):
+    net, _, _, _ = comparison
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source=best_source WHERE name='f0'")
+    calls = []
+    def judge(*args):
+        calls.append(args[1]['name'])
+        return True, SimpleNamespace(score=0), ''
+    monkeypatch.setattr(net, '_judge_with', judge)
+    monkeypatch.setattr(net, '_apply_compiler_config', lambda *a, **kw: pytest.fail('redundant config write'))
+    monkeypatch.setattr(net, 'set_compiler_ranges', lambda *a, **kw: pytest.fail('redundant config write'))
+    monkeypatch.setattr(net, 'try_quietly', lambda *a, **kw: pytest.fail('already matched'))
+    out = net.apply_function_compiler('demo', 'f0', 'gcc-2.7.2-kmc', ['-O2'])
+    assert out['matched'] and not out['newly_matched']
+    assert calls == ['f0']
