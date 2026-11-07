@@ -1816,6 +1816,17 @@ class Manager:
             s.push('info','No eligible work; waiting without starting a model request.')
             return True
         agent = self.net.authenticate(token)
+        # Availability may change after the runner's selection check while local
+        # connection setup is in progress. Do not launch a paid handshake for an
+        # empty queue; retained claims and explicitly targeted tasks still run.
+        if not s.options.get('focus_id') and s.options.get('task') not in {'readable', 'boundary'}:
+            counts = self.net.selection_counts(s.slug, agent)
+            if not counts['available'] and not self.net.project_store(s.slug).one(
+                    'SELECT 1 FROM claims WHERE agent_id=?', agent.id):
+                if s.context_budget:s.context_budget.waiting = True
+                s.rotated = True
+                s.push('info', 'No eligible work after the connection check; waiting without a model request.')
+                return True
         pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
         # Selection was checked by the runner. The authenticated claim rechecks live availability.
         if s.options.get('task') not in {'readable', 'boundary'}:

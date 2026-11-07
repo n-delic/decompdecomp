@@ -294,3 +294,10 @@ Batch commits count toward **Automatically push commits to origin**, which retai
 Authenticated `POST /api/repository-score-commits` accepts `slug`, boolean `enabled`, integer `threshold` (default 10), and the linked progress `folder`. The overview returns `score_commits` with enabled state, batch threshold, distinct pending-function count, error and last commit. Background processing uses the existing per-project autosave worker; Git initialization and an initial portable checkpoint are required.
 
 Improvement batches follow the judge’s context inheritance: an overlay or source unit without a dedicated context uses the shared header; dedicated contexts remain separate. Obsolete queued match commits are retired when a later recheck revokes their match, while an already-completed commit can still be acknowledged after interruption. Capture failures retain their traceback in the local application log and show an actionable saved-progress error.
+
+
+### Compiler comparison activity
+
+`GET /api/compilermap?slug=...&view=comparison` returns the project's current or latest comparison job in this app session, including its explicit project/function/options scope and compact progress. It does not run compiler maintenance or read the compiler map. Full results and output remain available through `/api/job?id=...`.
+
+`POST /api/compilermap` with `all_installed: true` attaches to an already-running comparison for that project instead of starting duplicate work. Returning to Settings or reopening the window reconnects its progress and Stop controls. The disclosure heading marks running work even when collapsed; saved comparison options are restored alongside progress. Temporary connection failures retry the same job, and late responses from another project cannot overwrite the current panel.
