@@ -610,6 +610,8 @@ class Manager:
         ids = []
         self._prepare(slug)
         with self._lock:
+            if self._down:
+                raise ValueError("decompdecomp is quitting")
             for _ in range(max(1, min(int(count), MAX_AT_ONCE))):
                 model = name_model
                 if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
@@ -617,11 +619,13 @@ class Manager:
                 name = helper_name(kind, model, self._taken())
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
-                self._launch(s)
-                ids.append(s.id)
+                if self._launch(s):
+                    ids.append(s.id)
         return ids
 
-    def _launch(self, s: Session) -> None:
+    def _launch(self, s: Session) -> bool:
+        if self._down:
+            return False
         s.stop = threading.Event()
         s.state, s.why, s.todo, s.until, s.stopped_by, s.error = "starting", "", "", None, "", ""
         s.signed_out = s.throttled = s.limited = s.auth_failed = False
@@ -629,10 +633,13 @@ class Manager:
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
         s.thread.start()
+        return True
 
     def restart(self, sid: str) -> None:
         """Start a stopped or paused helper again, by hand."""
         with self._lock:
+            if self._down:
+                raise ValueError("decompdecomp is quitting")
             s = self.sessions.get(sid)
             if s is None:
                 raise ValueError("no such helper")
@@ -653,22 +660,36 @@ class Manager:
         """Helpers the app stopped by quitting carry on, as their options are now (options_now)."""
         ids = []
         with self._lock:
-            for s in list(self.sessions.values()):
-                if s.state != "stopped" or s.stopped_by != BY_QUIT:
+            sessions = list(self.sessions.values())
+        for s in sessions:
+            with self._lock:
+                if self._down:
+                    break
+                if self.sessions.get(s.id) is not s or s.state != "stopped" or s.stopped_by != BY_QUIT:
                     continue
-                try:
-                    self.net.project_row(s.slug)
-                except NetworkError:
-                    continue
-                options = self.options_now(s.kind, dict(s.options))
-                if options is None:
-                    s.stopped_by, s.why = BY_ITSELF, "its API endpoint was removed"
-                    self._save(s)
+            try:
+                self.net.project_row(s.slug)
+            except NetworkError:
+                continue
+            options = self.options_now(s.kind, dict(s.options))
+            if options is None:
+                with self._lock:
+                    if not self._down and self.sessions.get(s.id) is s \
+                            and s.state == "stopped" and s.stopped_by == BY_QUIT:
+                        s.stopped_by, s.why = BY_ITSELF, "its API endpoint was removed"
+                        self._save(s)
+                continue
+            self._prepare(s.slug)
+            with self._lock:
+                # Project sync and preparation can take a while. stop(), restart(), or shutdown may have
+                # changed this session while they ran; only register a helper that is still eligible.
+                if self._down:
+                    break
+                if self.sessions.get(s.id) is not s or s.state != "stopped" or s.stopped_by != BY_QUIT:
                     continue
                 s.options = options
-                self._prepare(s.slug)
-                self._launch(s)
-                ids.append(s.id)
+                if self._launch(s):
+                    ids.append(s.id)
         return ids
 
     def _prepare(self, slug: str) -> None:
@@ -714,6 +735,9 @@ class Manager:
         and they carry on when it starts again). Its function is free at once, not when its thread notices (an API
         helper waits on its model meanwhile, and its claim showed up as a "connected agent")."""
         by = BY_QUIT if sid is None else by
+        if sid is None:
+            with self._lock:
+                self._down = True
         for s in list(self.sessions.values()):
             if sid not in (None, s.id):
                 continue
@@ -726,12 +750,15 @@ class Manager:
                     s.state, s.stopped_by, s.until, s.todo = "stopped", by, None, ""
                     s.why = {BY_YOU: "stopped by you", BY_QUIT: "decompdecomp closed while it worked"}.get(by, s.why)
                     self._save(s)
+                elif sid is not None and s.state == "stopped" and s.stopped_by == BY_QUIT:
+                    s.stopped_by, s.why = by, "stopped by you"
+                    self._save(s)
             self._release(s)
 
     def stop_project(self, slug: str) -> None:
         """Stop every helper working on one project (by the user)."""
         for s in list(self.sessions.values()):
-            if s.slug == slug and s.state in LIVE:
+            if s.slug == slug and (s.state in LIVE or s.state == "stopped" and s.stopped_by == BY_QUIT):
                 self.stop(s.id)
 
     def remove(self, sid: str) -> None:
