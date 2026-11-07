@@ -155,7 +155,10 @@ need a separate staging implementation; ordinary matching remains available.
 
 The bounded candidate search and the full-image verification have separate costs. Once an exact
 candidate is found, verification can exceed the short search budget: it rechecks affected functions
-and recompiles all matched C during export and the full build. No model tokens are used. Stop is
+and recompiles all matched C during export and the full build. Staging lives beside the
+project storage rather than on the system temporary volume. At most four staged compiler
+workers run concurrently; their immutable objects are reused for affected-function judging
+and export rechecks. The long build does not hold the live progress lock. No model tokens are used. Stop is
 checked between verification phases and before commit; the exporter's in-flight build can finish
 before cancellation takes effect. Application metrics report the affected judge builds, full-build
 source rechecks, image hash and rebuild duration separately from search candidate counts.

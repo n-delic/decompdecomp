@@ -16,4 +16,6 @@ def run(net, agent, proj, fn):
             if stop and stop.is_set():raise deep_permuter.SearchLimit('Stopped')
     search=deep_permuter.Search(net,2,12,Log(),fn)
     try:return reviewed_seed_search.run(search,agent,proj,fn,generated_only=True)['matched']
-    except deep_permuter.SearchLimit:return False
+    except deep_permuter.SearchLimit:
+        if stop and stop.is_set():raise
+        return False

@@ -4,7 +4,10 @@ import json
 import shutil
 import subprocess
 import time
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path, PurePosixPath, PureWindowsPath
+
+import yaml
 
 from ..network import NetworkError
 
@@ -39,7 +42,21 @@ def input_files(proj):
     required={cfg['rom']['file'],cfg['rom'].get('program',cfg['rom']['file'])}
     if any(not (root/name).is_file() for name in required):
         raise NetworkError('Supply the original ROM before applying return repairs.')
-    return {str(file.relative_to(root)):file.read_bytes() for file in sorted(set(files))}
+    result={str(file.relative_to(root)):file.read_bytes() for file in sorted(set(files))}
+    def relative(value):
+        if isinstance(value,str):
+            if (PurePosixPath(value).is_absolute() or PureWindowsPath(value).drive
+                    or '..' in value.replace('\\','/').split('/') or value.startswith('~')):
+                raise NetworkError('Layout paths must stay inside the isolated build; review this project manually.')
+        elif isinstance(value,dict):
+            for key,item in value.items():relative(key);relative(item)
+        elif isinstance(value,list):
+            for item in value:relative(item)
+    for name,data in result.items():
+        if name.endswith('.yaml'):
+            try:relative(yaml.safe_load(data))
+            except yaml.YAMLError as error:raise NetworkError('The layout configuration is unreadable.') from error
+    return result
 
 
 def verify(net, state, updates, files, directory, log):
@@ -53,6 +70,7 @@ def verify(net, state, updates, files, directory, log):
     cfg=json.loads(proj['config'])
     for key in ('progress_folder','save_folder','export','auto_commit_folder','auto_commit_matches','auto_push','autopilot'):
         cfg.pop(key,None)
+    compiles=ThreadPoolExecutor(max_workers=4)
     try:
         with staged.store.tx() as db:
             db.execute('INSERT INTO projects(id,slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)',
@@ -72,12 +90,22 @@ def verify(net, state, updates, files, directory, log):
                 db.execute("UPDATE functions SET unit=?,status='matched',matched_source=?,best_source=?,best_score=0 WHERE id=?",(unit,item['source'],item['source'],row['id']))
         stage_proj=staged.project_row(proj['slug'])
         original_compile=staged._compile
+        from .function_names import canonical_source
+        prepared={}
+        # Export revisits these immutable inputs. Compile at most four at once and reuse
+        # their objects for both affected-function judging and full export rechecks.
+        for row in staged.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' ORDER BY vram",pid):
+            hdr=staged._context(pid,row['unit'])['header']
+            body=canonical_source(row,row['matched_source'])
+            prepared[(row['id'],hdr,body)]=compiles.submit(original_compile,stage_proj,hdr,body,row)
         rechecks=[0]
-        def checked_compile(*args,**kwargs):
+        def checked_compile(project,header,body,row=None):
             log.check_cancel()
             rechecks[0]+=1
             if rechecks[0]%50==0:log('Return repair: rechecked '+str(rechecks[0])+' saved C functions in the isolated build.')
-            return original_compile(*args,**kwargs)
+            key=(row['id'],header,canonical_source(row,body)) if row is not None else None
+            future=prepared.get(key)
+            return future.result() if future is not None else original_compile(project,header,body,row)
         staged._compile=checked_compile
         for item in updates:
             log.check_cancel()
@@ -115,7 +143,10 @@ def verify(net, state, updates, files, directory, log):
     except (OSError, subprocess.SubprocessError, ExportError) as error:
         raise NetworkError('The staged return rebuild could not finish: '+str(error)) from error
     finally:
+        compiles.shutdown(wait=True,cancel_futures=True)
         staged._pool.shutdown(wait=True)
+        reader=getattr(staged.store._local,'reader',None)
+        if reader is not None:reader.conn.close()
         staged.store.conn.close()
         # No files in the user's project or checkout were written.
         shutil.rmtree(root,ignore_errors=True)

@@ -20,7 +20,8 @@ def apply(net, agent, proj, fn, source, log):
     verification = {}
     updates = []
     try:
-        # Serialize with progress-file publication, without holding a database write lock during builds.
+        # Capture under the progress lock, then release it while compiling. Publication
+        # reacquires it and rejects any intervening source or on-disk progress change.
         with gate:
             log.check_cancel()
             if progress:progress.sync(proj['slug'],force=True)
@@ -48,9 +49,11 @@ def apply(net, agent, proj, fn, source, log):
                 owner=store.one('SELECT agent_id FROM claims WHERE function_id=?',row['id'])
                 if owner and owner['agent_id']!=agent.id:
                     raise NetworkError('An affected function is claimed by another worker; retry after it is released.')
-            with tempfile.TemporaryDirectory(prefix='decomp-return-repair-') as scratch:
-                verification=return_repair_stage.verify(net,state,updates,files,scratch,log)
-            log.check_cancel()
+        with tempfile.TemporaryDirectory(prefix='decomp-return-repair-',dir=net.workspace) as scratch:
+            verification=return_repair_stage.verify(net,state,updates,files,scratch,log)
+        log.check_cancel()
+        with gate:
+            if progress:progress.sync(proj['slug'],force=True)
             with store.tx() as db:
                 fresh=net.project_row(proj['slug'])
                 if any(compiler_identity(profile)!=identity for profile,identity in profiles.values()):

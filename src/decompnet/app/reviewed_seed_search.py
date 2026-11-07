@@ -115,6 +115,7 @@ def run(search, agent, proj, fn, *, generated_only=False):
             result['diagnostic_exact'].append(hit)
             if hit['diagnostic_only'] and root.get('generated'):
                 from . import return_repair_apply
+                result['discovery_seconds'] = time.monotonic()-started
                 search.phase = 'verifying exact return repair'
                 search.report(force=True)
                 result['application'] = return_repair_apply.apply(net, agent, proj, fn, source, search.log)

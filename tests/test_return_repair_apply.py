@@ -151,3 +151,55 @@ def test_autopilot_checks_return_lane_before_old_completed_draft_skip(tmp_path,m
     monkeypatch.setattr(net,'_seed_for',lambda *a:pytest.fail('a matched return bundle must skip draft generation'))
     assert AutopilotMixin._autopilot_one_work(net,agent,net.project_row('game'),1)=='match'
     assert seen==[1] and not net.store.all('SELECT * FROM claims')
+
+
+def test_stopping_return_verification_does_not_start_another_draft(tmp_path,monkeypatch):
+    import threading
+
+    from decompnet.app import deep_permuter, return_repair_autopilot
+    net,agent=game(tmp_path,monkeypatch)
+    stop=threading.Event();stop.set();net.autopilots['game']={'stop':stop}
+    monkeypatch.setattr('decompnet.app.return_path_search.roots',lambda *a:[{}])
+    with pytest.raises(deep_permuter.SearchLimit,match='Stopped'):
+        return_repair_autopilot.run(net,agent,net.project_row('game'),net._function('f','game'))
+
+
+@pytest.mark.parametrize('path',['/outside/asm','../outside','C:\\outside','~/outside'])
+def test_layout_cannot_redirect_staging_writes_outside_the_copy(tmp_path,monkeypatch,path):
+    import yaml
+
+    net,agent=game(tmp_path,monkeypatch)
+    (tmp_path/'splat.yaml').write_text(yaml.safe_dump({'options':{'base_path':path}}))
+    monkeypatch.setattr(staging,'verify',lambda *a:pytest.fail('unsafe layout must not run'))
+    assert not invoke(net,agent)['matched']
+    assert net._function('f','game')['status']=='open'
+
+
+def test_full_build_does_not_hold_the_live_progress_lock(tmp_path,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net,agent=game(tmp_path,monkeypatch)
+    gate=net.progress._project_lock('game')
+    def probe():
+        acquired=gate.acquire(blocking=False)
+        if acquired:gate.release()
+        return acquired
+    def verify(*args):
+        with ThreadPoolExecutor(max_workers=1) as pool:assert pool.submit(probe).result()
+        return {}
+    monkeypatch.setattr(staging,'verify',verify)
+    assert invoke(net,agent)['matched']
+
+
+def test_caller_header_is_preserved_privately_without_changing_shared_context(tmp_path,monkeypatch):
+    net,agent=game(tmp_path,monkeypatch)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,version,unit,header) VALUES(1,2,'caller_unit','void f(int a);')")
+        db.execute("UPDATE functions SET unit='caller_unit',matched_source='void caller(void){f(1);}',best_source='void caller(void){f(1);}' WHERE id=2")
+    monkeypatch.setattr(staging,'verify',lambda *a:{})
+    assert invoke(net,agent)['matched']
+    caller=net._function('caller','game')
+    assert caller['matched_source']=='void caller(void){f(1);}'
+    assert caller['unit']!='caller_unit'
+    assert net._context(1,caller['unit'])['header']=='int f(int a);'
+    assert net._context(1,'caller_unit')['header']=='void f(int a);'
