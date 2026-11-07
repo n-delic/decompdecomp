@@ -42,18 +42,44 @@ def dependencies(root, source):
     return sorted((str(p),value) for p,value in seen.items())
 
 
+BATCH_CALLEES = 256
+
+
+def _callee_names(fn, source):
+    from .forks.csource import _blank
+    return sorted(set(re.findall(r'\b([A-Za-z_]\w*)\s*\(',_blank(source))) -
+                  {fn['name'],'if','for','while','switch','sizeof'})[:16]
+
+
+def _callee_rows(store, project_id, names, max_source_chars=None):
+    if not names:return []
+    bound = ' AND length(matched_source)<=?' if max_source_chars is not None else ''
+    args = (project_id,json.dumps(names)) + ((max_source_chars,) if max_source_chars is not None else ())
+    return store.all("SELECT name,matched_source FROM functions WHERE project_id=? AND status='matched' "
+                     'AND name IN (SELECT value FROM json_each(?))'+bound+' ORDER BY name',*args)
+
+
 def callees(net, proj, fn, source, max_source_chars=None):
     """Only referenced matched helpers can supply new signature/write-footprint evidence."""
-    store = net.project_store(proj['id'])
-    from .forks.csource import _blank
-    names=sorted(set(re.findall(r'\b([A-Za-z_]\w*)\s*\(',_blank(source))) -
-                 {fn['name'],'if','for','while','switch','sizeof'})[:16]
-    if not names:
-        return []
-    bound = ' AND length(matched_source)<=?' if max_source_chars is not None else ''
-    args = (proj['id'],json.dumps(names)) + ((max_source_chars,) if max_source_chars is not None else ())
-    return store.all("SELECT name,matched_source FROM functions WHERE project_id=? AND status='matched' "
-                         'AND name IN (SELECT value FROM json_each(?))'+bound+' ORDER BY name',*args)
+    return _callee_rows(net.project_store(proj['id']),proj['id'],_callee_names(fn,source),max_source_chars)
+
+
+def _callee_evidence(net, proj, fn, source, shared, store):
+    def hashes(rows):
+        return [(r['name'],hashlib.sha256((r['matched_source'] or '').encode()).hexdigest()) for r in rows]
+    if shared is None:return hashes(callees(net,proj,fn,source))
+    # Like shared headers/symbols, these belong only to this scheduling batch.
+    # Repeated callers must not read/unwrap/hash the same helper over and over.
+    # Keep hashes and negative lookups only; large C texts are never retained.
+    names=_callee_names(fn,source)
+    memo=shared.setdefault('callee_evidence',{})
+    missing=[name for name in names if name not in memo]
+    fresh={name:[] for name in missing}
+    for name,digest in hashes(_callee_rows(store,proj['id'],missing)):
+        fresh[name].append((name,digest))
+    for name,value in fresh.items():
+        if len(memo)<BATCH_CALLEES:memo[name]=value
+    return [entry for name in names for entry in (memo[name] if name in memo else fresh[name])]
 
 
 def batch_context(net, proj):
@@ -127,8 +153,7 @@ def state(net,proj,fn,shared=None):
     result=[build,proj['root'],proj['arch'],proj['big_endian'],ctx['header'] if ctx else None,symbols,fn['target'],fn['relocs'],fn['vram']]
     source = (fn['best_source'] or '')+'\n'+(fn['seed'] or '')
     def callee_hashes():
-        return [(r['name'],hashlib.sha256((r['matched_source'] or '').encode()).hexdigest())
-                for r in callees(net,proj,fn,source)]
+        return _callee_evidence(net,proj,fn,source,shared,store)
     # A scheduling batch caches its complete result. Thousands of one-use callee
     # entries would evict that project result from the bounded shared cache and
     # force the next claim in the same batch to recompute every paused function.
