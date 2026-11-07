@@ -21,7 +21,7 @@ function renderRepositorySetup(state) {
   if (!repositorySaveEdited) $("saveFolder").value = repositorySavedFolder(state);
   const unsaved = state.portable && $("saveFolder").value.trim() !== state.folder;
   repositorySaveRoot = unsaved ? "" : state.root || "";
-  for (const id of ["repositoryInit", "repositoryCheckpoint", "repositoryOriginGo"]) $(id).disabled = unsaved || repositorySetupBusy;
+  for (const id of ["repositoryInit", "repositoryCheckpoint", "repositoryOriginGo", "repositoryGithubGo"]) $(id).disabled = unsaved || repositorySetupBusy;
   $("repositoryInit").hidden = state.repository || !state.portable;
   $("repositoryCheckpoint").hidden = !state.repository || !state.portable;
   $("repositoryOriginGroup").hidden = !state.repository || state.origin;
@@ -54,6 +54,8 @@ async function refreshRepositorySetup() {
     if ($("repositorySetupLog")._workBar) $("repositorySetupLog")._workBar.hidden = true;
     $("repositorySetupLog").hidden = true; $("repositorySetupLog").textContent = "";
     $("repositoryOrigin").value = "";
+    $("repositoryGithubName").value = slug + "-progress";
+    $("repositoryGithubVisibility").value = "private";
     $("repositorySetupStop").hidden = true;
     $("saveFolder").value = S.ov?.save_folder || "";
     $("repositoryInit").hidden = true; $("repositoryCheckpoint").hidden = true;
@@ -66,18 +68,19 @@ async function refreshRepositorySetup() {
   try {
     const state = await api(`/api/repository-setup?slug=${encodeURIComponent(slug)}`);
     if (S.slug !== slug || request !== repositorySetupRequest) return;
+    if (state.job) { setupRepository(null, state.job); return; }
     renderRepositorySetup(state);
   } catch (error) {
     if (S.slug === slug && request === repositorySetupRequest) $("repositorySetupState").textContent = error.message;
   }
 }
-async function setupRepository(action) {
+async function setupRepository(action, existingJob = null) {
   if (repositorySetupBusy) return;
   const slug = S.slug, log = $("repositorySetupLog");
   repositorySetupBusy = true; ++repositorySetupRequest;
-  const finish = beginWork(log, "Updating save repository", [$("repositoryInit"), $("repositoryCheckpoint"), $("repositoryOriginGo"), $("saveGo"), $("repositoryAutoCommit")], "Save repository updated.");
+  const finish = beginWork(log, "Updating save repository", [$("repositoryInit"), $("repositoryCheckpoint"), $("repositoryOriginGo"), $("repositoryGithubGo"), $("saveGo"), $("repositoryAutoCommit")], "Save repository updated.");
   try {
-    const {job} = await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:$("repositoryOrigin").value.trim()}});
+    const {job} = existingJob ? {job:existingJob} : await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:$("repositoryOrigin").value.trim(), github_name:$("repositoryGithubName").value.trim(), visibility:$("repositoryGithubVisibility").value}});
     repositorySetupJob = job;
     if (S.slug === slug) $("repositorySetupStop").hidden = false;
     const state = await followJob(job, null, (lines, snapshot) => {
@@ -99,6 +102,7 @@ async function setupRepository(action) {
 $("repositoryInit").onclick = () => setupRepository("init");
 $("repositoryCheckpoint").onclick = () => setupRepository("checkpoint");
 $("repositoryOriginGo").onclick = () => setupRepository("origin");
+$("repositoryGithubGo").onclick = () => setupRepository("github");
 
 $("repositorySetupStop").onclick = async () => {
   try { if (repositorySetupJob) await api("/api/job/cancel", {method:"POST", body:{id:repositorySetupJob}}); }

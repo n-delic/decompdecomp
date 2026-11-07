@@ -10,6 +10,11 @@ from .. import repository_sync
 def register(app):
     lock=threading.Lock()
     pushes = {}
+    setups = {}
+
+    def active_setup(slug):
+        job = app.jobs.jobs.get(setups.get(slug), {})
+        return job.get("id") if job.get("state") == "running" else None
 
     def active_push(slug):
         with app.jobs._lock:
@@ -23,13 +28,20 @@ def register(app):
         try:
             from .. import repository_setup
             if request.method == 'GET':
-                return JSONResponse(await app.call(repository_setup.status, app.net,
-                    str(request.query_params.get('slug', ''))))
+                slug = str(request.query_params.get('slug', ''))
+                with app.jobs._lock:
+                    if job := active_setup(slug):return JSONResponse({'job':job})
+                return JSONResponse(await app.call(repository_setup.status, app.net, slug))
             data = await app.body(request)
             slug = str(data.get('slug', ''))
-            job = app.jobs.start('repository-setup', lambda log: repository_setup.run(
-                app.net, slug, str(data.get('action', '')), str(data.get('origin', '')).strip(), log),
-                cancel_message='Repository setup stopped. Created Git metadata or a completed local commit remain; review the folder before retrying.')
+            with app.jobs._lock:
+                if job := active_setup(slug):return JSONResponse({'job':job})
+                job = app.jobs.start('repository-setup', lambda log: repository_setup.run(
+                    app.net, slug, str(data.get('action', '')), str(data.get('origin', '')).strip(), log,
+                    github_name=str(data.get('github_name', '')).strip(), visibility=str(data.get('visibility', 'private'))),
+                    cancel_message='Repository setup stopped. A created GitHub repository, Git metadata or completed commit may remain; check the log before retrying.')
+                app.jobs.jobs[job]['scope'] = {'slug':slug}
+                setups[slug] = job
             return JSONResponse({'job': job})
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)

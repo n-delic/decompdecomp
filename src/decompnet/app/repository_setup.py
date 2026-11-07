@@ -67,7 +67,7 @@ def bind(net, slug, path, proj):
     net._update_cfg(slug, lambda cfg: cfg.update(progress_folder=str(path)))
 
 
-def run(net, slug, action, origin, log):
+def run(net, slug, action, origin, log, *, github_name="", visibility="private"):
     path, proj = folder(net, slug)
     with net.progress._project_lock(slug):
         with repository_operations.operation(root_at(path) or path, slug, 'Setting up progress repository', log) as output:
@@ -90,6 +90,11 @@ def run(net, slug, action, origin, log):
                 previous = ignore.read_bytes() if ignore.exists() else b''
                 ignore.write_bytes(IGNORE.encode() + previous)
                 log('Created Git repository and .gitignore. No files were staged or committed.')
+            elif action == 'github':
+                if not root:raise NetworkError('Create a Git repository before connecting GitHub.')
+                if 'origin' in git(root, 'remote').splitlines():raise NetworkError('Origin is already configured. Refresh its settings.')
+                from .repository_github import create
+                create(root, github_name, visibility, log)
             elif action == 'origin':
                 if not root:raise NetworkError('Create a Git repository before adding origin.')
                 if 'origin' in git(root, 'remote').splitlines():raise NetworkError('Origin is already configured. Refresh its settings.')

@@ -15,6 +15,9 @@ vm.createContext(ctx);vm.runInContext(source,ctx);
  $('saveFolder').value='/new';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,true);assert.match($('repositorySetupState').textContent,/Save now/);
  $('saveFolder').value='/save';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,false);
  const init=$('repositoryInit').onclick();await init;assert.equal(posted.action,'init');assert.equal(finish,1);assert.equal($('repositoryOriginGroup').hidden,false);
+ $('repositoryGithubName').value='person/progress';$('repositoryGithubVisibility').value='public';
+ await $('repositoryGithubGo').onclick();
+ assert.equal(posted.action,'github');assert.equal(posted.github_name,'person/progress');assert.equal(posted.visibility,'public');
  update(['No old project logs'],{});
  ctx.S.slug='other';ctx.S.ov={save_folder:'/other'};const next=ctx.refreshRepositorySetup();resolve({folder:'/other',root:'/other',repository:true,portable:true,checkpoint:true,linked:true,origin:true});await next;
  assert.equal($('repositoryOriginGroup').hidden,true);assert.equal($('repositoryAutoCommit').disabled,false);
@@ -134,3 +137,20 @@ async function simpleSetupRegression() {
  await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['checkpoint']);
  assert.equal(get('repositoryAutoCommit').checked,false,'failed preparation never enables automatic commits');
 }
+
+(async()=>{
+  const fields={},field=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false};
+  let posts=0, follows=0, complete;
+  const context={$:field,S:{slug:'game',ov:{save_folder:'/save'}},Date,encodeURIComponent,
+    refreshRepositoryPush(){}, updateWorkProgress(){},showJobError(){},
+    beginWork(){return()=>{};},
+    api(url,options){if(options)posts++;return Promise.resolve({job:'existing'});},
+    followJob(job){assert.equal(job,'existing');follows++;return new Promise(resolve=>complete=resolve);}};
+  vm.createContext(context);vm.runInContext(source,context);
+  await context.refreshRepositorySetup();
+  assert.equal(posts,0);assert.equal(follows,1);assert.equal(field('repositorySetupStop').hidden,false);
+  await field('repositoryGithubGo').onclick();assert.equal(posts,0);
+  complete({folder:'/save',root:'/save',repository:true,portable:true,checkpoint:true,linked:true,origin:true});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(field('repositoryOriginGroup').hidden,true);
+})().catch(e=>{console.error(e);process.exit(1);});
