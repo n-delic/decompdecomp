@@ -238,3 +238,45 @@ def test_github_creation_is_scoped_and_does_not_repeat(project, monkeypatch):
     with pytest.raises(NetworkError, match='already configured'):
         repository_setup.run(net, 'game', 'github', '', print, github_name='person/another')
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize('kind', ['matched', 'best'])
+@pytest.mark.parametrize('newline_in_backup', [True, False])
+def test_checkpoint_accepts_save_writer_final_newline(project, tmp_path, monkeypatch, kind, newline_in_backup):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status=?,matched_source=?,best_source=?,best_score=? WHERE name='f'",
+                   ('matched' if kind == 'matched' else 'open', 'good source' if kind == 'matched' else None,
+                    'good source', 0 if kind == 'matched' else 10))
+    net.progress.sync('game', force=True)
+    target = tmp_path/'backup'
+    saves.save(net, 'game', target)
+    relative = ('src' if kind == 'matched' else 'best')+'/f.c'
+    # Isolate precisely the two exporter representations; all other bytes agree.
+    (folder/relative).write_text('good source'+('' if newline_in_backup else '\n'))
+    (target/relative).write_text('good source'+('\n' if newline_in_backup else ''))
+    monkeypatch.setattr(net.progress, 'sync', lambda *args, **kwargs:None)
+    git(target, 'init', '--initial-branch=main')
+    git(target, 'config', 'user.name', 'Test')
+    git(target, 'config', 'user.email', 'test@example.invalid')
+    state = repository_setup.run(net, 'game', 'checkpoint', '', lambda line:None)
+    assert state['checkpoint'] and state['linked']
+    assert saves.default_folder(net, 'game') == target
+    assert git(target, 'show', 'HEAD:'+relative).strip() == 'good source'
+
+
+
+@pytest.mark.parametrize('changed', ['changed source\n', '\ngood source\n', 'good\nsource\n'])
+def test_newline_comparison_still_rejects_source_or_line_changes(project, tmp_path, monkeypatch, changed):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good source',best_score=10 WHERE name='f'")
+    net.progress.sync('game', force=True)
+    target = tmp_path/'backup'
+    saves.save(net, 'game', target)
+    (target/'best/f.c').write_text(changed)
+    monkeypatch.setattr(net.progress, 'sync', lambda *args, **kwargs:None)
+    with pytest.raises(NetworkError, match='differs'):
+        repository_setup.run(net, 'game', 'init', '', lambda line:None)
+    assert saves.default_folder(net, 'game') == folder
+    assert not (target/'.git').exists()

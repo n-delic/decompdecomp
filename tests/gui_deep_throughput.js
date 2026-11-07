@@ -10,7 +10,7 @@ assert.equal(get('fnDeepThroughput').hidden,false);
 assert.match(get('fnDeepThroughput').textContent,/8\/10 compiles active/);
 assert.match(get('fnDeepThroughput').textContent,/123.5 candidates\/s/);
 assert.match(get('fnDeepThroughput').textContent,/98.8 compiles\/s/);
-assert.match(get('fnDeepThroughput').textContent,/compiler processes excluded/);
+assert.match(get('fnDeepThroughput').textContent,/compiler and generator processes excluded/);
 render({});assert.equal(get('fnDeepThroughput').hidden,true);
 render({efficiency:{duplicate_outputs:3,fingerprinted_checks:9}});
 assert.match(get('fnDeepNow').textContent,/3 repeated outputs \/ 9 fingerprinted checks/);

@@ -58,6 +58,11 @@ def bind(net, slug, path, proj):
     net.progress.sync(slug, force=True)
     def comparable(folder):
         files = saves._read_owned(folder)
+        # Save now adds a final newline to C; an imported authoritative save may
+        # retain the exact source without it. Use the save writer's normalization,
+        # preserving leading/internal lines and headers (compiler inputs).
+        files = {name:saves._source_text(text) if name.startswith(('src/', 'best/')) and name.endswith('.c') else text
+                 for name, text in files.items()}
         manifest = json.loads(files[saves.MANIFEST])
         for key in ('revision', 'saved_at'):
             manifest.pop(key, None)
