@@ -12,18 +12,18 @@ def key(pid):return f'code-audit:{pid}'
 
 
 def revision(net,pid):
-    proj=net.store.one('SELECT config FROM projects WHERE id=?',pid)
+    proj=net.project_store(pid).one('SELECT config FROM projects WHERE id=?',pid)
     cfg=json.loads(proj['config'])
-    version=net.store.read_version('audit_layout',pid)
-    layout=net.store.read_cache.get(('audit-layout',pid),version,
-        lambda:[tuple(r) for r in net.store.all('SELECT name,vram,rom_offset,size FROM functions WHERE project_id=? ORDER BY id',pid)])
+    version=net.project_store(pid).read_version('audit_layout',pid)
+    layout=net.project_store(pid).read_cache.get(('audit-layout',pid),version,
+        lambda:[tuple(r) for r in net.project_store(pid).all('SELECT name,vram,rom_offset,size FROM functions WHERE project_id=? ORDER BY id',pid)])
     inputs=json.dumps([4,cfg.get('rom'),cfg.get('segments'),cfg.get('platform'),cfg.get('big_endian'),cfg.get('audit_data_mappings')],sort_keys=True)
-    return net.store.read_cache.get(('audit-revision',pid),(inputs,version),
+    return net.project_store(pid).read_cache.get(('audit-revision',pid),(inputs,version),
         lambda:hashlib.sha256(json.dumps([4,cfg.get('rom'),cfg.get('segments'),cfg.get('platform'),cfg.get('big_endian'),cfg.get('audit_data_mappings'),layout],sort_keys=True).encode()).hexdigest())
 
 
 def load(net,pid):
-    row=net.store.one('SELECT value FROM settings WHERE key=?',key(pid))
+    row=net.project_store(pid).one('SELECT value FROM settings WHERE key=?',key(pid))
     state=json.loads(row['value']) if row else {'report':None,'reviews':{}}
     if state['report'] and state['report'].get('input_revision')!=revision(net,pid):
         return {**state,'report':None,'stale':True}
@@ -46,7 +46,7 @@ def record(net,pid,result,image):
     for r in result['candidates']:
         facts=[identity,r['rom_offset'],r['vram'],r['gap_start'],r['gap_end'],r['extent_bytes']]
         r['review_id']=hashlib.sha256(json.dumps(facts).encode()).hexdigest()
-    with net.store.tx() as db:
+    with net.project_store(pid).tx() as db:
         row=db.execute('SELECT value FROM settings WHERE key=?',(key(pid),)).fetchone()
         state=json.loads(row['value']) if row else {'reviews':{}}
         state['report']={**result,'audited_at':time.time()}
@@ -63,7 +63,7 @@ def review(net,slug,review_id,status,notes):
     if not isinstance(notes,str) or len(notes)>4000:raise NetworkError('Review notes must be text up to 4,000 characters.')
     if status in ('confirmed_code','dismissed') and not notes.strip():raise NetworkError('Record the evidence for confirming or dismissing this candidate.')
     pid=net.project_row(slug)['id']
-    with net.store.tx() as db:
+    with net.project_store(pid).tx() as db:
         row=db.execute('SELECT value FROM settings WHERE key=?',(key(pid),)).fetchone()
         state=json.loads(row['value']) if row else {'report':None,'reviews':{}}
         if not state['report'] or state['report'].get('input_revision')!=revision(net,pid) or review_id not in {r['review_id'] for r in state['report']['candidates']}:

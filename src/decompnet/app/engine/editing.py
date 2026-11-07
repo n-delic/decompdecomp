@@ -26,7 +26,7 @@ class EditMixin:
                 link.sync()
             return text
         fn = self._function(function, project)
-        proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+        proj = self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         if not self.is_rom(proj):
             raise NetworkError("split_function is for ROM projects")
         if fn["status"] == "matched":
@@ -43,7 +43,7 @@ class EditMixin:
         inside = fn["vram"] <= addr < fn["vram"] + fn["size"]
         if not inside and addr % console.instruction_size(fn) == 0:
             rom, _ = self._rom(proj)
-            following = [r["vram"] for r in self.store.all(
+            following = [r["vram"] for r in self.project_store(fn['project_id']).all(
                 "SELECT vram FROM functions WHERE project_id=? AND vram>?", proj["id"], addr)]
             limit = min(following) if following else fn["vram"] - (fn["rom_offset"] or 0) + len(rom)
             new = console.function_at(rom, addr, limit, new_name)
@@ -60,7 +60,7 @@ class EditMixin:
         syms.add(Symbol(new_name, new.vram, new.size, "func"))
         target = self._make_target(proj, new, syms)
         meta = console.function_meta(new)
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, new.size, console.function_insns(new), target.code,
@@ -79,7 +79,7 @@ class EditMixin:
         if self._link(slug) is not None or slug in self.rooms:
             raise NetworkError("leave the shared room before changing ROM function boundaries")
         proj, fn = self._project(slug), self._function(function, slug)
-        if self.store.one("SELECT 1 FROM claims WHERE function_id=? AND expires_at>?", fn["id"], time.time()):
+        if self.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=? AND expires_at>?", fn["id"], time.time()):
             raise NetworkError("release the function's active claim before splitting it")
         image, _ = self._rom(proj)
         if image[fn["rom_offset"]:fn["rom_offset"] + fn["size"]] != fn["target"]:
@@ -101,7 +101,7 @@ class EditMixin:
         if old is not None:
             old.size = head.size
         th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, best_source=NULL "
                        "WHERE id=?", (head.size, len(head.lines), th.code, json.dumps(th.to_json()),
                                       self._asm_source(head), fn["id"]))
@@ -142,7 +142,7 @@ class EditMixin:
             if gap == -4 and a["target"][-4:] != b["target"][:4]:
                 raise NetworkError("overlapping delay-slot bytes disagree")
         ids = [f["id"] for f in pieces]
-        if any(self.store.one("SELECT 1 FROM claims WHERE function_id=?", fid) for fid in ids):
+        if any(self.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", fid) for fid in ids):
             raise NetworkError("release the pieces' claims before joining them")
         image, segments = self._rom(proj)
         end = pieces[-1]["rom_offset"] + pieces[-1]["size"]
@@ -177,7 +177,7 @@ class EditMixin:
         assembly = "\n".join("\n".join(sorted(labels.get(at, set()))) + "\n" + text
                              for at, text in sorted(lines.items()))
         assembly += f"\nendlabel {head['name']}\n"
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             for child in pieces[1:]:
                 db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (head["id"], child["id"]))
                 db.execute("UPDATE attempts SET function_id=? WHERE function_id=?", (head["id"], child["id"]))
@@ -301,7 +301,7 @@ class EditMixin:
             if old in trial.by_name:
                 trial.rename(old, new)
             else:
-                fnrow = self.store.one("SELECT size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+                fnrow = self.project_store(proj['id']).one("SELECT size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
                 current, _ = syms.name_at(addr)
                 base = syms.by_name.get(current) if current != f"D_{addr:08X}" else None
                 trial.add(Symbol(new, addr, fnrow["size"] if fnrow else (base.size if base and base.address == addr else 0),
@@ -312,7 +312,7 @@ class EditMixin:
         units = self._unit_contexts(proj["id"])
         current_ctx = {u: self._context(proj["id"], u) for u in ({""} | units)}
         changed = {u: swap(c["header"]) for u, c in current_ctx.items() if word.search(c["header"])}
-        matched = self.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
+        matched = self.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
         rewritten = {r["id"]: swap(r["matched_source"]) for r in matched if word.search(r["matched_source"] or "")}
         # A header change can affect every body in its effective unit. Also include the
         # destination identifier: renaming can capture an existing use of the new spelling.
@@ -336,7 +336,7 @@ class EditMixin:
             listing = "\n".join(f"- {n}: {why}" for n, why in broken[:10])
             return f"❌ REJECTED: renaming breaks {len(broken)} matched function(s).\n{listing}"
         msg = message.strip() or ", ".join(f"rename {old} -> {new}" for old, new in pairs[:3]) + (" ..." if len(pairs) > 3 else "")
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             for old, new in pairs:
                 addr = addresses[old]
                 if db.execute("UPDATE symbols SET name=? WHERE project_id=? AND name=?", (new, proj["id"], old)).rowcount == 0:
@@ -407,7 +407,7 @@ class EditMixin:
         if len(title) > 80:
             raise NetworkError("keep the name under 80 characters")
         proj = self._project(slug)
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             db.execute("UPDATE projects SET name=? WHERE id=?", (title, proj["id"]))
         return title
 

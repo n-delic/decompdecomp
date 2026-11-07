@@ -29,13 +29,13 @@ def blocked(net, proj):
     from .code_coverage import _view, boundaries
     def build():
         names={r['function'] for r in boundaries(net,proj) if not r.get('override')}
-        return frozenset(r['id'] for r in net.store.all('SELECT id,name,gone_mark FROM functions WHERE project_id=?',proj['id'])
+        return frozenset(r['id'] for r in net.project_store(proj['id']).all('SELECT id,name,gone_mark FROM functions WHERE project_id=?',proj['id'])
                          if r['gone_mark'] is not None or r['name'] in names)
     return _view(net,proj,'boundary-blocked',build)
 
 
 def _rows(net, proj):
-    return [dict(r) for r in net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id'])]
+    return [dict(r) for r in net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id'])]
 
 
 def _digest(value):
@@ -54,8 +54,8 @@ def _revision(net, proj, affected=()):
         rows.append(row if row['id'] in ids else {k:row[k] for k in
                     ('id','name','vram','rom_offset','size','target','relocs','unit','status','matched_source','meta')})
     return _digest([dict(net.project_row(proj['slug'])),rows,
-                    [list(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
-                    [list(r) for r in net.store.all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]])
+                    [list(r) for r in net.project_store(proj['id']).all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
+                    [list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]])
 
 
 def _supported(net, slug):
@@ -85,7 +85,7 @@ def audit(net, slug):
         suggested='delay_slot' if target and rabbitizer.Instruction(last).hasDelaySlot() else ''
         findings.append({**finding,'suggested_action':suggested})
     history=[]
-    for r in net.store.all('SELECT key,value FROM settings WHERE key LIKE ?',PREFIX+str(proj['id'])+':%'):
+    for r in net.project_store(proj['id']).all('SELECT key,value FROM settings WHERE key LIKE ?',PREFIX+str(proj['id'])+':%'):
         item=json.loads(r['value'])
         if not item.get('undone'):history.append({'key':r['key'],'function':item['function'],'action':item['action'],'time':item['time'],'evidence':item.get('evidence',''),'entries':[int(fid) for fid in item['before']]})
     return {'findings':findings,'history':sorted(history,key=lambda r:r['time'],reverse=True)[:30]}
@@ -134,13 +134,13 @@ def preview(net, slug, name, action, end=None, *, investigation=False):
             if all(p['id']!=row['id'] for p in pieces):pieces.append(row)
         if newend<address+fn['size']:
             # Shrink only into a separately retained tail, never throw away original bytes.
-            if net.store.one('SELECT 1 FROM functions WHERE project_id=? AND vram=? AND gone_mark IS NULL',proj['id'],newend):
+            if net.project_store(proj['id']).one('SELECT 1 FROM functions WHERE project_id=? AND vram=? AND gone_mark IS NULL',proj['id'],newend):
                 raise NetworkError('A function already starts at the proposed tail. Review a join instead.')
     if any(p['status']=='matched' for p in pieces):raise NetworkError('The repair would change an existing matched function.')
     if any(image[p['rom_offset']:p['rom_offset']+p['size']]!=p['target'] for p in pieces):
         raise NetworkError('A proposed piece differs from the original image. Review/reimport before joining.')
     ids=[p['id'] for p in pieces]
-    if not investigation and any(net.store.one('SELECT 1 FROM claims WHERE function_id=?',fid) for fid in ids):
+    if not investigation and any(net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',fid) for fid in ids):
         raise NetworkError('Release the affected claims before changing boundaries.')
     raw=image[start:finish]
     from .. import arch
@@ -187,9 +187,9 @@ def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=
     if broken:raise NetworkError('Existing matches could not be reverified: '+', '.join(n for n,_ in broken[:5]))
     getattr(log,'check_cancel',lambda:None)()
     rows=plan['pieces'];head=rows[0];old={str(p['id']):_pack(p) for p in rows}
-    symbols=[dict(r) for r in net.store.all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],head['name'])]
+    symbols=[dict(r) for r in net.project_store(proj['id']).all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],head['name'])]
     key=PREFIX+str(proj['id'])+':'+str(time.time_ns());created=[]
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         if _revision(net,proj,[p['id'] for p in rows])!=revision:raise NetworkError('Project inputs changed while checking matches. Preview again.')
         if _digest(_image(net,proj)[0])!=image_hash:raise NetworkError('The original image changed. Preview again.')
         if any(db.execute('SELECT 1 FROM claims WHERE function_id=?',(p['id'],)).fetchone() for p in rows):raise NetworkError('An affected function was claimed. Release it and preview again.')
@@ -234,8 +234,8 @@ def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=
         after={str(p['id']):_pack(dict(db.execute('SELECT * FROM functions WHERE id=?',(p['id'],)).fetchone())) for p in rows}
         for fid in created:after[str(fid)]=_pack(dict(db.execute('SELECT * FROM functions WHERE id=?',(fid,)).fetchone()))
         history={'evidence':note[:4000],'function':name,'action':action,'time':time.time(),'before':old,'after':after,'created':created,'symbols':symbols,
-                 'image':image_hash,'symbol_after':[dict(r) for r in net.store.all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],head['name'])],
-                 'config':proj['config'],'contexts':_digest([list(r) for r in net.store.all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]),
+                 'image':image_hash,'symbol_after':[dict(r) for r in net.project_store(proj['id']).all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],head['name'])],
+                 'config':proj['config'],'contexts':_digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]),
                  'attempt_id':db.execute('SELECT COALESCE(MAX(id),0) FROM attempts').fetchone()[0]}
         db.execute('INSERT INTO settings VALUES(?,?)',(key,json.dumps(history)))
         net._event(db,proj['id'],None,'boundary',f"{action}: {name}. {note[:600]}")
@@ -254,21 +254,21 @@ def undo(net,slug,key,log=print):
     proj=_supported(net,slug)
     if slug in net.rooms or net._link(slug) is not None:raise NetworkError('Leave the room before undoing boundary changes.')
     if not isinstance(key,str) or not key.startswith(PREFIX+str(proj['id'])+':'):raise NetworkError('Choose a repair in this project.')
-    row=net.store.one('SELECT value FROM settings WHERE key=?',key)
+    row=net.project_store(proj['id']).one('SELECT value FROM settings WHERE key=?',key)
     if not row:raise NetworkError('Repair history is unavailable.')
     history=json.loads(row['value'])
     if history.get('undone'):raise NetworkError('This decision was already undone.')
-    if proj['config']!=history['config'] or _digest([list(r) for r in net.store.all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])])!=history['contexts']:
+    if proj['config']!=history['config'] or _digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])])!=history['contexts']:
         raise NetworkError('Compiler settings, mappings or headers changed since this repair. Review those changes before undoing.')
     if _digest(_image(net,proj)[0])!=history['image']:raise NetworkError('The original image changed since this repair. Reimport/review it before undoing.')
-    if history['symbol_after'] and [dict(r) for r in net.store.all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],history['symbol_after'][0]['name'])]!=history['symbol_after']:
+    if history['symbol_after'] and [dict(r) for r in net.project_store(proj['id']).all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],history['symbol_after'][0]['name'])]!=history['symbol_after']:
         raise NetworkError('The repaired symbol changed. Undo would overwrite newer work.')
     ids=[int(fid) for fid in history['after']]
     revision=_revision(net,proj,ids)
     log('Checking existing matches before undo…')
     if _verify_matches(net,proj,log):
         raise NetworkError('Existing matches could not be reverified. Undo was not applied.')
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         if _revision(net,proj,ids)!=revision or _digest(_image(net,proj)[0])!=history['image']:raise NetworkError('Project or original image changed during undo verification. Try again.')
         for fid in ids:
             current=db.execute('SELECT * FROM functions WHERE id=? AND project_id=?',(fid,proj['id'])).fetchone()

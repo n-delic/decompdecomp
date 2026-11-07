@@ -37,7 +37,7 @@ class JudgeMixin:
         return super()._compile(proj, header, source, fn)
 
     def _rom_target(self, fn) -> match.RomTarget:
-        cfg = self.cfg(self.store.one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
+        cfg = self.cfg(self.project_store(fn['project_id']).one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
         session = compile_sessions.current()
         key = None
         if session is not None:
@@ -203,11 +203,11 @@ class JudgeMixin:
         if count == 1 or self._link(project) is not None:
             return self.claim(agent, project, None, strategy)
         proj = self._project(project)
-        held = self.store.all("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? "
+        held = self.project_store(proj['id']).all("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? "
                               "AND f.project_id=? ORDER BY f.vram, f.id", agent.id, proj["id"])
         if not held:
             text = self.claim(agent, project, None, strategy)  # the first, the usual way (with its "nothing left")
-            held = self.store.all("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? "
+            held = self.project_store(proj['id']).all("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? "
                                   "AND f.project_id=?", agent.id, proj["id"])
             if not held:
                 return text
@@ -235,7 +235,7 @@ class JudgeMixin:
         """Up to n more small open functions in the same file, using the normal queue and filters, claimed for the agent."""
         sdk=self.sdk_functions(proj)
         deferred=list(sdk) if first['id'] not in sdk else []
-        deferred += [r["function_id"] for r in self.store.all("SELECT function_id FROM claims WHERE agent_id=?", agent.id)]
+        deferred += [r["function_id"] for r in self.project_store(proj['id']).all("SELECT function_id FROM claims WHERE agent_id=?", agent.id)]
         rows = []
         for _ in range(n):
             row = Network.claim_row(self, agent, proj['slug'], strategy=strategy,
@@ -269,19 +269,21 @@ class JudgeMixin:
         if not function:
             return
         try:
-            fid = self._function(function, project)["id"]
+            fn = self._function(function, project)
+            fid = fn["id"]
         except NetworkError:
             return
         for _ in range(100):
-            held = self.store.one("SELECT a.name FROM claims c JOIN agents a ON a.id=c.agent_id WHERE c.function_id=?", fid)
-            if not held or held["name"] != "autopilot":
+            held = self.project_store(fn['project_id']).one('SELECT agent_id FROM claims WHERE function_id=?', fid)
+            identity = self.store.one('SELECT name FROM agents WHERE id=?', held['agent_id']) if held else None
+            if not identity or identity['name'] != 'autopilot':
                 return
             time.sleep(0.2)
 
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         with self.progress.foreground():
             fn = self._function(function, project)
-            slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+            slug = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
             with self.progress.judging(slug):
                 try:
                     return self._attempt(agent, function, source, project)
@@ -289,9 +291,9 @@ class JudgeMixin:
                     self.progress.foreground_changed(slug, fn['name'])
 
     def _record(self, fn, *args, **kwargs):
-        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        slug = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         matching = kwargs.get('matched', args[4] if len(args) > 4 else False)
-        proj = self.store.one('SELECT * FROM projects WHERE id=?', fn['project_id']) if matching and not self.progress.applying else None
+        proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?', fn['project_id']) if matching and not self.progress.applying else None
         automatic = proj is not None and self.cfg(proj).get('auto_commit_matches', False)
         with self.progress._project_lock(slug):
             # attempt()'s judging block already read progress just before this record; a second full read here made
@@ -299,7 +301,7 @@ class JudgeMixin:
             if not self.progress.applying and not getattr(self.progress.local, "judging", None):
                 self.progress.sync(slug, force=True)
             self.progress.check_result()
-            before = self.store.one('SELECT status FROM functions WHERE id=?', fn['id']) if automatic else None
+            before = self.project_store(fn['project_id']).one('SELECT status FROM functions WHERE id=?', fn['id']) if automatic else None
             result = super()._record(fn, *args, **kwargs)
             if before is not None and before['status'] != 'matched':
                 from .. import match_commits
@@ -352,7 +354,7 @@ class JudgeMixin:
                       not_c=not_c)
         said = super().release(agent, function, notes, project, not_c, claim_token=claim_token)
         fn = self._function(function, project)
-        self.rangechecks.gave_up(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn)
+        self.rangechecks.gave_up(self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn)
         return said
 
     @release_operation("function", protect_new=True)
@@ -370,7 +372,7 @@ class JudgeMixin:
         if move_on and not notes.strip():
             raise NetworkError("Explain what you tried and why you need to move on.")
         fn = self._function(function, project)
-        if not not_c and not needs.strip() and not self.store.one(
+        if not not_c and not needs.strip() and not self.project_store(fn['project_id']).one(
                 'SELECT 1 FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id):
             # A local pass can release on its move-on limit before the model sends its findings.
             # Notes need no lease; never release or change another worker's claim here.
@@ -386,7 +388,7 @@ class JudgeMixin:
         said = self.release(agent, function, notes, project, not_c, claim_token=claim_token)
         if not not_c and need is None and progress is not None and progress['compiles']:
             from .. import release_repairs
-            slug = self.store.one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']
+            slug = self.project_store(fn['project_id']).one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']
             said += release_repairs.handoff(self,slug,self._function(fn['name'],slug))
         if need is not None:
             self.wait_for(agent, fn, need)
@@ -440,7 +442,7 @@ class JudgeMixin:
             raise NetworkError(f"needs: {need['name']} is {need['status']} (no agent works on it), so this one would "
                                "wait forever; nothing was released.")
         seen, at = {need["id"]}, need["id"]
-        while (row := self.store.one("SELECT needs_id FROM waits WHERE function_id=?", at)) is not None:
+        while (row := self.project_store(fn['project_id']).one("SELECT needs_id FROM waits WHERE function_id=?", at)) is not None:
             at = row["needs_id"]
             if at == fn["id"]:  # waiting for one that (in the end) waits for this one: they'd both wait for good
                 raise NetworkError(
@@ -467,7 +469,7 @@ class JudgeMixin:
         n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
         if n and streak >= after:
             return None  # compile_and_diff said to move on
-        pushed = self.store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND "
+        pushed = self.project_store(fn['project_id']).one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND "
                                 "created_at >= ?", agent.id, fn["name"], progress["claimed_at"])
         if n and pushed is not None:
             return None  # asked again after the push-back, having tried it: it goes through
@@ -479,12 +481,12 @@ class JudgeMixin:
             exempt, hints = None, []
         if exempt:
             return None
-        with self.store.tx() as db:
+        with self.project_store(fn['project_id']).tx() as db:
             self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
         head = (f"Not released yet: you haven't compiled {fn['name']} since you claimed it." if not n else
                 f"Not released yet: {n} compile{'s' if n != 1 else ''} of {fn['name']} since you claimed it, "
                 f"{stall_line(streak, after)}.")
-        x86 = self.console(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])).arch == "x86"
+        x86 = self.console(self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"])).arch == "x86"
         from .. import agent_tokens
         source, revision = agent_tokens.candidate(self,agent,project,fn['name'])
         lines = [head,
@@ -506,7 +508,7 @@ class JudgeMixin:
 
     def _rom_release_exempt(self, fn) -> str | None:
         """A ROM project's function compiling can't help with: one with a boundary report waiting for the user."""
-        proj = self.store.one("SELECT config FROM projects WHERE id=?", fn["project_id"])
+        proj = self.project_store(fn['project_id']).one("SELECT config FROM projects WHERE id=?", fn["project_id"])
         if any(r.get("status") == "open" and r.get("function") == fn["name"] for r in self.cfg(proj).get("boundaries", [])):
             return "a boundary report waits for the user"
         return None
@@ -550,7 +552,7 @@ class JudgeMixin:
         """A function's best C, else its latest attempt."""
         if fn['best_source']:
             return canonical_source(fn, fn['best_source'])
-        row = self.store.one("SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC "
+        row = self.project_store(fn['project_id']).one("SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) ORDER BY id DESC "
                              "LIMIT 1", fn["id"])
         source = fn["best_source"] or (row["source"] if row else None)
         return canonical_source(fn, source) if source else None
@@ -561,9 +563,9 @@ class JudgeMixin:
         if function is None and project and not any(v is not None and v != "" for v in policy.values()) and not self.fork_slug(project):
             proj = self._project(project)
             for name in self.cfg(proj).get("priority", []):
-                row = self.store.one("SELECT f.id, f.status FROM functions f WHERE f.project_id=? AND f.name=?", proj["id"], name)
-                held = self.store.one("SELECT 1 FROM claims WHERE agent_id=?", agent.id)
-                if row and row["status"] == "open" and not held and not self.store.one(
+                row = self.project_store(proj['id']).one("SELECT f.id, f.status FROM functions f WHERE f.project_id=? AND f.name=?", proj["id"], name)
+                held = self.project_store(proj['id']).one("SELECT 1 FROM claims WHERE agent_id=?", agent.id)
+                if row and row["status"] == "open" and not held and not self.project_store(proj['id']).one(
                         "SELECT 1 FROM claims WHERE function_id=?", row["id"]):
                     function = name
                     break

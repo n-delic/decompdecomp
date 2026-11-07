@@ -105,7 +105,7 @@ class Drafter:
         if st.stop.is_set():
             return
         try:
-            fn = self.net.store.one("SELECT * FROM functions WHERE id=?", fid)
+            fn = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fid)
             if fn is None or fn["status"] != "open":
                 return
             from .boundary_repairs import blocked
@@ -118,7 +118,7 @@ class Drafter:
                 self.net._seed_for(fn, proj)
                 recovered = not fn['best_source']
             st.made += 1
-            if proj["slug"] not in self.net.links and (recovered or self.net.store.one(
+            if proj["slug"] not in self.net.links and (recovered or self.net.project_store(proj['id']).one(
                     "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?", fid, agent.id)):
                 # autopilot tried this function's draft before: the new one goes through the judge too (in a room,
                 # the host's copy does that, and its matches come back here)

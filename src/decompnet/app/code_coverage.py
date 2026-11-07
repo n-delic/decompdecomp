@@ -8,17 +8,17 @@ LIMITS=('candidate_limit','mapping_limit','pointer_probe_limit','callback_scan_l
 def _view(net, proj, kind, build):
     # Target decoding is diagnostic work, not a per-poll scan. Function edits
     # invalidate the map revision; audit reviews and project mappings have their own keys.
-    if getattr(net.store._local, 'in_tx', False):
+    if getattr(net.project_store(proj['id'])._local, 'in_tx', False):
         return build()
     if kind in ('coverage-boundaries','boundary-blocked'):
         cfg = net.cfg(proj)
-        version = (net.store.read_version('targets',proj['id']), net.store.read_version('naming',proj['id']),
-                   net.store.read_version('compiler_rows',proj['id']), proj['arch'], proj['big_endian'], cfg.get('kind'), cfg.get('platform'))
-        return net.store.read_cache.get((kind,proj['id']),version,build)
-    audit = net.store.one('SELECT value FROM settings WHERE key=?', code_audit_reviews.key(proj['id']))
-    version = (net.store.read_version('targets', proj['id']), net.store.read_version('naming', proj['id']), net.store.read_version('compiler_rows', proj['id']),
+        version = (net.project_store(proj['id']).read_version('targets',proj['id']), net.project_store(proj['id']).read_version('naming',proj['id']),
+                   net.project_store(proj['id']).read_version('compiler_rows',proj['id']), proj['arch'], proj['big_endian'], cfg.get('kind'), cfg.get('platform'))
+        return net.project_store(proj['id']).read_cache.get((kind,proj['id']),version,build)
+    audit = net.project_store(proj['id']).one('SELECT value FROM settings WHERE key=?', code_audit_reviews.key(proj['id']))
+    version = (net.project_store(proj['id']).read_version('targets', proj['id']), net.project_store(proj['id']).read_version('naming', proj['id']), net.project_store(proj['id']).read_version('compiler_rows', proj['id']),
                proj['config'], audit['value'] if audit else None)
-    return net.store.read_cache.get((kind, proj['id']), version, build)
+    return net.project_store(proj['id']).read_cache.get((kind, proj['id']), version, build)
 
 
 
@@ -37,7 +37,7 @@ def _boundaries(net,proj):
 
     from .boundary_repairs import reason
     console=net.console(proj);out=[]
-    for row in net.store.all(f"SELECT name,vram,size,target,status,meta FROM functions WHERE project_id=? AND {IN_BUILD} AND status!='matched'",proj['id']):
+    for row in net.project_store(proj['id']).all(f"SELECT name,vram,size,target,status,meta FROM functions WHERE project_id=? AND {IN_BUILD} AND status!='matched'",proj['id']):
         if warning:=reason(console,row):
             out.append({'function':row['name'],'vram':row['vram'],'size':row['size'],'stored_status':row['status'],
                         'analysis_state':'boundary_review','reason':warning,'override':bool(json.loads(row['meta'] or '{}').get('boundary_override'))})
@@ -53,8 +53,8 @@ def _snapshot(net,proj):
     if not net.is_rom(proj):return None
     all_findings=boundaries(net,proj)
     findings=[r for r in all_findings if not r.get('override')]
-    classified=net.store.one("SELECT COUNT(*) n,COALESCE(SUM(size),0) bytes FROM functions WHERE project_id=? AND json_extract(meta,'$.boundary_classification') IS NOT NULL",proj['id'])
-    counts=net.store.one(f"SELECT COUNT(*) total,SUM(status='open') open,SUM(size) bytes FROM functions WHERE project_id=? AND {IN_BUILD}",proj['id'])
+    classified=net.project_store(proj['id']).one("SELECT COUNT(*) n,COALESCE(SUM(size),0) bytes FROM functions WHERE project_id=? AND json_extract(meta,'$.boundary_classification') IS NOT NULL",proj['id'])
+    counts=net.project_store(proj['id']).one(f"SELECT COUNT(*) total,SUM(status='open') open,SUM(size) bytes FROM functions WHERE project_id=? AND {IN_BUILD}",proj['id'])
     supported=proj['arch']=='mips'
     state=code_audit_reviews.load(net,proj['id']) if supported else {'report':None}
     report=state['report'];queue_empty=bool(counts['total'] and not counts['open'])

@@ -333,7 +333,7 @@ def test_regeneration_reports_function_before_work_finishes_and_final_counts(net
         return 'fresh C'
     monkeypatch.setattr(draft_regeneration, 'generate', seed)
     monkeypatch.setattr(draft_regeneration, 'trial', lambda *args: ('near', {'compiled':True}))
-    monkeypatch.setattr(draft_reports, 'read', lambda *args: {'compiled': True})
+    monkeypatch.setattr(draft_reports, 'read', lambda *args, **kwargs: {'compiled': True})
     class Log:
         def __call__(self, *args): pass
         def progress(self, data):

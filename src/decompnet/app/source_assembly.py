@@ -29,10 +29,10 @@ def verified(proj, fn):
 
 
 def breakdown(net, proj):
-    with getattr(net.store,'lock',nullcontext()):
-        counts=net.store.one(f"SELECT SUM(status='matched') c,SUM(status='asm') a,SUM(status='open') o,SUM(size) bytes,SUM(CASE WHEN status='matched' THEN size ELSE 0 END) cbytes FROM functions WHERE project_id=? AND {IN_BUILD}",proj['id'])
+    with getattr(net.project_store(proj['id']),'lock',nullcontext()):
+        counts=net.project_store(proj['id']).one(f"SELECT SUM(status='matched') c,SUM(status='asm') a,SUM(status='open') o,SUM(size) bytes,SUM(CASE WHEN status='matched' THEN size ELSE 0 END) cbytes FROM functions WHERE project_id=? AND {IN_BUILD}",proj['id'])
         checked=0
-        for row in net.store.all(f"SELECT vram,size,target,relocs,meta,status FROM functions WHERE project_id=? AND {IN_BUILD} AND status='asm' AND json_type(meta,'$.verified_assembly')='object'",proj['id']):
+        for row in net.project_store(proj['id']).all(f"SELECT vram,size,target,relocs,meta,status FROM functions WHERE project_id=? AND {IN_BUILD} AND status='asm' AND json_type(meta,'$.verified_assembly')='object'",proj['id']):
             checked+=int(verified(proj,row))
     return {'exact_c':counts['c'] or 0,'verified_source_assembly':checked,
             'other_assembly':(counts['a'] or 0)-checked,'open':counts['o'] or 0,
@@ -44,7 +44,7 @@ def scan(net, proj, cfg):
     from .source_preparation import MAX_FILES, Reader, mappings, symbol_aliases
     reader=Reader(cfg);aliases=symbol_aliases(cfg.get('aliases',''))
     aliases.update({s:d for d,s,_ in mappings(cfg.get('mappings',''))+mappings(cfg.get('assembly_mappings',''))})
-    known={r['name'] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status!='matched'",proj['id'])}
+    known={r['name'] for r in net.project_store(proj['id']).all("SELECT name FROM functions WHERE project_id=? AND status!='matched'",proj['id'])}
     leads=[];count=0
     # rglob does not follow directory symlinks; Reader also checks each resolved file.
     seen=set()
@@ -90,7 +90,7 @@ def run(net, proj, cfg, log, stop=lambda:False, budget=8, only=None, agent=None,
             if verified(proj,fn) and old.get('source_sha256')==source_hash and old.get('prelude_sha256')==prelude_hash:
                 report['cached']+=1;continue
             key='local-assembly-v2:'+hashlib.sha256(repr((fingerprint(proj,fn),source_hash,prelude_hash)).encode()).hexdigest()
-            cached=net.store.one('SELECT reason FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key)
+            cached=net.project_store(proj['id']).one('SELECT reason FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key)
             if cached and not retry:
                 report['errors'].append(dest+': unchanged failed assembly trial skipped; use Verify mapped assembly to retry.');continue
             base=compiler_for(json.loads(proj['config']),fn['vram'], fn)
@@ -118,9 +118,9 @@ def run(net, proj, cfg, log, stop=lambda:False, budget=8, only=None, agent=None,
                    'source_sha256':hashlib.sha256(source.encode()).hexdigest(),
                    'prelude_sha256':hashlib.sha256(prelude.encode()).hexdigest(),
                    'object_sha256':hashlib.sha256(result.obj).hexdigest(),'compiler':profile,'at':time.time()}
-            with net.progress.judging(proj['slug']),net.progress._project_lock(proj['slug']),net.store.tx() as db:
+            with net.progress.judging(proj['slug']),net.progress._project_lock(proj['slug']),net.project_store(proj['id']).tx() as db:
                 current=net._function(dest,proj['slug']);fresh=net.project_row(proj['slug'])
-                claim=net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?',fn['id'])
+                claim=net.project_store(proj['id']).one('SELECT agent_id,expires_at FROM claims WHERE function_id=?',fn['id'])
                 if inputs(net,fresh,current)!=expected or current['status'] not in ('open','asm') or not claim or claim['agent_id']!=agent.id or claim['expires_at']<=time.time():
                     raise NetworkError('Assembly inputs or claim changed; run verification again.')
                 meta=json.loads(current['meta'] or '{}');meta['verified_assembly']=proof
@@ -130,7 +130,7 @@ def run(net, proj, cfg, log, stop=lambda:False, budget=8, only=None, agent=None,
             report['verified']+=1;log(dest+': verified source assembly; no C coverage added.')
         except NetworkError as error:
             if failure_key:
-                with net.store.tx() as db:
+                with net.project_store(proj['id']).tx() as db:
                     db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',(fn['id'],failure_key,'failed',str(error)[:2000]))
             report['errors'].append(dest+': '+str(error));log(report['errors'][-1])
         finally:net.permuter._let_go(agent,fn)

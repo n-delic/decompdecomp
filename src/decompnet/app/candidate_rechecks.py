@@ -14,8 +14,8 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS candidate_rechecks(
  PRIMARY KEY(function_id,source_hash,attempt_id))'''
 
 
-def ensure(net):
-    with net.store.tx() as db:
+def ensure(net, project):
+    with net.project_store(project).tx() as db:
         db.execute(SCHEMA)
 
 
@@ -23,7 +23,7 @@ def alternatives(net, fn, report):
     seen = {report['source_hash']}
     rows = []
     for ident in report['alternatives'][:3]:
-        row = net.store.one('SELECT id,source,score FROM attempts WHERE id=? AND function_id=? '
+        row = net.project_store(fn['project_id']).one('SELECT id,source,score FROM attempts WHERE id=? AND function_id=? '
                             'AND compiled=1 AND score IS NOT NULL', ident, fn['id'])
         if not row or not row['source']:
             continue
@@ -40,7 +40,7 @@ def stamp(net, proj, fn, alternative):
 
 
 def saved(net, fn, report, alternative, scope):
-    row = net.store.one('SELECT * FROM candidate_rechecks WHERE function_id=? AND source_hash=? AND attempt_id=?',
+    row = net.project_store(fn['project_id']).one('SELECT * FROM candidate_rechecks WHERE function_id=? AND source_hash=? AND attempt_id=?',
                         fn['id'], report['source_hash'], alternative['id'])
     return json.loads(row['result']) | {'measured_at':row['measured_at']} if row and row['build_scope'] == scope else None
 
@@ -48,11 +48,11 @@ def saved(net, fn, report, alternative, scope):
 def listing(net, slug):
     if slug:
         net.project_row(slug)
-    ensure(net)
     reports = candidate_quality.listing(net, slug)
     for report in reports:
         fn = net._function(report['function'], report['slug'])
         proj = net.project_row(report['slug'])
+        ensure(net, proj['id'])
         report.update(instructions=fn['n_insns'], starting_score=fn['best_score'])
         report['rechecks'] = []
         for alt in alternatives(net, fn, report):
@@ -64,7 +64,7 @@ def listing(net, slug):
 
 
 def evidence(net, slug, function, source_hash, attempt_id):
-    ensure(net)
+    ensure(net, slug)
     fn = net._function(function, slug)
     report = next((r for r in candidate_quality.pending(net, fn) if r['source_hash'] == source_hash), None)
     if not report:
@@ -105,7 +105,7 @@ def run(net, slug, limit, log, retry_failed=False):
         raise NetworkError('Retry failed measurements must be true or false.')
     if slug in net.links:
         raise NetworkError('Rejudge alternatives on the room host’s project.')
-    ensure(net)
+    ensure(net, slug)
     agent, _ = net.local_agent('candidate-recheck')
     reports = candidate_quality.listing(net, slug)
     reports.sort(key=lambda r: net._function(r['function'], slug)['n_insns'] or 0)
@@ -126,8 +126,11 @@ def run(net, slug, limit, log, retry_failed=False):
                 todo.append((alt, scope))
         if not todo:
             continue
-        with net.store.tx() as db:
-            net._expire_claims(db)
+        from .local_claims import expiry_ids
+        store = net.project_store(proj['id'])
+        identities = expiry_ids(net, store)
+        with store.tx() as db:
+            net._expire_claims(db, **identities)
             current = db.execute('SELECT * FROM functions WHERE id=?', (fn['id'],)).fetchone()
             if (current['status'] != 'open' or hashlib.sha256((current['best_source'] or '').encode()).hexdigest() != report['source_hash']):
                 continue
@@ -140,7 +143,7 @@ def run(net, slug, limit, log, retry_failed=False):
         try:
             for alt, scope in todo:
                 log.check_cancel()
-                with net.store.tx() as db:
+                with net.project_store(fn['project_id']).tx() as db:
                     db.execute('UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=?',
                                (time.time()+net.claim_ttl, fn['id'], agent.id))
                 started = time.monotonic()
@@ -154,7 +157,7 @@ def run(net, slug, limit, log, retry_failed=False):
                     log(f'{fn["name"]}: inputs changed; measurement discarded.')
                     break
                 result['seconds'] = round(time.monotonic()-started, 3)
-                with net.store.tx() as db:
+                with net.project_store(fn['project_id']).tx() as db:
                     db.execute('INSERT OR REPLACE INTO candidate_rechecks VALUES(?,?,?,?,?,?)',
                                (fn['id'], report['source_hash'], alt['id'], scope, json.dumps(result), time.time()))
                 stats['tested'] += 1
@@ -163,7 +166,7 @@ def run(net, slug, limit, log, retry_failed=False):
                 log(f'{fn["name"]} · alternative #{alt["id"]}: '+(result['error'] if result['score'] is None else f'score {result["score"]}; review required'))
                 log.progress(dict(stats) | {'function':fn['name'], 'limit':limit})
         finally:
-            with net.store.tx() as db:
+            with net.project_store(fn['project_id']).tx() as db:
                 db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (fn['id'], agent.id))
     log('Recovery batch finished. Measurements saved; selected C, matches and quality reports were not changed.')
     return stats
