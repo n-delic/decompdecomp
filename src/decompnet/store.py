@@ -15,6 +15,20 @@ from pathlib import Path
 
 from .read_cache import ReadCache
 
+
+class CorruptDatabaseError(sqlite3.DatabaseError):
+    """An actionable failure which never removes or silently replaces damaged data."""
+    def __init__(self, path, *, project=None):
+        self.path = str(path)
+        label = f"Project {project!r}" if project else 'decompdecomp'
+        super().__init__(f"{label} cannot open a damaged SQLite database: {self.path}. "
+                         "Keep this file and its -wal and -shm files together. "
+                         "Restore a verified recovery or a consistent backup before reopening; do not delete the database.")
+
+
+def corrupt_database(error):
+    return (getattr(error, 'sqlite_errorcode', 0) & 255) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
+
 _transactions = threading.local()
 
 
@@ -379,8 +393,10 @@ class Store:
         try:
             with self.writer_gate.hold():
                 self._initialize()
-        except BaseException:
+        except BaseException as error:
             if hasattr(self,'conn'):self.conn.close()
+            if isinstance(error, sqlite3.DatabaseError) and corrupt_database(error):
+                raise CorruptDatabaseError(self.path) from error
             raise
 
     def _initialize(self):
@@ -397,7 +413,9 @@ class Store:
         from .shard_ids import bind
         if self.require_existing and self.project_namespace is not None:
             try:marker = sqlite3.Connection.execute(self.conn,"SELECT value FROM settings WHERE key='project-id-namespace'").fetchone()
-            except sqlite3.DatabaseError as error:raise ValueError('The project database is incomplete. Restore a consistent backup.') from error
+            except sqlite3.DatabaseError as error:
+                if corrupt_database(error):raise
+                raise ValueError('The project database is incomplete. Restore a consistent backup.') from error
             if not marker or marker[0]!=str(self.project_namespace):raise ValueError('The project database identity is missing or incorrect. Restore a consistent backup.')
         bind(self.conn,self.project_namespace,self.stable_ids)
         from .header_storage import Codec

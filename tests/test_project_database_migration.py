@@ -528,3 +528,17 @@ def test_save_and_restore_initialize_knowledge_in_new_project_database(tmp_path)
         manifest,_,_=saves._manifest_from_rows(net,net.project_row('imported'),net.cfg(net.project_row('imported')),[],root)
         assert manifest['knowledge'] == ['Preserved knowledge']
     finally:close(net)
+
+
+def test_corrupt_project_startup_names_slug_and_preserves_evidence(tmp_path):
+    from decompnet.store import CorruptDatabaseError
+    path = tmp_path/'catalog.db'
+    legacy(path)
+    net = Network(path, project_databases=True)
+    selected = Path(net.project_store('first').path)
+    close(net)
+    contents = b'broken SQLite header' * 400
+    selected.write_bytes(contents)
+    with pytest.raises(CorruptDatabaseError, match="Project 'first'") as failure:Network(path)
+    assert str(selected) in str(failure.value)
+    assert selected.read_bytes() == contents

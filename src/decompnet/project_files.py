@@ -5,7 +5,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .project_migration import save, state
-from .store import Store
+from .store import CorruptDatabaseError, Store
 
 PENDING = 'project-registration:'
 
@@ -49,7 +49,10 @@ class Files:
         if not Path(str(path)+'.transcripts.sqlite3').is_file():
             raise ValueError('The project transcript database is missing. Restore it from a consistent backup.')
         # Do not hold the registry mutex while waiting for a SQLite writer.
-        store = Store(path,project_namespace=row['id'],repair_archive=self.catalog.conn.repair_archive,require_existing=True)
+        try:
+            store = Store(path,project_namespace=row['id'],repair_archive=self.catalog.conn.repair_archive,require_existing=True)
+        except CorruptDatabaseError as error:
+            raise CorruptDatabaseError(path,project=row['slug']) from error
         if not store.one('SELECT 1 FROM projects WHERE id=? AND slug=?',row['id'],row['slug']):
             store.conn.close()
             raise ValueError('The project database belongs to a different project. Restore a consistent backup.')
