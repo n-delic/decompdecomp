@@ -13,6 +13,7 @@ from decompnet.app import source_runtime as runtime
 def test_only_child_owned_python_can_update_without_a_server_restart():
     assert runtime.worker_only_changes([
         'src/decompnet/app/permute.py', 'src/decompnet/app/permuter_initialization.py', 'tests/test_permute.py'])
+    assert runtime.worker_only_changes(['src/decompnet/permuter_formatting.py'])
     assert not runtime.worker_only_changes(['src/decompnet/app/permuter_worker.py'])
     assert not runtime.worker_only_changes(['src/decompnet/app/permuter_focus.py'])
     assert not runtime.worker_only_changes(['src/decompnet/app/permute.py', 'src/decompnet/app/engine/core.py'])

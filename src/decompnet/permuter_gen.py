@@ -1,7 +1,7 @@
 """Variants of one function's C, made by decomp-permuter's randomizer (MIT, a pinned tool: toolchains.toml).
 
 A program of its own, not a module of decompdecomp: app/permute.py runs it with the Python of decomp-permuter's
-environment, `python -I permuter_gen.py <decomp-permuter's folder>`, and it imports only our dependency-free capture guard. Our
+environment, `python -I permuter_gen.py <decomp-permuter's folder>`, with dependency-free capture and formatting guards. Our
 own judge scores what it writes; this only makes candidates, so a variant that doesn't compile costs one compile.
 
 In, on stdin, one job per line, each a JSON object:
@@ -77,8 +77,9 @@ def supported_methods(methods):
 def main() -> int:
     sys.path.insert(0, sys.argv[1])  # decomp-permuter's folder: its `src` package and its own copy of pycparser
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from perm_pycparser import c_ast
+    from perm_pycparser import c_ast, c_parser
     from permuter_capture import protect_expand
+    from permuter_formatting import LineGroups
     from src.ast_util import to_c
     from src.candidate import Candidate
     from src.helpers import get_default_randomization_weights
@@ -103,12 +104,13 @@ def main() -> int:
             yield {"error": f"{type(e).__name__}: {e}"}
             return
         seam = next(node for node in first.ast.ext if isinstance(node, c_ast.Typedef) and node.name == SOURCE_STARTS)
+        line_groups = LineGroups(job['source'], job['header'], name, c_parser.CParser().parse)
 
         def own_part(ast) -> str:
             """The C after the seam: the function and its neighbours from the source, without the header. A header
             declaration the randomizer retyped is left out: the header isn't the permuter's to change, and a
             second, different declaration would only fail to compile."""
-            return to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:]))
+            return line_groups.apply(to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:])))
 
         seen = {own_part(first.ast)}  # the source as decomp-permuter prints it: not a variant
         cand = first

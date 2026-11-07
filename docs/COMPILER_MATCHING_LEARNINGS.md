@@ -5568,3 +5568,29 @@ compiler-source, retained older outputs and fresh read-only audit for return mod
 Private receipts `quantity-order-controls-nov7` and `return-mode-nov7` retain full
 sources/context and limitations; no game data is published. These findings support
 better hypothesis selection, not a new general automatic repair or new coverage.
+
+
+## Preserve known source line groups through native printing (7 November 2026)
+
+KMC GCC2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: a corrected decoder source
+compiled to1700/956bytes. Actual native Candidate/to_c printing produced1760/
+960bytes: one extra NOP after MFC1 when it split two unsigned-conversion
+assignments onto separate physical lines. Restoring only the original boundary
+recovered exact original linked SHA256
+`23d669f77eadaeea39d9e333aef312ae70c951d69d1e4e3fc84150454fb95304`.
+Ordinary/diagnostic pairs and independent object reload/relinks agree; all2078
+selected sources/profiles and442 focal attempts were unchanged. No new match.
+
+The shared native formatter records original same-line adjacent assignment AST
+pairs, preserving a boundary only for unique unchanged adjacent pairs. It makes
+whitespace-only edits with post-edit AST verification, never infers line groups
+from comments with collapsed newlines, and declines unsupported contexts. The
+helper does not remove candidate comments/directives, invent statements, preserve
+absolute debug line numbers or prove equivalence of other native mutations.
+
+Evidence: controlled private `current-root-search-nov7` reference/boundary pairs;
+production helper independently reproduces the measured corrected source byte
+for byte. Synthetic tests cover changed/missing/duplicate groups, overlapping
+three-statement groups, comments/directives, line macros, parser failure and the
+actual pinned native generator. This fixes a measured search-baseline regression;
+it is not a claim that preserving line groups always improves a candidate.

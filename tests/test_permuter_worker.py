@@ -27,6 +27,13 @@ def wait_for(check, seconds=10):
     raise AssertionError("the permuter worker did not reach the expected state")
 
 
+def test_formatting_code_update_changes_worker_revision(tmp_path, monkeypatch):
+    monkeypatch.setattr(permuter_worker, '__file__', str(tmp_path/'app'/'permuter_worker.py'))
+    before = permuter_worker.revision()
+    (tmp_path/'permuter_formatting.py').write_text('updated formatting code')
+    assert permuter_worker.revision() != before
+
+
 def test_permuter_restarts_without_replacing_the_app_engine(tmp_path, monkeypatch):
     internal = tmp_path / ".decomp"
     internal.mkdir()

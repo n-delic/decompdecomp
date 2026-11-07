@@ -1336,3 +1336,21 @@ return controls left the same allocation problem; a later staged-load draft
 provides no demonstrated interaction warranting a duplicate test. Keep caller
 prototypes consistent: a byte-consuming caller alone does not prove the original
 return declaration was a byte type.
+
+
+## Check the native printer before comparing a search
+
+A C printer can split two original assignments that share a physical line.
+Under KMC `-O2 -g3`, one measured conversion sequence changed1700/956bytes to
+1760/960bytes solely through this boundary: an extra NOP followed MFC1. Restoring
+that one original boundary reproduced the complete original linked bytes in
+ordinary/diagnostic builds and independent relinks. This was not a new match.
+
+Native generation now preserves original same-line adjacent assignments when
+both unchanged statements remain uniquely adjacent in the candidate. It joins
+only intervening whitespace and verifies the candidate AST again. Changed,
+missing, duplicated or ambiguous pairs are left as printed. Comments/directives
+are never erased; physical coordinates survive multiline comments, and line-
+sensitive macros or unsupported continuations disable the helper. This does not
+preserve every source layout or absolute line number, and it is not a semantic
+safety check for the random rewrite itself. Measure the exact emitted baseline.

@@ -68,7 +68,7 @@ def worker_only_changes(paths):
     """Only child-owned code can change under a live server; docs/tests are inert."""
     worker = {"src/decompnet/app/permute.py", "src/decompnet/app/permuter_initialization.py",
               "src/decompnet/app/permuter_local.py", "src/decompnet/app/permuter_macro_effects.py",
-              "src/decompnet/permuter_gen.py", "src/decompnet/permuter_capture.py"}
+              "src/decompnet/permuter_gen.py", "src/decompnet/permuter_capture.py", "src/decompnet/permuter_formatting.py"}
     def child_owned(path):
         return path in worker
     return bool(paths) and any(child_owned(path) for path in paths) and all(
