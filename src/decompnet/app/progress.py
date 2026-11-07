@@ -166,7 +166,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
 NAME = re.compile(r"[A-Za-z_]\w*|\.L[0-9A-F]+")
 
 
-def _manifest(files: dict[str, str], cfg: dict) -> dict:
+def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
         if manifest["format"] != saves.FORMAT or manifest["game"]["sha1"] != cfg["rom"]["sha1"]:
@@ -216,8 +216,6 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
         if "" not in (manifest.get("headers") or {}):
             raise ValueError("headers must name the project-wide header (the empty name)")
         source_files = {saves._source_file(name) for name in layout}
-        known_names = {row["name"] for row in net.store.all(
-            "SELECT name FROM functions WHERE project_id=?", pid)}
         known_by_file = {saves._source_file(name): name for name in known_names}
         for name in files:
             if name.startswith(("src/", "best/")) and Path(name).name not in source_files:
@@ -873,7 +871,9 @@ class Progress:
         if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
             report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
             disk = _repair(net, pid, folder, disk, report)
-            manifest = _manifest(disk, cfg)
+            known_names = {row["name"] for row in net.store.all(
+                "SELECT name FROM functions WHERE project_id=?", pid)}
+            manifest = _manifest(disk, cfg, known_names)
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
@@ -925,7 +925,7 @@ class Progress:
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
-                merged_manifest = _manifest(candidate, cfg)
+                merged_manifest = _manifest(candidate, cfg, known_names)
                 all_code = any(name.startswith("include/") for name in changed)
                 if saves.MANIFEST in changed:
                     old = json.loads(comparison_manifest)
@@ -1044,7 +1044,9 @@ class Progress:
             self.revisions[slug] = self.revisions.get(slug, 0) + 1
             self.published[slug] = set(pending) | set(removed)
             disk = _read(folder)
-            manifest = _manifest(disk, cfg)
+            known_names = {row["name"] for row in net.store.all(
+                "SELECT name FROM functions WHERE project_id=?", pid)}
+            manifest = _manifest(disk, cfg, known_names)
             saves._remember_revision(net, slug, manifest)
             self.results[slug] = saves._judge_saved(net, slug, folder, manifest, by_name,
                                                     manifest.get("functions") or {}, report,

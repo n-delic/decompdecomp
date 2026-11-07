@@ -121,7 +121,7 @@ def test_unlisted_shortened_filename_error_names_the_full_function(project):
     files[f"src/{file}"] = "edited source"
     cfg = net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))
     with pytest.raises(NetworkError, match=name):
-        _manifest(files, cfg)
+        _manifest(files, cfg, {name})
 @pytest.mark.parametrize("kind", ["rom", "fork"])
 def test_manual_save_locations_survive_restart_and_belong_to_one_project(project, tmp_path, kind):
     net, folder, _ = project
