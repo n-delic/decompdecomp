@@ -1,5 +1,61 @@
 # Compiler matching learning log
 
+### Check native substitution dependencies and measure transfer before promotion
+
+The native-pass audit found that assignment splitting, temporary extraction,
+assignment chaining/duplication and statement reordering may change captured
+values, conversion points or initialization order. These six passes now compare
+symbolic expressions, assignment conversions, ordered returns and final original
+locals for straight-line ordinary `int`/`unsigned` code. Unsupported control,
+memory effects, shadowing, macros, aliases and uninitialized reads decline.
+Existing expression expansion keeps its separate capture-stability check.
+Native inserted dummy reads, similar-type array aliasing and arbitrary AST
+removal are disabled pending independent proofs. Other native passes remain
+exploratory; this is not a general C equivalence checker or an ABI/type audit.
+
+Native `RandomizationFailure` is caught inside its own retry loop. Raising that
+after a mutating pass is insufficient: the bad AST can survive into the next
+method. Dependency rejection uses a distinct exception that escapes to the
+fresh-parent path. Pinned-generator regressions cover traced and untraced jobs
+and ensure a deliberately invalid rewrite emits no candidate.
+
+An independent six-function sample was selected by SHA256(name) ordering from
+a previously frozen unresolved snapshot, excluding the function used to develop
+the parameter-carrier/load-subtraction rules. Selection used no replay outcomes;
+these are held out from this rule's development, not every historical experiment.
+Pinned KMC GCC 2.7.2 with each frozen profile and the ordinary copied linked-ROM
+judge evaluated both policies, with 32 candidate checks and 30 seconds per case.
+Five profiles used `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`; one additionally used
+`-ffast-math`, identical between policies:
+
+| Measurement | New families omitted | New families enabled |
+| --- | ---: | ---: |
+| Distinct functions | 6 | 6 |
+| Candidate checks | 192 | 192 |
+| Exact recoveries | 0 | 0 |
+| Functions improved from baseline | 2 | 2 |
+| Better final scores than the other policy | 0 | 0 |
+
+No transfer gain is demonstrated in this sample. Only one function reached
+parameter-carrier trials; narrow-load subtraction did not reach a trial. All six
+final best scores agreed. Do not increase global priority based on the earlier
+single-case 1.8-second replay. Enabled trials repeated compatible allocated-output
+fingerprints 161 times in 192 checks (within each case's bounded window); this
+identifies wasted diversity, not proof that those edits are semantically inert.
+Timings are local observations, not a guaranteed speedup. No live project was
+written and no new match is claimed.
+
+New source-free telemetry distinguishes candidate checks, actual compiler starts,
+compile requests, unknown fingerprints and cached skips. The first-exact process
+count includes speculative compiler work started when exactness was observed.
+Process counts are explicitly pool-scoped: a sweep can share one pool across
+functions, so its first exact is not a per-function compile count. Independent
+frozen-suite evaluators separately report actual per-suite compiler invocations.
+Parallel summaries keep lane-local duplicate windows and do not invent a global
+first-exact ordering. Family counts and winning paths persist in ordinary saved
+deep-pass results. These deterministic searches use zero model tokens; existing
+provider telemetry remains the source for paid-agent token usage.
+
 ### Dead parameter carriers and a temporarily worse allocation bridge
 
 Profile: pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
@@ -6043,3 +6099,37 @@ shared object/rectangle pointer storage, shared branch locals, broad formatting 
 and blind extent-width changes were worse or inert. This case supports a focused
 repair family, not a universal old-GCC allocation rule. Game source, ROM data and
 private regression inputs remain outside the repository.
+### Automatic replay of disjoint selector/pointer/sentinel storage
+
+The shared `scratch_role_reuse` family now materializes an actual narrow selector
+load, reuses the temporary for a byte-pointer intermediate with casts back at its
+uses, and can reuse it again for a comparison/XOR constant after the pointer dies.
+It retains both the first step and bounded combinations; the existing iterative
+frontier can continue from a partial improvement. Register-only rows rank this
+family before broad mutations in autopilot and deep search, within their existing
+budgets. No physical register is bound.
+
+A private replay started from the original unresolved score-20 source, with the
+same `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` profile and header. The first
+automatically generated combined candidate recovered score 0 and exact linked
+bytes. The test also selects that candidate first through the ordinary targeted
+proposal pool, without reading a matched-source seed. This is recovery of a known
+case, not a new game match or a measured general speedup. Partial-step continuation,
+ROM/PROJECT deep-search admission and stop-on-exact behavior have synthetic tests.
+
+Eligibility is deliberately narrow: known 32-bit ABIs, an ordinary narrow load in
+a braced condition, an unescaped single-definition byte-pointer local and CFG
+checks for disjoint lifetimes and dominating definitions. Sentinel insertion is
+rejected if the old scratch remains live or a reachable path redefines it. Selector calls,
+volatile selector expressions, macros involving the function body, shadows and
+unknown widths are declined. Pointer/integer round trips are target-ABI hypotheses,
+not an ISO C portability claim. The ordinary exact judge is unchanged.
+
+Agent packets include the applicable edit plan and target-register occurrences
+from earlier matching rows when available; existing build-scoped failed-trial
+summaries remain alongside it. Wider carriers and random flag searches should not
+replace a targeted lifetime experiment when ordered instruction forms already
+agree. The opt-in regression uses `DECOMPNET_SCRATCH_ROLE_REPLAY` with a private
+case manifest pinned to source/header/target/compiler hashes; no game data is in
+the test or repository. Whole-image rebuilding and transfer to other games were
+not measured by this replay.

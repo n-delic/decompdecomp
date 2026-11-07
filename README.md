@@ -58,6 +58,12 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+Deep search reports repeated compiled outputs, cached skips and a successful repair path;
+saved results retain bounded per-family counters. Compiler requests and actual process starts
+are counted separately. Native scalar substitution/reordering passes now decline unproven
+dependencies before compiling; unsupported shapes are skipped, not certified safe. Frozen
+case suites support equal-budget family ablations before changing search priorities.
+
 Bounded local repairs can reuse dead incoming integer parameters through coordinated storage
 permutations, combine safe halfword-load subtractions, and remove redundant single-pass loop
 latches while keeping their scopes. Search reserves promising scheduling-to-allocation

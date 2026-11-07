@@ -28,6 +28,7 @@ class Metrics:
         self.rates = deque(maxlen=26)
         self.started = time.monotonic()
         self.cpu = time.process_time()
+        self.first_exact_invocations = None
 
     def add(self, key, value):
         with self.lock:
@@ -38,11 +39,17 @@ class Metrics:
                 bucket=self.rates[-1][1]
                 bucket[key]=bucket.get(key,0)+value
 
+    def exact(self):
+        with self.lock:
+            if self.first_exact_invocations is None:
+                self.first_exact_invocations=self.values.get('invocations',0)
+
     def snapshot(self):
         now=time.monotonic()
         elapsed = max(.001, now-self.started)
         with self.lock:
             values = dict(self.values)
+            first_exact=self.first_exact_invocations
             recent={}
             for tick,bucket in self.rates:
                 if tick/5 >= now-5:
@@ -51,6 +58,9 @@ class Metrics:
         gate = getattr(self,'gate',None)
         return {'active_proposal_workers':getattr(getattr(self,'proposals',None),'running',0),
                 'active_compiles':gate.active if gate else 0,
+                'pool_compiler_invocations':values.get('invocations',0),
+                'pool_compile_requests':values.get('requests',0),
+                'pool_compiler_invocations_at_first_exact':first_exact,
                 'compile_slots':gate.limit if gate else 0,
                 'maximum_throughput':getattr(self,'maximum',False),
                 'candidates_per_second':recent.get('considered',0)/rate_seconds,

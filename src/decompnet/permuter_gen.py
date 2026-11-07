@@ -73,8 +73,12 @@ def supported_methods(methods):
     # The native remover substitutes names without liveness and can turn base+b
     # into base+a+b after a pointer is overwritten. Shared CFG repairs provide
     # bounded storage reuse instead; never feed this pass invalid parents.
+    # The audit also found uninitialized inserted reads, similar-type array
+    # aliases without escape proofs, and arbitrary effect removal. Those passes
+    # stay disabled until independently guarded.
     return [(method, weight) for method, weight in methods
-            if method.__name__ not in {'perm_add_self_assignment','perm_remove_var'}]
+            if method.__name__ not in {'perm_add_self_assignment','perm_remove_var',
+                                      'perm_refer_to_var','perm_alias_array','perm_remove_ast'}]
 
 
 def main() -> int:
@@ -82,6 +86,7 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from perm_pycparser import c_ast, c_parser
     from permuter_capture import protect_expand
+    from permuter_dependencies import GUARDED, RejectedRewrite, protect
     from permuter_formatting import LineGroups
     from src.ast_util import to_c
     from src.candidate import Candidate
@@ -134,6 +139,8 @@ def main() -> int:
                     return result
                 return call
             def guarded(method):
+                if method.__name__ in GUARDED:
+                    return protect(method, RejectedRewrite, blocked)
                 if method.__name__ == "perm_expand_expr":
                     return protect_expand(method, blocked, lambda: [
                         node for node in candidate.ast.ext if isinstance(node, c_ast.Typedef)])

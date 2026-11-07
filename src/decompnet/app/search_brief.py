@@ -11,6 +11,8 @@ def read(net, agent, slug, function):
     lines = [f"{fn['name']}: saved score {fn['best_score']}; source SHA256 {hashlib.sha256(source.encode()).hexdigest()}."]
     if reviewed_search_seeds.supported(net, proj):
         evidence = allocation_search.saved(net,proj,fn,source) or {}
+        from .scratch_role_repairs import brief as scratch_brief
+        if clue := scratch_brief(source,fn['name'],header,proj['arch'],evidence.get('rows',[])):lines.append(clue)
         targeted = allocation_targeting.brief(source,header,evidence.get('rows',[]),evidence,proj['arch'])
         lines.append(targeted or 'No current source-mapped allocation capture. Ordinary compile feedback remains authoritative.')
         roots = reviewed_search_seeds.selected(net,proj,fn)

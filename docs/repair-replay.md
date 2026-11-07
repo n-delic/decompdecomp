@@ -11,6 +11,39 @@ Imported projects or incomplete historical context are reported as skips.
 
 ## Offline
 
+### Check transfer on distinct frozen functions
+
+Use `frozen_repair_cases.select_holdouts(items, development_functions, count=6)` to
+select distinct functions by a stable name hash, excluding the examples used to
+develop a rule. Freeze sources, headers, targets and compiler identities before
+testing policies. The helper does not inspect candidate outcomes; historical
+human investigation may still limit how independent the sample is.
+
+For a private exported ROM build and a frozen case manifest, compare identical
+budgets with named families omitted **before paging**:
+
+```sh
+uv run python -m decompnet.app.linked_repair_benchmark \
+  --project /private/copied-build --cases /private/frozen-cases.json \
+  --trials 32 --seconds 30 --omit-families parameter_carriers,narrow_load_subtraction \
+  --output /private/control.json
+uv run python -m decompnet.app.linked_repair_benchmark \
+  --project /private/copied-build --cases /private/frozen-cases.json \
+  --trials 32 --seconds 30 --reference /private/control.json \
+  --output /private/enabled.json
+```
+
+Reports keep failures, first exact checks, winning sequences and compatible-output
+duplicate counts. Candidate checks are not compiler-process counts: cached inputs
+can avoid work, while a baseline or multiple profiles add compiles. Deep search
+also records actual compiler starts and the count when first exactness is observed,
+including speculative work. These process totals are explicitly pool-scoped;
+a sweep's shared pool is not an individual function's compile count. Saved deep-pass results keep bounded family counters;
+live progress shows compact repeated-output totals. Parallel duplicate windows are
+lane-local, and unknown fingerprints are never treated as distinct output proof.
+These deterministic searches use zero model tokens; paid-agent usage still comes
+from provider telemetry. No replay result adopts source or changes a live project.
+
 Use replay to find out whether the app's current deterministic families can reproduce a captured repair.
 It uses no model requests, opens no project database and does not apply candidates or change review states.
 

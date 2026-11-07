@@ -73,6 +73,7 @@ def test_per_pool_metrics_are_scoped_and_numeric():
     stats=a.snapshot()
     assert stats['compiles_per_second']>0 and stats['generated_per_second']>0
     assert stats['compiler_queue_seconds']==.25
+    assert stats.pop('pool_compiler_invocations_at_first_exact') is None
     assert all(isinstance(n,(int,float)) for n in stats.values())
 
 

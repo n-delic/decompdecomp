@@ -23,6 +23,10 @@ function deepProgressView() {
       const family = p.current_family ? p.current_family.replaceAll("_", " ") : "preparing";
       const outcome = p.last_outcome ? ` · ${p.last_outcome}${p.last_score == null ? "" : ` · score ${number(p.last_score)}`}` : "";
       now.textContent = `${p.phase || "Starting"} · ${family}${outcome} · ${number(p.visited ?? 0)} candidates considered · ${number(p.rejected ?? 0)} invalid calls skipped`;
+      if (p.efficiency) {
+        const e = p.efficiency;
+        now.textContent += ` · ${number(e.duplicate_outputs)} repeated outputs / ${number(e.fingerprinted_checks)} fingerprinted checks · 0 AI tokens`;
+      }
     }
     el.fnDeepMetrics.dataset.matched = String(p.best_percent === 100);
     el.fnDeepMetrics.dataset.improved = String((p.improvements ?? 0) > 0);

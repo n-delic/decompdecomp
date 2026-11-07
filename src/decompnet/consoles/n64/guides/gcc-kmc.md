@@ -1470,3 +1470,11 @@ bounded. This recovered the final instruction and exact linked bytes in that cas
 Do not apply this to volatile fields, calls, unknown aliases/types or unproven ranges.
 The app exposes these as ordinary-judge candidates, including a small combined trial;
 source form and displayed allocation clues alone never establish a match.
+For this supported shape, try `try_local_repairs` with family
+`scratch_role_reuse` before rewriting the function. It stages a real narrow
+condition load and shares its temporary with disjoint byte-pointer and consumed
+sentinel phases. Autopilot and deep search include the same bounded candidates;
+a partial improvement can continue into the sentinel step. A private replay
+recovered the known score-20 checkpoint on its first generated combined trial.
+This is one regression case, not a promise for every register-only miss. The
+ordinary byte judge decides; keep real reads, pointer casts and compiler settings.

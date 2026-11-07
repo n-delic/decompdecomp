@@ -50,7 +50,7 @@ def regional_detour(node, report, arch=None):
 
 def allocation_detour(node, report, arch=None):
     """One scope step may worsen the score before a complementary lifetime repair."""
-    if (node.get('path') or [''])[-1] not in {'loop_weight_scope','scalar_storage_reuse','row_number_staging','explicit_loop_backedge'}:return False
+    if (node.get('path') or [''])[-1] not in {'loop_weight_scope','scratch_role_reuse','scalar_storage_reuse','row_number_staging','explicit_loop_backedge'}:return False
     score=report.get('score')
     before=allocation_evidence.diagnose(node.get('baseline_rows'),arch)
     after=allocation_evidence.diagnose(report.get('rows'),arch)
@@ -332,13 +332,14 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     from . import narrow_load_subtraction, parameter_carriers
     carriers=parameter_carriers.variants(source,fn["name"],header,arch)
     load_subtractions=narrow_load_subtraction.variants(source,fn["name"],header,arch)
-    from . import scalar_storage_reuse
+    from . import scalar_storage_reuse, scratch_role_repairs
+    scratch=scratch_role_repairs.variants(source,fn['name'],header,arch)
     reuse=scalar_storage_reuse.variants(source,fn['name'],header,arch,report.get('repair_locations'))
     from . import loop_storage_shapes
     loops=loop_storage_shapes.variants(source,fn['name'],header,arch,report.get('repair_locations'))
     from . import scan_load_repairs
     scans=scan_load_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
-    operand_focused = carriers + load_subtractions + loops + reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    operand_focused = scratch + carriers + load_subtractions + loops + reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
     labels.update({text: family for family, text in operand_focused})
     for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):
@@ -372,14 +373,14 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     diagnosis=allocation_evidence.diagnose(report.get('rows'),arch)
     # Source-token proximity can demote a coordinated storage cycle because its
     # edits span both arms. Reserve a finite lane after operand/localisation ranking.
-    preferred=('parameter_carriers',) if diagnosis['register_only'] else (
+    preferred=('scratch_role_reuse','parameter_carriers') if diagnosis['register_only'] else (
         ('narrow_load_subtraction','one_shot_scope') if diagnosis['scheduling'] else ())
     storage_lane=[item for item in tagged if item[0] in preferred][:12]
     return list(dict.fromkeys(guarded+near_loops[:3]+storage_lane+tagged))
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
-                      selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None):
+                      selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None, omit_families=()):
     key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'), report.get('repair_locations'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused, entry_scope)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None
@@ -389,6 +390,7 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
             pool_cache[key] = result
             while len(pool_cache) > 2:
                 del pool_cache[next(iter(pool_cache))]
+    result=[item for item in result if item[0] not in omit_families]
     preferred = repair_selection.COMPLEMENTS.get((report.get('repair_path') or [''])[-1], ())
     quota = min(repair_selection.FOLLOWUP_WINDOW, max(0, limit-2))
     prefix = [item for item in result if item[0] in preferred[:1]][:quota]
