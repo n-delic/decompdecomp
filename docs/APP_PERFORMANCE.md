@@ -296,3 +296,10 @@ Context/layout edits, prerequisite pivots and no-C verdict releases still wait f
 the full import. Outside an active ready recheck, the usual synchronization runs.
 This removes a wrapper-level queue; it does not skip imports or speed up the bulk
 verification itself.
+
+Current `get_candidate(base="current")` and `get_assembly` reads use the same
+ready-recheck lane. They read the installed database inputs and retain normal
+baseline verification or explicit historical/unverified labels. A read does not
+promote saved C merely because a saved recheck is pending. Recovery selections
+(`saved_best`, `last_compiling`, `reported_corrected`) remain serialized, as do
+ordinary imports when no ready recheck is active.

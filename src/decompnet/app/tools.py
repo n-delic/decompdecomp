@@ -619,10 +619,11 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
 
 @contextmanager
 def _tool_foreground(net, slug, name, args):
-    # Only ordinary candidate judgements and notes/lease releases can use context
+    # Ordinary judgements, current candidate/target reads and notes can use context
     # already installed by a saved recheck. Settings/layout/prerequisite changes
     # still serialize behind the complete import.
-    allowed = name in {'compile_and_diff','compile_patch','compile_variants','add_note'} or (
+    allowed = name in {'compile_and_diff','compile_patch','compile_variants','add_note','get_assembly'} or (
+        name == 'get_candidate' and args.get('base','current') == 'current') or (
         name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
     notes = allowed and name in {'add_note','release_function'}
     # Keep note writes and their publication marker together: the saved worker

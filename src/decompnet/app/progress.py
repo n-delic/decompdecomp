@@ -781,7 +781,7 @@ class Progress:
 
     @contextmanager
     def foreground(self):
-        """Only explicit judge/notes requests may use already-imported inputs during a saved-code recheck."""
+        """Explicit judges, candidate/target reads and notes may use already-imported recheck inputs."""
         previous = getattr(self.local, 'foreground', False)
         self.local.foreground = True
         try:
