@@ -383,6 +383,7 @@ async function renderProjectSettings() {
   if (!ov) return;
   renderSaveLocation(ov);
   const fork = ov.kind === "fork";
+  $("installedCompilerTest").hidden = fork;
   $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
   // project's flags its build's and nothing for the ROM engine's survey to check
@@ -399,6 +400,7 @@ async function renderProjectSettings() {
     $("setRanges").value = "";
     renderCompilerWaiting(ov);
     loadCompilerAnswer();
+    loadCompilerComparison();
   }
   const facts = [["Platform", ov.platform_name], ["Game", ov.rom?.title || ov.title], [fork ? "Version" : "Game code", ov.rom?.game_code || ov.version],
     !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
@@ -599,6 +601,7 @@ async function loadCompilerAnswer() {
   if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
 }
 function renderCompilerAnswer(a) {
+  $("installedCompilerTest").hidden = S.ov.kind === "fork" || !a.mips;
   const parts = a.parts || [];
   setHtml($("compilerAnswer"), `This game was built with <b>${esc(a.compiler)}</b>${a.flags ? ` <span class="flags mono" title="the flags it was given">${esc(a.flags)}</span>` : ""}.${parts.length ? ` ${parts.length === 1 ? "One part" : `${parts.length} parts`} of it with another compiler: below.` : ""}`
     + (a.elsewhere_count ? ` <span class="muted">${a.elsewhere_count === 1 ? "One more stretch of code looks" : `${a.elsewhere_count.toLocaleString()} more stretches of code look`} like another compiler's work; the app suggests a change once agents' C proves it.</span>` : ""));
@@ -640,3 +643,191 @@ $("deleteBtn").onclick = () => {
     } catch (e) { toast(esc(e.message), "err"); }
   };
 };
+
+let compilerRows = [], compilerJob = null, compilerJobSlug = null, compilerResultsSlug = null;
+let compilerHasRun = false, compilerResultFilter = "all";
+
+function compilerScope() {
+  const used = $("compilerUsedProfilesOnly"), flags = $("compilerFlagsOnly");
+  if (used.checked) flags.checked = false;
+  const scope = used.checked ? "Only profiles used in this project, with exact flags" : flags.checked ? "Current compiler only, with supported flag variations" : "All installed compilers and supported flag variations";
+  $("compilerTestScope").textContent = `${scope} · ${$("compilerRetest").checked ? "including completed attempts" : "new or changed attempts only"}.`;
+}
+$("compilerUsedProfilesOnly").onchange = () => { if ($("compilerUsedProfilesOnly").checked) $("compilerFlagsOnly").checked = false; compilerScope(); };
+$("compilerFlagsOnly").onchange = () => { if ($("compilerFlagsOnly").checked) $("compilerUsedProfilesOnly").checked = false; compilerScope(); };
+$("compilerRetest").onchange = compilerScope;
+
+function renderCompilerProgress(p, finished = false) {
+  const box = $("compilerProgress");
+  box.hidden = !p;
+  if (!p) return;
+  box.dataset.finished = String(finished);
+  const set = (name, value) => { box.querySelector(`[data-${name}]`).textContent = value; };
+  const queueBar = box.querySelector("[data-queue-bar]"), bar = box.querySelector("[data-bar]");
+  const completed = p.completed || 0, total = p.total || 0;
+  set("queue", p.phase === "stopped" ? `Comparison stopped · ${completed} functions tested` :
+    p.phase === "failed" ? `Comparison interrupted · ${completed} functions tested` :
+    p.phase === "eligibility" ? `Checking eligibility: ${p.checked || 0} / ${p.scan_total || 0}` :
+    p.phase === "applying" ? `Rechecking and applying settings for ${p.function}` :
+      finished ? `Comparison finished · ${completed} functions tested` : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left`);
+  queueBar.max = p.phase === "eligibility" ? p.scan_total || 1 : total || 1;
+  queueBar.value = p.phase === "eligibility" ? p.checked || 0 : completed;
+  set("current", p.function || (finished ? "Comparison finished" : "Preparing…"));
+  set("tested", p.phase === "applying" ? "Rechecking and applying best settings" :
+    p.phase === "eligibility" ? `${p.eligible || 0} eligible · ${p.skipped || 0} unchanged or unavailable` :
+      finished ? `${p.skipped || 0} unchanged comparisons skipped` : `${p.tested || 0} / ${p.combinations || 0} compiler and flag combinations`);
+  bar.max = p.combinations || 1; bar.value = p.tested || (finished ? 1 : 0);
+  set("before", p.before == null ? "—" : `${p.before.toFixed(2)}%`);
+  set("best", p.best == null ? "—" : `${p.best.toFixed(2)}%`);
+  set("completed", completed); set("improved", p.improved || 0); set("exact", p.exact || 0);
+  set("profile", p.phase === "applying" ? "Rechecking and applying best settings" : finished ?
+    `${p.applied || 0} applied · select a count to review the results` : p.profile ?
+      `Best settings: ${p.profile[0]} ${p.profile[1].join(" ")}` : "Comparing the saved C. Compiler settings stay unchanged.");
+  box.dataset.improved = String(p.best != null && (p.before == null || p.best > p.before + .001));
+  if (p.results) { compilerRows = p.results; compilerHasRun = true; renderCompilerResults(); }
+}
+
+function renderCompilerResults() {
+  if (S.dialogKind !== "compiler-results") return;
+  const box = $("dialogBody");
+  if (!compilerHasRun) { box.innerHTML = '<p class="small muted">No comparison results yet.</p>'; return; }
+  const openFunctions = new Set([...box.querySelectorAll("details.compiler-result[open]")].map(el => el.dataset.function));
+  const openAlternatives = new Set([...box.querySelectorAll("details.compiler-alternatives[open]")].map(el => el.dataset.function));
+  const scrollTop = box.scrollTop;
+  const filtered = compilerRows.filter(r =>
+    compilerResultFilter === "all" || compilerResultFilter === "improved" && r.improved || compilerResultFilter === "exact" && r.exact);
+  const sort = box.querySelector("#compilerResultSort")?.value || "best";
+  const ordered = filtered.slice().sort((a, b) => sort === "name" ? a.function.localeCompare(b.function)
+    : sort === "recent" ? (b.completed_at || 0) - (a.completed_at || 0)
+      : (b.best ?? -1) - (a.best ?? -1));
+  box.innerHTML = (compilerRows.length ? `<label class="field compiler-result-sort"><span>Sort results</span><select id="compilerResultSort"><option value="best">Best score</option><option value="name">Function</option><option value="recent">Most recent</option></select></label>` : "")
+    + (ordered.length ? ordered.map(r => {
+      const score = value => value == null ? "—" : `${value.toFixed(2)}%`;
+      const profile = value => value ? `${esc(value[0])} ${esc(value[1].join(" "))}` : "Unavailable for earlier comparisons";
+      const delta = r.before == null || r.best == null ? "" : ` (${r.best - r.before >= 0 ? "+" : ""}${(r.best - r.before).toFixed(2)} points)`;
+      const alternatives = (r.ranked || []).filter(p => p.percent != null && (!r.profile || p.toolchain !== r.profile[0] || JSON.stringify(p.flags) !== JSON.stringify(r.profile[1]))).slice(0, 12);
+      const apply = p => `<button class="ghost small-btn" type="button" data-apply-function="${esc(r.function)}" data-apply-toolchain="${esc(p.toolchain)}" data-apply-flags="${esc(JSON.stringify(p.flags))}"${r.stale || r.applied ? " disabled" : ""}>Apply these settings</button>`;
+      const winner = (r.ranked || []).find(p => r.profile && p.toolchain === r.profile[0] && JSON.stringify(p.flags) === JSON.stringify(r.profile[1]));
+      return `<details class="compiler-result" data-function="${esc(r.function)}"${openFunctions.has(r.function) ? " open" : ""}><summary><button class="compiler-function-link" type="button" data-open-compiler-function="${esc(r.function)}" title="Open function ${esc(r.function)}">${esc(r.function)}</button> · ${score(r.before)} → ${score(r.best)}${delta}${r.exact ? " · byte identical" : ""}</summary>
+        <div class="compiler-result-detail"><p><b>Score:</b> ${score(r.before)} → ${score(r.best)}${delta}${r.exact ? ' <span class="compiler-exact-badge">Byte identical</span>' : ""}</p>
+        <p><b>Previous settings:</b> <code>${profile(r.before_profile)}</code></p>
+        <p><b>Best tested settings:</b> <code>${profile(r.profile || r.before_profile)}</code></p>
+        <p><b>Status:</b> ${r.stale ? "Inputs changed; retest before applying" : r.applied ? "Applied and rechecked" : r.apply_error ? "Could not apply" : r.improved ? "Ready to apply" : "No better settings found"}</p>
+        ${r.apply_error ? `<p class="err-msg">${esc(r.apply_error)}</p>` : ""}
+        ${r.improved && !r.applied && !r.stale && winner ? apply(winner) : ""}
+        ${alternatives.length ? `<details class="compiler-alternatives" data-function="${esc(r.function)}"${openAlternatives.has(r.function) ? " open" : ""}><summary>Show other candidates (${alternatives.length})</summary><div class="compiler-result-actions">${alternatives.map(p => `<div><code>${esc(p.toolchain)} ${esc(p.flags.join(" "))}</code> · ${score(p.percent)}${p.exact ? " · byte identical" : ""} ${!r.applied && !r.stale && (p.exact || r.before == null || p.percent > r.before + .001) ? apply(p) : ""}</div>`).join("")}</div></details>` : ""}</div></details>`;
+    }).join("") : `<p class="small muted">${compilerRows.length ? "No results in this view." : "No eligible saved C attempts were compared yet."}</p>`);
+  if (compilerRows.length) { $("compilerResultSort").value = sort; $("compilerResultSort").onchange = renderCompilerResults; }
+  if (compilerRows.some(r => r.improved && !r.stale && !r.applied && r.profile)) {
+    box.insertAdjacentHTML("afterbegin", '<button class="ghost small-btn" type="button" id="applyAllCompilerResults">Apply all improvements</button>');
+  }
+  box.scrollTop = scrollTop;
+}
+$("compilerProgress").onclick = (e) => {
+  const count = e.target.closest("[data-compiler-results]");
+  if (!count) return;
+  compilerResultFilter = count.dataset.compilerResults;
+  const titles = {all: "Functions finished", improved: "Better settings found", exact: "Exact matches found"};
+  dialog(titles[compilerResultFilter], "", "compiler-results");
+  renderCompilerResults();
+};
+
+async function loadCompilerComparison() {
+  const slug = S.slug;
+  if (compilerResultsSlug !== slug) {
+    compilerResultsSlug = slug; compilerRows = []; compilerHasRun = false; compilerResultFilter = "all";
+    renderCompilerResults();
+  }
+  compilerScope();
+  try {
+    const data = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}&compiler_results=1`);
+    if (S.slug !== slug) return;
+    compilerRows = data.results || [];
+    compilerHasRun = !!data.ran;
+    renderCompilerResults();
+    if (data.job && compilerJob !== data.job) followCompilerComparison(data.job, slug);
+  } catch (e) { if (S.dialogKind === "compiler-results") $("dialogBody").textContent = e.message; }
+}
+
+async function followCompilerComparison(job, slug) {
+  if (compilerJob === job && compilerJobSlug === slug) return;
+  compilerJob = job; compilerJobSlug = slug;
+  const button = $("testInstalledCompilers"), error = $("compilerTestError");
+  button.textContent = "Stop comparison"; $("compilerRunState").textContent = "· Running";
+  $("installedCompilerTest").open = true;
+  error.hidden = true; error.textContent = "";
+  try {
+    const result = await followJob(job, null, (_lines, snapshot) => {
+      if (S.slug === slug && snapshot.progress) renderCompilerProgress(snapshot.progress);
+    });
+    if (S.slug === slug) {
+      renderCompilerProgress({phase: "done", completed: result.tried, total: result.total,
+        improved: result.improved, exact: result.confirmed, skipped: result.skipped,
+        applied: result.applied_count}, true);
+      await loadCompilerComparison();
+    }
+  } catch (e) {
+    if (S.slug === slug) {
+      const stopped = e.job?.state === "cancelled";
+      const latest = e.job?.progress || {};
+      const completed = latest.completed ?? (Number($("compilerProgress").querySelector("[data-completed]").textContent) || 0);
+      renderCompilerProgress({...latest, phase: stopped ? "stopped" : "failed", completed,
+        total: latest.total ?? $("compilerProgress").querySelector("[data-queue-bar]").max,
+        improved: latest.improved ?? Number($("compilerProgress").querySelector("[data-improved]").textContent),
+        exact: latest.exact ?? Number($("compilerProgress").querySelector("[data-exact]").textContent)}, true);
+      if (!stopped) { error.textContent = e.message; error.hidden = false; }
+      await loadCompilerComparison();
+    }
+  }
+  finally {
+    if (compilerJob === job) { compilerJob = null; compilerJobSlug = null; }
+    if (S.slug === slug) { button.disabled = false; button.textContent = "Find better settings"; $("compilerRunState").textContent = ""; }
+  }
+}
+
+$("testInstalledCompilers").onclick = async () => {
+  if (compilerJob && compilerJobSlug === S.slug) {
+    const button = $("testInstalledCompilers"); button.disabled = true; button.textContent = "Stopping…";
+    try { await api("/api/job/cancel", {method: "POST", body: {id: compilerJob}}); }
+    catch (e) { const error = $("compilerTestError"); error.textContent = e.message; error.hidden = false; button.disabled = false; button.textContent = "Stop comparison"; }
+    return;
+  }
+  const slug = S.slug, error = $("compilerTestError");
+  error.hidden = true; error.textContent = "";
+  try {
+    const {job} = await api("/api/compilermap", {method: "POST", body: {slug, find_better_settings: true,
+      flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked,
+      untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked}});
+    followCompilerComparison(job, slug);
+  } catch (e) { error.textContent = e.message; error.hidden = false; }
+};
+$("dialogBody").addEventListener("click", (e) => {
+  const button = e.target.closest("[data-open-compiler-function]");
+  if (S.dialogKind !== "compiler-results" || !button) return;
+  e.preventDefault(); e.stopPropagation();
+  const name = button.dataset.openCompilerFunction;
+  hideDrawer("dialog");
+  openFn(name);
+});
+$("dialogBody").addEventListener("click", async (e) => {
+  const button = e.target.closest("[data-apply-function]");
+  if (S.dialogKind !== "compiler-results" || !button || button.disabled) return;
+  button.disabled = true;
+  try {
+    await api("/api/compilermap", {method: "POST", body: {slug: S.slug, apply_compiler_result: true,
+      function: button.dataset.applyFunction, toolchain: button.dataset.applyToolchain,
+      flags: JSON.parse(button.dataset.applyFlags)}});
+    await loadCompilerComparison();
+  } catch (error) { toast(esc(error.message), "err"); button.disabled = false; }
+});
+$("dialogBody").addEventListener("click", async (e) => {
+  const button = e.target.closest("#applyAllCompilerResults");
+  if (S.dialogKind !== "compiler-results" || !button || button.disabled) return;
+  button.disabled = true;
+  for (const row of compilerRows.filter(r => r.improved && !r.stale && !r.applied && r.profile)) {
+    try { await api("/api/compilermap", {method: "POST", body: {slug: S.slug, apply_compiler_result: true,
+      function: row.function, toolchain: row.profile[0], flags: row.profile[1]}}); }
+    catch (error) { toast(`${esc(row.function)}: ${esc(error.message)}`, "err"); }
+  }
+  await loadCompilerComparison();
+});

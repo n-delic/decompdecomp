@@ -169,6 +169,194 @@ class CompilerMixin:
         threading.Thread(target=run, daemon=True, name=f"survey-{slug}").start()
         return state
 
+    def _compiler_comparison_profiles(self, proj, *, flags_only=False, used_profiles_only=False):
+        cfg = self.cfg(proj)
+        installed = {c.id for c in consoles.of(cfg).compilers if toolchains.installed(c.id)
+                     and toolchains.get(c.id).supported and not toolchains.runtime_error(c.id)}
+        if not installed:
+            raise NetworkError("Install a usable compiler in Compilers & tools before comparing settings.")
+        if used_profiles_only:
+            assignments = {((own := compiler_for(cfg, r["vram"]))["toolchain"], tuple(own["flags"]))
+                           for r in self.store.all("SELECT vram FROM functions WHERE project_id=?", proj["id"])}
+            return sorted(p for p in assignments if p[0] in installed)
+        return sorted({(tc, tuple(flags)) for tc in installed
+                       for flags in self.flag_variants(tc, consoles.default_flags(cfg, tc))})
+
+    def _compiler_comparison_digest(self, proj, fn, source, profiles):
+        cfg = self.cfg(proj)
+        context = self._context(proj["id"], fn["unit"])
+        header = context["header"] if context is not None else ""
+        inputs = [source, header, fn["target"].hex() if fn["target"] else None,
+                  fn["relocs"], fn["vram"], cfg.get("gp"), cfg.get("big_endian"),
+                  compiler_for(cfg, fn["vram"]), profiles]
+        return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+    def find_better_compiler_settings(self, slug: str, log=print, *, flags_only=False,
+                                      used_profiles_only=False, untested_only=True, auto_apply=False) -> dict:
+        """Compare saved C locally, persist results, and optionally apply each guarded improvement."""
+        if any(type(v) is not bool for v in (flags_only, used_profiles_only, untested_only, auto_apply)):
+            raise NetworkError("Choose valid compiler comparison options.")
+        if flags_only and used_profiles_only:
+            raise NetworkError("Choose either flag variations or used profiles, not both.")
+        self._rom_only(slug, "the compiler comparison")
+        proj = self._project(slug)
+        cfg = self.cfg(proj)
+        profiles = self._compiler_comparison_profiles(proj, flags_only=flags_only,
+                                                       used_profiles_only=used_profiles_only)
+        rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND status NOT IN ('matched','asm') "
+                              "ORDER BY best_score IS NULL, best_score, id", proj["id"])
+        prior = {r["function_id"]: r["input_digest"] for r in self.store.all(
+            "SELECT t.function_id,t.input_digest FROM compiler_tests t JOIN functions f ON f.id=t.function_id "
+            "WHERE f.project_id=?", proj["id"])} if untested_only else {}
+        pending = []
+        skipped = 0
+        progress = getattr(log, "progress", lambda value: None)
+        check_cancel = getattr(log, "check_cancel", lambda: None)
+        for scanned, fn in enumerate(rows, 1):
+            check_cancel()
+            source = self._source_of(fn)
+            if not source:
+                continue
+            own = compiler_for(cfg, fn["vram"])
+            candidates = ([p for p in profiles if p[0] == own["toolchain"]] if flags_only else profiles)
+            if not candidates:
+                continue
+            candidates = sorted(set(candidates) | {(own["toolchain"], tuple(own["flags"]))})
+            digest = self._compiler_comparison_digest(proj, fn, source, candidates)
+            if prior.get(fn["id"]) == digest:
+                skipped += 1
+            else:
+                pending.append((fn, source, candidates, digest))
+            if scanned % 25 == 0:
+                progress({"phase": "eligibility", "checked": scanned, "scan_total": len(rows),
+                          "eligible": len(pending), "skipped": skipped})
+        results = []
+        improved = exact = applied = 0
+        for index, (fn, source, candidates, digest) in enumerate(pending, 1):
+            check_cancel()
+            proj = self._project(slug)
+            digest = self._compiler_comparison_digest(proj, fn, source, candidates)
+            baseline = (100 * (1 - fn["best_score"] / max(1, (fn["n_insns"] or 0) * 100))
+                        if fn["best_score"] is not None else None)
+            best = baseline
+            best_profile = None
+            ranked = []
+            for n, (tc, flags) in enumerate(candidates, 1):
+                check_cancel()
+                matched, diff, _ = self._judge_with(proj, fn, tc, list(flags), source)
+                percent = 100.0 if matched else diff.percent if diff is not None else None
+                ranked.append({"toolchain": tc, "flags": list(flags), "percent": percent, "exact": matched})
+                if percent is not None and (best is None or percent > best + 0.001):
+                    best = percent
+                    best_profile = [tc, list(flags)]
+                progress({"phase": "testing", "function": fn["name"], "tested": n,
+                          "combinations": len(candidates), "completed": index - 1, "total": len(pending),
+                          "before": baseline, "best": best, "profile": best_profile,
+                          "improved": improved, "exact": exact, "skipped": skipped,
+                          "results": results})
+            ranked.sort(key=lambda r: (not r["exact"], r["percent"] is None,
+                                       -(r["percent"] or 0), r["toolchain"], r["flags"]))
+            own = compiler_for(self.cfg(proj), fn["vram"])
+            result = {"function": fn["name"], "before": baseline, "best": best,
+                      "before_profile": [own["toolchain"], list(own["flags"])],
+                      "profile": best_profile, "improved": best_profile is not None,
+                      "exact": any(r["exact"] for r in ranked), "ranked": ranked,
+                      "candidates": [[tc, list(flags)] for tc, flags in candidates],
+                      "flags_only": flags_only, "used_profiles_only": used_profiles_only,
+                      "applied": False, "apply_error": ""}
+            check_cancel()
+            with self.store.tx() as db:
+                db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
+                           (fn["id"], digest, time.time(), json.dumps(result)))
+            if result["improved"]:
+                improved += 1
+                log(f"{fn['name']}: {baseline:.2f}% → {best:.2f}% with {best_profile[0]} {' '.join(best_profile[1])}"
+                    if baseline is not None else f"{fn['name']}: best {best:.2f}% with {best_profile[0]} {' '.join(best_profile[1])}")
+            if result["exact"]:
+                exact += 1
+            if auto_apply and best_profile:
+                progress({"phase": "applying", "function": fn["name"], "completed": index - 1,
+                          "total": len(pending), "before": baseline, "best": best,
+                          "improved": improved, "exact": exact, "skipped": skipped,
+                          "applied": applied, "results": results})
+                try:
+                    self.apply_compiler_test_result(slug, fn["name"], best_profile[0], best_profile[1])
+                    result["applied"] = True
+                    applied += 1
+                except NetworkError as error:
+                    result["apply_error"] = str(error)
+                    log(f"{fn['name']}: auto-apply skipped: {error}")
+                with self.store.tx() as db:
+                    db.execute("UPDATE compiler_tests SET result=? WHERE function_id=?",
+                               (json.dumps(result), fn["id"]))
+            results.append(result)
+            progress({"phase": "testing", "completed": index, "total": len(pending),
+                      "improved": improved, "exact": exact, "applied": applied,
+                      "skipped": skipped, "results": results})
+        log(f"Finished: {len(pending)} functions tested; {skipped} unchanged skipped; "
+            f"{improved} improved, {exact} exact, {applied} applied.")
+        return {"tried": len(pending), "skipped": skipped, "total": len(pending),
+                "improved": improved, "confirmed": exact, "applied_count": applied, "results": results}
+
+    def compiler_comparison_results(self, slug: str) -> list[dict]:
+        proj = self._project(slug)
+        rows = self.store.all("SELECT f.*,t.input_digest,t.completed_at,t.result FROM functions f "
+                              "JOIN compiler_tests t ON t.function_id=f.id WHERE f.project_id=? "
+                              "ORDER BY t.completed_at DESC", proj["id"])
+        results = []
+        for fn in rows:
+            result = json.loads(fn["result"])
+            candidates = [(tc, tuple(flags)) for tc, flags in result["candidates"]]
+            source = self._source_of(fn)
+            stale = not source or fn["input_digest"] != self._compiler_comparison_digest(proj, fn, source, candidates)
+            results.append({**result, "completed_at": fn["completed_at"], "stale": stale})
+        return results
+
+    def apply_compiler_test_result(self, slug: str, function: str, toolchain: str, flags: list[str]) -> dict:
+        """Apply a saved profile to one function only after validating inputs and the fresh byte comparison."""
+        self._rom_only(slug, "applying compiler settings")
+        proj = self._project(slug)
+        fn = self._function(function, slug)
+        if fn["status"] in ("matched", "asm"):
+            raise NetworkError("This function is no longer unmatched. Run a fresh comparison.")
+        if fn["vram"] is None or not fn["size"]:
+            raise NetworkError("This function has no isolated address range for compiler settings.")
+        saved = self.store.one("SELECT input_digest,result FROM compiler_tests WHERE function_id=?", fn["id"])
+        if saved is None:
+            raise NetworkError("Run a compiler comparison for this function first.")
+        result = json.loads(saved["result"])
+        if not any(r["toolchain"] == toolchain and r["flags"] == flags and r["percent"] is not None
+                   for r in result["ranked"]):
+            raise NetworkError("Choose a tested compiler profile.")
+        candidates = [(tc, tuple(candidate_flags)) for tc, candidate_flags in result["candidates"]]
+        source = self._source_of(fn)
+        if not source or saved["input_digest"] != self._compiler_comparison_digest(proj, fn, source, candidates):
+            raise NetworkError("Code or build inputs changed. Run a fresh comparison before applying.")
+        if self.store.one("SELECT 1 FROM claims WHERE function_id=?", fn["id"]):
+            raise NetworkError("An agent is working on this function. Apply the result after it finishes.")
+        others = self.store.all("SELECT id,vram FROM functions WHERE project_id=? AND vram>=? AND vram<?",
+                                proj["id"], fn["vram"], fn["vram"] + fn["size"])
+        if any(r["id"] != fn["id"] for r in others):
+            raise NetworkError("Another function shares this address range; settings cannot be isolated safely.")
+        matched, diff, _ = self._judge_with(proj, fn, toolchain, flags, source)
+        if diff is None or (not matched and fn["best_score"] is not None and diff.score >= fn["best_score"]):
+            raise NetworkError("These settings no longer improve this function. Run a fresh comparison.")
+        default = self.cfg(proj)["compiler"]
+        is_default = toolchain == default["toolchain"] and flags == default["flags"]
+        self.set_compiler_ranges(slug, [[fn["vram"], fn["vram"] + fn["size"]]],
+                                 None if is_default else toolchain, flags)
+        agent, _ = self.local_agent("autopilot")
+        self.try_quietly(agent, self._project(slug), self._function(function, slug), source)
+        fresh = self._function(function, slug)
+        with self.store.tx() as db:
+            row = db.execute("SELECT result FROM compiler_tests WHERE function_id=?", (fn["id"],)).fetchone()
+            if row:
+                updated = json.loads(row["result"])
+                updated["applied"] = True
+                db.execute("UPDATE compiler_tests SET result=? WHERE function_id=?",
+                           (json.dumps(updated), fn["id"]))
+        return {"function": function, "matched": fresh["status"] == "matched"}
+
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
         compiler the project uses: C that matches the game with another compiler (and not with today's) confirms that
