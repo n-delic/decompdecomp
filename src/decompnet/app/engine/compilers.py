@@ -403,7 +403,7 @@ class CompilerMixin:
                         full=batch
                     else:
                         loaded={r['id']:r for r in self.project_store(proj['id']).all(
-                            'SELECT id,name,unit,vram,rom_offset,status,best_score,best_source,matched_source,meta,target,relocs '
+                            'SELECT id,project_id,name,unit,vram,rom_offset,status,best_score,best_source,matched_source,meta,target,relocs '
                             'FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
                             proj['id'],json.dumps([r['id'] for r in batch]))}
                         full=[loaded[r['id']] for r in batch if r['id'] in loaded]

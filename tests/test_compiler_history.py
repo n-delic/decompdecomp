@@ -463,3 +463,26 @@ def test_already_matched_current_profile_is_reverified_without_config_write(comp
     out = net.apply_function_compiler('demo', 'f0', 'gcc-2.7.2-kmc', ['-O2'])
     assert out['matched'] and not out['newly_matched']
     assert calls == ['f0']
+
+
+def test_bulk_comparison_loads_latest_attempt_without_best_source(comparison):
+    net, _, calls, _ = comparison
+    fn = net._function('f1', 'demo')
+    with net.project_store(fn['project_id']).tx() as db:
+        db.execute('UPDATE functions SET best_source=NULL WHERE id=?', (fn['id'],))
+        db.execute('INSERT INTO attempts(function_id,source,created_at) VALUES(?,?,?)',
+                   (fn['id'], 'int f1(void){return 2;}', 1))
+    result = net.survey_compilers('demo', all_installed=True, untested_only=True)
+    assert result['tried'] == 2
+    assert set(calls) == {'f0', 'f1'}
+    assert net.project_store(fn['project_id']).one('SELECT COUNT(*) AS n FROM compiler_tests')['n'] == 2
+    assert net.survey_compilers('demo', all_installed=True, untested_only=True)['tried'] == 0
+
+
+def test_bulk_comparison_skips_function_without_any_source(comparison):
+    net, _, calls, _ = comparison
+    fn = net._function('f1', 'demo')
+    with net.project_store(fn['project_id']).tx() as db:
+        db.execute('UPDATE functions SET best_source=NULL WHERE id=?', (fn['id'],))
+    result = net.survey_compilers('demo', all_installed=True)
+    assert result['tried'] == 1 and set(calls) == {'f0'}

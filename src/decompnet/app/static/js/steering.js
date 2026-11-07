@@ -659,7 +659,9 @@ function renderCrossGameProgress(p) {
 }
 
 async function renderSdkSelection() {
-  const data = await api(`/api/sdk-library?slug=${encodeURIComponent(S.slug)}`);
+  const slug = S.slug, gen = S.gen;
+  const data = await api(`/api/sdk-library?slug=${encodeURIComponent(slug)}`);
+  if (slug !== S.slug || gen !== S.gen) return;
   $("sdkMode").value = data.selection === null ? "auto" : "manual";
   const detected = data.libraries.filter(r => r.detected);
   $("sdkDetected").textContent = detected.length
@@ -863,7 +865,24 @@ $('dataRegionItems').onclick=async event=>{
   catch(error){showJobError(work,error.message);}finally{finish();}
 };
 
+function renderProjectFacts(ov) {
+  const fork = ov.kind === "fork";
+  const facts = [["Platform", ov.platform_name], ["Game", ov.rom?.title || ov.title], [fork ? "Version" : "Game code", ov.rom?.game_code || ov.version],
+    !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
+    ...projectCompilerFacts(ov),
+    ov.libultra ? ["Libultra (header)", ov.libultra.header_version || "Unknown"] : null,
+    ov.libultra ? ["Libultra detection", ov.libultra.note] : null,
+    ov.libultra ? ["Libultra signatures", ov.libultra.signature_candidates.slice(0, 3).map(r => `${r.corpus.split(" / ").slice(0, 2).join(" / ")}: ${r.fingerprints} exact fingerprints (${r.version_specific_fingerprints} specific to this version among local archives)`).join("; ") || "No matching local archive signatures indexed"] : null,
+    fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
+    ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`], ["Folder", ov.folder]].filter(Boolean);
+  $("projFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd></div>`).join("");
+  renderScope(ov);
+}
+
 async function renderProjectSettings() {
+  const ov = S.ov;
+  if (!ov) return;
+  renderProjectFacts(ov);
   loadDataRegions();
   loadBlockerReviews();
   $("codeAuditPanel").hidden = !S.ov?.code_audit;
@@ -876,8 +895,6 @@ async function renderProjectSettings() {
     $("compilerAutoApply").checked = false;
     $("compilerLogDetails").hidden = true;
   }
-  const ov = S.ov;
-  if (!ov) return;
   const fork = ov.kind === "fork";
   if (!fork) refreshCompilerComparison();
   $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
@@ -905,16 +922,6 @@ async function renderProjectSettings() {
   $("sourcePrepAutoExact").checked = !!prep.auto_exact;
   for (const [id, key] of [["Root", "root"], ["Header", "header"], ["Includes", "include_roots"], ["Mappings", "mappings"], ["Overrides", "overrides"], ["Aliases", "aliases"], ["Definitions", "definitions"], ["Contexts", "contexts"], ["Helpers", "helpers"], ["AssemblyHeader", "assembly_header"], ["AssemblyMappings", "assembly_mappings"]]) $("sourcePrep" + id).value = prep[key] || "";
   await renderSdkSelection();
-  const facts = [["Platform", ov.platform_name], ["Game", ov.rom?.title || ov.title], [fork ? "Version" : "Game code", ov.rom?.game_code || ov.version],
-    !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
-    ...projectCompilerFacts(ov),
-    ov.libultra ? ["Libultra (header)", ov.libultra.header_version || "Unknown"] : null,
-    ov.libultra ? ["Libultra detection", ov.libultra.note] : null,
-    ov.libultra ? ["Libultra signatures", ov.libultra.signature_candidates.slice(0, 3).map(r => `${r.corpus.split(" / ").slice(0, 2).join(" / ")}: ${r.fingerprints} exact fingerprints (${r.version_specific_fingerprints} specific to this version among local archives)`).join("; ") || "No matching local archive signatures indexed"] : null,
-    fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
-    ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`], ["Folder", ov.folder]].filter(Boolean);
-  $("projFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd></div>`).join("");
-  renderScope(ov);
 }
 
 /* What the project covers (forks/project.py SCOPES): the game's own code, with the library and middleware code its

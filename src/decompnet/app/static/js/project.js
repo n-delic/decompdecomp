@@ -33,6 +33,7 @@ async function openProject(slug, tab = "overview") {
   stopPolling();
   show("project");
   const gen = ++S.gen;
+  $("projFacts").replaceChildren();
   S.ov = null; S.fnDetail = null; S.fn = null; S.tab = tab;
   $("codeCoveragePanel").hidden=true;
   $("project").setAttribute("data-loading", "");
