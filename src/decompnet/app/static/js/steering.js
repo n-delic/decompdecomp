@@ -383,6 +383,7 @@ async function renderProjectSettings() {
   if (!ov) return;
   renderSaveLocation(ov);
   const fork = ov.kind === "fork";
+  $("installedCompilerTest").hidden = fork;
   $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
   // project's flags its build's and nothing for the ROM engine's survey to check
@@ -599,6 +600,7 @@ async function loadCompilerAnswer() {
   if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
 }
 function renderCompilerAnswer(a) {
+  $("installedCompilerTest").hidden = S.ov.kind === "fork" || !a.mips;
   const parts = a.parts || [];
   setHtml($("compilerAnswer"), `This game was built with <b>${esc(a.compiler)}</b>${a.flags ? ` <span class="flags mono" title="the flags it was given">${esc(a.flags)}</span>` : ""}.${parts.length ? ` ${parts.length === 1 ? "One part" : `${parts.length} parts`} of it with another compiler: below.` : ""}`
     + (a.elsewhere_count ? ` <span class="muted">${a.elsewhere_count === 1 ? "One more stretch of code looks" : `${a.elsewhere_count.toLocaleString()} more stretches of code look`} like another compiler's work; the app suggests a change once agents' C proves it.</span>` : ""));
@@ -639,4 +641,15 @@ $("deleteBtn").onclick = () => {
       location.hash = "#/";
     } catch (e) { toast(esc(e.message), "err"); }
   };
+};
+
+$("testInstalledCompilers").onclick = async () => {
+  const button = $("testInstalledCompilers"), log = $("installedCompilerLog");
+  const finish = beginWork(log, "Finding better compiler settings", [button], "Comparison finished.");
+  log.hidden = false;
+  showJobError(log, "");
+  try {
+    const {job} = await api("/api/compilermap", {method: "POST", body: {slug: S.slug, find_better_settings: true}});
+    await followJob(job, log);
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
 };

@@ -110,6 +110,9 @@ def register(app: App) -> None:
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
         answer is old. POST: check again now (the survey and the applied ranges)."""
+        if request.method == "POST" and data.get("find_better_settings"):
+            return {"job": jobs.start("compiler settings comparison", lambda log:
+                                      net.find_better_compiler_settings(slug, log=log))}
         return net.compiler_answer(slug, check_now=request.method == "POST")
 
     def p_open(slug, request, data):

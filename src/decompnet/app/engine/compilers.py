@@ -169,6 +169,64 @@ class CompilerMixin:
         threading.Thread(target=run, daemon=True, name=f"survey-{slug}").start()
         return state
 
+    def find_better_compiler_settings(self, slug: str, log=print, limit: int = 400) -> dict:
+        """Compare saved C with installed compilers and supported flag variations without changing the project."""
+        self._rom_only(slug, "the compiler comparison")
+        proj = self._project(slug)
+        cfg = self.cfg(proj)
+        console = consoles.of(cfg)
+        installed = [c.id for c in console.compilers if toolchains.installed(c.id)
+                     and toolchains.get(c.id).supported and not toolchains.runtime_error(c.id)]
+        if not installed:
+            raise NetworkError("Install a usable compiler in Compilers & tools before comparing settings.")
+        profiles = sorted({(tc, tuple(flags)) for tc in installed
+                           for flags in self.flag_variants(tc, consoles.default_flags(cfg, tc))})
+        rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND status NOT IN ('matched','asm') "
+                              "ORDER BY best_score IS NULL, best_score, id", proj["id"])
+        results = []
+        tested = 0
+        check_cancel = getattr(log, "check_cancel", lambda: None)
+        for fn in rows:
+            check_cancel()
+            source = self._source_of(fn)
+            if not source:
+                continue
+            if tested >= limit:
+                break
+            tested += 1
+            own = compiler_for(cfg, fn["vram"])
+            current = (own["toolchain"], tuple(own["flags"]))
+            candidates = sorted(set(profiles) | {current})
+            baseline = (100 * (1 - fn["best_score"] / max(1, fn["n_insns"] * 100))
+                        if fn["best_score"] is not None else None)
+            best = baseline
+            best_profile = None
+            exact = []
+            for tc, flags in candidates:
+                check_cancel()
+                matched, diff, _ = self._judge_with(proj, fn, tc, list(flags), source)
+                percent = 100.0 if matched else diff.percent if diff is not None else None
+                if matched:
+                    exact.append([tc, list(flags)])
+                if percent is not None and (best is None or percent > best + 0.001):
+                    best = percent
+                    best_profile = [tc, list(flags)]
+            if best_profile is not None or exact:
+                result = {"function": fn["name"], "before": baseline, "best": best,
+                          "profile": best_profile, "exact": exact}
+                results.append(result)
+                before = f"{baseline:.2f}%" if baseline is not None else "no previous score"
+                label = self._short((best_profile[0], tuple(best_profile[1]))) if best_profile else "current settings"
+                log(f"{fn['name']}: {before} → {best:.2f}% with {label}"
+                    + (f"; {len(exact)} exact profile(s)" if exact else ""))
+            if tested % 25 == 0:
+                log(f"{tested} functions tested, {len(results)} with better settings or exact matches")
+        log(f"Finished: {tested} functions tested; {len(results)} with better settings or exact matches. "
+            "Compiler settings unchanged.")
+        if not tested:
+            log("No saved C attempts to compare yet. Run the free matching pass or agents first.")
+        return {"tried": tested, "profiles": len(profiles), "results": results}
+
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
         compiler the project uses: C that matches the game with another compiler (and not with today's) confirms that
