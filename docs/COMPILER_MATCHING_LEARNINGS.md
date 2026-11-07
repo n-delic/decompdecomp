@@ -5654,3 +5654,38 @@ regression and full-image validation of the reviewed replacement. An initial
 20-second linker timeout was resolved by a separately bounded162-second link;
 a later bookkeeping assumption about compressed-cartridge metadata was corrected
 without recompiling or relinking. Final image comparison is byte-for-byte.
+
+## Store-result reuse changes a real scalar lifetime (November 7)
+
+Controlled nonmatching N64/MIPS experiment, rebuilt KMC GCC 2.7.2 with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`; unchanged context, symbols and target.
+An initialized signed32 half extent was used in a rectangle-coordinate sum.
+Restoring assignment of that actual sum to the half-extent local, inside the
+same store, changed an existing research draft from score 565 to 485. Ordinary
+and diagnostic compilation agree at 1548 linked bytes; both persisted objects
+independently reload/relink identically. This improves on the previous
+518 draft, **not an exact match or a full-cartridge acceptance**.
+
+The assignment recovers the target's placement of the coordinate additions
+before the item-id and rectangle stores. It also makes the reused local global
+again, worsening several previously correct register roles. Lower advisory
+score therefore does not mean every observed allocation feature improved.
+Merely naming a fresh coordinate temporary had already reproduced the565
+baseline exactly; the consumed old operand's lifetime is the measured difference.
+
+`store_result_reuse` reproduces the reviewed source exactly in a pure generator
+check. It retains the original arithmetic association and evaluates the RHS
+once, assigning its signed-int result to an existing same-type unescaped local
+before the same member store. CFG outgoing liveness must prove that the old
+operand value is dead on every successor, including loop and goto edges.
+Initialized declarations participate in bounded must-initialization. Unknown,
+unsigned, narrow, qualified, escaped or shadowed operands, opaque macros and
+unsupported C/C++ shapes receive no proposal. This is a bounded source repair,
+not a register prescription or a proof of arbitrary program equivalence. The
+ordinary compiler/link judge must still verify every candidate.
+
+The supporting liveness correction distinguishes an actual RHS local read from
+a member of the same spelling: `y=obj.y` kills the incoming local y, while
+`y=arr[y]` and `y=obj.y+y` still read it. Base/index expressions remain visible.
+No game source or extracted bytes are included here. Private measured evidence:
+`func80040CF4/store-frontier-revisit-nov7`.

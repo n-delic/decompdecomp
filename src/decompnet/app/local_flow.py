@@ -58,7 +58,8 @@ class Flow:
         assignment = re.fullmatch(rf'\s*({IDENT})\s*=(?!=)(.*?);?\s*', text, re.S)
         if assignment and assignment[1] in self.names:
             defines.add(assignment[1])
-            if not re.search(rf'\b{assignment[1]}\b', assignment[2]):
+            if not any(hit[0] == assignment[1] and not re.search(r'(?:\.|->)\s*$', assignment[2][:hit.start()])
+                       for hit in re.finditer(rf'\b{IDENT}\b', assignment[2])):
                 uses.discard(assignment[1])
         for decl in self.locals:
             if start <= decl.start() and decl.end() <= end:

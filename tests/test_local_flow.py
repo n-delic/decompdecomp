@@ -107,3 +107,15 @@ def test_inline_record_members_are_not_function_scalar_locals():
     flow=analyze(source,'f')
     assert flow is not None
     assert flow.names=={'value'}
+
+
+@pytest.mark.parametrize('rhs,reads_old', [
+    ('obj.y', False), ('obj->y', False), ('y.y', True),
+    ('arr[y]', True), ('obj->y + y', True),
+])
+def test_member_spelling_does_not_create_a_scalar_read(rhs, reads_old):
+    text='void f(void) { int y; y='+rhs+'; }'
+    graph=local_flow.analyze(text, 'f')
+    assert graph is not None
+    assignment=next(node for node in graph.nodes if text[node.start:node.end].strip().startswith('y='))
+    assert ('y' in assignment.uses) == reads_old

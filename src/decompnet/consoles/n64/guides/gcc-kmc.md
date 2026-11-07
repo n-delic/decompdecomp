@@ -1370,3 +1370,16 @@ Only capture an unchanged, unescaped scalar parameter; do not move a memory
 access or invent a dependency. Keep integer comparisons integer-typed. An exact
 older candidate with uninitialized reads or duplicate artificial branches is not
 source-validity evidence: a natural initialized baseline can already match.
+
+### Reuse a dead operand for an actual store result
+
+For a register/scheduling near miss, a final coordinate store such as
+`p->y=(y+half)+1` can differ from `p->y=(half=(y+half)+1)` even when the assigned
+`half` value is never read afterwards. Both compute the same actual store value;
+the reused existing local gives the compiler a different lifetime. Preserve
+association, signed width and every evaluation. Never use a narrow local or a
+value still read along a branch, goto or next loop iteration. The app's bounded
+`store_result_reuse` family checks these cases before proposing a candidate.
+One controlled example improved565→485, but remained nonmatching and lost some
+correct register roles; do not confuse a lower advisory score with exactness.
+A fresh named temporary was already tested in that example and did not help.
