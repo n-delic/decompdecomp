@@ -67,3 +67,40 @@ def test_priority_comparison_uses_unique_source_groups_not_renumbered_pseudos():
     assert not priority_changes(a, {'values':b['values']*2})
     assert not priority_changes(a, b | {'truncated':True})
     assert not diagnostics.compare({'output_unchanged':False}, {})['comparable']
+
+
+def test_second_cse_only_change_survives_capture_and_comparison(tmp_path):
+    (tmp_path/'func.c.cse2').write_text('(reg:SI 72)')
+    before = diagnostics.phase_summary(tmp_path)
+    (tmp_path/'func.c.cse2').write_text('(reg:SI 73) (reg:SI 74)')
+    after = diagnostics.phase_summary(tmp_path)
+    profile = {'output_unchanged':True, 'toolchain':'gcc-2.7.2-kmc', 'original_flags':['-O2']}
+    result = diagnostics.compare(before | profile, after | profile)
+    assert result['comparable']
+    assert [p['phase'] for p in result['changed']] == ['cse2']
+    assert result['changed'][0]['register_count_before'] == 1
+    assert result['changed'][0]['register_count_after'] == 2
+    assert result['lead'] == 'earlier optimization'
+
+
+def test_all_supported_phases_compared_in_legacy_pipeline_order():
+    def snapshot(digest):
+        return {'output_unchanged':True, 'toolchain':'gcc-2.7.2-kmc', 'original_flags':['-O2'],
+                'phases':{phase:{'captured_sha256':digest, 'register_count':1}
+                          for phase in diagnostics.PHASES}}
+    result = diagnostics.compare(snapshot('before'), snapshot('after'))
+    phases = [p['phase'] for p in result['changed']]
+    assert set(phases) == diagnostics.PHASES
+    assert phases.index('loop') < phases.index('cse2') < phases.index('flow') < phases.index('greg')
+
+
+def test_second_cse_keeps_truncation_and_profile_comparison_guards(tmp_path):
+    (tmp_path/'func.c.cse2').write_text('(reg:SI 72)')
+    before = diagnostics.phase_summary(tmp_path)
+    (tmp_path/'func.c.cse2').write_text('(reg:SI 73)')
+    after = diagnostics.phase_summary(tmp_path)
+    profile = {'output_unchanged':True, 'toolchain':'gcc-2.7.2-kmc', 'original_flags':['-O2']}
+    after['phases']['cse2']['truncated'] = True
+    assert not diagnostics.compare(before | profile, after | profile)['changed']
+    assert not diagnostics.compare(before | profile, after | (profile | {'original_flags':['-O1']}))['comparable']
+    assert not diagnostics.compare(before | profile, after | (profile | {'output_unchanged':False}))['comparable']

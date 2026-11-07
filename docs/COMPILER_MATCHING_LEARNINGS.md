@@ -5689,3 +5689,29 @@ a member of the same spelling: `y=obj.y` kills the incoming local y, while
 `y=arr[y]` and `y=obj.y+y` still read it. Base/index expressions remain visible.
 No game source or extracted bytes are included here. Private measured evidence:
 `func80040CF4/store-frontier-revisit-nov7`.
+
+## Compare second CSE before attributing a late stack slot (November 7)
+
+A controlled read-only stack-frame audit found four identical pointer homes
+followed by an unused eight-byte target gap; no fifth value was established.
+An early consumed aggregate instead shifted all four homes. A hypothetical
+slot removed only after allocation therefore needs actual late-phase evidence,
+not another arbitrary local or padding object.
+
+For the pinned KMC-compatible GCC 2.7.2 source, `toplev.c` runs the second CSE
+after loop optimization and before flow and global allocation/reload. CSE2
+cannot delete a slot first allocated by reload. Reload-local elimination or
+later jump optimization are separate hypotheses; neither was demonstrated for
+this gap. Source provenance: decompals/mips-gcc-2.7.2, commit
+`e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14`, `toplev.c` SHA256
+`3d14cc1f9cdc145e21c9acb86e2027d9d6475d1fc9d956a6297378a9221479b2`,
+second CSE at2926–2927, flow at2983, global allocation/reload at3074–3082.
+These are source observations, not instrumentation of the unavailable original
+vendor binary or proof that every GCC version follows the same pipeline.
+
+The app captured `.cse2` files but omitted them from its phase comparison.
+Capture and comparison now share one supported-phase inventory, with CSE2
+between loop and flow. A regression reproduces a CSE2-only change previously
+reported as no comparable phase changes. Existing output-parity, profile and
+truncation guards remain. This improves diagnostic evidence; it claims no new
+match, spill mechanism or game compilation.
