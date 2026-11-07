@@ -883,3 +883,34 @@ def test_a_matched_function_whose_name_the_host_moves_keeps_c_that_says_its_name
     assert calls == "s32 func_80004C00(s32 v) { return clamp_tail(v) + 1; }"
     assert net._context(pid)["header"] == "s32 clamp_tail(s32 v);\n"
     assert net.store.one("SELECT address FROM symbols WHERE project_id=? AND name='clamp_tail'", pid)["address"] == x["vram"]
+
+
+def test_both_overlay_twins_named_can_be_renamed_again(built, tmp_path):  # noqa: F811
+    """#117 review: with both twins named, the symbol table kept one name per address, so renaming the first again
+    said "`bounds` is not a symbol of this ROM". A guest follows each rename to the same twin."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "ola", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    for net, s in ((host, slug), (g, gslug)):
+        _add_overlay_twin(net, s, 0x800007C4, "ovl_func_800007C4")
+    agent, _ = host.local_agent("codex-1")
+    assert host.rename_symbol(agent, slug, "func_800007C4", "bounds").startswith("✅")
+    assert host.rename_symbol(agent, slug, "ovl_func_800007C4", "ovl_bounds").startswith("✅")
+    assert host.rename_symbol(agent, slug, "bounds", "bounds_head").startswith("✅")
+    assert host.rename_symbol(agent, slug, "ovl_bounds", "ovl_bounds_head").startswith("✅")
+    g.links[gslug].sync()
+    for net, s in ((host, slug), (g, gslug)):
+        assert net._function("bounds_head", s)["unit"] != "ovl"
+        assert net._function("ovl_bounds_head", s)["unit"] == "ovl"
+        syms = net.symbols(net._project(s)["id"])
+        assert syms.resolve("bounds_head") == syms.resolve("ovl_bounds_head") == 0x800007C4
+
+
+def test_an_overlay_twin_cant_take_the_other_twins_name(built, tmp_path):  # noqa: F811
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    _add_overlay_twin(net, slug, 0x800007C4, "ovl_func_800007C4")
+    agent, _ = net.local_agent("codex-1")
+    assert net.rename_symbol(agent, slug, "func_800007C4", "bounds").startswith("✅")
+    with pytest.raises(NetworkError, match="another function"):
+        net.rename_symbol(agent, slug, "ovl_func_800007C4", "bounds")
+    assert net._function("ovl_func_800007C4", slug)["unit"] == "ovl"

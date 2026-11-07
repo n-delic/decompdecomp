@@ -188,7 +188,7 @@ class EditMixin:
         if not pairs:
             return "nothing to rename"
         syms = self.symbols(proj["id"])
-        trial = SymbolTable([Symbol(s.name, s.address, s.size, s.kind) for s in syms.by_name.values()])
+        trial = syms.copy()  # with every overlay twin's name (#117 review)
         addresses = {}
         for old, new in pairs:
             if not (IDENT.match(old) and IDENT.match(new)):
@@ -200,15 +200,24 @@ class EditMixin:
             taken = trial.resolve(new)
             if taken is not None and taken != addr:
                 raise NetworkError(f"`{new}` already names 0x{taken:08X}")
+            at = self.store.all("SELECT id, name, size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+            renamed = [r for r in at if r["name"] == old] or (at if len(at) == 1 else [])
+            if any(r["name"] == new for r in at) and not any(r["name"] == new for r in renamed):
+                # the other overlay function at this address has it: the names would collide (#117 review)
+                raise NetworkError(f"`{new}` already names another function at 0x{addr:08X} (an overlay's)")
             addresses[old] = addr
             if old in trial.by_name:
                 trial.rename(old, new)
             else:
-                fnrow = self.store.one("SELECT size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+                fnrow = at[0] if at else None
                 current, _ = syms.name_at(addr)
                 base = syms.by_name.get(current) if current != f"D_{addr:08X}" else None
-                trial.add(Symbol(new, addr, fnrow["size"] if fnrow else (base.size if base and base.address == addr else 0),
-                                 "func" if fnrow else (base.kind if base else "data")))
+                sym = Symbol(new, addr, fnrow["size"] if fnrow else (base.size if base and base.address == addr else 0),
+                             "func" if fnrow else (base.kind if base else "data"))
+                if len(at) > 1:  # an overlay twin still called by its address's name: the other twin's name stays
+                    trial.alias(sym)
+                else:
+                    trial.add(sym)
         new_of = dict(pairs)
         word = re.compile(r"\b(" + "|".join(re.escape(old) for old in new_of) + r")\b")
         swap = lambda text: word.sub(lambda m: new_of[m.group(1)], text)
