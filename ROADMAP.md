@@ -28,6 +28,9 @@
   bookkeeping now select project storage; autosave keeps the shared-layout
   discovery fast path. A transaction fence defers file sync inside any Store's
   write transaction. Shared manifest author names remain in the catalog.
+  Room-engine mirrors and saved link configuration now select project storage.
+  Split-store progress imports prepare shared author identities before locking
+  project data; legacy failed imports retain atomic rollback.
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

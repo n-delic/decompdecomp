@@ -537,3 +537,153 @@ def test_match_commit_attribution_reads_project_attempts_and_shared_identities(s
     message = match_commit_notes.message(net, job, None)
     assert 'Matched by: worker' in message and 'Repair explanation: Scoped repair' in message
     assert net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == 0
+
+
+def _room_projects(net, stores, tmp_path):
+    from decompnet.app.engine.core import Core
+    from decompnet.app.engine.rooms import RoomMixin
+
+    _saved_projects(net, stores, tmp_path)
+    net.links, net._remote_ids, net._syms, net._sym_override, net._xrefs = {}, {}, {}, {}, {}
+    for cls, names in ((Core, ('console', 'symbols', '_local_identity_name', 'attribution_agent', '_update_cfg')),
+                       (RoomMixin, tuple(name for name in vars(RoomMixin) if not name.startswith('__')))):
+        for name in names:
+            setattr(net, name, getattr(cls, name).__get__(net))
+    for pid in (1, 2):
+        with stores[pid].tx() as db:
+            db.execute('UPDATE functions SET vram=4096,size=4,rom_offset=0')
+
+
+def test_room_updates_are_isolated_even_with_identical_names_and_addresses(scoped, tmp_path):
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    net.apply_remote_best('first', 4096, 12, 'first candidate')
+    net.apply_remote_best('second', 4096, 7, 'second candidate')
+    net.apply_remote_note('first', 1, 4096, 'first note', 'guest', 123, 12, 12)
+    net.apply_remote_note_named('second', 'same_name', 'second note', 'guest', 124, 8, 7)
+    net.apply_remote_note_named('second', 'same_name', 'second note', 'guest', 124, 8, 7)
+    net.remote_event(2, 'room_test', 'only second', 'guest', 125)
+    net.apply_remote_context('second', 'int room_header;', 4)
+    net.apply_remote_match('first', 4096, 'first exact', 'guest', rom_offset=0)
+    net.apply_remote_match_named('second', 'same_name', 'guest')
+    first, second = net._function('same_name', 'first'), net._function('same_name', 'second')
+    assert first['matched_source'] == 'first exact' and second['best_source'] == 'second candidate'
+    assert first['status'] == second['status'] == 'matched'
+    assert [r['text'] for r in stores[1].all('SELECT text FROM notes')] == ['first note']
+    assert [r['text'] for r in stores[2].all('SELECT text FROM notes')] == ['second note']
+    assert net._context(1)['header'] == 'int first;'
+    assert net._context(2)['header'] == 'int room_header;'
+    assert stores[1].one("SELECT 1 FROM events WHERE kind='room_test'") is None
+    assert stores[2].one("SELECT detail FROM events WHERE kind='room_test'")['detail'] == 'only second'
+    assert net.store.one('SELECT COUNT(*) n FROM functions')['n'] == 0
+    assert net.store.one('SELECT COUNT(*) n FROM notes')['n'] == 0
+    assert net.store.one("SELECT COUNT(*) n FROM agents WHERE name='@guest'")['n'] == 1
+
+
+def test_saved_authors_are_resolved_before_project_write_transactions(scoped, tmp_path, monkeypatch):
+    import json
+
+    from decompnet.app import saves
+    from decompnet.store import in_transaction
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    original = net.attribution_agent
+    seen = []
+    def credit(name):
+        assert not in_transaction()
+        seen.append(name)
+        return original(name)
+    monkeypatch.setattr(net, 'attribution_agent', credit)
+    manifest = {'layout': [{'name': 'same_name', 'vram': 4096, 'size': 4}],
+                'notes': [{'by': 'new-author', 'function': 'same_name', 'text': 'saved note',
+                           'score_before': 9, 'score_after': 9}]}
+    agents = saves._context_agents(net, stores[1], manifest)
+    with stores[1].tx():
+        saves._apply_context(net, 'first', tmp_path, manifest, lambda _: None, agents=agents)
+    assert seen == ['new-author', 'restored']
+    row = stores[1].one('SELECT agent_id,score_before,score_after FROM notes')
+    assert tuple(row) == (agents['new-author'], 9, 9)
+    assert stores[2].one('SELECT COUNT(*) n FROM notes')['n'] == 0
+    with stores[1].tx(), pytest.raises(NetworkError, match='before starting'):
+        saves._context_agents(net, stores[1], manifest)
+    net.progress.sync('first', force=True)
+    path = saves.default_folder(net, 'first') / saves.MANIFEST
+    disk = json.loads(path.read_text())
+    disk['notes'].append({'by': 'another-author', 'function': 'same_name', 'text': 'new disk note'})
+    path.write_text(json.dumps(disk))
+    assert net.progress.sync('first', force=True)
+    assert 'another-author' in seen
+    assert [r['text'] for r in stores[1].all('SELECT text FROM notes ORDER BY id')] == ['saved note', 'new disk note']
+
+
+def test_concurrent_rooms_share_one_remote_author_identity(scoped, tmp_path, monkeypatch):
+    import threading
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    original = net.store.one
+    barrier = threading.Barrier(2)
+    def lookup(sql, *args):
+        row = original(sql, *args)
+        if sql == 'SELECT id FROM agents WHERE name=?' and args == ('@simultaneous',):
+            barrier.wait(timeout=5)  # both callers observe the initially missing identity
+        return row
+    monkeypatch.setattr(net.store, 'one', lookup)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(net.remote_event, 1, 'parallel', 'first', 'simultaneous', 1)
+        second = pool.submit(net.remote_event, 2, 'parallel', 'second', 'simultaneous', 1)
+        first.result(timeout=10)
+        second.result(timeout=10)
+    assert original("SELECT COUNT(*) n FROM agents WHERE name='@simultaneous'")['n'] == 1
+    a = stores[1].one("SELECT agent_id FROM events WHERE kind='parallel'")['agent_id']
+    b = stores[2].one("SELECT agent_id FROM events WHERE kind='parallel'")['agent_id']
+    assert a == b
+
+
+def test_room_layout_rename_updates_only_its_own_sources_and_symbols(scoped, tmp_path):
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    for pid in (1, 2):
+        with stores[pid].tx() as db:
+            db.execute("UPDATE functions SET best_source='void same_name(void) {}'")
+            db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'same_name',4096,4,'func')", (pid,))
+    net.apply_remote_layout('first', [], [{'name': 'room_name', 'address': 4096, 'size': 4, 'kind': 'func'}])
+    assert net._function('room_name', 'first')['best_source'] == 'void room_name(void) {}'
+    assert net._function('same_name', 'second')['best_source'] == 'void same_name(void) {}'
+    assert stores[1].one('SELECT name FROM symbols')['name'] == 'room_name'
+    assert stores[2].one('SELECT name FROM symbols')['name'] == 'same_name'
+
+
+def test_room_restart_reads_link_config_from_operational_store(scoped, tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from decompnet.app import collab
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    started = []
+    monkeypatch.setattr(collab, 'Link', lambda net, slug, *args, **kw: SimpleNamespace(
+        run=lambda: started.append(slug), stop=lambda: None, _req=lambda *args: None))
+    info = {'url': 'https://example.invalid', 'room': 'second', 'token': 'test', 'member': 'test'}
+    net.link_project('second', info, start=False)
+    assert 'link' not in json.loads(net.store.one('SELECT config FROM projects WHERE id=2')['config'])
+    net.links.clear()
+    net.restore_links()
+    assert started == ['second']
+    net.unlink('second')
+    assert not net.links and 'link' not in json.loads(stores[2].one('SELECT config FROM projects')['config'])
+
+
+def test_room_lease_can_infer_the_only_project_without_catalog_claims(scoped, tmp_path):
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    net._yield_autopilot = lambda *args: None
+    with net.store.tx() as db:
+        db.execute('DELETE FROM projects WHERE id=2')
+    fn = net._room_claim_row(Agent(1, 'worker', None), None, 'same_name', 'easiest')
+    assert fn['id'] == 10
+    assert stores[1].one('SELECT function_id FROM claims')['function_id'] == 10
+    assert stores[2].one('SELECT 1 FROM claims') is None
+    assert net.store.one('SELECT 1 FROM claims') is None
