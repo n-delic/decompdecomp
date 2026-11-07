@@ -12,7 +12,7 @@ _STATES = {}
 
 
 def key(root):
-    root = Path(root).resolve()
+    root = Path(root).expanduser().resolve()
     # Linked worktrees share refs and objects, so they must share the same queue.
     if (root/'.git').exists():
         return (root/repository_git.git(root, 'rev-parse', '--git-common-dir')).resolve()

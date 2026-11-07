@@ -44,7 +44,7 @@ def test_queued_push_gets_next_turn_and_reports_holder_and_elapsed(tmp_path, mon
     assert not operations._STATES
 
 
-def test_other_repository_is_independent_and_shared_worktrees_serialize(tmp_path):
+def test_other_repository_is_independent_and_shared_worktrees_serialize(tmp_path, monkeypatch):
     root, other, worktree = [tmp_path/name for name in ('repo', 'other', 'worktree')]
     root.mkdir();other.mkdir()
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
@@ -52,6 +52,8 @@ def test_other_repository_is_independent_and_shared_worktrees_serialize(tmp_path
                     'commit', '-qm', 'initial', '--allow-empty'], check=True)
     subprocess.run(['git', '-C', str(root), 'worktree', 'add', '-qb', 'other', str(worktree)], check=True)
     assert operations.key(root) == operations.key(worktree)
+    monkeypatch.setenv('HOME', str(tmp_path))
+    assert operations.key('~/repo') == operations.key(root)
     alias = tmp_path/'alias';alias.symlink_to(root, target_is_directory=True)
     assert operations.key(root) == operations.key(alias)
     with operations.operation(root, 'first', 'Saving progress', lambda _: None):
