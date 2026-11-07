@@ -526,6 +526,38 @@ def test_a_project_that_reads_an_extracted_disc_gets_its_files_from_the_disc_ima
     assert ForkProject(other).unpack_disc("GALE01", log=lambda *_: None) == 0
 
 
+def test_a_build_that_never_finishes_is_stopped_at_its_timeout(tmp_path):
+    """A compiler looping on an agent's code kept the build's output open, and the output was read to the end before
+    the timeout was looked at: the build never ended, and held the project's build lock for hours."""
+    import os
+    import time
+
+    from decompnet.forks.project import ForkProject
+
+    def running(pid: int) -> bool:
+        if os.name == "nt":
+            listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
+            return f" {pid} " in listed
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    pid_file = tmp_path / "compiler.pid"
+    (tmp_path / "build.py").write_text(
+        "import os, time\n"
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        "print('MWCC build/game.o', flush=True)\n"
+        "time.sleep(60)  # a compiler that never finishes, its output still open\n")
+    started = time.monotonic()
+    ok, said = ForkProject(tmp_path).run(["python", "build.py"], log=lambda *_: None, timeout=2)
+    assert not ok
+    assert time.monotonic() - started < 20
+    assert "MWCC build/game.o" in said and "didn't finish in 2 seconds" in said
+    assert not running(int(pid_file.read_text()))
+
+
 def test_a_disc_of_another_version_switches_the_project_or_is_refused(tmp_path, monkeypatch):
     from decompnet.consoles.gc_wii import scratch as scratch_dtk
 
