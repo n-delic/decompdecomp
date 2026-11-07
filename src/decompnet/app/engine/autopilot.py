@@ -135,7 +135,8 @@ class AutopilotMixin:
                                 f"{drafts} of {state['tried']} functions matched from machine drafts")
 
     def on_improvement(self, proj, function_id: int) -> None:
-        if proj is not None:
+        from ..restore_effects import defer
+        if proj is not None and not defer(self,proj,function_id,matched=False):
             self.cascades.notify(proj, function_id)
 
     def on_match(self, proj, function_id: int, agent: Agent | None = None) -> None:
@@ -143,6 +144,8 @@ class AutopilotMixin:
         those twins itself.)"""
         if proj is None:
             return
+        from ..restore_effects import defer
+        if defer(self,proj,function_id,matched=True):return
         from .. import repair_mappings
         repair_mappings.harvest(self.twins, proj, function_id)
         self.twins.index_function(proj, function_id)

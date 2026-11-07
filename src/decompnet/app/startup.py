@@ -120,7 +120,19 @@ class StartupQueue:
             earliest = self.clock() + self.spacing
 
     def start(self):
-        threading.Thread(target=self.run, daemon=True, name='startup-maintenance').start()
+        # Optional work can be added after startup drained. Never create a second
+        # coordinator when a restore queues maintenance while the first is active.
+        with self.lock:
+            if getattr(self,'_runner',None) is not None:return
+            def drain():
+                try:self.run()
+                finally:
+                    with self.lock:
+                        self._runner=None
+                        again=not self.stop.is_set() and not self.tasks.empty()
+                    if again:self.start()
+            self._runner=threading.Thread(target=drain,daemon=True,name='startup-maintenance')
+            self._runner.start()
 
     def close(self):
         self.stop.set()

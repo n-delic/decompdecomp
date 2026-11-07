@@ -4,6 +4,7 @@ One shared worker consumes one budget for the entire cascade. Engine-only uses s
 explicitly enables this service; experiments and tests must opt in. A stopped project stays paused until Run again.
 """
 
+import json
 import logging
 import threading
 import time
@@ -54,17 +55,29 @@ class Cascade:
         with self.lock:
             self.paused.discard(slug)
 
-    def notify(self, donor, fid):
-        if not self.enabled:
-            return
-        fn = self.net.project_store(donor['id']).one('SELECT name,size,status,best_source FROM functions WHERE id=?', fid)
-        if not fn or (fn['status'] != 'matched' and not fn['best_source']):
-            return
+    def notify(self,donor,fid):
+        return self.notify_many(donor,[fid])
+
+    def notify_many(self,donor,fids):
+        """One discovery pass for a restored batch; no source payloads enter this scan."""
+        if not self.enabled or not fids:return
+        rows=self.net.project_store(donor['id']).all(
+            "SELECT name,size,status FROM main.functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?)) "
+            "AND (status='matched' OR best_source IS NOT NULL AND length(best_source)>0)",donor['id'],json.dumps(list(fids)))
+        if not rows:return
+        # Merge overlapping size windows, preserving the old per-function predicate
+        # without querying every other project once for every restored function.
+        intervals=[]
+        for start,end in sorted((int(r['size']*.9),int(r['size']/.9)) for r in rows):
+            if intervals and start<=intervals[-1][1]:intervals[-1][1]=max(end,intervals[-1][1])
+            else:intervals.append([start,end])
+        names=[r['name'] for r in rows if r['status']=='matched' and named_donors.meaningful(r['name'])]
         from .shared_reuse import compatible
-        identity=fn['name'] if fn['status']=='matched' and named_donors.meaningful(fn['name']) else ''
-        projects = [p for p in compatible(self.net, donor) if self.net.project_store(p['id']).one(
-            "SELECT 1 FROM functions WHERE project_id=? AND status IN ('open','nosource') AND (size BETWEEN ? AND ? OR name=?) LIMIT 1",
-            p['id'], int(fn['size'] * .9), int(fn['size'] / .9),identity)]
+        projects=[p for p in compatible(self.net,donor) if self.net.project_store(p['id']).one(
+            "SELECT 1 FROM functions WHERE project_id=? AND status IN ('open','nosource') AND "
+            "(name IN (SELECT value FROM json_each(?)) OR EXISTS(SELECT 1 FROM json_each(?) w "
+            "WHERE size BETWEEN json_extract(w.value,'$[0]') AND json_extract(w.value,'$[1]'))) LIMIT 1",
+            p['id'],json.dumps(names),json.dumps(intervals))]
         with self.lock:
             if not self.enabled:
                 return

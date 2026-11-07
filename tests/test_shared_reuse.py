@@ -113,3 +113,20 @@ def test_cascade_notifies_compatible_imported_destination(pair, monkeypatch):
     cascade.pending.clear()
     cascade.notify(pair.project_row('source'), 1)
     assert not cascade.pending
+
+
+def test_restored_batch_discovers_other_projects_once_and_preserves_size_gaps(pair,monkeypatch):
+    with pair.store.tx() as db:
+        db.execute('UPDATE functions SET size=10 WHERE id=1')
+        db.execute("INSERT INTO functions(id,project_id,name,status,size,best_source) VALUES(3,1,'wide_donor','matched',1000,'int wide_donor(void){return 0;}')")
+        db.execute("UPDATE functions SET name='unrelated',size=200 WHERE id=2")
+    donor=pair.project_row('source');destination=pair.project_row('destination')
+    discoveries=[]
+    monkeypatch.setattr(shared_reuse,'compatible',lambda *a:discoveries.append(1) or [destination])
+    pair.cascades.enabled=True;pair.cascades.running=True
+    pair.store._reader().create_function('payload_read',2,lambda *_:pytest.fail('discovery inflated saved C'))
+    pair.cascades.notify_many(donor,[1,3])
+    assert len(discoveries)==1 and not pair.cascades.pending
+    with pair.store.tx() as db:db.execute('UPDATE functions SET size=1000 WHERE id=2')
+    pair.cascades.notify_many(donor,[1,3])
+    assert len(discoveries)==2 and pair.cascades.pending=={'destination'}
