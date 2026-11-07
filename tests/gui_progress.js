@@ -182,5 +182,26 @@ async function main() {
   await runningJoin;
   assert.equal(replacement.disabled, false);
   assert.equal(test.log.bar.removed, true);
+  // A merge event (a host's or agents' join reaching the page) refreshes the map, like split and match do.
+  {
+    const mt = setup(...cases[0]);
+    const src = read("project");
+    const from = src.indexOf("let pollingGen = -1;");
+    vm.runInContext(src.slice(from, src.indexOf("\nlet statsLoading", from)), mt.ctx);
+    let dirty = null;
+    Object.assign(mt.ctx, {
+      MAP_EVERY_MS: 20000, performance: { now: () => 0 },
+      applyAttempts() {}, addActivity() {}, renderNow() {}, renderStats() {}, applyClaims() {}, renderList() {},
+      refreshFn() {}, fnBadge() {}, renderSessions() {}, addThoughts() {},
+      refreshMap: async (d) => { dirty = d; },
+      api: async () => ({ overview: {}, events: [{ id: 1, kind: "merge", detail: "a + b" }],
+        attempts: [], claims: [], sessions: [], cut: false }),
+    });
+    mt.ctx.S = { slug: "t", gen: 0, lastEvent: 0, lastAttempt: 0, seq: {}, scores: new Map(), flash: { set() {} },
+      claims: [], sessions: [], primed: true, tab: "", fn: null, claimSig: "", lastMapFetch: Date.now(), openedAt: 0 };
+    mt.get("drawer").hidden = true;
+    await mt.ctx.poll();
+    assert.equal(dirty, true, "a merge event must refresh the map");
+  }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

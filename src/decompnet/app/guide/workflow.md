@@ -35,7 +35,7 @@ frame (`addiu $sp, +N` before `jr $ra`) with no matching allocation (`addiu $sp,
 match, its prologue is missing. Give the instruction(s) back: `split_function` the symbol before it at this
 function's true start, then `join_functions` the peeled piece onto this one. (Overlay games carry the same code
 in several ROM copies; if one copy is already matched, re-bounding this one makes it that copy's twin and it
-matches for free. If you can't re-bound it, asm_stub it rather than burning compiles on a match it can't reach.)
+matches for free. If you can't re-bound it, set it aside with release_function(..., not_c=true) rather than burning compiles on a match it can't reach.)
 
 ## Reading the diff
 - `<` / `>`: an instruction is missing / extra. Control flow or expression structure differs.
