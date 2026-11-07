@@ -138,7 +138,10 @@ def test_serve_startup_never_calls_native_window_or_tray(tmp_path,monkeypatch,ca
     socket=SimpleNamespace(getsockname=lambda:('127.0.0.1',PORT))
     monkeypatch.setattr(cli,'_listen',lambda port,exact:calls.append(('listen',port,exact)) or socket)
     net=SimpleNamespace(web_login=SimpleNamespace(code='test-code'))
-    monkeypatch.setattr(engine,'RomNetwork',lambda *a:net)
+    def network(*args,**kwargs):
+        assert kwargs=={'project_databases':True}
+        return net
+    monkeypatch.setattr(engine,'RomNetwork',network)
     mcp=SimpleNamespace(streamable_http_app=lambda **kwargs:object())
     def build_server(*args,**kwargs):
         assert kwargs=={'headless':True}
@@ -354,3 +357,17 @@ def test_source_queue_routes_use_existing_write_guard(web,monkeypatch):
     assert client.post('/api/source-preparation',json=body).status_code==403 and not called
     response=client.post('/api/source-preparation',json=body,headers={'X-Decomp':'1','Origin':ORIGIN})
     assert response.status_code==200 and response.json()['job']=='queued' and called==[('test',True)]
+
+
+def test_second_launcher_does_not_start_workers_while_home_is_opening(tmp_path,monkeypatch,capsys):
+    from decompnet.writer_gate import WriterGate
+    internal=tmp_path/'.decomp';internal.mkdir()
+    monkeypatch.setattr(cli,'home_dir',lambda:tmp_path)
+    monkeypatch.setattr(cli,'use_own_wine_prefix',lambda:None)
+    monkeypatch.setattr(cli,'_restart_state',lambda:None)
+    monkeypatch.setattr(cli,'_state',lambda _:None)
+    monkeypatch.setattr(cli,'replace_older',lambda _:None)
+    monkeypatch.setattr(cli,'_listen',lambda *a,**kw:pytest.fail('second server must not bind a socket'))
+    with WriterGate(internal/'server-instance').hold():
+        assert cli.run(SimpleNamespace(cmd='serve',port=PORT))==0
+    assert 'already starting' in capsys.readouterr().out

@@ -30,8 +30,8 @@ class Core(Network):
         from ..sdk_identity import identify
         return identify(self, proj, super().sdk_functions(proj))
 
-    def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60):
-        super().__init__(db_path, claim_ttl=claim_ttl)
+    def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60, *, project_databases=False):
+        super().__init__(db_path, claim_ttl=claim_ttl,project_databases=project_databases)
         self.workspace = Path(workspace)
         self._syms: dict[int, SymbolTable] = {}
         self._sym_override: dict[int, SymbolTable] = {}

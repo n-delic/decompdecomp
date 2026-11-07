@@ -165,6 +165,7 @@ def _protection(store):
 
 
 def prune(net,value,log):
+    if options(value)['days']==0:raise ValueError('Choose a positive age before removing old candidate source.')
     from .storage_files import operational
     results = [_prune_store(net,store,value,log) for store in operational(net)]
     collect(net,log)
@@ -224,6 +225,7 @@ def history(net,slug,function,before=0,attempt=None):
 def start(net,jobs,action,value=None,*,foreground=True):
     if action not in ('pack','prune'):raise ValueError('Choose pack or prune.')
     rules=options(value or {})
+    if action=='prune' and rules['days']==0:raise ValueError('Choose a positive age before removing old candidate source.')
     kind='Compress candidate history' if action=='pack' else 'Clean old unsuccessful source'
     with jobs._lock:
         active=next((j for j in jobs.jobs.values() if j['kind'] in

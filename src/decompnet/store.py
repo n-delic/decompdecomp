@@ -344,7 +344,7 @@ class _ThreadReader:
     """
     def __init__(self,path,header_codec,repair_archive=None):
         from .payload_storage import Connection
-        self.conn=sqlite3.connect(path,isolation_level=None,check_same_thread=False,factory=Connection)
+        self.conn=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=rw' if str(path)!=':memory:' else path,uri=str(path)!=':memory:',isolation_level=None,check_same_thread=False,factory=Connection)
         try:
             self.conn.row_factory=sqlite3.Row
             if repair_archive is not None:
@@ -365,8 +365,9 @@ class _ThreadReader:
 
 
 class Store:
-    def __init__(self, path: str | Path, *, repair_archive=None, project_namespace=None, stable_ids=False):
+    def __init__(self, path: str | Path, *, repair_archive=None, project_namespace=None, stable_ids=False, require_existing=False):
         self.path = str(path)
+        self.require_existing = require_existing
         self.repair_archive = repair_archive
         self.project_namespace, self.stable_ids = project_namespace,stable_ids
         if project_namespace is not None:
@@ -384,13 +385,20 @@ class Store:
 
     def _initialize(self):
         from .payload_storage import Connection
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None,factory=Connection)
+        location = Path(self.path).resolve().as_uri()+'?mode=rw' if self.require_existing else self.path
+        self.conn = sqlite3.connect(location, uri=self.require_existing, check_same_thread=False, isolation_level=None,factory=Connection)
         self.conn.row_factory = sqlite3.Row
+        self._migration_admin = False
+        self.conn.create_function('storage_migration_admin',0,lambda:int(self._migration_admin))
         if self.repair_archive is not None:
             self.conn.repair_archive = self.repair_archive
             from .repair_archive import register
             register(self.conn)
         from .shard_ids import bind
+        if self.require_existing and self.project_namespace is not None:
+            try:marker = sqlite3.Connection.execute(self.conn,"SELECT value FROM settings WHERE key='project-id-namespace'").fetchone()
+            except sqlite3.DatabaseError as error:raise ValueError('The project database is incomplete. Restore a consistent backup.') from error
+            if not marker or marker[0]!=str(self.project_namespace):raise ValueError('The project database identity is missing or incorrect. Restore a consistent backup.')
         bind(self.conn,self.project_namespace,self.stable_ids)
         from .header_storage import Codec
         self.header_codec = Codec()

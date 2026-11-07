@@ -95,7 +95,13 @@ def _rows(net, after, last, limit, recent=False):
         'FROM activity_events e JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id '
         "WHERE e.id>? AND e.id<=? AND COALESCE(a.name,'') NOT IN ('progress-judge','@progress-judge') "
         f'ORDER BY e.id {direction} LIMIT ?',after,last,limit)
-    return [{k:row[k] for k in ('id','kind','detail','created_at','agent','slug','project')} for row in rows]
+    titles = {}
+    for pid in {row['project_id'] for row in rows}:
+        current = net.project_store(pid).one('SELECT slug,name FROM projects WHERE id=?',pid)
+        if current is None:raise NetworkError('A notification project is missing from its database. Restore a consistent backup.')
+        titles[pid] = current
+    return [{k:row[k] for k in ('id','kind','detail','created_at','agent')} |
+            {'slug':titles[row['project_id']]['slug'],'project':titles[row['project_id']]['name']} for row in rows]
 
 
 def events_after(net, after, limit):

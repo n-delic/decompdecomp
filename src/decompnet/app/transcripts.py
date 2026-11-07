@@ -177,7 +177,9 @@ class ProjectTranscripts:
             if store not in self.stores:
                 from .transcript_storage import TranscriptStore
                 path = str(store.path)+'.transcripts.sqlite3'
-                self.stores[store] = Transcripts(TranscriptStore(path), catalog=self.net.store, sessions=store)
+                migrated = getattr(self.net,'_project_files',None) is not None
+                pid = store.one('SELECT id FROM projects')['id'] if migrated else None
+                self.stores[store] = Transcripts(TranscriptStore(path,project_namespace=pid,repair_archive=self.net.store.conn.repair_archive,require_existing=migrated), catalog=self.net.store, sessions=store)
             return self.stores[store]
 
     def append(self, session, kind, value, secrets=(), *, helper=None, project=None):

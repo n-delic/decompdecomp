@@ -222,7 +222,7 @@ class Api(Agent):
                 # Done with what it held (in a room the host holds the claim: nothing here says when): what led up
                 # to this turn folds into a line, and this turn stays whole (a fork's match shows the file's data to
                 # fix next) until the next fold
-                if not focused and finishing and s.slug not in net.links and not _holds_claim(net, agent.id):
+                if not focused and finishing and s.slug not in net.links and not _holds_claim(net, agent.id, s.slug):
                     done += 1
                     turn = len(messages) - len(calls) - 1
                     if start < turn:
@@ -287,8 +287,8 @@ def is_local(base: str, resolve: bool = True) -> bool:
     return bool(addrs) and all(private(a) for a in addrs)
 
 
-def _holds_claim(net, agent_id: int) -> bool:
-    return net.store.one("SELECT 1 FROM claims WHERE agent_id=?", agent_id) is not None
+def _holds_claim(net, agent_id: int, slug: str) -> bool:
+    return net.project_store(slug).one("SELECT 1 FROM claims WHERE agent_id=?", agent_id) is not None
 
 
 def _done_line(net, slug: str, span: list[dict], done: int, count: int) -> str:

@@ -404,10 +404,26 @@ def _ago(ts: float | None) -> str:
 
 
 class Network:
-    def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL, *, repair_archive=None):
+    def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL, *, repair_archive=None, project_databases=False):
+        self._project_files = None
         self.store = Store(db_path,repair_archive=repair_archive)
-        from .permuter_claims import clear
-        with self.store.tx() as db:clear(db)
+        try:
+            from .project_migration import state, upgrade
+            if project_databases or state(self.store):
+                upgrade(self)
+                from .project_files import Files
+                self._project_files = Files(self)
+            from types import SimpleNamespace
+
+            from .permuter_claims import clear, nonexclusive
+            identities = [r['id'] for r in self.store.all('SELECT id,name,owner FROM agents') if nonexclusive(SimpleNamespace(**dict(r)))]
+            for selected,_ in self.project_stores():
+                with selected.tx() as db:clear(db,agent_ids=identities)
+        except BaseException:
+            if self._project_files is not None:
+                for store in self._project_files.opened.values():store.conn.close()
+            self.store.conn.close()
+            raise
         self.claim_ttl = claim_ttl
         self._compile_ahead_local = threading.local()
         self._attempt_locks: dict[tuple[int, int], threading.RLock] = {}
@@ -422,27 +438,28 @@ class Network:
         self._compiled: OrderedDict[str, dict] = OrderedDict()  # compile_key -> result, for repeat_of
 
     def project_store(self, project: int | str) -> Store:
-        """Select operational storage explicitly, by catalog ID or slug.
+        """Select one operational file by catalog ID or slug, with no fallback.
 
-        During the storage-boundary refactor every project still uses the legacy
-        file. Callers must keep this Store for the whole operation, including its
-        lock, read cache, transaction and after-commit callbacks. No thread-local
-        selection: background workers can operate on different projects at once.
-        Shared identities, settings and project discovery continue to use store.
+        App startup migrates before workers begin. Library callers without an
+        upgrade marker retain the legacy layout until explicitly enabled. Keep
+        this Store's transaction, read cache and callbacks for the whole action.
         """
         if not ((type(project) is int and project > 0) or
                 (isinstance(project, str) and project.strip())):
             raise ValueError("Project storage needs a positive catalog ID or a nonempty slug.")
-        return self.store
+        return self._project_files.get(project) if self._project_files is not None else self.store
 
     @contextmanager
     def project_registration(self, *, slug, name, description, arch, big_endian, root, config, existing=None):
-        """One registration boundary for imports and their initial operational rows.
+        """Register initial rows on their owner and publish only a committed file.
 
-        Reimports already have an explicit owner. New registrations retain the
-        legacy atomic transaction until the migration coordinator can publish
-        complete files; callers never insert catalog identities themselves.
+        Reimports select the existing owner. Legacy library callers retain their
+        original one-file atomic transaction until app startup upgrades them.
         """
+        if existing is None and self._project_files is not None:
+            values = (slug,name,description,arch,int(big_endian),str(root),json.dumps(config))
+            with self._project_files.create(values) as result:yield result
+            return
         store = self.store if existing is None else self.project_store(existing)
         with store.tx() as db:
             pid = existing
@@ -460,6 +477,12 @@ class Network:
         for row in self.store.all('SELECT id FROM projects ORDER BY id'):
             groups.setdefault(self.project_store(row['id']), []).append(row['id'])
         return list(groups.items()) or [(self.store, [])]
+
+    def project_rows(self):
+        """Discover identities in the catalog, then read current paths/configuration."""
+        for row in self.store.all('SELECT * FROM projects ORDER BY id'):
+            store = self.project_store(row['id'])
+            yield row if store is self.store else store.one('SELECT * FROM projects WHERE id=?',row['id'])
 
     def function_store(self, function_id):
         """Resolve old ID-only provenance through indexed owner discovery, never SQL routing."""
@@ -2172,8 +2195,12 @@ class Network:
     # ------------------------------------------------------------- the project as a whole
 
     def remove_project(self, slug: str) -> int:
-        """Delete a project and everything recorded for it. Returns how many functions it had."""
+        """Remove a project from the catalog, preserving fenced recovery files after upgrade."""
         proj = self._project(slug)
+        if self._project_files is not None:
+            count = self._project_files.remove(proj)
+            if progress := getattr(self,"progress",None):progress.forget(slug,proj['id'])
+            return count
         with self.store.tx() as db:
             ids = [r["id"] for r in db.execute("SELECT id FROM functions WHERE project_id=?", (proj["id"],))]
             for table in ("claims", "attempts"):

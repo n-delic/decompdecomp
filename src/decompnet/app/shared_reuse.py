@@ -137,6 +137,7 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
     from .free_candidates import exhausted
     from .twins import WHY_CHARS, _declared, _file_compiler, apply
     net = twins.net
+    store = net.project_store(proj['id'])
     bounded = job is not None and hasattr(job, 'reuse_limit')
     snapshot = snapshot if snapshot is not None else discover(twins, proj, job=job)
     if snapshot['blocked']:
@@ -146,7 +147,7 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
         _, fp, _ = net.forks.get(proj['slug'])
         try:
             with net.forks._tree(proj).exclusive(), net.forks._build_locks[proj['id']]:
-                units = {row['unit'] for row in net.store.all(
+                units = {row['unit'] for row in store.all(
                     "SELECT id,unit FROM functions WHERE project_id=? AND status='nosource'", proj['id'])
                     if any(h['verified'] for h in snapshot['hints'].get(row['id'], []))}
                 made = prepare(fp, limit=4, units=units)
@@ -162,8 +163,8 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
     matched = 0
     donor_cache = {}
     for fid, candidates in snapshot['hints'].items():
-        b = net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", fid)
-        if b is None or net.store.one('SELECT 1 FROM claims WHERE function_id=?', fid):
+        b = store.one("SELECT * FROM functions WHERE id=? AND status='open'", fid)
+        if b is None or store.one('SELECT 1 FROM claims WHERE function_id=?', fid):
             continue
         for hint in candidates:
             if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):
@@ -171,7 +172,7 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
             if not hint['verified']:
                 continue
             other = net.project_row(hint['source_slug'])
-            a = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", hint['function_id'])
+            a = net.project_store(other['id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", hint['function_id'])
             if a is None:
                 continue
             if net.fork_slug(other['slug']):
@@ -210,7 +211,7 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
                 outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", theirs=True)
             except (NetworkError, OSError, ValueError):
                 continue
-            with net.store.tx() as db:
+            with store.tx() as db:
                 db.execute('INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)',
                            (proj['id'], fid, other['id'], a['id'], outcome, why[:WHY_CHARS], time.time()))
                 if outcome == 'miss':

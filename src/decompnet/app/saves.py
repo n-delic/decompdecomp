@@ -632,7 +632,7 @@ def restore(net, source: str, game: Path, log=print) -> dict:
         files = _read(folder)
         manifest = _manifest(files, {"rom": {"sha1": game_sha1}})
         log("importing and splitting your game copy")
-        existing = net.store.all("SELECT slug,root,config FROM projects")
+        existing = list(net.project_rows())
         source_folder = folder if Path(source).expanduser().is_dir() else Path(source).expanduser()
         same_game = []
         for row in existing:

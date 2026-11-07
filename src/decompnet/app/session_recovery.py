@@ -2,6 +2,11 @@
 import uuid
 
 
+def _transcript_store(net,slug):
+    from .transcripts import service
+    return service(net).for_project(slug).store
+
+
 def checkpoint(net, session):
     actor = net.store.one('SELECT id FROM agents WHERE name=?', session.agent_name)
     if actor is None:return
@@ -28,7 +33,7 @@ def completed(session, net=None):
         session.options.pop('resume_conversation', None)
         session.options.pop('resume_functions', None)
         if net is not None:
-            with net.project_store(session.slug).tx() as db:
+            with _transcript_store(net,session.slug).tx() as db:
                 db.execute('DELETE FROM settings WHERE key=?', ('helper-conversation:' + session.id,))
 
 
@@ -49,13 +54,13 @@ def api_messages(net, session, identity, messages=None):
     if messages is not None:
         value = json.dumps({'identity':identity, 'messages':messages})
         if len(value.encode()) <= 16 * 1024 * 1024:
-            with net.project_store(session.slug).tx() as db:
+            with _transcript_store(net,session.slug).tx() as db:
                 if not db.execute('SELECT 1 FROM settings WHERE key IN (?,?)',
                                   ('helper-transcripts-removed:'+str(session.id),
                                    'helper-transcript-session-cleared:'+str(getattr(session,'session_id',0)))).fetchone():
                     db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (key,value))
         return None
-    row = net.project_store(session.slug).one('SELECT value FROM settings WHERE key=?', key)
+    row = _transcript_store(net,session.slug).one('SELECT value FROM settings WHERE key=?', key)
     if not row:
         return None
     try:

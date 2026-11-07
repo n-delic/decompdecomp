@@ -115,7 +115,7 @@ class ImportMixin:
         check_cancel = getattr(log, "check_cancel", lambda: None)
         check_cancel()
         if reimport is None:
-            for p in self.store.all("SELECT slug, config FROM projects"):
+            for p in self.project_rows():
                 if json.loads(p["config"]).get("rom", {}).get("sha1") == info["sha1"]:
                     log(f"already imported as {p['slug']}")
                     return p["slug"]

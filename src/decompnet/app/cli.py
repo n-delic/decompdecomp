@@ -153,11 +153,6 @@ def _open_when_ready(port: int) -> None:
 
 
 def run(args) -> int:
-    import uvicorn
-
-    from . import cleanup
-    from .engine import RomNetwork
-    from .server import build
     from .support import file_log
 
     headless = getattr(args, 'cmd', None) == 'serve' or os.environ.get('DECOMP_SERVE') == '1'
@@ -199,6 +194,24 @@ def run(args) -> int:
         # an update from 1.0.2 landed here: quitting would stop the helpers mid-work; they carry on, and `decomp`
         # opens the window once the packages are in (Window.open looks again)
 
+    # Migration can legitimately take longer than health discovery. Keep another
+    # launcher from starting a second server/workers while this home is opening.
+    from ..writer_gate import WriterGate
+    instance = WriterGate(internal / 'server-instance')
+    with instance.hold(blocking=bool(restarted)) as admitted:
+        if not admitted:
+            print('decompdecomp is already starting for this home. Wait for its database upgrade to finish.')
+            return 0
+        return _start(args,home,internal,state_file,log,restarted,headless)
+
+
+def _start(args,home,internal,state_file,log,restarted,headless):
+    import uvicorn
+
+    from . import cleanup
+    from .engine import RomNetwork
+    from .server import build
+
     sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or headless)
     port = sock.getsockname()[1]
     secret = restarted["secret"] if restarted else secrets.token_urlsafe(24)
@@ -207,7 +220,7 @@ def run(args) -> int:
     cleanup.old_registrations(internal)
     from .. import compiler_processes
     compiler_processes.configure(internal / "compiler-processes")
-    net = RomNetwork(internal / "decomp.db", home)
+    net = RomNetwork(internal / "decomp.db", home,project_databases=True)
     mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if headless else {}))
     app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
     # with a tray icon, helpers kept working without the window have a way back to it

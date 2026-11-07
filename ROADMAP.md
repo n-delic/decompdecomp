@@ -14,33 +14,13 @@
 
 - Done: compiler surveys and installed/used-profile comparisons process all eligible functions in one stoppable run; finished comparisons remain saved for resuming after Stop.
 
-- In progress: independent operational databases per project. Core function/header,
-  attempt, note and configuration paths now select storage explicitly, with real
-  two-database concurrency and rollback tests. Production still uses the legacy
-  file. Remaining service conversion, cross-project reads and automatic recoverable
-  migration are tracked in [Project database isolation](docs/project-databases.md).
-  The existing shared repair corpus and match library keep their locations.
-  Claim transactions, release replay receipts, candidate history/scopes and
-  pause/retry/model settings now select their project store too. Quality-report
-  listing queries projects individually; quick-claim setup no longer takes a
-  database mutex. Automatic migration remains planned, not enabled.
-  Saved-progress synchronization, backups, verification history and Git save
-  bookkeeping now select project storage; autosave keeps the shared-layout
-  discovery fast path. A transaction fence defers file sync inside any Store's
-  write transaction. Shared manifest author names remain in the catalog.
-  Room-engine mirrors and saved link configuration now select project storage.
-  Split-store progress imports prepare shared author identities before locking
-  project data; legacy failed imports retain atomic rollback.
-  Host room snapshots/event pages/member rollups, client queues/cursors and
-  reconnect discovery now select project storage. Snapshot labels stay shared;
-  guest batches resolve identities before taking a separate project write lock.
-  Cursor/config writes preserve concurrent edits. Host membership uses durable
-  catalog-to-project handoffs with replay receipts; pending verification and
-  prepared compiler/header publication select project storage. Local worker claims,
-  permutation input tracking, compiler comparisons and profile publication now
-  select project storage. Judge bookkeeping, drafts, source preparation, polishing,
-  function editing, coverage audits and local GUI views now select project storage.
-  Remaining service conversion and recoverable migration still gate activation.
+- Done: independent operational databases per project, plus a dedicated transcript
+  database per project. Desktop and headless startup automatically back up,
+  migrate, validate and publish the new layout before workers run; interrupted
+  upgrades and project registration/removal resume from durable journals. Missing
+  files fail explicitly, old catalog writes are fenced, and globally stable IDs,
+  notification cursors, room state, saved progress and shared learning archives
+  retain their ownership. See [Project database isolation](docs/project-databases.md).
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

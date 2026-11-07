@@ -12,9 +12,9 @@ def identify(net, proj, recorded, *, include_asm=False):
     Nothing is written to project settings or counted as matching C. Naming may
     include exact assembly identities; the default C-work queue still excludes them.
     """
-    version = (net.store.read_version('fingerprints', proj['id']), net.store.read_version('sdk_names'),
+    version = (net.project_store(proj['id']).read_version('fingerprints', proj['id']), net.store.read_version('sdk_names'),
                repr(net.cfg(proj).get('sdk_libraries')), include_asm)
-    discovered = net.store.read_cache.get(('sdk-identities', proj['id'], include_asm), version,
+    discovered = net.project_store(proj['id']).read_cache.get(('sdk-identities', proj['id'], include_asm), version,
                                          lambda: _identify(net, proj, include_asm=include_asm), ttl=10 if net.cfg(proj).get('kind') == 'fork' else None)
     return dict(recorded) | discovered
 
@@ -30,7 +30,7 @@ def naming_prints(net, proj):
         return prints
     from .twins import rom_print
     symbols = net.symbols(proj['id'])
-    for row in net.store.all("SELECT id,target,relocs FROM functions WHERE project_id=? AND status='asm'", proj['id']):
+    for row in net.project_store(proj['id']).all("SELECT id,target,relocs FROM functions WHERE project_id=? AND status='asm'", proj['id']):
         checkpoint()
         target = rom_print(row, proj['arch'] or 'mips', bool(net.cfg(proj).get('big_endian', True)), symbols.label)
         target.asm = 'hand-written assembly'

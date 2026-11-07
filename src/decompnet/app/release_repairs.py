@@ -59,7 +59,7 @@ def handoff(net, slug, fn):
                     log.check_cancel()
                     entered=gate.acquire(timeout=.1)
                 log.check_cancel()
-                current=net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?',fn['id'],fn['project_id'])
+                current=net.project_store(fn['project_id']).one('SELECT * FROM functions WHERE id=? AND project_id=?',fn['id'],fn['project_id'])
                 if not current or current['status']!='open' or current['gone_mark'] is not None:
                     return {'skipped':'Function no longer eligible.'}
                 fresh_scope=(candidate_scope.key(net,net.project_row(slug),current),hashlib.sha256((current['best_source'] or '').encode()).hexdigest(),repr(claim_stalls.repair_rules()))
@@ -73,7 +73,7 @@ def handoff(net, slug, fn):
                 try:
                     result=deep_permuter.run(net,slug,current['name'],1,6,log)
                 except NetworkError:
-                    if net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?',fn['id'],time.time()):
+                    if net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?',fn['id'],time.time()):
                         return {'skipped':'Another worker claimed this function; its lease is unchanged.'}
                     raise
                 log.check_cancel()

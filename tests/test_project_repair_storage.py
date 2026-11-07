@@ -84,3 +84,15 @@ def test_global_listing_exports_and_analysis_visit_owning_files(scoped, tmp_path
     assert repair_outcomes.result(feedback,second)['report']['summary']['project'] == 'second'
     assert repair_outcomes.backlog(feedback) == {'done':1}
     assert not net.store.one("SELECT 1 FROM sqlite_master WHERE name='repair_outcome_analysis'")
+
+
+def test_global_repair_pages_follow_time_across_project_identifier_ranges(scoped):
+    net,stores = scoped
+    first=capture(net,stores,1)
+    with stores[2].tx() as db:db.execute("INSERT OR REPLACE INTO sqlite_sequence(name,seq) VALUES('repair_examples',199)")
+    second=capture(net,stores,2)
+    with stores[1].tx() as db:db.execute('UPDATE repair_examples SET created_at=200 WHERE id=?',(first,))
+    with stores[2].tx() as db:db.execute('UPDATE repair_examples SET created_at=100 WHERE id=?',(second,))
+    assert first<second
+    assert [row['id'] for row in net.repair_feedback.listing()['examples']]==[first,second]
+    assert [row['id'] for row in net.repair_feedback.listing(before=first)['examples']]==[second]

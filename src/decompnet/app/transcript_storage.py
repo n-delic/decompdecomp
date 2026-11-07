@@ -1,6 +1,7 @@
 """Small WAL database for one project's conversation payloads, independent of saved work."""
 import sqlite3
 import threading
+from pathlib import Path
 
 from ..header_storage import Codec
 from ..payload_storage import Connection
@@ -10,8 +11,14 @@ from ..store import WAL_SIZE_LIMIT_BYTES, Store
 
 class TranscriptStore(Store):
     def _initialize(self):
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None, factory=Connection)
+        location = Path(self.path).resolve().as_uri()+'?mode=rw' if self.require_existing else self.path
+        self.conn = sqlite3.connect(location, uri=self.require_existing, check_same_thread=False, isolation_level=None, factory=Connection)
         self.conn.row_factory = sqlite3.Row
+        if self.require_existing:
+            try:marker = self.conn.execute("SELECT value FROM settings WHERE key='transcript-project-id'").fetchone()
+            except sqlite3.DatabaseError as error:raise ValueError('The transcript database is incomplete. Restore a consistent backup.') from error
+            if not marker or marker[0]!=str(self.project_namespace):raise ValueError('The transcript database belongs to a different project or is incomplete. Restore a consistent backup.')
+        if self.repair_archive is not None:self.conn.repair_archive = self.repair_archive
         self.header_codec = Codec()
         self.header_codec.register(self.conn)
         self.conn.execute('PRAGMA journal_mode=WAL')

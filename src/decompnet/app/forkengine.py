@@ -629,7 +629,7 @@ class ForkEngine:
         if not shutil.which("git"):
             raise NetworkError("forking needs git: install it from https://git-scm.com")
         url = _REPO.match(repo).group(1) if _REPO.match(repo) else str(local.resolve())
-        for p in self.net.store.all("SELECT slug, config FROM projects"):
+        for p in self.net.project_rows():
             if json.loads(p["config"]).get("repo_url") == url:
                 log(f"already forked as {p['slug']}")
                 return p["slug"]
@@ -659,7 +659,7 @@ class ForkEngine:
     def _local_roots(self) -> dict:
         """A project's analysis tree may live inside its checkout; recognise that checkout too."""
         roots = {}
-        for project in self.net.store.all("SELECT slug, root, config FROM projects"):
+        for project in self.net.project_rows():
             repo = json.loads(project["config"]).get("repo_url")
             if repo and Path(repo).is_absolute():
                 roots[str(Path(repo).resolve())] = project["slug"]
@@ -744,7 +744,7 @@ class ForkEngine:
         scoped = {"scope": scope or GAME} if console.sets_aside else {}
         info = console.game_info(game)
         sha1 = info["sha1"]
-        for p in self.net.store.all("SELECT slug, config FROM projects"):
+        for p in self.net.project_rows():
             if json.loads(p["config"]).get("program_sha1") == sha1:
                 log(f"already set up as {p['slug']}")
                 return p["slug"]

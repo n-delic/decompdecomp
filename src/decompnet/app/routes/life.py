@@ -119,7 +119,8 @@ def register(app: App) -> None:
         if request.method == "GET":
             def closing_snapshot():
                 running = set(manager.running())
-                projects = {p['slug']: p['name'] for p in app.net.store.all('SELECT slug,name FROM projects')}
+                from ..project_labels import projects as current_projects
+                projects = {p['slug']:p['name'] for p in current_projects(app.net)}
                 workers = [{'id': s.id, 'name': s.agent_name or s.label, 'project': projects.get(s.slug, s.slug),
                             'slug': s.slug, 'state': s.state, 'why': s.why or ''}
                            for s in list(manager.sessions.values()) if s.id in running]

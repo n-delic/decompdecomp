@@ -286,7 +286,7 @@ class RepairFeedback:
             clauses.append("e.before_attempt_id IS NOT NULL AND json_extract(e.evidence,'$.comparable_settings')=1 AND json_extract(e.evidence,'$.before.source_sha256') != json_extract(e.evidence,'$.after.source_sha256')")
         return ' AND '.join(clauses), args
 
-    def listing(self, slug='', category='', status='', before=0, comparable=False, *, _metrics=True):
+    def listing(self, slug='', category='', status='', before=0, comparable=False, *, _metrics=True, _chronological=False, _boundary=None):
         if self.project is None:
             if slug:
                 owner = self.for_project(slug)
@@ -294,8 +294,13 @@ class RepairFeedback:
             else:
                 services = self.services()
                 if services != [self]:
-                    parts = [service.listing('',category,status,before,comparable,_metrics=False) for service in services]
-                    examples = sorted((row for part in parts for row in part['examples']),key=lambda r:r['id'],reverse=True)
+                    boundary = None
+                    if before:
+                        owner = self.owner(before)
+                        anchor = owner.store.one('SELECT created_at FROM main.repair_examples WHERE id=?',before)
+                        boundary = (anchor['created_at'],before)
+                    parts = [service.listing('',category,status,0,comparable,_metrics=False,_chronological=True,_boundary=boundary) for service in services]
+                    examples = sorted((row for part in parts for row in part['examples']),key=lambda r:(r['created_at'],r['id']),reverse=True)
                     groups = {}
                     for part in parts:
                         for row in part['groups']:
@@ -310,6 +315,12 @@ class RepairFeedback:
         prefix = ('WITH grouped AS (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ' + partition +
                   ' ORDER BY id DESC) AS position,COUNT(*) OVER (PARTITION BY ' + partition +
                   ') AS repetitions FROM main.repair_examples e WHERE ' + where + ') ')
+        if _chronological:
+            pagination = '' if _boundary is None else ' AND (e.created_at<? OR (e.created_at=? AND e.id<?))'
+            page_args = () if _boundary is None else (_boundary[0],_boundary[0],_boundary[1])
+            ordering = 'e.created_at DESC,e.id DESC'
+        else:
+            pagination,page_args,ordering = ' AND (?=0 OR e.id<?)',(before,before),'e.id DESC'
         rows = self.store.all(prefix + 'SELECT e.id,e.created_at,e.category,e.explanation,e.automation,e.status,e.repetitions,'
                               "CASE WHEN json_extract(e.evidence,'$.via')='unit diff' THEN 'build report' WHEN e.before_attempt_id IS NULL THEN 'no failed baseline' WHEN json_extract(e.evidence,'$.before.source_sha256')=json_extract(e.evidence,'$.after.source_sha256') THEN 'same source / settings' WHEN json_extract(e.evidence,'$.comparable_settings')=1 THEN 'source repair' ELSE 'settings also changed' END AS evidence_kind,"
                               "(json_extract(e.evidence,'$.provenance.kind') IN ('deterministic draft repair','automatic agent local pass') AND "
@@ -318,7 +329,7 @@ class RepairFeedback:
                               'p.slug,p.name AS project,f.name AS function,e.agent_id FROM grouped e '
                               'JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id '
                               'WHERE e.position=1 '
-                              ' AND (?=0 OR e.id<?) ORDER BY e.id DESC LIMIT 26', *args, before, before)
+                              +pagination+' ORDER BY '+ordering+' LIMIT 26', *args, *page_args)
         from .app.project_labels import label
         rows = label(self.net,rows,{'agent':'agent_id'})
         total = self.store.one(prefix + 'SELECT COUNT(*) AS n FROM grouped e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id WHERE e.position=1', *args)['n']
