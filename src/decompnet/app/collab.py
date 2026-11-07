@@ -440,6 +440,8 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
     """The public side of a shared project, served through the tunnel."""
 
     def room_for(request: Request) -> Room:
+        if getattr(net, "shutting_down", False):
+            raise NetworkError("The host is shutting down. Reconnect after it restarts.")
         slug = request.query_params.get("room") or request.headers.get("x-room", "")
         if not slug and len(rooms) == 1:  # a public room's bare address
             slug = next(iter(rooms))
@@ -808,7 +810,7 @@ class Link:
 
     def _req(self, method: str, path: str, data: dict | None = None) -> dict:
         headers = {"authorization": f"Bearer {self.token}", "x-room": self.room}
-        quick={'timeout':httpx.Timeout(5,connect=3)} if path in ('/collab/claim','/collab/release','/collab/best') else {}
+        quick={'timeout':httpx.Timeout(5,connect=3)} if path in ('/collab/claim','/collab/release','/collab/best','/collab/leave') else {}
         try:
             if method == "GET":
                 r = self.client.get(f"{self.url}{path}", params={**(data or {}), "room": self.room}, headers=headers, **quick)

@@ -668,14 +668,18 @@ class Manager:
         # 'stopped' event that ends their run (what they released in it no longer keeps them off it)
         self.net.release_local_claims("the app restarted")
 
-    def _save(self, s: Session) -> None:
+    def _save(self, s: Session, *, db=None) -> None:
+        if self._down and db is None:return  # shutdown owns the single batched recovery write
         pid = s.proc.pid if s.proc is not None and s.proc.poll() is None else None
-        with self.net.store.tx() as db:
+        def write(db):
             db.execute("UPDATE helpers SET label=?, state=?, why=?, todo=?, until=?, stopped_by=?, last_message=?, "
                        "started_at=?, restarts=?, sessions=?, usd=?, tokens=?, pid=?, pid_start=?, options=? WHERE id=?",
                        (s.label, s.state, s.why, s.todo, s.until, s.stopped_by, s.last_message, s.started_at,
                         s.restarts, s.runs, s.usd, s.tokens, pid, s.pid_start if pid else None,
                         json.dumps({k:v for k,v in s.options.items() if k != "api_key"}), s.id))
+        if db is not None:write(db)
+        else:
+            with self.net.store.tx() as connection:write(connection)
 
     def _record(self, slug: str, kind: str, name: str, label: str, options: dict) -> Session:
         """The helper `name` on this project: its record from before (it carries on its numbers), or a new one."""
@@ -1079,21 +1083,42 @@ class Manager:
             if s.slug == slug:
                 self.remove(s.id)
 
-    def shutdown(self) -> None:
-        """The app quits: every helper stops (they carry on when the app starts again), each with its whole process
-        group, and so does anything a helper started that left its group (an `opencode serve` service): nothing the
-        app started keeps running, or spending, after it. Waits up to STOP_GRACE seconds for them to end."""
-        if self._down:
-            return
+    def request_shutdown(self) -> None:
+        """Signal all workers before touching a transcript, database or manager mutex."""
+        if self._down:return
         self._down = True
-        processes = [s.proc for s in list(self.sessions.values())]  # retain Windows handles until _end_groups returns
-        groups = {proc.pid for proc in processes if proc is not None and proc.poll() is None}
-        self.stop()
-        _end_groups(groups | self._strays())
+        self._shutdown_sessions = list(self.sessions.values())
+        self._shutdown_live = {s.id for s in self._shutdown_sessions if s.state in LIVE}
+        self._shutdown_groups = set()
+        self._shutdown_processes = [s.proc for s in self._shutdown_sessions]  # retain Windows handles until cleanup ends
+        for s,proc in zip(self._shutdown_sessions,self._shutdown_processes):
+            s.stop.set()
+            if s.id in self._shutdown_live:
+                s.state, s.stopped_by, s.until, s.todo = 'stopped', BY_QUIT, None, ''
+                s.why = 'decompdecomp closed while it worked'
+            if proc is not None and proc.poll() is None:
+                self._shutdown_groups.add(proc.pid)
+                _terminate(proc)
+
+    def close_rooms(self) -> None:
+        if getattr(self, '_shutdown_rooms_closed', False):return
+        self._shutdown_rooms_closed = True
+        try:self.on_stop()
+        except Exception:log.exception('closing rooms while quitting failed')
+
+    def shutdown(self, *, notify=lambda _:None, timeout=30) -> None:
+        """End processes first, then checkpoint/release helpers in database batches."""
+        self.request_shutdown()
+        if getattr(self, '_shutdown_finished', False):return
+        from .agent_shutdown import persist
+        deadline = time.monotonic() + timeout
+        self.close_rooms()
+        notify('Ending remaining agent process groups')
+        _end_groups(self._shutdown_groups | self._strays())
         try:
-            self.on_stop()
-        except Exception:  # the app quits anyway
-            log.exception("closing rooms while quitting failed")
+            persist(self, deadline, notify)
+        finally:
+            self._shutdown_finished = True
 
     def _strays(self) -> set[int]:
         """Process groups of processes this app's helpers started, found by HELPER_ENV in their environment."""
@@ -1567,6 +1592,7 @@ class Manager:
     def _release(self, s: Session, agent=None) -> None:
         """Free the function a helper holds (in a room, the host holds the real claim). A stop may happen before its
         runner notices, so recover the helper's identity to tell the host too."""
+        if self._down:return  # shutdown releases all helper claims in one pass per database
         if agent is None:
             row = self.net.store.one("SELECT id, name, owner, trusted FROM agents WHERE name=?", s.agent_name)
             if row is None:
@@ -1878,6 +1904,7 @@ class Manager:
 
             cmd = [sys.executable, "-I", str(Path(__file__).with_name("winhelper.py")), *cmd]
         # its own session and process group: stopping it ends everything it started
+        if self._down or s.stop.is_set():return False
         proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
                                 start_new_session=True, creationflags=NO_WINDOW)
@@ -1898,6 +1925,7 @@ class Manager:
                     _close_windows_job(proc.pid)
                 threading.Thread(target=reap_job, daemon=True, name=f"job-{proc.pid}").start()
         s.proc, s.pid_start = proc, _proc_start(proc.pid)
+        if self._down or s.stop.is_set():_terminate(proc)
         self._save(s)  # its process, should the app crash: the next start ends it
         errors: collections.deque = collections.deque(maxlen=20)
 
