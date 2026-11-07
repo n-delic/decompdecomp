@@ -4,8 +4,60 @@ leftovers around (Mario Party 6: 16 agents, one match, on 326 big functions rele
 
 import json
 
+import pytest
+
 from decompnet import network
 from decompnet.app.engine import RomNetwork
+
+
+def _ordered_game(tmp_path, kind: str, order: str = ""):
+    """A project with functions of different sizes and best scores, in the order the owner chose."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    config = {"kind": kind}
+    if order:
+        config["claim_order"] = order
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "mips", 0, str(tmp_path), json.dumps(config))).lastrowid
+        # name, instructions, attempts, done with, best score (below 100: near = 99.5%)
+        for name, n, attempts, abandons, score in [
+                ("tiny", 4, 2, 0, 350), ("fresh", 8, 0, 0, None), ("near", 100, 2, 0, 50),
+                ("medium", 50, 1, 1, 1200), ("big", 400, 3, 0, 8000), ("fresh_big", 200, 0, 0, None)]:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,attempts,abandons,best_score) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)",
+                       (pid, name, n * 4, n, "open", "a", attempts, abandons, score))
+    return net
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+@pytest.mark.parametrize("order, expected", [("easiest", "tiny"), ("hardest", "big"), ("closest", "near"),
+                                             ("untried", "fresh")])
+def test_the_projects_claim_order_chooses_the_next_function(tmp_path, kind, order, expected):
+    """The owner's setting, ROM and project mode alike, whatever strategy the helper would have used."""
+    net = _ordered_game(tmp_path, kind, order)
+    agent, _ = net.local_agent("helper")
+    against = "hardest" if order != "hardest" else "easiest"  # no setting: this one would pick something else
+    assert net.claim_row(agent, "game", None, against)["name"] == expected
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_the_projects_claim_order_overrides_the_agents_strategy_but_not_a_named_function(tmp_path, kind):
+    net = _ordered_game(tmp_path, kind, "hardest")
+    first, _ = net.local_agent("first")
+    assert net.claim_row(first, "game", None, "easiest")["name"] == "big"
+    second, _ = net.local_agent("second")
+    assert net.claim_row(second, "game", "tiny")["name"] == "tiny"  # by name: at once
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_untried_takes_every_function_nobody_compiled_before_the_smallest_tried(tmp_path, kind):
+    """A first pass over everything before polishing near misses, then easiest's order."""
+    net = _ordered_game(tmp_path, kind, "untried")
+    order = []
+    for k in range(3):
+        agent, _ = net.local_agent(f"a{k}")
+        order.append(net.claim_row(agent, "game", None, "hardest")["name"])
+    assert order == ["fresh", "fresh_big", "tiny"]
 
 
 def test_fresh_small_functions_first_and_files_close_to_done_among_equals(tmp_path):

@@ -108,6 +108,7 @@ class Console:
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
+    reference_tools: tuple[str, str, str] = ()
     # ROM mode, a program that's an ELF: the platform splat's config names, when it isn't the PS2's (splat's
     # create_config reads ELF programs as PS2 ones: rom/split.py)
     splat_platform = ""
@@ -122,6 +123,14 @@ class Console:
 
     def __repr__(self) -> str:
         return f"<console {self.id}>"
+
+    def generate_objdiff(self, project, config_path, config, version: str | None = None, log=print) -> bool:
+        """Generate byte-verified Splat references for consoles with pinned assembler tools."""
+        if not self.reference_tools:
+            return False
+        from ..forks.splatrefs import generate
+
+        return generate(project, config_path, config, self, version=version, log=log)
 
     @property
     def features(self) -> frozenset[str]:
@@ -359,6 +368,22 @@ class Console:
     def library_candidate(self, path: Path, size: int) -> bool:
         """Whether a library file is plausible before the search hashes its contents."""
         return True
+
+    def fork_game_versions(self, project) -> dict[str, str]:
+        """Original game hashes for supported versions of a public decomp."""
+        return {}
+
+    def fork_game_need(self, project, version: str | None) -> dict | None:
+        """Versioned game file required by a public decomp, if this console recognizes it."""
+        return None
+
+    def default_fork_game_version(self, project) -> str | None:
+        """Default version of a public decomp, when this console recognizes its build."""
+        return None
+
+    def match_fork_game_version(self, project, game: Path, log=print) -> str | None:
+        """Version matching a supplied game, or None when this console has no versioned build."""
+        return None
 
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         """Console-specific guidance for supplying a game file to a public decomp, or None for its usual help."""

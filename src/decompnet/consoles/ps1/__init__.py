@@ -57,6 +57,7 @@ class PlayStation(Console):
     demo_tools = ("gcc-2.7.2-psx", "maspsx", "binutils-mips")
     own_features = frozenset({EXPORT})
     as_flags = ("-EL", "-march=r3000", "-mabi=32")
+    reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
     image_ext = ".exe"
 
     def sniff(self, head: bytes, file) -> bool:

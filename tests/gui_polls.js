@@ -371,6 +371,32 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     }
   })()`, ctx);
   checks.advice = advice;
+  // #205: the owner's order for helpers is a project setting; the select saves it and puts the server's answer back
+  // when the save is refused
+  checks.claimOrder = await vm.runInContext(`(async () => {
+    const was = { slug: S.slug, ov: S.ov, api, toast };
+    const elements = {};
+    const original = document.getElementById;
+    const notes = [];
+    document.getElementById = (id) => {
+      if (id !== "claimOrder" && id !== "claimOrderHint") return original(id);
+      return elements[id] || (elements[id] = { value: "", textContent: "" });
+    };
+    const calls = [];
+    try {
+      toast = (html) => notes.push(String(html));
+      S.slug = "a"; S.ov = { slug: "a", kind: "rom", claim_order: "" };
+      api = async (url, opts) => { calls.push([url, opts]); return { ...S.ov, claim_order: opts.body.order }; };
+      await setClaimOrder("untried");
+      const saved = { url: calls[0][0], body: calls[0][1].body, value: elements.claimOrder.value };
+      api = async () => { throw new Error("The project is read-only."); };
+      await setClaimOrder("hardest");
+      return { saved, reverted: elements.claimOrder.value, text: elements.claimOrderHint.textContent, notes };
+    } finally {
+      api = was.api; toast = was.toast; S.slug = was.slug; S.ov = was.ov;
+      document.getElementById = original;
+    }
+  })()`, ctx);
   // a 2017 game's program dropped before the page's state arrived (review of #138): pickFile waits for the state,
   // whose PC table names the pack (it was offered 6.0-7.1's), and the import's dialog lists that 32-bit program's
   // own compilers, never the 64-bit one (setupCompilers, compilerFits)
