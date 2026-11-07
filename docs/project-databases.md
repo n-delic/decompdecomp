@@ -223,3 +223,13 @@ be skipped. Reads are bounded per project and exclude source/attempt payloads.
 Migration must bootstrap this index before workers start, preserving legacy cursor IDs
 and routine-event high-water marks. The production legacy feed retains its existing
 indexed path; a sharded feed with an uninitialized index reports incomplete migration.
+
+### Stable row identifiers
+
+Project files can opt into a catalog-ID namespace for newly allocated row IDs.
+Existing low IDs are copied unchanged during migration; new IDs use a disjoint
+32-bit range below JavaScript's exact integer limit. SQLite AUTOINCREMENT keeps
+allocation local to the project writer and prevents reuse after deletion or
+restart. Opening a namespaced file with another project ID fails explicitly.
+This is preparatory: legacy files must be copied and validated by migration,
+not assigned a namespace in place. Production routing is still unchanged.

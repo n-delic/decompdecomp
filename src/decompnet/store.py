@@ -365,9 +365,14 @@ class _ThreadReader:
 
 
 class Store:
-    def __init__(self, path: str | Path, *, repair_archive=None):
+    def __init__(self, path: str | Path, *, repair_archive=None, project_namespace=None, stable_ids=False):
         self.path = str(path)
         self.repair_archive = repair_archive
+        self.project_namespace, self.stable_ids = project_namespace,stable_ids
+        if project_namespace is not None:
+            from .shard_ids import bounds
+            bounds(project_namespace)
+            if repair_archive is None:raise ValueError('Project storage requires the existing shared repair archive.')
         from .writer_gate import WriterGate
         self.writer_gate=WriterGate(self.path)
         try:
@@ -385,6 +390,8 @@ class Store:
             self.conn.repair_archive = self.repair_archive
             from .repair_archive import register
             register(self.conn)
+        from .shard_ids import bind
+        bind(self.conn,self.project_namespace,self.stable_ids)
         from .header_storage import Codec
         self.header_codec = Codec()
         self.header_codec.register(self.conn)
@@ -567,6 +574,8 @@ class Store:
         self._slow_queries = {}
         from .large_text_storage import install as install_large_text
         install_large_text(self.conn)
+        from .shard_ids import remember
+        remember(self.conn)
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
 

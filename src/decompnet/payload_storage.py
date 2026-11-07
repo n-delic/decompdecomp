@@ -81,8 +81,28 @@ KEYWORDS={'where','on','using','join','left','right','inner','outer','cross','fu
 
 class Connection(sqlite3.Connection):
     detail_tables=frozenset()
+    stable_ids=False
+    project_namespace=None
+
+    def executescript(self,sql_script,/):
+        if self.project_namespace is not None:
+            from .shard_ids import script
+            return script(self,sql_script)
+        if self.stable_ids:
+            from .shard_ids import ddl
+            sql_script = ddl(sql_script)
+        return super().executescript(sql_script)
+
     def execute(self,sql,parameters=(),/):
-        if not re.match(r'\s*(CREATE|DROP|ALTER|PRAGMA)',sql,re.I):
+        creating = False
+        if self.stable_ids:
+            from .shard_ids import ddl, table_ddl
+            creating = table_ddl(sql)
+            if creating:
+                sql = ddl(sql)
+                if self.project_namespace is not None:
+                    before = sqlite3.Connection.execute(self,'PRAGMA schema_version').fetchone()[0]
+        if not re.match(r'\s*(?:(?:--[^\n]*(?:\n|$)|/\*[\s\S]*?\*/)\s*)*(CREATE|DROP|ALTER|PRAGMA)\b',sql,re.I):
             def part(text):
                 def table(match):
                     table=match.group(2).lower()
@@ -99,7 +119,13 @@ class Connection(sqlite3.Connection):
                 return TABLE.sub(table,text)
             bits=QUOTED.split(sql)
             sql=''.join(part(bit) if i%2==0 else bit for i,bit in enumerate(bits))
-        return super().execute(sql,parameters)
+        result = super().execute(sql,parameters)
+        if creating and self.project_namespace is not None:
+            after = sqlite3.Connection.execute(self,'PRAGMA schema_version').fetchone()[0]
+            if after != before:
+                from .shard_ids import seed
+                seed(self)
+        return result
 
 
 def install(conn,table='attempts'):
