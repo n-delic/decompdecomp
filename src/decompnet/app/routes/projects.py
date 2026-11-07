@@ -29,6 +29,13 @@ def register(app: App) -> None:
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
 
     slow_requests = {}
+    compiler_comparisons = {}
+
+    def compiler_comparison(slug):
+        with jobs._lock:
+            job = jobs.jobs.get(compiler_comparisons.get(slug))
+            return ({'id':job['id'], 'state':job['state'], 'scope':job['scope'],
+                     'progress':{key:value for key,value in job['progress'].items() if key != 'results'}} if job else None)
 
     def with_project(fn):
         async def handler(request: Request) -> Response:
@@ -60,7 +67,7 @@ def register(app: App) -> None:
                     if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
-                reader = app.fast_call if (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
+                reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
                 from ...request_timing import response
                 def respond():
                     return response(perform, started, JSONResponse, request.url.path)
@@ -247,6 +254,9 @@ def register(app: App) -> None:
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
         answer is old. POST: check again now (the survey and the applied ranges)."""
+        if request.method == 'GET' and request.query_params.get('view') == 'comparison':
+            active = compiler_comparison(slug)
+            return {'job':active['id'], **active} if active else {'job':None}
         if request.method == "POST" and data.get("all_installed"):
             with net.progress.view():
                 fork=net.fork_slug(slug)
@@ -254,9 +264,19 @@ def register(app: App) -> None:
                 raise NetworkError("This comparison currently needs a ROM-mode project.")
             if type(data.get("auto_apply", False)) is not bool:
                 raise NetworkError("Auto-apply must be true or false.")
-            return {"job": jobs.start("installed compilers", lambda log: net.run_compiler_comparison(
-                slug, log=log, function=data.get("function", ""), untested_only=data.get("untested_only", True), flags_only=bool(data.get("flags_only", False)), used_profiles_only=bool(data.get("used_profiles_only", False)), auto_apply=data.get("auto_apply", False)),
-                cancel_message="Compiler comparison stopped. Completed results are saved.")}
+            scope = {'slug':slug, 'function':str(data.get('function') or ''),
+                     'untested_only':bool(data.get('untested_only', True)), 'flags_only':bool(data.get('flags_only', False)),
+                     'used_profiles_only':bool(data.get('used_profiles_only', False)), 'auto_apply':data.get('auto_apply', False)}
+            with jobs._lock:
+                active = compiler_comparison(slug)
+                if active and active['state'] == 'running':return {'job':active['id'], **active}
+                job = jobs.start("installed compilers", lambda log: net.run_compiler_comparison(
+                    slug, log=log, **{key:value for key,value in scope.items() if key != 'slug'}),
+                    cancel_message="Compiler comparison stopped. Completed results are saved.")
+                jobs.jobs[job]['scope'] = scope
+                jobs.jobs[job].setdefault('progress', {'phase':'preparation', 'stage':'Starting compiler comparison'})
+                compiler_comparisons[slug] = job
+                return {'job':job}
         if request.method == 'POST':
             return net.compiler_answer(slug, check_now=True)
         project = net.store.one('SELECT id FROM projects WHERE slug=?', slug)

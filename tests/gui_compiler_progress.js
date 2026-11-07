@@ -299,3 +299,85 @@ ctx.renderCompilerProgress({phase:'applying',function:'example',stage:'Recheckin
 assert.equal(fields.get('[data-queue]').textContent, 'Rechecking and applying settings for example');
 assert.equal(fields.get('[data-tested]').textContent, 'Rechecking and applying best settings');
 assert.equal(fields.get('[data-queue-bar]').value, undefined);
+
+async function checkCompilerReconnection() {
+  const elements=new Map(), get=id=>{
+    if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,textContent:'',dataset:{},checked:false,
+      replaceChildren(){},querySelector(key){return get(id+key);}});
+    return elements.get(id);
+  };
+  const followers=[], timers=[], requests=[], rendered=[];
+  let discovery={job:'saved-comparison',state:'running',scope:{slug:'demo',flags_only:true,untested_only:true,auto_apply:true},
+    progress:{phase:'preparation',stage:'Checking saved functions'}};
+  const context={$:get,S:{slug:'demo',gen:1,tab:'settings'},encodeURIComponent,
+    setInterval(){},setTimeout:resolve=>timers.push(resolve),
+    api:async(url,options)=>{requests.push({url,options});if(options)return {};return discovery;},
+    renderCompilerProgress:progress=>rendered.push(progress),renderCompilerImprovements(){},compilerResultRows:rows=>rows,
+    showJobError:(work,message)=>{work.textContent=message;},
+    updateCompilerTestScope(){get('testInstalledCompilers').textContent='Find better settings';},
+    followJob:(id,log,update,active)=>new Promise((resolve,reject)=>followers.push({id,log,update,active,resolve,reject}))};
+  vm.createContext(context);
+  const source=read('steering'),start=source.indexOf('$("testInstalledCompilers").onclick');
+  vm.runInContext(source.slice(start,source.indexOf('\nfunction renderCompilerImprovements',start)),context);
+  const flush=()=>new Promise(resolve=>setImmediate(resolve));
+  await context.refreshCompilerComparison();await flush();
+  assert.equal(followers.length,1,'a fresh window discovers the existing comparison');
+  assert.equal(followers[0].log,null,'late output must go through scoped callbacks');
+  assert.equal(get('testInstalledCompilers').textContent,'Stop comparison');
+  assert.equal(get('compilerFlagsOnly').checked,true);assert.equal(get('compilerAutoApply').checked,true);
+  assert.match(get('installedCompilerTestsummary').textContent,/Running/);
+  assert.equal(rendered.at(-1).stage,'Checking saved functions');
+  await context.refreshCompilerComparison();assert.equal(followers.length,1);
+  const old=followers[0];
+  context.S.slug='other';context.S.gen=2;discovery={job:null};
+  await context.refreshCompilerComparison();
+  assert.equal(old.active(),false);old.update(['old project output'],{progress:{function:'wrong'}});
+  assert.doesNotMatch(get('installedCompilerLog').textContent,/old project/);
+  context.S.slug='demo';context.S.gen=3;
+  discovery={job:'saved-comparison',state:'running',scope:{slug:'demo',auto_apply:false},progress:{function:'f',tested:10}};
+  await context.refreshCompilerComparison();await flush();assert.equal(followers.length,2);
+  old.resolve({tried:99});await flush();
+  assert.equal(get('testInstalledCompilers').textContent,'Stop comparison','detached completion must not reset the current Stop');
+  const current=followers[1];
+  current.update(['Compiling f'],{progress:{function:'f',tested:15}});
+  assert.equal(rendered.at(-1).tested,15);
+  // A transport failure keeps the running controls and retries the same job without POSTing.
+  current.reject(Error('temporary disconnection'));await flush();
+  assert.equal(get('testInstalledCompilers').textContent,'Stop comparison');assert.equal(timers.length,1);
+  timers.shift()();await flush();assert.equal(followers.length,3);
+  assert.equal(followers[2].id,'saved-comparison');
+  followers[2].resolve({tried:2,results:[]});await flush();
+  assert.equal(get('testInstalledCompilers').textContent,'Find better settings');
+  assert.doesNotMatch(get('installedCompilerTestsummary').textContent,/Running/);
+  discovery={job:'saved-comparison',state:'done'};await context.refreshCompilerComparison();
+  assert.equal(followers.length,3,'a rendered terminal result is not followed repeatedly');
+  assert.equal(requests.filter(r=>r.options?.method==='POST').length,0,'rediscovery never starts a new comparison');
+  for(const state of ['cancelled','error']) {
+    discovery={job:'terminal-'+state,state,scope:{slug:'demo'},progress:{completed:1}};
+    await context.refreshCompilerComparison();await flush();
+    const last=followers.at(-1);last.reject(Object.assign(Error(state==='cancelled'?'Stopped':'Compiler failed'),{job:{state}}));await flush();
+    assert.equal(get('testInstalledCompilers').textContent,'Find better settings');
+    if(state==='error')assert.equal(get('installedCompilerWork').textContent,'Compiler failed');
+  }
+  let late;
+  context.api=async(url,options)=>options?{job:'new-click'}:new Promise(resolve=>{late=resolve;});
+  const staleDiscovery=context.refreshCompilerComparison();
+  const manual=get('testInstalledCompilers').onclick();await flush();
+  const count=followers.length;
+  late({job:'stale-discovery',state:'running',progress:{function:'wrong'}});await staleDiscovery;
+  assert.equal(followers.length,count,'a late discovery cannot replace a newer manual start');
+  assert.equal(followers.at(-1).id,'new-click');
+  followers.at(-1).resolve({tried:1,results:[]});await manual;
+  discovery={job:'gone-after-restart',state:'running'};context.api=async()=>discovery;
+  await context.refreshCompilerComparison();await flush();
+  followers.at(-1).reject(Error('connection reset'));await flush();
+  discovery={job:null};timers.shift()();await flush();
+  assert.equal(get('testInstalledCompilers').textContent,'Find better settings');
+  assert.match(get('installedCompilerWork').textContent,/no longer available/);
+  context.api=async()=>{throw Error('offline');};await context.refreshCompilerComparison();
+  assert.equal(get('compilerStopError').hidden,false);
+  assert.match(get('compilerStopError').textContent,/Retrying automatically/);
+  context.api=async()=>({job:null});await context.refreshCompilerComparison();
+  assert.equal(get('compilerStopError').hidden,true);
+}
+checkCompilerReconnection().catch(error=>{console.error(error);process.exitCode=1;});

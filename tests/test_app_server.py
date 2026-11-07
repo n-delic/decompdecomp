@@ -2886,7 +2886,7 @@ def test_starting_compiler_comparison_returns_job_without_saved_file_sync(app, m
         return None
     def compare(project, *, log, **options):
         calls.append((project, options))
-        log.progress({'phase':'preparation','stage':'Checking installed compiler profiles','elapsed':0})
+        log.progress({'phase':'preparation','stage':'Checking installed compiler profiles','elapsed':0,'results':[{'function':'saved'}]})
         entered.set()
         while not release.wait(.01):log.check_cancel()
         log.check_cancel()
@@ -2905,6 +2905,16 @@ def test_starting_compiler_comparison_returns_job_without_saved_file_sync(app, m
         status = client.get('/api/job', params={'id':job}).json()
         assert status['state'] == 'running'
         assert status['progress']['stage'] == 'Checking installed compiler profiles'
+        # A fresh window finds the scoped job without a compiler-map read or saved-file sync.
+        monkeypatch.setattr(net, 'compiler_answer', lambda *a, **kw:pytest.fail('discovery must not load the compiler map'))
+        discovered = client.get('/api/compilermap', params={'slug':slug, 'view':'comparison'}).json()
+        assert discovered['job'] == job and discovered['state'] == 'running'
+        assert 'results' not in discovered['progress']
+        assert discovered['scope']['slug'] == slug and discovered['scope']['flags_only']
+        assert discovered['scope']['auto_apply']
+        assert client.get('/api/compilermap', params={'slug':'another-project', 'view':'comparison'}).json() == {'job':None}
+        repeated = client.post('/api/compilermap', json={**payload, 'flags_only':False}, headers=headers).json()
+        assert repeated['job'] == job and repeated['scope']['flags_only']
         assert calls == [(slug, {'function':'','untested_only':True,'flags_only':True,
                                  'used_profiles_only':False,'auto_apply':True})]
         if cancel:
@@ -2915,6 +2925,7 @@ def test_starting_compiler_comparison_returns_job_without_saved_file_sync(app, m
             if status['state'] != 'running':break
             time.sleep(.01)
         assert status['state'] == ('cancelled' if cancel else 'done')
+        assert client.get('/api/compilermap', params={'slug':slug, 'view':'comparison'}).json()['state'] == status['state']
         if cancel:assert 'Completed results are saved' in status['error']
         else:assert status['result'] == {'tried':1}
     finally:
