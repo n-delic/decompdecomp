@@ -70,6 +70,15 @@ def gui():
     return result
 
 
+def test_importing_with_a_configured_copy_never_asks_to_download_another_compiler(gui):
+    result = gui["checks"]["watcomImport"]
+    assert result["local"] and result["listed"] and result["download"]
+    assert result["cleared"]
+    assert result["pathSelection"]
+    assert result["dos"]
+    assert "configured compiler copy" in result["note"]
+
+
 def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     nds = gui["checks"]["nds"]
     assert nds["good"] == ["nds", "ADQE", "DEMOQUESTDS"]
@@ -233,7 +242,7 @@ def test_the_drop_zone_tells_64_bit_arm_and_dos_programs_apart(gui):
     assert x64[0] is None and "64-bit Windows program" in x64[1] and "Newer Windows games" in x64[1]
     assert arm[0] is None and "ARM" in arm[1]
     assert x86[0] == "win32"  # a 32-bit x86 one is the PC console's (notSupported is asked only otherwise)
-    assert dos[0] is None and "DOS program" in dos[1]
+    assert dos[0] is None and "16-bit MZ" in dos[1] and "DOS LE" in dos[1]
 
 
 def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):

@@ -417,6 +417,46 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     }
   })()`, ctx);
   answers["/api/state"] = state;
+  checks.watcomImport = await vm.runInContext(`(() => {
+    const was = S.st, original = document.getElementById, oldDialog = dialog, oldImport = runImport;
+    const pick = { innerHTML: "", value: "" };
+    const controls = new Map();
+    document.getElementById = (id) => {
+      if (id === "compilerPick") return pick;
+      if (!controls.has(id)) controls.set(id, original(id));
+      return controls.get(id);
+    };
+    try {
+      S.st = { toolchains: [], consoles: [{ id: "pc", aliases: [], name: "Windows PC", mode: "project", packs: ["msvc"],
+        default_compiler: "", compilers: [{id: "MSVC/6.0", name: "Visual C++ 6.0"},
+          {id: "Watcom/copy-c", name: "Watcom C", target: "x86", local: true}] },
+        { id: "n64", aliases: [], mode: "rom", compilers: [], installable: [], packs: [], default_compiler: "" }] };
+      setupCompilers({platform: "pc", target: "x86"});
+      pick.value = "Watcom/copy-c";
+      pick.onchange();
+      const local = $("mwConsent").hidden;
+      const note = $("compilerNote").textContent;
+      pick.value = "MSVC/6.0";
+      pick.onchange();
+      const download = !$("mwConsent").hidden, listed = pick.innerHTML.includes("Watcom/copy-c");
+      const le = new Uint8Array(0x3000), dv = new DataView(le.buffer);
+      le.set([77, 90]); dv.setUint32(0x3c, 0x2000, true); le.set([76, 69], 0x2000);
+      const identified = identifyHead(le, {name: "dos.exe", size: le.length});
+      setupCompilers({platform: "pc", target: "x86", format: "LE"});
+      const dos = identified.format === "LE" && identified.platform === "win32" && pick.value === "Watcom/copy-c"
+        && !pick.innerHTML.includes('value="MSVC/6.0"') && $("mwConsent").hidden;
+      let query = "", html = "";
+      controls.set("ppPath", {value: "/games/local.exe"});
+      controls.set("ppCompiler", {value: "Watcom/copy-c"});
+      dialog = (_title, content) => { html = content; return {querySelector: (selector) => document.getElementById(selector.slice(1))}; };
+      runImport = (value) => { query = value; };
+      askPath();
+      $("ppGo").onclick();
+      const pathSelection = query.includes("toolchain=Watcom%2Fcopy-c") && html.includes('id="ppCompiler"');
+      setupCompilers({platform: "n64", order: "ROM", compiler: "KMC"});
+      return { local, note, download, listed, dos, pathSelection, cleared: pick.onchange === null };
+    } finally { S.st = was; document.getElementById = original; dialog = oldDialog; runImport = oldImport; }
+  })()`, ctx);
   // an Xbox program (XBEH, base address on a 4 KiB boundary), an XISO and a full dump's disc, and the 360's XEX2 refused
   checks.xbox = await vm.runInContext(`(async () => {
       const xbe = new Uint8Array(0x200), dv = new DataView(xbe.buffer);

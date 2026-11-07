@@ -2355,7 +2355,7 @@ def test_a_project_made_before_gets_the_newest_build_tools_once(tmp_path, monkey
     pid = net.project_row("p")["id"]
     said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)]
     assert said == ["its build has the fixes decompdecomp's has had since the project was made (tools/compile.py, "
-                    "tools/configure.py, tools/names.py, config/game/file_compilers.json, "
+                    "tools/configure.py, tools/names.py, tools/omf.py, tools/segments.py, config/game/file_compilers.json, "
                     "config/game/file_flags.json)"]
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert log.count("Analyse the game again") == 1
@@ -2666,6 +2666,7 @@ def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tm
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
     rows = [_row(0x401000, 0x401009), _row(0x401009, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401033)]
+    monkeypatch.setattr(scratch_pe, "ensure_ghidra", lambda log: None)  # analysis is synthetic, no tool download
     monkeypatch.setattr(ghidra, "functions", lambda program, timeout=3600: rows)
     with pytest.raises(NetworkError, match="isn't this project's program"):
         net.forks.reimport("p", ROOT / "README.md")

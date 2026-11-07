@@ -324,7 +324,7 @@ def test_a_project_gets_the_names_the_types_and_each_functions_brief(tmp_path):
                                                     "func_00401000": "Helper", "func_00401010": "Thing_Update"}
     scratch.write_debug(root, version, info)
     common = (root / "include" / "common.h").read_text()
-    assert common.rstrip().endswith('#include "debug_types.h"\n\n#endif') and common.count("#endif") == 2
+    assert common.rstrip().endswith('#include "debug_types.h"\n\n#endif') and common.count("#endif") == scratch.TYPES_H.count("#endif")
     assert "#define DEBUG_TYPES_H" in (root / "include" / "debug_types.h").read_text()
     pc = consoles.get("pc")
     fp = SimpleNamespace(root=root, manifest={"version": version})

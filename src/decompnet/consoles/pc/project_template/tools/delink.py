@@ -14,10 +14,21 @@ moves it). Standard library only. Made by decompdecomp.
 """
 
 import hashlib
+import importlib.util
 import json
 import struct
 import sys
 from pathlib import Path
+
+_spec = importlib.util.spec_from_file_location("linear", Path(__file__).with_name("linear.py"))
+linear = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(linear)
+_segments_path = Path(__file__).with_name("segments.py")
+if not _segments_path.is_file():  # the maintained module in the app; exported projects carry their own copy
+    _segments_path = Path(__file__).parents[4] / "arch/x86_segments.py"
+_spec = importlib.util.spec_from_file_location("segments", _segments_path)
+segments = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(segments)
 
 DIR32, REL32 = 0x06, 0x14
 CODE = 0x60500020  # code, readable, executable, 16-byte aligned
@@ -34,6 +45,8 @@ def coff(functions: list[dict], exe: bytes) -> bytes:
     sections = []
     for i, fn in enumerate(functions):
         symbols.append((fn["name"], 0, i + 1, 0x20, 2))
+    for fn in functions:
+        symbols.extend((segments.marker(fn["name"], site), 0, -1, 0, 3) for site in fn.get("segments", []))
     for i, fn in enumerate(functions):
         code = bytearray(exe[fn["offset"]:fn["offset"] + fn["size"]])
         relocs = bytearray()
@@ -126,7 +139,7 @@ def main() -> None:
         data = Path(path).read_bytes()
         if hashlib.sha1(data).hexdigest() != sha1:
             sys.exit(f"{path} isn't the copy this project was made from (its SHA-1 should be {sha1})")
-        loaded[name] = data if base is None else rebase(data, base)
+        loaded[name] = linear.Linear(data).view() if linear.header(data) is not None else data if base is None else rebase(data, base)
     for unit, functions in info["units"].items():
         data = coff(functions, loaded[module(unit)])
         path = out / f"{unit}.obj"

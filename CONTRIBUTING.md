@@ -269,6 +269,10 @@ records the folder, and reads it there. Nothing of it is copied, downloaded or p
    what runs it: wibo, wine or nothing, and its exact `build`) and `known_files` + `known` (the SHA-256 of a file
    each build has, so Setup says "verified": a kit isn't pinned, this is how users know their copy is the one the
    games were built with). Hashes are facts and may be shipped; the files never.
+   Another PROJECT compiler family sets `OwnCompiler.family` (default `MSVC`) and supplies its root/flags.
+   The PC's Watcom kit uses `Watcom/<version>` and `--watcom VERSION=ROOT` alongside `--own`, so its runner,
+   object conversion and flag syntax reach the same build and judge without an MSVC pack. A configured local
+   compiler advertises `Compiler.local` to keep import from downloading an unrelated pack.
    **Several copies.** Setup records any number of copies of a kit (a manifest's `folders`; `Remove` forgets one, the
    files stay), each checked when added, so a user with two XDKs or a Visual C++ 6.0 and a 2008 has both. Nothing
    in a part may assume one copy: `compilers(folder)` reads that copy only, and its `version` name must be unique

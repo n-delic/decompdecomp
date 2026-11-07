@@ -117,7 +117,7 @@ The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets th
 `~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp`;
 toolchains live in `~/Library/Application Support/decompnet/toolchains`. Xcode Command Line Tools
 (`xcode-select --install`) are needed on Intel Macs for N64's MIPS binutils, and on both Mac architectures to
-build PS1 GCC 2.6.3 from pinned source on first use. The other PS1 compilers' ready-made binaries are for Linux and
+build PS1 GCC 2.6.3 and Ghidra's native decompiler from pinned source on first use. The other PS1 compilers' ready-made binaries are for Linux and
 Windows (through WSL 2); 2.7.2, 2.7.2 CDK and 2.8.1 also have pinned Apple Silicon builds. Finder launches preserve the PATH
 from installation so your installed Node and helper CLIs remain available; rerun `decomp shortcut` after
 changing their locations. This source install uses an external uv installation.
@@ -276,6 +276,11 @@ yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx'
 Silicon): the app says so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the
 packs don't have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder
 (it's read where it is, never copied).
+
+Watcom Windows and DOS LE games can use your own compiler too: add its installation folder in **Setup → Compilers & tools**,
+then choose Watcom C or C++ when importing a 32-bit Windows PE or flat DOS LE `.exe`. This is experimental: 10.0a C and
+simple C++ are checked with homemade demos. Other DOS executable formats and full Watcom C++ support are planned.
+See [the Watcom guide](docs/WATCOM.md) for setup, checked features and current limits.
 
 ## Questions people ask
 

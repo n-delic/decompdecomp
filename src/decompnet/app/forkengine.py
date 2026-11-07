@@ -984,7 +984,7 @@ class ForkEngine:
                     was = self._meta(old)
                     kept = _KEPT_KEYS if old["size"] == size else ("reopened",)
                     meta.update({k: v for k, v in was.items() if k in kept
-                                 and not (k == "asm_code" and was.get("set_aside"))})  # (set aside: decided below)
+                                 and not (k == "asm_code" and (was.get("set_aside") or console.obsolete_assembly(v)))})
                 if sym in generated and not meta.get("reopened"):  # set aside as assembly is, whatever the scope
                     meta["asm_code"] = generated[sym]
                 if sym in aside:  # code the project says isn't the game's own (library code, middleware)
@@ -2417,6 +2417,7 @@ class ForkEngine:
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
         lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         lines += self._debug_brief(fp, cfg, fn)
+        lines += consoles.get(cfg.get("platform")).relocation_brief(fp, meta.get("symbol") or fn["name"])
         lines += self._ltcg_brief(fp, meta, fn, unit)
         lines += self._method_brief(fp, cfg, meta, fn)
         if found := self._unresolved_lines(fp, meta, fn, unit, src_text[span[0]:span[1]] if span else None):
@@ -2517,7 +2518,7 @@ class ForkEngine:
         if not consoles.get(cfg.get("platform")).own_drafts or unit.target is None:
             return None
         try:
-            return hashlib.sha1(unit.target.read_bytes()).hexdigest()[:16]
+            return ghidra.draft_key(unit.target)
         except OSError:
             return None
 
@@ -3163,7 +3164,7 @@ class ForkEngine:
             with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
                 try:
                     self._baseline(proj, fp, unit, (fp.root / unit.source).read_text(errors="replace", encoding="utf-8"))
-                    for flags in console.flag_variants(own):
+                    for flags in console.file_flag_variants(fp, unit.source, own):
                         if flags != own:
                             with self._build_locks[proj["id"]]:  # (a build reads the flags)
                                 rel = console.set_file_flags(fp, unit.source, flags)

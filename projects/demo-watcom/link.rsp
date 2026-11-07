@@ -1,0 +1,7 @@
+format windows nt
+option nodefaultlibs
+option start=start_
+name demo.exe
+file demo.obj
+option map=demo.map
+runtime console

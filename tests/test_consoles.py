@@ -78,7 +78,7 @@ def test_the_ids_older_projects_stored_still_open_them(tmp_path):
                        (slug, slug, str(tmp_path / slug), json.dumps(cfg)))
     row = net.summary("king")
     assert (row["platform"], row["platform_name"], row["platform_short"], row["layout"]) == \
-        ("pc", "Windows PC", "PC", "Ghidra + objdiff")
+        ("pc", "PC (Windows / DOS)", "PC", "Ghidra + objdiff")
     assert net.console(net.project_row("old")).id == "n64" and consoles.of(king) is consoles.get("pc")
 
 
@@ -90,7 +90,7 @@ def test_an_unknown_platform_is_a_console_with_only_its_name():
 
 
 def test_a_file_no_console_reads_says_which_ones_do():
-    with pytest.raises(RomError, match="Nintendo 64.*PlayStation 2.*Windows PC"):
+    with pytest.raises(RomError, match="Nintendo 64.*PlayStation 2.*PC"):
         consoles.identify(bytes(4096))
 
 
