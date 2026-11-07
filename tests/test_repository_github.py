@@ -64,3 +64,28 @@ def test_cancel_before_creation(github):
     with pytest.raises(RuntimeError, match='cancelled'):
         repository_github.create(root, 'progress', 'private', Log())
     assert len(calls) == 1 and not remotes
+
+
+def test_owners_includes_account_and_organizations(github, monkeypatch):
+    root, calls, _ = github
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout='[[{"login":"Studio"}], [{"login":"OtherStudio"}]]' if '--paginate' in args else '{"login":"person"}')
+    monkeypatch.setattr(repository_github.subprocess, 'run', run)
+    assert repository_github.owners(root) == {'owners':['person','Studio','OtherStudio'], 'warning':''}
+    assert '--slurp' in calls[1]
+
+
+def test_owner_discovery_auth_failure_is_actionable(github, monkeypatch):
+    root, _, _ = github
+    monkeypatch.setattr(repository_github.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(returncode=1))
+    with pytest.raises(NetworkError, match='gh auth login'):repository_github.owners(root)
+
+
+def test_owner_discovery_org_failure_keeps_personal_account(github, monkeypatch):
+    root, _, _ = github
+    def run(args, **kwargs):
+        return SimpleNamespace(returncode=int('--paginate' in args), stdout='{"login":"person"}')
+    monkeypatch.setattr(repository_github.subprocess, 'run', run)
+    state = repository_github.owners(root)
+    assert state['owners'] == ['person'] and state['warning']

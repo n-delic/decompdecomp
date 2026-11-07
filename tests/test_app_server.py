@@ -3029,3 +3029,18 @@ def test_github_setup_duplicate_and_reopen_attach(app, monkeypatch):
         assert client.get('/api/repository-setup?slug=game').json() == first
         assert calls == [('github', {'github_name':'owner/progress', 'visibility':'public'})]
     finally:release.set()
+
+
+def test_github_owner_discovery_is_project_scoped(app, monkeypatch, tmp_path):
+    from decompnet.app import repository_github, repository_setup
+    client, net, _ = app
+    calls = []
+    monkeypatch.setattr(repository_setup, 'folder', lambda net, slug: (tmp_path/slug, {}))
+    def owners(path):
+        calls.append(path)
+        return {'owners':['person','Studio'], 'warning':''}
+    monkeypatch.setattr(repository_github, 'owners', owners)
+    response = client.get('/api/repository-github-owners?slug=game')
+    assert response.status_code == 200
+    assert response.json()['owners'] == ['person','Studio']
+    assert calls == [tmp_path/'game']

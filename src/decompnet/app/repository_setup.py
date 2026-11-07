@@ -43,7 +43,7 @@ def status(net, slug):
         checkpoint = manifest in git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--', manifest).splitlines()
     return {'folder': str(path), 'save_folder':str(saves.save_folder(net, slug).expanduser().resolve()),
             'root': str(root) if root else '', 'repository': bool(root),
-            'origin': origin, 'checkpoint': checkpoint, 'portable': net.is_rom(proj),
+            'github_create': True, 'origin': origin, 'checkpoint': checkpoint, 'portable': net.is_rom(proj),
             'linked': path == saves.default_folder(net, slug).resolve(),
             'build_folder': str(build or '')}
 
@@ -130,5 +130,5 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                 commit = repository_progress.commit_snapshot(root, files, paths, log, expected_head=head, expected_branch=branch,
                     message='Save decompilation progress')
                 log('Saved progress commit '+commit[:12]+'. Nothing was pushed.')
-            else:raise NetworkError('Choose Create repository, Add origin or Commit saved progress.')
+            else:raise NetworkError('This repository action is not supported. Close and reopen decompdecomp after updating, then reload Settings.')
         return status(net, slug)
