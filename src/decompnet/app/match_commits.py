@@ -109,6 +109,11 @@ def enqueue(net, proj, function_id, *, restored=False):
 def scoped_snapshot(net, proj, root, job, output):
     """Advance only one function in the committed manifest, retaining its exact context and evidence."""
     store = net.project_store(proj['id'])
+    # A reopened/deleted function cannot be committed. Avoid repeating a full
+    # saved-progress synchronization on every retry of an already stale job.
+    queued = store.one('SELECT status FROM functions WHERE id=?', job['function_id'])
+    if queued is None or queued['status'] != 'matched':
+        raise NetworkError('The queued function no longer matches. Review it before retrying automatic commits.')
     head = repository_git.git(root, 'rev-parse', 'HEAD')
     files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, allow_unrelated_edits=True)
     folder = saves.default_folder(net, proj['slug']).resolve()
