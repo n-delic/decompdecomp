@@ -33,7 +33,7 @@ def register(app: App) -> None:
             try:
                 def perform():
                     result = fn(slug, request, data)
-                    if request.method == "POST" and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and request.url.path not in ("/api/compiler/test-default", "/api/compiler/cleanup") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 return JSONResponse(await call(perform))
@@ -57,6 +57,37 @@ def register(app: App) -> None:
             since = {}
         out["sessions"] = [s for s in manager.snapshot(since) if s["slug"] == slug]
         return out
+
+    profile_jobs = {}
+
+    def p_compiler_default_test(slug, request, data):
+        from .. import compiler_default_test as trial
+
+        action = data.get("action", "test")
+        handlers = {
+            "test": lambda log: trial.run(net, slug, data.get("profile"), log),
+            "nonmatches": lambda log: trial.run(net, slug, data.get("profile"), log, nonmatches=True),
+            "replace": lambda log: trial.replace_default(net, slug, data.get("profile"), log),
+            "apply-matches": lambda log: trial.apply_matches(net, slug, data.get("profile"), data.get("functions"), log),
+            "apply-safe-range": lambda log: trial.apply_matches(net, slug, data.get("profile"), data.get("functions"), log, safe_ranges=True),
+            "check-affected": lambda log: trial.check_affected(net, slug, data.get("profile"), data.get("functions"), log),
+        }
+        if action not in handlers:
+            raise NetworkError("Choose a compiler profile action from the list.")
+        key = (slug, action, json.dumps(data.get("profile"), sort_keys=True))
+        with jobs._lock:
+            previous = profile_jobs.get(key)
+            if previous and jobs.jobs.get(previous, {}).get("state") == "running":
+                return {"job": previous}
+            profile_jobs[key] = jobs.start("Test compiler profile as default", handlers[action])
+            return {"job": profile_jobs[key]}
+
+    def p_compiler_cleanup(slug, request, data):
+        from ..compiler_cleanup import cleanup
+
+        net._rom_only(slug, "comparing a compiler profile with the default")
+        return {"job": jobs.start("compiler-cleanup", lambda log:
+                                 cleanup(net, slug, log=log, source_profile=data.get("profile")))}
 
     def p_compiler(slug, request, data):
         if net.fork_slug(slug) and "auto" not in data:  # its source files each have a compiler (DS)
@@ -243,6 +274,8 @@ def register(app: App) -> None:
         "/api/function": (lambda s, r, d: net.function_detail(s, r.query_params.get("name", "")), ["GET"]),
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
                                                         r.query_params.get("which", "latest")), ["GET"]),
+        "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
+        "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]),
         "/api/compiler": (p_compiler, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),

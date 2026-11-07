@@ -1062,3 +1062,33 @@ def test_rom_library_setting_and_background_lookup(app, tmp_path, monkeypatch):
     assert result['state'] == 'done' and result['result']['path'].endswith('game.z64')
     assert seen == [(p, {'sha1': 'a' * 40}, str(library))]
     assert client.post('/api/settings', json={'rom_library': ''}, headers={'X-Decomp': '1'}).json()['rom_library'] == ''
+
+
+def test_compiler_profile_jobs_stream_progress_and_reuse_active_task(app, monkeypatch, tmp_path):
+    from decompnet.app import compiler_default_test
+
+    client, net, _ = app
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+                   ('profile-api', 'Profile API', str(tmp_path), json.dumps({'kind': 'rom', 'platform': 'n64'})))
+    release = threading.Event()
+    entered = threading.Event()
+    def run(net, slug, profile, log, **kwargs):
+        log.progress({'total': 2, 'checked': 1, 'passed': 1, 'failed': 0})
+        entered.set()
+        release.wait(3)
+        return {'compatible': True}
+    monkeypatch.setattr(compiler_default_test, 'run', run)
+    data = {'slug': 'profile-api', 'profile': {'toolchain': 'ido-5.3', 'flags': ['-O1']}, 'action': 'nonmatches'}
+    try:
+        first = client.post('/api/compiler/test-default', headers={'X-Decomp': '1'}, json=data)
+        assert first.status_code == 200, first.text
+        assert entered.wait(2)
+        second = client.post('/api/compiler/test-default', headers={'X-Decomp': '1'}, json=data)
+        assert second.json()['job'] == first.json()['job']
+        snapshot = client.get('/api/job', params={'id': first.json()['job']}).json()
+        assert snapshot['progress']['checked'] == 1 and snapshot['state'] == 'running'
+    finally:
+        release.set()
+    bad = client.post('/api/compiler/test-default', headers={'X-Decomp': '1'}, json={**data, 'action': 'unsupported'})
+    assert bad.status_code == 400

@@ -469,6 +469,29 @@ $("autoAdjust").onchange = async () => {
   } catch (err) { $("autoAdjust").checked = !on; toast(esc(err.message), "err"); }
 };
 $("compilerParts").onclick = async (e) => {
+  const menuAction = e.target.closest('.compiler-profile-menu button');
+  if (menuAction) {
+    const menu = menuAction.closest('details');
+    menu.open = false;
+    menu.querySelector('summary').focus();
+  }
+  const fn = e.target.closest("[data-compiler-function]");
+  if (fn) { openFn(fn.dataset.compilerFunction); return; }
+  const testDefault = e.target.closest("button[data-profile-test-default]");
+  if (testDefault) { await testProfileAsDefault(testDefault, testDefault.dataset.profileAction || "test"); return; }
+  const stopProfile = e.target.closest("button[data-profile-stop]");
+  if (stopProfile) {
+    const group = compilerDisplayedGroups[Number(stopProfile.dataset.profileStop)];
+    const item = group && compilerProfileJobs.get(`${S.slug}:${group.id}`);
+    if (item?.job) {
+      stopProfile.disabled = true;
+      try { await api("/api/job/cancel", {method:"POST", body:{id:item.job}}); }
+      catch (error) { item.message = error.message; stopProfile.disabled = false; }
+    }
+    return;
+  }
+  const profileButton = e.target.closest("button[data-profile-default]");
+  if (profileButton) { await compareProfileWithDefault(profileButton); return; }
   const b = e.target.closest("button[data-unrange]");
   if (!b) return;
   const remove = (reopen) => api("/api/compiler", { method: "POST", body: { slug: S.slug, ranges: b.dataset.unrange, remove: true, reopen } });
@@ -598,17 +621,244 @@ async function loadCompilerAnswer() {
   renderCompilerAnswer(a);
   if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
 }
+$("compilerAnswer").addEventListener("click", e => {
+  const fn = e.target.closest("[data-compiler-function]");
+  if (fn) openFn(fn.dataset.compilerFunction);
+});
+
+function compilerFunctionLinks(functions) {
+  return (functions || []).map(f => `<button class="link mono" type="button" data-compiler-function="${esc(f.name)}" title="${esc(f.status || "")}">${esc(f.name)}</button>`).join("");
+}
+let compilerPartsAnswer = null;
+let compilerPartsSlug = null;
+let compilerDisplayedGroups = [];
+const compilerProfileJobs = new Map();
+async function compareProfileWithDefault(button) {
+  const group = compilerDisplayedGroups[Number(button.dataset.profileDefault)], part = group?.parts[0];
+  if (!part || group.default) return;
+  const slug = S.slug, key = `${slug}:${group.id}`;
+  if (compilerProfileJobs.get(key)?.running) return;
+  const profile = {toolchain:part.toolchain, flags:part.flag_list || part.flags.split(/\s+/).filter(Boolean)};
+  const item = {running:true, message:"Comparing matched functions against the default…"};
+  compilerProfileJobs.set(key, item); renderCompilerParts(compilerPartsAnswer);
+  try {
+    const {job} = await api("/api/compiler/cleanup", {method:"POST", body:{slug,profile}});
+    item.job = job;
+    const out = await followJob(job, null, (lines, snapshot) => {
+      item.progress = snapshot.progress;
+      item.message = lines[lines.length - 1] || "Comparing against default…";
+      if (S.slug === slug) renderCompilerParts(compilerPartsAnswer);
+    });
+    item.message = `${out.changed.length} moved to default · ${out.unchanged} kept their settings · ${out.skipped} busy/shared-address skips · ${out.tested} comparisons`;
+    if (S.slug === slug) toast(esc(item.message), out.changed.length ? "match" : undefined);
+  } catch (error) { item.message = error.message; }
+  finally {
+    item.running = false;
+    if (S.slug === slug) { renderCompilerParts(compilerPartsAnswer); await loadCompilerAnswer(); }
+  }
+}
+function profileFailureGroups(failures) {
+  const groups = new Map();
+  const titles = {affected_matches:"Other matches affected by this compiler range", busy:"Functions currently claimed", overlay:"Shared overlay addresses", no_source:"No saved C", changed:"Inputs or status changed", verification:"Verification or compiler error"};
+  const link = name => `<button type="button" class="link mono" data-profile-function="${esc(name)}">${esc(name)}</button>`;
+  for (const failure of failures || []) {
+    const key = failure.category || (failure.reason?.startsWith('Different bytes') ? 'Different compiled bytes' : failure.reason || 'Verification failed');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(failure);
+  }
+  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure profile-failure-group" open><summary class="panel-head"><h3>${esc(titles[key] || key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="profile-failure-body">
+    ${key==='affected_matches' ? `<div class="profile-range-toolbar"><p class="small muted">Narrow each override to its function. Existing matches keep their profiles and are protected by verification. Affected functions are not necessarily callers.</p><button class="primary small-btn" type="button" data-safe-profile-ranges="${esc(JSON.stringify(rows.map(f=>f.function)))}">Fix all ${rows.length} ranges &amp; apply matches</button></div>` : ''}
+    <div class="profile-failure-cards">${rows.map(f => `<article class="profile-failure-card"><div class="profile-failure-heading">${link(f.function)}<span class="small muted">${f.blockers?.length ? 'Range blocked' : 'Needs review'}</span></div>${f.blockers?.length ? `<p class="small muted">Protect these existing matches</p><div class="profile-related-functions">${f.blockers.map(b=>link(b.function)).join('')}</div><div class="profile-failure-actions"><button class="primary small-btn" type="button" data-safe-profile-range="${esc(f.function)}">Fix range &amp; apply match</button><button class="ghost small-btn" type="button" data-check-profile-blockers="${esc(JSON.stringify(f.blockers.map(b=>b.function)))}">Check affected functions</button></div><div data-blocker-result class="small" role="status"></div>` : `<p class="small muted">${esc(f.reason)}</p>`}</article>`).join('')}</div></div></details>`).join('');
+}
+
+async function testProfileAsDefault(button, action="test") {
+  const group = compilerDisplayedGroups[Number(button.dataset.profileTestDefault)], part = group?.parts[0];
+  if (!part || group.default) return;
+  const slug = S.slug;
+  const profile = {toolchain:part.toolchain, flags:part.flag_list || part.flags.split(/\s+/).filter(Boolean)};
+  const replacing=action==='replace', nonmatches=action==='nonmatches';
+  const body = dialog(replacing ? 'Replace project default compiler' : nonmatches ? 'Test all non-matches' : 'Test compiler profile as default', `<p class="profile-test-intro">${replacing ? 'Check compatibility and replace the project default.' : nonmatches ? 'Find exact matches for currently unmatched functions.' : 'Check whether this profile preserves matches using the project default.'}</p>
+    <div class="profile-test-selection"><span class="small muted">Compiler to test</span><strong>${esc(group.compiler)}</strong><code class="compiler-arguments">${esc(profile.flags.join(' '))}</code></div>
+    <p class="small muted">${replacing ? 'Make this profile the default. Existing matches that need the previous default keep it as a non-default override. Other profiles keep their settings. Saved attempts are rescored before settings are saved.' : nonmatches ? 'Includes all compiler profiles. Testing changes nothing; apply verified matches afterward. Ready functions are tested while others load. Functions without saved C are reported.' : 'Test only. Compiler settings, ranges and saved matches stay unchanged. Functions using other profiles are excluded.'}</p>
+    <section class="default-profile-test" aria-label="Compiler profile test progress"><div class="profile-test-heading"><p data-default-status role="status">${nonmatches ? 'Preparing non-matching functions…' : 'Preparing default-profile matches…'}</p><span class="small muted" data-default-count></span><button class="ghost small-btn" type="button" data-default-stop hidden>Stop</button></div>
+    <div data-default-work></div><progress class="deep-sweep-bar" data-default-bar hidden max="1" aria-label="Functions checked"></progress><p class="small muted profile-test-current" data-default-function></p>
+    <dl class="default-profile-counts"><div><dt>Passed</dt><dd class="ok" data-default-passed>0</dd></div><div><dt>Did not pass</dt><dd data-default-failed>0</dd></div><div><dt>Remaining</dt><dd data-default-left>—</dd></div></dl></section>
+    <p class="err-msg" data-default-error role="alert" hidden></p><p class="profile-test-verdict" data-default-verdict></p><div data-apply-matches hidden><button type="button" class="primary" data-apply-matches-button>Apply verified matches</button><p class="small muted">Rechecks the saved C, assigns this profile to passing functions and saves exact byte matches. Busy functions are skipped so active agents can finish their work.</p></div><details data-default-matches hidden><summary>Functions that match this profile</summary><div data-default-match-list class="mono"></div></details><details data-default-failures hidden><summary>Functions that did not pass</summary><div class="profile-failure-list" data-default-failure-list></div></details>
+    <details class="profile-test-log"><summary>Technical log</summary><pre class="joblog" data-default-log></pre></details>`, 'compiler-default-test');
+  const get = selector=>body.querySelector(selector), log=get('[data-default-log]'), work=get('[data-default-work]');
+  const active=()=>S.dialogKind==='compiler-default-test' && !$("dialog").hidden && get('[data-default-log]')===log;
+  work._errorBox = get('[data-default-error]');
+  work._errorBox.id = "compilerProfileError";
+  let testJob = null;
+  const stop = get('[data-default-stop]');
+  stop.onclick = async () => {
+    if (testJob == null || stop.disabled) return;
+    stop.disabled = true; stop.textContent = 'Stopping…';
+    try { await api('/api/job/cancel', {method:'POST', body:{id:testJob}}); }
+    catch (error) { if (active()) { showJobError(work,error.message); stop.disabled=false; stop.textContent='Stop'; } }
+  };
+  const followTest = async (job, update) => {
+    testJob = job;
+    if (active()) { stop.hidden=false; stop.disabled=false; stop.textContent='Stop'; }
+    try { return await followJob(job,log,update,active); }
+    finally { testJob=null; if(active())stop.hidden=true; }
+  };
+  const startWork = (label, controls) => {
+    const done = beginWork(work, label, controls, '');
+    // This drawer owns the visible progress; shared work still handles cleanup and errors.
+    if (work._workBar) work._workBar.hidden = false;
+    if (work._workStatus) work._workStatus.hidden = true;
+    work._errorBox.hidden = true;
+    get('[data-default-status]').textContent = `${label}…`;
+    get('[data-default-count]').textContent = '';
+    get('[data-default-function]').textContent = '';
+    get('[data-default-bar]').removeAttribute('value');
+    get('[data-default-bar]').hidden = true;
+    return done;
+  };
+  const fail = error => {
+    get('[data-default-status]').textContent = /stopp|cancel/i.test(error.message) ? 'Test stopped' : 'Could not finish';
+    // Stop indeterminate motion on failure; keep measured progress for partial work.
+    if (!get('[data-default-bar]').hasAttribute('value')) get('[data-default-bar]').value = 0;
+    get('[data-default-bar]').hidden = false;
+    if (work._workBar) work._workBar.hidden = true;
+    showJobError(work, error.message);
+  };
+  let rangeBusy=false, currentResult=null;
+  body.addEventListener('click', async event=>{
+    const fn=event.target.closest('[data-profile-function]');
+    if(fn){hideDrawer('dialog');openFn(fn.dataset.profileFunction);return;}
+    const fix=event.target.closest('[data-safe-profile-range], [data-safe-profile-ranges]');
+    if(fix){
+      if(rangeBusy)return;
+      rangeBusy=true;
+      const functions=fix.dataset.safeProfileRanges ? JSON.parse(fix.dataset.safeProfileRanges) : [fix.dataset.safeProfileRange];
+      const controls=[...body.querySelectorAll('[data-safe-profile-range], [data-safe-profile-ranges], [data-check-profile-blockers]')];
+      const done=startWork(`Fixing ${functions.length} compiler ranges`,controls);
+      try{
+        const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-safe-range',functions}});
+        const saved=await followTest(job,(_lines,state)=>{
+          if(!active() || !state.progress)return;
+          const p=state.progress;
+          get('[data-default-status]').textContent=`Repairing ranges · ${p.checked || 0} / ${p.total || functions.length} checked`;
+          get('[data-default-bar]').max=p.total || functions.length;get('[data-default-bar]').value=p.checked || 0;
+          get('[data-default-bar]').hidden=false;if(work._workBar)work._workBar.hidden=true;
+        });
+        if(saved && active()){
+          const successful=new Set(saved.matches || []), attempted=new Set(functions);
+          const failures=[...(currentResult?.failures || []).filter(f=>!successful.has(f.function) && !attempted.has(f.function)),...(saved.failures || [])];
+          const previous=currentResult || {total:saved.total,checked:saved.total,passed:0,matches:[]};
+          render({...previous,passed:previous.passed+saved.passed,failed:failures.length,failures,matches:[...(previous.matches || []),...(saved.matches || [])]});
+          get('[data-default-verdict]').textContent=`${saved.passed} matches saved by range repair. ${saved.failed} could not be repaired; remaining issues are listed below. Existing matches remain protected.`;
+        }
+        if(saved?.passed && S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();}
+      }catch(error){if(active())fail(error);}finally{done();rangeBusy=false;}
+      return;
+    }
+    const check=event.target.closest('[data-check-profile-blockers]');
+    if(!check || rangeBusy)return;
+    const result=check.parentElement.querySelector('[data-blocker-result]');
+    const done=beginWork(result,'Checking affected functions',[check],'Read-only check complete; no settings changed.');
+    try{
+      const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'check-affected',functions:JSON.parse(check.dataset.checkProfileBlockers)}});
+      const checked=await followTest(job);
+      if(checked)result.appendChild(Object.assign(document.createElement('p'),{textContent:checked.results.map(r=>`${r.function}: ${r.reason}`).join(' ')}));
+    }catch(error){showJobError(result,error.message);}finally{done();}
+  });
+  const finish=startWork(nonmatches ? 'Preparing non-matching functions' : 'Preparing default-profile matches',[button]);
+  const render=p=>{
+    if(!p)return;
+    if(p.checked!==undefined)currentResult=p;
+    const checked = p.checked ?? p.done ?? 0, counted = Number.isFinite(p.total) && p.total > 0;
+    get('[data-default-status]').textContent = p.phase || (p.total === 0 ? 'No functions to test' : p.applied ? 'Applying matches' : nonmatches ? 'Testing non-matches' : 'Testing default-profile matches');
+    get('[data-default-count]').textContent = counted ? `${checked.toLocaleString()} / ${p.total.toLocaleString()} · ${Math.round(100*checked/p.total)}%` : '';
+    get('[data-default-function]').textContent = p.function ? `${p.applied ? 'Checking' : 'Last checked'}: ${p.function}` : '';
+    const bar = get('[data-default-bar]');
+    bar.max = p.total || 1;
+    bar.hidden = !counted && p.total !== 0;
+    if (work._workBar) work._workBar.hidden = !bar.hidden;
+    if (counted || p.total === 0) bar.value = p.total === 0 ? 1 : checked; else bar.removeAttribute('value');
+    if(p.checked===undefined)return;
+    get('[data-default-passed]').textContent=(p.applied && p.phase==='Verifying selected matches' ? (p.verified || 0) : p.passed).toLocaleString();get('[data-default-failed]').textContent=p.failed.toLocaleString();
+    get('[data-default-left]').textContent=Number.isFinite(p.total)?Math.max(0,p.total-p.checked).toLocaleString():'—';
+    get('[data-default-matches]').hidden=!p.matches?.length;
+    get('[data-default-match-list]').innerHTML=compilerFunctionLinks((p.matches || []).map(name=>({name})));
+    get('[data-default-match-list]').querySelectorAll('[data-compiler-function]').forEach(link=>link.onclick=()=>{hideDrawer('dialog');openFn(link.dataset.compilerFunction);});
+    get('[data-default-failures]').hidden=!p.failures?.length;
+    get('[data-default-failure-list]').innerHTML=profileFailureGroups(p.failures);
+  };
+  try {
+    const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action}});
+    const out=await followTest(job,(_lines,state)=>{if(active())render(state.progress);});
+    if(!active() || !out)return;
+    if(out.replaced){get('[data-default-status]').textContent='Default compiler replaced';get('[data-default-verdict]').textContent=`Default replaced. ${out.preserved} functions kept their previous compiler profile. All existing matches remain verified.`; if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();} return;}
+    render(out);
+    get('[data-default-status]').textContent=out.total ? 'Test complete' : 'No functions to test';
+    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? `${out.changed_matches?.length || 0} passing functions changed during testing. Selected functions will be rechecked; only functions that still match will be saved.` : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
+      if(out.matches?.length){
+        get('[data-apply-matches]').hidden=false;
+        const apply=get('[data-apply-matches-button]');apply.textContent=out.stale ? `Recheck & apply ${out.matches.length} matches` : `Apply ${out.matches.length} matches`;
+        apply.onclick=async()=>{
+          const done=startWork('Rechecking and applying matches',[apply]);
+          try{
+            const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-matches',functions:out.matches,receipt:out.receipt}});
+            const saved=await followTest(job,(_lines,state)=>{if(active())render(state.progress);});
+            if(!active() || !saved)return;
+            render(saved);get('[data-default-status]').textContent='Matches saved';get('[data-default-verdict]').textContent=`${saved.passed} new matches saved. ${saved.failed} functions skipped or could not be applied; see the results below.`;
+            get('[data-apply-matches]').hidden=true;
+            if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();}
+          }catch(error){if(active())fail(error);}
+          finally{done();}
+        };
+      }return;}
+    get('[data-default-verdict]').textContent=out.stale ? 'Inputs changed while testing. Results are outdated; rerun before deciding.' : !out.total ? 'No matched functions currently use the default. No compatibility conclusion can be drawn.' : out.compatible ? 'All tested default-profile matches still match byte for byte. This profile is a compatible default candidate for this population. Nothing has been changed.' : `${out.failed} functions did not pass. These functions need their previous compiler profile if you replace the default. Nothing has been changed.`;
+  } catch(error){if(active())fail(error);}
+  finally{finish();}
+}
+
+const compilerGroupsOpen = new Set();
+const compilerReasonsOpen = new Set();
+function renderCompilerParts(a) {
+  if (compilerPartsSlug !== S.slug) { compilerPartsSlug = S.slug; compilerGroupsOpen.clear(); compilerReasonsOpen.clear(); }
+  compilerPartsAnswer = a;
+  const parts = a.parts || [], mode = $("compilerGroup").value, sort = $("compilerSort").value;
+  $("compilerViewControls").hidden = !parts.length;
+  const row = (p, showProfile) => {
+    const [word, why] = PART_STATE[p.check] || PART_STATE[""];
+    return `<li class="compiler-range"><div class="compiler-range-heading"><code>${hexShort(p.start)}–${hexShort(p.end)}</code>
+      <span class="part-state ${esc(p.check || "none")}">${esc(word)}</span>
+      ${p.functions != null ? `<span class="muted small">${plural(p.functions, "function")}</span>` : ""}
+      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" title="Return this range to the default compiler">Remove</button></div>
+      ${showProfile ? `<div class="small"><b>${esc(p.compiler)}</b><code class="compiler-arguments">${esc(p.flags)}</code></div>` : ""}
+      ${p.file ? `<div class="muted small mono">${esc(p.file)}</div>` : ""}
+      <div class="compiler-function-links">${compilerFunctionLinks(p.function_list)}</div>
+      ${p.said || why ? `<details class="compiler-range-reason" data-range-reason="${p.start}-${p.end}"${compilerReasonsOpen.has(`${p.start}-${p.end}`) ? " open" : ""}><summary>Verification details</summary><p class="small muted">${esc(p.said || why)}</p></details>` : ""}</li>`;
+  };
+  const groups = compilerPartGroups(parts, mode, sort);
+  compilerDisplayedGroups = groups;
+  setHtml($("compilerParts"), mode === "range" ? `<ol class="compiler-range-list">${groups.flatMap(g => g.parts).map(p => row(p, true)).join("")}</ol>`
+    : groups.map((g, index) => `<details class="compiler-profile" data-compiler-group="${esc(g.id)}"${compilerGroupsOpen.has(g.id) ? " open" : ""}>
+      <summary><span><b>${esc(mode === "family" ? g.family.toUpperCase() : g.compiler)}</b>${g.default ? ` <span class="chip-s">${mode === "family" && g.profiles > 1 ? "Includes default" : "Default"}</span>` : ""}${mode === "settings" ? `<code class="compiler-arguments">${esc(g.flags || "No arguments")}</code>` : ""}<span class="compiler-profile-count">${plural(g.parts.length, "range")}${g.functions != null ? ` · ${plural(g.functions, "function")}` : ""}${mode === "family" ? ` · ${plural(g.profiles, "argument profile")}` : ""}</span></span></summary>
+      ${mode === "settings" && !g.default && S.ov.kind !== "fork" ? `<div class="compiler-profile-action"><div class="compiler-profile-tools"><span class="small muted">Profile actions</span><details class="agent-menu compiler-profile-menu"><summary aria-label="Actions for ${esc(g.compiler)} profile" title="Compiler profile actions">⋮</summary><div class="agent-menu-items"><button type="button" data-profile-default="${index}"${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.running ? " disabled" : ""}>Compare all matches with default</button><button type="button" data-profile-test-default="${index}">Test this profile as default</button><button type="button" data-profile-test-default="${index}" data-profile-action="replace">Replace default with this profile</button><button type="button" data-profile-test-default="${index}" data-profile-action="nonmatches">Test all non-matches</button></div></details></div><p class="small muted">Only exact byte matches move to the project default. Drafts and non-matches keep their settings.</p><p class="small" role="status">${esc(compilerProfileJobs.get(`${S.slug}:${g.id}`)?.message || "")}</p>${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.running ? `<progress aria-label="Comparing profile with default" max="${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.progress?.total || 1}"${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.progress ? ` value="${compilerProfileJobs.get(`${S.slug}:${g.id}`).progress.done || 0}"` : ""}></progress><button class="ghost small-btn" type="button" data-profile-stop="${index}">Stop</button>` : ""}</div>` : ""}
+      <ol class="compiler-range-list">${g.parts.map(p => row(p, mode === "family")).join("")}</ol></details>`).join(""));
+  $("compilerParts").querySelectorAll("details[data-range-reason]").forEach(d => d.ontoggle = () => {
+    if (!d.isConnected) return;
+    if (d.open) compilerReasonsOpen.add(d.dataset.rangeReason); else compilerReasonsOpen.delete(d.dataset.rangeReason);
+  });
+  $("compilerParts").querySelectorAll("details[data-compiler-group]").forEach(d => d.ontoggle = () => {
+    if (!d.isConnected) return;
+    if (d.open) compilerGroupsOpen.add(d.dataset.compilerGroup); else compilerGroupsOpen.delete(d.dataset.compilerGroup);
+  });
+}
+for (const id of ["compilerGroup", "compilerSort"]) $(id).onchange = () => { if (compilerPartsAnswer) renderCompilerParts(compilerPartsAnswer); };
 function renderCompilerAnswer(a) {
   const parts = a.parts || [];
-  setHtml($("compilerAnswer"), `This game was built with <b>${esc(a.compiler)}</b>${a.flags ? ` <span class="flags mono" title="the flags it was given">${esc(a.flags)}</span>` : ""}.${parts.length ? ` ${parts.length === 1 ? "One part" : `${parts.length} parts`} of it with another compiler: below.` : ""}`
-    + (a.elsewhere_count ? ` <span class="muted">${a.elsewhere_count === 1 ? "One more stretch of code looks" : `${a.elsewhere_count.toLocaleString()} more stretches of code look`} like another compiler's work; the app suggests a change once agents' C proves it.</span>` : ""));
+  const defaultOpen = compilerPartsSlug === S.slug && $("compilerAnswer").querySelector("[data-default-functions]")?.open;
+  setHtml($("compilerAnswer"), `<div class="compiler-default"><span class="small muted">Default settings</span><div><b>${esc(a.compiler)}</b></div><code class="compiler-arguments">${esc(a.flags || "No arguments")}</code></div>
+    ${a.default_function_list?.length ? `<details data-default-functions${defaultOpen ? " open" : ""}><summary>Functions using the default settings (${a.default_function_list.length})</summary><div class="compiler-function-links">${compilerFunctionLinks(a.default_function_list)}</div></details>` : ""}
+    <p class="small muted">${a.default_functions != null ? `${plural(a.default_functions, "function")} use the default. ` : ""}${plural(parts.length, "explicit range")}${a.elsewhere_count ? ` · ${plural(a.elsewhere_count, "other range")} look like a different compiler; not applied.` : "."}</p>`);
   $("compilerState").textContent = a.checking ? "checking…" : "";
-  setHtml($("compilerParts"), parts.length ? `<ol class="parts">${parts.map((p) => {
-    const [word, why] = PART_STATE[p.check] || PART_STATE[""];
-    return `<li><code>${hexShort(p.start)}–${hexShort(p.end)}</code><span class="grow">${esc(p.compiler)} <span class="flags mono">${esc(p.flags)}</span></span>
-      ${p.file ? `<span class="muted small mono">${esc(p.file)}</span>` : ""}<span class="part-state ${esc(p.check || "none")}" title="${esc(p.said || why)}">${word}</span>
-      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with ${esc(a.compiler)} again" title="Build this part with ${esc(a.compiler)} again">Remove</button></li>`;
-  }).join("")}</ol>` : "");
+  renderCompilerParts(a);
   const sv = a.survey || {};
   const checks = (a.checks || []).slice(-20).reverse();
   setHtml($("compilerEvidence"), `<p class="small">The app works out which compiler built each part by itself: it tries agents' C for functions that don't match yet with the other compilers the game uses (${
@@ -640,3 +890,17 @@ $("deleteBtn").onclick = () => {
     } catch (e) { toast(esc(e.message), "err"); }
   };
 };
+
+// Profile menus use the app's standard dismissal behavior.
+document.addEventListener("click", event => {
+  document.querySelectorAll(".compiler-profile-menu[open]").forEach(menu => {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
+});
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  document.querySelectorAll(".compiler-profile-menu[open]").forEach(menu => {
+    menu.open = false;
+    menu.querySelector("summary").focus();
+  });
+});

@@ -118,6 +118,7 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   bar.setAttribute("aria-label", label);
   bar.append(document.createElement("i"));
   log.before(bar);
+  log._workBar = bar;
   const disabled = controls.map((control) => control.disabled);
   controls.forEach((control) => { control.disabled = true; });
   return () => {
@@ -130,11 +131,13 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   };
 }
 
-async function followJob(id, logEl, onUpdate) {
+async function followJob(id, logEl, onUpdate, active = () => true) {
   for (;;) {
+    if (!active()) return;
     const job = await api(`/api/job?id=${id}`);
+    if (!active()) return;
     if (logEl) { logEl.textContent = job.log.join("\n"); logEl.scrollTop = logEl.scrollHeight; }
-    if (onUpdate) onUpdate(job.log);
+    if (onUpdate) onUpdate(job.log, job);
     if (job.state === "done") return job.result;
     if (job.state === "error" || job.state === "cancelled") {
       const err = new Error(job.error || (job.state === "cancelled" ? "Cancelled." : "The job failed. Try again."));
