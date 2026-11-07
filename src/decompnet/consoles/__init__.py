@@ -73,7 +73,7 @@ class Console:
         console's only when that compiler is."""
         from .. import kits
 
-        mine = {c.id for c in self.fixed_compilers}
+        mine = {c.id for c in self.fixed_compilers} | set(self.kit_only_compilers)
         return tuple(Compiler(c.version, c.name, "your own copy") for c in kits.compilers(self.kits)
                      if not c.like or c.like in mine)
 
@@ -90,6 +90,7 @@ class Console:
     compilers: tuple[Compiler, ...] = ()  # the first is the default, unless default_compiler says another
     packs: tuple[tuple[str, str], ...] = ()  # (toolchain, what it's for): more that Setup offers for it
     kits: tuple[str, ...] = ()  # the kits users bring that it takes (kits/: an SDK, a compiler only it came in)
+    kit_only_compilers: tuple[str, ...] = ()  # profiles with no redistributable pack; shown only with a user's kit
     guides: tuple[str, ...] = ()  # guide topics worth reading first (files in its guides/ folder or app/guide/)
     m2c = ""  # m2c's target for drafts of its code, without the language ("mipsee-gcc"); "" when m2c can't read it
     compiler_guide = ""  # the guide on matching what most of its games were built with ("mwcc"): see up_front_guide

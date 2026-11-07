@@ -36,7 +36,9 @@ def packs(platform: str) -> dict[str, tuple[str, str, str, tuple[str, ...]]]:
     pinned = tomllib.loads(resources.files("decompnet").joinpath("toolchains.toml").read_text(encoding="utf-8"))
     out = {}
     for tid, spec in pinned.items():
-        if spec.get("kind", "compiler") != "compiler" or spec.get("platform") != platform:
+        # Dedicated kits identify these builds explicitly; the generic kit could mistake one shared driver for six.
+        if (spec.get("kind", "compiler") != "compiler" or spec.get("platform") != platform
+                or spec.get("source") == "your own compiler kit: no download"):
             continue
         program = next((m for m in _PROGRAM.findall(" ".join([*spec.get("cc", []), *spec.get("cmd", [])]))
                         if m != "include"), None)

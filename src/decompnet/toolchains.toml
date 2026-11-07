@@ -1204,3 +1204,428 @@ subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 # sha256 = "be179831ffde0bc185c68939dd43213d05afd4a502de6f56c8b6e6f5f3fc651c"
 # subdir = "ppu-lv2-gcc-2.7.0"
 # platforms = ["linux-x86_64"]
+
+
+
+["sn-n64-281"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.8.1"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mcpu=VR4300", "-mhard-float", "-mfp64"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+
+
+["sn-n64-272-0001"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0001)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "decompme/compilers n64_sn272_0001"
+description = "Original SN64 GCC 2.7.2 build 0001 and ASN64 2.56. Matching uses wibo and the pinned PsyQ-to-ELF converter."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-0001".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/n64_sn272_0001.tar.gz"
+sha256 = "17c57ccd5f2305fe5445c576d4cc2c1fea681dd78b29dd3d1f15c5ca0fdf2cea"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+
+["gcc-2.8.1-pm"]
+family = "gcc"
+name = "GCC 2.8.1 (PM matching)"
+platform = "N64"
+arch = "mips"
+license = "GPL-2.0-or-later"
+source = "pmret/gcc-papermario and pmret/binutils-papermario master releases"
+description = "Distinct matching compiler and paired GNU assembler; not an SN64 compiler alias."
+cc = ["{tc}/gcc", "-B{tc}/", "-c"]
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"]
+cplusplus = true
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/linux.tar.gz"
+sha256 = "1156cf0d6a88a64c20e2a10fc9445d99cb9a38518f432b1669528dfa82ebb45f"
+file = "pm-gcc-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/binutils-papermario/releases/download/master/linux.tar.gz"
+sha256 = "c3cd88db47ac41f78b557042c7e7ad47ac9c04cee6f0d1069a489c1c9e8c103c"
+file = "pm-as-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/mac.tar.gz"
+sha256 = "772efc8272a992401f9a9a3faef58ef2f4b6028e792afa0015d894de96fe584e"
+file = "pm-gcc-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/binutils-papermario/releases/download/master/mac.tar.gz"
+sha256 = "7c1680dbbd207bc6e85d113da601dd75d93e1f982282b1f4bef0b25c15c5432c"
+file = "pm-as-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+
+
+["gcc-egcs-2.91.66"]
+family = "gcc"
+name = "EGCS 1.1.2 / GCC 2.91.66"
+platform = "N64"
+arch = "mips"
+license = "GPL-2.0-or-later"
+source = "decompals EGCS 0.7 and binutils 0.6"
+description = "Distinct matching compiler and paired GNU assembler; not an SN64 compiler alias."
+cc = ["{tc}/gcc", "-B{tc}/", "-c"]
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2", "-mno-abicalls", "-fno-pic"]
+cplusplus = true
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-gcc-egcs-2.91.66/releases/download/0.7/mips-gcc-egcs-2.91.66-linux.tar.gz"
+sha256 = "47b8cfccbad18fba40daa3fb01f4d71da7895d9183ab3ab91d6d7b1d27a715ab"
+file = "egcs-gcc-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-binutils-egcs-2.9.5/releases/download/0.6/mips-binutils-egcs-2.9.5-linux.tar.gz"
+sha256 = "54eb249ccfbc9956048de5c740ff41d6ab6137cfc3a872739e465349327bbcbf"
+file = "egcs-as-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-gcc-egcs-2.91.66/releases/download/0.7/mips-gcc-egcs-2.91.66-macos.tar.gz"
+sha256 = "ceb26826e708ce484a120b002680dff9f13fd3f71a4b4c51e991994107b29542"
+file = "egcs-gcc-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-binutils-egcs-2.9.5/releases/download/0.6/mips-binutils-egcs-2.9.5-macos.tar.gz"
+sha256 = "71d16bb4a0e537ff76421fd5d26aaad44d073dfc0d0ee66344250169500d4706"
+file = "egcs-as-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+
+
+["sn-n64-272-970404"]
+family = "gcc"
+name = "Reconstructed SN64 GCC 2.7.2 (970404)"
+platform = "N64"
+arch = "mips"
+license = "GPL-2.0-or-later"
+source = "decompals/SN64-gcc 2c037f330a99b514e5b53c66f1c63f90d8a15302"
+description = "Reconstructed SN compiler, with modern-asn64 compatibility assembly. Native source build on macOS."
+requires = ["modern-asn64", "binutils-mips"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float", "-fno-exceptions"]
+cmd = ["{python}", "{driver}", "--native", "--cc", "{tc}/cc1", "--cpp", "{tc}/cpp", "--assembler", "{tc:binutils-mips}/mips-ps2-decompals-as", "--wrapper", "{tc:modern-asn64}/modern-asn64.py", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-970404".parts]]
+url = "https://github.com/decompals/SN64-gcc/releases/download/gcc-2.7.2-970404/SN64-gcc-2.7.2-970404-linux.tar.gz"
+sha256 = "60abe17c2562f5ae28444fe4f783fa8217d84b73e59e29cf39c41f7551d968f4"
+platforms = ["linux-x86_64"]
+[["sn-n64-272-970404".parts]]
+url = "https://codeload.github.com/decompals/SN64-gcc/tar.gz/2c037f330a99b514e5b53c66f1c63f90d8a15302"
+sha256 = "51ddf17004bd74e738941c71fe6532e0dfe2d02822e0029c3624620a02da3eb7"
+file = "sn64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302.tar.gz"
+subdir = "SN64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302/2.7.2-970404"
+build = "sn64-gcc"
+platforms = ["macos-x86_64", "macos-arm64"]
+
+
+
+["sn-n64-272-0004"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0004)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+
+
+["sn-n64-272-0006"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0006)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "decompme/compilers n64_sn272_0006"
+description = "Preserved SN64 build 0006 with its paired ASN64 assembler. Distinct from build 0001."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-0006".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/n64_sn272_0006.tar.gz"
+sha256 = "1a35a875278f38bfc285c2bd80b782cec38859dedfd925d8b8a2f1733ba9acad"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+# Additional comparison profiles: Linux packs, Windows via WSL.
+
+
+["gcc-egcs-1.1.2-4"]
+name = "Original EGCS 1.1.2-4"
+platform = "N64"
+arch = "mips"
+family = "gcc"
+license = "GPL-2.0-or-later"
+source = "https://github.com/AngheloAlf/egcs_1.1.2-4/releases/download/latest/egcs_1.1.2-4.tar.gz"
+description = "Linux executable pack; Windows through WSL. No native macOS build. Explicit comparison does not establish retail N64 use."
+cc = ["{tc}/mips-linux-gcc", "-B{tc}/", "-c"]
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-mcpu=4300", "-O2", "-fno-PIC", "-mno-abicalls"]
+requires = ["runtime-i386"]
+[["gcc-egcs-1.1.2-4".parts]]
+url = "https://github.com/AngheloAlf/egcs_1.1.2-4/releases/download/latest/egcs_1.1.2-4.tar.gz"
+sha256 = "c8d0adeecbe655db1631df5dea58781f4aa738f9762b907f58a6e70740d1815a"
+platforms = ["linux-x86_64"]
+
+
+["gcc-4.4.0-n64"]
+name = "GCC 4.4.0 (MIPS64 ELF)"
+platform = "N64"
+arch = "mips"
+family = "gcc"
+license = "GPL-2.0-or-later"
+source = "https://github.com/devwizard64/gcc4.4.0-mips64-elf/releases/download/latest/gcc4.4.0-mips64-elf.tar.gz"
+description = "Linux executable pack; Windows through WSL. No native macOS build. Explicit comparison does not establish retail N64 use."
+cc = ["{tc}/bin/mips64-elf-gcc", "-c"]
+flags = ["-G0", "-march=vr4300", "-mabi=32", "-mno-abicalls", "-fno-pic", "-O2"]
+requires = ["runtime-gcc-math"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-gcc-math}", "{tc}/bin/mips64-elf-gcc", "-c", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+[["gcc-4.4.0-n64".parts]]
+url = "https://github.com/devwizard64/gcc4.4.0-mips64-elf/releases/download/latest/gcc4.4.0-mips64-elf.tar.gz"
+sha256 = "d1a9815f730582ff65f8c14371c62436790655b20a21a5f8ee8b39b4fafa2f58"
+platforms = ["linux-x86_64"]
+
+
+["ido-4.1"]
+case_sensitive = true
+name = "IDO 4.1 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "https://github.com/decompme/compilers/releases/download/compilers/ido4.1.tar.gz"
+description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; This profile currently runs on Linux x86_64. Install only after license acceptance."
+requires = ["runtime-irix-host-modern"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host-modern}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-4.1", "{src}", "{obj}", "{include}", "{flags}"]
+[["ido-4.1".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/ido4.1.tar.gz"
+sha256 = "16008087602fe1a39cdd7880a3c6987891ddb594cce4416670f2e96456e9b4d4"
+platforms = ["linux-x86_64"]
+
+
+
+
+
+
+["ido-5.2"]
+case_sensitive = true
+name = "IDO 5.2 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.2", "{src}", "{obj}", "{include}", "{flags}"]
+
+["ido-5.3-cxx"]
+case_sensitive = true
+name = "IDO 5.3 C++ (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.3-cxx", "{src}", "{obj}", "{include}", "{flags}"]
+cplusplus = true
+
+["ido-6.0"]
+case_sensitive = true
+name = "IDO 6.0 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-6.0", "{src}", "{obj}", "{include}", "{flags}"]
+
+["mipspro-7.4.4"]
+case_sensitive = true
+name = "MIPSpro 7.4.4 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips3", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "mipspro-7.4.4", "{src}", "{obj}", "{include}", "{flags}"]
+
+
+["gcc-2.8.1-pm-sn-as"]
+family = "gcc"
+name = "GCC 2.8.1 + SN ASN64 2.56"
+platform = "N64"
+arch = "mips"
+license = "proprietary"
+source = "pmret/gcc-papermario and preserved SN64 0001 assembler"
+description = "GCC 2.8.1 PM code generation paired with original SN ASN64 2.56. Tests assembler macro encodings and scheduling independently; not proof of a game's original toolchain."
+requires = ["sn-n64-272-0001", "wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"]
+cmd = ["{python}", "{driver}", "--gcc", "{tc}/gcc", "--assembler", "{tc:sn-n64-272-0001}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["gcc-2.8.1-pm-sn-as".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/linux.tar.gz"
+sha256 = "1156cf0d6a88a64c20e2a10fc9445d99cb9a38518f432b1669528dfa82ebb45f"
+file = "pm-gcc-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-2.8.1-pm-sn-as".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/mac.tar.gz"
+sha256 = "772efc8272a992401f9a9a3faef58ef2f4b6028e792afa0015d894de96fe584e"
+file = "pm-gcc-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+
+
+["modern-asn64"]
+name = "SN64 assembler compatibility wrapper"
+kind = "tool"
+license = "Unlicense"
+source = "RocketRet/modern-asn64 20d21729ce6a2e7bc8a4a91ec9505cab0d6e50f9"
+description = "Reproduces SN assembler expansion and scheduling before the pinned GNU assembler."
+[["modern-asn64".parts]]
+url = "https://raw.githubusercontent.com/RocketRet/modern-asn64/20d21729ce6a2e7bc8a4a91ec9505cab0d6e50f9/modern-asn64.py"
+sha256 = "7e6815e2c2c0ae0b4581ace1c5adab3d1d567f0fc729f674fc52bdd77e2240bc"
+binary = "modern-asn64.py"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+
+[psyq-obj-parser]
+name = "PsyQ object to ELF converter"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "PCSX-Redux 8a86b7e and its pinned header dependencies"
+description = "Converts SN Systems objects to ELF; built locally with a C++20 compiler and zlib headers."
+build = "psyq-obj-parser"
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/grumpycoders/pcsx-redux/tar.gz/8a86b7ec1d246eb5ae9b213cac27aa2f7854a176"
+sha256 = "bebf3b6c67315a33191d1c338ad04297d1a3e10a5e8049bb4409492d489372a7"
+file = "psyq-pcsx-8a86b7ec1d246eb5ae9b213cac27aa2f7854a176.tar.gz"
+subdir = "pcsx-redux-8a86b7ec1d246eb5ae9b213cac27aa2f7854a176"
+into = "source/pcsx"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/fmtlib/fmt/tar.gz/407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+sha256 = "2bc1fe4a5b6d5d6a614239b4ca1d520e66e152a02d3d262684d26dfd6ab3438a"
+file = "psyq-fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f.tar.gz"
+subdir = "fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+into = "source/fmt"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/serge1/ELFIO/tar.gz/8ae6cec5d60495822ecd57d736f66149da9b1830"
+sha256 = "71c1a72e3fac6c9db3d4126c8f9b84bbda902e8dfb563f6dfcbed454636fa1c5"
+file = "psyq-elfio-8ae6cec5d60495822ecd57d736f66149da9b1830.tar.gz"
+subdir = "ELFIO-8ae6cec5d60495822ecd57d736f66149da9b1830"
+into = "source/elfio"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/Taywee/args/tar.gz/794f2dc7caa306984cf385cbb8e7176146514959"
+sha256 = "009aad8e019da87322cea8feaee68f8b2d1d5434511b23743292bdf474cdd983"
+file = "psyq-args-794f2dc7caa306984cf385cbb8e7176146514959.tar.gz"
+subdir = "args-794f2dc7caa306984cf385cbb8e7176146514959"
+into = "source/args"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/Neargye/magic_enum/tar.gz/e55b9b54d5cf61f8e117cafb17846d7d742dd3b4"
+sha256 = "bdb15ee58b44988a493b514194ca7e770b7c69d8af0c93d4447bcfa5fc044e3a"
+file = "psyq-magic_enum-e55b9b54d5cf61f8e117cafb17846d7d742dd3b4.tar.gz"
+subdir = "magic_enum-e55b9b54d5cf61f8e117cafb17846d7d742dd3b4"
+into = "source/magic_enum"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+
+[runtime-gcc-math]
+name = "GCC host math libraries (GMP and MPFR)"
+kind = "runtime"
+license = "LGPL-3.0-or-later"
+source = "Debian 12 GMP 6.2.1 and MPFR 4.2.0"
+description = "Pinned x86_64 Linux host libraries required by the GCC 4.4 pack. Windows uses these through WSL."
+[[runtime-gcc-math.parts]]
+url = "https://deb.debian.org/debian/pool/main/m/mpfr4/libmpfr6_4.2.0-1_amd64.deb"
+sha256 = "37b7a2b4e78890b6a074777f27b96c84f58e81558ba08410c2b6c0ca4a4ad77b"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-gcc-math.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/gmp/libgmp10_6.2.1+dfsg1-1.1_amd64.deb"
+sha256 = "187aedef2ed763f425c1e523753b9719677633c7eede660401739e9c893482bd"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+
+
+[runtime-irix-host]
+name = "IRIX emulator host libraries"
+kind = "runtime"
+license = "LGPL-2.1-or-later AND BSD-3-Clause"
+source = "Debian 12 GLib 2.74.6 and PCRE2 10.42"
+description = "Pinned Linux x86_64 host libraries for the preserved SGI packs' bundled IRIX emulators."
+[[runtime-irix-host.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/glib2.0/libglib2.0-0_2.74.6-2+deb12u9_amd64.deb"
+sha256 = "7ff85197685d89e150e342b29a59aab1beee400050ba7da73de81cd999ffee5a"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-irix-host.parts]]
+url = "https://deb.debian.org/debian/pool/main/p/pcre2/libpcre2-8-0_10.42-1_amd64.deb"
+sha256 = "030db54f4d76cdfe2bf0e8eb5f9efea0233ab3c7aa942d672c7b63b52dbaf935"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+
+
+[runtime-irix-host-modern]
+name = "Modern IRIX emulator host libraries"
+kind = "runtime"
+license = "LGPL-2.1-or-later AND BSD-3-Clause AND GPL-3.0-with-GCC-exception"
+source = "Debian 13 GLib 2.84.4; Debian 12 PCRE2 10.42 and libatomic 12.2.0"
+description = "Pinned modern GLib required by the IDO 4.1 pack's newer emulator; Linux hosts need glibc 2.38 or newer."
+[[runtime-irix-host-modern.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/glib2.0/libglib2.0-0t64_2.84.4-3~deb13u5_amd64.deb"
+sha256 = "e2baf92c57d1db1753e5781a61450d9a01e7833c7bd2dfe87776a6811c11ecc2"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-irix-host-modern.parts]]
+url = "https://deb.debian.org/debian/pool/main/p/pcre2/libpcre2-8-0_10.42-1_amd64.deb"
+sha256 = "030db54f4d76cdfe2bf0e8eb5f9efea0233ab3c7aa942d672c7b63b52dbaf935"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-irix-host-modern.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/gcc-12/libatomic1_12.2.0-14+deb12u1_amd64.deb"
+sha256 = "fbd4e154a6b444229ea002cc209df099209c0adc09102e5fd21239a3d2b55e2d"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]

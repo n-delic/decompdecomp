@@ -168,12 +168,13 @@ def own_compiler(cid: str) -> OwnCompiler | None:
 
 
 def _registry() -> list[Kit]:
+    from .n64legacy import N64_LEGACY
     from .owncompiler import OWN_COMPILERS
     from .ps3sdk import PS3SDK
     from .visualcpp import VISUALCPP
     from .xdk import XDK
 
-    return [XDK, VISUALCPP, PS3SDK, *OWN_COMPILERS]
+    return [XDK, VISUALCPP, PS3SDK, *OWN_COMPILERS, *N64_LEGACY]
 
 
 KITS: list[Kit] = _registry()
