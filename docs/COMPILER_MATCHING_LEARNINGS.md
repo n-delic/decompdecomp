@@ -5807,7 +5807,7 @@ For the same private N64 GCC 2.7.2 profile (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`),
 a bounded target-backed final-guard return hypothesis plus an independent scalar lifetime now
 regenerates a useful alternative from the original score-215 C without being supplied that alternative.
 One following quotient scope reaches linked exact bytes: 5 search builds, plus baseline and independent
-final verification (7 total), zero model tokens. Cold diagnostic-cache replays took 7.42 and 3.64 seconds.
+final verification (7 total), zero model tokens. Cold diagnostic-cache replays took 7.42, 3.64 and 7.19 seconds.
 This is known-case regression evidence; final signature remains diagnostic-only and no new full
 rebuild was claimed. Mixed exit-register definitions do not imply a defined C return on every path.
 The +2-weighted-reference-per-scope estimate ranks trials only; it is not a general GCC rule.

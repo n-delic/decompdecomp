@@ -114,7 +114,7 @@ repair implementation. Restore those inputs in the disposable copy before compar
 The private score-215 regression generated two roots itself and reached linked exact bytes in
 **5 search compiles** (3 candidate checks and 2 allocation-capture builds). A separate original-baseline
 check and independent final linker recheck bring the total to **7**, with **0 model tokens**.
-Two cold diagnostic-cache runs took **7.42 and 3.64 seconds**; host/filesystem/toolchain caches can
+Cold diagnostic-cache runs took **7.42, 3.64 and 7.19 seconds**; host/filesystem/toolchain caches can
 change wall time. The saved source remained unchanged, the independent diagnostic recheck passed,
 and full rebuild time remained unmeasured (`null`) because interface review was still required.
 This is a known-case regression for a recipe designed from this investigation, not a held-out model
