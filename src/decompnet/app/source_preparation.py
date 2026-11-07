@@ -25,7 +25,7 @@ _INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"\n]+)[>"]\s*$', re.M)
 
 
 def settings(net, proj):
-    row = net.store.one('SELECT value FROM settings WHERE key=?', f'source-preparation:{proj["id"]}')
+    row = net.project_store(proj['id']).one('SELECT value FROM settings WHERE key=?', f'source-preparation:{proj["id"]}')
     return json.loads(row['value']) if row else {}
 
 
@@ -121,7 +121,7 @@ def configure(net, proj, data):
             reader.file(reader.root / header)
         for key in ('header','assembly_header'):
             if cfg[key]:reader.file(Path(cfg[key]).expanduser())
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
                    (f'source-preparation:{proj["id"]}', json.dumps(cfg)))
     return cfg
@@ -374,7 +374,7 @@ def prepare_variants(reader, cfg, mapping, aliases, fallback):
 def inputs(net, proj, fn):
     """The destination state that a private-header compile was judged against, checked again before promotion."""
     ctx = net._context(proj['id'], fn['unit'])
-    symbols = [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+    symbols = [tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     from .permuter_inputs import build_state
     cfg = json.loads(proj['config'])
     from ..project import compiler_for

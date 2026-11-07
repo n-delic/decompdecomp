@@ -24,7 +24,7 @@ def _packet(net, slug, function, source):
     proj = net.project_row(slug)
     if net.fork_slug(slug):
         return None
-    row = net.store.one('SELECT * FROM verified_matches WHERE function_id=?', fn['id']) if net.store.one(
+    row = net.project_store(fn['project_id']).one('SELECT * FROM verified_matches WHERE function_id=?', fn['id']) if net.project_store(fn['project_id']).one(
         "SELECT 1 FROM sqlite_master WHERE name='verified_matches'") else None
     if row and row['source'] == source:
         details = json.loads(row['details'])
@@ -44,17 +44,17 @@ def packet(net, slug, function, source):
     if result is None:
         return None
     fn = net._function(function, slug)
-    if net.store.one("SELECT 1 FROM sqlite_master WHERE name='repair_examples'"):
-        row = net.store.one("SELECT evidence FROM repair_examples WHERE function_id=? AND json_extract(evidence,'$.after.source_sha256')=? ORDER BY id DESC LIMIT 1",
+    if net.project_store(fn['project_id']).one("SELECT 1 FROM sqlite_master WHERE name='repair_examples'"):
+        row = net.project_store(fn['project_id']).one("SELECT evidence FROM repair_examples WHERE function_id=? AND json_extract(evidence,'$.after.source_sha256')=? ORDER BY id DESC LIMIT 1",
                             fn['id'], match_bundle.digest(source))
         if row:
             case = json.loads(row['evidence'])
             before = case.get('before') or {}
-            attempt = net.store.one('SELECT source,function_id FROM attempts WHERE id=?', before.get('attempt_id')) if before.get('attempt_id') else None
+            attempt = net.project_store(fn['project_id']).one('SELECT source,function_id FROM attempts WHERE id=?', before.get('attempt_id')) if before.get('attempt_id') else None
             if attempt and attempt['function_id'] == fn['id'] and match_bundle.digest(attempt['source'] or '') == before.get('source_sha256'):
                 settings_before = before.get('settings') or {}
                 unit = settings_before.get('context_unit', fn['unit'])
-                context = net.store.one('SELECT header FROM context_versions WHERE project_id=? AND unit=? AND version=?',
+                context = net.project_store(fn['project_id']).one('SELECT header FROM context_versions WHERE project_id=? AND unit=? AND version=?',
                                         fn['project_id'], unit, before.get('context_version'))
                 baseline = {'source':attempt['source'], 'source_sha256':before['source_sha256'],
                             'score':before.get('score'), 'settings':settings_before,
@@ -85,7 +85,7 @@ def attach_baseline(net, fn, agent, source, evidence):
         or evidence.get('target_sha256') != match_bundle.digest(fn['target'] or b'')
         or evidence.get('vram') != fn['vram']):
         return
-    with net.store.tx() as db:
+    with net.project_store(fn['project_id']).tx() as db:
         row = db.execute("SELECT id,evidence FROM repair_examples WHERE function_id=? AND agent_id=? AND json_extract(evidence,'$.after.source_sha256')=? ORDER BY id DESC LIMIT 1",
                          (fn['id'], agent.id, match_bundle.digest(source))).fetchone()
         if row:
@@ -101,24 +101,27 @@ def save(net, slug, direction, agent, function, source, evidence, room=''):
     if evidence is not None and (not isinstance(evidence,dict) or len(json.dumps(evidence).encode())>1200000):
         raise NetworkError('Room match evidence must be an object of at most 1.2 MB.')
     proj=net.project_row(slug);fn=net._function(function,slug)
+    store=net.project_store(proj['id'])
     key=PREFIX+str(proj['id'])+':'+hashlib.sha256(json.dumps([direction,room,agent.id,fn['id'],source,evidence],sort_keys=True).encode()).hexdigest()
-    old=net.store.one('SELECT value FROM settings WHERE key=?',key)
+    old=store.one('SELECT value FROM settings WHERE key=?',key)
     if old:
         item=json.loads(old['value'])
         if item['status']=='accepted':
             item.update(source=source,evidence=evidence,status='pending',reason='Rechecking resubmitted saved evidence')
-            update(net,key,item)
+            update(net,key,item,project_id=proj['id'])
         return key,item
     item={'function_id':fn['id'],'function':function,'agent_id':agent.id,'agent':agent.name,'source':source,
           'evidence':evidence,'direction':direction,'room':room,'status':'pending','reason':'Awaiting host verification',
           'created_at':time.time(),'tried':[]}
-    update(net,key,item)
+    update(net,key,item,project_id=proj['id'])
     return key,item
 
 
-def update(net,key,item):
+def update(net,key,item, *, project_id):
+    if not key.startswith(PREFIX+str(project_id)+':'):
+        raise NetworkError('Choose a submission belonging to this project.')
     item['updated_at']=time.time()
-    with net.store.tx() as db:
+    with net.project_store(project_id).tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(item)))
 
 
@@ -136,7 +139,7 @@ def _pending_filter(net, slug, direction=None):
 
 def pending(net,slug, direction=None):
     where, args = _pending_filter(net, slug, direction)
-    return [dict(json.loads(row['value']), key=row['key']) for row in net.store.all(
+    return [dict(json.loads(row['value']), key=row['key']) for row in net.project_store(slug).all(
         "SELECT key,value FROM settings WHERE " + where + " ORDER BY json_extract(value,'$.created_at')", *args)]
 
 
@@ -145,7 +148,7 @@ def public(net,slug):
     where, args = _pending_filter(net, slug)
     fields = ('function','agent','direction','reason','updated_at')
     columns = ','.join("json_extract(value,'$." + field + "') AS " + field for field in fields)
-    return [dict(row) for row in net.store.all("SELECT key," + columns + " FROM settings WHERE " + where
+    return [dict(row) for row in net.project_store(slug).all("SELECT key," + columns + " FROM settings WHERE " + where
                                               + " ORDER BY json_extract(value,'$.created_at')", *args)]
 
 
@@ -188,8 +191,9 @@ def entry_function(net, proj, fn, item):
     from ..forks import csource
     from .function_names import _C_TOKEN
 
+    store = net.project_store(proj['id'])
     evidence = item.get('evidence') or {}
-    submitted = net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?',
+    submitted = store.one('SELECT * FROM functions WHERE id=? AND project_id=?',
                              item.get('submitted_function_id', fn['id']), proj['id'])
     if (not submitted or evidence.get('source_sha256') != match_bundle.digest(item['source']) or
         evidence.get('target_sha256') != match_bundle.digest(submitted['target'] or b'') or
@@ -199,7 +203,7 @@ def entry_function(net, proj, fn, item):
         return fn
     names = {token.group() for token in _C_TOKEN.finditer(item['source'])
              if re.fullmatch(r'func_[0-9A-Fa-f]{8}_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3})', token.group())}
-    rows = [row for row in net.store.all('SELECT * FROM functions WHERE project_id=? AND vram=?',
+    rows = [row for row in store.all('SELECT * FROM functions WHERE project_id=? AND vram=?',
                                        proj['id'], submitted['vram'])
             if row['name'] in names and csource.find(item['source'], row['name']) is not None]
     if len(rows) == 1:
@@ -238,7 +242,7 @@ def verify(net,slug,agent,function,source,evidence=None):
     result=retry(net,slug,key,recover_profiles=bool(evidence))
     if not result['matched']:
         # The client finished its local exact candidate. A pending host review must not strand its next claim.
-        with net.store.tx() as db:
+        with net.project_store(slug).tx() as db:
             removed=db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(item['function_id'],agent.id)).rowcount
             if removed:net._event(db,net.project_row(slug)['id'],agent.id,'release',function)
     return result
@@ -248,11 +252,12 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
     report=progress or (lambda value:None)
     report({'phase':'Loading saved submission'})
     proj=net.project_row(slug)
+    store=net.project_store(proj['id'])
     if not key.startswith(PREFIX+str(proj['id'])+':'):
         raise NetworkError('Choose a submission belonging to this project.')
-    row=net.store.one('SELECT value FROM settings WHERE key=?',key)
+    row=store.one('SELECT value FROM settings WHERE key=?',key)
     if not row:raise NetworkError('Room submission is no longer available.')
-    item=json.loads(row['value']);fn=net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?',item['function_id'],proj['id'])
+    item=json.loads(row['value']);fn=store.one('SELECT * FROM functions WHERE id=? AND project_id=?',item['function_id'],proj['id'])
     item['failure_reason']=failure_reason(item)
     if not fn:raise NetworkError('Room submission function was removed.')
     fn=entry_function(net,proj,fn,item)
@@ -270,8 +275,9 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
             # Recovered submissions share one attribution identity. Verification is
             # scoped to this candidate, not that identity's ongoing work elsewhere.
             report({'phase':'Checking function availability', 'function':fn['name']})
-            with net.store.tx() as db:
-                net._expire_claims(db)
+            own_agents = None if store is net.store else net._machine_agent_ids()
+            with store.tx() as db:
+                net._expire_claims(db, machine_ids=own_agents)
                 claim=db.execute('SELECT agent_id FROM claims WHERE function_id=?',(fn['id'],)).fetchone()
                 if claim and claim['agent_id']!=agent.id and not side_search:
                     raise NetworkError('This function is claimed by another worker; retry when released.')
@@ -295,7 +301,7 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
                 evidence=item.get('evidence')
                 header=net._context(proj['id'],fn['unit'])['header']
                 if evidence:
-                    submitted=net.store.one('SELECT target FROM functions WHERE id=? AND project_id=?',
+                    submitted=store.one('SELECT target FROM functions WHERE id=? AND project_id=?',
                                              item.get('submitted_function_id',fn['id']),proj['id'])
                     if (not submitted or evidence.get('source_sha256')!=match_bundle.digest(item['source']) or
                         evidence.get('target_sha256')!=match_bundle.digest(submitted['target'] or b'') or evidence.get('vram')!=fn['vram']):
@@ -353,30 +359,31 @@ def retry(net,slug,key, *, recover_profiles=True, progress=None):
         item['reason']=item['failure_reason']=str(error)
     finally:
         if verification_claim:
-            with net.store.tx() as db:
+            with store.tx() as db:
                 db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(fn['id'],agent.id))
     report({'phase':'Saving verification result'})
     if result['matched']:
         attach_baseline(net,fn,agent,item['source'],item.get('evidence'))
         item.update(status='accepted',reason='Host verified exact bytes',source='',evidence=None,tried=[])
         result['pending']=False
-    update(net,key,item)
+    update(net,key,item,project_id=proj['id'])
     result['reason']=item['reason']
     return result
 
 
 def send(link,agent,function,source, *, evidence=None):
     net,slug=link.net,link.slug
+    proj=net.project_row(slug)
     if evidence is None:evidence=packet(net,slug,function,source)
     room=link.url+'/'+link.room
     key,item=save(net,slug,'client',agent,function,source,evidence,room)
     try:
         result=link._req('POST','/collab/attempt',{'agent':agent.name,'function':function,'source':source,'evidence':evidence})
     except NetworkError as error:
-        item['reason']=str(error);update(net,key,item);raise
+        item['reason']=str(error);update(net,key,item,project_id=proj['id']);raise
     item.update(status='accepted' if result.get('matched') else 'rejected' if result.get('rejected') else 'pending',reason=result.get('reason') or 'Host did not confirm the match; evidence retained.')
     if result.get('matched'):item.update(source='',evidence=None)
-    update(net,key,item)
+    update(net,key,item,project_id=proj['id'])
     return result
 
 
@@ -385,17 +392,20 @@ def recover_client(link,state):
     accepted={(r.get('name'),r['vram']) for r in state.get('matched',[])}
     agent,_=link.net.local_agent('saved-progress')
     proj=link.net.project_row(link.slug)
-    for fn in link.net.store.all("SELECT name,vram,matched_source FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL",proj['id']):
+    for fn in link.net.project_store(link.slug).all("SELECT name,vram,matched_source FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL",proj['id']):
         if (fn['name'],fn['vram']) not in accepted:
             evidence=packet(link.net,link.slug,fn['name'],fn['matched_source'])
             key,item=save(link.net,link.slug,'client',agent,fn['name'],fn['matched_source'],evidence,link.url+'/'+link.room)
             if item['status']=='accepted':
                 item.update(status='pending',reason='Host no longer reports this match; resubmitting saved evidence.')
-                update(link.net,key,item)
+                update(link.net,key,item,project_id=proj['id'])
 
 
 def resend(link,key):
-    row=link.net.store.one('SELECT value FROM settings WHERE key=?',key)
+    proj=link.net.project_row(link.slug)
+    if not key.startswith(PREFIX+str(proj['id'])+':'):
+        raise NetworkError('Choose a submission belonging to this project.')
+    row=link.net.project_store(link.slug).one('SELECT value FROM settings WHERE key=?',key)
     if not row:raise NetworkError('Queued room match no longer exists.')
     item=json.loads(row['value'])
     if item['direction']!='client' or item['room']!=link.url+'/'+link.room:
@@ -407,7 +417,7 @@ def resend(link,key):
                                            'source':item['source'],'evidence':item['evidence']})
     item.update(status='accepted' if result.get('matched') else 'rejected' if result.get('rejected') else 'pending',reason=result.get('reason') or 'Awaiting host verification')
     if result.get('matched'):item.update(source='',evidence=None)
-    update(link.net,key,item)
+    update(link.net,key,item,project_id=proj['id'])
     return result
 
 
@@ -451,13 +461,18 @@ def sync_inputs(net,slug,state):
 def recover_legacy(net,slug):
     """Old room clients only asked the host to compile when they reported a match."""
     proj=net.project_row(slug)
-    rows=net.store.all("SELECT t.agent_id,t.source,f.name FROM attempts t JOIN functions f ON f.id=t.function_id "
+    store=net.project_store(proj['id'])
+    agents = [row['id'] for row in net.store.all('SELECT id FROM agents WHERE origin=?', 'collab:'+slug)]
+    rows=store.all("SELECT t.agent_id,t.source,f.name FROM attempts t JOIN functions f ON f.id=t.function_id "
                        "WHERE t.id IN (SELECT MAX(a.id) FROM attempts a JOIN functions f ON f.id=a.function_id "
-                       "JOIN agents g ON g.id=a.agent_id WHERE f.project_id=? AND f.status='open' "
-                       "AND g.origin=? AND a.via='agent' AND (a.source_hash IS NOT NULL OR a.source IS NOT NULL) GROUP BY f.id) LIMIT 20",
-                       proj['id'],'collab:'+slug)
+                       "WHERE f.project_id=? AND f.status='open' "
+                       "AND a.agent_id IN (SELECT value FROM json_each(?)) AND a.via='agent' "
+                       "AND (a.source_hash IS NOT NULL OR a.source IS NOT NULL) GROUP BY f.id) LIMIT 20",
+                       proj['id'],json.dumps(agents))
     for row in rows:
         a=net.store.one('SELECT id,name,owner,trusted FROM agents WHERE id=?',row['agent_id'])
+        if a is None:
+            continue
         agent=Agent(a['id'],a['name'],a['owner'],bool(a['trusted']))
         save(net,slug,'host',agent,row['name'],row['source'],None)
     return len(rows)

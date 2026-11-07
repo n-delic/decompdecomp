@@ -13,7 +13,7 @@ def digest(net, proj, fn):
 
 
 def listing(net, proj):
-    rows=net.store.all("SELECT r.signature,r.feedback,f.name,f.status FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE f.project_id=? AND r.signature LIKE 'local-source-%' ORDER BY CASE WHEN r.outcome='0' THEN 0 ELSE 1 END,r.rowid DESC LIMIT 80",proj['id'])
+    rows=net.project_store(proj['id']).all("SELECT r.signature,r.feedback,f.name,f.status FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE f.project_id=? AND r.signature LIKE 'local-source-%' ORDER BY CASE WHEN r.outcome='0' THEN 0 ELSE 1 END,r.rowid DESC LIMIT 80",proj['id'])
     result=[]
     for row in rows:
         item=json.loads(row['feedback'] or '{}')
@@ -84,10 +84,10 @@ def apply(net, proj, key, log, refresh=False, include_assembly=False, agent=None
         raise NetworkError('Prepared profile bundles are available for local ROM projects; imported builds own their headers and compiler settings.')
     if refresh:
         proj=net.project_row(proj['slug'])
-    row=net.store.one('SELECT r.*,f.project_id FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE r.signature=? AND f.project_id=?',key,proj['id'])
+    row=net.project_store(proj['id']).one('SELECT r.*,f.project_id FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE r.signature=? AND f.project_id=?',key,proj['id'])
     if not row:raise NetworkError('This prepared bundle is no longer available. Run preparation again.')
     item=json.loads(row['feedback'] or '{}')
-    fn=net.store.one('SELECT * FROM functions WHERE id=?',row['function_id'])
+    fn=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',row['function_id'])
     if (not item.get('exact') or not item.get('inputs') or fn['status'] not in (('open','asm') if include_assembly else ('open',))
             or not all(k in item for k in ('source','header','toolchain','flags'))
             or (not refresh and item['inputs']!=digest(net,proj,fn))):
@@ -107,7 +107,7 @@ def apply(net, proj, key, log, refresh=False, include_assembly=False, agent=None
         candidate,verdict,problems=net._evaluate(fn,proj,result.obj)
         if candidate is None or verdict is not True:
             raise NetworkError('The prepared bundle is no longer byte-identical: '+'; '.join(problems))
-        if digest(net,net.project_row(proj['slug']),net.store.one('SELECT * FROM functions WHERE id=?',fn['id']))!=starting_digest:
+        if digest(net,net.project_row(proj['slug']),net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id']))!=starting_digest:
             raise NetworkError('Build inputs changed while rechecking. Run preparation again.')
         net._record(fn,agent,0,item['source'],0,matched=True,via='local-source-review',
                     effective_settings=result.effective_settings,prepared_header=item['header'],
@@ -222,7 +222,7 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
     for attempt in range(2):
         fresh = net.project_row(proj['slug'])
         current = net._function(fn['name'], proj['slug'])
-        claim = net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', current['id'])
+        claim = net.project_store(proj['id']).one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', current['id'])
         from ..permuter_claims import nonexclusive
         if not agent or (not nonexclusive(agent) and (not claim or claim['agent_id'] != agent.id or claim['expires_at'] <= time.time())):
             raise NetworkError('The prepared bundle claim expired or changed. Claim the function and submit a fresh proposal.')
@@ -236,7 +236,7 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
             state = prep.inputs(net, net.project_row(proj['slug']), latest)
             changed = changed_inputs(expected, state)
             if attempt == 0 and latest['status'] == 'open' and retry_inputs(expected, state):
-                claim = net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', latest['id'])
+                claim = net.project_store(proj['id']).one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', latest['id'])
                 if nonexclusive(agent) or (claim and claim['agent_id'] == agent.id and claim['expires_at'] > time.time()):
                     expected = state
                     continue
@@ -279,16 +279,16 @@ def _promote_measured(net, proj, fn, source, header, settings, agent, expected):
 def auto_existing(net, proj, fn, agent):
     """Rejudge one untried historical exact pair, including budget-limited deep searches."""
     if not prep.settings(net,proj).get('auto_exact'):return None
-    rows=net.store.all("SELECT signature FROM reuse_trials WHERE function_id=? AND outcome='0' "
+    rows=net.project_store(proj['id']).all("SELECT signature FROM reuse_trials WHERE function_id=? AND outcome='0' "
                        "AND (signature LIKE 'local-source-profile-%' OR signature LIKE 'local-source-deep-profile-%') "
                        "ORDER BY rowid DESC",fn['id'])
     if not rows:return None
     scope=digest(net,proj,fn)
-    checked={r['signature'] for r in net.store.all("SELECT signature FROM reuse_trials WHERE function_id=? AND signature LIKE 'local-source-auto-recheck:%'",fn['id'])}
+    checked={r['signature'] for r in net.project_store(proj['id']).all("SELECT signature FROM reuse_trials WHERE function_id=? AND signature LIKE 'local-source-auto-recheck:%'",fn['id'])}
     for row in rows:
         key='local-source-auto-recheck:'+hashlib.sha256((scope+row['signature']).encode()).hexdigest()
         if key in checked:continue
-        saved=net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],row['signature'])
+        saved=net.project_store(proj['id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],row['signature'])
         if not saved:continue
         try:item=json.loads(saved['feedback'] or '{}')
         except (ValueError,TypeError):continue
@@ -299,7 +299,7 @@ def auto_existing(net, proj, fn, agent):
                              {'toolchain':item['toolchain'],'flags':item['flags']},agent,expected)
             return {'tested':1,'matched':True}
         except NetworkError as error:
-            with net.store.tx() as db:
+            with net.project_store(proj['id']).tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                            (fn['id'],key,'failed',str(error)[:1200]))
             return {'tested':1,'matched':False,'error':str(error)}
