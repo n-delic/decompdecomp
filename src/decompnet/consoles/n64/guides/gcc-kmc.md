@@ -1383,3 +1383,12 @@ value still read along a branch, goto or next loop iteration. The app's bounded
 One controlled example improved565→485, but remained nonmatching and lost some
 correct register roles; do not confuse a lower advisory score with exactness.
 A fresh named temporary was already tested in that example and did not help.
+
+### Check second CSE before explaining late stack space
+
+In the pinned KMC-compatible GCC 2.7.2 pipeline, `.cse2` follows loop optimization
+and precedes flow and global allocation/reload. It cannot remove a slot that
+reload has not allocated yet. Check reload-local changes and later jump
+optimization separately, using retained dumps. An unused target frame gap is
+not permission to add padding or an otherwise unused local. Phase comparison
+includes CSE2, but changes and renumbered pseudos remain investigation leads.

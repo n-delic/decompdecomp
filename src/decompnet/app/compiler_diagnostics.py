@@ -15,7 +15,9 @@ from ..compiler import capture_artifacts, compile_source
 from ..elfobj import extract_function
 from ..project import compiler_config
 
-PHASES = {'rtl','jump','cse','cse2','loop','flow','combine','sched','lreg','greg','sched2','jump2','dbr'}
+# Legacy GCC runs its second CSE after loop optimization, before flow/allocation.
+PHASE_ORDER = ('rtl','jump','cse','loop','cse2','flow','combine','sched','lreg','greg','sched2','jump2','dbr')
+PHASES = set(PHASE_ORDER)
 
 
 def allocated_output(raw):
@@ -127,7 +129,7 @@ def compare(before,after):
     from .rtl_value_trace import compare as compare_values
     values=compare_values(before.get('value_trace'),after.get('value_trace'))
     phases = []
-    for phase in ('rtl','jump','cse','loop','flow','combine','sched','lreg','greg','sched2','jump2','dbr'):
+    for phase in PHASE_ORDER:
         a,b = before.get('phases',{}).get(phase),after.get('phases',{}).get(phase)
         if not a or not b:continue
         if a.get('truncated') or b.get('truncated'):continue
