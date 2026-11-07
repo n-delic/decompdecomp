@@ -5822,3 +5822,10 @@ this use as unknown. The bounded reader now crosses known stores that do not rea
 This is a reader correction, not a new compiler scheduling rule. Automatic
 return-type publication additionally needs reconciled caller declarations, ordinary
 byte/data verdicts and a complete image rebuild; caller evidence alone is insufficient.
+
+**Controlled application regression:** the original guarded-return/lifetime checkpoint
+now reaches ordinary adoption without an agent: 5 search builds, discarded direct caller
+evidence, both linked source verdicts and a byte-identical 12,582,912-byte image. The
+minimal control retained one existing C caller and used original assembly elsewhere.
+The full 2,079-match snapshot instead hit an unrelated export constant-mapping failure
+and was rejected unchanged. These are different controls, not equivalent success claims.

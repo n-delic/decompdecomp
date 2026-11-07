@@ -87,4 +87,4 @@ def apply(net, agent, proj, fn, source, log):
             log('Return repair was committed; follow-up notification failed: '+str(error))
             return dict(matched=True,affected=[u['function']['name'] for u in updates],notification_error=str(error),**verification)
         log('Return repair remains diagnostic: '+str(error))
-        return {'matched':False,'reason':str(error)}
+        return dict(matched=False,reason=str(error),**getattr(error,'verification',{}))

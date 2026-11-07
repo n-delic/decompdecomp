@@ -120,7 +120,7 @@ def test_stage_rebuild_rejects_false_identical_claim(tmp_path,monkeypatch):
     monkeypatch.setattr(RomNetwork,'_evaluate',lambda *a:(b'test',True,None))
     def export(self,stage,slug,out,log):
         out.mkdir();(out/'original').write_bytes(b'original');(out/'output').write_bytes(b'corrupt')
-        (out/'build.json').write_text(json.dumps({'image':'original','output':'output','sha1':'not valid','functions':[{'name':'f','kind':'c'},{'name':'caller','kind':'c'}]}))
+        (out/'build.json').write_text(json.dumps({'image':'original','output':'output','sha1':'not valid','functions':[{'name':'f','c':'src/f.c'},{'name':'caller','c':'src/caller.c'}]}))
         return {'identical':True}
     from decompnet.consoles import Console
     monkeypatch.setattr(Console,'export_project',export)
@@ -203,3 +203,15 @@ def test_caller_header_is_preserved_privately_without_changing_shared_context(tm
     assert caller['unit']!='caller_unit'
     assert net._context(1,caller['unit'])['header']=='int f(int a);'
     assert net._context(1,'caller_unit')['header']=='void f(int a);'
+
+
+def test_failed_full_build_keeps_cause_and_verification_metrics(tmp_path,monkeypatch):
+    net,agent=game(tmp_path,monkeypatch)
+    def verify(*args):
+        error=NetworkError('Unverified constant reads in an existing function')
+        error.verification={'rebuild_verified':False,'rebuild_seconds':12,'judge_compiles':2}
+        raise error
+    monkeypatch.setattr(staging,'verify',verify)
+    result=invoke(net,agent)
+    assert not result['matched'] and result['rebuild_verified'] is False
+    assert result['rebuild_seconds']==12 and 'constant reads' in result['reason']

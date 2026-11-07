@@ -162,3 +162,22 @@ and export rechecks. The long build does not hold the live progress lock. No mod
 checked between verification phases and before commit; the exporter's in-flight build can finish
 before cancellation takes effect. Application metrics report the affected judge builds, full-build
 source rechecks, image hash and rebuild duration separately from search candidate counts.
+
+### Staged application regression, 7 November 2026
+
+A controlled real-ROM replay restored the original score-215 source and one already matched
+caller; all unrelated functions used original assembly. Discovery found the exact shape in
+**5 search builds** (3 candidates plus 2 allocation captures), **3.10 seconds**. It then
+verified both affected functions, reconciled the caller declaration, rebuilt all **12,582,912
+bytes** identically and published both ordinary match records atomically. Total elapsed time
+was **29.43 seconds**, including **11.05 seconds** for export/full rebuild; **0 model calls**.
+The replay counted 9 setup/search/individual-verification calls; export source rechecks and
+full-build compilation are separate work. This is controlled rediscovery of a known match,
+not a newly decompiled function or a model comparison.
+
+The full copied 2,079-match snapshot was also tested. Discovery and affected-function judging
+passed, but its full export failed on unrelated unverified constant reads in another existing
+function. The bundle was correctly rejected and its original saved source retained. This is
+not a successful whole-project replay: the existing export needs reviewed constant-data
+mappings before automatic return publication can succeed there. The gate does not downgrade
+existing C to assembly to force a pass. No live project or running app was modified.

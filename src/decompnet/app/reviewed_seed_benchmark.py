@@ -53,7 +53,7 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
         diagnostic_verification_seconds=None,diagnostic_verified=None,
         rebuild_seconds=None,rebuild_verified=None)
     application=outcome.get('application',{})
-    if application.get('matched'):
+    if application.get('rebuild_verified') is not None:
         report.update(rebuild_verified=application['rebuild_verified'],rebuild_seconds=application['rebuild_seconds'])
         report['total_judge_or_diagnostic_compiles']+=application['judge_compiles']
         report['full_build_source_rechecks']=application['matched_source_rechecks']

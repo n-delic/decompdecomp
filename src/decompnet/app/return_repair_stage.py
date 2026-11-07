@@ -70,6 +70,13 @@ def verify(net, state, updates, files, directory, log):
     cfg=json.loads(proj['config'])
     for key in ('progress_folder','save_folder','export','auto_commit_folder','auto_commit_matches','auto_push','autopilot'):
         cfg.pop(key,None)
+    began=None
+    result={}
+    def failed(error):
+        if began is not None:
+            error.verification=dict(rebuild_verified=False,rebuild_seconds=time.monotonic()-began,
+                                    judge_compiles=len(updates),matched_source_rechecks=result.get('matched',0))
+        return error
     compiles=ThreadPoolExecutor(max_workers=4)
     try:
         with staged.store.tx() as db:
@@ -119,12 +126,12 @@ def verify(net, state, updates, files, directory, log):
         began=time.monotonic()
         result=staged.console(stage_proj).export_project(staged,proj['slug'],output,log=log)
         log.check_cancel()
-        if not result.get('identical'):raise NetworkError('The staged return repair failed its complete rebuild; saved C is unchanged.')
+        if not result.get('identical'):raise NetworkError('The staged return repair failed its complete rebuild; saved C is unchanged.\n'+result.get('log','')[-1200:])
         if result.get('fallback'):
             raise NetworkError('An existing matched source fell back to assembly; the return repair was not applied.')
         manifest=json.loads((output/'build.json').read_text())
         expected_names={r['name'] for r in state['functions'] if r['status']=='matched'}|{u['function']['name'] for u in updates}
-        compiled_names={f['name'] for f in manifest['functions'] if f['kind']=='c'}
+        compiled_names={f['name'] for f in manifest['functions'] if f.get('c')}
         if not expected_names.issubset(compiled_names):
             raise NetworkError('The staged rebuild omitted matched C; the return repair was not applied.')
         reference=manifest.get('cartridge',{}).get('image',manifest['image'])
@@ -140,8 +147,10 @@ def verify(net, state, updates, files, directory, log):
             raise NetworkError('The staged rebuilt image differs; saved C is unchanged.')
         return dict(image_sha256=hashlib.sha256(rebuilt).hexdigest(),image_bytes=len(rebuilt),verified_functions=len(updates),judge_compiles=len(updates),
                     rebuild_verified=True,rebuild_seconds=time.monotonic()-began,matched_source_rechecks=result['matched'])
+    except NetworkError as error:
+        raise failed(error)
     except (OSError, subprocess.SubprocessError, ExportError) as error:
-        raise NetworkError('The staged return rebuild could not finish: '+str(error)) from error
+        raise failed(NetworkError('The staged return rebuild could not finish: '+str(error))) from error
     finally:
         compiles.shutdown(wait=True,cancel_futures=True)
         staged._pool.shutdown(wait=True)
