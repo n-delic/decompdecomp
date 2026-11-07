@@ -17,8 +17,10 @@ from . import (
 )
 
 # Lower judge distance is better; exact matches have their own commit pipeline.
+# Presence is metadata: packed sources are nonempty hash blobs (only large text is
+# packed). Read the physical rows here so queue polling never decompresses C.
 PENDING = """SELECT f.id,f.name,f.unit,f.vram,f.rom_offset,f.best_score,b.score AS baseline_score
- FROM functions f LEFT JOIN score_commit_baselines b ON b.function_id=f.id AND b.project_id=f.project_id
+ FROM main.functions f LEFT JOIN score_commit_baselines b ON b.function_id=f.id AND b.project_id=f.project_id
  WHERE f.project_id=? AND f.status='open' AND f.best_source IS NOT NULL AND f.best_source!=''
  AND f.best_score>=0 AND (b.score IS NULL OR f.best_score<b.score)"""
 
