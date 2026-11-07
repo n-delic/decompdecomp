@@ -75,6 +75,8 @@ class Search(Permuter):
         self.limit = max_variants
         self.log = log
         self.tested = self.skipped = self.visited = self.rejected = 0
+        from .search_efficiency import Measurements
+        self.efficiency = Measurements()
         self.starting_score = fn['best_score'] if fn is not None else None
         self.best = self.starting_score
         self.max_score = max(1, fn['n_insns'] or 0) * scoring.PENALTY_INSERTION if fn is not None else None
@@ -157,7 +159,7 @@ class Search(Permuter):
         if self.tested >= self.limit:
             raise SearchLimit('Variant limit reached')
 
-    def metrics(self):
+    def metrics(self, *, detail=True):
         """Use the ordinary score scale; a near miss must never round up to a displayed 100%."""
         def percent(score):
             if score is None or self.max_score is None:
@@ -168,7 +170,8 @@ class Search(Permuter):
                 'best_score': self.best, 'best_percent': percent(self.best), 'improvements': self.improvements,
                 'local_search': self.local_status, 'reviewed_seeds':self.reviewed_seed_result,
                 'allocation_trials':self.allocation_trials,
-                'allocation_diagnostic_compiles':self.allocation_diagnostic_compiles}
+                'allocation_diagnostic_compiles':self.allocation_diagnostic_compiles,
+                'efficiency':self.efficiency.snapshot(detail=detail)}
 
     def report(self, *, force=False):
         if self.best is not None and (self.recorded_best is None or self.best < self.recorded_best):
@@ -181,7 +184,7 @@ class Search(Permuter):
             return
         self._reported_state, self._reported_at = urgent, now
         self.log.progress({'phase': self.phase, 'tested': self.tested, 'skipped': self.skipped,
-                           **self.metrics(), 'variant_limit': self.limit, 'rejected': self.rejected,
+                           **self.metrics(detail=False), 'variant_limit': self.limit, 'rejected': self.rejected,
                            'seconds_left': max(0, round(self.deadline-time.monotonic())), 'refinement_rounds': self.refinement_rounds,
                            'current_family': self.current_family, 'last_outcome': self.last_outcome,
                            'last_score': self.last_score, 'visited': self.visited})
@@ -189,6 +192,13 @@ class Search(Permuter):
     def recipe(self, fn, source, best, score, outcome, elapsed_ms=0):
         provenance = current_trial() or {'kind': self.phase, 'family': 'unattributed'}
         family = provenance.get('family') or 'unattributed'
+        if outcome in ('tested', 'skipped'):
+            pool=getattr(self,'compile_pool',None)
+            if score==0 and outcome=='tested' and pool is not None:pool.metrics.exact()
+            self.efficiency.observe(family, score=score, best=self.best if self.best is not None else best,
+                output=getattr(self,'_trial_output',None), granularity=getattr(self,'_trial_output_granularity',None),
+                scope=getattr(self,'_efficiency_scope',None), cached=outcome=='skipped',
+                exact=score==0, path=provenance.get('lineage') or [family])
         detail = ('compile failed' if getattr(self, '_trial_outcome', '') == 'compile_failed' else 'unscored')
         self.current_family, self.last_outcome, self.last_score = (
             family, detail if outcome == 'tested' and score is None else outcome, score)
@@ -711,6 +721,7 @@ class Search(Permuter):
         # miss is reusable only in that scope. Better cached results are rejudged before being kept.
         scope = getattr(self, '_primed_scopes', {}).get(recent_key) if recent_key is not None else None
         if scope is None:scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
+        self._efficiency_scope = scope
         key = 'deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest()
         pending = trial_bookkeeping.lookup(self.net.project_store(proj['id']), ('reuse_trials', fn['id'], key))
         primed = getattr(self, '_primed_trials', {})

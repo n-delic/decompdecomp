@@ -25,8 +25,11 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
     started = time.monotonic()
     state = dict(pending=[dict(source=source, depth=0, ceiling=baseline_score)], next=[], seen=[source], explore_plateaus=True, paired_search=paired_search,output_diversity=output_diversity)
     results = []
+    from .search_efficiency import Measurements
+    efficiency = Measurements()
     check_cancel()
     baseline = evaluate(source)
+    best_measured = [baseline.get('score')]
     baseline_diagnostics=diagnostics(baseline,arch)
 
     def judge(candidate):
@@ -44,6 +47,11 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
                    'diagnostics':measured_diagnostics,
                    'elapsed_seconds': time.monotonic()-trial_started}
             results.append(row)
+            efficiency.observe(row['family'],score=report.get('score'),best=best_measured[0],
+                output=report.get('output_fingerprint'),granularity=report.get('output_granularity','allocated_object'),
+                scope='frozen-case',exact=bool(report.get('matched')),path=row['path'])
+            if isinstance(report.get('score'),(int,float)) and (best_measured[0] is None or report['score']<best_measured[0]):
+                best_measured[0]=report['score']
             progress({'tested': len(results), 'budget': trials, **row})
         return report
 
@@ -69,6 +77,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             'trials': results, 'summary': dict(Counter(r['outcome'] for r in results)),
             'remaining': len(state['pending']), 'reason': reason, 'elapsed_seconds': time.monotonic()-started,
             'candidate_compiles': len(results),
+            'efficiency':efficiency.snapshot(),
             'first_exact_trial': next((i+1 for i, r in enumerate(results) if r['exact']), None),
             'exact_alternatives': len(state.get('exact', [])), 'winning_path': state.get('winning_path'),
             'search_counts': state.get('counts', {}), 'regional_combination_bursts':state.get('regional_bursts',0),
@@ -100,7 +109,11 @@ def batch(cases, evaluate, generate, *, trials=32, seconds=30, check_cancel=lamb
                      trials=trials, deadline=started+seconds,
                      check_cancel=check_cancel, collect_exact=True, generate_report=generate_report, arch=case.get('arch'),header=case.get('header',''))
         reports.append({'case': case['scope'], 'source_sha256': hashlib.sha256(case['source'].encode()).hexdigest(), **result})
-    return {'cases': reports, 'trial_budget': trials, 'seconds_budget': seconds, 'functions': len(reports),
+    from ..claim_stalls import repair_rules
+    from .search_efficiency import combine
+    return {'cases': reports, 'efficiency':combine([r['efficiency'] for r in reports]),
+            'rules_sha256':hashlib.sha256(repr(repair_rules()).encode()).hexdigest(),
+            'trial_budget': trials, 'seconds_budget': seconds, 'functions': len(reports),
             'matched_functions': sum(r['first_exact_trial'] is not None and not r['baseline_exact'] for r in reports),
             'improved_functions': sum(isinstance(r['best_score'], (int,float)) and isinstance(r['baseline_score'], (int,float))
                                       and r['best_score'] < r['baseline_score'] for r in reports),

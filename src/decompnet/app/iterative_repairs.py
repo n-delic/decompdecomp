@@ -379,7 +379,7 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
-                      selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None):
+                      selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None, omit_families=()):
     key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'), report.get('repair_locations'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused, entry_scope)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None
@@ -389,6 +389,7 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
             pool_cache[key] = result
             while len(pool_cache) > 2:
                 del pool_cache[next(iter(pool_cache))]
+    result=[item for item in result if item[0] not in omit_families]
     preferred = repair_selection.COMPLEMENTS.get((report.get('repair_path') or [''])[-1], ())
     quota = min(repair_selection.FOLLOWUP_WINDOW, max(0, limit-2))
     prefix = [item for item in result if item[0] in preferred[:1]][:quota]
