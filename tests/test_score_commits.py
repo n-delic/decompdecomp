@@ -204,3 +204,40 @@ def test_zero_distance_without_an_exact_verdict_is_still_a_draft(automatic):
     assert manifest['functions']['f']['best_score'] == 0
     assert 'matched_by' not in manifest['functions']['f']
     assert 'best/f.c' in git(root, 'show', '--format=', '--name-only', 'HEAD')
+
+
+@pytest.mark.parametrize('worker', ['matches', 'scores'])
+def test_busy_progress_save_does_not_hold_repository_or_block_push(automatic, worker):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_operations
+    net, root, _, _ = automatic
+    if worker == 'scores':
+        enable(automatic, threshold=1)
+        improve(automatic)
+        process = score_commits.process
+        pending = lambda: state(net)['pending']
+    else:
+        test_match_commits.enable(automatic)
+        test_match_commits.match(automatic)
+        process = match_commits.process
+        pending = lambda: match_commits.status(net, net.store.one("SELECT * FROM projects WHERE slug='game'"))['pending']
+    saving, release = threading.Event(), threading.Event()
+    def save():
+        with net.progress._project_lock('game'):
+            saving.set()
+            assert release.wait(10)
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(save)
+        try:
+            assert saving.wait(5)
+            process(net, 'game')
+            with repository_operations.operation(root, 'game', 'Pushing commits', lambda _: None) as operation:
+                assert operation is not None
+            assert pending() == 1
+        finally:
+            release.set()
+        future.result(timeout=5)
+    process(net, 'game')
+    assert pending() == 0

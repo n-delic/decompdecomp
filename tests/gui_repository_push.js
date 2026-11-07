@@ -62,8 +62,8 @@ async function reconnect({failure=false}={}) {
   old.resolve(null);await new Promise(resolve=>setImmediate(resolve));
   assert.equal($('repositoryPushStop').hidden,false,'late detached completion cannot hide current Stop');
   const current=followers[1];
-  current.update(['Queued, no Git writes yet'],{progress:{phase:'Queued — waiting for the current repository operation'}});
-  assert.match($('repositoryPushState').textContent,/Queued/);
+  current.update(['Queued, no Git writes yet'],{progress:{phase:'Queued — waiting for Committing a verified match (game): Capturing progress files · waited 1m 05s'}});
+  assert.match($('repositoryPushState').textContent,/Capturing progress files.*waited 1m 05s/);
   await $('repositoryPushStop').onclick();
   assert.equal(requests.at(-1).url,'/api/job/cancel');
   assert.equal(requests.at(-1).options.body.id,'queued-job');

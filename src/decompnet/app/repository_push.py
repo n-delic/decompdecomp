@@ -66,7 +66,7 @@ def run(net, slug, folder, log, *, validate=None):
         getattr(log, 'check_cancel', lambda: None)()
         if validate:validate(root, branch, ref, url)
     progress = getattr(log, 'progress', lambda value: None)
-    with turn(log, check):
+    with turn(root, slug, log, check) as log:
         if checkout(net, slug, folder) != root or destination(root) != (branch, ref) or git(root, 'remote', 'get-url', 'origin') != url:
             raise NetworkError('The checkout, branch or origin changed while this push was queued. Review the destination and push again.')
         head = git(root, 'rev-parse', 'HEAD')

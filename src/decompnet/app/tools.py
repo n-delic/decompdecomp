@@ -568,10 +568,19 @@ def tool_names(fork: bool, console=None, ltcg: bool = False) -> list[str]:
 
 def project_tools(net: RomNetwork, slug: str | None, agent=None, include_disabled=False) -> list[str]:
     """tool_names for a project (None: no project yet)."""
-    fork = bool(slug and net.fork_slug(slug))
-    cfg = net.cfg(net._project(slug)) if fork else {}
+    # Discovery needs the project kind, not a saved-code recheck. fork_slug() uses RomNetwork._project(), which
+    # synchronizes progress even for ROM projects; two slow lists can occupy both MCP metadata workers and block
+    # initialization too. Actual work tools still synchronize through the ordinary project/invocation paths.
+    try:
+        proj = Network._project(net, slug) if slug else None
+        cfg = net.cfg(proj) if proj is not None else {}
+    except NetworkError:
+        return []
+    fork = cfg.get('kind') == 'fork'
+    cfg = cfg if fork else {}
+    from ..forks.project import ForkProject
     from .tool_policy import visible
-    manifest = (net.forks.get(slug)[1].manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
+    manifest = (ForkProject(proj['root'], create_state=False).manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
     names = tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None,
                        bool(manifest.get("ltcg")))
     return names if include_disabled else visible(net, slug, names, agent)
