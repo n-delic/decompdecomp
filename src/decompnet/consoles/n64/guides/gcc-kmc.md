@@ -1408,3 +1408,9 @@ Inspect `.lreg`/`.greg`, local reservations and conflicts, preserve real work, a
 use the ordinary judge. Do not add dummy references or fixed registers. A return-
 lifetime change also needs compatible caller declarations and evidence about
 whether callers consume the result; unused fallthrough is not a defined result.
+
+The shared `loop_weight_scope` repair includes complete scalar quotient
+assignments, with space reserved alongside update and pointer-load scopes.
+It keeps the original arithmetic and excludes calls, hidden writes and control
+transfers. It does not infer return types. These proposals still need the judge;
+a scope helps only when the resulting allocation and complete output agree.

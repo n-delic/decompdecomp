@@ -34,7 +34,7 @@ def test_formatting_code_update_changes_worker_revision(tmp_path, monkeypatch):
     assert permuter_worker.revision() != before
 
 
-@pytest.mark.parametrize('module', ['argument_mask_repairs.py', 'inline_scheduling_repairs.py'])
+@pytest.mark.parametrize('module', ['argument_mask_repairs.py', 'inline_scheduling_repairs.py', 'loop_weight_repairs.py'])
 def test_argument_capture_update_changes_worker_revision(tmp_path, monkeypatch, module):
     (tmp_path/'app').mkdir()
     monkeypatch.setattr(permuter_worker, '__file__', str(tmp_path/'app'/'permuter_worker.py'))
