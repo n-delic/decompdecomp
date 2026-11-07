@@ -19,7 +19,7 @@ def entries(obj):
 
 
 def named_row(net, proj, name):
-    row = net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?', proj['id'], name)
+    row = net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND name=?', proj['id'], name)
     if row is not None:
         return row
     # A rename regression judges proposed names before committing them to the database.
@@ -28,7 +28,7 @@ def named_row(net, proj, name):
     address = trial.resolve(name) if trial is not None else None
     if address is None:
         return None
-    row = net.store.one('SELECT * FROM functions WHERE project_id=? AND vram=?', proj['id'], address)
+    row = net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND vram=?', proj['id'], address)
     return dict(row, name=name) if row is not None else None
 
 

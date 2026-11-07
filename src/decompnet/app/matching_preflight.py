@@ -77,7 +77,7 @@ def _run(net, proj, fn, log, check, max_profiles):
         with compiler.cancellable(ensure):
             for flags, source in probes:
                 probe_key = key+':probe:'+hashlib.sha256(repr((flags,source)).encode()).hexdigest()
-                old = net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], probe_key)
+                old = net.project_store(proj['id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], probe_key)
                 if old:
                     item = json.loads(old['feedback'])
                 else:
@@ -94,7 +94,7 @@ def _run(net, proj, fn, log, check, max_profiles):
                     if item['link']:
                         from .helper_call_diagnostics import suggestions
                         for hint in suggestions(getattr(diff, 'rows', [])):log(hint)
-                    with net.store.tx() as db:
+                    with net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                                    (fn['id'],probe_key,'profile','completed bounded profile',json.dumps(item)))
                 if item.get('link'):
@@ -111,7 +111,7 @@ def _run(net, proj, fn, log, check, max_profiles):
     if check() is False:
         return result
     result['cached'] = result['tested'] == 0
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                    (fn['id'],key,'preflight','resumable compiler preflight',json.dumps(result)))
     if result['pending']:
@@ -151,7 +151,7 @@ def _run(net, proj, fn, log, check, max_profiles):
                         if not result['applied']:log(said)
                     if best_key:
                         best['notified']=not best['exact'] or bool(result.get('applied')) or not net.auto_adjusts(fresh)
-                        with net.store.tx() as db:
+                        with net.project_store(proj['id']).tx() as db:
                             db.execute('UPDATE reuse_trials SET feedback=? WHERE function_id=? AND signature=?',
                                        (json.dumps(best),fn['id'],best_key))
                 log('Compiler preflight found a better source/profile hypothesis: '+' '.join(best['flags'])+

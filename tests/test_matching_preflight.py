@@ -30,6 +30,7 @@ def setup():
                           _judge_with=judge, auto_adjusts=lambda p:state['auto'],
                           apply_function_compiler=lambda *a:state['applied'].append(a),
                           local_agent=lambda n:(object(),None), suggest=lambda *a,**k:state['suggested'].append(k))
+    net.project_store = lambda _: net.store
     return net, proj, fn, state
 
 

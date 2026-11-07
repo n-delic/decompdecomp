@@ -19,6 +19,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(context.match,'link',judge)
     net=SimpleNamespace(is_rom=lambda p:True,store=SimpleNamespace(one=lambda sql,pid,name:rows.get(name)),
                         _rom_target=lambda row:row,symbols=lambda pid:object(),reader=lambda p,f:object())
+    net.project_store = lambda _: net.store
     return net,{'id':1,'arch':'mips'},rows,found,calls
 
 

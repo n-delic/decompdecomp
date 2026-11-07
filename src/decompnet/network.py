@@ -435,6 +435,13 @@ class Network:
             raise ValueError("Project storage needs a positive catalog ID or a nonempty slug.")
         return self.store
 
+    def project_stores(self):
+        """Discover operational owners explicitly; shared-layout callers still query once."""
+        groups = {}
+        for row in self.store.all('SELECT id FROM projects ORDER BY id'):
+            groups.setdefault(self.project_store(row['id']), []).append(row['id'])
+        return list(groups.items()) or [(self.store, [])]
+
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
@@ -562,7 +569,14 @@ class Network:
         if project is None:
             name, project = local, scope
         if project is None:
-            rows = self.store.all("SELECT * FROM functions WHERE name=?", name)
+            rows = []
+            for store, ids in self.project_stores():
+                if store is self.store:
+                    rows.extend(store.all('SELECT * FROM functions WHERE name=? LIMIT 2', name))
+                else:
+                    rows.extend(store.all('SELECT * FROM functions WHERE name=? AND project_id IN '
+                                          '(SELECT value FROM json_each(?)) LIMIT 2', name, json.dumps(ids)))
+                if len(rows) > 1:break
             if len(rows) > 1:
                 raise NetworkError(f"{name!r} exists in several projects; pass `project`")
             row = rows[0] if rows else None
@@ -688,13 +702,14 @@ class Network:
         while len(self._compiled) > REPEATS_KEPT:
             self._compiled.popitem(last=False)
 
-    def same_score_note(self, fn_id: int, agent_id: int, score: int | None, source: str) -> str:
+    def same_score_note(self, fn_id: int, agent_id: int, score: int | None, source: str, *, project_id=None) -> str:
         """When a new variant only reproduces a score an earlier, different source of this claim had: which compile
         it equals (in one project, 21 of 56 compiles in two long sessions did, 1001 seven times on one function)."""
-        st = self.stall_status(fn_id, agent_id)
+        store = self.project_store(project_id) if project_id is not None else self.store
+        st = self.stall_status(fn_id, agent_id, project_id=project_id)
         if score is None or st["claimed_at"] is None:
             return ""
-        rows = self.store.all("SELECT score, source FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+        rows = store.all("SELECT score, source FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
                               "ORDER BY id", fn_id, agent_id, st["claimed_at"])
         mine = normalized_source(source)
         for k, r in enumerate(rows[:-1], 1):  # (the last row is this compile)
@@ -797,24 +812,28 @@ class Network:
 
     def claim(self, agent: Agent, project: str | None = None, function: str | None = None,
               strategy: str = "easiest") -> str:
-        still = self.still_holding(agent, function)
+        still = self.still_holding(agent, function, project=project)
         fn = self.claim_row(agent, project, function, strategy)
         if fn is None:
             return self.nothing_to_claim(agent, self._project(project))
         return still + self._brief(fn, agent, header="CLAIMED")
 
-    def still_holding(self, agent: Agent, function: str | None) -> str:
+    def still_holding(self, agent: Agent, function: str | None, *, project=None) -> str:
         """What to say first when claim_function (no function named) gives an agent the one it already holds: after
         a pushed-back release it still does, and an agent read the same brief coming back as the queue handing it
         back the function it had just released."""
         if function:
             return ""
-        held = self.store.one("SELECT f.name, c.claimed_at FROM claims c JOIN functions f ON f.id=c.function_id "
-                              "WHERE c.agent_id=?", agent.id)
-        if held is None or not self.store.one(
-                "SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND created_at >= ?",
-                agent.id, held["name"], held["claimed_at"] or 0):
-            return ""  # an ordinary renewal of the claim
+        stores = [(self.project_store(project), [])] if project else self.project_stores()
+        held = None
+        for store, _ in stores:
+            held = store.one("SELECT f.name,c.claimed_at FROM claims c JOIN functions f ON f.id=c.function_id "
+                             "WHERE c.agent_id=?", agent.id)
+            if held is not None:
+                if store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? "
+                             "AND created_at>=?", agent.id, held['name'], held['claimed_at'] or 0):break
+                return ''
+        if held is None:return ''
         return (f"You still hold {held['name']}: it wasn't released (release_function was pushed back), so this is "
                 "your claim on it, not a new one. Compile the next step; release_function goes through once you've "
                 "compiled it, when you ask again.\n\n")
@@ -825,7 +844,7 @@ class Network:
         row = db.execute("SELECT MAX(created_at) AS t FROM events WHERE agent_id=? AND kind IN ('freed', 'stopped')",
                          (agent_id,)).fetchone()
         from .pause_scope import cooldown_start
-        worker=db.execute('SELECT id,name FROM agents WHERE id=?',(agent_id,)).fetchone()
+        worker=self.store.one('SELECT id,name FROM agents WHERE id=?',agent_id)
         boundary=cooldown_start(self,proj,worker) if proj is not None and worker else 0
         return max(now - SELF_RELEASE_WINDOW, (row["t"] if row else None) or 0, boundary)
 
@@ -834,17 +853,19 @@ class Network:
         long), ones it set aside itself (which it can still take by name), or really all done. A bare "nothing left"
         sent four helpers away from a project with ten open functions."""
         now = time.time()
-        n_open = self.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'",
+        n_open = self.project_store(proj['id']).one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'",
                                 proj["id"])["n"]
         if not n_open:
             return f"Nothing left to claim in {proj['slug']}: every function{scope} matches. 🎉"
-        held = self.store.all(
-            "SELECT f.name, a.name AS agent, c.expires_at FROM claims c JOIN functions f ON f.id=c.function_id "
-            "LEFT JOIN agents a ON a.id=c.agent_id WHERE f.project_id=? AND f.status='open' ORDER BY c.expires_at",
+        held = self.project_store(proj['id']).all(
+            "SELECT f.name,c.agent_id,c.expires_at FROM claims c JOIN functions f ON f.id=c.function_id "
+            "WHERE f.project_id=? AND f.status='open' ORDER BY c.expires_at",
             proj["id"])
-        with self.store.tx() as db:
+        from .app.project_labels import label
+        held = label(self, held, {'agent':'agent_id'})
+        with self.project_store(proj['id']).tx() as db:
             cutoff = self._own_release_cutoff(db, agent.id, now, proj)
-        mine = self.store.all(
+        mine = self.project_store(proj['id']).all(
             "SELECT DISTINCT f.name FROM functions f JOIN events e ON e.project_id=f.project_id AND e.detail=f.name "
             "WHERE f.project_id=? AND f.status='open' AND e.agent_id=? AND e.kind='release' AND e.created_at > ? "
             "AND f.id NOT IN (SELECT function_id FROM claims) ORDER BY f.name", proj["id"], agent.id, cutoff)
@@ -1015,7 +1036,7 @@ class Network:
         paused = claim_stalls.blocked(self, proj, agent)
         from .app.data_regions import blocked as data_blocked
         excluded.update(data_blocked(self, proj))
-        row = self.store.one(
+        row = self.project_store(project).one(
             "SELECT COUNT(*) selected, "
             "COALESCE(SUM(f.id NOT IN (SELECT value FROM json_each(?))),0) eligible, "
             "COALESCE(SUM(f.id NOT IN (SELECT value FROM json_each(?)) AND "
@@ -1038,7 +1059,7 @@ class Network:
             excluded.update(claim_stalls.blocked(self,self._project(project),agent))
         from .app.data_regions import blocked as data_blocked
         excluded.update(data_blocked(self,self._project(project)))
-        return self.store.one(
+        return self.project_store(project).one(
             "SELECT COUNT(*) AS n FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? "
             "AND f.id NOT IN (SELECT value FROM json_each(?)) "
             "AND (?=0 OR f.id NOT IN (SELECT function_id FROM claims WHERE expires_at>?)) "
@@ -1050,7 +1071,7 @@ class Network:
 
     def selection_wait_reason(self, project: str, agent: Agent, *, counts: dict | None = None) -> tuple[str, str]:
         """Explain the automatic-selection gate without implying its timer resets exhaustion."""
-        total = self.store.one("SELECT COUNT(*) n FROM functions f JOIN projects p ON p.id=f.project_id "
+        total = self.project_store(project).one("SELECT COUNT(*) n FROM functions f JOIN projects p ON p.id=f.project_id "
                                "WHERE p.slug=? AND f.status='open'", project)["n"]
         counts = counts if counts is not None else self.selection_counts(project, agent)
         selected, eligible = counts['selected'], counts['eligible']
@@ -1059,13 +1080,13 @@ class Network:
         facts = [f"{paused} unchanged candidates paused in this worker's selection"] if paused else []
         from .app.boundary_repairs import blocked as boundary_blocked
         review_ids=boundary_blocked(self,self._project(project))
-        review_count=self.store.one("SELECT COUNT(*) n FROM functions WHERE status='open' AND gone_mark IS NULL AND id IN (SELECT value FROM json_each(?))",json.dumps(list(review_ids)))['n']
+        review_count=self.project_store(project).one("SELECT COUNT(*) n FROM functions WHERE status='open' AND gone_mark IS NULL AND id IN (SELECT value FROM json_each(?))",json.dumps(list(review_ids)))['n']
         if review_count:facts.append(f"{review_count} incomplete entries waiting for boundary review")
         if filtered:
             facts.append(f"{filtered} open functions excluded by this worker's Work selection")
         if not facts:
             facts.append(f"{total} open functions; none currently available for automatic selection")
-        held = self.store.one("SELECT COUNT(*) n FROM claims c JOIN functions f ON f.id=c.function_id "
+        held = self.project_store(project).one("SELECT COUNT(*) n FROM claims c JOIN functions f ON f.id=c.function_id "
                               "JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.status='open' "
                               "AND c.expires_at>?", project, time.time())["n"]
         why = "; ".join(facts) + f". Project: {total} open functions, {held} currently claimed (counts can overlap)."
@@ -1110,11 +1131,13 @@ class Network:
         scope = proj["id"] if proj is not None else self._function(function, None)["project_id"]
         store = self.project_store(scope)
         now = time.time()
+        from .app.local_claims import expiry_ids
+        identities = expiry_ids(self, store)
         with store.tx() as db:
             self.ensure_agent_active(agent)
             region_blocked = data_blocked(self,proj) if proj is not None else []
             blocked = list(set(blocked) | set(region_blocked))
-            self._expire_claims(db)
+            self._expire_claims(db, **identities)
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                               (agent.id,)).fetchone()
             if batch_from is not None:
@@ -1346,12 +1369,14 @@ class Network:
         # notes from before pieces were joined to a function were about a piece, not about it (decompdecomp's note
         # on a join says so): they don't count
         joined = {r["function_id"]: r["t"] for r in store.all(
-            "SELECT n.function_id, MAX(n.created_at) AS t FROM notes n JOIN agents a ON a.id=n.agent_id WHERE "
-            "n.project_id=? AND a.name='decompdecomp' AND n.text LIKE '%joined%' GROUP BY n.function_id", pid)}
-        for r in store.all("SELECT n.function_id, n.text, n.created_at, a.name FROM notes n JOIN agents a "
-                                "ON a.id=n.agent_id JOIN functions f ON f.id=n.function_id WHERE f.project_id=? AND "
-                                "f.status='open' AND (f.meta IS NULL OR f.meta NOT LIKE '%\"reopened\"%') ORDER BY n.id",
-                                pid):
+            "SELECT n.function_id, MAX(n.created_at) AS t FROM notes n WHERE "
+            "n.project_id=? AND n.agent_id=? AND n.text LIKE '%joined%' GROUP BY n.function_id", pid,
+            (self.store.one("SELECT id FROM agents WHERE name='decompdecomp'") or {'id':None})['id'])}
+        from .app.project_labels import label
+        rows = store.all("SELECT n.function_id,n.text,n.created_at,n.agent_id FROM notes n "
+                         "JOIN functions f ON f.id=n.function_id WHERE f.project_id=? AND "
+                         "f.status='open' AND (f.meta IS NULL OR f.meta NOT LIKE '%\"reopened\"%') ORDER BY n.id", pid)
+        for r in label(self, rows, {'name':'agent_id'}, require=('name',)):
             if r["name"] in ("you", "decompdecomp", *MACHINE_AGENTS) or r["created_at"] <= joined.get(r["function_id"], float("-inf")) \
                     or not NOT_C_NOTE.search(r["text"]) or assembly_blocker(r["text"]):
                 continue
@@ -1406,7 +1431,7 @@ class Network:
         if fn["status"] != "asm" or meta.get("set_aside"):
             return
         meta = {k: v for k, v in meta.items() if k not in ("asm_code", "asm_twin", "not_c")}
-        with self.store.tx() as db:
+        with self.project_store(fn['project_id']).tx() as db:
             db.execute("UPDATE functions SET status='open', meta=? WHERE id=? AND status='asm'", (json.dumps(meta), fn["id"]))
             self._event(db, fn["project_id"], None, "reopen", f"{fn['name']}: open again (pieces were joined to it)")
 
@@ -1428,20 +1453,31 @@ class Network:
         without a function when the agent held none), which ends the agent's run: what it released before no longer
         keeps it off those functions (SELF_RELEASE_WINDOW). Returns the functions released."""
         now, freed = time.time(), []
-        with self.store.tx() as db:
-            own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
-            for aid in agent_ids:
-                rows = db.execute("SELECT f.id, f.project_id, f.name FROM claims c JOIN functions f ON f.id=c.function_id "
-                                  "WHERE c.agent_id=?", (aid,)).fetchall()
-                db.execute("DELETE FROM claims WHERE agent_id=?", (aid,))
-                for r in rows:
-                    if aid not in own:  # decompdecomp's own tries leave no notes
-                        agent_notes.save(db, r["project_id"], r["id"], aid,
-                                         f"Released because its agent stopped ({why}); its attempts are kept.", now)
-                    self._event(db, r["project_id"], aid, "freed", r["name"])
-                    freed.append(r["name"])
-                if not rows:
-                    self._event(db, None, aid, "freed", "")
+        agent_ids = list(agent_ids)
+        if not agent_ids:return freed
+        own = self._machine_agent_ids()
+        names = {r['id']:r['name'] for r in self.store.all(
+            'SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))', json.dumps(agent_ids))}
+        for store, projects in self.project_stores():
+            with store.tx() as db:
+                for aid in agent_ids:
+                    scope = '' if store is self.store else ' AND f.project_id IN (SELECT value FROM json_each(?))'
+                    args = (aid,) if store is self.store else (aid, json.dumps(projects))
+                    rows = db.execute("SELECT f.id,f.project_id,f.name FROM claims c JOIN functions f ON f.id=c.function_id "
+                                      "WHERE c.agent_id=?" + scope, args).fetchall()
+                    for r in rows:
+                        db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (r['id'], aid))
+                        if aid not in own:
+                            agent_notes.save(db, r['project_id'], r['id'], aid,
+                                             f"Released because its agent stopped ({why}); its attempts are kept.",
+                                             now, agent_name=names.get(aid))
+                        self._event(db, r['project_id'], aid, 'freed', r['name'])
+                        freed.append(r['name'])
+                    if not rows:
+                        # Each independent queue needs its own run boundary, even
+                        # when this worker held nothing there at shutdown.
+                        for pid in ([None] if store is self.store else projects):
+                            self._event(db, pid, aid, 'freed', '')
         return freed
 
     def release_local_claims(self, why: str) -> list[str]:
@@ -1518,9 +1554,11 @@ class Network:
     def notes_for_brief(self, fn, best_text: str = "", show: int | None = None, when: bool = True) -> list[str]:
         """A function's notes for its brief (brief_notes), with when its best score was first reached."""
         store = self.project_store(fn["project_id"])
-        rows = store.all("SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
+        rows = store.all("SELECT n.text,n.created_at,n.agent_id FROM notes n "
                               f"WHERE n.function_id=? AND n.text != 'Deep permutation turn ended; improvements shared.' "
                               f"ORDER BY n.created_at DESC,n.id DESC LIMIT {BRIEF_NOTES * 8}", fn["id"])
+        from .app.project_labels import label
+        rows = label(self, rows, {'name':'agent_id'})
         best_at = None
         if fn["status"] != "matched" and fn["best_score"] is not None:
             row = store.one("SELECT MIN(created_at) AS t FROM attempts WHERE function_id=? AND score=?",
@@ -1564,8 +1602,10 @@ class Network:
         self.check_attempt_limit(agent, fn)
 
         # Claim bookkeeping first: you can't score (or get credit) on someone else's function.
+        from .app.local_claims import expiry_ids
+        identities = expiry_ids(self, store)
         with store.tx() as db:
-            self._expire_claims(db)
+            self._expire_claims(db, **identities)
             claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
             scratch = fn["status"] == "matched"
             if not scratch:
@@ -1619,7 +1659,7 @@ class Network:
         elif d.bytes_match:
             return {"text": f"✅ MATCH! {fn['name']} is byte-identical to the target ({fn['n_insns']} instructions). "
                             f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
-                            f"{self.dependents_note(fn['id'])}"
+                            f"{self.dependents_note(fn['id'], project_id=fn['project_id'])}"
                             + ("\n" + checks["message"] if checks.get("message") else ""),
                     "score": 0, "matched": True, "checks": checks}
         else:
@@ -1645,7 +1685,7 @@ class Network:
         text = f"{head}\n{d.render()}{render_source_lines(mapped, source)}{warn}"
         if not scratch:
             self.remember_compile(key, agent, fn, text, d.score)
-            text += self.same_score_note(fn["id"], agent.id, d.score, source)
+            text += self.same_score_note(fn["id"], agent.id, d.score, source, project_id=fn["project_id"])
         return {"text": text + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": d.score, "matched": False, "checks": checks}
 
     @staticmethod
@@ -1756,8 +1796,11 @@ class Network:
         """For a brief: what this function waits for, and what waits for it."""
         store = self.project_store(fn["project_id"])
         out = []
-        row = store.one("SELECT n.name, n.status, a.name AS agent FROM waits w JOIN functions n ON n.id=w.needs_id "
-                             "LEFT JOIN agents a ON a.id=w.agent_id WHERE w.function_id=?", fn["id"])
+        row = store.one("SELECT n.name,n.status,w.agent_id FROM waits w JOIN functions n ON n.id=w.needs_id "
+                        "WHERE w.function_id=?", fn['id'])
+        if row is not None:
+            from .app.project_labels import label
+            row = label(self, [row], {'agent':'agent_id'})[0]
         if row is not None and fn["status"] != "matched":
             if row["status"] == "matched":
                 out += ["", f"### {row['name']} matches now: {row['agent'] or 'an agent'} found this function needs it "
@@ -1779,9 +1822,10 @@ class Network:
                         "matching it unblocks them."]
         return out
 
-    def dependents_note(self, function_id: int) -> str:
+    def dependents_note(self, function_id: int, *, project_id=None) -> str:
         """For a match: the functions that were waiting for it."""
-        rows = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
+        store = self.project_store(project_id) if project_id is not None else self.store
+        rows = store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
                               "AND b.status='open' ORDER BY b.name LIMIT 6", function_id)
         if not rows:
             return ""
@@ -2079,9 +2123,11 @@ class Network:
         """Notes on the project that contain `query`, newest first."""
         proj = self._project(project)
         rows = self.project_store(proj["id"]).all(
-            "SELECT n.text, n.created_at, a.name AS agent, f.name AS fn FROM notes n "
-            "LEFT JOIN agents a ON a.id=n.agent_id LEFT JOIN functions f ON f.id=n.function_id "
+            "SELECT n.text,n.created_at,n.agent_id,f.name AS fn FROM notes n "
+            "LEFT JOIN functions f ON f.id=n.function_id "
             f"WHERE n.project_id=? AND n.text LIKE ? ORDER BY n.id DESC LIMIT {NOTES_FOUND}", proj["id"], f"%{query}%")
+        from .app.project_labels import label
+        rows = label(self, rows, {'agent':'agent_id'})
         if not rows:
             return f"No notes matching {query!r}."
         return "\n".join(f"- [{r['fn'] or 'project'}] ({r['agent']}, {_ago(r['created_at'])}) {r['text']}" for r in rows)

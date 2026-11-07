@@ -35,7 +35,7 @@ def probe(search, agent, proj, fn, source, profile):
     search.visited += 1
     scope = agent_tokens.target_scope(search.net, {**dict(fn), 'best_source':source}, '')
     key = 'deep-profile-v1:'+hashlib.sha256(repr((scope, source, profile)).encode()).hexdigest()
-    cached = search.net.store.one('SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
+    cached = search.net.project_store(proj['id']).one('SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
     if cached and cached['outcome'] == 'miss':
         search.skipped += 1
         return None
@@ -44,7 +44,7 @@ def probe(search, agent, proj, fn, source, profile):
     search.report()
     exact, diff, _ = search.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
     score = (0 if exact else max(1, diff.score)) if diff is not None else None
-    with search.net.store.tx() as db:
+    with search.net.project_store(proj['id']).tx() as db:
         db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                    (fn['id'], key, 'exact' if exact else 'miss' if score is not None else 'compile_failed',
                     'deep compiler profile probe', json.dumps({'score':score, 'profile':profile, **({'source':source} if exact else {})})))
@@ -83,7 +83,7 @@ def probe(search, agent, proj, fn, source, profile):
                     'header':search.net._context(proj['id'], fn['unit'])['header'],
                     **profile, 'inputs':prepared_evidence.digest(search.net, fresh, current),
                     'category':'deep compiler profile', 'diagnostic':'Fresh linked-byte profile verdict; recheck before applying.'}
-        with search.net.store.tx() as db:
+        with search.net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                        (fn['id'], 'local-source-'+key, '0', 'deep compiler profile exact bundle', json.dumps(evidence)))
         # suggest rechecks inputs and respects the user's automatic-compiler-changes preference.

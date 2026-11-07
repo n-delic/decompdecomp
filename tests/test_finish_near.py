@@ -67,7 +67,7 @@ def test_stale_or_regressed_donors_never_supply_prototypes(monkeypatch):
 def test_fair_queue_prefers_unvisited_and_changed_inputs(tmp_path,monkeypatch):
     from decompnet.store import Store
     store=Store(tmp_path/'queue.db')
-    net=SimpleNamespace(store=store)
+    net=SimpleNamespace(store=store,project_store=lambda _:store)
     monkeypatch.setattr(finish_near,'scope',lambda net,proj,fn:fn['best_source'])
     rows=[dict(id=11,best_source='one',best_score=1,n_insns=100),dict(id=12,best_source='two',best_score=2,n_insns=100)]
     assert finish_near.ordered(net,{'id':1},rows)[0]['id']==11

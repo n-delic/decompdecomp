@@ -21,7 +21,7 @@ def run(net, slug, selected, log=print, nonmatches=False):
     proj = net._project(slug)
     cfg = json.loads(proj['config'])
     default, target = profile(cfg['compiler']), profile(selected)
-    rows = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
+    rows = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
     if target == default or not any(profile(compiler_for(cfg, f['vram'], f)) == target for f in rows):
         raise NetworkError('Choose a non-default compiler profile currently used in this project.')
     if toolchains.installed(target[0]) is None:
@@ -32,7 +32,7 @@ def run(net, slug, selected, log=print, nonmatches=False):
     def signature(items):
         return [tuple(f[k] for k in ('id','name','vram','unit','size','target','relocs','meta','status','matched_source','best_source','best_score')) for f in items]
     def headers():
-        return [tuple(r) for r in net.store.all('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', proj['id'])]
+        return [tuple(r) for r in net.project_store(proj['id']).all('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', proj['id'])]
     original_headers = headers()
     state = {'total':len(candidates), 'checked':0, 'passed':0, 'failed':0,
              'profile':{'toolchain':target[0], 'flags':list(target[1])},
@@ -73,9 +73,9 @@ def run(net, slug, selected, log=print, nonmatches=False):
         for future in pending:
             future.cancel()
     cancel()
-    current = net.store.one('SELECT config FROM projects WHERE id=?', proj['id'])
+    current = net.project_store(proj['id']).one('SELECT config FROM projects WHERE id=?', proj['id'])
     current_cfg = json.loads(current['config']) if current else None
-    latest = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id'])
+    latest = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id'])
     latest_candidates = population(latest, current_cfg) if current_cfg else []
     state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
                       or headers() != original_headers or signature(latest_candidates) != signature(candidates))
@@ -89,7 +89,7 @@ def replace_default(net, slug, selected, log=print):
     with net.progress.judging(slug):
         proj = net._project(slug)
         cfg = json.loads(proj['config'])
-        rows = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
+        rows = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
         result = run(net, slug, selected, log)
         if result['stale']:
             raise NetworkError('Code or settings changed during testing. Run the replacement again.')

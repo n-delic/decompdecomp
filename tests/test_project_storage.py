@@ -969,3 +969,52 @@ def test_gui_summaries_history_and_shared_labels_use_selected_files(scoped, tmp_
     assert cross_project_ids(net, net._project('first')) == {10}
     with stores[2].tx() as db:db.execute('UPDATE functions SET target=?', (b'other',))
     assert cross_project_ids(net, net._project('first')) == set()
+
+
+def test_unscoped_lookup_and_stopped_claim_recovery_discover_project_stores(scoped):
+    net, stores = scoped
+    with pytest.raises(NetworkError, match='several projects'):
+        net._function('same_name', None)
+    with stores[1].tx() as db:
+        db.execute("UPDATE functions SET name='unique_name'")
+        db.execute('INSERT INTO claims VALUES(10,1,1,9999999999)')
+    with stores[2].tx() as db:db.execute('INSERT INTO claims VALUES(20,1,1,9999999999)')
+    assert net._function('unique_name', None)['project_id'] == 1
+    assert sorted(net.release_stopped([1], 'test stop')) == ['same_name', 'unique_name']
+    for pid in (1, 2):
+        assert not stores[pid].one('SELECT 1 FROM claims')
+        assert stores[pid].one("SELECT COUNT(*) n FROM notes WHERE text LIKE 'Released because%'")['n'] == 1
+        assert stores[pid].one("SELECT COUNT(*) n FROM events WHERE kind='freed'")['n'] == 1
+    assert not net.store.one('SELECT 1 FROM notes')
+
+
+def test_imported_project_score_refresh_and_selection_use_owner(scoped):
+    from decompnet.app.forkengine import ForkEngine
+    net, stores = scoped
+    import json
+    net.cfg = lambda proj: json.loads(proj['config'])
+    net.is_rom = lambda proj: False
+    with stores[1].tx() as db:
+        db.execute("UPDATE functions SET status='matched',best_score=0,meta=?", ('{"symbol":"same_name"}',))
+    engine = ForkEngine(net)
+    engine._apply_scores(net._project('first'), '', {'same_name':50})
+    first = net._function('same_name', 'first')
+    assert first['status'] == 'open' and first['best_score'] > 0
+    assert net._function('same_name', 'second')['best_score'] is None
+    assert net.selection_counts('first', Agent(1, 'worker', None))['selected'] == 1
+    assert net.selection_remaining('second', Agent(1, 'worker', None)) == 1
+
+
+def test_repair_visit_state_and_predecessor_lookup_use_owner(scoped, monkeypatch):
+    from decompnet.app import finish_near, predecessor_context
+    net, stores = scoped
+    with stores[1].tx() as db:db.execute('UPDATE functions SET best_score=50')
+    first = net._function('same_name', 'first')
+    second = net._function('same_name', 'second')
+    monkeypatch.setattr(finish_near, 'scope', lambda net, proj, fn: str(fn['id']))
+    assert finish_near.ordered(net, net._project('first'), [first]) == [first]
+    finish_near.visited(net, net._project('first'), first)
+    assert stores[1].one('SELECT function_id FROM near_pass_visits')['function_id'] == 10
+    assert not stores[2].one("SELECT 1 FROM sqlite_master WHERE name='near_pass_visits'")
+    assert predecessor_context.named_row(net, net._project('first'), 'same_name')['id'] == 10
+    assert predecessor_context.named_row(net, net._project('second'), 'same_name')['id'] == second['id']

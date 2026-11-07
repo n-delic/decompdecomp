@@ -117,6 +117,13 @@ come from the shared agent registry. Separate-store peer indicators compare
 cached target fingerprints one project at a time. Global notifications, provider
 session routing, imports and cross-game services still need their remaining audit.
 
+Imported-project runtime reads/writes now select project storage for file edits,
+score refreshes, local drafts, claims and inspector history. Compiler application
+batches and matching preflight diagnostics keep their transactions, receipts and
+after-commit callbacks on that same store. Global function-name discovery and
+stopped-worker claim recovery visit project stores explicitly. Project creation,
+removal and the remaining cross-game services still require conversion.
+
 ## Ownership for the completed split
 
 | Storage | Contents |

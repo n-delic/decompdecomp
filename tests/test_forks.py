@@ -920,7 +920,7 @@ def test_a_match_that_is_lost_gets_its_score_back_so_the_queue_doesnt_say_it_is_
         db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,status,best_score,best_source,unit,meta,asm) "
                    "VALUES(2,7,'G',40,10,'open',0,'int G() {}','u','{\"symbol\": \"_G\"}','')")
     eng = ForkEngine.__new__(ForkEngine)
-    eng.net = SimpleNamespace(store=store, _event=lambda db, pid, aid, kind, detail: db.execute(
+    eng.net = SimpleNamespace(store=store, project_store=lambda _:store, _event=lambda db, pid, aid, kind, detail: db.execute(
         "INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,0)", (pid, aid, kind, detail)))
     eng._apply_scores({"id": 7, "root": str(tmp_path)}, "u", {"_F": 52.7, "_G": 90.0}, via="unit diff before a compile")
     rows = {r["name"]: r for r in store.all("SELECT name, status, best_score FROM functions")}

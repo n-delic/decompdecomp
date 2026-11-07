@@ -29,8 +29,8 @@ def scope(net, proj, fn):
 
 def ordered(net, proj, rows):
     """Visit untouched/changed inputs first, then oldest visits, then closest normalized scores."""
-    with net.store.tx() as db:db.execute(SCHEMA)
-    visits={r['function_id']:r for r in net.store.all('SELECT * FROM near_pass_visits WHERE project_id=?',proj['id'])}
+    with net.project_store(proj['id']).tx() as db:db.execute(SCHEMA)
+    visits={r['function_id']:r for r in net.project_store(proj['id']).all('SELECT * FROM near_pass_visits WHERE project_id=?',proj['id'])}
     def key(fn):
         visit=visits.get(fn['id'])
         age=visit['visited'] if visit and visit['scope']==scope(net,proj,fn) else 0
@@ -39,7 +39,7 @@ def ordered(net, proj, rows):
 
 
 def visited(net, proj, fn):
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.execute('INSERT OR REPLACE INTO near_pass_visits VALUES(?,?,?,?)',(fn['id'],proj['id'],scope(net,proj,fn),time.time()))
 
 

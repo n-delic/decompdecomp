@@ -68,7 +68,7 @@ class FileCompilers:
     def _rows_by_file(self, proj) -> dict[str, list]:
         """The project's functions by their source file."""
         out: dict[str, list] = {}
-        for r in self.net.store.all("SELECT id, name, status, meta, best_source FROM functions WHERE project_id=?",
+        for r in self.net.project_store(proj['id']).all("SELECT id, name, status, meta, best_source FROM functions WHERE project_id=?",
                                     proj["id"]):
             if (source := self.net.forks._meta(r).get("source")):
                 out.setdefault(source, []).append(r)
@@ -234,7 +234,7 @@ class FileCompilers:
                                                                            "t": time.time()}))
         suggested = self._suggest_from_map(slug) if found else []
         if found:
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 self.net._event(db, proj["id"], None, "compiler",
                                 f"the compiler survey: {found} function(s) match with another compiler than their file's")
         return {"tried": n, "confirmed": found, "suggested": suggested}
@@ -452,7 +452,7 @@ class FileCompilers:
             source = next((s for s0, _, s, _ in self._files(slug) if s0 == vram), None)
             for f in self._rows_by_file(proj).get(source, ()):
                 self.net.set_priority(slug, f["name"], False)
-        with self.net.store.tx() as db:
+        with self.net.project_store(proj['id']).tx() as db:
             self.net._event(db, proj["id"], None, "compiler", f"range check #{c['id']} ({compiler}): {text}")
 
     def _save(self, slug: str, c: dict, said: str, resolve: str | None = None) -> None:

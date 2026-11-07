@@ -26,7 +26,7 @@ def environment(net,proj,selected):
     # Hash common symbol/config/compiler input once, rather than reformatting the
     # full project symbol inventory for each candidate fingerprint.
     return hashlib.sha256(repr((cfg,proj['root'],proj['arch'],proj['big_endian'],
-            [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
+            [tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
             match_bundle.compiler_identity(selected))).encode()).hexdigest()
 
 
@@ -99,7 +99,7 @@ def apply(net,slug,selected,names,log,receipt=None):
     publish('Preparing selected matches')
     with net.progress.judging(slug):
         proj=net._project(slug)
-        identities=net.store.all('SELECT id,vram,rom_offset,size,name FROM functions WHERE project_id=?',proj['id'])
+        identities=net.project_store(proj['id']).all('SELECT id,vram,rom_offset,size,name FROM functions WHERE project_id=?',proj['id'])
         env=environment(net,proj,selected);cache=remembered(net,slug,selected,receipt)
         boundaries=blocked(net,proj)
         custom=bool(set(json.loads(proj['config'])['compiler'])-{'toolchain','flags','timeout'})
@@ -141,10 +141,10 @@ def apply(net,slug,selected,names,log,receipt=None):
         agent,_=net.local_agent('autopilot')
         # Match the usual record lock order: project lock before SQLite writer. All candidates
         # are revalidated before publishing settings; exact publication releases displaced claims through the normal recorder.
-        with net.progress._project_lock(slug),net.progress.view(),net.store.tx() as db:
+        with net.progress._project_lock(slug),net.progress.view(),net.project_store(proj['id']).tx() as db:
             net.progress.local.judging=(slug,net.progress.revisions.get(slug,0))
             current=net._project(slug);current_env=environment(net,current,selected)
-            latest=net.store.all('SELECT id,vram,rom_offset,size,name FROM functions WHERE project_id=?',proj['id'])
+            latest=net.project_store(proj['id']).all('SELECT id,vram,rom_offset,size,name FROM functions WHERE project_id=?',proj['id'])
             current_boundaries=blocked(net,current)
             candidates=[]
             for fn,source,signature,reuse in verified:
@@ -178,7 +178,7 @@ def apply(net,slug,selected,names,log,receipt=None):
                 db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
                 net._event(db,proj['id'],agent.id,'compiler',f'Applied verified compiler profile to {len(candidates)} functions')
             publish('Saving verified matches')
-            net.store.after_commit(lambda:publish('Matches committed · updating match indexes'))
+            net.project_store(proj['id']).after_commit(lambda:publish('Matches committed · updating match indexes'))
             for fn,source,reuse in candidates:
                 cancel()
                 context=net._context(proj['id'],fn['unit'])

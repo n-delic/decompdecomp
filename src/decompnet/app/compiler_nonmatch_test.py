@@ -24,7 +24,7 @@ def run(net, slug, selected, log=print):
         proj=net._project(slug)
     cfg=json.loads(proj['config'])
     target=profile(selected)
-    rows=net.store.all('SELECT id,name,vram,rom_offset,status FROM functions WHERE project_id=? ORDER BY id',proj['id'])
+    rows=net.project_store(proj['id']).all('SELECT id,name,vram,rom_offset,status FROM functions WHERE project_id=? ORDER BY id',proj['id'])
     if target==profile(cfg['compiler']) or not any(profile(compiler_for(cfg,f['vram'],f))==target for f in rows):
         raise NetworkError('Choose a non-default compiler profile currently used in this project.')
     cancel()
@@ -47,7 +47,7 @@ def run(net, slug, selected, log=print):
         try:
             # Only the bounded in-flight workers fetch/decompress full function
             # records. Slow preparation of one candidate cannot hold up its peers.
-            fn=net.store.one('SELECT * FROM functions WHERE project_id=? AND id=?',proj['id'],identity)
+            fn=net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND id=?',proj['id'],identity)
             cancel()
             if fn is None or fn['status']!='open':
                 return identity,name,False,'No longer unmatched; skipped.',None
@@ -77,12 +77,12 @@ def run(net, slug, selected, log=print):
     # Passing receipts keep the same exact input checks as application. Re-read
     # one passing candidate at a time rather than inflating all successful sources.
     publish('Confirming successful inputs')
-    current=net.store.one('SELECT * FROM projects WHERE id=?',proj['id'])
+    current=net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id'])
     current_env=batch.environment(net,current,selected) if current and proofs else None
     changed=[]
     for identity,proof in proofs.items():
         cancel()
-        fn=net.store.one('SELECT * FROM functions WHERE project_id=? AND id=?',proj['id'],identity)
+        fn=net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND id=?',proj['id'],identity)
         try:
             same=(current_env is not None and fn is not None and fn['status']=='open'
                   and batch.fingerprint(net,current,fn,net._source_of(fn),current_env)==proof)

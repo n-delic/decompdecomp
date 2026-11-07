@@ -34,11 +34,11 @@ def run(net, proj, log=print):
     """Invalidate only obsolete tooling votes, then use the ordinary bounded autopilot judge."""
     if not net.is_rom(proj) or proj['slug'] in net.links:return 0
     reopened=0
-    for fn in net.store.all("SELECT * FROM functions WHERE project_id=? AND status='asm'",proj['id']):
-        if net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):continue
+    for fn in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='asm'",proj['id']):
+        if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):continue
         proposals=candidates(net,proj,fn)
         if not proposals:continue
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             current=db.execute('SELECT * FROM functions WHERE id=?',(fn['id'],)).fetchone()
             if dict(current)!=dict(fn) or db.execute('SELECT 1 FROM claims WHERE function_id=?',(fn['id'],)).fetchone():continue
             meta=json.loads(fn['meta'] or '{}')
@@ -51,7 +51,7 @@ def run(net, proj, log=print):
         agent,_=net.local_agent('autopilot')
         log(f"Checking supported hardware C for {fn['name']} ({len(proposals)} candidates).")
         for _,source in proposals:
-            current=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+            current=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
             if current['status']!='open':break
             try:
                 if net.try_quietly(agent,proj,current,source).get('matched'):break
