@@ -6,11 +6,16 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from .. import compile_timing
+
 _current = ContextVar('trial_bookkeeping', default=None)
 
 
 class Batch:
-    def __init__(self):
+    def __init__(self, maximum=False):
+        self.max_bytes = (4 if maximum else 1)*1024*1024
+        self.max_statements = 256 if maximum else 64
+        self.seconds = 1 if maximum else .5
         self.owner = threading.get_ident()
         self.store = None
         self.pending = []
@@ -20,7 +25,7 @@ class Batch:
 
     def flush(self):
         if not self.pending:return
-        with self.store.tx() as db:
+        with compile_timing.phase('history_write'), self.store.tx() as db:
             for sql, args in self.pending:db.execute(sql, args)
         self.pending.clear()
         self.values.clear()
@@ -53,18 +58,18 @@ def submit(store, statements, *, immediate=False, memo=None):
         value.flush();value.store = store
     size = sum(len(sql.encode()) + sum(len(arg.encode()) if isinstance(arg, str) else
                len(arg) if isinstance(arg, bytes) else 8 for arg in args) for sql, args in statements)
-    if value.pending and value.bytes + size > 1024 * 1024:value.flush()
+    if value.pending and value.bytes + size > value.max_bytes:value.flush()
     value.pending.extend(statements)
     if memo is not None:value.values[memo[0]] = memo[1]
     value.bytes += size
-    if immediate or value.bytes >= 1024 * 1024 or len(value.pending) >= 64 or time.monotonic()-value.started >= .5:value.flush()
+    if immediate or value.bytes >= value.max_bytes or len(value.pending) >= value.max_statements or time.monotonic()-value.started >= value.seconds:value.flush()
 
 
 @contextmanager
-def scope():
+def scope(maximum=False):
     if current() is not None:
         yield;return
-    value = Batch();token = _current.set(value)
+    value = Batch(maximum);token = _current.set(value)
     try:
         yield
     except BaseException:
@@ -79,5 +84,7 @@ def scope():
 def buffered(function):
     @functools.wraps(function)
     def run(*args, **kwargs):
-        with scope():return function(*args, **kwargs)
+        log = kwargs.get('log') or (args[5] if len(args)>5 else None)
+        maximum = getattr(getattr(log, 'compile_pool', None), 'maximum', False)
+        with scope(maximum):return function(*args, **kwargs)
     return run

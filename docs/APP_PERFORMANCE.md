@@ -325,3 +325,37 @@ Token validation and project ownership checks are separate and remain uncached h
 Autosave discovery can race a project removal after its catalog snapshot. It discards that row
 only when a fresh catalog lookup confirms removal, allowing worker reconciliation to cancel
 its old worker and continue other projects. Owner errors for catalogued projects still surface.
+
+### Maximum-throughput deep search
+
+On a dedicated machine, enable **Maximum throughput** in Deep permuter's advanced
+settings (or the individual function's deep-search form). Leave **Functions at a time**
+and **Concurrent compiles** blank to use the detected CPU core count. A 64 GB M4
+needs no machine-specific hard-coded core count: M4 variants have different counts.
+The individual-function default of one path expands to the detected core count in
+maximum mode; an explicitly higher path count is retained. Time and candidate budgets
+still cover the entire function, including parallel paths and speculative compiles.
+
+Each path uses the existing dedicated, persistent AST generator process. A project
+pass shares one bounded compiler pool across functions, retaining private prepared
+headers and object caches per compiler worker; target caches remain private to each
+search lane. This removes the four-worker per-search
+compile-ahead ceiling and avoids repeatedly destroying preparation between functions.
+Balanced project passes retain the normal global compiler allowance. Maximum mode
+raises global admission for its lifetime, bypasses the background-only compiler slot
+reserve, and avoids lowering its workers' priority. Multiple searches still share one
+global admission counter; ending one cannot replace a semaphore or forget running
+compiles. A smaller explicit compile limit bounds that search's synchronous and
+speculative compiles. Per-compile memory, runtime and output caps remain in force.
+
+Advisory miss statistics batch up to 256 statements / 4 MiB / one second in maximum
+mode, then flush on exit or cancellation. Verified improvements retain immediate
+publication through the ordinary current-input and byte-verification guards.
+
+The live strip shows active compiler slots, considered candidates/sec (including
+cache hits and rejected candidates), actual compiler invocations/sec, cumulative
+compiler queue/setup and advisory-history write time, and app-process CPU averaged over the run. CPU excludes
+compiler/generator child processes; use Activity Monitor for the machine's total CPU.
+Counters contain numbers only and are scoped to the shared search pool. Imported
+builds still own their build system and may serialize internally; maximum mode cannot
+guarantee full CPU utilization for those projects or I/O-bound workloads.

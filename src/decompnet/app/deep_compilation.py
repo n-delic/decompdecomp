@@ -27,8 +27,14 @@ class Ticket:
 
 
 class Pool:
-    def __init__(self):
-        self.count = min(4, compiler.concurrency_limit())
+    def __init__(self, count=None, *, maximum=False):
+        from .deep_throughput import Metrics
+        self.count = count or min(4, compiler.concurrency_limit())
+        self.maximum = maximum
+        self.slots = compiler.Admission(self.count)
+        self.metrics = Metrics()
+        self.metrics.gate = self.slots
+        self.metrics.maximum = maximum
         self.queue = queue.Queue(maxsize=self.count*2)
         self.group = compile_sharing.Group()
         self.workers = []
@@ -69,8 +75,9 @@ class Pool:
 
     def work(self):
         from .workers import lower_priority
-        lower_priority()
-        with compile_sessions.session(), compile_sharing.group(self.group):
+        if not self.maximum:lower_priority()
+        from .deep_throughput import scope
+        with scope(self), compile_sessions.session(), compile_sharing.group(self.group):
             while (ticket := self.queue.get()) is not None:
                 if not ticket.future.set_running_or_notify_cancel():continue
                 try:

@@ -23,6 +23,7 @@ from pathlib import Path
 from decompnet.hostenv import NO_WINDOW, stop_process_tree
 
 from . import compile_sessions, compile_timing, limits, linuxvm, wsl
+from .compile_admission import Admission
 from .request_timing import span
 
 MAX_SOURCE_BYTES = 64 * 1024
@@ -39,11 +40,12 @@ def concurrency_limit():
 
 
 _COMPILER_THREADS = concurrency_limit()
-_SLOTS = threading.BoundedSemaphore(_COMPILER_THREADS)
+_SLOTS = Admission(_COMPILER_THREADS)
 # Background jobs cannot occupy the last compiler slot needed by an interactive request.
 _BACKGROUND_SLOTS = threading.BoundedSemaphore(max(1, _COMPILER_THREADS - 1))
 _SCHEDULING = threading.local()
 _ARTIFACT_SINK = contextvars.ContextVar("compiler_artifact_sink", default=None)
+_LOCAL_SLOTS = contextvars.ContextVar('compiler_local_slots', default=None)
 _CANCEL_CHECK = contextvars.ContextVar("compiler_cancel_check", default=None)
 
 
@@ -55,7 +57,7 @@ def background_thread():
 def _slot():
     acquired = []
     queued = time.monotonic()
-    gates = ([_BACKGROUND_SLOTS] if getattr(_SCHEDULING, 'background', False) else []) + [_SLOTS]
+    gates = ([_LOCAL_SLOTS.get()] if _LOCAL_SLOTS.get() is not None else []) + ([_BACKGROUND_SLOTS] if getattr(_SCHEDULING, 'background', False) else []) + [_SLOTS]
     try:
         for gate in gates:
             while not gate.acquire(timeout=0.1):
@@ -69,6 +71,17 @@ def _slot():
     finally:
         for gate in reversed(acquired):
             gate.release()
+
+
+@contextmanager
+def throughput_slots(enabled, gate=None):
+    token = _LOCAL_SLOTS.set(gate)
+    previous = getattr(_SCHEDULING, 'background', False)
+    if enabled:_SCHEDULING.background = False
+    try:yield
+    finally:
+        _SCHEDULING.background = previous
+        _LOCAL_SLOTS.reset(token)
 
 
 @contextmanager
@@ -404,6 +417,7 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     (work / "func.o").unlink(missing_ok=True)
     try:
         with _slot():
+            compile_timing.add("invocations", 1)
             with span("compile_execute"), compile_timing.phase("execute"):
                 proc = _exec(cfg, work, argv, cfg.timeout,
                          **({"outputs": ["func.o"], "stage": root} if _sandbox_mode(cfg) in ("wsl", "linux-vm") else {}))

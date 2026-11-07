@@ -1443,3 +1443,13 @@ assignments, with space reserved alongside update and pointer-load scopes.
 It keeps the original arithmetic and excludes calls, hidden writes and control
 transfers. It does not infer return types. These proposals still need the judge;
 a scope helps only when the resulting allocation and complete output agree.
+
+When only disjoint local register roles differ, compare the target's reuse of a
+mode/selector temporary with later pointer-chain and sentinel roles. A verified
+30-instruction O32 case needed one signed-word source scratch to carry those
+three genuinely used phases: mode plus pointer reuse reduced distance 20 to 10;
+including the actual sentinel comparison/XOR recovered exact linked bytes. Keep
+all read order, pointer-width assumptions and the existing function contract.
+Do not add dummy values to reserve a register. This is a measured source-storage
+hypothesis, not a rule that naming locals alike always fixes allocation; rejudge
+normally and distinguish function equality from complete-image acceptance.

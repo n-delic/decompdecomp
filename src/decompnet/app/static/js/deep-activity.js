@@ -3,6 +3,11 @@
 let deepActivitySnapshot = {};
 function renderDeepActivity(progress = {}) {
   deepActivitySnapshot = progress;
+  const throughput = $("deepSweepThroughput");
+  if (throughput && typeof deepThroughputText === "function") {
+    throughput.hidden = !progress.throughput;
+    throughput.textContent = deepThroughputText(progress.throughput);
+  }
   const activeOnly = $("deepActivityOnlyActive"), sort = $("deepActivitySort");
   activeOnly.onchange = sort.onchange = () => renderDeepActivity(deepActivitySnapshot);
   const host = $("deepActivity"), slug = S.slug;
