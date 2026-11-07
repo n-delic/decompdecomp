@@ -1,4 +1,6 @@
 """Explicit function suggestions publish one freshly verified source/header/profile bundle."""
+import re
+
 from .. import toolchains
 from ..network import NetworkError
 from . import prepared_evidence, source_preparation
@@ -103,7 +105,15 @@ def actionable(net, proj, suggestion):
 
 def accept_all(net, slug, log):
     """Apply a snapshot sequentially through the usual verification and match protections."""
-    items = [s for s in net.overview(slug)['suggestions'] if s.get('toolchain')]
+    log.check_cancel()
+    # The inbox lives in config. An overview also loads coverage, reuse results
+    # and diagnostics, and _project can synchronize saved files before returning.
+    proj = net.store.one('SELECT id,slug,config FROM projects WHERE slug=?', slug)
+    if proj is None:raise NetworkError('Project not found; reopen it and try again.')
+    items = [{'id':s['id'], 'toolchain':s['toolchain']}
+             for s in net.cfg(proj).get('suggestions', [])
+             if s.get('status') == 'open' and s.get('toolchain')
+             and not re.search(r"does not match|doesn't compile", s.get('check') or '')]
     results = []
     def publish(item=None, current=None):
         log.progress({'phase':'Applying waiting suggestions', 'done':len(results), 'total':len(items),
@@ -118,10 +128,11 @@ def accept_all(net, slug, log):
     publish()
     for index, item in enumerate(items, 1):
         log.check_cancel()
-        current = net.project_row(slug)
+        publish(item, {'phase':'Checking suggested settings'})
+        current = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+        if current is None:raise NetworkError('Project not found; reopen it and try again.')
         fresh = next((s for s in net.cfg(current).get('suggestions', []) if s['id'] == item['id']), None)
         reason = None
-        publish(item, {'phase':'Checking suggested settings'})
         try:
             if not fresh or fresh['status'] != 'open' or not actionable(net, current, fresh):
                 raise NetworkError('Already resolved or no longer needs a compiler suggestion; skipped.')
@@ -133,6 +144,8 @@ def accept_all(net, slug, log):
         publish(item, {'phase':'Suggestion skipped' if reason else 'Settings and scores saved'})
     publish(current={'phase':'Saving project progress'})
     net.progress.sync(slug, force=True, logger=log)
+    log.check_cancel()
+    publish(current={'phase':'Refreshing project overview'})
     return {'overview':net.overview(slug), 'results':results,
             'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results)}
 

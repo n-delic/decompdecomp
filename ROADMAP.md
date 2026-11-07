@@ -3111,3 +3111,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 
 - Done: bounded concurrent compile-ahead for captured ROM random trials with ordered fresh judging; successful object and non-exact baseline evidence sharing across lanes; warning preflight only in the preparation owner; compact ordinary random-miss diagnostics and effect spans; one allocation diagnosis per family ranking. Existing budgets, cancellation, compiler limits and winner publication gates remain in force.
 - Planned: independent build workspaces/dependency snapshots before enabling speculative compilation for imported/custom builds; profile-aware reservation before scheduling multiple compiler profiles speculatively. These retain their current build/lane paths meanwhile.
+
+- Done: accepting waiting compiler suggestions reads the pending config snapshot directly, reports its count before per-suggestion verification, and refreshes the full overview only after processing and saving. Preparation no longer loads project-wide diagnostics or implicitly synchronizes project files.
