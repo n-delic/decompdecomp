@@ -326,6 +326,7 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
             if name in projected:
                 pending[name] = projected[name]
     manifest["headers"] = headers
+    manifest["function_headers"] = (manifest.get("function_headers") or {}) | (local.get("function_headers") or {})
     for name, text in projected.items():
         if name.startswith(("src/", "best/")) and name not in disk:
             pending[name] = text
