@@ -298,9 +298,11 @@ def _function_rows(net, project_id: int, *, sources: bool) -> list:
         return store.all(
             "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
             f"best_agent_id, readable, meta, {exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
+    # Packed sources are nonempty hash blobs; only large text is packed. Use
+    # physical presence flags so a manifest-only render never inflates the C.
     return store.all(
         "SELECT name, vram, size, status, matched_agent_id, best_score, best_agent_id, readable, meta, "
-        f"{exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
+        f"{exists}FROM main.functions WHERE project_id=? ORDER BY vram", project_id)
 
 
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
