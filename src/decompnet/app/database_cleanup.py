@@ -39,20 +39,44 @@ def saved(net):
 
 def eligible(net,value):
     value,cutoff=options(value)
-    return net.store.all('SELECT s.id,s.helper_id FROM helper_sessions s WHERE '
-        '((? AND NOT EXISTS(SELECT 1 FROM helpers h WHERE h.id=s.helper_id AND h.project=s.project AND h.name=s.agent)) '
-        'OR (? IS NOT NULL AND s.ended_at IS NOT NULL AND s.ended_at<?)) '
-        'AND EXISTS(SELECT 1 FROM helper_messages m WHERE m.session_id=s.id) ORDER BY s.id',
-        value['removed'],cutoff,cutoff)
+    current = {(r['id'],r['project'],r['name']) for r in net.store.all('SELECT id,project,name FROM helpers')}
+    rows = []
+    from .transcripts import service
+    for store, pids in net.project_stores():
+        if not store.one("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'"):continue
+        if store is net.store:
+            if not store.one("SELECT 1 FROM sqlite_master WHERE name='helper_messages'"):continue
+            messages = store
+            found = store.all('SELECT s.id,s.helper_id,s.project FROM helper_sessions s WHERE '
+                '((? AND NOT EXISTS(SELECT 1 FROM helpers h WHERE h.id=s.helper_id AND h.project=s.project AND h.name=s.agent)) '
+                'OR (? IS NOT NULL AND s.ended_at IS NOT NULL AND s.ended_at<?)) '
+                'AND EXISTS(SELECT 1 FROM helper_messages m WHERE m.session_id=s.id) ORDER BY s.id',
+                value['removed'],cutoff,cutoff)
+        else:
+            messages = service(net).for_project(pids[0]).store
+            found = [row for row in store.all(
+                'SELECT id,helper_id,project,agent,ended_at FROM helper_sessions ORDER BY id')
+                if (value['removed'] and (row['helper_id'],row['project'],row['agent']) not in current) or
+                   (cutoff is not None and row['ended_at'] is not None and row['ended_at'] < cutoff)]
+            populated = {r['session_id'] for r in messages.all(
+                'SELECT DISTINCT session_id FROM helper_messages WHERE session_id IN (SELECT value FROM json_each(?))',
+                json.dumps([r['id'] for r in found]))}
+            found = [row for row in found if row['id'] in populated]
+        rows.extend(dict(row) | {'_store':messages,'_sessions':store} for row in found)
+
+    return rows
 
 
 def summary(net,value=None):
     value,_=options(saved(net) if value is None else value)
     rows=eligible(net,value)
-    ids=json.dumps([r['id'] for r in rows])
-    count=net.store.one('SELECT COUNT(*) n FROM helper_messages WHERE session_id IN (SELECT value FROM json_each(?))',ids)['n']
-    path=Path(net.store.path)
-    disk=sum(f.stat().st_size for f in [path,Path(str(path)+'-wal'),Path(str(path)+'-shm')] if f.is_file())
+    groups = {}
+    for row in rows:groups.setdefault(row['_store'], []).append(row['id'])
+    count = sum(store.one('SELECT COUNT(*) n FROM helper_messages WHERE session_id IN '
+                          '(SELECT value FROM json_each(?))',json.dumps(ids))['n'] for store, ids in groups.items())
+    stores = {net.store, *(store for store, _ in net.project_stores()), *(row['_store'] for row in rows)}
+    paths = {Path(store.path) for store in stores}
+    disk = sum(f.stat().st_size for path in paths for f in (path,Path(str(path)+'-wal'),Path(str(path)+'-shm')) if f.is_file())
     return {'options':value,'sessions':len(rows),'messages':count,'disk_bytes':disk}
 
 
@@ -69,7 +93,8 @@ def run(net,value,log):
         first=True
         while True:
             getattr(log,'check_cancel',lambda:None)()
-            with net.store.tx() as db:
+            helper_exists = net.store.one('SELECT 1 FROM helpers WHERE id=?', session['helper_id'])
+            with session['_store'].tx() as db:
                 if first:
                     db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',('helper-transcript-session-cleared:'+str(session['id']),'1'))
                     last=db.execute('SELECT COALESCE(MAX(id),0) FROM helper_messages').fetchone()[0]
@@ -80,8 +105,11 @@ def run(net,value,log):
                 if not removed:
                     db.execute('DELETE FROM helper_score_events WHERE session_id=?',(session['id'],))
                     # A current worker's resumable conversation is separate from its old session history.
-                    if not db.execute('SELECT 1 FROM helpers WHERE id=?',(session['helper_id'],)).fetchone():
+                    if not helper_exists:
                         db.execute('DELETE FROM settings WHERE key=?',('helper-conversation:'+str(session['helper_id']),))
+            if not removed and not helper_exists and session['_sessions'] is not session['_store']:
+                with session['_sessions'].tx() as db:
+                    db.execute('DELETE FROM settings WHERE key=?', ('helper-conversation:'+str(session['helper_id']),))
             first=False;deleted+=removed
             maintenance.checkpoint()  # Pace only outside the write transaction.
             report('Clearing old agent transcripts')

@@ -54,7 +54,7 @@ def test_cutoff_uses_completed_session_end_and_keeps_ongoing_and_newer_sessions(
     assert cleanup.saved(net)==dict(value,automatic=False)
     assert cleanup.summary(net,value)['messages']==0
     from decompnet.app.session_recovery import api_messages
-    old=SimpleNamespace(id='1',session_id=ids[0]);new=SimpleNamespace(id='1',session_id=ids[1])
+    old=SimpleNamespace(id='1',session_id=ids[0],slug='game');new=SimpleNamespace(id='1',session_id=ids[1],slug='game')
     api_messages(net,old,'endpoint',[{'role':'assistant','content':'late old private text'}])
     assert not net.store.one("SELECT value FROM settings WHERE key='helper-conversation:1'")
     api_messages(net,new,'endpoint',[{'role':'assistant','content':'ongoing conversation'}])
