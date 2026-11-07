@@ -387,3 +387,36 @@ def test_member_macro_stays_opaque_before_field_names_are_hidden():
     from decompnet.app.permuter_initialization import _initialization_verdicts
     candidate = 'int f(void) { int x; p->x=1; return x; }'
     assert _initialization_verdicts(candidate, 'f', '#define x hidden()') == {}
+
+
+@pytest.mark.parametrize('loop', [False, True])
+def test_rhs_pointer_capture_cannot_initialize_an_alternate_branch(loop):
+    parent = 'void f(int cond, char *base, int offset) { char *out; out=base+offset; }'
+    body = ('char *p; char *out; int i; i=0; again: '
+            'if(cond) { out=offset+(p=base+3); } else { out=p+1; }')
+    tail = 'i+=1; if(i<3) goto again;' if loop else ''
+    candidate = 'void f(int cond, char *base, int offset) {'+body+tail+'}'
+    assert unsafe_temporary(parent, candidate, 'f')
+    initialized = candidate.replace('i=0;', 'i=0; p=base+3;')
+    assert not unsafe_temporary(parent, initialized, 'f')
+
+
+@pytest.mark.parametrize('expression', [
+    'cond ? (p=base+3) : base',
+    '(cond && (p=base+3)) ? base : base',
+    '(cond || (p=base+3)) ? base : base',
+    '(p=p+3)', '(p=base+3)+(other=4)', 'call()+(p=base+3)',
+    '(p=call_pointer())', '((p=base+3),base)',
+    'object->field+(p=base+3)', 'object.field+(p=base+3)', 'items[0]+(p=base+3)',
+])
+def test_complex_rhs_capture_keeps_unknown_initialization(expression):
+    from decompnet.app.permuter_initialization import _initialization_verdicts
+    source = ('void f(int cond, char *base) { char *p; char *out; int other; '
+              'out='+expression+'; out=p+1; }')
+    assert _initialization_verdicts(source, 'f', '').get('p') is None
+
+
+def test_rhs_capture_target_must_be_a_supported_function_local():
+    from decompnet.app.permuter_initialization import _initialization_verdicts
+    source = 'char *out; void f(char *base) { char *p; out=(p=base+3); out=p+1; }'
+    assert _initialization_verdicts(source, 'f', '').get('p') is None

@@ -126,14 +126,36 @@ def _without_type_only_records(candidate, part, macros):
     return ''.join(result)
 
 
-def _embedded_pointer_copy(text, variable):
-    """Recognize one plain pointer copy in an ordinary indirect store's address.
+def _embedded_pointer_copy(text, variable, local_names=()):
+    """Recognize one unconditional pointer copy in two bounded expression forms.
 
-    Calls/unevaluated builtins and other references to the copied binding stay opaque.
-    Short-circuit and conditional expressions are already excluded by the caller.
+    Retain the ordinary indirect store-address copy, or accept a single capture
+    in another plain local assignment's arithmetic RHS. Calls, conditional
+    evaluation and other reads/writes of the copied binding remain opaque.
     """
-    if not text.lstrip().startswith('*') or len(re.findall(rf'\b{variable}\b', text)) != 1:
+    if len(re.findall(rf'\b{variable}\b', text)) != 1:
         return False
+    if not text.lstrip().startswith('*'):
+        # A single unconditional capture in another plain local's arithmetic RHS.
+        # No sequencing inference: the copied binding occurs only at this write.
+        assignment = re.fullmatch(rf'\s*({IDENT})\s*=(?!=)(.*?)\s*;?\s*', text, re.S)
+        if not assignment or assignment[1] not in local_names or assignment[1] == variable:
+            return False
+        rhs = assignment[2]
+        if (re.search(r'[,?;]|&&|\|\||\+\+|--|(?:<<|>>|[+*/%&|^\-])=', rhs)
+                or re.search(rf'\b{IDENT}\s*\(', rhs)
+                or re.search(r'\b(?:sizeof|_Alignof|typeof|__typeof__)\b', rhs)):
+            return False
+        capture = re.search(rf'\(\s*{variable}\s*=(?!=)\s*{IDENT}(?:\s*[+\-]\s*(?:{NUMBER}|{IDENT}))?\s*\)', rhs)
+        if capture is None:
+            return False
+        remaining = rhs[:capture.start()]+'0'+rhs[capture.end():]
+        # Other writes, member/index accesses and calls remain unknown. This is
+        # an initialization transfer, not an expression purity proof: arithmetic
+        # (including unary *) may evaluate operands in either order, but none
+        # reads/writes this p outside its single capture.
+        return (not re.search(r'=(?!=)|->|[\[\].]', remaining)
+                and re.fullmatch(r'[\s()A-Za-z_0-9+*/%&|^~<>\-]+', remaining) is not None)
     depth = 0
     for pos, char in enumerate(text):
         if char in '([':
@@ -155,6 +177,7 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
     pointers = names if '*' in decl['type'] else set()
     from .permuter_macro_effects import transparent_macros
     opaque_macros = macros - transparent_macros(combined, names)
+    local_names = set(flow.names)
     transfers = []
     for index, node in enumerate(flow.nodes):
         text = part.clean[node.start:node.end]
@@ -200,10 +223,10 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
                 return None
             generates.add(assignment[1])
         elif not contained and re.search(rf'\b(?:{"|".join(map(re.escape, names))})\s*=(?!=)', text):
-            if decl['name'] not in pointers or not _embedded_pointer_copy(text, decl['name']):
+            if decl['name'] not in pointers or not _embedded_pointer_copy(text, decl['name'], local_names):
                 return None
-            # Completing this ordinary store necessarily evaluates its address. Track the
-            # copy on this CFG edge, not on paths that bypass the whole store.
+            # Completing this supported expression necessarily evaluates its capture.
+            # Track the copy on this CFG edge, not on paths bypassing the statement.
             uses.discard(decl['name'])
             generates.add(decl['name'])
         transfers.append((uses, generates, kills))
