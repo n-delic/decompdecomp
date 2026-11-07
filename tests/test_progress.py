@@ -113,7 +113,7 @@ def test_unlisted_shortened_filename_error_names_the_full_function(project):
     file = saves._source_file(name)
     with net.store.tx() as db:
         db.execute("UPDATE functions SET name=? WHERE name='f'", (name,))
-    files = saves._read(folder)
+    files = _read(folder)
     data = json.loads(files[saves.MANIFEST])
     data["layout"] = []
     data["functions"] = {}
@@ -122,6 +122,8 @@ def test_unlisted_shortened_filename_error_names_the_full_function(project):
     cfg = net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))
     with pytest.raises(NetworkError, match=name):
         _manifest(files, cfg, {name})
+
+
 @pytest.mark.parametrize("kind", ["rom", "fork"])
 def test_manual_save_locations_survive_restart_and_belong_to_one_project(project, tmp_path, kind):
     net, folder, _ = project
