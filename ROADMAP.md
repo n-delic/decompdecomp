@@ -36,8 +36,10 @@
   guest batches resolve identities before taking a separate project write lock.
   Cursor/config writes preserve concurrent edits. Host membership uses durable
   catalog-to-project handoffs with replay receipts; pending verification and
-  prepared compiler/header publication select project storage. Remaining service
-  conversion and recoverable migration still gate activation.
+  prepared compiler/header publication select project storage. Local worker claims,
+  permutation input tracking, compiler comparisons and profile publication now
+  select project storage. Remaining service conversion and recoverable migration
+  still gate activation.
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

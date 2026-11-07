@@ -104,6 +104,12 @@ resolves machine and legacy speculative identities before entering the project
 writer transaction, without depending on stale project copies of agent names.
 Input renewal rejects mixed-project batches before writing fingerprints.
 
+Compiler map inputs, comparison eligibility/history, profile usage, suggestion
+reads and compiler configuration publication now select project storage.
+Configuration changes still verify affected matches and reject concurrent input
+changes before publishing settings and rescored attempts together. Claim checks
+resolve shared identities before acquiring a separate project writer.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
@@ -126,7 +132,8 @@ need explicit ownership during the project split.
    writes for lock ordering; saved-progress restoration now resolves them before
    separate project transactions. Host membership and room verification now have
    explicit boundaries; other claim-expiry callers, provider services, source
-   preparation workers, compiler services and repair indexes still need conversion.
+   preparation workers and repair indexes still need conversion. Remaining compiler
+   consumers outside the compiler service also need auditing.
 2. Replace cross-project operational SQL joins with bounded queries to individual
    project stores. Keep cross-game matching and activity feeds complete without
    loading every project's full history. Preserve global identity and cursor

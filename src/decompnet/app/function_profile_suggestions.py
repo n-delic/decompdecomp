@@ -29,7 +29,7 @@ def saved(net, proj, suggestion):
     if suggestion.get('function_match'):return suggestion['function_match']
     for check in net.cfg(proj).get('range_checks',[]):
         if check.get('suggestion')!=suggestion['id'] or not check.get('origin_source'):continue
-        fn=net.store.one('SELECT * FROM functions WHERE project_id=? AND vram=?',proj['id'],check.get('origin'))
+        fn=net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND vram=?',proj['id'],check.get('origin'))
         if fn and contained(fn,suggestion.get('ranges') or []) and suggestion.get('ranges'):
             return capture(net,proj,fn['name'],suggestion['ranges'],check['origin_source'])
     return None
@@ -40,8 +40,13 @@ def apply(net, agent, proj, bundle, toolchain, flags):
     fn=net._function(bundle['function'],proj['slug'])
     if fn['status']!='open' or (fn['vram'],fn['size'])!=(bundle['vram'],bundle['size']):
         raise NetworkError('This function is already matched or its boundary changed. Review a fresh suggestion.')
-    with net.store.tx() as db:
-        net._expire_claims(db)
+    store = net.project_store(proj['id'])
+    identities = {} if store is net.store else {
+        'machine_ids': net._machine_agent_ids(),
+        'nonexclusive_ids': net._nonexclusive_agent_ids(),
+    }
+    with store.tx() as db:
+        net._expire_claims(db, **identities)
         claim=db.execute('SELECT agent_id FROM claims WHERE function_id=?',(fn['id'],)).fetchone()
     if claim and claim['agent_id']!=agent.id:
         raise NetworkError('This function is being worked on by another agent. Apply the suggestion after it is released.')
@@ -88,7 +93,7 @@ def actionable(net, proj, suggestion):
         return True
     bundle = suggestion.get('function_match')
     if bundle:
-        fn = net.store.one('SELECT status,vram,size FROM functions WHERE project_id=? AND name=?',
+        fn = net.project_store(proj['id']).one('SELECT status,vram,size FROM functions WHERE project_id=? AND name=?',
                            proj['id'], bundle['function'])
         return bool(fn and fn['status'] == 'open' and (fn['vram'], fn['size']) == (bundle['vram'], bundle['size']))
     # Legacy map suggestions identify their originating function through the range check.
@@ -96,7 +101,7 @@ def actionable(net, proj, suggestion):
     for check in checks:
         if check.get('suggestion') != suggestion['id'] or check.get('origin') is None:
             continue
-        rows = net.store.all('SELECT status,vram,size FROM functions WHERE project_id=? AND vram=?',
+        rows = net.project_store(proj['id']).all('SELECT status,vram,size FROM functions WHERE project_id=? AND vram=?',
                              proj['id'], check['origin'])
         if len(rows) == 1 and suggestion.get('ranges') and contained(rows[0], suggestion['ranges']):
             return rows[0]['status'] == 'open'
@@ -108,7 +113,8 @@ def accept_all(net, slug, log):
     log.check_cancel()
     # The inbox lives in config. An overview also loads coverage, reuse results
     # and diagnostics, and _project can synchronize saved files before returning.
-    proj = net.store.one('SELECT id,slug,config FROM projects WHERE slug=?', slug)
+    store = net.project_store(slug)
+    proj = store.one('SELECT id,slug,config FROM projects WHERE slug=?', slug)
     if proj is None:raise NetworkError('Project not found; reopen it and try again.')
     items = [{'id':s['id'], 'toolchain':s['toolchain']}
              for s in net.cfg(proj).get('suggestions', [])
@@ -129,7 +135,7 @@ def accept_all(net, slug, log):
     for index, item in enumerate(items, 1):
         log.check_cancel()
         publish(item, {'phase':'Checking suggested settings'})
-        current = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+        current = net.project_store(proj['id']).one('SELECT * FROM projects WHERE slug=?', slug)
         if current is None:raise NetworkError('Project not found; reopen it and try again.')
         fresh = next((s for s in net.cfg(current).get('suggestions', []) if s['id'] == item['id']), None)
         reason = None

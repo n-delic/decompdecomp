@@ -68,7 +68,7 @@ class CompilerMixin:
     def _cmap_key(self, proj) -> tuple:
         """What the compiler map is built from, summed up: matches, the compilers and ranges, confirmations."""
         cfg = self.cfg(proj)
-        done = self.store.one("SELECT COUNT(*) AS n, COALESCE(SUM(status='matched'), 0) AS m, COALESCE(MAX(matched_at), 0) "
+        done = self.project_store(proj['id']).one("SELECT COUNT(*) AS n, COALESCE(SUM(status='matched'), 0) AS m, COALESCE(MAX(matched_at), 0) "
                               "AS t FROM functions WHERE project_id=?", proj["id"])
         confirmed = (cfg.get("compiler_survey") or {}).get("confirmed", {})
         return tuple(done), json.dumps([cfg.get("compiler"), cfg.get("compiler_ranges"),cfg.get('function_compilers')], sort_keys=True), len(confirmed)
@@ -92,7 +92,7 @@ class CompilerMixin:
 
         def label(c: dict) -> compilermap.Label:
             return c["toolchain"], tuple(c["flags"])
-        rows = self.store.all("SELECT name,vram,rom_offset,size,target,status FROM functions WHERE project_id=? AND target IS NOT NULL",
+        rows = self.project_store(proj['id']).all("SELECT name,vram,rom_offset,size,target,status FROM functions WHERE project_id=? AND target IS NOT NULL",
                               proj["id"])
         built = compilermap.build(
             [(r["vram"], r["size"], r["target"], label(compiler_for(cfg, r["vram"], r)), r["status"] == "matched",
@@ -210,9 +210,9 @@ class CompilerMixin:
     def _comparison_inputs(self, proj, candidates):
         """Read and encode project-wide inputs once per eligibility pass."""
         encode = lambda value: json.dumps(value, sort_keys=True).encode()
-        return {'contexts': [list(r) for r in self.store.all(
+        return {'contexts': [list(r) for r in self.project_store(proj['id']).all(
                     "SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY unit", proj['id'])],
-                'symbols': encode([list(r) for r in self.store.all(
+                'symbols': encode([list(r) for r in self.project_store(proj['id']).all(
                     "SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name", proj['id'])]),
                 'tools': {tid: toolchains.installed(tid) for tid in sorted({tc for tc, _ in candidates})},
                 'units': {}, 'options': {}, 'cfg': self.cfg(proj)}
@@ -254,7 +254,7 @@ class CompilerMixin:
         fallback={}
         for own in (cfg.get('function_compilers') or {}).values():
             fallback.setdefault((own.get('function'),own.get('vram')),own)
-        for fn in self.store.all("SELECT name,unit,vram,rom_offset,status FROM functions WHERE project_id=?", proj["id"]):
+        for fn in self.project_store(proj['id']).all("SELECT name,unit,vram,rom_offset,status FROM functions WHERE project_id=?", proj["id"]):
             row=dict(fn)
             if row.get('rom_offset') is None:
                 own=fallback.get((row.get('name'),row['vram']))
@@ -268,7 +268,7 @@ class CompilerMixin:
         return list(profiles.values())
 
     def compiler_test_result(self, proj, fn):
-        row = self.store.one("SELECT * FROM compiler_tests WHERE function_id=?", fn["id"])
+        row = self.project_store(proj['id']).one("SELECT * FROM compiler_tests WHERE function_id=?", fn["id"])
         if row is None:
             return None
         comparison = json.loads(row["result"])
@@ -359,7 +359,7 @@ class CompilerMixin:
             log(f"{function}: testing all {len(candidates)} supported compiler/flag combinations (not an exhaustive search of every possible flag).")
         else:
             fields='id,vram,best_score' if all_installed else '*'
-            rows=self.store.all(f"SELECT {fields} FROM functions WHERE project_id=? AND status NOT IN ('matched', 'asm') AND n_insns>=?",
+            rows=self.project_store(proj['id']).all(f"SELECT {fields} FROM functions WHERE project_id=? AND status NOT IN ('matched', 'asm') AND n_insns>=?",
                                 proj['id'],0 if all_installed else self.SURVEY_MIN_INSNS)
         contradicted=cmap.contradicted if cmap else set()
         rows.sort(key=lambda f:(f['vram'] not in contradicted,f['best_score'] if f['best_score'] is not None else 1<<30))
@@ -384,7 +384,7 @@ class CompilerMixin:
             preparing_phase('Reading shared headers and symbols')
             began=time.monotonic()
             shared=self._comparison_inputs(proj,available_candidates)
-            previous_tests={r['function_id']:r['input_digest'] for r in self.store.all(
+            previous_tests={r['function_id']:r['input_digest'] for r in self.project_store(proj['id']).all(
                 "SELECT t.function_id,t.input_digest FROM compiler_tests t JOIN functions f ON f.id=t.function_id "
                 "WHERE f.project_id=?",proj['id'])} if untested_only else {}
             phase_done('Shared inputs and history',began)
@@ -402,7 +402,7 @@ class CompilerMixin:
                     if function:
                         full=batch
                     else:
-                        loaded={r['id']:r for r in self.store.all(
+                        loaded={r['id']:r for r in self.project_store(proj['id']).all(
                             'SELECT id,name,unit,vram,rom_offset,status,best_score,best_source,matched_source,meta,target,relocs '
                             'FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
                             proj['id'],json.dumps([r['id'] for r in batch]))}
@@ -438,7 +438,7 @@ class CompilerMixin:
             discovered = fn
             if all_installed and not function:
                 # Assembly and seeds are needed only for work actually selected to compile.
-                fn = self.store.one('SELECT * FROM functions WHERE project_id=? AND id=?', proj['id'], fn['id'])
+                fn = self.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND id=?', proj['id'], fn['id'])
                 if fn is None or fn['status'] in ('matched', 'asm'):
                     continue
             source = self._comparison_source(fn)
@@ -513,7 +513,7 @@ class CompilerMixin:
                              "tested": len(candidates), "exact_matches": len(matches),
                              "improved": improved, "ranked": ranked, "flags_only": flags_only, "used_profiles_only": used_profiles_only}
                 check_cancel()
-                with self.store.tx() as db:
+                with self.project_store(proj['id']).tx() as db:
                     db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
                                (fn["id"], input_digest, time.time(), json.dumps(completed)))
                 applied = False
@@ -538,7 +538,7 @@ class CompilerMixin:
                         apply_error = str(error)
                         log(f"{fn['name']}: auto-apply skipped: {error}")
                     completed.update(applied=applied, apply_error=apply_error)
-                    with self.store.tx() as db:
+                    with self.project_store(proj['id']).tx() as db:
                         db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
                                    (fn["id"], input_digest, time.time(), json.dumps(completed)))
                 results.append({"function": fn["name"], "before": baseline, "best": best,
@@ -590,7 +590,7 @@ class CompilerMixin:
         for line in suggested:
             log(line)
         if found:
-            with self.store.tx() as db:
+            with self.project_store(proj['id']).tx() as db:
                 self._event(db, proj["id"], None, "compiler",
                             f"the compiler survey: {found} function(s) match with another compiler than today's")
         return {"tried": n, "confirmed": found, "suggested": suggested}
@@ -607,7 +607,7 @@ class CompilerMixin:
                           if run.start <= int(a) < run.end and compilermap.kind((lab[0], tuple(lab[1]))) == compilermap.kind(run.label)), None)
             if proof is None:
                 continue
-            fn = self.store.one("SELECT * FROM functions WHERE project_id=? AND vram=?", proj["id"], proof)
+            fn = self.project_store(proj['id']).one("SELECT * FROM functions WHERE project_id=? AND vram=?", proj["id"], proof)
             source = self._comparison_source(fn) if fn else None
             if not source:
                 continue
@@ -994,15 +994,20 @@ class CompilerMixin:
         if not allow_non_improving and not ok and fn["best_score"] is not None and diff.score >= fn["best_score"]:
             raise NetworkError("These settings no longer improve this function. Run a fresh comparison.")
         if not ok:
-            with self.store.tx() as db:
-                self._expire_claims(db)
+            store = self.project_store(proj['id'])
+            identities = {} if store is self.store else {
+                'machine_ids': self._machine_agent_ids(),
+                'nonexclusive_ids': self._nonexclusive_agent_ids(),
+            }
+            with store.tx() as db:
+                self._expire_claims(db, **identities)
                 if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn['id'],)).fetchone():
                     raise NetworkError('This function is being worked on. Only a verified exact match can replace active work.')
         default = self.cfg(proj)["compiler"]
         use_default = toolchain == default["toolchain"] and flags == default["flags"]
         end = fn["vram"] + fn["size"]
         if preserve_other_profiles and fn['rom_offset'] is None:
-            rows = self.store.all("SELECT id,vram FROM functions WHERE project_id=? AND vram IS NOT NULL", proj['id'])
+            rows = self.project_store(proj['id']).all("SELECT id,vram FROM functions WHERE project_id=? AND vram IS NOT NULL", proj['id'])
             if any(row['id'] != fn['id'] and row['vram'] == fn['vram'] for row in rows):
                 raise NetworkError("This overlay shares its start address. An address-only range cannot safely isolate it.")
             # Compiler profiles are selected by function start address. Stop before
@@ -1019,7 +1024,7 @@ class CompilerMixin:
         if allow_non_improving:
             # A deliberate compiler change can lower the percentage. The old score
             # described another profile; retain the C/attempt history, rebase its score.
-            with self.store.tx() as db:
+            with self.project_store(proj['id']).tx() as db:
                 db.execute("UPDATE functions SET best_score=? WHERE id=? AND status='open'", (diff.score, fn["id"]))
         agent, _ = self.local_agent("autopilot")
         # An exact-only recheck may finish someone else's function without disturbing
@@ -1062,7 +1067,7 @@ class CompilerMixin:
             cfg["compiler_ranges"] = sorted(keep, key=lambda r: r["start"])
         change(cfg)
         self._apply_compiler_config(proj, cfg, reopen=reopen and not toolchain, log=log)
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             where = ", ".join(f"0x{a:X}-0x{b:X}" for a, b in ranges)
             self._event(db, proj["id"], None, "compiler", f"{consoles.compiler_name(toolchain)} {' '.join(flags)} for {where}"
                         if toolchain else f"the project's compiler again for {where}")
@@ -1072,12 +1077,12 @@ class CompilerMixin:
         built with now, so the next agent starts from it."""
         cfg = self.cfg(proj)
         for name in names:
-            fn = self.store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name)
+            fn = self.project_store(proj['id']).one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name)
             if fn is None or fn["status"] != "matched":
                 continue
             own = compiler_for(cfg, fn["vram"], fn)
             _, d, _ = self._judge_with(proj, fn, own["toolchain"], list(own["flags"]), fn["matched_source"] or "")
-            with self.store.tx() as db:
+            with self.project_store(proj['id']).tx() as db:
                 db.execute("UPDATE functions SET status='open', best_source=matched_source, best_agent_id=matched_agent_id, "
                            "best_score=?, matched_source=NULL, matched_agent_id=NULL, matched_at=NULL WHERE id=?",
                            (d.score if d is not None else None, fn["id"]))
@@ -1091,11 +1096,11 @@ class CompilerMixin:
         keys = ("compiler", "compiler_ranges",'function_compilers')
         # Profile selection needs identity only. Narrow range edits must not load every source/target blob.
         identities = "id,name,vram,rom_offset"
-        rows = self.store.all(f"SELECT {identities} FROM functions WHERE project_id=? ORDER BY id", proj["id"])
+        rows = self.project_store(proj['id']).all(f"SELECT {identities} FROM functions WHERE project_id=? ORDER BY id", proj["id"])
         ids = [f['id'] for f in rows if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
-        affected = self.store.all("SELECT * FROM functions WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id", json.dumps(ids))
+        affected = self.project_store(proj['id']).all("SELECT * FROM functions WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id", json.dumps(ids))
         trial = dict(proj) | {"config": json.dumps(cfg)}
-        contexts = [tuple(r) for r in self.store.all("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", proj["id"])]
+        contexts = [tuple(r) for r in self.project_store(proj['id']).all("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", proj["id"])]
         matched = [f for f in affected if f["status"] == "matched"]
         log(f"Checking {len(matched)} matched functions before changing compiler settings.")
         report = getattr(log, 'progress', lambda value: None)
@@ -1133,7 +1138,7 @@ class CompilerMixin:
         def population(items):
             return [tuple(r[k] for k in ("id", "name", "vram", "rom_offset", "unit", "size", "target", "relocs", "meta",
                                          "status", "matched_source", "best_source", "best_score")) for r in items]
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             current = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             latest = db.execute(f"SELECT {identities} FROM functions WHERE project_id=? ORDER BY id", (proj["id"],)).fetchall()
             headers = [tuple(r) for r in db.execute("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", (proj["id"],))]
@@ -1170,5 +1175,5 @@ class CompilerMixin:
         cfg = json.loads(proj["config"])
         cfg["compiler"] = {"toolchain": tc.id, "flags": flags or consoles.default_flags(cfg, tc.id), "timeout": 20}
         self._apply_compiler_config(proj, cfg, log=log)
-        with self.store.tx() as db:
+        with self.project_store(proj['id']).tx() as db:
             self._event(db, proj["id"], None, "compiler", f"{tc.name} {' '.join(cfg['compiler']['flags'])}")

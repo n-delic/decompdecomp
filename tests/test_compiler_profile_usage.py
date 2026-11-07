@@ -16,6 +16,7 @@ def test_usage_counts_effective_profiles_in_project_with_range_precedence():
                 [(None, "open"), (0, "matched"), (10, "matched"), (16, "open"), (20, "matched"), (30, "open")]]
 
     engine = SimpleNamespace(cfg=lambda proj: cfg, store=SimpleNamespace(all=rows))
+    engine.project_store = lambda _: engine.store
     result = CompilerMixin.compiler_profile_usage(engine, {"id": 7})
     assert result == [
         {"toolchain": "gcc", "flags": ["-O1", "-g3"], "functions": 3, "matched": 1},
@@ -38,6 +39,7 @@ def test_profile_usage_indexes_legacy_overrides_once_instead_of_scanning_per_fun
     cfg=dict(compiler=dict(toolchain='gcc',flags=['-O2']),function_compilers=overrides)
     rows=[dict(name=f'f{n}',vram=100,rom_offset=None,status='open') for n in range(100)]
     engine=SimpleNamespace(cfg=lambda _:cfg,store=SimpleNamespace(all=lambda *args:rows))
+    engine.project_store = lambda _: engine.store
     usage=CompilerMixin.compiler_profile_usage(engine,{'id':1})
     assert overrides.scans==1
     assert sorted(p['functions'] for p in usage)==[33,33,34]
