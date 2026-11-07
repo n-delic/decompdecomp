@@ -2756,7 +2756,7 @@ def test_repository_setup_requires_write_guard_and_runs_as_job(app, monkeypatch)
     client, net, _ = app
     calls = []
     monkeypatch.setattr(repository_setup, 'status', lambda net, slug: {'repository':False})
-    def setup(net, slug, action, origin, log):
+    def setup(net, slug, action, origin, log, **kwargs):
         calls.append((slug, action, origin))
         return {'repository':True}
     monkeypatch.setattr(repository_setup, 'run', setup)
@@ -3008,3 +3008,24 @@ def test_room_reconciliation_discovers_active_scoped_job_and_deduplicates(app,mo
         client.post('/api/job/cancel',json={'id':identity},headers={'X-Decomp':'1'})
     finally:
         release.set();net.rooms.pop(slug,None)
+
+
+def test_github_setup_duplicate_and_reopen_attach(app, monkeypatch):
+    from decompnet.app import repository_setup
+    client, net, _ = app
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def setup(net, slug, action, origin, log, **kwargs):
+        calls.append((action, kwargs))
+        entered.set()
+        release.wait(5)
+        return {'repository':True, 'origin':True}
+    monkeypatch.setattr(repository_setup, 'run', setup)
+    data = {'slug':'game', 'action':'github', 'github_name':'owner/progress', 'visibility':'public'}
+    try:
+        first = client.post('/api/repository-setup', json=data, headers={'X-Decomp':'1'}).json()
+        assert entered.wait(2)
+        assert client.post('/api/repository-setup', json=data, headers={'X-Decomp':'1'}).json() == first
+        assert client.get('/api/repository-setup?slug=game').json() == first
+        assert calls == [('github', {'github_name':'owner/progress', 'visibility':'public'})]
+    finally:release.set()
