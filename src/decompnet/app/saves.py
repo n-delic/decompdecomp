@@ -877,6 +877,14 @@ def _saved_name(old_name, info, by_name, by_vram):
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _saved_current(store, project_id, name, kind):
+    # Already matched entries never use C here. For an open saved source, only the
+    # normal judge needs the full function; unchanged drafts compare just best C.
+    # CASE keeps unused packed columns out of the checksum/decompression path.
+    return store.one("SELECT status,CASE WHEN status IS NOT 'matched' AND ? THEN best_source END AS best_source "
+                     "FROM functions WHERE project_id=? AND name=?", kind == 'best', project_id, name)
+
+
 def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
     """Compile a bounded window ahead; only the caller may judge or change project state."""
     store = net.project_store(proj['id'])
@@ -914,13 +922,17 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
                 name = _saved_name(old_name, info, by_name, by_vram)
                 prepared = None
                 if judge_code and name is not None and text is not None:
-                    fn = dict(store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
-                    if fn["status"] != "matched" and not (kind == "best" and fn["best_source"] == text):
-                        ctx = net._context(proj["id"], fn["unit"])
-                        if ctx is not None:
-                            snapshot = net._compile_snapshot(proj, fn, ctx["header"], text)
-                            future = pool.submit(compile_one, dict(proj), ctx["header"], text, fn)
-                            prepared = (snapshot, future)
+                    current = _saved_current(store, proj["id"], name, kind)
+                    if current["status"] != "matched" and not (kind == "best" and current["best_source"] == text):
+                        fn = dict(store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
+                        # A foreground result can arrive between the narrow read and
+                        # the full compiler snapshot. Recheck against that fresh row.
+                        if fn["status"] != "matched" and not (kind == "best" and fn["best_source"] == text):
+                            ctx = net._context(proj["id"], fn["unit"])
+                            if ctx is not None:
+                                snapshot = net._compile_snapshot(proj, fn, ctx["header"], text)
+                                future = pool.submit(compile_one, dict(proj), ctx["header"], text, fn)
+                                prepared = (snapshot, future)
                 pending.append((old_name, info, kind, text, name, prepared))
             if not pending:
                 return
@@ -1001,8 +1013,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                 if name is None or text is None:
                     lost.append(old_name) if kind == "src" else None
                     continue
-                current = (store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
-                           if judge_code else current_rows[name])
+                current = (_saved_current(store, pid, name, kind) if judge_code else current_rows[name])
                 if current["status"] == "matched":
                     matched += kind == "src"
                     continue

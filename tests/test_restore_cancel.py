@@ -59,7 +59,7 @@ def test_restore_import_uses_the_same_cancellation_scope_as_judging(tmp_path, mo
         raise RuntimeError("cancelled at import")
 
     with pytest.raises(RuntimeError, match="cancelled at import"):
-        net = SimpleNamespace(import_rom=importing, store=SimpleNamespace(all=lambda *_: []))
+        net = SimpleNamespace(import_rom=importing, project_rows=lambda: [])
         saves.restore(net, str(tmp_path), tmp_path / "game", log)
     assert checks
     assert compiler._CANCEL_CHECK.get() is None
