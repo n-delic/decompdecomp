@@ -619,13 +619,13 @@ class Manager:
                 name = helper_name(kind, model, self._taken())
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
-                self._launch(s)
-                ids.append(s.id)
+                if self._launch(s):
+                    ids.append(s.id)
         return ids
 
-    def _launch(self, s: Session) -> None:
+    def _launch(self, s: Session) -> bool:
         if self._down:
-            return
+            return False
         s.stop = threading.Event()
         s.state, s.why, s.todo, s.until, s.stopped_by, s.error = "starting", "", "", None, "", ""
         s.signed_out = s.throttled = s.limited = s.auth_failed = False
@@ -633,6 +633,7 @@ class Manager:
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
         s.thread.start()
+        return True
 
     def restart(self, sid: str) -> None:
         """Start a stopped or paused helper again, by hand."""
@@ -687,8 +688,7 @@ class Manager:
                 if self.sessions.get(s.id) is not s or s.state != "stopped" or s.stopped_by != BY_QUIT:
                     continue
                 s.options = options
-                self._launch(s)
-                if s.state == "starting":
+                if self._launch(s):
                     ids.append(s.id)
         return ids
 
@@ -750,12 +750,15 @@ class Manager:
                     s.state, s.stopped_by, s.until, s.todo = "stopped", by, None, ""
                     s.why = {BY_YOU: "stopped by you", BY_QUIT: "decompdecomp closed while it worked"}.get(by, s.why)
                     self._save(s)
+                elif sid is not None and s.state == "stopped" and s.stopped_by == BY_QUIT:
+                    s.stopped_by, s.why = by, "stopped by you"
+                    self._save(s)
             self._release(s)
 
     def stop_project(self, slug: str) -> None:
         """Stop every helper working on one project (by the user)."""
         for s in list(self.sessions.values()):
-            if s.slug == slug and s.state in LIVE:
+            if s.slug == slug and (s.state in LIVE or s.state == "stopped" and s.stopped_by == BY_QUIT):
                 self.stop(s.id)
 
     def remove(self, sid: str) -> None:

@@ -82,8 +82,7 @@ def test_shutdown_prevents_background_startup_from_launching_helpers(tmp_path, m
 def test_start_after_shutdown_does_not_prepare_a_project(tmp_path, monkeypatch):
     net = RomNetwork(tmp_path / "decomp.db", tmp_path)
     manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
-    manager._down = True
-    monkeypatch.setattr(manager, "_prepare", lambda slug: pytest.fail("project was prepared during shutdown"))
+    monkeypatch.setattr(manager, "_prepare", lambda slug: setattr(manager, "_down", True))
     with pytest.raises(ValueError, match="is quitting"):
         manager.start("api", "game")
 
@@ -131,6 +130,37 @@ def test_resume_does_project_sync_outside_manager_lock_and_launches_under_it(tmp
         worker.join(5)
     assert not worker.is_alive()
     assert launched.is_set()
+
+
+def test_stopping_project_cancels_helpers_waiting_to_resume(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    sessions = [agents.Session(str(i), "api", f"helper{i}", "game", f"helper{i}", {},
+                               state="stopped", stopped_by=agents.BY_QUIT) for i in (1, 2)]
+    manager.sessions.update({session.id: session for session in sessions})
+    entered, release = threading.Event(), threading.Event()
+    launched = []
+
+    def project_row(slug):
+        if threading.current_thread().name == "resume-test":
+            entered.set()
+            assert release.wait(5)
+
+    monkeypatch.setattr(net, "project_row", project_row)
+    monkeypatch.setattr(manager, "_prepare", lambda slug: None)
+    monkeypatch.setattr(manager, "_launch", lambda session: launched.append(session.id))
+    monkeypatch.setattr(manager, "options_now", lambda kind, options: options)
+    worker = threading.Thread(target=manager.resume, name="resume-test")
+    worker.start()
+    try:
+        assert entered.wait(5)
+        manager.stop_project("game")
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert launched == []
+    assert all(session.stopped_by == agents.BY_YOU for session in sessions)
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
     from .test_loading import tiny_game
 
