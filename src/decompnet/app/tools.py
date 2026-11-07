@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from contextlib import nullcontext
 from importlib import resources
 from typing import Callable, Literal
 
@@ -607,9 +608,12 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
 
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
-    """Every helper sees pulled changes before acting; only tools that write work need a second synchronization."""
+    """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
     if boundary_investigations.scope(net,agent):
         return _dispatch(net,agent,slug,name,args)
+    if (name == 'project_info' and not args.get('detail', False)
+            and (agent.id, slug) in getattr(net, '_pending_tool_handshakes', set())):
+        return _dispatch(net, agent, slug, name, args)
     net.progress.sync(slug, force=True)
     result = _dispatch(net,agent,slug,name,args)
     if name not in READ_ONLY:
@@ -635,7 +639,13 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     result=''
     try:
         named=_named(net,agent,slug,args,name)
-        result=HANDLERS[name](net,agent,slug,**named)
+        # A real CLI handshake confirms authenticated access, not a saved-code
+        # import. Keep its compact facts on the current database snapshot so a
+        # long recheck cannot prevent the CLI from establishing its connection.
+        # The next work tool still synchronizes and validates its own inputs.
+        compact_handshake = handshake and name == 'project_info' and not args.get('detail', False)
+        with net.progress.view() if compact_handshake else nullcontext():
+            result=HANDLERS[name](net,agent,slug,**named)
         if name in {'get_function','get_assembly'} and args.get('function') != named.get('function'):
             result = f"Resolved read {str(args.get('function'))[:200]!r} to {named['function']}. This does not rename or create a function.\n"+result
         if handshake and name == 'project_info':

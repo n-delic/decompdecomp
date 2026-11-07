@@ -149,8 +149,9 @@ def test_lost_tool_connection_pauses_instead_of_paid_retries(tmp_path, monkeypat
     import sys
 
     from decompnet.app.agents import Session
+    from tests.test_agents import _game
 
-    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    net = _game(tmp_path)  # Work exists; this case exercises a connection lost after launch.
     monkeypatch.setattr(Manager, 'refresh_detected', lambda self: None)
     manager = Manager(net, tmp_path, 'http://127.0.0.1:1/mcp')
     monkeypatch.setattr(manager, '_preflight_tools', lambda token: None)
