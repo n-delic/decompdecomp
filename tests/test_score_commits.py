@@ -283,3 +283,21 @@ def test_capture_metadata_failures_are_logged_and_do_not_blame_git(automatic, mo
     assert 'missing required metadata' in state(net)['error']
     assert 'Git setup' not in state(net)['error']
     assert 'missing-context-key' in caplog.text and 'KeyError' in caplog.text
+
+
+def test_inherited_context_keeps_new_private_includes_owned_by_the_batch(automatic):
+    net, root, _, agent = automatic
+    store = net.project_store('game')
+    pid = store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    with store.tx() as db:
+        db.execute("UPDATE functions SET unit='overlay_a' WHERE name='f' AND project_id=?", (pid,))
+    enable(automatic, 1)
+    with store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,2,'typedef int private_value;',0,'local_extra')", (pid,))
+    fn = net._function('f', 'game')
+    net._record(fn, agent, 9, '#include "common_local_extra.h"\nvoid f(void) {}', 1)
+    score_commits.process(net, 'game')
+    assert state(net)['pending'] == 0 and not state(net)['error']
+    manifest = json.loads(git(root, 'show', 'HEAD:decompdecomp.json'))
+    assert manifest['headers']['local_extra'] == 'common_local_extra.h'
+    assert 'private_value' in git(root, 'show', 'HEAD:include/common_local_extra.h')

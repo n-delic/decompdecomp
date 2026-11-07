@@ -137,6 +137,10 @@ def scoped_snapshot(net, proj, root, rows, output):
         if path not in files:raise NetworkError('A saved draft header is missing. Save current progress and retry.')
         chosen[path] = files[path]
         needed.extend(prefix+'include/'+item.decode() for item in include.findall(files[path]))
+    # Private headers pulled in by the draft must also remain owned by the portable save.
+    for context_unit, header in current['headers'].items():
+        if prefix+'include/'+header in chosen:
+            base.setdefault('headers', {})[context_unit] = header
     base['notes'] = [note for note in base.get('notes', []) if note.get('function') not in names] + [note for note in current.get('notes', []) if note.get('function') in names]
     base['saved_at'], base['revision'] = current['saved_at'], current.get('revision')
     chosen[manifest_path] = (json.dumps(base, indent=1)+'\n').encode()
