@@ -209,6 +209,13 @@ def process(net, slug, output=log.info):
                 if existing:
                     commit = existing
                 else:
+                    current = store.one('SELECT status FROM functions WHERE id=? AND project_id=?', job['function_id'], proj['id'])
+                    if current is None or current['status'] != 'matched':
+                        # A later recheck revoked the verdict; its frozen source must not be published.
+                        with store.tx() as db:
+                            db.execute("UPDATE auto_match_commits SET state='cancelled',error=NULL WHERE id=? AND state='pending'", (job['id'],))
+                        log('Discarded an obsolete automatic match commit after its verdict changed.')
+                        continue
                     log('Preparing saved files for '+json.loads(job['snapshot'])['name']+'…')
                     files, paths, head = scoped_snapshot(net, proj, root, job, log)
                     # Disabling or moving the checkout cancels publication too.

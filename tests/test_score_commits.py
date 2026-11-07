@@ -241,3 +241,45 @@ def test_busy_progress_save_does_not_hold_repository_or_block_push(automatic, wo
         future.result(timeout=5)
     process(net, 'game')
     assert pending() == 0
+
+
+@pytest.mark.parametrize('dedicated', [False, True])
+def test_overlay_drafts_inherit_shared_context_unless_they_have_their_own(automatic, dedicated):
+    net, root, _, _ = automatic
+    store = net.project_store('game')
+    pid = store.one("SELECT id FROM projects WHERE slug='game'")['id']
+    with store.tx() as db:
+        db.execute("UPDATE functions SET unit='overlay_a' WHERE name='f' AND project_id=?", (pid,))
+        db.execute("UPDATE functions SET unit='overlay_b' WHERE name='g' AND project_id=?", (pid,))
+        if dedicated:
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,2,'/* own unit context */',0,'overlay_b')", (pid,))
+    net.progress.sync('game', force=True)
+    git(root, 'add', '.')
+    git(root, 'commit', '--allow-empty', '-qm', 'Checkpoint source units')
+    enable(automatic, 2)
+    improve(automatic, 'f', 9)
+    improve(automatic, 'g', 19)
+    score_commits.process(net, 'game')
+    assert state(net)['pending'] == 0 and not state(net)['error']
+    manifest = json.loads(git(root, 'show', 'HEAD:decompdecomp.json'))
+    assert 'overlay_a' not in manifest['headers'], 'Inherited context must remain shared'
+    assert manifest['headers'][''] == 'common.h'
+    assert git(root, 'show', 'HEAD:include/common.h') == (root/'include/common.h').read_text().strip()
+    if dedicated:
+        assert manifest['headers']['overlay_b'] == 'common_overlay_b.h'
+        assert 'own unit context' in git(root, 'show', 'HEAD:include/common_overlay_b.h')
+    else:
+        assert 'overlay_b' not in manifest['headers']
+    assert git(root, 'log', '-1', '--format=%s') == 'Improve drafts for 2 functions'
+
+
+def test_capture_metadata_failures_are_logged_and_do_not_blame_git(automatic, monkeypatch, caplog):
+    net, _, _, _ = automatic
+    enable(automatic, 1)
+    improve(automatic)
+    def missing(*args):raise KeyError('missing-context-key')
+    monkeypatch.setattr(score_commits, 'scoped_snapshot', missing)
+    score_commits.process(net, 'game')
+    assert 'missing required metadata' in state(net)['error']
+    assert 'Git setup' not in state(net)['error']
+    assert 'missing-context-key' in caplog.text and 'KeyError' in caplog.text
