@@ -79,7 +79,8 @@ class WindowsPC(Console):
     ram = (0x00400000, 0x80000000)  # a 32-bit program's address space above its usual image base
     demo = "demo-pc"
     demo_tools = ("msvc", "objdiff-cli", "wibo", "ghidra", "java")  # Ghidra needs Java 21 or newer
-    # the whole program rebuilt from the project: like GameCube's and DS's, the project is the export
+    # the whole program rebuilt from the project: like GameCube's and DS's, the project is the export (`ninja
+    # export` relinks the program: project_template/tools/export.py)
     own_features = frozenset({REBUILD_CHECK})
     reimports = True  # Ghidra again, read by the newest rules, matches kept (reimport)
     # what a project's config holds, in its manifest's "analysis" (on_start brings one with less up, step by step):

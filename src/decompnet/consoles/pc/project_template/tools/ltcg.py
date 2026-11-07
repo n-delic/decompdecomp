@@ -11,7 +11,13 @@ bytes depend on who calls it and on what it calls, and an object compiled on its
 
 The build links each source file in harness mode instead (tools/configure.py writes the rules from here):
 
-- src/auto/<unit>.cpp, the decompiled code;
+- src/auto/<unit>.cpp, the decompiled code, and src/auto/<unit>.<part>.cpp, more of it in files of its own. Under
+  LTCG the split into source files is part of what the code compiles to: a caller's call order and where it keeps
+  results can depend on whether its callees were in its own file, or in a file linked before or after it. A unit is a
+  stretch of the program's addresses, so it can hold pieces of several of the original's files. Each file is its own
+  /GL object in the unit's link. They link in the order a `// LINK-ORDER: <file> <file> ...` line in
+  src/auto/<unit>.cpp gives (file names; files it leaves out follow in name order), or else <unit>.cpp first, then the
+  parts in name order;
 - harness/<unit>.drv.cpp, the driver: `extern "C" __declspec(dllexport) void HarnessEntry(...)` calling the unit's
   functions the way the original's call sites do (which registers hold what, which constants are passed), so the
   linker gives them the original's conventions;
@@ -22,9 +28,14 @@ The build links each source file in harness mode instead (tools/configure.py wri
 
 All of it is compiled with /GL and linked into a DLL with /LTCG and a map by the same Visual C++'s own linker
 (link.exe: through wine on Linux and macOS, which the user installs, as for Visual C++ 2017; wibo can't run it),
-with a library of C runtime stubs (support.lib, built here) for what the compiler calls implicitly. A `// HARNESS-LINK: <flags>` line in any of those files adds linker flags for that unit, such as
-`d3d8ltcg.lib` (the XDK's LTCG Direct3D, so its inlined code is generated alike) or `/d2:"-inlT56"`.
-tools/dll2coff.py then cuts the unit's functions out of the DLL into the object objdiff compares.
+with a library of C runtime stubs (support.lib, built here) for what the compiler calls implicitly. A
+`// HARNESS-LINK: <flags>` line in any of those files adds linker flags for that unit, such as `d3d8ltcg.lib` (the
+XDK's LTCG Direct3D, so its inlined code is generated alike; the lib folder beside each of the compiler's header
+folders is searched) or `/d2:"-inlT56"`. tools/dll2coff.py then cuts the unit's functions out of the DLL into the
+object objdiff compares.
+
+What each file includes (headers, another unit's source a driver includes) is its dependency (tools/cldeps.py), so
+an edit rebuilds the units that read the edited file, and only those.
 
 A unit whose driver doesn't define HarnessEntry yet is compiled as a plain unit, without /GL: leaf functions with
 standard conventions match that way too. Made by decompdecomp.
@@ -47,6 +58,7 @@ import compile as compiler_runner  # (tools/compile.py: how wine is found and st
 ENTRY = re.compile(r'^[ \t]*extern[ \t]+"C"[^\n;]*\bHarnessEntry[ \t]*\(', re.M)
 # a line of its own (a comment that only mentions the directive, as older driver skeletons did, isn't one)
 LINK_LINE = re.compile(r"^[ \t]*//[ \t]*HARNESS-LINK:[ \t]*([^\r\n]*)", re.M)
+ORDER_LINE = re.compile(r"^[ \t]*//[ \t]*LINK-ORDER:[ \t]*([^\r\n]*)", re.M)
 
 # What the compiler calls without the source asking for it (floating point, 64-bit arithmetic, stack probes,
 # pure virtual calls, structure copies). Builds link with /NODEFAULTLIB, so these stubs stand in for the C runtime:
@@ -80,11 +92,61 @@ LINK_SECONDS = 900  # a whole program's code generation under wine
 UNRESOLVED = re.compile(r"unresolved external symbol (?:\"[^\"]*\" \()?([^\s()\"]+)\)?")
 
 
-def harness_files(unit: str, harness: Path = Path("harness")) -> tuple[Path, list[Path]]:
-    """(driver, stand-ins) of a unit: harness/<unit>.drv.cpp and every other harness/<unit>.*.cpp."""
+def by_prefix(folder: Path, suffix: str) -> dict[str, list[Path]]:
+    """Every <prefix>.<more><suffix> file in `folder`, under each prefix it has (case as the file system matches it):
+    what a glob of `<prefix>.*<suffix>` finds, for every unit from one listing. A glob per unit read the folder once
+    for each of them: 2.3 s of configure's 3.9 on a game of 1,400 units."""
+    out: dict[str, list[Path]] = {}
+    if not folder.is_dir():
+        return out
+    for p in folder.iterdir():
+        if not p.name.lower().endswith(suffix.lower()):
+            continue
+        stem = p.name[:-len(suffix)]
+        for i, ch in enumerate(stem):
+            if ch == ".":
+                out.setdefault(os.path.normcase(stem[:i]), []).append(p)
+    return out
+
+
+def harness_files(unit: str, harness: Path = Path("harness"),
+                  listing: dict[str, list[Path]] | None = None) -> tuple[Path, list[Path]]:
+    """(driver, stand-ins) of a unit: harness/<unit>.drv.cpp and every other harness/<unit>.*.cpp. `listing`: the
+    folder's by_prefix(harness, ".cpp"), for many units at once."""
     driver = harness / f"{unit}.drv.cpp"
-    extras = sorted(p for p in harness.glob(f"{unit}.*.cpp") if p != driver)
-    return driver, extras
+    found = (listing if listing is not None else by_prefix(harness, ".cpp")).get(os.path.normcase(unit), [])
+    return driver, sorted(p for p in found if p != driver)
+
+
+def unit_parts(src: Path, listing: dict[str, list[Path]] | None = None) -> list[Path]:
+    """The other files of a unit's own code: <unit>.<part>.cpp beside its source <unit>.cpp, in name order.
+    `listing`: the folder's by_prefix(src.parent, src.suffix), for many units at once."""
+    found = (listing if listing is not None else by_prefix(src.parent, src.suffix)).get(os.path.normcase(src.stem), [])
+    return sorted(p for p in found if p != src)
+
+
+def unit_sources(src: Path, listing: dict[str, list[Path]] | None = None) -> list[Path]:
+    """A unit's own source files in link order: as the source's `// LINK-ORDER:` line names them (the last such line;
+    files it leaves out follow in name order), else the source first, then its parts in name order."""
+    files = [src, *unit_parts(src, listing)]
+    try:
+        text = src.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return files
+    found = list(ORDER_LINE.finditer(text))
+    if not found:
+        return files
+    by_name = {p.name.lower(): p for p in files}
+    order: list[Path] = []
+    for name in found[-1].group(1).split():
+        p = by_name.get(Path(name).name.lower())
+        if p is None:  # a typo or a part not written yet: say where, configure stops with it
+            line = text.count("\n", 0, found[-1].start()) + 1
+            raise SystemExit(f"{src}:{line}: LINK-ORDER names {name}, which isn't one of this unit's files "
+                             f"({', '.join(p.name for p in files)})")
+        if p not in order:
+            order.append(p)
+    return order + [p for p in files if p not in order]
 
 
 def has_entry(driver: Path) -> bool:
@@ -92,6 +154,24 @@ def has_entry(driver: Path) -> bool:
         return bool(ENTRY.search(driver.read_text(encoding="utf-8", errors="replace")))
     except OSError:
         return False
+
+
+def directives(paths: list[Path]) -> dict[str, list[str]]:
+    """What configure reads inside these files: their LINK-ORDER and HARNESS-LINK lines and whether they define
+    HarnessEntry, by file (files with none left out). With the lists of files, it's all build.ninja is made from
+    (configure.py's facts), so editing a function's body doesn't write the build again, and editing these does."""
+    out: dict[str, list[str]] = {}
+    for p in paths:
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # (the words first: the build runs this before every compile, and most files have none of them)
+        found = [m.group(0).strip() for word, r in (("LINK-ORDER", ORDER_LINE), ("HARNESS-LINK", LINK_LINE),
+                                                    ("HarnessEntry", ENTRY)) if word in text for m in r.finditer(text)]
+        if found:
+            out[p.as_posix()] = found
+    return out
 
 
 def link_flags(paths: list[Path]) -> list[str]:
@@ -110,64 +190,89 @@ def link_flags(paths: list[Path]) -> list[str]:
     return [f for f in out if not f.lower().startswith("/d2:")] + d2[-1:]
 
 
+def lib_paths(includes) -> list[str]:
+    """The linker's /LIBPATH: flags for a compiler's header folders: the `lib` folder beside each (an SDK's include/
+    and lib/, the XDK's xbox/include and xbox/lib), where a HARNESS-LINK library is found."""
+    out = []
+    for d in includes:
+        lib = next((p for p in (Path(d).parent / "lib", Path(d).parent / "Lib") if p.is_dir()), None)
+        if lib is not None and f"/LIBPATH:{lib}" not in out:
+            out.append(f"/LIBPATH:{lib}")
+    return out
+
+
 def write_rules(n, *, units: list[str], source_of, build: Path, config: Path, compiler_of, py: str, wibo: str,
                 headers: list[str]) -> tuple[set[str], list[str]]:
     """Ninja rules and builds for every unit whose driver defines HarnessEntry. `compiler_of(source)`: the unit's
-    (cl.exe, header folders, flags); its linker is the one beside the compiler. Returns (those units' source files,
-    the harness files the build depends on, so editing a driver re-runs configure)."""
+    (cl.exe, header folders, flags, whether it has /showIncludes); its linker is the one beside the compiler. Returns
+    (the source files those units link, their parts too, the harness files configure reads). An object depends on
+    what its compile read (tools/cldeps.py), or, from a compiler without /showIncludes (Visual C++ 7.0, which an
+    early XDK has), on every header and harness file."""
     q = subprocess.list2cmdline
     out = build / "ltcg"
     wrap = f'"{wibo}" ' if wibo and sys.platform != "win32" else ""
-    n.rule("ltcg_cc", f'{wrap}"$cl" $flags /Iinclude /Iharness $includes /Fo$out $in', description="LTCG cc $in")
+    n.rule("ltcg_cc", f'{py} tools/cldeps.py $out -- {wrap}"$cl" $flags /Iinclude /Iharness $includes /showIncludes '
+                      "/Fo$out $in", deps="gcc", depfile="$out.d", description="LTCG cc $in")
+    n.rule("ltcg_cc_all", f'{wrap}"$cl" $flags /Iinclude /Iharness $includes /Fo$out $in', description="LTCG cc $in")
     n.rule("ltcg_support", f'{py} tools/ltcg.py support $out --cl "$cl" --lib "$lib"' + (f' --wibo "{wibo}"' if wrap else ""))
     # through `ltcg.py link`, which runs the linker (through wine) and keeps what it said (<map>.link.txt: what's
     # unresolved, for dll2coff)
-    n.rule("ltcg_link", f'{py} tools/ltcg.py link $out $map.link.txt -- "$link" {q(LINK_FLAGS)} /MAP:$map /OUT:$out'
-                        " $extra $in", description="LTCG link $out")
+    n.rule("ltcg_link", f'{py} tools/ltcg.py link $out $map.link.txt -- "$link" {q(LINK_FLAGS)} $libpaths /MAP:$map'
+                        " /OUT:$out $extra $in", description="LTCG link $out")
     n.rule("ltcg_coff", f"{py} tools/dll2coff.py {config.as_posix()} $unit $dll $map $out $sources")
 
     harness_paths = sorted(p.as_posix() for p in Path("harness").rglob("*") if p.is_file()) if Path("harness").is_dir() \
         else []
     done: set[str] = set()
     support_lib = None
+    in_harness = by_prefix(Path("harness"), ".cpp")
+    beside: dict[tuple[Path, str], dict[str, list[Path]]] = {}  # a unit source's folder and suffix -> by_prefix of it
     for unit in units:
-        driver, extras = harness_files(unit)
+        driver, extras = harness_files(unit, listing=in_harness)
         src = Path(source_of(unit))
         if not src.exists() or not has_entry(driver):
             continue
-        cl, includes, flags = compiler_of(src.as_posix())
-        beside = Path(cl).parent
-        link = next((p for p in (beside / "link.exe", beside / "LINK.EXE") if p.exists()), beside / "link.exe")
-        lib = next((p for p in (beside / "lib.exe", beside / "LIB.EXE") if p.exists()), beside / "lib.exe")
+        key = (src.parent, src.suffix)
+        if key not in beside:
+            beside[key] = by_prefix(*key)
+        own = unit_sources(src, beside[key])
+        cl, includes, flags, deps = compiler_of(src.as_posix())
+        there = Path(cl).parent
+        link = next((p for p in (there / "link.exe", there / "LINK.EXE", there / "Link.Exe") if p.exists()),
+                    there / "link.exe")
+        lib = next((p for p in (there / "lib.exe", there / "LIB.EXE", there / "Lib.Exe") if p.exists()),
+                   there / "lib.exe")
         if support_lib is None:  # shortcut: one support.lib for every unit, built by the first one's Visual C++
             support_lib = (out / "support.lib").as_posix()
             n.build(support_lib, "ltcg_support", implicit=["tools/ltcg.py"], variables={"cl": cl, "lib": str(lib)})
         gl = [f for f in flags if f.upper() != "/GL"] + ["/GL"]
-        sources = [src, driver, *extras]
+        sources = [*own, driver, *extras]
         objs = []
         for i, path in enumerate(sources):
             obj = (out / unit / f"{i:02d}_{path.stem.replace('.', '_')}.obj").as_posix()
             plain = [f for f in gl if f.upper() != "/GL"] if ".nogl." in path.name.lower() else gl
-            n.build(obj, "ltcg_cc", path.as_posix(), implicit=headers,
+            n.build(obj, "ltcg_cc" if deps else "ltcg_cc_all", path.as_posix(),
+                    implicit=["tools/cldeps.py"] if deps else [*headers, *harness_paths],
                     variables={"cl": cl, "includes": q([f"/I{d}" for d in includes]), "flags": q(plain)})
             objs.append(obj)
         dll, mapf = (out / unit / f"{unit}.dll").as_posix(), (out / unit / f"{unit}.map").as_posix()
         n.build(dll, "ltcg_link", [*objs, support_lib], implicit=["tools/ltcg.py"],
                 implicit_outputs=[mapf, f"{mapf}.link.txt"],
-                variables={"map": mapf, "link": str(link), "extra": q(link_flags(sources))})
+                variables={"map": mapf, "link": str(link), "extra": q(link_flags(sources)),
+                           "libpaths": q(lib_paths(includes))})
         base = (build / src.with_suffix(".obj")).as_posix()
         n.build([base], "ltcg_coff", [dll], implicit=[mapf, config.as_posix(), "tools/dll2coff.py", "tools/delink.py",
                                                       "tools/names.py", *(s.as_posix() for s in sources)],
                 implicit_outputs=[Path(base).with_suffix(".ltcg.json").as_posix()],
                 variables={"unit": unit, "dll": dll, "map": mapf, "sources": q([s.as_posix() for s in sources])})
-        done.add(src.as_posix())
+        done.update(p.as_posix() for p in own)
     return done, harness_paths
 
 
 def _run(cmd: list[str], env: dict | None = None) -> None:
-    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=env)
-    if res.returncode:
-        sys.exit(f"{subprocess.list2cmdline(cmd)} failed:\n{res.stdout}{res.stderr}")
+    code, text = compiler_runner.run_to_text(cmd, env, timeout=LINK_SECONDS)  # (to a file: wine's services, above)
+    if code:
+        sys.exit(f"{subprocess.list2cmdline(cmd)} failed:\n{text}")
 
 
 def support(out: Path, cl: str, lib: str, wibo: str) -> None:

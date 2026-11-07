@@ -10,9 +10,10 @@ $DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX, and the packs wine runs in $DECOMPNE
 sets): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
 config/VERSION/file_flags.json gives it (/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp)
 compares every source file's functions with the original's. `ninja rebuild` puts the whole program back together from
-them (tools/rebuild.py) and checks it against your copy. A game built with link-time code generation (LTCG = True:
-units with a driver in harness/) builds those units through tools/ltcg.py, whose linker runs through wine. Made by
-decompdecomp.
+them (tools/rebuild.py) and checks it against your copy. `ninja export` rebuilds it with the game's own linker instead
+(an Xbox game's: then your XDK's imagebld) and says whether it's byte for byte your copy (tools/export.py). A game
+built with link-time code generation (LTCG = True: units with a driver in harness/) builds those units through
+tools/ltcg.py, whose linker runs through wine. Made by decompdecomp.
 """
 
 import argparse
@@ -44,6 +45,8 @@ parser.add_argument("--wibo", default="", help="runs the Windows compilers on Li
 parser.add_argument("--own", default=[], action="append",
                     help="a compiler of the user's own (a kit: decompdecomp's kits/): VERSION=RUNNER,CL[,INCLUDE...], "
                          "RUNNER wibo, wine or none")
+parser.add_argument("--facts", action="store_true", help="only bring build/VERSION/configure.facts up to date (the "
+                                                         "build runs this, see facts())")
 args = parser.parse_args()
 WINE_FROM = 14  # without $DECOMPNET_WINE_PACKS: the first Visual C++ wibo can't run (2015 and newer), which wine runs
 # the --msvc folders whose compilers run through wine, not wibo (decompdecomp sets it from its toolchains' `wine`, as
@@ -59,6 +62,7 @@ CONFIG = Path("config") / VERSION / "functions.json"
 FILE_COMPILERS = CONFIG.parent / "file_compilers.json"  # {"src/auto/text_00401000.cpp": "7.1"}: files built with another
 FILE_FLAGS = CONFIG.parent / "file_flags.json"  # {"src/auto/text_00401000.cpp": ["/Oy-"]}: files built with more flags
 BUILD = Path("build") / VERSION
+FACTS = BUILD / "configure.facts"
 
 
 def q(argv: list[str]) -> str:
@@ -119,6 +123,31 @@ def runner(version: str) -> list[str]:
     return ["--wine"]
 
 
+def shows_includes(version: str) -> bool:
+    """/showIncludes (header dependencies): Visual C++ .NET 2003 (7.1) and later have it, Visual C++ 6 doesn't. A
+    compiler of the user's own has it when it's known to be 7.1 or later: an XDK's (xdk-<build>) from XDK 5233 on, or
+    one in an XDK's bin/vc71 (the earlier XDKs shipped 7.0 builds of their own, kits/xdk.py); a Visual C++ of the
+    user's own (own-<its build>: own-13.10.3077) from build 13.10, 7.1's, on."""
+    if version in OWN and not version[:1].isdigit():
+        kind, _, build = version.rpartition("/")[2].partition("-")  # MSVC/xdk-5849, MSVC/own-13.10.3077
+        if kind == "own":
+            return tuple(int(x) for x in build.split(".")[:2] if x.isdigit()) >= (13, 10)
+        return kind == "xdk" and ((build.isdigit() and int(build) >= 5233)
+                                  or Path(OWN[version][1]).parent.name.lower() == "vc71")
+    return tuple(int(x) for x in version.split(".")[:2] if x.isdigit()) >= (7, 1)
+
+
+def xdk_folder() -> Path | None:
+    """The user's own XDK (its xbox folder: include/xtl.h, lib/xboxkrnl.lib, bin/imagebld.exe), from the header folders
+    of its compilers (--own): what `ninja export` rebuilds an Xbox game's XBE with. With several XDKs, the one whose
+    compiler is the game's (MSVC_VERSION) first."""
+    for version in sorted(OWN, key=lambda v: v != MSVC_VERSION):
+        for d in OWN[version][2:]:
+            if (Path(d) / "xtl.h").is_file() and (Path(d).parent / "lib" / "xboxkrnl.lib").is_file():
+                return Path(d).parent
+    return None
+
+
 def file_compilers() -> dict[str, str]:
     return json.loads(FILE_COMPILERS.read_text(encoding="utf-8")) if FILE_COMPILERS.exists() else {}
 
@@ -137,10 +166,39 @@ def source_of(unit: str) -> str:
     return cpp.as_posix() if cpp.exists() or not cpp.with_suffix(".c").exists() else cpp.with_suffix(".c").as_posix()
 
 
+def facts(headers: list[str], sources: list[str], harness: list[str]) -> str:
+    """What build.ninja is made from besides this file, the config and the compiler maps: which source files, headers
+    and harness files there are, and in LTCG harness mode the lines configure reads inside them (ltcg.directives:
+    LINK-ORDER, HARNESS-LINK, a driver's HarnessEntry), not the code in them. build.ninja depended on every one of
+    them, so each edit of a source wrote the whole build again before compiling: on a game of 1,400 units, 3 s of
+    every compile, an agent's or each of the permuter's variants (which judge in under one). Now the build brings this
+    file up to date first (rule facts, restat): it changes, and configure runs, only when one of those does."""
+    found = {"headers": headers, "sources": sources, "harness": harness}
+    if LTCG:
+        import ltcg
+
+        found["directives"] = ltcg.directives([Path(p) for p in (*sources, *harness)
+                                               if Path(p).parent in (Path("src") / "auto", Path("harness"))])
+    return json.dumps(found, indent=0) + "\n"
+
+
+def write_facts(text: str) -> None:
+    """Written only when it changes: its date is what tells ninja whether build.ninja is out of date."""
+    if not FACTS.is_file() or FACTS.read_text(encoding="utf-8") != text:
+        FACTS.parent.mkdir(parents=True, exist_ok=True)
+        FACTS.write_text(text, encoding="utf-8")
+
+
 def main() -> None:
+    headers = [p.as_posix() for p in files("include", (".h", ".hpp"))]
+    sources = [s.as_posix() for s in files("src", (".c", ".cpp"))]
+    harness = sorted(p.as_posix() for p in Path("harness").rglob("*") if p.is_file()) \
+        if LTCG and Path("harness").is_dir() else []  # (only LTCG harness mode builds from harness/)
+    write_facts(facts(headers, sources, harness))
+    if args.facts:
+        return
     info = json.loads(CONFIG.read_text(encoding="utf-8"))
     units = info["units"]
-    headers = [p.as_posix() for p in files("include", (".h", ".hpp"))]
     # written aside and put in place whole: a configure that stops half way (a driver it can't read) leaves the last
     # build.ninja, so ninja runs this again and shows why
     with open("build.ninja.tmp", "w", encoding="utf-8") as f:
@@ -149,35 +207,47 @@ def main() -> None:
         compiler = [PYTHON, "tools/compile.py", "--config", CONFIG.as_posix()]
         # The runner invokes the compiler and names.py separately: cmd /c misparsed quoted compiler paths.
         # $runner: what runs the file's compiler (wibo, wine or nothing: runner())
-        n.rule("cl", q(compiler).replace("$", "$$") + " $runner --compiler $cl $includes --output $out "
-               "--source $in -- " + q(CL_FLAGS).replace("$", "$$") + " $cflags")
+        command = (q(compiler).replace("$", "$$") + " $runner --compiler $cl $includes --output $out --source $in -- "
+                   + q(CL_FLAGS).replace("$", "$$") + " $cflags")
+        n.rule("cl", command)
+        # The headers a 7.1 or later compiler reads are its file's dependencies (--deps: tools/cldeps.py): editing
+        # one rebuilds only what includes it. Visual C++ 6 has no /showIncludes: there every file depends on every
+        # header (rule cl)
+        n.rule("cl_deps", command.replace(" --output ", " --deps --output ", 1), deps="gcc", depfile="$out.d")
         n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
+        n.rule("facts", f"{PY} tools/configure.py " + q([*sys.argv[1:], "--facts"]).replace("$", "$$"), restat=True,
+               description="configure: which files there are")
 
         targets = [(BUILD / "target" / f"{u}.obj").as_posix() for u in units]
         n.build(targets, "delink", [CONFIG.as_posix(), "tools/delink.py"])
         objs = []
         versions, more = file_compilers(), file_flags()
-        harness, harness_files = set(), []
+        harness_sources = set()
         if LTCG:  # ---- harness mode (tools/ltcg.py, tools/dll2coff.py)
             import ltcg
 
             def compiler_of(source: str):
-                cl, includes = msvc(versions.get(source, MSVC_VERSION))
-                return cl, includes, [*CL_FLAGS, *more.get(source, [])]
+                version = versions.get(source, MSVC_VERSION)
+                cl, includes = msvc(version)
+                return cl, includes, [*CL_FLAGS, *more.get(source, [])], shows_includes(version)
 
-            harness, harness_files = ltcg.write_rules(
+            harness_sources, _ = ltcg.write_rules(
                 n, units=list(units), source_of=source_of, build=BUILD, config=CONFIG, compiler_of=compiler_of, py=PY,
                 wibo=args.wibo, headers=headers)
-            objs += [(BUILD / Path(s).with_suffix(".obj")).as_posix() for s in sorted(harness)]
+            objs += [(BUILD / Path(source_of(u)).with_suffix(".obj")).as_posix() for u in units
+                     if source_of(u) in harness_sources]
         # ---- end of harness mode
         for src in files("src", (".c", ".cpp")):
-            if src.as_posix() in harness:
-                continue
+            if src.as_posix() in harness_sources:  # (a harness unit's parts too: only its link builds them; a part
+                continue  # of a unit built plain is a file of its own, which isn't the unit's object)
             obj = (BUILD / src.with_suffix(".obj")).as_posix()
             src_posix = src.as_posix()
             version = versions.get(src_posix, MSVC_VERSION)
             cl, includes = msvc(version)
-            n.build(obj, "cl", src_posix, implicit=[*headers, CONFIG.as_posix(), "tools/compile.py", "tools/names.py"],
+            deps = shows_includes(version)
+            n.build(obj, "cl_deps" if deps else "cl", src_posix,
+                    implicit=[CONFIG.as_posix(), "tools/compile.py", "tools/names.py", "tools/cldeps.py"] if deps
+                    else [*headers, CONFIG.as_posix(), "tools/compile.py", "tools/names.py"],
                     variables={"cl": q([cl]).replace("$", "$$"),
                                "includes": q([a for d in includes for a in ("--include", d)]).replace("$", "$$"),
                                "runner": q(runner(version)).replace("$", "$$"),
@@ -195,10 +265,33 @@ def main() -> None:
         n.build(programs, "rebuild", [*targets, *objs],
                 implicit=[CONFIG.as_posix(), *exes, "tools/rebuild.py", "tools/delink.py"])
         n.build("rebuild", "phony", programs)
-        n.build("build.ninja", "configure", ["tools/configure.py", CONFIG.as_posix(), *headers,
-                                             *[s.as_posix() for s in files("src", (".c", ".cpp"))],
-                                             *[p.as_posix() for p in (FILE_COMPILERS, FILE_FLAGS) if p.exists()],
-                                             *harness_files])
+        # `ninja export`: the game's program linked again by the game's own linker (the one beside its compiler) and
+        # checked byte for byte (tools/export.py); an Xbox game's XBE is made by your XDK's imagebld then
+        game_cl = Path(msvc(MSVC_VERSION)[0])
+        link = next((p for p in (game_cl.with_name(name) for name in ("link.exe", "LINK.EXE", "Link.Exe"))
+                     if p.exists()), game_cl.with_name("link.exe"))
+        xdk = xdk_folder()
+        n.rule("export", " ".join([f"{PY} tools/export.py {CONFIG.as_posix()} {(BUILD / 'export').as_posix()}",
+                                   f'--link "{link}"', *([f'--xdk "{xdk}"'] if xdk else [])]),
+               description="rebuild the game's program with its own linker and compare it")
+        n.build((BUILD / "export" / "export.json").as_posix(), "export", [*targets, *objs],
+                implicit=["tools/export.py", "objdiff.json"])
+        n.build("export", "phony", [(BUILD / "export" / "export.json").as_posix()])
+        # The facts look again when a file they list changes, or a folder holding them does (a file added or
+        # removed changes its folder's date: one added on its own was never seen), and change only when what they
+        # say does (restat). Each is also a phony with no inputs, so one that's gone makes the facts out of date
+        # instead of stopping ninja before configure could run ("needed by configure.facts, missing"); a phony,
+        # not "always look", so a dry run (ForkProject._no_work) still says "no work to do" of a built object.
+        # build.ninja depends on the facts alone: what configure reads inside the files is in them too
+        folders = sorted({p.as_posix() for top in ("src", "include", "harness") if Path(top).is_dir()
+                          for p in (Path(top), *Path(top).rglob("*")) if p.is_dir()})
+        looked_at = list(dict.fromkeys([*headers, *harness, *sources, *folders]))
+        for p in looked_at:
+            n.build(p, "phony")
+        n.build(FACTS.as_posix(), "facts", looked_at,
+                implicit=["tools/configure.py", *(["tools/ltcg.py"] if LTCG else [])])
+        n.build("build.ninja", "configure", ["tools/configure.py", CONFIG.as_posix(), FACTS.as_posix(),
+                                             *[p.as_posix() for p in (FILE_COMPILERS, FILE_FLAGS) if p.exists()]])
         n.default(["prepare"])
     os.replace("build.ninja.tmp", "build.ninja")
 
@@ -210,7 +303,9 @@ def main() -> None:
                    "base_path": (BUILD / "src" / "auto" / f"{u}.obj").as_posix(),
                    "metadata": {"source_path": source_of(u), "complete": False}} for u in units],
     }
-    Path("objdiff.json").write_text(json.dumps(objdiff, indent=2), encoding="utf-8")
+    # (put in place whole: the app reads it while the build runs)
+    Path("objdiff.json.tmp").write_text(json.dumps(objdiff, indent=2), encoding="utf-8")
+    os.replace("objdiff.json.tmp", "objdiff.json")
 
 
 if __name__ == "__main__":

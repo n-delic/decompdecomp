@@ -63,23 +63,27 @@ after the user accepts that in Setup; don't add code that fetches them silently.
 ## Consoles, and the two ways a game is decompiled
 
 Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps1/`, `ps2/`, `gc_wii/`
-(GameCube and Wii), `pc/` (Windows games), `nds/` (Nintendo DS). Its `__init__.py` makes the console (its facts and
-parts) and its docstring lists its files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part,
-one line each) and the list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine:
-`self.console(proj)`) and never compares console names: a console-specific `if` outside `consoles/` is a bug. What
-depends only on the processor (relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/`
-(`mips.py`, `ppc.py`, `x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
+(GameCube and Wii), `pc/` (Windows games), `nds/` (Nintendo DS), `xbox/` (original Xbox: the PC path with an XBE
+reader). Its `__init__.py` makes the console (its facts and parts) and its docstring lists its files.
+`consoles/__init__.py` is the connector: the `Console` class (every fact and part, one line each) and the list of
+consoles. The rest of the app asks `consoles.get(platform)` (in the engine: `self.console(proj)`) and never compares
+console names: a console-specific `if` outside `consoles/` is a bug. What depends only on the processor (relocations,
+disassembly, hand-written assembly, which readers exist for it) is in `arch/` (`mips.py`, `ppc.py`, `x86.py`,
+`arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
 
 1. **ROM mode** (N64, PS1, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
    code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
    compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they
    share). Exported as a rebuildable tree by `rom/export*.py`.
-3. **PROJECT mode** (GameCube/Wii/PC/DS started from scratch, and public decomps forked by repository address): a
-   community-shaped project on disk with an `objdiff.json`; objdiff judges each unit. The console makes the project
+2. **PROJECT mode** (GameCube/Wii/PC/DS/Xbox started from scratch, and public decomps forked by repository address):
+   a community-shaped project on disk with an `objdiff.json`; objdiff judges each unit. The console makes the project
    (`consoles/gc_wii/scratch.py`: dtk-template; `consoles/pc/scratch.py`: Ghidra finds functions, decompdecomp
-   delinks them into COFF objects itself, from `consoles/pc/project_template/`; `consoles/nds/scratch.py`: ds-decomp,
-   with a CodeWarrior version per source file that `try_compiler` switches, `Console.file_compiler`). `forks/project.py`
-   detects and builds projects, `app/forkengine.py` drives them. Fork-mode helpers that read objects with pyelftools must
+   delinks them into COFF objects itself, from `consoles/pc/project_template/`; `consoles/xbox/scratch.py` makes an
+   XBE a Windows program at the same addresses, which the PC path takes as it is; both are rebuilt and checked by the
+   template's `tools/rebuild.py` (`ninja rebuild`), and relinked by the game's own linker with `ninja export`;
+   `consoles/nds/scratch.py`: ds-decomp, with a CodeWarrior version per source file that `try_compiler` switches,
+   `Console.file_compiler`). `forks/project.py` detects and builds projects, `app/forkengine.py` drives them.
+   Fork-mode helpers that read objects with pyelftools must
    tolerate COFF (PC, Xbox): treat an `ELFError` as "no verdict".
 
 **One pipeline, every console.** A feature is built for every console it can reach, ROM mode and project mode
@@ -137,8 +141,9 @@ CONTRIBUTING.md, "Adding an agent".
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
 from the vtables constructors store, MIPS and x86, named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`
-tool and the class lines of `get_function`), `structs.py` (struct layouts from the loads and stores through pointers, read by
-the processor’s `Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct`
+tool and the class lines of `get_function`; on Xbox and under link-time code generation, x86's structs, classes and
+member functions are `forks/methods.py`, which follows `this` in any register: `forkengine._by_members`),
+`structs.py` (struct layouts from the loads and stores through pointers, read by the processor’s `Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct`
 tool and the brief’s lines, `app/engine/layouts.py`), `compilermap.py` (which compiler built each part of a MIPS game; the
 judge's survey is `engine.survey_compilers`; `app/rangecheck.py` tests a suggested range on its neighbours before it
 applies), `app/tools.py` (the MCP tools helpers get and their prompt; MCP is only the app's private wiring to the CLI

@@ -53,7 +53,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | ✓ | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
+| Rebuildable export | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project | the project (`ninja rebuild`; `ninja export` relinks it with the game's own linker) | the project (`ninja rebuild` writes your default.xbe back, byte for byte; `ninja export` relinks it with your XDK's linker and imagebld, LTCG units from their harness links) | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Public project build prerequisite hints | — | — | — | — | — | — | — | — | — | — | ✓ (observed missing cross tools; Make-specific checks) |
 | Verified objdiff references for public Splat projects | — | — | — | — | — | — | — | — | — | — | ✓ N64 and PS1 simple code splits; — overlays and nested builds |
@@ -604,15 +604,31 @@ The original Xbox is a beta PROJECT-mode console: decompdecomp reads your defaul
 makes it a Windows program at the same addresses, and from there it is the PC path (Ghidra, COFF objects, objdiff,
 `ninja rebuild`, which writes your default.xbe back byte for byte). With your own XDK set up in Setup (a kit:
 `kits/`), its library code in .text is set aside and a game of an early XDK builds with that XDK's own Visual C++.
+On Windows a game of Visual C++ 7.1 needs your XDK: the msvc pack's 7.1 doesn't start there, the XDK's copy does.
 Three retail games imported and rebuilt byte for byte (thousands of functions each). All three were built with
 link-time code generation (/GL, /LTCG), as most Xbox games were: the import tells it from the program (or the import
 dialog says), units build in harness mode (`tools/ltcg.py`: the unit, a driver calling its functions as the game's
 call sites do, and stand-ins, linked /LTCG by the compiler's own linker through wine), briefs show each function's
 convention, `standins_for` writes a starting harness, and a register-convention function of a retail game matched
 through its driver.
-Briefs also say when a function is a member function (its `this` in any register) and of which struct, and an
-attempt whose function got another convention than the original's says which registers differ. What's next is real
-games: a whole one rebuilt from C, then the console's status can say recommended.
+Briefs also say when a function is a member function (its `this` in any register) and of which struct, and every
+compile checks the conventions its harness link gave the function and the functions it calls against the
+original's. A unit's code can be split over files linked in a `// LINK-ORDER:` (under /LTCG the split changes the
+callers' code), an edit rebuilds only the units whose files include it (`tools/cldeps.py`), and configure runs again
+only for what it reads inside the files. `ninja export` relinks the XBE with your XDK's linker and imagebld, which
+`ninja rebuild` doesn't (it puts the code back into your copy). What's next is real games: a whole one rebuilt from
+C, then the console's status can say recommended.
+
+- **x86 member functions** (Xbox, and games built with link-time code generation: `forks/methods.py`, which
+  follows `this` in any register, where PC's reader expects it in ecx): it can't tell a free function taking a
+  pointer from a member function when LTCG moves both into a register, and it groups a base class's functions, and
+  a member object's at +0, with the object they're called on. Names from another build would settle both.
+- **`ninja export` of a game with DLLs of its own** (PC: functions.json's `modules`): it relinks the program only,
+  so it stops and says so rather than call the game identical; `ninja rebuild` checks them all. Each DLL relinked
+  with its exports and compared with its own SHA-1 is what's missing.
+- **Visual C++ 7.1 on Windows itself**: the msvc pack's 7.1 `cl.exe` doesn't start there (MSVCR71.dll isn't in the
+  pack; wibo has it built in on Linux). An Xbox game's import picks your XDK's own copy of the same compiler there
+  (`MSVC/xdk-<build>`), which has the runtime beside it; a PC game of 7.1 has no such copy yet.
 
 ### Game Boy Advance from your own copy
 
@@ -768,6 +784,13 @@ The export rebuilds the game byte for byte; mods need code that can move. Build 
 and report every address that is still hard-coded ("93% movable, 41 addresses left"). The matching build stays as
 it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
 (tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
+
+### A failed build step counts against its unit in make-built forks too
+
+In a fork built with ninja, a unit whose build fails at a step before its object (objects linked into one, a
+generated source) counts as not building: `ninja -t query` says what each failed step goes into. A make-built fork
+has no such query, so only the failed target itself is counted, and an edit that breaks such a step there can still
+be kept as breaking nothing. Make's own dry run (`make -n -W <file>`) or its database (`make -p`) could say the same.
 
 ### A list of open rooms (to investigate)
 

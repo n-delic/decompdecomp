@@ -98,7 +98,8 @@ def coff_prints(data: bytes) -> dict[str, Print]:
 
 def object_prints(data: bytes) -> dict[str, Print]:
     """Fingerprints of every function an object file defines, by symbol, with whether its code is hand-written
-    assembly where its processor tells that without its console's facts (PowerPC: arch/)."""
+    assembly where its processor tells that without its console's facts (PowerPC: arch/). x86 COFF objects (PC,
+    Xbox) are read by coff_prints()."""
     from elftools.elf.elffile import ELFFile
     from elftools.elf.relocation import RelocationSection
 

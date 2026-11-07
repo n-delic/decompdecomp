@@ -228,6 +228,47 @@ def test_lines_the_file_already_has_may_come_along(fork):
     assert "struct Gain" in str(e.value) and "edit_file" in str(e.value)
 
 
+def test_a_definition_the_build_leaves_out_is_said_and_compiled_where_the_build_sees_it(fork):
+    """An x86 game's agents parked drafts in `#if defined(SOME_FLAG)` blocks no build defines: the brief showed one as
+    the function's source, and each compile replaced it there, judged on other code (13 functions, about 18 KB).
+    The brief says so, and a compile puts the agent's version where the build sees it, without the parked copy (its
+    annotation comes along); kept, the function is visible from then on."""
+    net, slug, agent = fork
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    parked = "#ifdef PARKED_DRAFTS\n// FUNCTION: 0x80000010\n" + SCALE.replace("1.1", "1.2") + "#endif\n"
+    path.write_text(path.read_text() + "\n" + parked)
+    brief = net.claim(agent, slug, "scale")
+    assert "inside `#ifdef PARKED_DRAFTS`" in brief and "leaves out" in brief, brief
+    assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")
+    text = path.read_text()
+    assert "1.2" not in text and "#ifdef PARKED_DRAFTS\n#endif\n" in text  # the parked copy is gone, its block left
+    assert "// FUNCTION: 0x80000010\n" + SCALE in text  # the annotation went with it, outside the block
+
+
+def test_a_parked_definition_brought_out_leaves_out_its_harness_stand_in_too(fork):
+    """An LTCG unit parked a draft under `#ifdef FLAG` while its harness defined a stand-in under `#ifndef FLAG`, so
+    the matched callers linked. Moved out alone, the draft was defined twice: every compile of it a link error
+    (LNK2005), where before every compile had measured the stand-in. The harness goes as if FLAG were on, with the
+    draft: undone with it, kept with it."""
+    net, slug, agent = fork
+    root = Path(net.project_row(slug)["root"])
+    path = root / "src" / "lit.c"
+    path.write_text(path.read_text() + "\n#ifdef REAL_SCALE\n// FUNCTION: 0x80000010\n" + SCALE.replace("1.1", "1.2")
+                    + "#endif\n")
+    (root / "harness").mkdir()
+    harness = root / "harness" / "lit.standins.cpp"
+    standin = "int g_other;\n#ifndef REAL_SCALE\ndouble scale(double x) { return x; }\n#endif\n"
+    harness.write_text(standin)
+    other = root / "harness" / "lit2.standins.cpp"  # another unit's: not this draft's business
+    other.write_text(standin)
+    text = net.compile_and_diff(agent, "scale", SCALE.replace("{", "{ syntax error"), slug)
+    assert "BUILD ERROR" in text and harness.read_text() == standin  # undone with the draft
+    assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")
+    assert harness.read_text() == "int g_other;\n" and other.read_text() == standin
+    log = subprocess.run(["git", "-C", str(root), "show", "--stat", "HEAD"], capture_output=True, text=True).stdout
+    assert "lit.standins.cpp" in log  # committed with the match
+
+
 def test_a_function_only_declared_in_the_build_is_not_built_yet(tmp_path, monkeypatch):
     """objdiff lists an extern the source calls on the build's side, with no size and no code: read as built, that
     was a "100% match", and a DS game's agents were told so of a function no file defined, again and again."""
@@ -241,3 +282,98 @@ def test_a_function_only_declared_in_the_build_is_not_built_yet(tmp_path, monkey
     monkeypatch.setattr(objdiff, "_run", lambda args, cwd, timeout: json.dumps(answer))
     d = objdiff.diff(tmp_path / "t.o", tmp_path / "b.o", "f", tmp_path)
     assert d.match_percent is None and not d.matched
+
+
+def test_a_change_that_breaks_a_neighbour_still_says_how_close_the_function_came(tmp_path):
+    """Where a function's code changes how a neighbour compiles (inlined into it, or whole-program optimisation
+    choosing registers across functions), a draft short of exact breaks the matched neighbour and is undone. The
+    function's own result used to go with it, so an x86 game's agents parked drafts behind #if flags and rebuilt by
+    hand to measure them. Its score and diff now come back, recorded as an attempt, never as the best (a release
+    writes the best into the file)."""
+    import sys
+
+    repo = tmp_path / "upstream"
+    (repo / "src").mkdir(parents=True)
+    (repo / "expected").mkdir()
+    base = "inline int base(int x) {\n    return x * 3 + 1;\n}\n"  # GNU89 inline: emitted, and inlined into twice
+    twice = "int twice(int x) {\n    return base(x) * 2;\n}\n"
+    command = write_compiler(repo, ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"])
+    (repo / "ref.c").write_text(base + "\n" + twice)
+    subprocess.run([sys.executable, "compile.py", "ref.c", "expected/lit.o"], cwd=repo, check=True)
+    (repo / "ref.c").unlink()
+    (repo / "src" / "lit.c").write_text(base + "\n" + twice)
+    (repo / "build.ninja").write_text(f"rule cc\n  command = {command} $in $out\nbuild build/lit.o: cc src/lit.c\n")
+    (repo / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
+        {"name": "lit", "target_path": "expected/lit.o", "base_path": "build/lit.o",
+         "metadata": {"source_path": "src/lit.c", "complete": False}}]}))
+    (repo / ".gitignore").write_text("build/\n")
+    _run(repo, "git", "init", "-q", "-b", "main")
+    _run(repo, "git", "add", "-A")
+    _run(repo, "git", "commit", "-q", "-m", "initial")
+    (tmp_path / "work").mkdir()
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
+    slug = net.forks.clone(str(repo), name="Inlined", platform="n64", log=lambda *_: None)
+    net.forks.get(slug)[1].build_all()
+    net.forks.check(slug, log=lambda *_: None)
+    agent, _ = net.local_agent("agent-1")
+    assert _status(net, slug, "twice") == "matched" and _status(net, slug, "base") == "matched"
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    before = path.read_text()
+    out = net.compile_and_diff(agent, "base", base.replace("x * 3 + 1", "x * 5 + 1"), slug)
+    assert out.startswith("❌ REJECTED") and "twice" in out, out
+    assert "base itself came out at" in out and "score" in out and "TARGET" in out, out  # its own result and diff
+    assert path.read_text() == before and _status(net, slug, "twice") == "matched"
+    fn = net._function("base", slug)
+    last = net.store.one("SELECT score, compiled FROM attempts WHERE function_id=? ORDER BY id DESC LIMIT 1", fn["id"])
+    assert last["compiled"] and last["score"] and last["score"] > 0
+    assert fn["best_source"] is None or "x * 5" not in fn["best_source"]
+
+
+def test_a_call_after_a_parked_draft_isnt_taken_for_the_builds_own_definition(fork):
+    """Past a parked draft, the next match was a call followed by a block (`y = scale(x) * 2.0;`, then the `if`'s
+    `{`): the try replaced `twice` from the call on, and sat inside it."""
+    net, slug, agent = fork
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    twice = ("double twice(double x) {\n    double y = 0.0;\n    y = scale(x) * 2.0;\n    if (y > 1.0) {\n"
+             "        y = 1.0;\n    }\n    return y;\n}\n")
+    path.write_text(path.read_text() + "\n#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#endif\n\n" + twice)
+    net.compile_and_diff(agent, "scale", SCALE, slug)
+    text = path.read_text()
+    assert twice in text, text
+
+
+def test_a_parked_draft_beside_the_builds_own_definition_leaves_the_draft_and_replaces_the_definition(fork):
+    """A draft in `#ifdef PARKED_DRAFTS` and the build's own definition in its `#else`: the parked one was taken out
+    and a new one put in, beside the visible one (redefinition of 'scale', every try a build error)."""
+    net, slug, agent = fork
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    # (the build's own one divides: another constant alone would read 100% by objdiff, already matched)
+    both = ("#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#else\n" + SCALE.replace("x * 1.1", "x / 1.1")
+            + "#endif\n")
+    path.write_text(path.read_text() + "\n" + both)
+    assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")
+    text = path.read_text()
+    assert ("#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#else\n" + SCALE + "#endif\n") in text, text
+    assert "x / 1.1" not in text
+
+
+def test_a_run_of_tries_builds_each_once_and_the_file_once_at_its_end(fork, monkeypatch):
+    """The permuter's tries aren't kept: each built its variant and then the file it put back. On an x86 game's LTCG
+    units a build is a ~5 s link, so half the permuter's time went to the rebuild. In a run (trial_run), a try that
+    isn't kept only puts its file back; the unit is built once at the end, as its file is."""
+    net, slug, agent = fork
+    builds = []
+    build = net.forks._build_unit
+    monkeypatch.setattr(net.forks, "_build_unit", lambda *a, **k: builds.append(1) or build(*a, **k))
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    before = path.read_text()
+    with net.forks.trial_run(net.project_row(slug), "lit"):
+        for constant in ("1.2", "1.3", "1.4"):
+            res = net.forks.attempt(agent, slug, "scale", SCALE.replace("1.1", constant), keep=False)
+            assert res["score"] and not res["matched"], res["text"]
+        inside = len(builds)
+    assert inside <= 4 and len(builds) == inside + 1  # (a baseline at most, then one build a try; one at the end)
+    assert path.read_text() == before
+    proj, fp, _ = net.forks.get(slug)
+    assert fp.diff(fp.unit("lit"), None).unit_scores.get("offset") == 100  # the object is the file's again
+    assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")
