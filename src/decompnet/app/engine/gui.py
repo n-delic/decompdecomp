@@ -58,6 +58,7 @@ class GuiMixin:
             base = self._overview(slug, proj, room_members=False, quick=True)
             return base | {'overview_pending':True, 'instructions':cfg.get('instructions') or '',
                            'priority':cfg.get('priority',[]), 'spend':cfg.get('spend'),
+                           'save_folder':str(saves.save_folder(self, slug)),
                            'suggestions':[], 'boundaries':[], 'compiler_ranges':base.get('compiler_ranges') or self._range_rows(cfg),
                            'auto_commit':match_commits.status(self, proj), 'auto_push':auto_push.status(self, proj), 'score_commits':score_commits.status(self, proj),
                            'auto_compiler':self.auto_adjusts(proj), 'progress_syncing':self.progress.syncing(slug),

@@ -1,9 +1,26 @@
 /* The save is the primary destination; an export checkout remains an explicit advanced tool. */
 let repositorySetupSlug = "", repositorySaveRoot = "", repositorySetupBusy = false, repositorySetupChecked = 0, repositorySetupRequest = 0, repositorySetupJob = null;
+let repositorySaveEdited = false, repositorySetupState = null;
+function repositorySavedFolder(state) {
+  return state.save_folder ?? (state.portable ? state.folder : S.ov?.save_folder) ?? "";
+}
+function rememberRepositorySave(folder, submitted) {
+  // A save response must not replace a newer choice entered while that save was running.
+  if ($("saveFolder").value.trim() === submitted) {
+    $("saveFolder").value = folder;
+    repositorySaveEdited = false;
+  }
+  repositorySetupChecked = 0;
+}
+$("saveFolder").oninput = () => {
+  repositorySaveEdited = !repositorySetupState || $("saveFolder").value.trim() !== repositorySavedFolder(repositorySetupState);
+  if (repositorySetupState) renderRepositorySetup(repositorySetupState);
+};
 function renderRepositorySetup(state) {
+  repositorySetupState = state;
+  if (!repositorySaveEdited) $("saveFolder").value = repositorySavedFolder(state);
   const unsaved = state.portable && $("saveFolder").value.trim() !== state.folder;
   repositorySaveRoot = unsaved ? "" : state.root || "";
-  $("saveFolder").oninput = () => renderRepositorySetup(state);
   for (const id of ["repositoryInit", "repositoryCheckpoint", "repositoryOriginGo"]) $(id).disabled = unsaved || repositorySetupBusy;
   $("repositoryInit").hidden = state.repository || !state.portable;
   $("repositoryCheckpoint").hidden = !state.repository || !state.portable;
@@ -25,6 +42,7 @@ async function refreshRepositorySetup() {
   if (repositorySetupSlug === slug && Date.now() - repositorySetupChecked < 10000) return;
   if (repositorySetupSlug !== slug) {
     repositorySetupSlug = slug; repositorySaveRoot = "";
+    repositorySaveEdited = false; repositorySetupState = null; ++repositorySetupRequest;
     if ($("repositorySetupLog")._workStatus) $("repositorySetupLog")._workStatus.hidden = true;
     if ($("repositorySetupLog")._workBar) $("repositorySetupLog")._workBar.hidden = true;
     $("repositorySetupLog").hidden = true; $("repositorySetupLog").textContent = "";

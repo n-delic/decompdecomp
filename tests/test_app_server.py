@@ -83,9 +83,12 @@ def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp
         assert response.status_code == 200, response.text
         assert response.json()["folder"] == str(target.resolve())
     for slug in (second, first):
-        response = client.get("/api/project", params={"slug": slug})
-        assert response.status_code == 200, response.text
-        assert response.json()["save_folder"] == str((tmp_path / slug).resolve())
+        for quick in (False, True):
+            response = client.get("/api/project", params={"slug": slug, "quick": "1" if quick else "0"})
+            assert response.status_code == 200, response.text
+            assert response.json()["save_folder"] == str((tmp_path / slug).resolve())
+            state = client.get("/api/repository-setup", params={"slug":slug}).json()
+            assert state["folder"] == state["save_folder"] == str((tmp_path / slug).resolve())
 
 
 def test_on_windows_it_stops_updating_and_shows_the_way_back_to_1_0_2(tmp_path, monkeypatch):

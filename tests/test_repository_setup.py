@@ -106,9 +106,10 @@ def test_origin_on_imported_project_uses_its_source_checkout(project, tmp_path):
     git(root, 'init')
     with net.store.tx() as db:
         db.execute("UPDATE projects SET root=? WHERE slug='game'", (str(root),))
-    net._update_cfg('game', lambda cfg: cfg.update(kind='fork'))
+    net._update_cfg('game', lambda cfg: cfg.update(kind='fork', save_folder=str(tmp_path/'backup')))
     state = repository_setup.status(net, 'game')
     assert not state['portable'] and state['root'] == str(root)
+    assert state['folder'] == str(root) and state['save_folder'] == str(tmp_path/'backup')
     assert repository_setup.run(net, 'game', 'origin', 'git@example.invalid:project.git', lambda line: None)['origin']
     assert git(root, 'remote', 'get-url', 'origin') == 'git@example.invalid:project.git'
 
