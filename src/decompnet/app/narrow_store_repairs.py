@@ -60,11 +60,27 @@ def scalar_type(part, variable, pos, header, arch):
     return integer_abi.scalar(obj[0],header+'\n'+part.source,arch)
 
 
+def opaque_use(part, variable, header):
+    """A macro can hide a read/write/address escape that the plain C CFG cannot see."""
+    definitions=dict(re.findall(r'(?m)^\s*#\s*define\s+('+IDENT+r')([^\n]*)',_blank(header+'\n'+part.source)))
+    pending=list(set(re.findall(IDENT,part.body))&definitions.keys());seen=set()
+    while pending:
+        macro=pending.pop()
+        if macro in seen:return True
+        seen.add(macro)
+        body=definitions[macro]
+        if '\\' in body or re.search(r'\b'+re.escape(variable)+r'\b',body):return True
+        if body.startswith('(') and re.search(r'\b'+re.escape(macro)+r'\s*\([^;{}]*\b'+re.escape(variable)+r'\b',part.body):return True
+        pending.extend((set(re.findall(IDENT,body))&definitions.keys())-seen)
+    return False
+
+
 def expression_ok(part, expression, pos, header, arch):
     if not support.pure(expression) or re.search(r'\b(?:0[xX][\da-fA-F]+|\d+)[uUlL]+\b',expression):return False
-    if any(int(v,16 if v.lower().startswith('0x') else 10)>2147483647 for v in re.findall(r'\b(?:0[xX][0-9a-fA-F]+|[0-9]+)\b',expression)):return False
+    if any(len(v)>12 or int(v,16 if v.lower().startswith('0x') else 10)>2147483647 for v in re.findall(r'\b(?:0[xX][0-9a-fA-F]+|[0-9]+)\b',expression)):return False
     words=set(re.findall(r'\b'+IDENT+r'\b',expression))
     return bool(words) and all(scalar_type(part,w,pos,header,arch) in {(8,True),(16,True),(32,True)}
+                              and not opaque_use(part,w,header)
                               and not re.search(rf'(?<!&)&(?!&)\s*\(*\s*{re.escape(w)}\b',part.body) for w in words)
 
 
@@ -88,6 +104,7 @@ def captures(part, header, arch):
         if not node or node.start!=start or node.end!=end:continue
         variable=hit[2];typ=field_type(part,hit[1],start,header,arch)
         if not typ or scalar_type(part,variable,start,header,arch)!=(32,True):continue
+        if opaque_use(part,variable,header):continue
         if sum(d['name']==variable for d in decls)!=1 or variable not in flow.names or any(variable in flow.nodes[n].live for n in node.successors):continue
         rhs=hit[3].strip()
         if not expression_ok(part,rhs,start,header,arch):continue
@@ -138,12 +155,12 @@ def interval(part, expression, pos, header, arch, seen=()):
         if isinstance(node,ast.Constant) and type(node.value) is int and 0<=node.value<=2147483647:return node.value,node.value
         if isinstance(node,ast.Name):
             var=node.id
-            if var in seen or re.search(rf'&\s*\(*\s*{re.escape(var)}\b',part.body):return None
+            if var in seen or opaque_use(part,var,header) or re.search(rf'&\s*\(*\s*{re.escape(var)}\b',part.body):return None
             bits=scalar_type(part,var,pos,header,arch)
             if bits not in {(8,True),(16,True),(32,True)}:return None
             defs=[d for d in declarations(part) if d['name']==var]
             writes=list(re.finditer(rf'(?<![\w.>]){re.escape(var)}\s*=(?!=)\s*([^;{{}}]+);',part.body))
-            if len(writes)!=1 or re.search(rf'(?<![\w.>]){re.escape(var)}\s*(?:\+\+|--|(?:<<|>>|[+*/%&|^\-])=)|(?:\+\+|--)\s*\b{re.escape(var)}\b',part.body):return None
+            if len(writes)!=1 or re.search(rf'(?<![\w.>])(?:\(\s*)*{re.escape(var)}\b(?:\s*\))*\s*(?:\+\+|--|(?:<<|>>|[+*/%&|^\-])=)|(?:\+\+|--)\s*(?:\(\s*)*{re.escape(var)}\b',part.body):return None
             write=writes[0];at=part.opening+1+write.start()
             if len(defs)!=1 or at>=pos or block_path(part,pos)[:len(block_path(part,at))]!=block_path(part,at):return None
             return interval(part,write[1],at,header,arch,seen+(var,))
@@ -175,6 +192,7 @@ def folds(part, header, arch):
         if not a or not b:continue
         bits=integer_abi.scalar(typ,header+'\n'+part.source,arch)
         lo,hi=(-(1<<(bits[0]-1)),(1<<(bits[0]-1))-1) if bits[1] else (0,(1<<bits[0])-1)
+        if len(hit['n'])>10:continue
         n=int(hit['n'])
         if not lo<=a[0]<=a[1]<=hi or not -2147483648<=lo+b[0]<=hi+b[1]<=2147483647 or hi+n>2147483647:continue
         # Preserve the second assignment's narrowing even when the sum exceeds the field range.

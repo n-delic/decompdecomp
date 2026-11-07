@@ -186,3 +186,11 @@ def test_new_draft_rules_invalidate_completed_miss_cache(monkeypatch):
     previous=draft_reports.key('plan','header','data',fn)
     monkeypatch.setattr(draft_reports,'REPAIR_REVISION',draft_reports.REPAIR_REVISION+1)
     assert draft_reports.key('plan','header','data',fn)!=previous
+
+
+def test_hidden_macro_reads_and_parenthesized_updates_are_not_proved_dead_or_bounded():
+    hidden='#define OBSERVE use(height)\n'+DEAD.replace(' p->w = w;', ' OBSERVE; p->w = w;')
+    assert not [s for f,s in candidates(hidden) if f==repairs.FAMILIES[0]]
+    for extra in ['(half) <<= 20;', '++(half);', 'SHIFT(half);', 'HIDDEN;']:
+        text='#define SHIFT(v) ((v) <<= 20)\n#define HIDDEN half = 100000\n'+DEAD.replace('half = w / 2;','half = w / 2; '+extra)
+        assert not [s for f,s in candidates(text) if f==repairs.FAMILIES[1]]
