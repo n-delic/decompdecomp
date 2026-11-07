@@ -18,9 +18,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW, stop_process_tree
+from decompnet.hostenv import NO_WINDOW
 
-from . import linuxvm, wsl
+from . import limits, linuxvm, wsl
 
 MAX_SOURCE_BYTES = 64 * 1024
 # Per-compile resource caps (address space, CPU seconds, output file size) and a global
@@ -146,26 +146,33 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     # in the work folder, never in the app's own: KMC GCC's assembler (binutils 2.6) can't read its input when the
     # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
     check = _CANCEL_CHECK.get()
-    if check is None:
-        return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW)
+    timeout = min(timeout, limits.compiler_time_limit())
     proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
+                            start_new_session=os.name != "nt")
+    limits.attach_job(proc)
     started = time.monotonic()
     try:
-        while True:
-            check()
-            try:
-                stdout, stderr = proc.communicate(timeout=0.1)
-                return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
-                if time.monotonic() - started > timeout:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                    raise subprocess.TimeoutExpired(proc.args, timeout, output=stdout, stderr=stderr)
+        with limits.CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
+            while True:
+                if check:
+                    check()
+                try:
+                    stdout, stderr = proc.communicate(timeout=0.1)
+                    if watchdog.timed_out:
+                        raise subprocess.TimeoutExpired(proc.args, timeout)
+                    if watchdog.exceeded:
+                        return subprocess.CompletedProcess(proc.args, 1, stdout, stderr + "\n" + watchdog.message())
+                    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - started >= timeout or watchdog.timed_out:
+                        raise subprocess.TimeoutExpired(proc.args, timeout)
     except BaseException:
-        stop_process_tree(proc)
+        limits.stop_group(proc)
+        proc.communicate()
         raise
+    finally:
+        limits.stop_group(proc)
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,

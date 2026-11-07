@@ -69,3 +69,145 @@ def no_core_dumps() -> None:
 
 def killed_for_memory(returncode: int) -> bool:
     return returncode in (137, -9)
+
+
+def compiler_memory_limit() -> int:
+    """Per-process resident memory limit on macOS, configurable in MiB before starting the app."""
+    try:
+        mb = int(os.environ.get('DECOMP_COMPILER_MEMORY_MB', '2048'))
+        if mb < 16:
+            raise ValueError
+    except ValueError:
+        mb = 2048
+    return mb << 20
+
+
+def _process_memory_tree(root_pid: int) -> list[tuple[int, int]]:
+    """Snapshot resident sizes (bytes) of a process and its descendants on macOS."""
+    try:
+        result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,rss='], capture_output=True,
+                                text=True, timeout=2, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    children = {}
+    sizes = {}
+    for line in result.stdout.splitlines():
+        try:
+            pid, parent, rss = map(int, line.split())
+        except ValueError:
+            continue
+        children.setdefault(parent, []).append(pid)
+        sizes[pid] = rss * 1024
+    pending, seen = [root_pid], set()
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        pending.extend(children.get(pid, ()))
+    return [(pid, sizes[pid]) for pid in seen if pid in sizes]
+
+
+def compiler_time_limit() -> float:
+    """Absolute wall-time ceiling, including compiler subprocesses that never finish."""
+    try:
+        seconds = float(os.environ.get('DECOMP_COMPILER_TIMEOUT_SECONDS', '300'))
+        return seconds if 0 < seconds < float('inf') else 300
+    except ValueError:
+        return 300
+
+
+def attach_job(proc) -> None:
+    """Keep a Windows driver's children addressable after the driver itself exits."""
+    if os.name != 'nt':
+        return
+    import ctypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    kernel.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    kernel.AssignProcessToJobObject.restype = ctypes.c_int
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    job = kernel.CreateJobObjectW(None, None)
+    if not job:
+        return
+    if not kernel.AssignProcessToJobObject(job, int(proc._handle)):
+        kernel.CloseHandle(job)
+        return
+    proc._decomp_job = job
+
+
+def stop_group(proc) -> None:
+    """Stop a tool and descendants launched in their own process group."""
+    if os.name == 'nt':
+        if job := getattr(proc, '_decomp_job', None):
+            import ctypes
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel.TerminateJobObject(job, 1)
+            kernel.CloseHandle(job)
+            proc._decomp_job = None
+            return
+        from .hostenv import stop_process_tree
+        stop_process_tree(proc)
+        return
+    import signal
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # macOS can refuse a group signal after the driver exits or while its
+        # descendants change state. Stop the processes we still own individually.
+        for pid, _ in reversed(_process_memory_tree(proc.pid)):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
+class CompilerMemoryWatchdog:
+    """Watch native macOS compiler/build trees and stop the whole isolated group on excess RSS."""
+    def __init__(self, proc, limit=None, timeout=None):
+        import threading
+        self.proc = proc
+        self.limit = limit if limit is not None else compiler_memory_limit()
+        self.exceeded = False
+        self.timed_out = False
+        self.timeout = timeout
+        self._stop = threading.Event()
+        self._thread = None
+
+    def __enter__(self):
+        import sys
+        import threading
+        if sys.platform == 'darwin' or self.timeout is not None:
+            self._thread = threading.Thread(target=self._watch, name='compiler-memory-watchdog', daemon=True)
+            self._thread.start()
+        return self
+
+    def _watch(self):
+        import sys
+        import time
+        started = time.monotonic()
+        while not self._stop.wait(0.25):
+            self.timed_out = self.timeout is not None and time.monotonic() - started >= self.timeout
+            self.exceeded = sys.platform == 'darwin' and any(rss > self.limit for _, rss in _process_memory_tree(self.proc.pid))
+            if self.timed_out or self.exceeded:
+                stop_group(self.proc)
+                return
+
+    def __exit__(self, *_):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=3)
+
+    def message(self):
+        return (f'Compiler or build process exceeded the {self.limit // (1 << 20)} MiB memory limit and was stopped. '
+                'Reduce concurrency or increase DECOMP_COMPILER_MEMORY_MB before starting decompdecomp.')
