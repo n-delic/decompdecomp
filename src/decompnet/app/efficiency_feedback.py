@@ -59,7 +59,7 @@ def continuation(net,agent,slug,function,*,applied=None,base=None):
     from .agent_tokens import candidate
     fn=net._function(function,slug)
     source,revision=candidate(net,agent,slug,function)
-    held=bool(net.store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id))
+    held=bool(net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id))
     text=f'Continuation state: function={fn["name"]}; revision={revision}; status={fn["status"]}; claim={"held" if held else "not held"}'
     if held:
         from ..release_receipts import current as claim_token

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -15,8 +16,10 @@ from ..network import NetworkError
 
 
 class Transcripts:
-    def __init__(self, store):
+    def __init__(self, store, *, catalog=None, sessions=None):
         self.store = store
+        self.catalog = store if catalog is None else catalog
+        self.sessions = store if sessions is None else sessions
         with store.tx() as db:
             db.execute('CREATE TABLE IF NOT EXISTS helper_messages('
                        'id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, created_at REAL NOT NULL, '
@@ -29,24 +32,26 @@ class Transcripts:
 
     def clear_helper(self, helper, project, agent):
         """Forget recorded exchanges while retaining session cost/attribution summaries."""
+        exists = self.catalog.one('SELECT 1 FROM helpers WHERE id=?', helper)
+        sessions = self.sessions.all('SELECT id FROM helper_sessions WHERE helper_id=? AND project=? AND agent=?',
+                                     helper,project,agent)
+        if not exists and not sessions:return
+        ids = json.dumps([row['id'] for row in sessions])
         with self.store.tx() as db:
-            if not db.execute('SELECT 1 FROM helpers WHERE id=? UNION ALL '
-                              'SELECT 1 FROM helper_sessions WHERE helper_id=? AND project=? AND agent=? LIMIT 1',
-                              (helper,helper,project,agent)).fetchone():
-                return
             # Removed helper IDs are never recycled. A durable marker also rejects late worker callbacks.
             db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
                        ('helper-transcripts-removed:'+str(helper),'1'))
+            db.execute('DELETE FROM settings WHERE key=?', ('helper-conversation:'+str(helper),))
             last=db.execute('SELECT COALESCE(MAX(id),0) FROM helper_messages').fetchone()[0]
             # SQLite may reuse a deleted maximum rowid. Keep paged readers/exports and automation cursors monotonic.
             db.execute("INSERT INTO settings VALUES('helper-message-id-floor',?) ON CONFLICT(key) DO UPDATE SET "
                        "value=CAST(MAX(CAST(value AS INTEGER),CAST(excluded.value AS INTEGER)) AS TEXT)",(str(last),))
-            db.execute('DELETE FROM helper_messages WHERE session_id IN '
-                       '(SELECT id FROM helper_sessions WHERE helper_id=? AND project=? AND agent=?)',
-                       (helper,project,agent))
-            db.execute('DELETE FROM helper_score_events WHERE session_id IN '
-                       '(SELECT id FROM helper_sessions WHERE helper_id=? AND project=? AND agent=?)',
-                       (helper,project,agent))
+            db.execute('DELETE FROM helper_messages WHERE session_id IN (SELECT value FROM json_each(?))', (ids,))
+            db.execute('DELETE FROM helper_score_events WHERE session_id IN (SELECT value FROM json_each(?))', (ids,))
+        if self.sessions is not self.store:
+            with self.sessions.tx() as db:
+                db.execute('DELETE FROM settings WHERE key=?', ('helper-conversation:'+str(helper),))
+
 
     @staticmethod
     def _insert(db, session, created, kind, text):
@@ -64,34 +69,34 @@ class Transcripts:
         text = re.sub(r'(?i)("(?:api_key|access_token|refresh_token|authorization|password)"\s*:\s*)"(?:\\.|[^"\\])*"',
                       r'\1"[redacted]"', text)
         text = re.sub(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+', 'Bearer [redacted]', text)
+        owner = self.sessions.one('SELECT * FROM helper_sessions WHERE id=?', session) if self.sessions.one(
+            "SELECT 1 FROM sqlite_master WHERE name='helper_sessions'") else None
+        if helper is None and owner:helper = owner['helper_id']
+        actor = self.catalog.one('SELECT id FROM agents WHERE name=?', owner['agent']) if owner and kind == 'tool_response' else None
+        seen = json.dumps([r['attempt_id'] for r in self.store.all(
+            'SELECT attempt_id FROM helper_score_events WHERE session_id=?',session)]) if actor else '[]'
+        changes = self.sessions.all(
+            'SELECT t.id,t.score_before,t.score,t.created_at,f.name FROM main.attempts t '
+            'JOIN main.functions f ON f.id=t.function_id JOIN projects p ON p.id=f.project_id '
+            'WHERE p.slug=? AND t.agent_id=? AND t.created_at>=? AND t.score_improved=1 '
+            'AND t.id NOT IN (SELECT value FROM json_each(?)) ORDER BY t.id',
+            owner['project'],actor['id'],owner['started_at'],seen) if actor else []
         with self.store.tx() as db:
-            if db.execute('SELECT 1 FROM settings WHERE key=?',('helper-transcript-session-cleared:'+str(session),)).fetchone():
-                return
-            if helper is None and db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
-                owner=db.execute('SELECT helper_id FROM helper_sessions WHERE id=?',(session,)).fetchone()
-                helper=owner['helper_id'] if owner else None
+            if db.execute('SELECT 1 FROM settings WHERE key=?',('helper-transcript-session-cleared:'+str(session),)).fetchone():return
             if helper is not None and db.execute('SELECT 1 FROM settings WHERE key=?',
-                                                 ('helper-transcripts-removed:'+str(helper),)).fetchone():
-                return
+                                                 ('helper-transcripts-removed:'+str(helper),)).fetchone():return
             self._insert(db,session,time.time(),kind,text)
-            if kind == 'tool_response' and db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
-                changes = db.execute('SELECT t.id,t.score_before,t.score,t.created_at,f.name FROM attempts t '
-                                     'JOIN functions f ON f.id=t.function_id JOIN projects p ON p.id=f.project_id '
-                                     'JOIN agents a ON a.id=t.agent_id JOIN helper_sessions s ON s.agent=a.name AND s.project=p.slug '
-                                     'WHERE s.id=? AND t.created_at>=s.started_at AND t.score_improved=1 '
-                                     'AND NOT EXISTS(SELECT 1 FROM helper_score_events e WHERE e.session_id=s.id AND e.attempt_id=t.id) '
-                                     'ORDER BY t.id', (session,)).fetchall()
-                for change in changes:
-                    db.execute('INSERT INTO helper_score_events VALUES(?,?)', (session, change['id']))
+            for change in changes:
+                if db.execute('INSERT OR IGNORE INTO helper_score_events VALUES(?,?)', (session,change['id'])).rowcount:
                     self._insert(db,session,change['created_at'],'score_improvement',json.dumps(dict(change)))
 
 
     def read(self, slug, helper, session=0, after=0, before=0, whole=False):
-        sessions = self.store.all('SELECT * FROM helper_sessions WHERE project=? AND helper_id=? AND '
+        sessions = self.sessions.all('SELECT * FROM helper_sessions WHERE project=? AND helper_id=? AND '
                                   '(?=0 OR id<?) ORDER BY id DESC LIMIT 30', slug, helper, before, before)
         if not session:
             session = sessions[0]['id'] if sessions else 0
-        row = self.store.one('SELECT * FROM helper_sessions WHERE id=? AND project=? AND helper_id=?',
+        row = self.sessions.one('SELECT * FROM helper_sessions WHERE id=? AND project=? AND helper_id=?',
                              session, slug, helper)
         if session and row is None:
             raise NetworkError('This session does not belong to this project and helper.')
@@ -117,7 +122,7 @@ class Transcripts:
 
     def export(self, slug, helper):
         """Save every recorded session without the dialog's session/event page limits."""
-        sessions = self.store.all('SELECT * FROM helper_sessions WHERE project=? AND helper_id=? ORDER BY id',
+        sessions = self.sessions.all('SELECT * FROM helper_sessions WHERE project=? AND helper_id=? ORDER BY id',
                                   slug, helper)
         directory = Path.home() / 'Downloads'
         name = re.sub(r'[^a-zA-Z0-9_-]', '_', slug)[:80] or 'project'
@@ -156,3 +161,53 @@ class Transcripts:
             path.unlink(missing_ok=True)
             raise NetworkError(f'Could not save transcripts in {directory}: {error}. Check that Downloads is writable.') from error
         return {'path': str(path), 'sessions': len(sessions), 'events': count}
+
+
+class ProjectTranscripts:
+    """Resolve a transcript's explicit project before taking its writer lock."""
+    def __init__(self, net):
+        self.net = net
+        self.lock = threading.RLock()
+        self.stores = {net.store:Transcripts(net.store)}
+
+    def for_project(self, project):
+        from .session_storage import prepare
+        store = prepare(self.net, project)
+        with self.lock:
+            if store not in self.stores:
+                from .transcript_storage import TranscriptStore
+                path = str(store.path)+'.transcripts.sqlite3'
+                self.stores[store] = Transcripts(TranscriptStore(path), catalog=self.net.store, sessions=store)
+            return self.stores[store]
+
+    def append(self, session, kind, value, secrets=(), *, helper=None, project=None):
+        if project is not None:
+            target = self.for_project(project)
+        else:
+            # Compatibility for old ID-only callbacks. Session IDs must remain
+            # globally unique; ambiguous evidence is rejected rather than guessed.
+            targets = []
+            for store, _ in self.net.project_stores():
+                if store.one("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'") and store.one(
+                        'SELECT 1 FROM helper_sessions WHERE id=?', session):
+                    targets.append(store)
+            if len(targets) > 1:raise NetworkError('This session ID exists in several project databases. Restore a consistent backup.')
+            if not targets:return
+            with self.lock:
+                store = targets[0]
+                if store not in self.stores:
+                    pid = next(ids[0] for candidate, ids in self.net.project_stores() if candidate is store and ids)
+                    self.for_project(pid)
+                target = self.stores[store]
+        return target.append(session, kind, value, secrets, helper=helper)
+
+    def read(self, slug, *args, **kwargs):return self.for_project(slug).read(slug, *args, **kwargs)
+    def export(self, slug, helper):return self.for_project(slug).export(slug, helper)
+    def clear_helper(self, helper, project, agent):return self.for_project(project).clear_helper(helper, project, agent)
+
+
+def service(net):
+    lock = net.__dict__.setdefault('_transcript_service_lock', threading.RLock())
+    with lock:
+        if '_transcript_service' not in net.__dict__:net._transcript_service = ProjectTranscripts(net)
+        return net._transcript_service

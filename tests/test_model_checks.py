@@ -55,7 +55,7 @@ def history():
 
 def test_model_filter_only_returns_distinct_functions_inside_own_project_sessions(history):
     seen = []
-    net = SimpleNamespace(project_store=lambda project: seen.append(project) or history)
+    net = SimpleNamespace(store=history, project_store=lambda project: seen.append(project) or history)
     assert model_checks.tried(net, 'game', SimpleNamespace(name='new-worker')) == {1,2,3}
     assert seen == ['game']
     assert history.attempt_rows == [3]  # no transfer of 20,000 unrelated historical attempts
@@ -63,31 +63,31 @@ def test_model_filter_only_returns_distinct_functions_inside_own_project_session
 
 def test_new_model_without_recorded_sessions_never_reads_attempts(history):
     history.db.execute("UPDATE helpers SET model='brand-new-model'")
-    net = SimpleNamespace(project_store=lambda project: history)
+    net = SimpleNamespace(store=history, project_store=lambda project: history)
     assert model_checks.tried(net, 'game', SimpleNamespace(name='new-worker')) == set()
     assert history.attempt_rows == []
 
 
 def test_session_fallback_uses_latest_model_without_helper_record(history):
-    net = SimpleNamespace(project_store=lambda project: history)
+    net = SimpleNamespace(store=history, project_store=lambda project: history)
     assert model_checks.tried(net, 'game', SimpleNamespace(name='old-worker')) == {1,2,3}
 
 
 def test_changed_helper_model_uses_its_own_historical_windows(history):
     history.db.execute("UPDATE helpers SET model='model-b#low'")
-    net = SimpleNamespace(project_store=lambda project: history)
+    net = SimpleNamespace(store=history, project_store=lambda project: history)
     assert model_checks.tried(net, 'game', SimpleNamespace(name='new-worker')) == {4}
 
 
 def test_no_session_table_returns_empty_without_loading_attempts(history):
     history.db.execute('DROP TABLE helper_sessions')
-    net = SimpleNamespace(project_store=lambda project: history)
+    net = SimpleNamespace(store=history, project_store=lambda project: history)
     assert model_checks.tried(net, 'game', SimpleNamespace(name='new-worker')) == set()
     assert history.attempt_rows == []
 
 
 def test_missing_model_identity_still_rejects_filter(history):
-    net = SimpleNamespace(project_store=lambda project: history)
+    net = SimpleNamespace(store=history, project_store=lambda project: history)
     with pytest.raises(NetworkError, match='explicit model'):
         model_checks.tried(net, 'game', SimpleNamespace(name='unknown'))
     assert history.attempt_rows == []
