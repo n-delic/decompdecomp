@@ -134,7 +134,7 @@ function renderSessions(sessions) {
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = board.get(s.agent);
-    const facts = [s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.model ? esc(s.model) : "its default model", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
+    const facts = [s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.account_name ? `account: ${esc(s.account_name)}` : "", s.model ? esc(s.model) : "its default model", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
@@ -186,7 +186,7 @@ $("removePaused").onclick = async () => {
 };
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
-const LZ = { kind: null, model: "", customModel: false, apiSingleModel: null, apiCustomModel: "", models: [], multiple: false, endpointModels: {}, byKind: {}, count: 1, per: null, effort: "", task: "" };
+const LZ = { account: "", kind: null, model: "", customModel: false, apiSingleModel: null, apiCustomModel: "", models: [], multiple: false, endpointModels: {}, byKind: {}, count: 1, per: null, effort: "", task: "" };
 const EFFORT_NAMES = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 const effortField = (a) => (a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ...(a.efforts || []).map((e) => [e, EFFORT_NAMES[e] || e])].map(([v, l]) => `<option value="${v}" ${effortOf(a) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : "");
 // an agent that takes an effort (opencode 2, Claude Code) gets it with the model's name: provider/model#high. The
@@ -206,6 +206,7 @@ function launcherInit() {
   LZ.multiple = !!(known && (l.multiple || l.model === "__all_models" || LZ.models.length));
   LZ.apiSingleModel = known && l.api_model ? { endpoint: String(l.api_model.endpoint), model: String(l.api_model.model) } : null;
   LZ.count = l.count || 1;
+  LZ.account = l.account_id || "";
   const eps = S.st.settings.endpoints || [];
   LZ.eps = (l.endpoints || []).filter((id) => eps.some((e) => e.id === id));
   if (!LZ.eps.length && eps.length) LZ.eps = [eps[0].id];
@@ -215,7 +216,7 @@ function launcherInit() {
 }
 function modelOptions(a) {
   const recent = (S.st.settings.recent_models || {})[a.id] || [];
-  const opts = [{ id: "", name: a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
+  const opts = [{ id: "", name: a.uses_accounts && LZ.account ? "Account’s default" : a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
   for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "" });
   for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
   opts.push({ id: "__multiple", name: "Multiple models", note: "" });
@@ -272,6 +273,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
   if (btn) btn.disabled = true;
   try {
     const options = { ...extra };
+    if (a.uses_accounts && LZ.account) options.account_id = LZ.account;
     if (models.length) options.models = models;
     if (LZ.multiple) options.multiple_models = true;
     else if (model && !a.uses_endpoints) options.model = withEffort(a, model);
@@ -280,7 +282,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
     await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
-    S.st.settings.launcher = { kind: a.id, model: model || "", models, multiple: LZ.multiple, count,
+    S.st.settings.launcher = { account_id: options.account_id || "", kind: a.id, model: model || "", models, multiple: LZ.multiple, count,
       ...(a.uses_endpoints && LZ.apiSingleModel ? { api_model: LZ.apiSingleModel } : {}),
       ...(a.uses_endpoints ? { endpoints: LZ.eps || [] } : {}) };
     if (model && !a.uses_endpoints) {
@@ -357,6 +359,14 @@ function renderLauncher(box, compact = true) {
       <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${custom ? esc(LZ.model) : ""}" ${custom ? "" : "hidden"}>
       ${effortField(a)}`;
   }
+  if (a.uses_accounts && a.installed) {
+    const accounts = (S.st.settings.agent_accounts || []).filter((p) => p.kind === a.id);
+    const missing = LZ.account && !accounts.some((p) => p.id === LZ.account);
+    body = `<label class="field"><span>Account</span><select data-f="account"><option value="" ${!LZ.account ? "selected" : ""}>Default sign-in</option>
+      ${missing ? `<option value="${esc(LZ.account)}" selected>Account removed — choose another</option>` : ""}
+      ${accounts.map((p) => `<option value="${esc(p.id)}" ${p.id === LZ.account ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+      <span class="muted small">Add and sign in to accounts on Agents &amp; models. Start another group to use a different account.</span></label>` + body;
+  }
   const ready = a.installed;
   // helpers can also polish matched C (app/readable.py), once half the game matches
   const tasks = polishOffered(S.ov) ?`<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
@@ -373,6 +383,8 @@ function renderLauncher(box, compact = true) {
         <p class="muted small">${a.uses_endpoints ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
     </div>`;
   wireCopies(box);
+  const account = box.querySelector('[data-f="account"]');
+  if (account) account.onchange = () => { LZ.account = account.value; renderLauncher(box, compact); };
   const rerender = () => renderLauncher(box, compact);
   box.querySelectorAll("[data-task]").forEach((b) => { b.onclick = () => { LZ.task = b.dataset.task; rerender(); }; });
   box.querySelectorAll(".lz-kind").forEach((b) => { b.onclick = () => {

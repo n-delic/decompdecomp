@@ -16,6 +16,7 @@ from importlib import resources
 from pathlib import Path
 
 from .. import hostenv, toolchains
+from ..agents import get as agent_kind
 from ..agents import kind_id
 from ..agents.api import API_PRESETS, endpoint_entry
 from ..network import NetworkError
@@ -180,6 +181,60 @@ class Settings:
                 pass
             os.replace(tmp, self.path)
 
+    def accounts(self) -> list[dict]:
+        return [a for a in self.data.get("agent_accounts") or [] if isinstance(a, dict) and a.get("id")]
+
+    def account(self, aid: str) -> dict | None:
+        return next((a for a in self.accounts() if a["id"] == aid), None)
+
+    def save_account(self, data: dict) -> dict:
+        """#45: save a named sign-in's directory, leaving login and credential storage to the CLI."""
+        current = self.account(str(data.get("id") or ""))
+        if data.get("id") and current is None:
+            raise ValueError("That account was removed. Add a new account instead.")
+        kind = agent_kind(str((current or data).get("kind") or ""))
+        if not kind.uses_accounts:
+            raise ValueError("This agent does not support named accounts.")
+        name = str(data.get("name") or "").strip()
+        if not name or len(name) > 80:
+            raise ValueError("Give the account a name of 1 to 80 characters.")
+        if any(a["kind"] == kind.id and a["name"].casefold() == name.casefold()
+               and a is not current for a in self.accounts()):
+            raise ValueError("An account already has that name. Choose another name.")
+        if current is not None:
+            if data.get("config_dir") and str(data["config_dir"]) != current["config_dir"]:
+                raise ValueError("An account's directory cannot change. Add a new account for that directory.")
+            current["name"] = name
+            return current
+        seq = int(self.data.get("account_seq") or 0) + 1
+        aid = "a" + str(seq)
+        while self.account(aid):
+            seq += 1
+            aid = "a" + str(seq)
+        supplied = str(data.get("config_dir") or "").strip()
+        folder = Path(supplied).expanduser() if supplied else self.path.parent / "agent-accounts" / aid
+        if not folder.is_absolute():
+            raise ValueError("Use an absolute path for the account's configuration directory.")
+        folder = folder.resolve()
+        if folder.exists() and not folder.is_dir():
+            raise ValueError("The account's configuration path must be a directory.")
+        if any(Path(a["config_dir"]).resolve() == folder for a in self.accounts()):
+            raise ValueError("That directory already belongs to another account.")
+        current = {"id": aid, "kind": kind.id, "name": name, "config_dir": str(folder)}
+        self.data["account_seq"] = seq
+        self.data.setdefault("agent_accounts", []).append(current)
+        return current
+
+    def remove_account(self, aid: str) -> None:
+        # Never delete its directory or log it out: other Claude sessions may still use it.
+        self.data["agent_accounts"] = [a for a in self.accounts() if a["id"] != aid]
+
+    def account_options(self, kind: str, aid: str) -> dict:
+        account = self.account(aid)
+        if account is None or account["kind"] != agent_kind(kind).id:
+            raise ValueError("That account is no longer saved for this agent. Choose another account.")
+        return {"account_id": account["id"], "account_name": account["name"], "account_dir": account["config_dir"]}
+
     # -- API endpoints: OpenAI-compatible servers for the built-in agent, each with its own address, model and key
 
     def endpoints(self) -> list[dict]:
@@ -239,7 +294,8 @@ class Settings:
             return out
 
         eps = [masked(e) for e in self.endpoints()]
-        return {"endpoints": eps, "api": eps[0] if eps else {},
+        return {"agent_accounts": [a | {"signin": agent_kind(a["kind"]).account_signin(a["config_dir"])}
+                                    for a in self.accounts()], "endpoints": eps, "api": eps[0] if eps else {},
                 "per_session": self.data.get("per_session", PER_SESSION), "last_project": self.data.get("last_project"),
                 "autopilot": self.data.get("autopilot", True), "budget_usd": self.data.get("budget_usd") or 0,
                 "auto_update": bool(self.data.get("auto_update")), "check_updates": self.data.get("check_updates", True) is not False,

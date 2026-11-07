@@ -163,6 +163,8 @@ def register(app: App) -> None:
             return fail(ValueError("choose specific models or one model, not both"))
         picked: list[str] = []
         try:
+            if given.get("account_id"):
+                options.update(settings.account_options(kind, str(given["account_id"])))
             net.project_row(slug)
             net.warm_briefs_soon(slug)  # ready before the helpers' first claims
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
@@ -222,7 +224,8 @@ def register(app: App) -> None:
         # remembered, so the next start is one click; models typed in come back as suggestions
         model = str(options.get("model") or "")
         settings.data["launcher"] = {"kind": kind, "model": model, "models": requested_models,
-                                     "multiple": bool(given.get("multiple_models")), "count": count} | (
+                                     "multiple": bool(given.get("multiple_models")), "count": count,
+                                     "account_id": options.get("account_id") or ""} | (
                                          {"endpoints": picked} if picked else {})
         if kinds.get(kind).uses_endpoints and model and picked:
             settings.data["launcher"]["api_model"] = {"endpoint": picked[0], "model": model}
@@ -259,6 +262,27 @@ def register(app: App) -> None:
         except ValueError as e:
             return fail(e)
         return JSONResponse({"ok": True})
+
+    @mcp.custom_route("/api/agent-accounts", methods=["POST"])
+    async def api_agent_accounts(request: Request) -> Response:
+        """Save or forget a sign-in reference; authentication remains in the agent's own CLI."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        try:
+            if data.get("remove"):
+                aid = str(data["remove"])
+                settings.remove_account(aid)
+                for sid, sess in list(manager.sessions.items()):
+                    if sess.options.get("account_id") == aid and sess.state in agents.LIVE:
+                        await call(manager.stop, sid)
+            else:
+                await call(settings.save_account, data)
+            await call(settings.save)
+        except (ValueError, OSError) as e:
+            return fail(ValueError(str(e)) if isinstance(e, ValueError) else
+                        ValueError("The account could not be saved. Check that its directory is accessible."))
+        return JSONResponse(settings.public())
 
     @mcp.custom_route("/api/settings", methods=["POST"])
     async def api_settings(request: Request) -> Response:

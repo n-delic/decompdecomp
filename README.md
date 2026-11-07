@@ -48,6 +48,18 @@ This works for public projects whose declared SHA-1 is the original file's hash.
 declare a game SHA-1 in their setup metadata yet, so select their game files manually. PlayStation splat projects
 often hash an extracted file rather than the whole disc; a library of disc images will not match that hash.
 
+## Multiple Claude accounts
+
+In **Agents & models → Agent accounts**, add a name for each Claude subscription account. Leave the configuration
+directory empty to give it a separate directory, or enter an existing one. Run the command shown in a terminal and
+sign in with `/login`. When starting helpers, choose their account. Start another group to use another account.
+Helpers keep their chosen account when they restart, and wait for its usage limit to reset.
+
+The accounts panel shows tokens and reported model cost from finished sessions across your projects. This is not
+your subscription bill or the allowance remaining; usage outside decompdecomp is not counted. The default sign-in
+keeps working as before. Named accounts refuse API-key, token and cloud-provider overrides that would select a
+different login. Removing an account stops its helpers but keeps its login files and usage history.
+
 ## Install
 
 decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with

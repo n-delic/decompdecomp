@@ -30,6 +30,7 @@ function renderAgentsPage() {
       } catch (e) { showJobError(log, e.message); b.disabled = false; } finally { finish(); }
     };
   });
+  renderAgentAccounts();
   const eps = S.st.settings.endpoints || [];
   const card = (e) => `<div class="ep-card" data-id="${esc(e.id || "")}">
       ${e.id ? `<div class="ar-head"><b>${esc(e.name)}</b><span class="muted small mono">${esc(e.model)} · ${esc(hostOf(e.base_url))}</span></div>` : `<div class="ar-head"><b>A new endpoint</b></div>`}
@@ -60,6 +61,38 @@ function renderAgentsPage() {
     if (cancel) cancel.onclick = () => { S.addingEndpoint = false; renderAgentsPage(); };
   });
   if ($("epAdd")) $("epAdd").onclick = () => { S.addingEndpoint = true; renderAgentsPage(); };
+}
+function renderAgentAccounts() {
+  const box = $("agentAccounts"), accounts = S.st.settings.agent_accounts || [];
+  const kinds = S.st.agents.filter((a) => a.uses_accounts);
+  const usage = S.st.account_usage || [];
+  const totals = (row) => row ? `${Number(row.tokens).toLocaleString()} tokens · ${money(row.usd)} reported cost · ${plural(row.sessions, "finished session")}` : "No recorded usage yet";
+  box.innerHTML = `<p class="muted small">Give each subscription login its own account. Add one, then run its command in a terminal and sign in with /login. Credentials stay with the agent CLI. Choose the account when starting helpers; each keeps its account when it restarts.</p>
+    ${accounts.map((p) => `<div class="ep-card" data-account="${esc(p.id)}"><b>${esc(p.name)}</b>
+      <p class="small mono">${esc(p.config_dir)}</p>${cmdBox(p.signin)}
+      <p class="muted small">${totals(usage.find((r) => r.kind === p.kind && r.account_id === p.id))}</p>
+      <button class="ghost small-btn danger" data-account-remove="${esc(p.id)}" type="button">Remove account and stop its helpers</button></div>`).join("")}
+    ${usage.filter((r) => !accounts.some((p) => p.kind === r.kind && p.id === r.account_id)).map((r) => `<p class="small"><b>${esc(r.name || "Default sign-in")} ${r.account_id ? "(removed)" : ""}</b>: ${totals(r)}</p>`).join("")}
+    <div class="lz-fields"><label class="field"><span>Agent</span><select data-account-kind>${kinds.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>Account name</span><input data-account-name placeholder="Personal or work" maxlength="80"></label>
+      <label class="field wide"><span>Existing configuration directory (optional)</span><input data-account-dir placeholder="Leave blank for a separate directory"></label></div>
+    <button class="primary small-btn" data-account-add type="button" ${kinds.length ? "" : "disabled"}>Add account</button>
+    <p class="muted small">Totals cover reported usage from finished sessions in decompdecomp across your projects. Reported cost is a model cost estimate, not your subscription bill. Remaining five-hour and weekly allowance is not measured here. Refresh to update the totals. Removing an account keeps its login files and usage history.</p>`;
+  wireCopies(box);
+  const save = async (button, body) => {
+    button.disabled = true;
+    try {
+      S.st.settings = await api("/api/agent-accounts", { method: "POST", body });
+      await loadState();
+      renderAgentAccounts();
+    } catch (e) { toast(esc(e.message), "err"); } finally { button.disabled = false; }
+  };
+  box.querySelectorAll("[data-account-remove]").forEach((button) => {
+    button.onclick = () => save(button, { remove: button.dataset.accountRemove });
+  });
+  const add = box.querySelector("[data-account-add]");
+  add.onclick = () => save(add, { kind: box.querySelector("[data-account-kind]").value,
+    name: box.querySelector("[data-account-name]").value, config_dir: box.querySelector("[data-account-dir]").value });
 }
 $("agRefresh").onclick = showAgentsPage;
 
