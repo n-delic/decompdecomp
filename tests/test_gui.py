@@ -160,6 +160,21 @@ def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui
     assert fork_main == ["func_80000400", "lerp", "main_loop"] and nothing == []
 
 
+def test_the_project_can_choose_which_functions_helpers_take_first(gui):
+    """#205: the owner's order is a select beside the instructions, saved to the project; a refused save puts the
+    server's value back instead of leaving the page showing an order that isn't in force."""
+    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    for value, label in [("", "Default"), ("easiest", "Smallest first"), ("hardest", "Largest first"),
+                         ("closest", "Closest to matching first"), ("untried", "Not yet tried first")]:
+        assert f'<option value="{value}">{label}' in html, value
+    order = gui["checks"]["claimOrder"]
+    assert order["saved"] == {"url": "/api/claim-order", "body": {"slug": "a", "order": "untried"},
+                              "value": "untried"}
+    assert order["reverted"] == "untried" and "nobody has tried yet" in order["text"]
+    assert any("read-only" in note for note in order["notes"])
+
+
 def test_the_theme_button_goes_round_system_light_and_dark(gui):
     """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
     assert gui["checks"]["themes"] == ["light", "dark", ""]

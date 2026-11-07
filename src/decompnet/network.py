@@ -146,10 +146,11 @@ WAITING = ("SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_i
            "AND NOT EXISTS (SELECT 1 FROM waits w2 WHERE w2.function_id=w.needs_id AND w2.needs_id=w.function_id)")
 READY = "SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status = 'matched'"
 WANTED = "SELECT w.needs_id FROM waits w JOIN functions b ON b.id=w.function_id WHERE b.status = 'open'"
+# (a failing part waits even for its twins: they'd fail the same way)
+_EASIEST = (f"{_FAILING}, " + _TWINS + f"f.abandons > 0, (f.n_insns + {SIZE_STEP - 1}) / {SIZE_STEP} ASC, "
+            f"{_SHARE} DESC, f.n_insns ASC")
 STRATEGIES = {
-    # (a failing part waits even for its twins: they'd fail the same way)
-    "easiest": f"{_FAILING}, " + _TWINS + f"f.abandons > 0, (f.n_insns + {SIZE_STEP - 1}) / {SIZE_STEP} ASC, "
-                                          f"{_SHARE} DESC, f.n_insns ASC",
+    "easiest": _EASIEST,
     # what nobody gave up on, small first; among functions of about the same size, the files closest to done (a
     # file is linked into the game once all of it matches). Leftovers agents released again and again come last,
     # or a crowd of agents spends its time passing the hardest functions around.
@@ -159,7 +160,17 @@ STRATEGIES = {
     # near-misses, the ones given up on least first (else every agent resumes the same stuck one)
     "closest": "f.best_score IS NULL, f.abandons ASC, CAST(f.best_score AS REAL) / (f.n_insns * 100) ASC",
     "hardest": "f.n_insns DESC",
+    # a first pass over everything before polishing near misses: what nobody compiled yet, then easiest's order
+    "untried": f"f.attempts > 0, {_EASIEST}",
     "random": "RANDOM()",
+}
+# What a project's owner can choose for the order helpers take functions in (its config's "claim_order"): each names
+# the strategy it uses and the sentence agents read. Absent (""): the agent's own strategy, as before.
+CLAIM_ORDERS = {
+    "easiest": "smallest functions first",
+    "hardest": "largest functions first",
+    "closest": "functions closest to matching first",
+    "untried": "functions nobody has tried yet first, then the smallest",
 }
 
 
@@ -647,9 +658,12 @@ class Network:
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None,
                   strategy: str = "easiest"):
         """Claim (or renew) a function and return its row, or None when nothing is left."""
+        proj = self._project(project) if (project or not function) else None
+        if not function:  # the owner's order wins over the agent's, but a function asked for by name still comes
+            order = json.loads(proj["config"]).get("claim_order") or ""
+            strategy = order if order in CLAIM_ORDERS else strategy
         if strategy not in STRATEGIES:
             raise NetworkError(f"strategy must be one of {', '.join(STRATEGIES)}")
-        proj = self._project(project) if (project or function is None) else None
         now = time.time()
         with self.store.tx() as db:
             self._expire_claims(db)

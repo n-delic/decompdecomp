@@ -647,11 +647,25 @@ class Manager:
             options.pop("model", None)  # a Gemini CLI model name may mean nothing to Antigravity: use its default
         if self._down:
             raise ValueError("decompdecomp is quitting")
+        # A helper keeps the model it starts on (#204): one started on the CLI's own default records that default
+        # now, so that changing the default later in the CLI's settings doesn't silently switch a resumed helper
+        # while its name still says the old model. The default as the CLI's settings spell it may not be a model id
+        # its command line takes (Antigravity's is a display name): resolve_model maps it from what the CLI last
+        # listed, or returns "" when it can't, and then the helper stays unpinned and starts on the CLI's default as
+        # before. An API helper's model is its endpoint's and is recorded there.
+        chosen = str(options.get("model") or "")
+        name_model = chosen
+        if agent.command and not chosen:
+            name_model = str(agent.config_model() or "")
+            if name_model:
+                pinned = agent.resolve_model(name_model, _which(agent.command))
+                if pinned:
+                    options["model"] = name_model = pinned
         ids = []
         self._prepare(slug)
         with self._lock:
             for _ in range(max(1, min(int(count), MAX_AT_ONCE))):
-                model = options.get("model") or agent.config_model() or ""
+                model = name_model
                 if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
                     model = f"{model}#{options['effort']}"
                 name = helper_name(kind, model, self._taken())
@@ -1158,6 +1172,9 @@ class Manager:
             text += f"\n{known}\n"
         if (wish := self.net.instructions(s.slug)):
             text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
+        if (order := self.net.claim_order(s.slug)):
+            text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
+                     "claim_function without a function follows it; one you name still comes.\n")
         return text
 
     def _prompt(self, s: Session) -> str:

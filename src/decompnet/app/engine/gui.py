@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from ... import compilermap, consoles, scoring, toolchains
-from ...network import IN_BUILD, PROGRESS_COLUMNS, set_aside
+from ...network import CLAIM_ORDERS, IN_BUILD, PROGRESS_COLUMNS, set_aside
 from ...project import compiler_for
 from .. import saves
 
@@ -62,6 +62,7 @@ class GuiMixin:
                        "helper_matches": helpers,
                        "readable": self.readability.counts(proj)["readable"],
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
+                       "claim_order": cfg.get("claim_order") if cfg.get("claim_order") in CLAIM_ORDERS else "",
                        "priority": cfg.get("priority", []), "save_folder": str(saves.save_folder(self, slug)),
                        # (a suggestion its own check disproved isn't one: older ones were filed)
                        "suggestions": [s for s in cfg.get("suggestions", []) if s["status"] == "open"
