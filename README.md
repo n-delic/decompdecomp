@@ -166,6 +166,9 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
    For a stubborn function with a saved C candidate, open its **Edit** tab and use **Deep permuter** to give local
    rewrites a time and variant budget. It uses the same compiler and byte comparison as other attempts, saves
    verified improvements, and consumes no AI tokens. You can stop it at any time.
+   Each search rechecks the saved C first, tries a few targeted source rewrites, then uses random mutations.
+   The compile allowance includes the baseline check; repeated unsuccessful candidates with unchanged ROM
+   inputs are skipped without another compile.
 4. **Export** (in the project's header). You get a decomp project that builds your game again, byte for byte.
 
 You can also continue a community decomp: paste the address of its repository and pick your own copy of its game.

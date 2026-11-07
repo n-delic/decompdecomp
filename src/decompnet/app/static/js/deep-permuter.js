@@ -64,7 +64,8 @@ function renderDeepSearch() {
   const gain = p.starting_score != null && best != null && d?.insns ? deepMatch(best, d.insns) - deepMatch(p.starting_score, d.insns) : null;
   $("deepGain").textContent = gain == null ? "" : gain > 0 ? `+${gain.toFixed(2)} percentage points` : active ? "No improvement yet" : "No improvement this run";
   $("deepTested").textContent = tested.toLocaleString();
-  $("deepLimit").textContent = p.variant_limit ? `of ${p.variant_limit.toLocaleString()} allowed` : "";
+  $("deepLimit").textContent = (p.variant_limit ? `of ${p.variant_limit.toLocaleString()} allowed` : "")
+    + (p.skipped ? ` · ${p.skipped.toLocaleString()} repeats skipped` : "");
   $("deepTiming").textContent = p.elapsed == null ? "" : `${deepDuration(p.elapsed)} elapsed${active && p.seconds_left != null ? ` · ${deepDuration(p.seconds_left)} left` : ""}`;
   if (active && p.variant_limit == null) $("deepProgress").removeAttribute("value");
   else $("deepProgress").value = p.variant_limit ? Math.min(100, tested / p.variant_limit * 100) : 0;
