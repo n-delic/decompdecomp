@@ -90,8 +90,22 @@ class EditMixin:
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
-            head_meta = json.loads(fn["meta"] or "{}")
+            # read the head's meta inside the transaction, so a vote recorded while the split ran is not lost
+            head_meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (fn["id"],)).fetchone()["meta"] or "{}")
             head_meta.pop("joins", None)  # the head's extent changed: any pending join votes for it are now void
+            # A join vote on another row that names this function (as either end of the pair) is now void too: the
+            # split changed what this address holds, so those stored votes no longer describe the current function.
+            for row in db.execute("SELECT id, meta FROM functions WHERE project_id=? AND id!=? AND meta LIKE ?",
+                                  (proj["id"], fn["id"], f'%{fn["name"]}%')).fetchall():
+                m = json.loads(row["meta"] or "{}")
+                joins = m.get("joins")
+                drop = [k for k in joins if fn["name"] in k.split("+")] if joins else []
+                if drop:
+                    for k in drop:
+                        joins.pop(k)
+                    if not joins:
+                        m.pop("joins", None)
+                    db.execute("UPDATE functions SET meta=? WHERE id=?", (json.dumps(m) if m else None, row["id"]))
             db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
                        "meta=? WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
                                              console.function_asm(head), json.dumps(head_meta) if head_meta else None,

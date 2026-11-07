@@ -204,11 +204,25 @@ class RoomMixin:
         # Mirror the host's joins (the reverse of the split pass below): where the host has one function spanning
         # what we hold as several -- an over-split head plus tails -- join them back, as the saved-layout join does.
         for h in sorted(functions, key=lambda f: f["vram"]):
-            inside = sorted((r for r in local.values() if h["vram"] <= r["vram"] < h["vram"] + h["size"]),
-                            key=lambda r: r["vram"])
-            if len(inside) < 2 or inside[0]["vram"] != h["vram"]:
-                continue  # not over-split against the host, or the head doesn't start where the host's function does
-            head, tails = inside[0], inside[1:]
+            # Mirror _join_saved_layout's disambiguation: the head is the piece at the host's address carrying the
+            # host's name (or the sole function there); an overlay that shares the address is never guessed at. The
+            # tails are only pieces in the head's own unit, so a second overlay's alias in the range is never folded.
+            at = by_vram.get(h["vram"], [])
+            head = next((r for r in at if r["name"] == h["name"]), None)
+            if head is None:
+                if len(at) != 1:
+                    continue  # an ambiguous overlay address (or a rename): never guess which function is meant
+                head = at[0]
+            if head["status"] == "matched" or head["matched_source"]:
+                continue  # the head already matches at its own extent; don't fold it into a longer function
+            if (head["size"] or 0) >= h["size"]:
+                continue  # already the host's function: there is no split to undo
+            rows = sorted((r for r in local.values()
+                           if head["vram"] <= r["vram"] < h["vram"] + h["size"] and r["unit"] == head["unit"]),
+                          key=lambda r: (r["vram"], r["id"]))
+            if len(rows) < 2 or rows[0]["id"] != head["id"]:
+                continue  # only the head in its own unit here, or another function starts the run
+            head, tails = rows[0], rows[1:]
             if any(t["status"] == "matched" or t["matched_source"] for t in tails):
                 continue  # never fold a matched function away
             try:

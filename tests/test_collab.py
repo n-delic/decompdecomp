@@ -958,6 +958,47 @@ def test_apply_remote_layout_joins_what_the_host_joined(built, tmp_path):  # noq
     assert joined["target"] == orig_target                               # original bytes restored
 
 
+def test_splitting_a_function_voids_join_votes_that_name_it(built, tmp_path):  # noqa: F811
+    # #192 review 3: votes to join FN+TAIL live on FN's meta; when TAIL is split they must be dropped, or a single
+    # fresh vote reaches quorum against the now-shorter TAIL and joins the wrong extent.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")        # FN=func_800007C4, TAIL=func_800007D0
+    tail = net._function("func_800007D0", slug)
+    assert tail["size"] >= 8, tail["size"]                               # room to split the tail again
+    fn = net._function("func_800007C4", slug)
+    key = "func_800007C4+func_800007D0"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta=? WHERE id=?",
+                   (json.dumps({"joins": {key: {"api-1": {"model": "api"}, "api-2": {"model": "api"}}}}), fn["id"]))
+    net.split_function(agent, slug, "func_800007D0", hex(0x800007D0 + 4))  # splitting TAIL must void FN's FN+TAIL vote
+    meta = json.loads(net._function("func_800007C4", slug)["meta"] or "{}")
+    assert key not in meta.get("joins", {}), meta
+
+
+def test_apply_remote_layout_join_keeps_an_overlay_alias(built, tmp_path):  # noqa: F811
+    # #192 review 1: when the guest's over-split head+tail sit at an address a *second overlay* also uses, the join
+    # must fold only the head's own-unit pieces, never the alias. Selecting rows by vram alone deleted the alias.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    orig = net._function("func_800007C4", slug)
+    orig_size, pid = orig["size"], orig["project_id"]
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")       # over-split: head + tail at 0x800007D0
+    # a second overlay's function aliases the tail's address, in its own unit
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,rom_offset,target,relocs,asm) "
+                   "SELECT project_id,'ovl_alias_004',vram,size,n_insns,'open','ovl/other.c',"
+                   "COALESCE(rom_offset,0)+0x100000,target,relocs,asm "
+                   "FROM functions WHERE project_id=? AND name='func_800007D0'", (pid,))
+    net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
+    assert net._function("func_800007C4", slug)["size"] == orig_size     # the over-split pieces still joined
+    alias = net.store.one("SELECT * FROM functions WHERE project_id=? AND name='ovl_alias_004'", pid)
+    assert alias is not None, "the overlay alias was deleted by the join"
+    assert alias["vram"] == 0x800007D0 and alias["status"] == "open" and alias["unit"] == "ovl/other.c"
+
+
 def test_a_hosts_join_reaches_the_guest(built, tmp_path):  # noqa: F811
     # End to end with an isolated host+guest (not the shared module room, which other tests mutate): the host
     # splits, the guest mirrors it, the host joins the pieces back, and the join reaches the guest on the next
