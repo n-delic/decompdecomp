@@ -190,6 +190,7 @@ async function showAgentResults(session, kind) {
   more.onclick = load; await load();
 }
 const agentDetailsOpen = new Set();
+const agentMetricResets = new Map();
 const agentMenusOpen = new Set();
 function compactAgentNumber(value) {
   const n = Number(value || 0);
@@ -238,6 +239,12 @@ document.addEventListener('keydown', event => {
 $("agentSort").onchange = () => { agentSort = $("agentSort").value; renderSessions(S.sessions || []); };
 
 function renderSessions(sessions, refreshCosts = true) {
+  sessions = sessions.map(session => {
+    const reset = agentMetricResets.get(session.id);
+    if (!reset) return session;
+    if ((session.metrics_since || 0) >= reset.metrics_since) { agentMetricResets.delete(session.id); return session; }
+    return clearedAgentMetrics(session, reset);
+  });
   if (refreshCosts) renderCosts();
   const box = $("sessions");
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
@@ -347,14 +354,7 @@ function renderSessions(sessions, refreshCosts = true) {
     };
   }; });
   box.querySelectorAll("[data-reset-metrics]").forEach(button => { button.onclick = () => {
-    const panel = dialog("Reset agent metrics", `<p>Start this agent’s displayed matches, improvements, compiles, tokens, cost and session counters from zero. Matched code, attribution and transcripts are kept. The agent continues running.</p><p class="small muted">Token usage reported after reset counts in the new period, even if the call started earlier. Latest-start runtime stays unchanged. Project and model lifetime totals are kept.</p><button class="primary" data-confirm-reset>Reset metrics</button><button class="ghost" data-cancel-reset>Cancel</button>`);
-    panel.querySelector('[data-cancel-reset]').onclick = closeDialog;
-    panel.querySelector('[data-confirm-reset]').onclick = async () => {
-      try {
-        await api('/api/agents/reset-metrics', {method:'POST',body:{id:button.dataset.resetMetrics}});
-        closeDialog(); await poll(false);
-      } catch (error) { toast(esc(error.message),'err'); }
-    };
+    resetAgentMetrics(button.dataset.resetMetrics);
   }; });
   box.querySelectorAll('[data-change-model]').forEach(button => { button.onclick = () => {
     const session = sessions.find(s => s.id === button.dataset.changeModel);
@@ -1152,5 +1152,37 @@ function showRetryPaused(session) {
       poll(false);
     } catch (error) { showJobError(panel,error); }
     finally { finish(); }
+  };
+}
+
+
+function clearedAgentMetrics(session, reset) {
+  return {...session, tokens:0, usd:0, runs:0, restarts:0, estimated_cost:0, efficiency:null,
+    metrics:{matched:0, improved:0, compiles:0, worked:0, polished:0, last_improvement:null},
+    metrics_since:reset.metrics_since, metrics_after:reset.metrics_after};
+}
+
+function resetAgentMetrics(id) {
+  const slug=S.slug, generation=S.gen;
+  const panel=dialog('Reset agent metrics', `<p>Start this agent’s displayed matches, improvements, compiles, tokens, cost and session counters from zero. Matched code, attribution and transcripts are kept. The agent continues running.</p><p class="small muted">Token usage reported after reset counts in the new period, even if the call started earlier. Latest-start runtime stays unchanged. Project and model lifetime totals are kept.</p><button class="primary" data-confirm-reset>Reset metrics</button><button class="ghost" data-cancel-reset>Cancel</button><div data-reset-log></div>`);
+  const confirm=panel.querySelector('[data-confirm-reset]'), cancel=panel.querySelector('[data-cancel-reset]'), log=panel.querySelector('[data-reset-log]');
+  let pending=false;
+  cancel.onclick=closeDialog;
+  confirm.onclick=async()=>{
+    if(pending)return;
+    pending=true; confirm.textContent='Resetting…';
+    const finish=beginWork(log,'Resetting agent metrics',[confirm,cancel],'');
+    showJobError(log,'');
+    try {
+      const reset=await api('/api/agents/reset-metrics',{method:'POST',body:{id}});
+      if(Number.isFinite(reset.metrics_since))agentMetricResets.set(id,reset);
+      if(S.slug===slug && S.gen===generation){
+        S.sessions=(S.sessions || []).map(session=>session.id===id ? clearedAgentMetrics(session,reset) : session);
+        renderSessions(S.sessions);
+      }
+      if(panel.isConnected)closeDialog();
+      poll(false).catch(error=>toast(esc(error.message),'err'));
+    } catch(error) { showJobError(log,error.message); }
+    finally { finish(); pending=false; confirm.textContent='Reset metrics'; }
   };
 }

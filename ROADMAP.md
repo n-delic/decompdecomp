@@ -3129,3 +3129,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Done: compiler-comparison startup returns its background job ID without forcing saved-file synchronization in the request wrapper, so progress and Stop attach immediately. Synchronous compiler-map updates retain their save behavior; the comparison's fresh verification and publication guards remain unchanged.
 
 - Done: score-improvement batch commits inherit the shared header for units without a dedicated context, preserving explicit unit headers. Revoked match jobs leave the pending commit queue, and unexpected capture failures retain local traceback diagnostics instead of a generic Git-setup warning.
+
+- Done: agent metric reset gives immediate working/progress/error feedback and duplicate-click protection, performs database work off the event loop, reads only the selected helper's billing history, and clears confirmed card counters without waiting for a full poll. Reset boundaries protect the card from stale poll responses while preserving lifetime records and runtime.

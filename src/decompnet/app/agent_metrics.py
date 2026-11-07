@@ -1,5 +1,4 @@
 """Resettable card counters retain attribution, transcripts and lifetime billing records."""
-import json
 import time
 
 from ..history_changes import append_only
@@ -71,14 +70,39 @@ def results(net, slug, sessions):
     return board
 
 
+def lifetime_cost(manager, s, history_version=None, records=None):
+    """Read one helper's billing evidence without computing project/card metrics."""
+    from .. import agents
+    from . import session_history
+    from .agents import TOKEN_KINDS
+    if records is None:
+        history_version, records = session_history.records(manager.net, s.id, s.agent_name)
+    def history_costs(records=records, kind=s.kind):
+        estimates = [agents.get(kind).estimate_cost(r["model"], {
+            k: r[k + "_tokens"] for k in TOKEN_KINDS} | {"tokens": r["tokens"]}) for r in records if r["tokens"]]
+        return estimates, sum(r['tokens'] for r in records), {r['id'] for r in records}
+    saved_costs, recorded_tokens, session_ids = manager.net.store.read_cache.get(
+        ('helper-history-cost',s.id,s.agent_name,s.kind),history_version,history_costs)
+    estimates = list(saved_costs)  # Active usage is live, never appended to the cached completed totals.
+    if s.record and s.session_id not in session_ids and s.usage["tokens"]:
+        active = manager.net.store.one("SELECT model FROM helper_sessions WHERE id=?", s.session_id)
+        model = active["model"] if active else s.model
+        estimates.append(agents.get(s.kind).estimate_cost(model, s.usage))
+    if s.record and s.session_id not in session_ids:
+        recorded_tokens += s.usage["tokens"]
+    cost = (sum(estimates) if estimates and all(x is not None for x in estimates)
+                             and recorded_tokens == s.tokens else None)
+    return cost
+
+
 def reset(manager, sid):
     with manager._lock:
         s = manager.sessions.get(sid)
         if s is None:
             raise ValueError('This agent no longer exists. Refresh the agents list.')
-        estimate = next(row['estimated_cost'] for row in manager.snapshot() if row['id'] == sid)
-        previous = s.options.get('_metrics', {}).get('estimated_cost', 0)
-        estimate = estimate + previous if estimate is not None and previous is not None else None
+        estimate = lifetime_cost(manager, s)
+        missing = object()
+        previous = s.options.get('_metrics', missing)
         s.options['_metrics'] = {
             'estimated_cost': estimate,
             'at': time.time(),
@@ -86,8 +110,11 @@ def reset(manager, sid):
             'event': manager.net.store.one('SELECT COALESCE(MAX(id),0) AS n FROM events')['n'],
             'tokens': s.tokens, 'usd': s.usd, 'runs': s.runs, 'restarts': s.restarts,
         }
-        with manager.net.store.tx() as db:
-            kept = {k: v for k, v in s.options.items() if k != 'api_key'}
-            db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), s.id))
-        manager._save(s)
+        # _save already persists options alongside helper state in one transaction.
+        try:manager._save(s)
+        except BaseException:
+            if previous is missing:s.options.pop('_metrics', None)
+            else:s.options['_metrics'] = previous
+            raise
         manager._metrics_cache = {}
+        return {'metrics_since':s.options['_metrics']['at'], 'metrics_after':s.options['_metrics']['attempt']}
