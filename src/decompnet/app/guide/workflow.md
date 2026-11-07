@@ -115,3 +115,12 @@ Do not add empty constant-loop scaffolding merely to alter compiler layout.
 Random/deep search rejects newly introduced literal-zero empty do loops, while
 preserving existing wrappers, real nonempty blocks and dynamic waits. A lower
 score from artificial scaffolding is not a useful source reconstruction.
+
+
+For a loop with a four-case integer switch, `switch_constant_dispatch` can try
+staging the real comparison operands before existing setup while preserving
+forward case dispatch. It proposes one guarded source rewrite without AI tokens;
+the normal judge accepts it only after the destination build verifies it. It
+skips unsupported scope, macros, fallthrough and qualified selectors. Currently
+only proven direct pinned C32 GCC ROM invocations are eligible; external PROJECT
+builds need invocation evidence before this family can run.

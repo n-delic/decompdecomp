@@ -1,5 +1,15 @@
 # Roadmap
 
+- Done: one bounded `switch_constant_dispatch` proposal stages consumed comparison
+  constants and preserves a four-case forward dispatch graph for eligible loops.
+  The shared generator uses existing direct pinned C32 GCC invocation proof;
+  V-Rally N64 ordinary/diagnostic and independent relinks reproduced the exact target.
+  Planned gap: external PROJECT/custom commands have no proved language, integer
+  width or hidden preprocessing scope, so this family stays disabled there.
+  Broader compiler-profile invocation proof and real-profile validation are needed
+  before enabling or claiming coverage for other adapters; architecture routing
+  tests alone do not prove invocation eligibility.
+
 - Done: helper startup and claim receipts read current database state without inline saved-file restoration. Startup reuses one eligibility scan, waits when all selected work is claimed, and shows elapsed preparation stages. Heavy drafts/diagnostics stay behind the ordinary claimed-function reads.
 
 - Done: compiler surveys and installed/used-profile comparisons process all eligible functions in one stoppable run; finished comparisons remain saved for resuming after Stop.
@@ -629,6 +639,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Bounded flag preflight before long search | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — own build | — own build | — own build | — own build |
 | Existing-record structure-return / typed inline-setter hypotheses | ✓ | ✓ | ✓ | ✓ | ✓ C shapes | ✓ C shapes | ✓ C shapes | by supported C architecture |
 | Separate function and export-layout checks | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — own build | — own build | — own build | — own build |
+| Consumed-constant forward switch repair | ✓ proven C32 GCC ROM profiles | — real-profile validation planned | — invocation/validation planned | — invocation/validation planned | — external invocation proof planned | — external invocation proof planned | — external invocation proof planned | — external invocation proof planned |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Pieces of functions joined to their function | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |

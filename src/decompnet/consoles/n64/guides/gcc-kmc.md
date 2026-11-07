@@ -1280,3 +1280,34 @@ it was not exact. The rule never invents a lifetime-ending write or removes an
 pointer load or call, and the normal judge still decides whether to retain it.
 Primitive typedefs must be visible. Unresolved headers, reference-capable contexts
 and unsupported extensions yield no alias proposal; this is a bounded C rule.
+
+
+## Constant operands and the switch case graph
+
+A V-Rally KMC GCC control had an exact first loop, but its second loop loaded
+three comparison constants after an invariant pointer copy instead of before it.
+Initializing ordinary integer locals to 1, 2 and 3 at loop entry, then consuming
+those locals directly in rank comparisons, repaired the preheader. Actual first
+CSE retained the constant registers: this compiler's nonzero equality branches
+require register operands. Loop motion then visited the constant assignments
+before the pointer copy. Precomputing Boolean comparison results had not done
+this; it generated different value operations.
+
+That alone was insufficient. A structured `if`/`else` chain changed case layout
+and lowered the final selection to arithmetic (score 1650). Preserving the
+switch's real forward case graph with comparisons in dispatch order 1, 0, 2, 3
+and out-of-line case bodies in original order recovered all 448 bytes, with the
+original 8-byte frame. Ordinary and diagnostic builds and independent relinking
+agreed. This is observed KMC behavior, not a rule that all switches or compilers
+benefit from extra locals or gotos.
+
+The `switch_constant_dispatch` local family proposes this composition once for
+an eligible four-case switch directly inside a braced loop. AST checks require
+an ordinary local integer selector, cases 0 through 3 with terminal breaks and
+no default or fallthrough; unknown control, macros, escapes and scope hazards
+are skipped. Existing case statements retain their order and effects. It uses the shared
+generator, currently enabled only for proven direct pinned C32 GCC ROM profiles.
+External PROJECT/custom commands stay disabled until invocation language, integer
+width and preprocessing can be proved (see ROADMAP). Architecture routing tests
+do not establish eligibility or a benefit for another compiler. Every proposal
+still passes the existing destination judge.
