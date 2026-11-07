@@ -341,3 +341,62 @@ def test_parallel_deep_search_uses_real_judge_and_saves_exact_match(built, tmp_p
     assert result['matched'] and result['tested'] <= 20
     assert net._function(name, slug)['matched_source'] == CLAMP
     assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', owner.id) is None
+
+
+
+def test_exact_compiler_apply_pins_successful_header_and_profile(built, tmp_path, monkeypatch):  # noqa: F811
+    import json
+
+    from decompnet import match_bundle
+    from decompnet.app import saves
+    from decompnet.project import compiler_for
+    if toolchains.installed('binutils-mips') is None:pytest.skip('needs binutils-mips for a byte-identical export')
+    net = RomNetwork(tmp_path/'frozen.db', tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda _: None)
+    owner, _ = net.local_agent('owner')
+    net.split_function(owner, slug, 'func_800007C4', '0x800007D0')
+    name = 'func_800007D0'
+    net.claim(owner, slug, name)
+    proj, fn = net.project_row(slug), net._function(name, slug)
+    original = dict(compiler_for(net.cfg(proj), fn['vram'], fn))
+    header = net._context(proj['id'], fn['unit'])['header']
+    store = net.project_store(proj['id'])
+    with store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,best_score=10 WHERE id=?', (CLAMP, fn['id']))
+    compile_source = net._compile
+    def concurrent_work(*args, **kwargs):
+        result = compile_source(*args, **kwargs)
+        with store.tx() as db:
+            current = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
+            cfg = json.loads(current['config'])
+            cfg.update(spend={'tokens':1234}, progress_revision='background-save')
+            cfg['compiler']['flags'] = ['-O1']
+            db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), proj['id']))
+            version = net._next_version(db, proj['id'])
+            db.execute('INSERT INTO context_versions(project_id,unit,version,header) VALUES(?,?,?,?)',
+                       (proj['id'], fn['unit'], version, header+'\n#define NEW_SHARED_HEADER 1\n'))
+        return result
+    monkeypatch.setattr(net, '_compile', concurrent_work)
+    result = net.apply_function_compiler(slug, name, original['toolchain'], original['flags'])
+    assert result['matched']
+    saved = net._function(name, slug)
+    assert saved['status'] == 'matched' and saved['unit'] != fn['unit']
+    assert net._context(proj['id'], saved['unit'])['header'] == header
+    assert not match_bundle.status(net, saved)['changed_inputs']
+    assert not store.one('SELECT 1 FROM claims WHERE function_id=?', saved['id'])
+    output = saves.save(net, slug, tmp_path/'portable')
+    assert output['matched'] >= 1
+    assert (tmp_path/'portable/include'/saves._header_file(saved['unit'])).read_text() == header
+    monkeypatch.setattr(net, '_compile', compile_source)
+    exported = net.export_rom(slug, log=lambda _: None)
+    assert exported['identical'], exported.get('log')
+    reopened_root = tmp_path/'reopened'
+    reopened_root.mkdir()
+    reopened = RomNetwork(reopened_root/'app.db', reopened_root)
+    rom = tmp_path/'demo.z64'
+    rom.write_bytes(built)
+    restored = saves.restore(reopened, str(tmp_path/'portable'), rom, log=lambda _: None)
+    replayed = reopened._function(name, restored['slug'])
+    assert replayed['status'] == 'matched'
+    assert reopened._context(replayed['project_id'], replayed['unit'])['header'] == header
+    assert not match_bundle.status(reopened, replayed)['changed_inputs']

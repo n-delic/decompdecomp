@@ -301,3 +301,10 @@ Improvement batches follow the judge’s context inheritance: an overlay or sour
 `GET /api/compilermap?slug=...&view=comparison` returns the project's current or latest comparison job in this app session, including its explicit project/function/options scope and compact progress. It does not run compiler maintenance or read the compiler map. Full results and output remain available through `/api/job?id=...`.
 
 `POST /api/compilermap` with `all_installed: true` attaches to an already-running comparison for that project instead of starting duplicate work. Returning to Settings or reopening the window reconnects its progress and Stop controls. The disclosure heading marks running work even when collapsed; saved comparison options are restored alongside progress. Temporary connection failures retry the same job, and late responses from another project cannot overwrite the current panel.
+
+
+### Exact matches found while other work continues
+
+An exact compiler-application recheck retains the source, header and compiler profile that produced its byte-identical verdict. Saving progress, updating usage totals or changing another function's settings does not invalidate it. If a shared header changes during compilation, the verified header becomes private to the matched function; newer shared work remains intact. A concurrent toolchain/flag change is preserved for other functions while this function keeps its verified profile. Profile, context, match evidence and claim release publish atomically.
+
+Target identity, boundaries, symbols, game/ABI identity, build files, compiler installation and unknown build settings remain checked before publication. Changed targets must be checked against their new bytes; a percentage alone cannot create a match. Ordinary non-exact attempts retain their existing claim and input protections.

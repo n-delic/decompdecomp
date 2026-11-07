@@ -168,23 +168,7 @@ class AutopilotMixin:
         fn = self.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fn["id"])
         if fn is None or fn["status"] != "open":
             raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")
-        if exact_only:
-            from ..source_preparation import inputs
-            # The frozen source being judged remains valid if an agent saves a newer draft.
-            # Target, boundaries, headers, symbols and compiler inputs must still be identical.
-            def signature(project, function):
-                return (inputs(self,project,{**dict(function),'best_source':None}),
-                        tuple(function[k] for k in ('meta','rom_offset','n_insns')),
-                        project['arch'],project['big_endian'])
-            expected = signature(proj,fn)
-            def validate():
-                latest=self.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
-                current=self.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id'])
-                if (latest is None or latest['status']!='open' or current is None
-                        or signature(current,latest)!=expected):
-                    raise NetworkError('Function or build inputs changed during exact verification. Recheck the match.')
-                if before_record is not None:before_record()
-        else:
+        if not exact_only:
             now = time.time()
             store = self.project_store(proj['id'])
             identities = {} if store is self.store else {
@@ -196,6 +180,9 @@ class AutopilotMixin:
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
         try:
             ctx = self._context(proj["id"], fn["unit"])
+            if exact_only:
+                from ..exact_match_inputs import capture
+                exact_inputs = capture(self, proj, fn, ctx, source)
             result = self._compile(proj, ctx["header"], source, fn)
             if not result.ok:
                 return {"matched": False, "score": None}
@@ -209,7 +196,7 @@ class AutopilotMixin:
                 return {"matched":False,"score":d.score}
             self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
                          effective_settings=getattr(result, 'effective_settings', None),
-                         before_record=validate if exact_only else before_record)
+                         before_record=before_record, **({"exact_inputs":exact_inputs} if exact_only else {}))
             from ...source_lines import mismatches
             from ..repair_localisation import bind
             locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
