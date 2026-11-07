@@ -72,6 +72,22 @@ def edit(source, edits):
     return source
 
 
+def split_plain_declarations(source, name, header=''):
+    """Expose ordinary comma declarations to scalar analysis without moving scopes/lines."""
+    part=view(source,name)
+    if not part:return source
+    macros=set(re.findall(r'^\s*#\s*define\s+('+IDENT+')',header+'\n'+source,re.M))
+    changes=[]
+    pattern=re.compile(rf'\b(?P<type>{INTEGER})\s+(?P<names>{IDENT}(?:\s*,\s*{IDENT})+)\s*;')
+    for hit in pattern.finditer(part.clean,part.opening+1,part.end):
+        if part.clean[part.opening+1:hit.start()].rstrip()[-1:] not in ('',';','{','}'):continue
+        if set(re.findall(IDENT,hit[0]))&macros:continue
+        names=source[hit.start('names'):hit.end('names')]
+        names=re.sub(r',(\s*)',lambda m,kind=hit['type']:';'+m[1]+kind+' ',names)
+        changes.append((hit.start(),hit.end(),hit['type']+' '+names+';'))
+    return edit(source,changes)
+
+
 def integer(text):
     text = re.sub(r'[uUlL]+$', '', text)
     return int(text, 16 if text.lower().startswith('0x') else 10)

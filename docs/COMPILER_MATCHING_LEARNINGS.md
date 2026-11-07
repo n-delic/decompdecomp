@@ -1,5 +1,42 @@
 # Compiler matching learning log
 
+### Dead parameter carriers and a temporarily worse allocation bridge
+
+Profile: pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+A frozen 119-instruction routine recovered all 476 linked bytes without changing
+its ABI, flags, header or target. The controlled sequence was score 240 → 60
+(remove an existing single-pass loop latch, retain braces), 60 → 65 (combine
+two unsigned-halfword reads into the final narrow subtraction), then 65 → 0
+(simultaneously permute a dead incoming signed integer parameter and two locals).
+The intermediate score regression removed scheduling differences and exposed a
+register-only problem with the same known frame. Numeric score alone discarded
+the useful bridge. Search now reserves a bounded bridge slot and prioritizes
+these complementary families within its existing budgets.
+
+The shared generators reproduced this known sequence in ten ordinary compiler
+invocations, including baseline, in 1.78 seconds. The actual targeted eight-item
+page recovered exact output at proposal seven from the score-65 checkpoint
+(1.53 seconds including generation). This is known-checkpoint replay, not a new
+live match, a fresh-draft discovery benchmark or demonstrated transfer to other
+games. The live project was not changed. Full linked bytes, not a diagnostic
+score alone, determined exactness. Normal and dump-enabled compiler runs agreed
+on allocated output; no helpers, fixed registers or data payload were added.
+
+Guarded parameter reuse requires a dead entry value at a top-level CFG phase,
+compatible signed 32-bit storage, dominating local initialization, no escapes,
+and simultaneous bijective substitution. Loops, incoming jumps, macros and
+ambiguous shadowing decline proposals. The narrow-load rule crosses only pure
+local address arithmetic, retaining both memory reads and their order; observable
+effects, escaped locals, volatile types and gap reads of the destination decline.
+These are shared ROM/PROJECT proposals, still judged by the ordinary exact judge.
+
+Negative evidence: an earlier 1,003-build random search produced 357 distinct
+outputs in 531.8 seconds without an exact match. Unconstrained native variable
+removal also captured an overwritten base pointer: substitution changed the
+effective address. That native pass is disabled, rather than treating a good
+machine score as proof of source validity. This does not claim general semantic
+verification for every remaining native permutation.
+
 Keep this file updated when a verified match explains a reusable compiler behaviour. Agent-facing
 summaries live in `src/decompnet/consoles/*/guides/`; this is the evidence ledger, including failed ideas.
 Do not treat an instruction similarity score as proof of a match.

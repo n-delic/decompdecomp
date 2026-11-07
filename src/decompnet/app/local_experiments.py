@@ -253,6 +253,10 @@ def _available(net, agent, slug, fn, source, revision, requested):
             header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
             for family,text in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],measured.get('rows') or [],measured.get('repair_locations')):
                 if family in pools:pools[family].append(text)
+    from . import narrow_load_subtraction, parameter_carriers
+    for generator in (parameter_carriers,narrow_load_subtraction):
+        if generator.FAMILY in pools:
+            pools[generator.FAMILY]=[s for _,s in generator.variants(source,fn['name'],header,proj['arch'])]
     if 'scalar_storage_reuse' in pools:
         from . import scalar_storage_reuse
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))

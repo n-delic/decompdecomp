@@ -70,8 +70,11 @@ def supported_methods(methods):
     # Native perm_add_self_assignment also inserts x++; x--;. Signed overflow,
     # pointer bounds and uninitialized/qualified reads make these unsafe without
     # range and type proofs. They add no source-level computation to recover.
+    # The native remover substitutes names without liveness and can turn base+b
+    # into base+a+b after a pointer is overwritten. Shared CFG repairs provide
+    # bounded storage reuse instead; never feed this pass invalid parents.
     return [(method, weight) for method, weight in methods
-            if method.__name__ != 'perm_add_self_assignment']
+            if method.__name__ not in {'perm_add_self_assignment','perm_remove_var'}]
 
 
 def main() -> int:

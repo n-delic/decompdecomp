@@ -58,6 +58,11 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+Bounded local repairs can reuse dead incoming integer parameters through coordinated storage
+permutations, combine safe halfword-load subtractions, and remove redundant single-pass loop
+latches while keeping their scopes. Search reserves promising scheduling-to-allocation
+alternatives even when their numeric score briefly worsens. Every result still needs the ordinary judge.
+
 Open **Regenerate machine drafts** under a project's overview, then choose **Regenerate drafts** to refresh
 starting C for functions without compiling C and test it with the project's compiler. Select **Include all unmatched functions** for a full refresh. Room members can run this locally, with potential matches confirmed by the host. Matches, best attempts and shared headers are preserved. If a ROM draft fails to compile, a bounded pass tries private callback and stack-layout repairs and retains the first compiling candidate. Unsupported instructions and incomplete output remain explicit failures rather than placeholder C.
 Claimed functions and unresolved boundaries are skipped; Stop keeps completed work. **Starting C diagnostics**

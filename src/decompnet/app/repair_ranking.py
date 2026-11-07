@@ -20,6 +20,7 @@ def order(families, rows):
     from .matching_investigations import paired_loads
     from .normalization_repairs import frame_gap
     register_priority = (
+            'parameter_carriers',
             'inline_byte_address_bundle', 'inline_byte_address', 'debug_branch_scope', 'loaded_byte_compound', 'unsigned_byte_increment', 'return_contract', 'narrow_expression_inline', 'plain_float_slots',
             'narrow_call_destination', 'branch_scalar_lifetime', 'embedded_call_assignment', 'inline_call_count', 'typed_pointer_snapshot',
             'shared_scaled_offset', 'pointer_conditional_load_inline', 'branch_store_tail', 'address_association',
@@ -39,7 +40,7 @@ def order(families, rows):
         preferred = ('switch_constant_dispatch', 'unsigned_countdown_guard','structured_backedge','guard_forward_jump','branch_orientation','loop_update_order',
                      'goto_leaf','shared_return_tail','redundant_loop_guard','combined_scheduling')
     elif paired_loads(rows):
-        preferred = ('paired_load_order','scalar_schedule_order','local_declaration_order','small_helper_expansion','combined_scheduling')
+        preferred = ('narrow_load_subtraction','one_shot_scope','paired_load_order','scalar_schedule_order','local_declaration_order','small_helper_expansion','combined_scheduling')
     elif markers and markers <= {'s'}:
         preferred = ('argument_home_slot', 'callee_array_extent', 'modular_guard_width', 'local_width', 'spill_normalization', 'unused_scalar_local',
                      'local_storage', 'parameter_storage', 'local_declaration_order', 'stack_padding')
@@ -81,6 +82,10 @@ def order(families, rows):
     # These families only exist after a narrow target/source guard. Generic delay-slot
     # or register-shape heuristics must not spend the whole budget before that operation.
     preferred=GUARDED+('m2c_refinement',)+STRUCTURAL+('mapped_spill_storage','mapped_register_lifetime')+preferred
+    if diagnosis['register_only']:
+        preferred=GUARDED+('parameter_carriers',)+preferred
+    elif diagnosis['scheduling']:
+        preferred=GUARDED+('narrow_load_subtraction','one_shot_scope')+preferred
     ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
     from .trial_evidence import order as evidence_order
     return evidence_order(ranked,rows,evidence=diagnosis)

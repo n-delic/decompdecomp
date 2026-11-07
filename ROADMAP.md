@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: bounded dead-parameter storage permutations and safe narrow-load subtraction proposals
+  reach shared ROM/PROJECT local repairs. Scheduling-to-allocation bridges retain a bounded
+  frontier slot; unconstrained native variable removal is disabled. A frozen known-checkpoint
+  replay recovered exact linked output in ten compiles; broader transfer remains unmeasured.
+
 - Done: frozen intermediate-source audits separate literal generation, first-page selection and
   ordinary search-admission gaps; bounded compiler probes can identify equivalent generated output.
   Unmeasured equivalents remain unknown. A six-proposal loop-combination lane retains measured
