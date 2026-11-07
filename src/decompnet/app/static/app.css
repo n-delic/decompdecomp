@@ -620,6 +620,9 @@ a.ghost, a.primary { text-decoration: none; }
 .said-check.ok { color: var(--match); }
 #knowList .note { overflow-wrap: anywhere; }
 .note-box { display: grid; gap: 8px; }
+#deepPermuterPanel input[type="number"] { width: 110px; max-width: 100%; margin-left: 6px; }
+#deepPermuterPanel { margin-top: 14px; }
+#deepPermuterPanel #deepLog { max-height: 160px; overflow: auto; white-space: pre-wrap; }
 .note-box textarea { width: 100%; border-radius: var(--r); border: 1px solid var(--line); background: var(--raise); padding: 9px 11px; font: 13px/1.5 var(--sans); color: var(--ink); resize: vertical; }
 .pin.on { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
 .tabs { display: flex; gap: 4px; }

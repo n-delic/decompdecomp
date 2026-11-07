@@ -106,6 +106,9 @@ async function refreshFn(first) {
     const kinds = { matched: "Matching C", best: "Best attempt so far", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt", draft: "Machine draft (m2c)" };
     $("fnSrcKind").textContent = kinds[d.source_kind] || "No C yet";
     if (!S.editDirty || first) setEditor(d.source || "", d);
+    $("deepStart").disabled = d.status !== "open" || !d.source || d.best == null || deepFollowing != null;
+    $("deepPermuterPanel").hidden = d.status === "matched" || d.status === "asm";
+    reconnectDeepSearch(d.name);
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
     $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
@@ -152,6 +155,61 @@ $("fnEdit").addEventListener("keydown", (e) => {
   }
 });
 $("tryBtn").onclick = () => tryIt();
+
+let deepFollowing = null;
+async function followDeepSearch(id, name) {
+  if (deepFollowing === id) return;
+  deepFollowing = id;
+  const log = $("deepLog");
+  const finish = beginWork(log, "Deep permuting", [$("deepStart")], "Deep search finished.");
+  $("deepStop").hidden = false;
+  try {
+    const result = await followJob(id, log);
+    if (S.fn === name) {
+      log.textContent += `\n${result.reason}: ${result.tested} variants tested.`;
+      S.diffKey = null;
+      await refreshFn(false);
+      await refreshMap(true);
+    }
+  } catch (error) {
+    if (S.fn === name) showJobError(log, error.message);
+  } finally {
+    deepFollowing = null;
+    finish();
+    $("deepStop").hidden = true;
+    if (S.fn === name && S.fnDetail) {
+      $("deepStart").disabled = S.fnDetail.status !== "open" || !S.fnDetail.source || S.fnDetail.best == null;
+    }
+  }
+}
+
+async function reconnectDeepSearch(name) {
+  try {
+    const { job } = await api(`/api/deep-permuter?slug=${encodeURIComponent(S.slug)}&name=${encodeURIComponent(name)}`);
+    if (job && S.fn === name) followDeepSearch(job, name);
+  } catch (error) { console.warn("Deep search status unavailable", error); }
+}
+
+$("deepStart").onclick = async () => {
+  const name = S.fn;
+  if (!name || $("deepStart").disabled) return;
+  $("deepStart").disabled = true;
+  const log = $("deepLog");
+  showJobError(log, "");
+  try {
+    const { job } = await api("/api/deep-permuter", { method: "POST", body: {
+      slug: S.slug, name, minutes: Number($("deepMinutes").value), variants: Number($("deepVariants").value),
+    } });
+    $("deepStart").disabled = false;
+    followDeepSearch(job, name);
+  } catch (error) {
+    showJobError(log, error.message);
+    $("deepStart").disabled = false;
+  }
+};
+$("deepStop").onclick = async () => {
+  if (deepFollowing) await api("/api/job/cancel", { method: "POST", body: { id: deepFollowing } });
+};
 
 async function tryIt() {
   const name = S.fn, source = $("fnEdit").value, msg = $("tryMsg");

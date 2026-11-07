@@ -517,6 +517,19 @@
             <span class="muted small" id="tryHint">Ctrl+Enter · edit it yourself: you're judged like an agent</span>
           </div>
           <p class="try-msg" id="tryMsg" hidden></p>
+          <div class="note-box" id="deepPermuterPanel">
+            <p class="col-title">Deep permuter</p>
+            <p class="muted small">Spend more local compiler time on this saved C candidate. No AI tokens are used.</p>
+            <div class="row">
+              <label>Minutes <input id="deepMinutes" type="number" min="1" max="120" value="10"></label>
+              <label>Max variants <input id="deepVariants" type="number" min="1" max="1000000" value="500"></label>
+            </div>
+            <div class="row">
+              <button class="ghost small-btn" id="deepStart" type="button">Deep permute this function</button>
+              <button class="ghost small-btn" id="deepStop" type="button" hidden>Stop search</button>
+            </div>
+            <pre class="code" id="deepLog" aria-live="polite"></pre>
+          </div>
         </div>
       </div>
       <div class="fn-chart" id="fnChartWrap"><svg id="fnChart" aria-label="Match per compile"></svg><div class="fn-chart-note" id="fnChartNote"></div></div>

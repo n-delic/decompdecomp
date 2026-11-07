@@ -163,6 +163,9 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
    functions at the same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
    the easy ones for free, before any agent starts.
+   For a stubborn function with a saved C candidate, open its **Edit** tab and use **Deep permuter** to give local
+   rewrites a time and variant budget. It uses the same compiler and byte comparison as other attempts, saves
+   verified improvements, and consumes no AI tokens. You can stop it at any time.
 4. **Export** (in the project's header). You get a decomp project that builds your game again, byte for byte.
 
 You can also continue a community decomp: paste the address of its repository and pick your own copy of its game.

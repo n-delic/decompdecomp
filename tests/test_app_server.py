@@ -39,6 +39,37 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monkeypatch):
+    from decompnet.app import deep_permuter
+
+    client, _, _ = app
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+
+    def run(net, slug, name, minutes, variants, log):
+        started.set()
+        release.wait(2)
+        log.check_cancel()
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    payload = {"slug": "game", "name": "f", "minutes": 1, "variants": 10}
+    try:
+        response = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload)
+        assert response.status_code == 200, response.text
+        jid = response.json()["job"]
+        assert started.wait(1)
+        assert client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json() == {"job": jid}
+        again = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload)
+        assert again.json()["job"] == jid
+        other = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json={**payload, "name": "g"})
+        assert other.status_code == 400 and "Another function" in other.json()["error"]
+        assert client.post("/api/job/cancel", headers={"X-Decomp": "1"}, json={"id": jid}).json() == {"cancelled": True}
+    finally:
+        release.set()
+
+
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
     from .test_loading import tiny_game
 
