@@ -809,6 +809,8 @@ session keeps the full app prompt (including guides and project instructions), e
 replies, app tool arguments/results, and reported input/cache/output usage. API helpers
 also record each request after context trimming, including tool definitions. CLI provider
 system prompts, hidden reasoning, shell output and internal compaction are not available.
+[Compact search history](docs/COMPACT_SEARCH_HISTORY.md) keeps candidate hashes and scores while expiring superseded unsuccessful C and oversized search diagnostics.
+
 **Settings → Database cleanup** previews and clears transcripts from agents already
 removed, and optionally from completed sessions before a chosen date (00:00 UTC).
 Enable automatic cutoff enforcement and save the rules to check every five minutes
