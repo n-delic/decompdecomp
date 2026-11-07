@@ -288,21 +288,28 @@ def _read_owned(folder: Path) -> dict[str, str]:
     return {name: text for name, text in previous.items() if name in owned}
 
 
-def _function_rows(net, project_id: int, *, sources: bool) -> list:
-    """The columns a render reads. Without `sources` only whether a file exists is selected: a manifest needs the
-    layout and who matched it, not the megabytes of C that make the files."""
+def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | None = None) -> list:
+    """Render metadata and, when requested, only the C that will become a progress file."""
     store = net.project_store(project_id)
-    exists = ("CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
-              "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best ")
+    # Packed sources are nonempty hash blobs; only large text is packed. Presence
+    # checks must use physical rows so they don't inflate either source again.
+    matched = "r.status='matched' AND r.matched_source IS NOT NULL AND r.matched_source != ''"
+    columns = ("r.name, r.vram, r.size, r.status, r.matched_agent_id, r.best_score, "
+               "r.best_agent_id, r.readable, r.meta, "
+               "CASE WHEN r.matched_source IS NOT NULL AND r.matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
+               "CASE WHEN r.best_source IS NOT NULL AND r.best_source != '' THEN 1 ELSE 0 END AS has_best")
+    join = ""
     if sources:
-        return store.all(
-            "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
-            f"best_agent_id, readable, meta, {exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
-    # Packed sources are nonempty hash blobs; only large text is packed. Use
-    # physical presence flags so a manifest-only render never inflates the C.
-    return store.all(
-        "SELECT name, vram, size, status, matched_agent_id, best_score, best_agent_id, readable, meta, "
-        f"{exists}FROM main.functions WHERE project_id=? ORDER BY vram", project_id)
+        # CASE short-circuits unused payloads, but selected C still uses the normal
+        # checksum-validated detail view in the same read snapshot as its metadata.
+        columns += (f", CASE WHEN {matched} THEN f.matched_source END AS matched_source, "
+                    f"CASE WHEN {matched} THEN NULL WHEN r.best_score IS NOT NULL "
+                    "THEN f.best_source END AS best_source")
+        join = " JOIN functions f ON f.id=r.id"
+    selected = "" if names is None else " AND r.name IN (SELECT value FROM json_each(?))"
+    params = (project_id,) if names is None else (project_id, json.dumps(names))
+    return store.all(f"SELECT {columns} FROM main.functions r{join} WHERE r.project_id=?{selected} ORDER BY r.vram",
+                     *params)
 
 
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
@@ -471,7 +478,6 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
     A match, a rename or a header edit touches a handful of files; rebuilding the other 17,999 sources' text is what
     made one database change take seconds on a big game. The manifest is always rebuilt, because it carries the
     revision, the layout and who matched what."""
-    store = net.project_store(proj['id'])
     cfg = net.cfg(proj)
     pid = proj["id"]
     rows = _function_rows(net, pid, sources=False)
@@ -483,12 +489,7 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
     if names:
         for start in range(0, len(names), 400):
             chunk = names[start:start + 400]
-            selected = store.all(
-                "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
-                "best_agent_id, readable, meta, "
-                "CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
-                "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best "
-                f"FROM functions WHERE project_id=? AND name IN ({','.join('?' * len(chunk))})", pid, *chunk)
+            selected = _function_rows(net, pid, sources=True, names=chunk)
             files.update(_source_files(selected))
     if readme_key is None or _readme_key(manifest) != readme_key:
         _write_readme(net, proj, folder, manifest, functions)
