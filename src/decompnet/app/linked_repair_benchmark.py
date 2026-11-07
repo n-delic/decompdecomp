@@ -113,7 +113,7 @@ def benchmark(root, name, source, header, *, trials=128, seconds=120, families=(
             'compiler_invocations':len(cache),'verdict':'Normal linked-byte and ROM-data judge; read-only, no adoption.'}
 
 
-def suite(root, cases, *, trials=16, seconds=30, focused=True):
+def suite(root, cases, *, trials=16, seconds=30, focused=True, omit_families=()):
     """Equal budgets for a frozen list of saved sources; never write or adopt a candidate."""
     from . import iterative_repairs
     if isinstance(trials,bool) or not isinstance(trials,int) or not 1<=trials<=4096:
@@ -122,7 +122,7 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True):
         raise ValueError('Use 1–1800 seconds per function.')
     prepared=[]
     for item in cases:
-        evaluate,scope,arch,asm,_=evaluator(root,item['name'],item['header'])
+        evaluate,scope,arch,asm,compiled=evaluator(root,item['name'],item['header'])
         baseline=evaluate(item['source'])
         if baseline.get('score') is None or baseline.get('matched'):
             raise ValueError('Every frozen case must compile and be unresolved under the copied judge.')
@@ -130,17 +130,19 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True):
             scope=hashlib.sha256(repr((scope,item['id']) if 'id' in item else scope).encode()).hexdigest(),
             name=item['name'],header=item['header'],asm=asm,flags=scope['compiler'].get('flags',[]),
             entry_scope=draft_repairs.promoted_entry_repairs.profile_scope(arch,scope['compiler']),
-            evaluate=evaluate,selection={},pool_cache={}))
+            evaluate=evaluate,compiled=compiled,selection={},pool_cache={}))
     def generate(case,source,report):
         return iterative_repairs.targeted_variants(source,report,{'name':case['name'],'asm':case['asm']},
             case['arch'],case['flags'],case['header'],tagged=True,selection=case['selection'],
-            pool_cache=case['pool_cache'],focused=focused,entry_scope=case['entry_scope'])
+            pool_cache=case['pool_cache'],focused=focused,entry_scope=case['entry_scope'],omit_families=omit_families)
     result=repair_benchmark.batch(prepared,lambda c,s:c['evaluate'](s),generate,
         trials=trials,seconds=seconds,generate_report=True)
     # Case scope includes precursor ids; count actual functions independently of those ids.
     distinct=len({c['name'] for c in prepared})
     return result | {'coverage':dict(cases=len(prepared),distinct_functions=distinct,repeated_precursors=len(prepared)-distinct),
-                     'focused':focused,'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
+                     'compiler_invocations':sum(len(c['compiled']) for c in prepared),
+                     'focused':focused,'omitted_families':list(omit_families),
+                     'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
 
 
 def audit(root,name,stages,header,*,proposals=256,probes=8,seconds=120):
@@ -176,8 +178,11 @@ def main():
     parser.add_argument('--trials',type=int,default=128)
     parser.add_argument('--seconds',type=int,default=120)
     parser.add_argument('--families',default='')
+    parser.add_argument('--omit-families',default='',help='Case-suite ablation: omit named families before paging, with unchanged budgets.')
     args = parser.parse_args()
     try:
+        if args.omit_families and (not args.cases or args.freeze):
+            raise ValueError('Use --omit-families only when replaying a frozen case suite.')
         if args.audit_path:
             if args.cases or args.before or args.freeze or args.reference or args.families or not args.function or not args.header:
                 raise ValueError('Use --audit-path with --function and --header only.')
@@ -192,7 +197,8 @@ def main():
             if args.function or args.before or args.header or args.families:
                 raise ValueError('Choose either frozen cases or single-function arguments.')
             cases,frozen=frozen_repair_cases.load(args.cases,args.project,evaluator,freeze=args.freeze)
-            report=frozen if args.freeze else suite(args.project,cases,trials=args.trials,seconds=args.seconds)
+            report=frozen if args.freeze else suite(args.project,cases,trials=args.trials,seconds=args.seconds,
+                                                   omit_families=tuple(filter(None,args.omit_families.split(','))))
             if args.reference:
                 if args.freeze:raise ValueError('Compare replay reports, not freeze manifests.')
                 report['comparison']=repair_benchmark.compare(json.loads(args.reference.read_text()),report)

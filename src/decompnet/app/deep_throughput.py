@@ -26,15 +26,26 @@ class Metrics:
         self.values = {}
         self.started = time.monotonic()
         self.cpu = time.process_time()
+        self.first_exact_invocations = None
 
     def add(self, key, value):
         with self.lock:self.values[key] = self.values.get(key, 0) + value
 
+    def exact(self):
+        with self.lock:
+            if self.first_exact_invocations is None:
+                self.first_exact_invocations=self.values.get('invocations',0)
+
     def snapshot(self):
         elapsed = max(.001, time.monotonic()-self.started)
-        with self.lock:values = dict(self.values)
+        with self.lock:
+            values = dict(self.values)
+            first_exact=self.first_exact_invocations
         gate = getattr(self,'gate',None)
         return {'active_compiles':gate.active if gate else 0,
+                'pool_compiler_invocations':values.get('invocations',0),
+                'pool_compile_requests':values.get('requests',0),
+                'pool_compiler_invocations_at_first_exact':first_exact,
                 'compile_slots':gate.limit if gate else 0,
                 'maximum_throughput':getattr(self,'maximum',False),
                 'candidates_per_second':values.get('considered',0)/elapsed,

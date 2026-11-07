@@ -8,6 +8,21 @@ def digest(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def select_holdouts(items, development_functions, *, count=6):
+    """Choose distinct functions without looking at candidate results or score gains.
+
+    Freeze the returned inputs before running any policy. This separates the
+    current rule's development examples, not every historical human experiment.
+    """
+    if type(count) is not int or not 2<=count<=16:raise ValueError('Choose 2–16 holdout functions.')
+    excluded=set(development_functions)
+    names=[i['name'] for i in items]
+    if len(names)!=len(set(names)):raise ValueError('Holdouts must use distinct functions, not repeated precursors.')
+    eligible=[i for i in items if i['name'] not in excluded]
+    if len(eligible)<count:raise ValueError('Not enough independent functions after development exclusions.')
+    return sorted(eligible,key=lambda i:digest(i['name']))[:count]
+
+
 def load(path, root, evaluator, *, freeze=False):
     manifest=json.loads(path.read_text())
     if not freeze and manifest.get('format')!=1:

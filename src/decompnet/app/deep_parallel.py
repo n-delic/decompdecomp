@@ -52,6 +52,8 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
             updates[index] = update
             values = list(updates.values())
             aggregate = dict(update)
+            from .search_efficiency import combine
+            aggregate['efficiency']=combine([v.get('efficiency') for v in values])
             for field in ('tested', 'skipped', 'rejected', 'visited', 'improvements', 'refinement_rounds',
                           'allocation_trials', 'allocation_captures', 'allocation_diagnostic_compiles'):
                 aggregate[field] = sum(v.get(field, 0) for v in values)
@@ -114,6 +116,8 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
     values = list(updates.values())
     winner = min(values, key=lambda v: v.get('best_score') if v.get('best_score') is not None else float('inf')) if values else {}
     result = dict(winner)
+    from .search_efficiency import combine
+    result['efficiency']=combine([v.get('efficiency') for v in results])
     for field in ('tested', 'skipped', 'rejected', 'improvements', 'refinement_rounds',
                   'allocation_trials', 'allocation_captures', 'allocation_diagnostic_compiles'):
         result[field] = sum(v.get(field, 0) for v in results)
