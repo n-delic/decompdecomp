@@ -1045,5 +1045,7 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-results { display: grid; gap: .5rem; margin-top: .8rem; }
 .compiler-result { padding: .7rem; border: 1px solid var(--line); border-radius: .4rem; }
 .compiler-result summary { cursor: pointer; }
+.compiler-function-link { border: 0; padding: 0; background: none; color: inherit; font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.compiler-function-link:hover, .compiler-function-link:focus-visible { color: var(--hl); }
 .compiler-result-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
 .compiler-result-sort { width: min(100%, 220px); }
