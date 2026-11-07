@@ -8,7 +8,7 @@ import re
 from .integer_repair_support import IDENT, NUMBER, edit, locals_for, view
 from .pattern_repairs import close
 
-FAMILIES = ('inline_scalar_shape', 'expression_placement', 'stack_address_temporary',
+FAMILIES = ('inline_scalar_shape', 'expression_placement', 'stack_address_temporary', 'loop_argument_mask',
             'structured_backedge', 'loop_invariant_placement', 'scalar_schedule_order', 'combined_scheduling')
 
 
@@ -23,7 +23,7 @@ def comparison_literal(text):
     return -(2**31) <= value < 2**31
 
 
-def singles(source, name):
+def singles(source, name, header=''):
     part = view(source, name)
     if not part or re.search(r'\b(?:volatile|asm|__asm__)\b', part.clean):
         return []
@@ -110,6 +110,8 @@ def singles(source, name):
             result.append(('stack_address_temporary',edit(source,[(part.opening+1+hit.start(),part.opening+1+hit.end(),replacement)])))
     from .structured_loop_repairs import variants as structured_loops
     result.extend(structured_loops(source,name))
+    from .argument_mask_repairs import variants as argument_masks
+    result.extend(argument_masks(source,name,header))
     # Swap only adjacent assignments of unescaped equal-type locals and pure scalar operands.
     scalar = rf'{IDENT}(?:\s*[+*]\s*(?:{IDENT}|{NUMBER}))?'
     pair = rf'(?<=[;{{}}])\s*({IDENT})\s*=\s*({scalar});\s*({IDENT})\s*=\s*({scalar});'
@@ -153,13 +155,13 @@ def singles(source, name):
     return selected
 
 
-def variants(source, name):
-    result = singles(source,name)
+def variants(source, name, header=''):
+    result = singles(source,name,header)
     # Include a few cross-family bridges even when either first step compiles identically
     # or temporarily worse. The existing beam judges and retains those alternatives safely.
     combined = []
     for family, first in result[:8]:
-        for other, second in singles(first,name):
+        for other, second in singles(first,name,header):
             if other != family:
                 combined.append(('combined_scheduling',second))
                 break

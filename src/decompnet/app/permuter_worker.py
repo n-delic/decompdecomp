@@ -25,7 +25,8 @@ from . import edition, local_claims, workers
 
 log = logging.getLogger("decompdecomp")
 WATCHED = ("permuter_claims.py", "app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
-           "app/permuter_macro_effects.py", "permuter_gen.py", "permuter_capture.py", "permuter_formatting.py")
+           "app/permuter_macro_effects.py", "app/inline_scheduling_repairs.py", "app/argument_mask_repairs.py",
+           "permuter_gen.py", "permuter_capture.py", "permuter_formatting.py")
 POLL_SECONDS = 1
 STOP_SECONDS = 5
 

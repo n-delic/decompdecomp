@@ -5594,3 +5594,40 @@ for byte. Synthetic tests cover changed/missing/duplicate groups, overlapping
 three-statement groups, comments/directives, line macros, parser failure and the
 actual pinned native generator. This fixes a measured search-baseline regression;
 it is not a claim that preserving line groups always improves a candidate.
+
+## 2026-11-07: snapshot a loop-invariant scalar argument mask
+
+Controlled N64/MIPS regression, rebuilt KMC GCC 2.7.2, flags `-G0 -mips3
+-mgp32 -mfp32 -O2 -g3`, unchanged header, symbols, prelude and target. An integer
+list position was compared against `(argument & 255)` inside a backward-label
+loop. Computing that pure mask once after the existing nonempty-list guard and
+before the label changed score60 to exact0. Both ordinary and diagnostic builds
+agree, with76 linked bytes in each case. Inline masking allocated node/count in
+argument registers and recomputed the mask on the backedge; the snapshot retains
+the target's argument mask and node/count allocation. The common exit tail was
+identical in both outputs; a loop-break hypothesis was not needed or tested.
+
+This also corrected an older selected source with an uninitialized short-circuit
+read and artificial duplicate branches. Constructor evidence establishes that an
+empty list is legitimate. The natural initialized source matches without those
+artifacts. This replaces an existing match, not an additional function. Exact
+bytes alone do not establish defined source, and the bounded initialization
+checker returned unknown for this unsupported shape.
+
+`loop_argument_mask` offers a narrow local repair for a single backward label:
+explicit 32-bit integer formal, parenthesized constant mask, no parameter writes,
+address escape, shadow, qualifier or extra jump. It retains the entry guard and
+backedge, and preserves signed/unsigned result type. It does not hoist memory
+loads or apply to arbitrary expressions. Every proposal still needs the ordinary
+exact judge. Private evidence: `func8005A05C/source-validity-nov7`; no game bytes
+or extracted code are included here.
+
+The production generator's single proposal independently recovered exact output
+in ordinary and diagnostic compilation, with the same76 linked bytes as the
+reviewed natural correction. The copied full cartridge rebuilt to its original
+12,582,912-byte image; the other2,077 selected sources, effective profiles and
+cached objects were unchanged. These are separate checks: generated per-function
+regression and full-image validation of the reviewed replacement. An initial
+20-second linker timeout was resolved by a separately bounded162-second link;
+a later bookkeeping assumption about compressed-cartridge metadata was corrected
+without recompiling or relinking. Final image comparison is byte-for-byte.

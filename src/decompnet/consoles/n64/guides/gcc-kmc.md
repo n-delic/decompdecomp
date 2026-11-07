@@ -1354,3 +1354,15 @@ are never erased; physical coordinates survive multiline comments, and line-
 sensitive macros or unsupported continuations disable the helper. This does not
 preserve every source layout or absolute line number, and it is not a semantic
 safety check for the random rewrite itself. Measure the exact emitted baseline.
+
+### A stable argument mask before a backward label
+
+If a target masks an integer argument once before a list loop, keep that masked
+value in a local before the loop label, inside the original entry guard. In one
+controlled KMC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` case, this changed a
+60-point near miss to exact output; the mask inside the comparison instead changed
+node/count register allocation. `loop_argument_mask` tries this narrow repair.
+Only capture an unchanged, unescaped scalar parameter; do not move a memory
+access or invent a dependency. Keep integer comparisons integer-typed. An exact
+older candidate with uninitialized reads or duplicate artificial branches is not
+source-validity evidence: a natural initialized baseline can already match.

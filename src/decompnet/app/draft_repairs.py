@@ -330,7 +330,7 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
             proposals.append(seeds.M2C_MACROS + refined)
             labels[proposals[-1]] = 'm2c_refinement'
     if arch == "mips":
-        for family, text in _generated(inline_scheduling_repairs.variants, source, name):
+        for family, text in _generated(inline_scheduling_repairs.variants, source, name, header):
             proposals.append(text)
             labels[text] = family
     for family, text in _generated(allocator_shape_repairs.variants, source, name, header):
