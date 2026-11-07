@@ -354,7 +354,7 @@ function renderList() {
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;
     return `<tr data-fn="${esc(f.name)}" class="${S.fn === f.name ? "sel" : ""}" tabindex="0">${starCell}<td class="mono dim">${fork ? esc(f.unit || "") : hex8(f.vram)}</td>
       <td class="mono name">${esc(f.name)}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
-      <td class="r mono">${f.attempts || `<span class="dim">0</span>`}</td><td>${functionAge(f.last_improved)}</td><td>${functionAge(f.last_checked)}</td><td>${status}</td></tr>`;
+      <td class="r mono">${f.attempts || `<span class="dim">0</span>`}</td><td class="fn-age-improved">${functionAge(f.last_improved)}</td><td class="fn-age-checked">${functionAge(f.last_checked)}</td><td>${status}</td></tr>`;
   }).join("") || `<tr class="none"><td colspan="9">${L.filter === "first" && !q ? "No function is starred. ☆ one and agents take it before the others." : `No function matches${q ? ` “${esc(L.q)}”` : ""}.`}</td></tr>`;
   $("fnShown").textContent = rows.length > L.limit ? `${L.limit.toLocaleString()} of ${rows.length.toLocaleString()} shown` : plural(rows.length, "function");
   $("fnMore").hidden = rows.length <= L.limit;
@@ -366,6 +366,17 @@ function renderList() {
 $("fnFilter").addEventListener("click", (e) => { const b = e.target.closest("[data-filter]"); if (b) { L.filter = b.dataset.filter; L.limit = FUNCTION_ROWS; renderList(); } });
 $("fnSearch").addEventListener("input", () => { L.q = $("fnSearch").value; L.limit = FUNCTION_ROWS; renderList(); });
 $("fnMore").onclick = () => { L.limit += MORE_ROWS; renderList(); };
+setInterval(() => {
+  if (document.hidden || S.tab !== "functions") return;
+  // Refresh the relative dates without replacing rows while someone is using the list.
+  for (const row of $("fnRows").querySelectorAll("tr[data-fn]")) {
+    const index = S.byName?.get(row.dataset.fn);
+    if (index == null) continue;
+    const fn = S.map[index];
+    row.querySelector(".fn-age-improved").innerHTML = functionAge(fn.last_improved);
+    row.querySelector(".fn-age-checked").innerHTML = functionAge(fn.last_checked);
+  }
+}, 15000);
 $("fnRows").addEventListener("click", (e) => {
   const star = e.target.closest("[data-star]");
   if (star) { togglePrio(star.dataset.star, star.getAttribute("aria-pressed") !== "true"); return; }

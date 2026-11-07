@@ -111,10 +111,10 @@ function applyAttempts(attempts) {
     const f = S.map[i];
     f.attempts = (f.attempts || 0) + 1;
     f.last_checked = Math.max(f.last_checked || 0, at.created_at || 0) || null;
-    if (at.compiled !== 0 && at.score != null && at.score >= 0 && at.score < (f.best ?? f.insns * 100)) {
+    if (at.compiled === 1 && at.score != null && at.score < (f.best ?? f.insns * 100)) {
       f.last_improved = Math.max(f.last_improved || 0, at.created_at || 0) || null;
     }
-    if (at.compiled !== 0 && at.score != null && at.score >= 0 && (f.best == null || at.score < f.best)) { f.best = at.score; mapChanged(i); }
+    if (at.compiled === 1 && at.score != null && (f.best == null || at.score < f.best)) { f.best = at.score; mapChanged(i); }
   }
 }
 
