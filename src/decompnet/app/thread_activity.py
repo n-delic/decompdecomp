@@ -63,6 +63,8 @@ def purpose(name):
         ('background-worker','Background pool','Shared machine-draft and permutation worker; may be idle.'),
         ('autosave-', 'Saved progress', 'Checks and saves this project’s progress files; pause or resume in Background work.'),
         ('progress-compile','Saved progress','Compiles saved C to verify imported or synchronized matches.'),
+        ('deep-proposals','Local repair generation','Coordinates private proposal processes; stopping the deep search stops them.'),
+        ('deep-proposal-output','Local repair output','Reads proposals from a private generator process.'),
         ('deep-pass','Deep permuter','Searches C rewrites for a function during a deep pass.'),
         ('iterative-repair','Local repairs','Tests successive local source repairs.'),
         ('room-heartbeat-','Room heartbeat','Keeps a room connection alive and reports presence.'),

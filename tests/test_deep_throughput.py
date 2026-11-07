@@ -132,3 +132,17 @@ def test_configurable_pool_runs_real_compiler_and_reports_invocations(monkeypatc
         finally:pool.close()
         assert all(not worker.is_alive() for worker in pool.workers)
     assert results[0]==results[1]
+
+
+def test_live_rates_do_not_include_long_preparation_and_decay_when_idle(monkeypatch):
+    clock=[0.]
+    monkeypatch.setattr(deep_throughput.time,'monotonic',lambda:clock[0])
+    metrics=deep_throughput.Metrics()
+    clock[0]=100
+    metrics.add('considered',50);metrics.add('invocations',25)
+    snapshot=metrics.snapshot()
+    assert snapshot['candidates_per_second']==10
+    assert snapshot['compiles_per_second']==5
+    clock[0]=106
+    assert metrics.snapshot()['compiles_per_second']==0
+    assert metrics.snapshot()['candidates_per_second']==0

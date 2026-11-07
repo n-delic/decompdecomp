@@ -384,7 +384,24 @@ class Search(Permuter):
             self.local_seen.add(source)
             rows = source_rows.get(source,[])
             labels = {}
-            choices = draft_repairs.variants(source, fn['name'], proj['arch'], fn['asm'] or '', flags, labels=labels, limit=None, header=header, tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,source),entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
+            from .repair_generation import ACTIVE
+            pool = getattr(self,'compile_pool',None)
+            args = (source,fn['name'],proj['arch'],fn['asm'] or '',flags)
+            options = dict(limit=None,header=header,tables=switch_tables.read(self.net,proj,fn),
+                callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,source),
+                entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
+            if pool is not None and pool.maximum and ACTIVE.get() is None:
+                self.phase = 'generating local proposals'
+                self.report(force=True)
+                def generation_check():
+                    self.check()
+                    self.report()
+                choices, generated_labels, elapsed = pool.proposal_pool().generate(args,options,generation_check)
+                labels.update(generated_labels)
+                pool.metrics.add('local_generation',elapsed)
+                self.phase = ordinary_phase
+            else:
+                choices = draft_repairs.variants(*args,labels=labels,**options)
             from . import hazard_line_repairs
             for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
                 labels[candidate]=family
@@ -429,6 +446,9 @@ class Search(Permuter):
             progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
             queue = list(dict.fromkeys(c for _,c in progressed))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
+            lane = getattr(self, "parallel_lane", None)
+            if lane is not None:
+                queue = [c for c in queue if int(hashlib.sha256(c.encode()).hexdigest(),16)%lane.count == lane.index]
             parents = {}
             while queue:
                 feedback.order(queue,labels,source,parents)
