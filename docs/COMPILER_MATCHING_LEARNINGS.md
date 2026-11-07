@@ -5582,7 +5582,8 @@ Ordinary/diagnostic pairs and independent object reload/relinks agree; all2078
 selected sources/profiles and442 focal attempts were unchanged. No new match.
 
 The shared native formatter records original same-line adjacent assignment AST
-pairs, preserving a boundary only for unique unchanged adjacent pairs. It makes
+pairs, preserving a boundary for unique unchanged adjacent pairs or uniquely identified
+original assignment parents whose child expressions changed. It makes
 whitespace-only edits with post-edit AST verification, never infers line groups
 from comments with collapsed newlines, and declines unsupported contexts. The
 helper does not remove candidate comments/directives, invent statements, preserve
@@ -5594,6 +5595,28 @@ for byte. Synthetic tests cover changed/missing/duplicate groups, overlapping
 three-statement groups, comments/directives, line macros, parser failure and the
 actual pinned native generator. This fixes a measured search-baseline regression;
 it is not a claim that preserving line groups always improves a candidate.
+
+### Preserve assignment origins when a child expression changes
+
+A retained branch-local f64 subtraction capture changed the conversion's AST
+key while keeping its assignment parent adjacent to the original high-bit mask.
+The text-key-only formatter lost that group and the earlier search rejected the
+candidate before compilation. Four bounded compiler calls now establish split
+1760/960bytes versus joined1700/956bytes, with ordinary/-da parity and independent
+persisted-object relinks/rescores. The joined body is exactly the original
+baseline SHA256 above, not an improvement over that baseline or a new match.
+One strict C89 preflight passed; all2078 selected sources/profiles and444 focal
+attempts remain unchanged. Private `lineage-revisit-nov7` retains receipts.
+
+Bind unique original assignment-parent coordinates in the native baseline AST
+before randomization. Deep copies and child-expression replacement retain those
+coordinates. Only derive a new formatting key when both parents remain unique
+and adjacent; duplicated coordinates, reversed/separated/missing parents or new
+coordinate-less assignments do not qualify. The printed pair must also be unique,
+and whitespace edits must preserve the full candidate AST. This preserves known
+input layout through a rewrite; it does not prove the rewrite's C semantics.
+The production API reproduces the measured retained candidate exactly in a pure
+native-AST fixture, without another mutation or compiler call.
 
 ## 2026-11-07: snapshot a loop-invariant scalar argument mask
 

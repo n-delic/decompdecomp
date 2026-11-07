@@ -105,12 +105,16 @@ def main() -> int:
             return
         seam = next(node for node in first.ast.ext if isinstance(node, c_ast.Typedef) and node.name == SOURCE_STARTS)
         line_groups = LineGroups(job['source'], job['header'], name, c_parser.CParser().parse)
+        line_groups.bind_origins(next(node for node in first.ast.ext
+                                     if isinstance(node, c_ast.FuncDef) and node.decl.name == name))
 
         def own_part(ast) -> str:
             """The C after the seam: the function and its neighbours from the source, without the header. A header
             declaration the randomizer retyped is left out: the header isn't the permuter's to change, and a
             second, different declaration would only fail to compile."""
-            return line_groups.apply(to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:])))
+            function = next(node for node in ast.ext
+                            if isinstance(node, c_ast.FuncDef) and node.decl.name == name)
+            return line_groups.apply(to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:])), function)
 
         seen = {own_part(first.ast)}  # the source as decomp-permuter prints it: not a variant
         cand = first

@@ -1347,9 +1347,13 @@ that one original boundary reproduced the complete original linked bytes in
 ordinary/diagnostic builds and independent relinks. This was not a new match.
 
 Native generation now preserves original same-line adjacent assignments when
-both unchanged statements remain uniquely adjacent in the candidate. It joins
-only intervening whitespace and verifies the candidate AST again. Changed,
-missing, duplicated or ambiguous pairs are left as printed. Comments/directives
+both unchanged statements remain uniquely adjacent in the candidate, or their
+unique original assignment-parent coordinates survive a child-expression rewrite.
+It joins only intervening whitespace and verifies the candidate AST again.
+Missing, duplicated, reordered or ambiguous parents are left as printed. One
+branch-local subtraction capture lost the old text key: preserving its original
+conversion/mask line recovered1700/956bytes from1760/960bytes, exactly the baseline
+body rather than a new match. Comments/directives
 are never erased; physical coordinates survive multiline comments, and line-
 sensitive macros or unsupported continuations disable the helper. This does not
 preserve every source layout or absolute line number, and it is not a semantic

@@ -93,3 +93,54 @@ def test_native_generator_preserves_unchanged_input_group():
         assert not any('a = n;\n  a |= 8;' in row for row in rows)
     finally:
         generator.close()
+
+
+def origin_candidate():
+    import copy
+
+    from pycparser.c_generator import CGenerator
+    guard = groups()
+    function = parser().parse(ORIGINAL).ext[0]
+    guard.bind_origins(function)
+    candidate = copy.deepcopy(function)
+    candidate.body.block_items[1].rvalue.value = '2'
+    return guard, candidate, lambda: CGenerator().visit(candidate)+'\n'
+
+
+def test_origin_group_survives_changed_child_and_deepcopy():
+    guard, candidate, printed = origin_candidate()
+    source = printed()
+    assert 'x = 2;\n' in source
+    assert 'x = 2; x |= 8;' in guard.apply(source, candidate)
+    # A text-only caller cannot infer where an altered assignment came from.
+    assert guard.apply(source) == source
+
+
+@pytest.mark.parametrize('change', ['duplicate', 'separate', 'reverse', 'new_parent'])
+def test_origin_group_skips_lost_or_ambiguous_parents(change):
+    import copy
+    guard, candidate, printed = origin_candidate()
+    items = candidate.body.block_items
+    if change == 'duplicate':
+        items.insert(3, copy.deepcopy(items[1]))
+    elif change == 'separate':
+        items.insert(2, copy.deepcopy(items[0]))
+    elif change == 'reverse':
+        items[1], items[2] = items[2], items[1]
+    else:
+        items[1].coord = None
+    source = printed()
+    assert guard.apply(source, candidate) == source
+
+
+def test_origin_coordinates_do_not_guess_a_different_printed_expression():
+    guard, candidate, printed = origin_candidate()
+    source = printed().replace('x = 2;', 'x = 3;')
+    assert guard.apply(source, candidate) == source
+
+
+def test_origin_groups_still_disable_preprocessor_dependent_inputs():
+    guard, candidate, printed = origin_candidate()
+    blocked = groups(header='#define HERE __LINE__')
+    blocked.bind_origins(candidate)
+    assert blocked.apply(printed(), candidate) == printed()
