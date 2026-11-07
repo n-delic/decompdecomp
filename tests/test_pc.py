@@ -1722,6 +1722,7 @@ def test_a_projects_flags_follow_its_compiler_and_how_it_takes_its_c_runtime():
     assert settings("6.0", own) == ("6.0", ["/nologo", "/c", "/O2", "/W3", "/GX"])
     # a copy of the user's own (kits/visualcpp.py) is named by its cl.exe's version: 19.x is 2015 and newer, 15.0 is
     # 2008 (whose msvcr90 isn't yet), as the Rich header names them (rich_version)
+    assert scratch_pe.builds_md(dll, "own-19.29.30137-x64")
     assert scratch_pe.builds_md(dll, "own-19.29.30137") and not scratch_pe.builds_md(dll, "own-15.0.30411")
     text = scratch_pe.configure_settings(template, "own-19.29.30137", dll, log=lambda _: None, ehsc=True)
     assert re.search(r'^CL_FLAGS = .*"/EHsc", "/MD"\]', text, re.M), text
@@ -3507,3 +3508,23 @@ def test_the_features_agents_use_work_on_a_64_bit_game(tmp_path):
     for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
         said = net.request_boundary(net.local_agent(who)[0], slug, start, "+0x178", "its jump table: data, no code")
     assert said.endswith("set aside as not code. The game still builds byte for byte."), said
+
+
+def test_own_compiler_selection_never_crosses_targets(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.29.30137.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    assert scratch_pe.own_copy("14.2", 30137) is None
+    assert scratch_pe.own_copy("14.2", 30137, "x64").version == "own-19.29.30137-x64"
+    assert scratch_pe.own_copy("14.2", 30137, "arm64") is None
+    make_vc(tmp_path, "19.29.30136.0", "VC/bin/Hostx64/x86")
+    assert scratch_pe.own_copy("14.2", 30137).version == "own-19.29.30136"
+    assert scratch_pe.own_copy("14.2", None, "x64").version == "own-19.29.30137-x64"
+
+
+def test_x86_pack_does_not_hide_a_matching_own_x64_copy(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "15.0.30729.1", "VC/bin/amd64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    assert scratch_pe.own_copy("9.0", 30729) is None  # exact downloadable x86 build
+    assert scratch_pe.own_copy("9.0", 30729, "x64").version == "own-15.0.30729-x64"

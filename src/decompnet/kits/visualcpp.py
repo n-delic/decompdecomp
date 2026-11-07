@@ -8,8 +8,10 @@ the compiler is in, as the products lay it out:
   copy (#137): the code reads c2.dll, then c2.exe, then cl.exe, whichever has a version resource.
 - Visual C++ 6.0: VC98 (bin/cl.exe, bin/c2.dll, include)
 - .NET 2002 to 2013: VC, Vc7 (the same inside)
-- 2015 and newer: VC/Tools/MSVC/<version> (bin/Hostx86/x86/cl.exe, ...), which the user may also give as the Visual
+- 2015: VC/bin (x86), VC/bin/amd64 or VC/bin/x86_amd64 (x64)
+- 2017 and newer: VC/Tools/MSVC/<version> (bin/Hostx86/x86/cl.exe, ...), which the user may also give as the Visual
   Studio folder, Tools/MSVC or the version's folder.
+Both x86 and x64 targets are read, including copies with only an x64 compiler.
 Its build is its code generator's, c2.dll's file version ("9.0.30729.1"), the number a game's Rich header gives for the
 compiler (consoles/pc/scratch.py). 2015 and newer run through wine on Linux and macOS (wine.py, as the msvc2015
 pack's), older ones through wibo (unverified for 2.x to 5.0: no copy has been tried). Their Windows SDK headers are found beside the copy (Windows Kits) when they are
@@ -31,6 +33,8 @@ C2 = ("c2.dll", "c2.exe", "cl.exe")  # (the files that hold the compiler's versi
 FIRST = 9  # the first 32-bit cl (Visual C++ 2.0); 8.x is Visual C++ 1.x, 16-bit
 BIN = ("bin", "bin/Hostx86/x86", "bin/Hostx64/x86")  # (a 2017 copy's compiler for 32-bit programs, by host)
 
+X64_BIN = ("bin/amd64", "bin/x86_amd64", "bin/Hostx64/x64", "bin/Hostx86/x64")
+
 
 def _children(folder: Path | None) -> list[Path]:
     try:
@@ -39,9 +43,9 @@ def _children(folder: Path | None) -> list[Path]:
         return []
 
 
-def _bin(base: Path) -> Path | None:
+def _bin(base: Path, folders: tuple[str, ...] = BIN) -> Path | None:
     """The folder of a copy's compiler: cl.exe and its code generator c2.dll."""
-    for sub in BIN:
+    for sub in folders:
         at = find(base, sub, dirs=True)
         if at is not None and find(at, "cl.exe") and (find(at, "c2.dll") or find(at, "c2.exe")):
             return at
@@ -60,13 +64,13 @@ class VisualCpp(Kit):
     def locate(self, folder: Path) -> Path | None:
         msvc = [find(folder, p, dirs=True) for p in ("Tools/MSVC", "VC/Tools/MSVC")]
         for base in (folder, *_children(folder), *(c for m in msvc for c in _children(m))):
-            if _bin(base) is not None:
+            if _bin(base) is not None or _bin(base, X64_BIN) is not None:
                 return base.resolve()
         return None
 
     def build(self, folder: Path) -> str | None:
         """c2.dll's file version, "9.0.30729.1": Visual Studio's version, then the build number."""
-        b = _bin(folder)
+        b = _bin(folder) or _bin(folder, X64_BIN)
         return next((v for n in C2 if b and (f := find(b, n)) and (v := file_version(f))), None)
 
     def sdk(self, folder: Path, build: str) -> list[Path]:
@@ -86,16 +90,25 @@ class VisualCpp(Kit):
         return []
 
     def compilers(self, folder: Path) -> list[OwnCompiler]:
-        build, bin_ = self.build(folder), _bin(folder)
-        if build is None or bin_ is None or int(build.split(".")[0]) < FIRST:
-            return []
-        include = find(folder, "include", dirs=True)
-        old_sdk = find(folder, "PlatformSDK/include", dirs=True)  # (.NET 2003 brought one)
-        runner = "wine" if int(build.split(".")[0]) >= WINE_FROM else "wibo"
-        short = ".".join(build.split(".")[:3])
-        return [OwnCompiler(f"own-{short}", f"your Visual C++ {build}", find(bin_, "cl.exe"),
-                            tuple(p for p in (include, old_sdk, *self.sdk(folder, build)) if p is not None),
-                            runner=runner, build=build)]
+        """Read each target separately: a host's width is not the width of the code it generates.
+        Keep the existing x86 ids; x64 copies get the same -x64 suffix as the downloadable compilers."""
+        out = []
+        for target, folders in (("x86", BIN), ("x64", X64_BIN)):
+            bin_ = _bin(folder, folders)
+            build = next((v for n in C2 if bin_ and (f := find(bin_, n)) and (v := file_version(f))), None)
+            if build is None or int(build.split(".")[0]) < FIRST:
+                continue
+            include = find(folder, "include", dirs=True)
+            old_sdk = find(folder, "PlatformSDK/include", dirs=True)
+            # wibo runs 32-bit Windows tools; an x64-hosted code generator needs wine even before VS2015.
+            runner = "wine" if target == "x64" or int(build.split(".")[0]) >= WINE_FROM else "wibo"
+            short = ".".join(build.split(".")[:3])
+            suffix = "-x64" if target == "x64" else ""
+            name = f"your Visual C++ {build}" + (" (64-bit)" if suffix else "")
+            out.append(OwnCompiler(f"own-{short}{suffix}", name, find(bin_, "cl.exe"),
+                                   tuple(p for p in (include, old_sdk, *self.sdk(folder, build)) if p is not None),
+                                   runner=runner, build=build))
+        return out
 
     def verify(self, folder: Path) -> str:
         build = self.build(folder)
