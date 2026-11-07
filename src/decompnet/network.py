@@ -404,8 +404,8 @@ def _ago(ts: float | None) -> str:
 
 
 class Network:
-    def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL):
-        self.store = Store(db_path)
+    def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL, *, repair_archive=None):
+        self.store = Store(db_path,repair_archive=repair_archive)
         from .permuter_claims import clear
         with self.store.tx() as db:clear(db)
         self.claim_ttl = claim_ttl
@@ -1845,6 +1845,7 @@ class Network:
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None):
         store = self.project_store(fn["project_id"])
+        self.repair_feedback.for_project(fn["project_id"])
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         improved = False

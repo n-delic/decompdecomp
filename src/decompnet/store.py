@@ -342,11 +342,15 @@ class _ThreadReader:
     SQLite connections contain cycles; dropping the last thread-local reference
     alone can leave their WAL/database descriptors open until cyclic GC runs.
     """
-    def __init__(self,path,header_codec):
+    def __init__(self,path,header_codec,repair_archive=None):
         from .payload_storage import Connection
         self.conn=sqlite3.connect(path,isolation_level=None,check_same_thread=False,factory=Connection)
         try:
             self.conn.row_factory=sqlite3.Row
+            if repair_archive is not None:
+                self.conn.repair_archive = repair_archive
+                from .repair_archive import register
+                register(self.conn)
             header_codec.register(self.conn)
             self.conn.execute("PRAGMA query_only=1").close()
         except BaseException:
@@ -361,8 +365,9 @@ class _ThreadReader:
 
 
 class Store:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, repair_archive=None):
         self.path = str(path)
+        self.repair_archive = repair_archive
         from .writer_gate import WriterGate
         self.writer_gate=WriterGate(self.path)
         try:
@@ -376,6 +381,10 @@ class Store:
         from .payload_storage import Connection
         self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None,factory=Connection)
         self.conn.row_factory = sqlite3.Row
+        if self.repair_archive is not None:
+            self.conn.repair_archive = self.repair_archive
+            from .repair_archive import register
+            register(self.conn)
         from .header_storage import Codec
         self.header_codec = Codec()
         self.header_codec.register(self.conn)
@@ -701,7 +710,7 @@ class Store:
             return None
         reader = getattr(self._local, "reader", None)
         if reader is None:
-            reader = _ThreadReader(self.path,self.header_codec)
+            reader = _ThreadReader(self.path,self.header_codec,self.conn.repair_archive)
             self._local.reader = reader
         reader.conn.detail_tables=set(self.conn.detail_tables)
         return reader.conn

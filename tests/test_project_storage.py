@@ -17,7 +17,7 @@ def scoped(tmp_path):
     for pid, slug in ((1, 'first'), (2, 'second')):
         folder = tmp_path / 'projects' / slug
         folder.mkdir(parents=True)
-        leaf = Network(folder / 'project.sqlite3')
+        leaf = Network(folder / 'project.sqlite3',repair_archive=catalog.store.conn.repair_archive)
         projects[pid] = projects[slug] = leaf.store
         for store in (catalog.store, leaf.store):
             with store.tx() as db:

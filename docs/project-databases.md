@@ -192,3 +192,12 @@ need explicit ownership during the project split.
 
 Until those steps are complete, do not add a setting or manifest that activates
 partially converted storage, and do not remove project rows from the legacy file.
+
+Repair review records, attempt settings/provenance, profile indexes and outcome
+queues now select the project store. Global review pages merge bounded project
+pages and exports stream stable IDs from their owners. Repair analysis starts
+only after the capture transaction commits and drains queues through one worker.
+Sampling and analysis preferences remain global. Store readers explicitly reuse
+the configured shared repair archive, so opening a project file cannot silently
+choose a new archive location. New project stores must receive the catalog's
+archive instance before their schema or captures are prepared.

@@ -19,8 +19,7 @@ def register(app):
             descriptor,path=tempfile.mkstemp(prefix='repair-evidence-',suffix='.sqlite3')
             os.close(descriptor)
             try:
-                reviews=app.net.store.all('SELECT e.evidence_archive,e.id,p.slug,f.name,e.category,e.explanation,e.automation,e.status,e.review_note FROM main.repair_examples e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id WHERE e.evidence_archive IS NOT NULL')
-                app.net.store.conn.repair_archive.export(path,[tuple(r) for r in reviews])
+                feedback.export_database(path)
             except BaseException:
                 Path(path).unlink(missing_ok=True)
                 raise

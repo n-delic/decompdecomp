@@ -75,11 +75,11 @@ def bucket(evidence, before_source, source):
     return hashlib.sha256(json.dumps(key,sort_keys=True,default=str).encode()).hexdigest(),automated
 
 
-def retain(db,evidence,before_source,source,now):
+def retain(db,evidence,before_source,source,now, *, policy=None):
     signature,automated=bucket(evidence,before_source,source)
     if signature is None:return True
     # Keep one installed-rule regression case, or three manual examples for diversity.
-    policy=read_options(db)
+    policy=read_options(db) if policy is None else policy
     limit=policy['automatic_limit' if automated else 'manual_limit']
     row=db.execute('SELECT retained FROM repair_capture_groups WHERE signature=?',(signature,)).fetchone()
     keep=not policy['enabled'] or (row['retained'] if row else 0)<limit

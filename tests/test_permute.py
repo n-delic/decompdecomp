@@ -36,6 +36,7 @@ class FakeNet:
 
     links: dict = {}
     project_store = Network.project_store
+    project_stores = Network.project_stores
 
     def __init__(self):
         self.store = Store(IN_MEMORY)

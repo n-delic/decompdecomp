@@ -29,18 +29,19 @@ def prepare(feedback):
 
 
 def enabled(feedback):
-    row = feedback.store.one('SELECT value FROM settings WHERE key=?',KEY)
+    row = feedback.net.store.one('SELECT value FROM settings WHERE key=?',KEY)
     return row is None or row['value']=='true'
 
 
 def configure(feedback,value):
     if not isinstance(value,bool):raise ValueError('Automatic repair analysis must be true or false.')
-    with feedback.store.tx() as db:
+    with feedback.net.store.tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(KEY,json.dumps(value)))
     # The next capture or analysis request resumes a paused queue.
 
 
 def result(feedback,case_id,include_source=True):
+    feedback = feedback.owner(case_id)
     prepare(feedback)
     row = feedback.store.one('SELECT * FROM repair_outcome_analysis WHERE example_id=?',case_id)
     if not row:return None
@@ -66,23 +67,31 @@ QUEUE = """CREATE TABLE IF NOT EXISTS repair_analysis_queue(
 
 
 def backlog(feedback):
-    prepare(feedback)
-    return {row['state']:row['count'] for row in feedback.store.all(
-        'SELECT state,COUNT(*) AS count FROM repair_outcome_analysis GROUP BY state')}
+    totals = {}
+    for service in feedback.services():
+        prepare(service)
+        for row in service.store.all('SELECT state,COUNT(*) count FROM repair_outcome_analysis GROUP BY state'):
+            totals[row['state']] = totals.get(row['state'],0)+row['count']
+    return totals
 
 
 def resume(feedback):
     """One draining worker, with durable rows rather than one future per capture."""
     if os.environ.get('DECOMP_REPAIR_ANALYSIS')=='off' or not hasattr(feedback.net,'forks') or not enabled(feedback):return
     if not _SLOT.acquire(blocking=False):return
+    root = feedback.root
     lock=feedback.net.__dict__.setdefault('_repair_analysis_lock',threading.Lock())
     pending=feedback.net.__dict__.setdefault('_repair_analysis_pending',set())
     def run():
         try:
-            while enabled(feedback) and not getattr(feedback.net, 'source_update_pending', False):
-                prepare(feedback)
-                row=feedback.store.one('SELECT * FROM repair_analysis_queue ORDER BY created_at,example_id LIMIT 1')
-                if not row:break
+            while enabled(root) and not getattr(root.net,'source_update_pending',False):
+                candidates = []
+                for service in root.services():
+                    prepare(service)
+                    queued = service.store.one('SELECT * FROM repair_analysis_queue ORDER BY created_at,example_id LIMIT 1')
+                    if queued:candidates.append((queued,service))
+                if not candidates:break
+                row,feedback = min(candidates,key=lambda item:(item[0]['created_at'],item[0]['example_id']))
                 case_id=row['example_id']
                 with lock:pending.add(case_id)
                 try:
@@ -105,8 +114,8 @@ def resume(feedback):
             with lock:pending.clear()
             _SLOT.release()
         # Close the empty-queue/enqueue race without allocating a future per capture.
-        if enabled(feedback) and feedback.store.one('SELECT 1 FROM repair_analysis_queue LIMIT 1'):
-            resume(feedback)
+        if enabled(root) and any(service.store.one('SELECT 1 FROM repair_analysis_queue LIMIT 1') for service in root.services()):
+            resume(root)
     try:workers.pool().submit(run)
     except Exception as error:
         _SLOT.release()
@@ -115,6 +124,7 @@ def resume(feedback):
 
 def schedule(feedback,case_id,expected_hash=None):
     if os.environ.get('DECOMP_REPAIR_ANALYSIS')=='off' or not hasattr(feedback.net,'forks'):return
+    feedback = feedback.owner(case_id)
     prepare(feedback)
     with feedback.store.tx() as db:
         # Enqueue inside the capture transaction: rollback removes the queue row too.
@@ -122,4 +132,4 @@ def schedule(feedback,case_id,expected_hash=None):
         if not old:
             db.execute('INSERT OR IGNORE INTO repair_analysis_queue VALUES(?,?,?)',(case_id,expected_hash,time.time()))
             db.execute('INSERT OR IGNORE INTO repair_outcome_analysis VALUES(?,?,?,?)',(case_id,'pending','{}',time.time()))
-    resume(feedback)
+    feedback.store.after_commit(lambda:resume(feedback.root))

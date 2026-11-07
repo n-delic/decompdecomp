@@ -10,6 +10,7 @@ import difflib
 import hashlib
 import json
 import logging
+import threading
 import time
 from contextlib import contextmanager
 
@@ -89,8 +90,12 @@ def _same_recheck(old, new):
 
 
 class RepairFeedback:
-    def __init__(self, net):
-        self.net, self.store = net, net.store
+    def __init__(self, net, *, store=None, project=None, root=None):
+        self.net, self.store = net, net.store if store is None else store
+        self.project, self.root = project, root or self
+        if root is None:
+            self._lock = threading.RLock()
+            self._services = {net.store:self}
         with self.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
@@ -112,7 +117,40 @@ class RepairFeedback:
                        "json_extract(evidence,'$.provenance.source_sha256')=json_extract(evidence,'$.after.source_sha256'))",
                        ('Already produced by an automatic repair; retained for regression review.',))
 
+    def for_project(self, project):
+        store = self.net.project_store(project)
+        root = self.root
+        with root._lock:
+            cached = root._services.get(store)
+        if cached is not None:return cached
+        # Schema setup may take a project writer; never hold the shared registry
+        # mutex while waiting for it (captures can already hold that writer).
+        pid = project if isinstance(project,int) else self.net._project(project)['id']
+        service = RepairFeedback(self.net,store=store,project=pid,root=root)
+        with root._lock:return root._services.setdefault(store,service)
+
+    def services(self):
+        if self.project is not None:return [self]
+        return [self.for_project(ids[0]) if ids else self for store, ids in self.net.project_stores()]
+
+    def owner(self, case_id):
+        found = [service for service in self.services() if service.store.one('SELECT 1 FROM main.repair_examples WHERE id=?',case_id)]
+        if len(found)>1:raise NetworkError('This repair ID exists in several project databases. Restore a consistent backup.')
+        if not found:raise NetworkError('No repair example exists in this project.')
+        return found[0]
+
+    def export_database(self, path):
+        reviews = []
+        for service in self.services():
+            reviews.extend(tuple(r) for r in service.store.all(
+                'SELECT e.evidence_archive,e.id,p.slug,f.name,e.category,e.explanation,e.automation,e.status,e.review_note '
+                'FROM main.repair_examples e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id '
+                'WHERE e.evidence_archive IS NOT NULL'))
+        self.net.store.conn.repair_archive.export(path,reviews)
+
     def attempt(self, db, fn, attempt_id, context_version, effective_settings=None):
+        owner = self.for_project(fn['project_id'])
+        if owner is not self:return owner.attempt(db,fn,attempt_id,context_version,effective_settings)
         proj = db.execute('SELECT * FROM projects WHERE id=?', (fn['project_id'],)).fetchone()
         settings = _settings(proj, fn)
         if effective_settings and settings['mode']=='rom':
@@ -131,6 +169,8 @@ class RepairFeedback:
         db.execute('INSERT INTO repair_attempt_settings VALUES(?,?)', (attempt_id, json.dumps(settings)))
 
     def capture(self, db, fn, source, agent_id, via, context_version, attempt_id=None):
+        owner = self.for_project(fn['project_id'])
+        if owner is not self:return owner.capture(db,fn,source,agent_id,via,context_version,attempt_id)
         if fn['status'] == 'matched' or not source:
             return  # polishing an existing match is not a new matching repair
         proj = db.execute('SELECT * FROM projects WHERE id=?', (fn['project_id'],)).fetchone()
@@ -160,7 +200,7 @@ class RepairFeedback:
                     'settings':json.loads(settings['settings']) if settings else None}
         provenance = db.execute('SELECT provenance FROM repair_attempt_provenance WHERE attempt_id=?',(attempt_id,)).fetchone()
         meta = json.loads(fn['meta'] or '{}')
-        agent = db.execute('SELECT name FROM agents WHERE id=?', (agent_id,)).fetchone() if agent_id else None
+        agent = self.net.store.one('SELECT name FROM agents WHERE id=?',agent_id) if agent_id else None
         session = None
         if agent and db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
             session = db.execute('SELECT id,helper_id,model,kind FROM helper_sessions WHERE agent=? AND project=? '
@@ -197,8 +237,8 @@ class RepairFeedback:
                               'ORDER BY id DESC LIMIT 1', (fn['id'], agent_id)).fetchone()
             if last and _same_recheck(json.loads(last['evidence']), evidence):
                 return
-        from .repair_corpus import AUTOMATIC, retain
-        if not retain(db,evidence,old_source,source,time.time()):
+        from .repair_corpus import AUTOMATIC, read_options, retain
+        if not retain(db,evidence,old_source,source,time.time(),policy=read_options(self.net.store)):
             return
         # Retain deterministic successes for regression analysis without proposing the installed
         # rule as new work. Agent explanations still cannot mark their own hypotheses implemented.
@@ -218,6 +258,8 @@ class RepairFeedback:
         fn = self.net._function(function, slug)
         if category not in CATEGORIES or not change.strip():
             raise NetworkError('Give a short change explanation and a valid repair category: ' + ', '.join(CATEGORIES))
+        owner = self.for_project(fn['project_id'])
+        if owner is not self:return owner.report(agent,slug,function,change,category,automation,case_id)
         with self.store.tx() as db:
             row = db.execute('SELECT id FROM repair_examples WHERE project_id=? AND function_id=? AND agent_id=? '
                              'AND (?=0 OR id=?) ORDER BY id DESC LIMIT 1',
@@ -230,8 +272,8 @@ class RepairFeedback:
 
     def _where(self, slug='', category='', status='', comparable=False):
         clauses, args = ['1=1'], []
-        if slug:
-            clauses.append('e.project_id=?'); args.append(self.net._project(slug)['id'])
+        if slug or self.project is not None:
+            clauses.append('e.project_id=?'); args.append(self.net._project(slug)['id'] if slug else self.project)
         if category:
             if category not in CATEGORIES:
                 raise NetworkError('Unknown repair category.')
@@ -244,7 +286,25 @@ class RepairFeedback:
             clauses.append("e.before_attempt_id IS NOT NULL AND json_extract(e.evidence,'$.comparable_settings')=1 AND json_extract(e.evidence,'$.before.source_sha256') != json_extract(e.evidence,'$.after.source_sha256')")
         return ' AND '.join(clauses), args
 
-    def listing(self, slug='', category='', status='', before=0, comparable=False):
+    def listing(self, slug='', category='', status='', before=0, comparable=False, *, _metrics=True):
+        if self.project is None:
+            if slug:
+                owner = self.for_project(slug)
+                if owner is not self:return owner.listing(slug,category,status,before,comparable,_metrics=_metrics)
+            else:
+                services = self.services()
+                if services != [self]:
+                    parts = [service.listing('',category,status,before,comparable,_metrics=False) for service in services]
+                    examples = sorted((row for part in parts for row in part['examples']),key=lambda r:r['id'],reverse=True)
+                    groups = {}
+                    for part in parts:
+                        for row in part['groups']:
+                            key = (row['category'],row['status'])
+                            groups[key] = groups.get(key,0)+row['count']
+                    from .app.adaptive_repairs import coverage
+                    return {'examples':examples[:25],'more':len(examples)>25 or any(p['more'] for p in parts),
+                            'total':sum(p['total'] for p in parts),'groups':[{'category':k[0],'status':k[1],'count':v} for k,v in groups.items()],
+                            'categories':CATEGORIES,'states':STATES,'metrics':coverage(self.net) if _metrics else None}
         where, args = self._where(slug, category, status, comparable)
         partition = "project_id,category,status,CASE WHEN json_extract(evidence,'$.via')='unit diff' THEN 'build:' || COALESCE(json_extract(evidence,'$.unit'),'') || ':' || CAST(created_at/60 AS INTEGER) ELSE 'function:' || function_id END,CASE WHEN json_extract(evidence,'$.via')!='unit diff' OR json_extract(evidence,'$.via') IS NULL THEN json_extract(evidence,'$.target_sha256') END,CASE WHEN json_extract(evidence,'$.via')!='unit diff' OR json_extract(evidence,'$.via') IS NULL THEN json_extract(evidence,'$.after.source_sha256') END,json_extract(evidence,'$.after.settings'),json_extract(evidence,'$.after.context_version')"
         prefix = ('WITH grouped AS (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ' + partition +
@@ -255,26 +315,31 @@ class RepairFeedback:
                               "(json_extract(e.evidence,'$.provenance.kind') IN ('deterministic draft repair','automatic agent local pass') AND "
                               "(json_extract(e.evidence,'$.provenance.source_sha256') IS NULL OR "
                               "json_extract(e.evidence,'$.provenance.source_sha256')=json_extract(e.evidence,'$.after.source_sha256'))) AS automation_known,"
-                              'p.slug,p.name AS project,f.name AS function,a.name AS agent FROM grouped e '
+                              'p.slug,p.name AS project,f.name AS function,e.agent_id FROM grouped e '
                               'JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id '
-                              'LEFT JOIN agents a ON a.id=e.agent_id WHERE e.position=1 '
+                              'WHERE e.position=1 '
                               ' AND (?=0 OR e.id<?) ORDER BY e.id DESC LIMIT 26', *args, before, before)
+        from .app.project_labels import label
+        rows = label(self.net,rows,{'agent':'agent_id'})
         total = self.store.one(prefix + 'SELECT COUNT(*) AS n FROM grouped e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id WHERE e.position=1', *args)['n']
         groups = self.store.all('SELECT e.category,e.status,COUNT(*) AS count FROM main.repair_examples e WHERE ' + where +
                                 ' GROUP BY e.category,e.status', *args)
         from .app.adaptive_repairs import coverage
         return {'examples': [dict(r) | {'review_group': ('build' if r['evidence_kind']=='build report' else 'first' if r['evidence_kind']=='no failed baseline' else 'context' if r['evidence_kind'] in ('same source / settings','settings also changed') else 'source')} for r in rows[:25]], 'more': len(rows) > 25,
                 'total': total, 'groups': [dict(r) for r in groups], 'categories': CATEGORIES, 'states': STATES,
-                'metrics': coverage(self.net)}
+                'metrics': coverage(self.net) if _metrics else None}
 
     def detail(self, slug, case_id, include_source=True):
+        owner = self.for_project(slug) if slug else self.owner(case_id)
+        if owner is not self:return owner.detail(slug,case_id,include_source)
         where, args = self._where(slug)
-        row = self.store.one('SELECT e.*,p.slug,p.name AS project,a.name AS agent FROM repair_examples e '
-                             'JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id '
+        row = self.store.one('SELECT e.*,p.slug,p.name AS project FROM repair_examples e '
+                             'JOIN projects p ON p.id=e.project_id '
                              'WHERE ' + where + ' AND e.id=?', *args, case_id)
         if row is None:
             raise NetworkError('No repair example exists in this project.')
-        result = dict(row); evidence = json.loads(result.pop('evidence'))
+        from .app.project_labels import names
+        result = dict(row) | {'agent':names(self.net,[row['agent_id']]).get(row['agent_id'])}; evidence = json.loads(result.pop('evidence'))
         if include_source and row['evidence_archive']:
             evidence=json.loads(self.store.conn.repair_archive.read(row['evidence_archive'],snapshot=True))['evidence']
         evidence['provenance'] = validated_provenance(evidence.get('provenance'),evidence['after'].get('source_sha256'))
@@ -333,6 +398,8 @@ class RepairFeedback:
         return result | {'evidence': evidence, 'automatic_analysis':analysis}
 
     def review(self, slug, case_id, status, category='', note=None):
+        owner = self.for_project(slug) if slug else self.owner(case_id)
+        if owner is not self:return owner.review(slug,case_id,status,category,note)
         if status not in STATES:
             raise NetworkError('Choose a valid review state.')
         self.detail(slug, case_id, include_source=False)
@@ -344,12 +411,22 @@ class RepairFeedback:
                        (status, category, category, str(note)[:6000] if note is not None else None, case_id))
         return {'message': 'Review state saved.'}
 
-    def classify_new(self, slug, apply=False):
+    def classify_new(self, slug, apply=False, *, _limit=500):
         """Triage at most 500 untouched examples; existing human reviews and annotations stay intact."""
+        if self.project is None:
+            services = [self.for_project(slug)] if slug else self.services()
+            if services != [self]:
+                plans,counts = [],{}
+                for service in services:
+                    part = service.classify_new(slug,apply,_limit=_limit-len(plans))
+                    plans.extend(part['examples'])
+                    for category,n in part['counts'].items():counts[category] = counts.get(category,0)+n
+                    if len(plans)>=_limit:break
+                return {'examples':plans,'counts':counts,'applied':bool(apply),'total':len(plans)}
         from . import repair_review
         where, args = self._where(slug, 'unclassified', 'new')
         rows = self.store.all('SELECT e.id FROM repair_examples e WHERE ' + where +
-                              " AND e.review_note='' AND e.explanation='' AND e.automation='' ORDER BY e.id LIMIT 500", *args)
+                              " AND e.review_note='' AND e.explanation='' AND e.automation='' ORDER BY e.id LIMIT ?", *args,_limit)
         seen, plans, counts = {}, [], {}
         scope, scope_args = self._where(slug)
         prior = self.store.all("SELECT e.id,e.project_id,json_extract(evidence,'$.target_sha256') AS target,"
@@ -382,6 +459,25 @@ class RepairFeedback:
         return {'examples': plans, 'counts': counts, 'applied': bool(apply), 'total': len(plans)}
 
     def export(self, slug='', category='', status='', include_source=False, comparable=False):
+        if self.project is None:
+            services = [self.for_project(slug)] if slug else self.services()
+            if services != [self]:
+                import heapq
+                def records(service):
+                    where,args = service._where(slug,category,status,comparable)
+                    maximum = service.store.one('SELECT COALESCE(MAX(e.id),0) n FROM main.repair_examples e WHERE '+where,*args)['n']
+                    after = 0
+                    while True:
+                        rows = service.store.all('SELECT e.id FROM main.repair_examples e WHERE '+where+' AND e.id>? AND e.id<=? ORDER BY e.id LIMIT 50',*args,after,maximum)
+                        if not rows:return
+                        for row in rows:
+                            yield row['id'],service
+                            after = row['id']
+                yield '{"schema_version":1,"examples":['
+                for index,(case_id,service) in enumerate(heapq.merge(*(records(service) for service in services),key=lambda r:r[0])):
+                    yield (',' if index else '')+json.dumps(service.detail(slug,case_id,include_source))
+                yield ']}'
+                return
         where, args = self._where(slug, category, status, comparable)
         maximum = self.store.one('SELECT MAX(e.id) AS id FROM repair_examples e WHERE ' + where, *args)['id'] or 0
         yield '{"schema_version":1,"examples":['
