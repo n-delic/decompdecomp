@@ -38,6 +38,7 @@ def test_name_reuse_reads_metadata_and_preserves_rename_checks(tmp_path, monkeyp
     net = SimpleNamespace(store=store, links={}, cfg=lambda _: {'platform':'n64'},
                           project_row=projects.__getitem__, fork_slug=lambda _: fork,
                           local_agent=lambda _: (1,None), rename_symbols=rename, rename_symbol=rename)
+    net.project_store = lambda _: net.store
     twins = Twins(net)
     monkeypatch.setattr(twins, 'prints', lambda p: mine if p['id']==1 else donor)
     reads = []

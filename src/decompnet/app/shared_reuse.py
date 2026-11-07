@@ -24,7 +24,9 @@ def machine(net, proj):
 
 def compatible(net, proj):
     wanted = machine(net, proj)
-    for other in net.store.all('SELECT * FROM projects WHERE id!=?', proj['id']):
+    for catalog in net.store.all('SELECT id,slug FROM projects WHERE id!=?', proj['id']):
+        other = net.project_store(catalog['id']).one('SELECT * FROM projects WHERE id=?', catalog['id'])
+        if other is None:raise NetworkError('A donor project is missing from its database. Restore it before searching.')
         if other['slug'] in net.links:
             continue
         try:
@@ -46,7 +48,7 @@ def discover(twins, proj, *, job=None, force=False, donors=None, matched_only=Fa
     net = twins.net
     report(job, 'Fingerprinting this game', game=proj['name'])
     mine = twins.prints(proj)
-    rows = {r['id']: r for r in net.store.all('SELECT id,name,status FROM functions WHERE project_id=?', proj['id'])}
+    rows = {r['id']: r for r in net.project_store(proj['id']).all('SELECT id,name,status FROM functions WHERE project_id=?', proj['id'])}
     wanted = defaultdict(list)
     for fid, target in mine.items():
         if fid in rows and target.size >= ACROSS_MIN_BYTES and not target.asm:
@@ -57,7 +59,7 @@ def discover(twins, proj, *, job=None, force=False, donors=None, matched_only=Fa
         if job is not None and (job.stop.is_set() or (hasattr(job, 'reuse_deadline') and time.monotonic() >= job.reuse_deadline)):
             break
         report(job, 'Finding shared machine code', game=other['name'], done=index, total=len(others))
-        donor_rows = net.store.all('SELECT id,name,status FROM functions WHERE project_id=?'
+        donor_rows = net.project_store(other['id']).all('SELECT id,name,status FROM functions WHERE project_id=?'
                                   + (" AND status='matched'" if matched_only else ''), other['id'])
         if not donor_rows:
             continue

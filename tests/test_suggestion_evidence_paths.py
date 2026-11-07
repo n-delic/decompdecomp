@@ -132,8 +132,9 @@ def test_similar_suggestions_limit_metadata_first_and_reuse_ranked_results(tmp_p
     first = net.twins.suggestions('game', 'f')
     assert first and first[0]['name'] == 'helper' and first[0]['kind'] == 'similar code; unverified'
     assert net.twins.suggestions('game', 'f') == first
-    shortlist = [q for q in queries if 'WITH shortlist AS MATERIALIZED' in q]
-    assert len(shortlist) == 1 and 'LIMIT 400)' in shortlist[0]
+    shortlist = [q for q in queries if 'SELECT i.function_id,i.size FROM cross_game_index' in q]
+    assert len(shortlist) == 1 and 'LIMIT 400' in shortlist[0]
+    assert 'f.target' not in shortlist[0] and 'matched_source' not in shortlist[0]
     plan = net.store.all('EXPLAIN QUERY PLAN ' + shortlist[0])
     assert any('idx_cross_game_compiler_size' in r['detail'] for r in plan)
     with net.store.tx() as db:

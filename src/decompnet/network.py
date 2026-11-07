@@ -442,6 +442,15 @@ class Network:
             groups.setdefault(self.project_store(row['id']), []).append(row['id'])
         return list(groups.items()) or [(self.store, [])]
 
+    def function_store(self, function_id):
+        """Resolve old ID-only provenance through indexed owner discovery, never SQL routing."""
+        found = None
+        for store, _ in self.project_stores():
+            if store.one('SELECT 1 FROM functions WHERE id=?', function_id):
+                if found is not None:raise NetworkError('A function ID exists in several project databases. Restore a consistent backup.')
+                found = store
+        return found
+
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:

@@ -27,13 +27,13 @@ def fields(fn, big):
 def learn(net, destination, donor):
     """Maps (memory opcode, argument register, old offset) to an agreed new byte offset."""
     votes = defaultdict(lambda: defaultdict(set))
-    pairs = net.store.all("SELECT DISTINCT source_function_id,function_id FROM cross_game_attempts "
+    pairs = net.project_store(destination['id']).all("SELECT DISTINCT source_function_id,function_id FROM cross_game_attempts "
                           "WHERE project_id=? AND source_project_id=? AND outcome='match'",
                           destination['id'], donor['id'])
     for pair in pairs:
-        a = net.store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'",
+        a = net.project_store(donor['id']).one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'",
                          pair['source_function_id'], donor['id'])
-        b = net.store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'",
+        b = net.project_store(destination['id']).one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'",
                          pair['function_id'], destination['id'])
         if not a or not b or len(a['target'] or b'') != len(b['target'] or b''):
             continue

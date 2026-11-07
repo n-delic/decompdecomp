@@ -201,15 +201,15 @@ def regional_names(twins, proj, other) -> dict[str, str]:
     left, right = twins.prints(other), twins.prints(proj)
     syms_a, syms_b = net.symbols(other['id']), net.symbols(proj['id'])
     votes = {}
-    rows = net.store.all("SELECT DISTINCT source_function_id,function_id FROM cross_game_attempts "
+    rows = net.project_store(proj['id']).all("SELECT DISTINCT source_function_id,function_id FROM cross_game_attempts "
                          "WHERE project_id=? AND source_project_id=? AND outcome='match'", proj['id'], other['id'])
     old_pairs = {(r['source_function_id'], r['function_id']) for r in rows}
     rows = [*rows, *repair_mappings.pairs(net, proj, other)]
     support = {}
     functions = set()
     for row in rows:
-        a = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", row['source_function_id'])
-        b = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", row['function_id'])
+        a = net.project_store(other['id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", row['source_function_id'])
+        b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", row['function_id'])
         if not a or not b or a['project_id'] != other['id'] or b['project_id'] != proj['id']:
             continue
         functions.add((a['name'], b['name']))
@@ -241,8 +241,11 @@ def trial_key(source, header, compiler, fn, names) -> str:
 def compiler_trial(net, agent, proj, fn, candidate, settings):
     """Test donor flags without changing build settings or misreporting them as accepted project progress."""
     now = time.time()
-    with net.store.tx() as db:
-        net._expire_claims(db)
+    from .local_claims import expiry_ids
+    store = net.project_store(proj['id'])
+    identities = expiry_ids(net, store)
+    with store.tx() as db:
+        net._expire_claims(db, **identities)
         current = db.execute('SELECT status FROM functions WHERE id=?', (fn['id'],)).fetchone()
         if not current or current['status'] != 'open' or db.execute(
                 'SELECT 1 FROM claims WHERE function_id=?', (fn['id'],)).fetchone():
@@ -259,7 +262,7 @@ def compiler_trial(net, agent, proj, fn, candidate, settings):
     except (NetworkError, toolchains.ToolchainError) as error:
         return 'skip', str(error)[:160]
     finally:
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (fn['id'], agent.id))
 
 
@@ -274,9 +277,8 @@ def run(twins, slug: str, job) -> int:
     if net.fork_slug(slug) or not net.is_rom(proj) or proj['arch'] != 'mips' or slug in net.links:
         return 0
     cfg = net.cfg(proj)
-    others = {p['id']: p for p in net.store.all(
-        'SELECT * FROM projects WHERE id!=? AND arch=? AND big_endian=?',
-        proj['id'], proj['arch'], proj['big_endian']) if net.is_rom(p) and p['slug'] not in net.links}
+    from .shared_reuse import compatible
+    others = {p['id']:p for p in compatible(net, proj) if net.is_rom(p)}
     from . import free_candidates
     free_candidates.budget(job, MAX_SECONDS, MAX_ATTEMPTS)
     deadline = job.reuse_deadline
@@ -287,17 +289,17 @@ def run(twins, slug: str, job) -> int:
     agent, _ = net.local_agent('autopilot')
     mine = twins.prints(proj)
     syms_b = net.symbols(proj['id'])
-    symbol_state = [(r['name'], r['address']) for r in net.store.all(
+    symbol_state = [(r['name'], r['address']) for r in net.project_store(proj['id']).all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     source_cache, ops_cache = {}, {}
     from . import address_repairs, regional_layouts, reuse_donors
     donors = reuse_donors.Donors(net, proj)
     layouts = {pid: regional_layouts.learn(net, proj, other) for pid, other in others.items()}
     maps = {pid: regional_names(twins, proj, other) for pid, other in others.items()}
-    saved = net.store.one('SELECT function_id FROM reuse_cursors WHERE project_id=?', proj['id'])
+    saved = net.project_store(proj['id']).one('SELECT function_id FROM reuse_cursors WHERE project_id=?', proj['id'])
     cursor = saved['function_id'] if saved else 0
     def resume(fid):
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO reuse_cursors VALUES(?,?)', (proj['id'], fid))
     attempted = matched = 0
     repairs = {}
@@ -310,14 +312,14 @@ def run(twins, slug: str, job) -> int:
     def attempt(a, b, other, score, candidate, settings, kind, names, header):
         nonlocal attempted, matched
         feedback.clear()
-        current = net.store.one('SELECT status FROM functions WHERE id=?', b['id'])
+        current = net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?', b['id'])
         if not current or current['status'] != 'open':
             return 'skip', ''
         from .repair_preflight import invalid_call
         if invalid_call(candidate, b['name'], header):
             return 'skip', 'Generated call disagrees with a fixed prototype'
         signature = trial_key(candidate, header, settings, b, [names, symbol_state])
-        previous = net.store.one("SELECT * FROM reuse_trials WHERE function_id=? AND signature=? AND outcome!='match'",
+        previous = net.project_store(proj['id']).one("SELECT * FROM reuse_trials WHERE function_id=? AND signature=? AND outcome!='match'",
                                  b['id'], signature)
         if previous:
             feedback.update(json.loads(previous['feedback']))
@@ -334,7 +336,7 @@ def run(twins, slug: str, job) -> int:
             outcome, why = twins._attempt_twin(agent, proj, a, b, candidate,
                 origin=f" in {other['name']}", similar=True, feedback=feedback, mapping=names)
         reason = f'similar code ({score:.0%}); {kind}; ' + (why or outcome)
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,'
                        'source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)',
                        (proj['id'], b['id'], other['id'], a['id'], outcome, reason, time.time()))
@@ -358,7 +360,7 @@ def run(twins, slug: str, job) -> int:
     def transfers_exhausted():
         return bool(repairs) and (job.reuse_attempts >= transfer_limit or time.monotonic() >= transfer_deadline)
 
-    targets = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id", proj['id'])
+    targets = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id", proj['id'])
     # Preserve the cheap aligned-transfer search before widening to learned mappings or different flags.
     # A signed cursor encodes which phase to resume without storing any game source in the queue.
     work = [(phase, b) for phase in (0, 1) for b in targets]
@@ -376,7 +378,7 @@ def run(twins, slug: str, job) -> int:
         pb = mine.get(b['id'])
         if pb is None or pb.asm or not MIN_BYTES <= pb.size <= MAX_BYTES:
             continue
-        if net.store.one('SELECT 1 FROM claims WHERE function_id=?', b['id']):
+        if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', b['id']):
             continue
         rows = donors.candidates(pb.size, max(MIN_BYTES, int(pb.size * .9)), min(MAX_BYTES, int(pb.size / .9)),
                                  pb.key, twins._compiler_key(compiler_for(cfg, b['vram'], b)), MAX_POOL)
@@ -446,7 +448,7 @@ def run(twins, slug: str, job) -> int:
                     break
             if incomplete:
                 break
-            if net.store.one('SELECT status FROM functions WHERE id=?', b['id'])['status'] == 'matched':
+            if net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?', b['id'])['status'] == 'matched':
                 break
         if incomplete:
             break
@@ -461,7 +463,7 @@ def run(twins, slug: str, job) -> int:
             if not incomplete:
                 resume(0)
             return matched
-        if net.store.one('SELECT status FROM functions WHERE id=?', b['id'])['status'] != 'open':
+        if net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?', b['id'])['status'] != 'open':
             continue
         guided = list(address_variants)
         if report.get('candidate_target'):

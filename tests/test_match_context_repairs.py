@@ -62,6 +62,7 @@ def test_brief_queries_only_called_matched_functions_and_attributes_context():
         queries.append((sql,args))
         return [{'name':'consume','unit':'unit1','source':'int consume(int n){return n;}'}]
     net=SimpleNamespace(store=SimpleNamespace(all=all_))
+    net.project_store=lambda _:net.store
     fn={'name':'f','project_id':2,'unit':'unit1'}
     result='\n'.join(brief(net,fn,'void f(void){consume(1);}'))
     assert "status='matched'" in queries[0][0]
@@ -77,6 +78,7 @@ def test_cross_game_reference_is_attributed_and_never_invented():
         'name':'library_read','source':'typedef struct {int n;} Stream; int library_read(Stream *s){return s->n;}'}))
     items=[{'name':'library_read','game':'another game','function_id':4,'kind':'similar code; unverified'},
            {'name':'sdk_name','game':'local archive','kind':'SDK object signature; name only'}]
+    net.project_stores=lambda:[(net.store, [1])]
     result=reference_hints(net,items)
     assert 'Stream' in result[0]['reference_context']
     assert result[0]['kind']=='similar code; unverified'

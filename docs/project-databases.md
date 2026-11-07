@@ -124,6 +124,14 @@ after-commit callbacks on that same store. Global function-name discovery and
 stopped-worker claim recovery visit project stores explicitly. Project creation,
 removal and the remaining cross-game services still require conversion.
 
+Twin indexes, donor shortlists, cross-game transfers, local misses and repair
+mapping evidence now distinguish source and destination stores. Result labels
+read source metadata from its owner; archived transfer labels survive removal.
+The shared match library retains its catalog-relative path and identity, while
+snapshots and publication callbacks follow the owning project transaction.
+Older ID-only provenance uses indexed project-owner discovery. Global ID
+allocation and migrated-schema validation remain prerequisites for activation.
+
 ## Ownership for the completed split
 
 | Storage | Contents |

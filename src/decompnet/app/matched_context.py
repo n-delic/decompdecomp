@@ -40,7 +40,7 @@ def brief(net, fn, source):
         return []
     # Indexed project/unit lookup, capped rows and text. No all-project scan on a brief.
     marks=','.join('?' for _ in calls)
-    rows=net.store.all("SELECT name,unit,substr(matched_source,1,16000) AS source FROM functions "
+    rows=net.project_store(fn['project_id']).all("SELECT name,unit,substr(matched_source,1,16000) AS source FROM functions "
                        "WHERE project_id=? AND status='matched' AND name IN ("+marks+") "
                        "ORDER BY CASE WHEN unit=? THEN 0 ELSE 1 END,id LIMIT 4",
                        fn['project_id'],*calls,fn['unit'])
@@ -65,7 +65,16 @@ def reference_hints(net, items):
         item=dict(item)
         fid=item.get('function_id')
         if fid and len(out)<3:
-            row=net.store.one("SELECT name,substr(matched_source,1,16000) AS source FROM functions WHERE id=? AND status='matched'",fid)
+            query = "SELECT name,substr(matched_source,1,16000) AS source FROM functions WHERE id=? AND status='matched'"
+            slug = item.get('source_slug')
+            if slug:
+                owner = net.store.one('SELECT id FROM projects WHERE slug=?', slug)
+                row = net.project_store(owner['id']).one(query, fid) if owner else None
+            else:
+                # Older cached hints retained only globally unique function IDs.
+                matches = [found for store, _ in net.project_stores() if (found := store.one(query, fid))]
+                if len(matches) > 1:raise ValueError('Ambiguous function identity in cached reference hint.')
+                row = matches[0] if matches else None
             if row and row['source']:
                 context=declarations(row['source'],row['name'],row['source'])
                 if context and len(context)<=3000:

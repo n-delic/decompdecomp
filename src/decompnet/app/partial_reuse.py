@@ -29,6 +29,7 @@ def machine(net, proj):
 
 def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None):
     """Automatic passes try at most 64 donors; manual passes use their chosen shared budget and stop control."""
+    from .shared_reuse import compatible
     net = twins.net
     if proj['slug'] in net.links:
         return 0
@@ -36,7 +37,7 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
     target_machine = machine(net, proj)
     matched = 0
     budget_state = {'tried':0} if budget_state is None else budget_state
-    projects = net.store.all('SELECT * FROM projects WHERE id!=? ORDER BY id', proj['id']) if projects is None else projects
+    projects = compatible(net, proj) if projects is None else projects
     for other in projects:
         from .free_candidates import exhausted
         if budget_state['tried'] >= getattr(job,'partial_limit',MAX_TRIALS) or (job and (job.stop.is_set() or
@@ -47,7 +48,7 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
         try:
             if machine(net, other) != target_machine:
                 continue
-            donors = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' "
+            donors = net.project_store(other['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' "
                                    'AND best_source IS NOT NULL AND best_score IS NOT NULL ORDER BY best_score,id', other['id'])
             if not donors:
                 continue
@@ -63,8 +64,8 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
                     if budget_state['tried'] >= getattr(job, 'partial_limit', MAX_TRIALS) or (job and (job.stop.is_set() or
                             (hasattr(job, 'reuse_limit') and exhausted(job)))):
                         return matched
-                    b = net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", bid)
-                    if not b or net.store.one('SELECT 1 FROM claims WHERE function_id=?', bid):
+                    b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='open'", bid)
+                    if not b or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', bid):
                         continue
                     if b['best_score'] is not None and a['best_score'] / max(1, a['n_insns']) >= b['best_score'] / max(1, b['n_insns']):
                         continue
@@ -72,7 +73,7 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
                     if not source:
                         continue
                     signature = scope(net, proj, b, source, a)
-                    if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?', bid, signature):
+                    if net.project_store(proj['id']).one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?', bid, signature):
                         continue
                     if job:
                         job.cross_candidates += 1
@@ -94,11 +95,11 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
                     elif result.get('matched'):
                         outcome = 'match'
                     else:
-                        current = net.store.one('SELECT best_score,best_agent_id FROM functions WHERE id=?', bid)
+                        current = net.project_store(proj['id']).one('SELECT best_score,best_agent_id FROM functions WHERE id=?', bid)
                         outcome = 'improved' if current['best_agent_id'] == agent.id and current['best_score'] == result['score'] and (
                             b['best_score'] is None or current['best_score'] < b['best_score']) else 'miss'
                     reason = f"Partial donor; locally checked score {result.get('score')}; previous score {b['best_score']}"
-                    with net.store.tx() as db:
+                    with net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                                    (bid, signature, outcome, reason))
                         db.execute('INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,'
@@ -143,7 +144,7 @@ def scope(net, proj, fn, source, donor):
         _, fp, _ = net.forks.get(proj['slug'])
         context += input_stamp(fp.root)
     return 'partial-v1:' + hashlib.sha256(json.dumps([donor['best_score'],
-        trial_key(source, context, net.cfg(proj), fn, [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])])], sort_keys=True).encode()).hexdigest()
+        trial_key(source, context, net.cfg(proj), fn, [tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])])], sort_keys=True).encode()).hexdigest()
 
 
 def input_stamp(root):

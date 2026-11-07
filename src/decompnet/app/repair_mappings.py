@@ -16,22 +16,23 @@ def stamp(fn, donor=False):
 
 def remember(net, a, b, source, names):
     fid = a['function_id'] if 'function_id' in a.keys() else a['id']
-    current = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", fid)
+    current = net.project_store(a['project_id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", fid)
     if current is None or ('matched_source' in a.keys() and current['matched_source'] != a['matched_source']):
         return
     a = current
     if a['project_id'] == b['project_id'] or a['status'] != 'matched':
         return
-    with net.store.tx() as db:
+    with net.project_store(b['project_id']).tx() as db:
         db.execute('INSERT OR REPLACE INTO repair_origins VALUES(?,?,?,?,?,?)',
                    (b['id'], digest(source), a['id'], stamp(a, True), stamp(b), json.dumps(names, sort_keys=True)))
 
 
 def origins(net, fn, source):
-    rows = net.store.all('SELECT * FROM repair_origins WHERE function_id=? AND source_hash=?', fn['id'], digest(source))
+    rows = net.project_store(fn['project_id']).all('SELECT * FROM repair_origins WHERE function_id=? AND source_hash=?', fn['id'], digest(source))
     valid = []
     for row in rows:
-        a = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", row['source_function_id'])
+        owner = net.function_store(row['source_function_id'])
+        a = owner.one("SELECT * FROM functions WHERE id=? AND status='matched'", row['source_function_id']) if owner else None
         if a and a['project_id'] != fn['project_id'] and stamp(a, True) == row['source_stamp'] and stamp(fn) == row['target_stamp']:
             valid.append((row, a))
     # Ambiguous provenance must not teach a particular donor's regional mapping.
@@ -52,15 +53,22 @@ def recover(twins, proj, fn, source):
     bare = re.sub('^' + prefix, '', source, count=1)
     if bare == source:
         return
-    donors = net.store.all('SELECT DISTINCT f.* FROM cross_game_attempts x JOIN functions f ON f.id=x.source_function_id '
-                          "WHERE x.function_id=? AND f.status='matched' AND f.project_id!=? ORDER BY f.id LIMIT 16",
-                          fn['id'], proj['id'])
+    donors = []
+    references = net.project_store(proj['id']).all(
+        'SELECT DISTINCT source_project_id,source_function_id FROM cross_game_attempts WHERE function_id=? '
+        'AND source_project_id!=? ORDER BY source_function_id LIMIT 16', fn['id'], proj['id'])
+    for ref in references:
+        if not net.store.one('SELECT 1 FROM projects WHERE id=?', ref['source_project_id']):continue
+        donor = net.project_store(ref['source_project_id']).one(
+            "SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'",
+            ref['source_function_id'], ref['source_project_id'])
+        if donor is not None:donors.append(donor)
     header = net._context(proj['id'], fn['unit'])['header']
     target_print = twins.prints(proj).get(fn['id'])
     if target_print is None:
         return
     for a in donors:
-        other = net.store.one('SELECT * FROM projects WHERE id=?', a['project_id'])
+        other = net.project_store(a['project_id']).one('SELECT * FROM projects WHERE id=?', a['project_id'])
         if not other or not net.is_rom(other) or (other['arch'], other['big_endian']) != (proj['arch'], proj['big_endian']):
             continue
         if [(o,t) for o,t,_ in relocations(a)] != [(o,t) for o,t,_ in relocations(fn)]:
@@ -109,22 +117,29 @@ def propagate(net, fn, seed, candidate):
 
 def accepted(net, fn, seed):
     for row, a in origins(net, fn, seed):
-        b = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", fn['id'])
+        b = net.project_store(fn['project_id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", fn['id'])
         if b is None or stamp(b) != row['target_stamp']:
             continue
-        with net.store.tx() as db:
+        with net.project_store(fn['project_id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO repaired_pairs VALUES(?,?,?,?)',
                        (b['id'], a['id'], row['source_stamp'], row['target_stamp']))
 
 
 def pairs(net, proj, other):
-    rows = net.store.all('SELECT r.* FROM repaired_pairs r JOIN functions a ON a.id=r.source_function_id '
-                         'JOIN functions b ON b.id=r.function_id WHERE a.project_id=? AND b.project_id=?', other['id'], proj['id'])
+    rows = net.project_store(proj['id']).all(
+        'SELECT r.* FROM repaired_pairs r JOIN functions b ON b.id=r.function_id WHERE b.project_id=?', proj['id'])
+    if not rows:return []
+    sources = {r['id']:r for r in net.project_store(other['id']).all(
+        "SELECT * FROM functions WHERE project_id=? AND status='matched' AND id IN "
+        '(SELECT value FROM json_each(?))', other['id'], json.dumps([r['source_function_id'] for r in rows]))}
+    relevant = [row for row in rows if row['source_function_id'] in sources]
+    targets = {r['id']:r for r in net.project_store(proj['id']).all(
+        "SELECT * FROM functions WHERE project_id=? AND status='matched' AND id IN "
+        '(SELECT value FROM json_each(?))', proj['id'], json.dumps([r['function_id'] for r in relevant]))}
     valid = []
-    for row in rows:
-        a = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", row['source_function_id'])
-        b = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", row['function_id'])
-        if a and b and stamp(a, True) == row['source_stamp'] and stamp(b) == row['target_stamp']:
+    for row in relevant:
+        a, b = sources[row['source_function_id']], targets.get(row['function_id'])
+        if b and stamp(a, True) == row['source_stamp'] and stamp(b) == row['target_stamp']:
             valid.append(row)
     return valid
 
@@ -149,7 +164,7 @@ def variant(twins, proj, fn, source):
     if not evidence:
         return None
     row, a = evidence[0]
-    donor = twins.net.store.one('SELECT * FROM projects WHERE id=?', a['project_id'])
+    donor = twins.net.project_store(a['project_id']).one('SELECT * FROM projects WHERE id=?', a['project_id'])
     learned = regional_names(twins, proj, donor)
     bindings = json.loads(row['names'])
     votes = {}
@@ -182,16 +197,16 @@ def harvest(twins, proj, function_id):
     net = twins.net
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         return
-    fn = net.store.one("SELECT * FROM functions WHERE id=? AND status='matched'", function_id)
+    fn = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", function_id)
     if not fn or not fn['matched_source']:
         return
     source = fn['matched_source']
     if origins(net, fn, source):
         accepted(net, fn, source)
         return
-    if not net.store.one('SELECT 1 FROM cross_game_attempts WHERE function_id=? LIMIT 1', function_id):
+    if not net.project_store(proj['id']).one('SELECT 1 FROM cross_game_attempts WHERE function_id=? LIMIT 1', function_id):
         return
-    seeds = net.store.all('SELECT source FROM attempts WHERE function_id=? AND score>0 AND compiled=1 '
+    seeds = net.project_store(proj['id']).all('SELECT source FROM attempts WHERE function_id=? AND score>0 AND compiled=1 '
                          'ORDER BY id DESC LIMIT 8', function_id)
     for row in seeds:
         seed = row['source'] or ''

@@ -98,25 +98,25 @@ class Library:
         symbols = {} if fork else self.net.symbols(proj['id']).by_name
         # Preserve the existing archive's symbol order without scanning the inventory
         # per function. A changed symbol revision or replacement table rebuilds the index.
-        order = self.net.store.read_cache.get(('library-symbol-order',proj['id']),
-            (self.net.store.read_version('scope_symbols',proj['id']),id(symbols)),
+        order = self.net.project_store(proj['id']).read_cache.get(('library-symbol-order',proj['id']),
+            (self.net.project_store(proj['id']).read_version('scope_symbols',proj['id']),id(symbols)),
             lambda:(symbols,{name:index for index,name in enumerate(symbols)}))[1] if not fork else {}
         return {'fork':fork, 'cfg':self.net.cfg(proj),
                 'prints':self.net.twins.prints(proj), 'machine':machine(self.net, proj),
                 'game':self.game_key(proj), 'headers':{}, 'reserved':{}, 'fork_project':None, 'file_compilers':{},
                 'symbols':symbols, 'symbol_order':order,
-                'proofs':bool(self.net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"))}
+                'proofs':bool(self.net.project_store(proj['id']).one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"))}
 
     def _snapshot(self, proj, fid, *, inputs=None, fn=None, proof=None):
         from ..project import compiler_for
         net = self.net
         if inputs is None:
-            proj = net.store.one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
-            fn = net.store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'", fid, proj['id'])
+            proj = net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
+            fn = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='matched'", fid, proj['id'])
             if not fn:return None
             inputs = self._inputs(proj)
             if inputs['proofs']:
-                proof = net.store.one('SELECT source,header,details FROM verified_matches WHERE function_id=?',fid)
+                proof = net.project_store(proj['id']).one('SELECT source,header,details FROM verified_matches WHERE function_id=?',fid)
         p = inputs['prints'].get(fid)
         source = fn['matched_source']
         fork = inputs['fork']
@@ -234,13 +234,13 @@ class Library:
                 def publish():
                     try:self.write([item])
                     except (sqlite3.Error, OSError):log.exception('Could not archive verified match; startup will retry')
-                self.net.store.after_commit(publish)
+                self.net.project_store(proj['id']).after_commit(publish)
         except Exception:  # archiving must never turn a committed exact verdict into a judge failure
             log.exception('Could not snapshot verified match for the local library')
 
     def archive_project(self, proj, log=None, *, rows=None, progress=None):
         if rows is None:
-            rows=self.net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
+            rows=self.net.project_store(proj['id']).all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
         def report(done, phase, name=''):
             if log:
                 log.check_cancel()
@@ -255,15 +255,15 @@ class Library:
             # Narrow reads avoid loading target bytes and unfinished candidate/history
             # data. Never hold a main-database transaction while writing the library.
             with self.net.progress.view():
-                current=self.net.store.one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
+                current=self.net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id']) or proj
                 inputs=self._inputs(current)
                 ids=[row['id'] for row in rows[start:start+ARCHIVE_BATCH]]
                 marks=','.join('?' for _ in ids)
                 fields='id,name,unit,vram,rom_offset,size,matched_source,matched_at,meta'
-                functions={row['id']:row for row in self.net.store.all(
+                functions={row['id']:row for row in self.net.project_store(proj['id']).all(
                     f"SELECT {fields} FROM functions WHERE project_id=? AND status='matched' AND id IN ({marks})",
                     proj['id'],*ids)}
-                proofs={row['function_id']:row for row in self.net.store.all(
+                proofs={row['function_id']:row for row in self.net.project_store(proj['id']).all(
                     f'SELECT function_id,source,header,details FROM verified_matches WHERE function_id IN ({marks})',
                     *ids)} if inputs['proofs'] else {}
                 batch=[]
@@ -283,7 +283,7 @@ class Library:
     def _startup_stamp(self, proj):
         if self.net.cfg(proj).get('kind') != 'rom':return None
         # Imported objects can change outside SQLite; keep their full file-based scan.
-        revisions = [self.net.store.read_version(kind, proj['id']) for kind in
+        revisions = [self.net.project_store(proj['id']).read_version(kind, proj['id']) for kind in
                      ('inputs','scope_context','scope_symbols','matched_evidence','fingerprints')]
         return encoded([ARCHIVE_VERSION,str(self.net.store.path),proj['id'],proj['slug'],revisions,proj['config'],proj['root'],proj['name']])
 
@@ -291,7 +291,9 @@ class Library:
         failures=[]
         if log:log.progress({'phase':'Counting verified matches','done':0,'total':0})
         projects=[]
-        for proj in self.net.store.all('SELECT * FROM projects ORDER BY id'):
+        for catalog in self.net.store.all('SELECT id FROM projects ORDER BY id'):
+            proj = self.net.project_store(catalog['id']).one('SELECT * FROM projects WHERE id=?', catalog['id'])
+            if proj is None:raise NetworkError('A project is missing from its database. Restore it before archiving.')
             if log:log.check_cancel()
             stamp = self._startup_stamp(proj) if only_changed else None
             if stamp is not None:
@@ -300,7 +302,7 @@ class Library:
                 if previous and previous['stamp'] == stamp:
                     if log:log(f"{proj['name']}: verified-match archive is unchanged")
                     continue
-            rows=self.net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
+            rows=self.net.project_store(proj['id']).all("SELECT id,name FROM functions WHERE project_id=? AND status='matched'",proj['id'])
             projects.append((proj,rows,stamp))
         total=sum(len(rows) for _,rows,_ in projects)
         completed=0
@@ -358,14 +360,16 @@ class Library:
                 FROM solutions s JOIN occurrences o ON o.solution_id=s.id JOIN games g ON g.id=o.game_id
                 LEFT JOIN locations l ON l.function_id=s.function_id AND l.game_id=o.game_id AND l.name=o.name
                 WHERE s.function_id=? ORDER BY g.name,o.name,l.vram""",(fid,)).fetchall()
-        project_rows=self.net.store.all('SELECT * FROM projects')
+        project_rows=[self.net.project_store(row['id']).one('SELECT * FROM projects WHERE id=?', row['id'])
+                      for row in self.net.store.all('SELECT id FROM projects')]
+        if any(row is None for row in project_rows):raise NetworkError('A project is missing from its database. Restore it before browsing the library.')
         projects={self.game_key(p):p for p in project_rows}
         occurrences=[];prints={}
         for row in rows:
             r=dict(row);proj=projects.get(r['game_id']);r['available']=False
             if r['vram']==-1:r['vram']=None
             if proj:
-                fn=self.net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],r['name'])
+                fn=self.net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],r['name'])
                 if fn:
                     if proj['id'] not in prints:prints[proj['id']]=self.net.twins.prints(proj)
                     proof=prints[proj['id']].get(fn['id'])
@@ -385,7 +389,7 @@ class Library:
             if proj['id'] not in prints:prints[proj['id']]=self.net.twins.prints(proj)
             ids=[key for key,p in prints[proj['id']].items()
                  if p.key==item['fingerprint'] and p.size==item['size'] and key not in available]
-            for fn in self.net.store.all('SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
+            for fn in self.net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',
                                          proj['id'],encoded(ids)):
                 fn=dict(fn)
                 occurrences.append({'game_id':game,'game':proj['name'],'slug':proj['slug'],'name':fn['name'],
@@ -505,7 +509,7 @@ class Library:
         exclude={self.game_key(proj)}
         report(job,'Reading target fingerprints',game=proj['name'])
         prints=twins.prints(proj);matched=0
-        rows=net.store.all("SELECT id,name FROM functions WHERE project_id=? AND status='open'",proj['id'])
+        rows=net.project_store(proj['id']).all("SELECT id,name FROM functions WHERE project_id=? AND status='open'",proj['id'])
         targets=[r for r in rows if (p:=prints.get(r['id'])) and not p.asm and p.size>=ACROSS_MIN_BYTES]
         report(job,'Looking up indexed matches',done=0,total=len(targets))
         available=self.available(processor,big,{prints[r['id']].key for r in targets},exclude)
@@ -514,11 +518,11 @@ class Library:
         if job is not None:job.cross_indexed=len(targets)
         for index,row in enumerate(targets):
             report(job,'Checking indexed matches',function=row['name'],done=index,total=len(targets))
-            b=net.store.one("SELECT * FROM functions WHERE id=? AND status='open'",row['id'])
+            b=net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='open'",row['id'])
             if b is None:continue
             if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):break
             pb=prints.get(b['id'])
-            if not pb or pb.asm or pb.size<ACROSS_MIN_BYTES or net.store.one('SELECT 1 FROM claims WHERE function_id=?',b['id']):continue
+            if not pb or pb.asm or pb.size<ACROSS_MIN_BYTES or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',b['id']):continue
             candidates=self.candidates(processor,big,pb.key,pb.size,exclude)
             if not fork:
                 own=compiler_for(net.cfg(proj),b['vram'],b)
@@ -546,16 +550,17 @@ class Library:
                     if bounded:job.reuse_attempts+=1
                 from .cross_game_progress import report
                 report(job, 'Compiling candidate', game=item['game'], function=b['name'], donor=item['name'])
-                live=net.store.one("SELECT f.name,p.slug,p.name AS game FROM cross_game_index i JOIN functions f ON f.id=i.function_id JOIN projects p ON p.id=i.project_id WHERE p.slug=? AND i.fingerprint=? AND i.size=? AND f.status='matched' ORDER BY f.name=? DESC LIMIT 1",item['source_slug'],pb.key,pb.size,item['name'])
+                donor=net.store.one('SELECT id FROM projects WHERE slug=?',item['source_slug'])
+                live=net.project_store(donor['id']).one("SELECT f.name,p.slug,p.name AS game FROM cross_game_index i JOIN functions f ON f.id=i.function_id JOIN projects p ON p.id=i.project_id WHERE p.slug=? AND i.fingerprint=? AND i.size=? AND f.status='matched' ORDER BY f.name=? DESC LIMIT 1",item['source_slug'],pb.key,pb.size,item['name']) if donor else None
                 donor_name=live['name'] if live else item['name']
                 outcome,why=twins._attempt_twin(agent,proj,{'name':donor_name},b,source,
                                               origin=' in '+item['game']+' (local match library)',theirs=fork)
                 import time
-                with net.store.tx() as db:
+                with net.project_store(proj['id']).tx() as db:
                     db.execute('INSERT INTO library_transfers(project_id,function_id,source_game,source_name,source_slug,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?,?)',
                                (proj['id'],b['id'],live['game'] if live else item['game'],donor_name,live['slug'] if live else '',outcome,why[:2000],time.time()))
                 if outcome=='miss':
-                    with net.store.tx() as db:
+                    with net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT OR REPLACE INTO twin_misses(function_id,source_hash,project_id,at,why) VALUES(?,?,?,?,?)',
                                    (b['id'],twins._miss_key(source),proj['id'],time.time(),why))
                 if outcome=='match':

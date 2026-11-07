@@ -322,14 +322,14 @@ class Twins:
         # synchronize progress and wait for a project lock whose owner needs this index
         # to record a restored match. Read the kind from the caller's project snapshot.
         fork = self.net.cfg(proj).get("kind") == "fork"
-        if not fork and getattr(self.net.store._local, 'in_tx', False):
+        if not fork and getattr(self.net.project_store(proj['id'])._local, 'in_tx', False):
             return self._build_rom_prints(proj)  # Never publish values from a transaction that may roll back.
-        layout = None if fork else self.net.store.read_version('fingerprints', proj['id'])
+        layout = None if fork else self.net.project_store(proj['id']).read_version('fingerprints', proj['id'])
         def build():
             return self._fork_prints(proj) if fork else self._rom_prints(proj)
         with self._lock:
             generation = self._print_generations[proj['id']]
-        prints = self.net.store.read_cache.get(('twin-prints', proj['id']), (fork, layout, generation), build,
+        prints = self.net.project_store(proj['id']).read_cache.get(('twin-prints', proj['id']), (fork, layout, generation), build,
                                               ttl=FORK_PRINTS_TTL if fork else None)
         with self._lock:
             self._prints[proj['id']] = (time.time(), layout, prints)
@@ -337,10 +337,10 @@ class Twins:
 
     def _rom_prints(self, proj) -> dict[int, Print]:
         from .view_snapshots import persistent
-        revision = self.net.store.read_version('fingerprints', proj['id'])
+        revision = self.net.project_store(proj['id']).read_version('fingerprints', proj['id'])
         def build():
             return {str(fid): asdict(p) for fid, p in self._build_rom_prints(proj).items()}
-        values = persistent(self.net.store, ('rom-fingerprints', proj['id']), (2, revision, self._print_generations[proj['id']]), build)
+        values = persistent(self.net.project_store(proj['id']), ('rom-fingerprints', proj['id']), (2, revision, self._print_generations[proj['id']]), build)
         return {int(fid): Print(**value) for fid, value in values.items()}
 
     def _build_rom_prints(self, proj) -> dict[int, Print]:
@@ -348,7 +348,7 @@ class Twins:
         syms = self.net.symbols(proj["id"])
         from .maintenance import checkpoint
         out = {}
-        for row in self.net.store.all("SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'", proj["id"]):
+        for row in self.net.project_store(proj['id']).all("SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'", proj["id"]):
             checkpoint()
             out[row["id"]] = rom_print(row, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label)
         return out
@@ -364,7 +364,7 @@ class Twins:
             cache = {}
         if cache.get("_v") != _CACHE_VERSION:
             cache = {"_v": _CACHE_VERSION}
-        rows = self.net.store.all("SELECT id, name, unit, meta FROM functions WHERE project_id=?"
+        rows = self.net.project_store(proj['id']).all("SELECT id, name, unit, meta FROM functions WHERE project_id=?"
                                   + (" AND status='matched'" if matched_only else "")
                                   + (" AND id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""),
                                   proj["id"], *([json.dumps(function_ids)] if function_ids is not None else []))
@@ -421,7 +421,7 @@ class Twins:
     def pairs(self, proj, only: set[int] | None = None, min_size: int = 8) -> list[tuple[int, int]]:
         """(matched function, unmatched twin) pairs to try, the twins of `only` (newly matched ones) or all."""
         prints = self.prints(proj)
-        rows = {r["id"]: r for r in self.net.store.all(
+        rows = {r["id"]: r for r in self.net.project_store(proj['id']).all(
             "SELECT id, status FROM functions WHERE project_id=?", proj["id"])}
         groups: dict[str, list[int]] = defaultdict(list)
         for fid, p in prints.items():
@@ -449,7 +449,7 @@ class Twins:
             return None
         for other, q in prints.items():
             if other != fid and q.key == p.key:
-                r = self.net.store.one("SELECT status FROM functions WHERE id=?", other)
+                r = self.net.project_store(proj['id']).one("SELECT status FROM functions WHERE id=?", other)
                 if r and r["status"] == "matched":
                     return other
         return None
@@ -460,7 +460,7 @@ class Twins:
         try matched code on its unmatched twins, which go last meanwhile (-1): they may be free in a minute.
         Returns how many groups."""
         prints = self.prints(proj)
-        rows = {r["id"]: r["status"] for r in self.net.store.all(
+        rows = {r["id"]: r["status"] for r in self.net.project_store(proj['id']).all(
             "SELECT id, status FROM functions WHERE project_id=?", proj["id"])}
         groups: dict[str, list[int]] = defaultdict(list)
         for fid, p in prints.items():
@@ -469,7 +469,7 @@ class Twins:
             if p.size >= 8:
                 groups[p.key].append(fid)
         updates = []
-        names = {r["id"]: r["name"] for r in self.net.store.all(
+        names = {r["id"]: r["name"] for r in self.net.project_store(proj['id']).all(
             "SELECT id, name FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
         for members in groups.values():
             open_ = sorted(f for f in members if rows.get(f) == "open")
@@ -486,7 +486,7 @@ class Twins:
                 continue
             updates.append((len(open_) - 1, open_[0]))
             updates += [(-1, f) for f in open_[1:]]
-        with self.net.store.tx() as db:
+        with self.net.project_store(proj['id']).tx() as db:
             db.execute("UPDATE functions SET boost=0 WHERE project_id=? AND boost!=0", (proj["id"],))
             db.executemany("UPDATE functions SET boost=? WHERE id=?", updates)
         return sum(1 for b, _ in updates if b > 0)
@@ -501,7 +501,7 @@ class Twins:
         n = 0
         for at in range(0, len(found), SQL_CHUNK):
             chunk = found[at:at + SQL_CHUNK]
-            for r in self.net.store.all(f"SELECT * FROM functions WHERE id IN ({','.join('?' * len(chunk))}) "
+            for r in self.net.project_store(proj['id']).all(f"SELECT * FROM functions WHERE id IN ({','.join('?' * len(chunk))}) "
                                         "AND status='open'", *chunk):
                 if '"reopened"' in (r["meta"] or ""):  # the user gave it back to the agents (Network.reopen)
                     continue
@@ -515,11 +515,11 @@ class Twins:
         from .boundary_review import refresh
         refresh(self.net,proj,console)
         marks = []
-        for r in self.net.store.all("SELECT id, target, meta FROM functions WHERE project_id=? AND status='open'", proj["id"]):
+        for r in self.net.project_store(proj['id']).all("SELECT id, target, meta FROM functions WHERE project_id=? AND status='open'", proj["id"]):
             if '"reopened"' not in (r["meta"] or "") and (why := console.asm_reason(r["target"] or b"")):
                 marks.append((json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"]))
         if marks:
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", marks)
                 db.executemany("DELETE FROM claims WHERE function_id=?", [(fid,) for _, fid in marks])
         return len(marks)
@@ -616,7 +616,7 @@ class Twins:
             job.matched += free_candidates.run(self, slug, job)
             report(job, 'Checking similar matched functions')
             job.matched += similar_matches.run(self, slug, job)
-            with self.net.store.tx() as db:
+            with self.net.project_store(slug).tx() as db:
                 db.execute('INSERT INTO reuse_runs(project_id,attempts,matched,bytes,seconds,created_at) VALUES(?,?,?,?,?,?)',
                            (proj['id'], job.reuse_attempts, job.reuse_matched,
                             job.reuse_bytes, time.monotonic() - started, time.time()))
@@ -666,11 +666,11 @@ class Twins:
 
     def try_pair(self, agent, proj, a_id: int, b_id: int) -> str:
         """match | miss | asm | skip, for a's matched code on its twin b."""
-        a = self.net.store.one("SELECT * FROM functions WHERE id=?", a_id)
-        b = self.net.store.one("SELECT * FROM functions WHERE id=?", b_id)
+        a = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", a_id)
+        b = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", b_id)
         if a is None or b is None or a["status"] != "matched" or b["status"] != "open":
             return "skip"
-        if self.net.store.one("SELECT 1 FROM claims WHERE function_id=?", b_id):
+        if self.net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", b_id):
             return "skip"  # an agent is on it: its brief names the twin (see twin_of)
         with self._lock:
             if b_id in self._trying:
@@ -686,21 +686,22 @@ class Twins:
     def _miss_key(source: str) -> str:
         return hashlib.sha1(source.encode("utf-8", "replace")).hexdigest()[:20]
 
-    def _missed(self, b_id: int, source: str) -> bool:
-        return self.net.store.one("SELECT 1 FROM twin_misses WHERE function_id=? AND source_hash=? AND at > ?",
+    def _missed(self, b_id: int, source: str, *, project_id=None) -> bool:
+        store = self.net.project_store(project_id) if project_id is not None else self.net.store
+        return store.one("SELECT 1 FROM twin_misses WHERE function_id=? AND source_hash=? AND at > ?",
                                   b_id, self._miss_key(source), time.time() - MISS_TTL) is not None
 
     def known_miss(self, proj, a_id: int, b_id: int) -> bool:
         """Whether a's code was tried on b, as it is now, and didn't match (see MISS_TTL)."""
-        a = self.net.store.one("SELECT * FROM functions WHERE id=?", a_id)
-        b = self.net.store.one("SELECT * FROM functions WHERE id=?", b_id)
+        a = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", a_id)
+        b = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", b_id)
         if a is None or b is None:
             return False
         try:
             source = self.source_for(proj, a, b)
         except (NetworkError, OSError, ValueError):
             return False
-        return bool(source) and self._missed(b_id, source)
+        return bool(source) and self._missed(b_id, source, project_id=proj['id'])
 
     def across_games(self, slug: str, job: Job | None = None) -> int:
         """Matched code from the user's other games, tried on this game's identical functions: libraries (an SDK's,
@@ -718,7 +719,7 @@ class Twins:
             matched = archived
             mine = self.prints(proj)
             wanted = defaultdict(list)
-            for row in self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
+            for row in self.net.project_store(slug).all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
                 target = mine.get(row["id"])
                 if target and not target.asm and target.size >= ACROSS_MIN_BYTES:
                     wanted[target.key].append(row["id"])
@@ -739,7 +740,7 @@ class Twins:
         bounded = job is not None and hasattr(job, 'reuse_limit')
         mine = self.prints(proj)
         wanted: dict[str, list[int]] = defaultdict(list)
-        for r in self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
+        for r in self.net.project_store(slug).all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
             p = mine.get(r["id"])
             if p is not None and not p.asm and p.size >= ACROSS_MIN_BYTES:
                 wanted[p.key].append(r["id"])
@@ -756,7 +757,7 @@ class Twins:
             report(job, 'Searching donor project', game=other['name'])
             try:
                 if self.net.is_rom(other):
-                    if self.net.store.one("SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL LIMIT 1",other['id']):
+                    if self.net.project_store(other['id']).one("SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL LIMIT 1",other['id']):
                         self.index_project(other)
                         matched += self._rom_to_rom(agent, proj, other, wanted, mine, job)
                 else:
@@ -782,7 +783,7 @@ class Twins:
         keys = list(wanted)
         for at in range(0, len(keys), SQL_CHUNK):
             part = keys[at:at + SQL_CHUNK]
-            sources += self.net.store.all(
+            sources += self.net.project_store(other['id']).all(
                 "SELECT i.*, f.name, f.vram, f.matched_source FROM cross_game_index i "
                 "JOIN functions f ON f.id=i.function_id AND f.status='matched' "
                 "WHERE i.project_id = ? AND i.fingerprint IN (" + ",".join("?" for _ in part) + ")",
@@ -803,8 +804,8 @@ class Twins:
             for b_id in wanted.get(a["fingerprint"], []):
                 if bounded and exhausted(job):
                     return matched
-                b = self.net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", b_id)
-                if b is None or self.net.store.one("SELECT 1 FROM claims WHERE function_id=?", b_id):
+                b = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='open'", b_id)
+                if b is None or self.net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", b_id):
                     continue
                 if job is not None:
                     job.cross_candidates += 1
@@ -814,7 +815,7 @@ class Twins:
                     continue
                 header_b = self.net._context(proj["id"], b["unit"])["header"]
                 source = _declared(header, header_b, names, a["name"]) + apply(a["matched_source"], names)
-                if self._missed(b_id, source):
+                if self._missed(b_id, source, project_id=proj['id']):
                     continue
                 if job is not None:
                     job.cross_tried += 1
@@ -822,7 +823,7 @@ class Twins:
                     job.reuse_attempts += 1
                 report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
                 outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
-                with self.net.store.tx() as db:
+                with self.net.project_store(proj['id']).tx() as db:
                     db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,"
                                "source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
                                (proj["id"], b_id, other["id"], a["function_id"], outcome, why[:WHY_CHARS], time.time()))
@@ -852,19 +853,19 @@ class Twins:
 
     def _index_project(self, proj) -> int:
         cfg = self.net.cfg(proj)
-        counts = self.net.store.one("SELECT COUNT(*) AS n,MAX(matched_at) AS latest FROM functions "
+        counts = self.net.project_store(proj['id']).one("SELECT COUNT(*) AS n,MAX(matched_at) AS latest FROM functions "
                                     "WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL", proj["id"])
         stamp = (self.net._layout_key(proj), self._compiler_key(cfg["compiler"]),
                  self._compiler_key({"ranges": cfg.get("compiler_ranges") or [],'functions':cfg.get('function_compilers') or {}}), counts["n"], counts["latest"])
         if self._index_stamps.get(proj["id"]) == stamp:
             return counts["n"]
         prints = self.prints(proj)
-        rows = self.net.store.all("SELECT id,name,vram,rom_offset,matched_at FROM functions WHERE project_id=? AND status='matched' "
+        rows = self.net.project_store(proj['id']).all("SELECT id,name,vram,rom_offset,matched_at FROM functions WHERE project_id=? AND status='matched' "
                                   "AND matched_source IS NOT NULL", proj["id"])
         entries = [(r["id"], proj["id"], prints[r["id"]].key,
                     self._compiler_key(compiler_for(cfg, r["vram"], r)), prints[r["id"]].size,
                     r["matched_at"] or 0) for r in rows if r["id"] in prints and not prints[r["id"]].asm]
-        with self.net.store.tx() as db:
+        with self.net.project_store(proj['id']).tx() as db:
             db.execute("DELETE FROM cross_game_index WHERE project_id=?", (proj["id"],))
             db.executemany("INSERT INTO cross_game_index VALUES(?,?,?,?,?,?)", entries)
         self._index_stamps[proj["id"]] = stamp
@@ -888,15 +889,15 @@ class Twins:
 
     def clear_index(self, project_id: int) -> None:
         """An import replaced the function layout; discard signatures before they can be suggested."""
-        with self._index_lock, self.net.store.tx() as db:
+        with self._index_lock, self.net.project_store(project_id).tx() as db:
             db.execute("DELETE FROM cross_game_index WHERE project_id=?", (project_id,))
             self._index_stamps.pop(project_id, None)
 
     def _index_function(self, proj, fid: int) -> None:
-        row = self.net.store.one("SELECT id,name,vram,rom_offset,matched_at,status,matched_source FROM functions WHERE id=?", fid)
+        row = self.net.project_store(proj['id']).one("SELECT id,name,vram,rom_offset,matched_at,status,matched_source FROM functions WHERE id=?", fid)
         p = self.prints(proj).get(fid)
         cfg = self.net.cfg(proj)
-        with self.net.store.tx() as db:
+        with self.net.project_store(proj['id']).tx() as db:
             if row is None or row["status"] != "matched" or not row["matched_source"] or p is None or p.asm or not cfg.get("compiler"):
                 db.execute("DELETE FROM cross_game_index WHERE function_id=?", (fid,))
             else:
@@ -908,22 +909,39 @@ class Twins:
     def cross_game_results(self, slug: str) -> dict:
         """What exact transfers tried, including failures and where accepted C came from."""
         proj = self.net.project_row(slug)
-        rows = self.net.store.all(
-            "SELECT a.outcome,a.reason,a.created_at,f.name AS target,s.name AS source,p.name AS game,p.slug AS source_slug "
-            "FROM cross_game_attempts a JOIN functions f ON f.id=a.function_id "
-            "JOIN functions s ON s.id=a.source_function_id JOIN projects p ON p.id=a.source_project_id "
-            "WHERE a.project_id=? ORDER BY a.id DESC LIMIT 30", proj["id"])
-        matches = self.net.store.all(
-            "SELECT a.outcome,a.reason,a.created_at,f.name AS target,s.name AS source,p.name AS game,p.slug AS source_slug "
-            "FROM cross_game_attempts a JOIN functions f ON f.id=a.function_id "
-            "JOIN functions s ON s.id=a.source_function_id JOIN projects p ON p.id=a.source_project_id "
-            "WHERE a.project_id=? AND a.outcome='match' ORDER BY a.id DESC LIMIT 30", proj["id"])
-        counts = self.net.store.all("SELECT outcome,COUNT(*) AS n FROM cross_game_attempts WHERE project_id=? "
-                                    "GROUP BY outcome", proj["id"])
-        archived=self.net.store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_name AS source,a.source_game AS game,COALESCE((SELECT slug FROM projects WHERE slug=a.source_slug),'') AS source_slug FROM library_transfers a JOIN functions f ON f.id=a.function_id WHERE a.project_id=? ORDER BY a.id DESC LIMIT 30",proj['id'])
-        archived_matches=self.net.store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_name AS source,a.source_game AS game,COALESCE((SELECT slug FROM projects WHERE slug=a.source_slug),'') AS source_slug FROM library_transfers a JOIN functions f ON f.id=a.function_id WHERE a.project_id=? AND a.outcome='match' ORDER BY a.id DESC LIMIT 30",proj['id'])
+        store = self.net.project_store(proj['id'])
+        catalog = {r['id']:dict(r) for r in self.net.store.all('SELECT id,slug,name FROM projects')}
+        donors = {}
+        def attempts(matched=False):
+            rows = store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_project_id,a.source_function_id "
+                             "FROM cross_game_attempts a JOIN functions f ON f.id=a.function_id WHERE a.project_id=? "
+                             + ("AND a.outcome='match' " if matched else '') + 'ORDER BY a.id DESC LIMIT 30', proj['id'])
+            result = []
+            for row in rows:
+                pid, fid = row['source_project_id'], row['source_function_id']
+                if (pid, fid) not in donors:
+                    project = catalog.get(pid)
+                    source = None
+                    if project:
+                        owner = self.net.project_store(pid)
+                        project = owner.one('SELECT name,slug FROM projects WHERE id=?', pid)
+                        source = owner.one('SELECT name FROM functions WHERE id=? AND project_id=?', fid, pid)
+                    donors[pid, fid] = {'source':source['name'] if source else 'Removed function',
+                                       'game':project['name'] if project else 'Removed project',
+                                       'source_slug':project['slug'] if project else ''}
+                result.append({k:row[k] for k in ('outcome','reason','created_at','target')} | donors[pid, fid])
+            return result
+        rows, matches = attempts(), attempts(True)
+        counts = store.all('SELECT outcome,COUNT(*) n FROM cross_game_attempts WHERE project_id=? GROUP BY outcome', proj['id'])
+        slugs = {r['slug'] for r in catalog.values()}
+        def archived_rows(matched=False):
+            rows = store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_name AS source,"
+                             "a.source_game AS game,a.source_slug FROM library_transfers a JOIN functions f ON f.id=a.function_id "
+                             'WHERE a.project_id=? ' + ("AND a.outcome='match' " if matched else '') + 'ORDER BY a.id DESC LIMIT 30', proj['id'])
+            return [dict(row) | {'source_slug':row['source_slug'] if row['source_slug'] in slugs else ''} for row in rows]
+        archived, archived_matches = archived_rows(), archived_rows(True)
         totals={r['outcome']:r['n'] for r in counts}
-        for r in self.net.store.all('SELECT outcome,COUNT(*) n FROM library_transfers WHERE project_id=? GROUP BY outcome',proj['id']):
+        for r in store.all('SELECT outcome,COUNT(*) n FROM library_transfers WHERE project_id=? GROUP BY outcome',proj['id']):
             totals[r['outcome']]=totals.get(r['outcome'],0)+r['n']
         recent=sorted([dict(r) for r in [*rows,*archived]],key=lambda r:r['created_at'],reverse=True)[:30]
         verified=sorted([dict(r) for r in [*matches,*archived_matches]],key=lambda r:r['created_at'],reverse=True)[:30]
@@ -949,14 +967,18 @@ class Twins:
         if target is None or target.size < ACROSS_MIN_BYTES:
             return []
         compiler = self._compiler_key(compiler_for(self.net.cfg(proj), fn["vram"], fn))
-        exact = self.net.store.all(
-            "SELECT i.*, f.name, p.name AS game FROM cross_game_index i "
-            "JOIN functions f ON f.id=i.function_id AND f.status='matched' "
-            "JOIN projects p ON p.id=i.project_id WHERE i.project_id!=? AND p.arch=? AND p.big_endian=? "
-            "AND i.fingerprint=? AND i.compiler=? LIMIT ?", proj["id"], proj["arch"], proj["big_endian"],
-            target.key, compiler, limit)
+        from .shared_reuse import compatible
+        projects = list(compatible(self.net, proj))
+        exact = []
+        for other in projects:
+            found = self.net.project_store(other['id']).all(
+                "SELECT i.function_id,f.name FROM cross_game_index i JOIN functions f ON f.id=i.function_id "
+                "AND f.status='matched' WHERE i.project_id=? AND i.fingerprint=? AND i.compiler=? LIMIT ?",
+                other['id'], target.key, compiler, limit)
+            exact.extend(dict(row) | {'game':other['name'], 'source_slug':other['slug']} for row in found)
+            if len(exact) >= limit:break
         hints = [{"name": r["name"], "game": r["game"], "score": 1.0, "kind": "verified C in another game",
-                  "function_id": r["function_id"]} for r in exact]
+                  "function_id": r["function_id"], 'source_slug':r['source_slug']} for r in exact[:limit]]
         for r in self.net.store.all("SELECT corpus,name FROM sdk_signatures WHERE arch=? AND big_endian=? "
                                     "AND fingerprint=?", proj["arch"], proj["big_endian"], target.key):
             from .sdk_library import allowed
@@ -971,27 +993,38 @@ class Twins:
         def candidates():
             # Limit indexed metadata before reading any target blobs. Sorting the old joined
             # projection materialized code bytes for every size-compatible function.
-            rows = self.net.store.all("""WITH shortlist AS MATERIALIZED (
-                SELECT i.function_id,i.project_id,i.size FROM cross_game_index i INDEXED BY idx_cross_game_compiler_size
-                JOIN main.functions f INDEXED BY idx_functions_matched_id ON f.id=i.function_id AND f.status='matched'
-                JOIN projects p ON p.id=i.project_id
-                WHERE i.project_id!=? AND p.arch=? AND p.big_endian=? AND i.fingerprint!=?
-                AND i.compiler=? AND i.size BETWEEN ? AND ? ORDER BY ABS(i.size-?),i.function_id LIMIT 400)
-                SELECT s.function_id,f.name,f.target,f.vram,p.name AS game FROM shortlist s
-                JOIN functions f ON f.id=s.function_id JOIN projects p ON p.id=s.project_id""",
-                proj['id'], proj['arch'], proj['big_endian'], target.key, compiler,
-                max(ACROSS_MIN_BYTES, int(target.size * .75)), int(target.size / .75), target.size)
+            shortlist = []
+            by_project = {p['id']:p for p in projects}
+            for other in projects:
+                found = self.net.project_store(other['id']).all(
+                    "SELECT i.function_id,i.size FROM cross_game_index i INDEXED BY idx_cross_game_compiler_size "
+                    "JOIN main.functions f INDEXED BY idx_functions_matched_id ON f.id=i.function_id AND f.status='matched' "
+                    "WHERE i.project_id=? AND i.fingerprint!=? AND i.compiler=? AND i.size BETWEEN ? AND ? "
+                    "ORDER BY ABS(i.size-?),i.function_id LIMIT 400", other['id'], target.key, compiler,
+                    max(ACROSS_MIN_BYTES, int(target.size * .75)), int(target.size / .75), target.size)
+                shortlist.extend(dict(row) | {'project_id':other['id']} for row in found)
+            shortlist.sort(key=lambda row:(abs(row['size']-target.size), row['function_id']))
+            selected = defaultdict(list)
+            for row in shortlist[:400]:selected[row['project_id']].append(row['function_id'])
+            rows = []
+            for pid, ids in selected.items():
+                found = self.net.project_store(pid).all(
+                    'SELECT id AS function_id,name,target,vram FROM functions WHERE project_id=? '
+                    'AND id IN (SELECT value FROM json_each(?))', pid, json.dumps(ids))
+                rows.extend(dict(row) | {'game':by_project[pid]['name'], 'source_slug':by_project[pid]['slug']} for row in found)
             ops = similarity.mips_mnemonics(fn['target'], bool(proj['big_endian']), fn['vram'] or 0)
             by_id = {str(r['function_id']):r for r in rows}
             decoded = {str(r['function_id']):similarity.mips_mnemonics(r['target'], bool(proj['big_endian']), r['vram'] or 0)
                        for r in rows if r['target']}
             return [{'name':by_id[fid]['name'], 'game':by_id[fid]['game'], 'score':round(score,3),
-                     'kind':'similar code; unverified', 'function_id':by_id[fid]['function_id']}
+                     'kind':'similar code; unverified', 'function_id':by_id[fid]['function_id'], 'source_slug':by_id[fid]['source_slug']}
                     for fid, score in similarity.rank(ops, decoded, top=limit, floor=.8)]
-        version = (self.net.store.read_version('reuse_index'), self.net.store.read_version('fingerprints'),
-                   self.net.store.read_version('matched_evidence'), self.net.store.read_version('project_list'))
+        version = (self.net.store.read_version('project_list'), tuple(
+            (p['id'], *(self.net.project_store(p['id']).read_version(kind)
+                         for kind in ('reuse_index','fingerprints','matched_evidence','project_list')))
+            for p in projects))
         # Keep only the strongest names/IDs/scores, never the 400 target blobs or decoded instruction lists.
-        hints += self.net.store.read_cache.get(('suggestion-shortlist', proj['id'], target.key, compiler, target.size, limit),
+        hints += self.net.project_store(proj['id']).read_cache.get(('suggestion-shortlist', proj['id'], target.key, compiler, target.size, limit),
                                               version, candidates)
         return finish(hints)
 
@@ -1045,7 +1078,9 @@ class Twins:
         mine = self.prints(proj)
         wanted = {p.key for p in mine.values() if p.size >= ACROSS_MIN_BYTES and not p.asm}
         donors = defaultdict(dict)
-        for other in self.net.store.all("SELECT * FROM projects WHERE id != ?", proj["id"]):
+        for catalog in self.net.store.all("SELECT id,slug FROM projects WHERE id != ?", proj['id']):
+            other = self.net.project_store(catalog['id']).one('SELECT * FROM projects WHERE id=?', catalog['id'])
+            if other is None:raise NetworkError('A donor project is missing from its database. Restore it before searching.')
             from .maintenance import checkpoint
             checkpoint()
             if job is not None and job.stop.is_set():
@@ -1058,7 +1093,7 @@ class Twins:
                 con = consoles.of(self.net.cfg(other))
                 if (con.arch, con.big_endian) != (console.arch, console.big_endian):
                     continue
-                rows = self.net.store.all("SELECT id,name,meta FROM functions WHERE project_id=? AND status='matched'",
+                rows = self.net.project_store(other['id']).all("SELECT id,name,meta FROM functions WHERE project_id=? AND status='matched'",
                                           other["id"])
                 if not rows:
                     continue
@@ -1072,7 +1107,7 @@ class Twins:
             except (NetworkError, OSError, ValueError):
                 continue  # moved or incompletely prepared donor
         # Naming needs no C or disassembly; resolving packed payloads here can stall reuse.
-        rows = self.net.store.all("SELECT id,name,meta FROM functions WHERE project_id=?", proj["id"])
+        rows = self.net.project_store(proj['id']).all("SELECT id,name,meta FROM functions WHERE project_id=?", proj["id"])
         taken = {r["name"] for r in rows}
         candidates = []
         for row in rows:
@@ -1082,7 +1117,7 @@ class Twins:
             if naming["named"] or naming["renamed"] or len(choices) != 1:
                 continue
             name, provenance = next(iter(choices.items()))
-            if name in taken or self.net.store.one("SELECT 1 FROM claims WHERE function_id=?", row["id"]):
+            if name in taken or self.net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", row["id"]):
                 continue
             candidates.append((row, name, provenance))
         # A shared fingerprint can occur several times in the target. Do not pick an arbitrary owner.
@@ -1101,7 +1136,7 @@ class Twins:
                 return 0
             if not result.startswith("✅"):
                 return 0
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 for row, name, provenance in candidates:
                     record(db, row["id"], row["name"], name, method="exact_cross_game", **provenance)
             return len(candidates)
@@ -1117,7 +1152,7 @@ class Twins:
                 continue
             if not result.startswith("✅"):
                 continue
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 record(db, row["id"], row["name"], name, method="exact_cross_game", **provenance)
             renamed += 1
         return renamed
@@ -1139,7 +1174,7 @@ class Twins:
         report(job, 'Reading imported target objects', game=other['name'])
         theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
-        for a in self.net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", other["id"]):
+        for a in self.net.project_store(other['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched'", other["id"]):
             pa = theirs.get(a["id"])
             if pa is None or pa.asm:
                 continue
@@ -1147,8 +1182,8 @@ class Twins:
                 if job is not None and (job.stop.is_set() or (bounded and (
                         job.reuse_attempts >= job.reuse_limit or time.monotonic() >= job.reuse_deadline))):
                     return matched
-                b = self.net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", b_id)
-                if b is None or self.net.store.one("SELECT 1 FROM claims WHERE function_id=?", b_id):
+                b = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='open'", b_id)
+                if b is None or self.net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", b_id):
                     continue
                 names = renames(pa, mine[b_id], pa.name or a["name"].split("@")[0], b["name"])
                 if names is None or self.net.forks.is_asm(other, a):
@@ -1157,7 +1192,7 @@ class Twins:
                 if not original:
                     continue
                 source = apply(original, names)
-                if self._missed(b_id, source):
+                if self._missed(b_id, source, project_id=proj['id']):
                     continue
                 if job is not None:
                     job.cross_candidates += 1
@@ -1166,7 +1201,7 @@ class Twins:
                     job.reuse_attempts += 1
                 report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
                 outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
-                with self.net.store.tx() as db:
+                with self.net.project_store(proj['id']).tx() as db:
                     db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,"
                                "source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
                                (proj["id"], b_id, other["id"], a["id"], outcome, why[:WHY_CHARS], time.time()))
@@ -1193,18 +1228,19 @@ class Twins:
                 self.net.forks.mark_asm(b, a["name"])
                 return "asm"
             return "skip"
-        if self._missed(b["id"], source):
+        if self._missed(b["id"], source, project_id=proj["id"]):
             return "known"
         outcome, why = self._attempt_twin(agent, proj, a, b, source)
         if outcome == "miss":
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
                            "VALUES(?,?,?,?,?)", (b["id"], self._miss_key(source), proj["id"], time.time(), why))
         return outcome
 
-    def miss_why(self, b_id: int) -> str | None:
+    def miss_why(self, b_id: int, *, project_id=None) -> str | None:
         """What the last try of its twin's code said (the compiler's first error, or how close it came)."""
-        row = self.net.store.one("SELECT why FROM twin_misses WHERE function_id=? ORDER BY at DESC LIMIT 1", b_id)
+        store = self.net.project_store(project_id) if project_id is not None else self.net.store
+        row = store.one("SELECT why FROM twin_misses WHERE function_id=? ORDER BY at DESC LIMIT 1", b_id)
         return row["why"] if row else None
 
     @staticmethod
@@ -1307,7 +1343,7 @@ class Twins:
                     if job.stop.is_set():
                         return
                     with progress_lock:
-                        fn = self.net.store.one('SELECT name FROM functions WHERE id=?', pair[1])
+                        fn = self.net.project_store(slug).one('SELECT name FROM functions WHERE id=?', pair[1])
                         active[pair[1]] = fn['name'] if fn else str(pair[1])
                         publish()
                     try:
@@ -1331,7 +1367,7 @@ class Twins:
                 for p in pairs:  # one try per unmatched function, unless its twin's code already failed on it
                     if p[1] not in by_target and not self.known_miss(proj, *p):
                         by_target[p[1]] = p
-                with self.net.store.tx() as db:  # agents leave these for last meanwhile: they may be free in a minute
+                with self.net.project_store(slug).tx() as db:  # agents leave these for last meanwhile: they may be free in a minute
                     db.executemany("UPDATE functions SET boost=-1 WHERE id=? AND status='open'", [(b,) for b in by_target])
                 tally['total'] = len(by_target)
                 publish()
@@ -1344,7 +1380,7 @@ class Twins:
         finally:
             job.state = "stopped" if job.stop.is_set() else "done"
             if job.matched:
-                with self.net.store.tx() as db:
+                with self.net.project_store(slug).tx() as db:
                     self.net._event(db, proj["id"], agent.id, "autopilot",
                                     f"{job.matched} functions matched from identical code elsewhere in the game")
         return job

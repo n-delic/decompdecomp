@@ -2620,7 +2620,7 @@ class ForkEngine:
             source = None
         out = ["", f"### Identical code: {a['name']} ({a['unit']}) is the same machine code and already matches"]
         if source and len(source) < 6000:
-            why = self.net.twins.miss_why(fn["id"])
+            why = self.net.twins.miss_why(fn["id"], project_id=fn["project_id"])
             out += ["Its code with this function's names: start from it. "
                     + (f"decompdecomp tried it as is: {why}. Fix that (this file lacks something the other one has: a "
                        "type, a declaration, an include, or declares a callee differently)." if why else

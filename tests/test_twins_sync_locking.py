@@ -26,6 +26,7 @@ def test_source_matches_reuse_target_prints_without_progress_sync(monkeypatch, k
     store = SimpleNamespace(_local=threading.local(), read_cache=ReadCache(), read_version=lambda *a: 1)
     net = SimpleNamespace(store=store, links={}, cfg=lambda proj: {'kind':kind},
                           fork_slug=lambda *a: pytest.fail('A source-only match looked up and synchronized its project'))
+    net.project_store = lambda _: net.store
     worker = twins.Twins(net)
     proj = {'id':1, 'slug':'example'}
     builds = []
