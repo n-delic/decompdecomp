@@ -400,7 +400,7 @@ class Network:
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
-        """Mint an agent token for one of the app's helpers (`trusted` stays on the record for older databases)."""
+        """Mint an agent token for a managed helper or manual MCP connection (`trusted` stays on the record for older databases)."""
         name = name.strip()
         if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
             raise NetworkError("agent name must be 1-40 chars of [A-Za-z0-9-_.]")

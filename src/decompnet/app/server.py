@@ -1,7 +1,7 @@
 """The local decompdecomp server: the GUI, its API, and the MCP endpoint agents connect to.
 
 It listens on 127.0.0.1 only. The GUI answers only the app's own window, whose user agent carries the per-launch
-secret (window.py); helper agents need their own bearer token. Host headers are checked on every request, so web
+secret (window.py); managed and manual agents need their own project-scoped bearer token. Host headers are checked on every request, so web
 pages can't reach it through DNS rebinding.
 
 build() sets up what the routes share (the engine, helper agents, jobs, settings, the request checks) and hands it to
@@ -74,13 +74,18 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
+    from . import manual_mcp
+
+    def project_for(agent_id):
+        return manager.project_of(agent_id) or manual_mcp.project_for(net, settings, agent_id)
+
     def agent_of(ctx: Context):
         headers = ctx.headers or {}
         auth = headers.get("authorization") or headers.get("Authorization") or ""
         agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
-        slug = manager.project_of(agent.id)  # only helpers the app starts have tokens, each for one project
+        slug = project_for(agent.id)
         if not slug:
-            raise NetworkError("this agent isn't one of this app's helpers: start helpers from the app")
+            raise NetworkError("This MCP connection is no longer assigned to a project. Create a connection in Agents & models.")
         return agent, slug
 
     threading.Thread(target=collab.local_addresses, daemon=True).start()  # `tailscale status` can take seconds
@@ -117,6 +122,24 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     mcp = tools.build_mcp(net, agent_of)
 
+    async def personalized_instructions(ctx, call_next):
+        result = await call_next(ctx)
+        if ctx.method not in {'initialize', 'server/discover'}:
+            return result
+        auth = (getattr(ctx.request, 'headers', None) or {}).get('authorization', '')
+        try:
+            agent = net.authenticate(auth.removeprefix('Bearer ').strip() or None)
+            slug = project_for(agent.id)
+            if slug:
+                instructions = manager.instructions_for(agent, slug)
+                return ({**result, 'instructions': instructions} if isinstance(result, dict)
+                        else result.model_copy(update={'instructions': instructions}))
+        except NetworkError:
+            pass
+        return result
+
+    mcp._lowlevel_server.middleware.append(personalized_instructions)
+
     # Each helper sees only the work tools for its project's kind (fewer tool definitions in every request, nothing
     # it shouldn't call).
     from mcp_types import ListToolsResult, PaginatedRequestParams
@@ -128,8 +151,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
         except NetworkError:
             return ListToolsResult(tools=[])
-        slug = manager.project_of(agent.id)
-        keep = set(tools.project_tools(net, slug))
+        slug = project_for(agent.id)
+        if not slug:
+            return ListToolsResult(tools=[])
+        keep = set(tools.project_tools(net, slug, agent))
         return ListToolsResult(tools=[t for t in everything if t.name in keep])
 
     mcp._lowlevel_server.add_request_handler("tools/list", PaginatedRequestParams, scoped_tools)

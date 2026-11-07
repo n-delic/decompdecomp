@@ -2,15 +2,20 @@
 /* decompdecomp GUI. Plain JS, no build step. Everything shown from agents or ROMs is untrusted text:
    it only ever reaches the page through textContent or esc().
 
-   The GUI is nine classic scripts sharing one global scope, loaded by index.html in this order: base (helpers,
+   The GUI is twelve classic scripts sharing one global scope, loaded by index.html in this order: base (helpers,
    theme, state and routing, bug reports), sidebar (the project list, New project, the notification centre), home,
-   project (overview, decompiling together, public decomps), map, agents (who's working, the launcher, what
+   project (overview, decompiling together, public decomps), map, prompt-settings, tool-catalog, tool-settings,
+   agents (who's working, the launcher, what
    happens), function (the drawer, the function list), steering (drawers and keys, instructions, export, project
    settings and the compiler), pages (the app's own pages, updates, and starting the app). Functions can be called
    across files once all have loaded; code that runs while a file loads may only use what this file or an earlier
    one defines. Not ES modules: they would need an import for every name used across files. */
 
 const $ = (id) => document.getElementById(id);
+function disclosureContext(id, text) {
+  const el = $(id);
+  if (el) el.textContent = `— ${text}`;
+}
 if (new URLSearchParams(location.search).get("native") === "1") document.documentElement.classList.add("windows-window");
 window.addEventListener("pywebviewready", () => {
   if (!window.pywebview.api.set_theme) return;

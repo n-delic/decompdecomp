@@ -107,6 +107,9 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
+  visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
+  per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.
 - **The project's owner chooses which functions helpers take first (#205).** Beside the instructions, a project's
   Agents tab picks Default (the helper's own choice), Smallest first, Largest first, Closest to matching first (the
   near misses), or Not yet tried first (a first pass over every function nobody compiled, then the smallest). The

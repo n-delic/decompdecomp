@@ -363,12 +363,16 @@ def tool_names(fork: bool, console=None, ltcg: bool = False) -> list[str]:
     return [n for n in HANDLERS if n not in skip and (ltcg or n not in LTCG_ONLY)]
 
 
-def project_tools(net: RomNetwork, slug: str | None) -> list[str]:
+def project_tools(net: RomNetwork, slug: str | None, agent=None, include_disabled: bool = False) -> list[str]:
     """tool_names for a project (None: no project yet)."""
     fork = bool(slug and net.fork_slug(slug))
     cfg = net.cfg(net._project(slug)) if fork else {}
     manifest = (net.forks.get(slug)[1].manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
-    return tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None, bool(manifest.get("ltcg")))
+    names = tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None, bool(manifest.get("ltcg")))
+    if include_disabled:
+        return names
+    from .tool_policy import visible
+    return visible(net, slug, names, agent)
 
 
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
@@ -384,6 +388,8 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Every helper sees pulled changes before acting; only tools that write work need a second synchronization."""
+    from .tool_policy import record
+    record(net, agent, slug, name)
     net.progress.sync(slug, force=True)
     result = HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
     if name not in READ_ONLY:

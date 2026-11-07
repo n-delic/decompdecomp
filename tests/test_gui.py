@@ -301,3 +301,24 @@ def test_linux_vm_setup_shows_readiness_and_uses_progress():
         pytest.skip('needs node to run GUI scripts')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
                    capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_prompt_editor_inherits_previews_and_reports_errors():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_prompt_settings.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_tool_controls_save_and_revert_failed_changes():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_tool_settings.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_manual_mcp_connections_handle_failed_project_loads():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_manual_mcp.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

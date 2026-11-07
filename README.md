@@ -167,6 +167,22 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
 
 You can also continue a community decomp: paste the address of its repository and pick your own copy of its game.
 
+### Your AI agents
+
+Open **Agents & models** to install agent apps or add an OpenAI-compatible API endpoint. The page also lets you
+edit the built-in prompt templates globally and preview the result. An individual helper can override its prompts;
+changes take effect when its next session starts. Project instructions and guides still accompany the prompt.
+
+**Agent tools & usage** shows the tools exposed to agents, local recorded call counts, and presets for hiding
+optional tools. Required claim, inspect, compile and release tools stay enabled. A global choice affects every
+agent; an individual helper can hide more tools. A changed tool list is advertised at the next session or MCP
+reconnect, and a disabled tool call is rejected immediately. Older calls may be absent from the counts.
+
+To use another AI tool, choose **Connect another AI tool with MCP**, select a project, and create a connection.
+The panel shows a copyable Streamable HTTP URL and bearer configuration. Keep decompdecomp running locally and
+keep the bearer token private: it can read and change that project's work. The token is shown once, survives app
+restarts, and can be revoked from the panel. The external tool manages its own sessions and token costs.
+
 To decompile with friends, open a project's **Decompile together** panel to host a room, or choose **Join a team's
 room** from **New project**. If you've already imported that exact game, joining also shares your saved matches that
 the host hasn't matched yet; the host verifies each one. For ROM projects, better unfinished attempts are shared too
