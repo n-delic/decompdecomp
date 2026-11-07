@@ -836,3 +836,17 @@ def test_controls_and_start_stop_do_not_wait_for_saved_statistics(sweep, monkeyp
         assert not obj.stop('game')['enabled']
     finally:
         release.set()
+
+
+def test_maximum_throughput_controls_persist_for_returning_project(sweep, monkeypatch):
+    import time
+    obj,net,_,_=sweep
+    seen=[]
+    monkeypatch.setattr(obj,'run',lambda *args:seen.append(args))
+    started=obj.start('game',1,10,threads=2,maximum_throughput=True,compile_slots=10)
+    for _ in range(100):
+        if obj.jobs.jobs[started['job']]['state']!='running':break
+        time.sleep(.01)
+    assert seen
+    saved=deep_sweep.Sweeps(net,obj.jobs).config('game')
+    assert saved['maximum_throughput'] is True and saved['compile_slots']==10

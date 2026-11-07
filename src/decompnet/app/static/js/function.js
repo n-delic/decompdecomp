@@ -245,12 +245,13 @@ async function openFn(name) {
     $("fnCompilerLog").hidden = true;
     $("fnWorkPanel").hidden = true;
     $("fnDeepMetrics").hidden = true;
+    $("fnDeepThroughput").hidden = true; $("fnDeepThroughput").textContent = "";
     $("fnDeepStatus").textContent = "";
     $("fnDeepLog").textContent = ""; $("fnDeepLog").hidden = true;
     $("fnDeepNow").textContent = "";
     $("fnDeepWork").replaceChildren();
     $("fnDeepRun").disabled = false; $("fnDeepStop").hidden = true;
-    $("fnDeepMinutes").disabled = false; $("fnDeepVariants").disabled = false; $("fnDeepProfiles").disabled = false; $("fnDeepThreads").disabled = false;
+    $("fnDeepMinutes").disabled = false; $("fnDeepVariants").disabled = false; $("fnDeepProfiles").disabled = false; $("fnDeepThreads").disabled = false; $("fnDeepMaximum").disabled = false; $("fnDeepCompileSlots").disabled = false;
     for (const id of ["fnCompilerSummary", "fnCompilerLog", "fnDeepLog"]) {
       const log = $(id); if (log._workStatus) { log._workStatus.remove(); log._workStatus = null; }
     }
@@ -1007,7 +1008,7 @@ async function followFunctionDeep(job = null) {
   const target = deepPermuterTarget = {};
   const active = () => deepPermuterTarget === target && S.gen === gen && S.fnNav === nav && S.slug === slug && S.fn === name && !$("drawer").hidden;
   const log = $("fnDeepLog"), status = $("fnDeepStatus"), stop = $("fnDeepStop");
-  const controls = [$("fnDeepRun"), $("fnDeepMinutes"), $("fnDeepVariants"), $("fnDeepProfiles"), $("fnDeepThreads")];
+  const controls = [$("fnDeepRun"), $("fnDeepMinutes"), $("fnDeepVariants"), $("fnDeepProfiles"), $("fnDeepThreads"), $("fnDeepMaximum"), $("fnDeepCompileSlots")];
   const minutes = Number($("fnDeepMinutes").value), maxVariants = Number($("fnDeepVariants").value);
   const renderProgress = deepProgressView();
   renderProgress();
@@ -1021,7 +1022,7 @@ async function followFunctionDeep(job = null) {
   $("fnDeepWork").append(log._workStatus);
   $("fnDeepWork").append(bar);
   try {
-    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants, compiler_profiles:Number($("fnDeepProfiles").value), threads_per_function:Number($("fnDeepThreads").value) } }));
+    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants, compiler_profiles:Number($("fnDeepProfiles").value), threads_per_function:Number($("fnDeepThreads").value), maximum_throughput:$("fnDeepMaximum").checked, compile_slots:Number($("fnDeepCompileSlots").value) || 0 } }));
     if (active()) { deepPermuterJob = job; stop.disabled = false; }
     const result = await followJob(job, null, (lines, state) => {
       if (!active()) return;

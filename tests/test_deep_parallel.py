@@ -148,3 +148,24 @@ def test_wrapped_deadline_is_not_multiplied_by_worker_count(monkeypatch):
     monkeypatch.setattr(deep_permuter, '_run', lambda *a, **k: pytest.fail('expired budget'))
     result = deep_permuter.run(net, 'game', 'f', 1, 10, log, threads_per_function=3)
     assert result['reason'] == 'Time limit reached' and result['tested'] == 0
+
+
+def test_maximum_mode_uses_detected_cores_without_multiplying_budget(monkeypatch):
+    from decompnet import compiler
+    from decompnet.app import deep_throughput
+    net = setup(monkeypatch)
+    monkeypatch.setattr(deep_throughput.os,'cpu_count',lambda:4)
+    paths=[]
+    def path(net,slug,name,minutes,allowance,log,profiles,*,lane):
+        paths.append((lane.index,allowance,log.compile_pool))
+        lane.prepared()
+        return {'tested':allowance}
+    monkeypatch.setattr(deep_permuter,'_run',path)
+    initial=compiler._SLOTS.limit
+    log=Log()
+    result=deep_permuter.run(net,'game','f',1,11,log,maximum_throughput=True)
+    assert len(paths)==4 and result['tested']==11
+    assert sum(n for _,n,_ in paths)==11
+    assert len({id(pool) for _,_,pool in paths})==1
+    assert paths[0][2].count==4 and paths[0][2].maximum
+    assert compiler._SLOTS.limit==initial and log.compile_pool is None

@@ -34,7 +34,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, m2cfix, permuter_claims, scoring, seeds, toolchains
+from .. import compile_timing, consoles, m2cfix, permuter_claims, scoring, seeds, toolchains
 from ..candidate_work import trial
 from ..compile_sessions import batched
 from ..forks.project import ForkError
@@ -168,6 +168,7 @@ class Generator:
                 elif not failed and isinstance(out.get('variant'), str):
                     from .permuter_initialization import unsafe_temporary
                     if unsafe_temporary(job['source'], out['variant'], job['function'], job.get('header', '')):continue
+                    compile_timing.add('generated', 1)
                     chunk.append(TracedVariant(out['variant'], out['lineage'])
                                  if isinstance(out.get('lineage'), list) else out['variant'])
                     self.empty = False
@@ -217,11 +218,13 @@ class Generator:
             elif variants is not None and isinstance(out.get("variant"), str):
                 from .permuter_initialization import unsafe_temporary
                 if not unsafe_temporary(job["source"], out["variant"], job["function"], job.get("header", "")):
+                    compile_timing.add('generated', 1)
                     variants.append(TracedVariant(out["variant"], out["lineage"]) if isinstance(out.get("lineage"), list) else out["variant"])
     def _line(self, deadline: float):
         """The generator's next line, or None when it has stopped or hasn't answered by `deadline`."""
         try:
-            return self._lines.get(timeout=max(0, deadline - time.monotonic()))
+            with compile_timing.phase('generation'):
+                return self._lines.get(timeout=max(0, deadline - time.monotonic()))
         except queue.Empty:
             return None
 

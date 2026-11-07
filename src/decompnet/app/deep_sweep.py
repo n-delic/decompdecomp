@@ -8,7 +8,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
-from . import agent_tokens, deep_permuter, workers
+from . import agent_tokens, deep_permuter, deep_throughput, workers
 from .deep_activity import Activity
 
 POLL_SECONDS = 15
@@ -329,7 +329,8 @@ class Sweeps:
                                    'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 
-    def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1):
+    def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1, maximum_throughput=False, compile_slots=0):
+        throughput = deep_throughput.options(maximum_throughput, compile_slots)
         from . import deep_profiles
         if not isinstance(loop, bool):
             raise NetworkError('Loop indefinitely must be true or false.')
@@ -354,7 +355,7 @@ class Sweeps:
                     db.execute("DELETE FROM deep_permutation_passes WHERE function_id IN "
                                "(SELECT id FROM functions WHERE project_id=? AND status='open')",
                                (self.net.project_row(slug)['id'],))
-            self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop})
+            self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, **throughput})
             job = self.jobs.start('deep-permutation-pass', lambda log: self.run(slug, minutes, max_variants, log, threads, loop),
                                   project=slug, cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}
@@ -405,20 +406,22 @@ class Sweeps:
                        (fn['id'], scope, state, minutes, variants, time.time() if state == 'completed' else None,
                         json.dumps(result or {}), error))
 
+    @deep_throughput.sweep
     def run(self, slug, minutes, variants, log, threads=1, loop=False):
         """Keep a bounded queue moving; optionally repeat eligible turns until stopped.
 
         Blocked functions never occupy a worker. Sleep only when no useful turn is available.
         """
         self.recover_room_transport(slug)
-        count = workers.clamp(threads) if threads != 1 else 1
+        maximum = getattr(log.compile_pool, 'maximum', False)
+        count = deep_throughput.width(True,0) if maximum and not threads else workers.clamp(threads) if threads != 1 else 1
         stats = {'visited': 0, 'tested': 0, 'matched': 0, 'rotated':0, 'activity': Activity(log)}
         visited_turns = set()
         lock = threading.Lock()  # (the counters are shared by every thread's function)
         cycle = 1
         order = []
         futures = {}
-        pool = ThreadPoolExecutor(count, thread_name_prefix='deep-pass', initializer=workers.lower_priority)
+        pool = ThreadPoolExecutor(count, thread_name_prefix='deep-pass', initializer=None if maximum else workers.lower_priority)
         stats['activity'].publish({'cycle': cycle, 'loop': loop,
             'preparation': {'checked': 0, 'total': 0, 'eligible': 0, 'waiting': 0, 'done': False}}, force=True)
         try:
@@ -559,6 +562,7 @@ class Sweeps:
         def function_log(line):
             activity.update(fn["name"], line=line)
             log(f'{fn["name"]}: {line}')
+        function_log.compile_pool = getattr(log, 'compile_pool', None)
         function_log.check_cancel = log.check_cancel
         function_log.progress = progress
         try:

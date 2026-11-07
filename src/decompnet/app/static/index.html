@@ -526,6 +526,8 @@
           <details class="deep-advanced"><summary>Advanced settings</summary><div class="deep-advanced-fields">
             <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
             <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
+            <label class="deep-sweep-repeat"><input id="deepSweepMaximum" type="checkbox"><span>Maximum throughput<small>Use all detected CPU cores, dedicated candidate generators and a shared compiler pool.</small></span></label>
+            <label class="field"><span>Concurrent compiles</span><input id="deepSweepCompileSlots" type="number" min="1" max="256" placeholder="auto"><small>Blank uses all cores in maximum mode; balanced mode keeps its normal compiler allowance.</small></label>
             <label class="field"><span>Functions at a time</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
             <label class="field"><span>Threads per function</span><input id="deepSweepFunctionThreads" type="number" min="1" max="256" value="1"><small>Search independent candidate paths in parallel. The time and candidate limits apply to the whole function. Total workers = functions × threads per function.</small></label>
             <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label>
@@ -533,6 +535,7 @@
           </div></details>
         </div>
         <div class="deep-dashboard">
+        <p class="hint" id="deepSweepThroughput" hidden></p>
         <section class="deep-queue-state" id="deepSweepQueueState" role="status">
           <div><h3 id="deepSweepQueueTitle">Ready to search</h3><p id="deepSweepQueueReason"></p></div>
           <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Start search</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop</button></div>
@@ -977,10 +980,13 @@
             <label class="field"><span>Time limit · minutes</span><input id="fnDeepMinutes" type="number" min="1" max="120" value="30"></label>
             <label class="field"><span>Compile limit</span><input id="fnDeepVariants" type="number" min="1" max="1000000" value="100000"></label>
             <label class="field"><span>Compiler profiles per candidate</span><input id="fnDeepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
+            <label class="deep-sweep-repeat"><input id="fnDeepMaximum" type="checkbox"><span>Maximum throughput<small>The default one-thread setting expands to one independent search path per detected core. Higher thread counts remain in effect.</small></span></label>
+            <label class="field"><span>Concurrent compiles</span><input id="fnDeepCompileSlots" type="number" min="1" max="256" placeholder="auto"></label>
             <label class="field"><span>Threads per function</span><input id="fnDeepThreads" type="number" min="1" max="256" value="1"><small>Parallel candidate paths share this function’s time and candidate limits.</small></label>
             <div class="deep-actions"><button class="primary small-btn" id="fnDeepRun" type="button">Run deep permuter</button>
             <button class="ghost small-btn" id="fnDeepStop" type="button" hidden>Stop</button></div>
           </div>
+          <p class="hint" id="fnDeepThroughput" hidden></p>
           <div class="deep-dashboard" id="fnDeepMetrics" hidden>
             <dl class="deep-scores">
               <div><dt>Starting match</dt><dd id="fnDeepStartPercent">—</dd><span id="fnDeepStartScore">Score —</span></div>
