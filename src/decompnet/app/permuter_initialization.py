@@ -166,6 +166,10 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
                 or set(re.findall(IDENT, text)) & opaque_macros
                 or re.search(r'\b(?:sizeof|_Alignof|typeof|__typeof__|true|false)\b', text)):
             return None
+        # A field named x is not the local x. Preserve the base and index expressions,
+        # but hide member identifiers from the binding-specific write/sequence checks.
+        text = re.sub(r'(\.|->)(\s*)('+IDENT+r')',
+                      lambda hit: hit[1]+hit[2]+' '*len(hit[3]), text)
         # Expression sequencing, embedded writes and macro-like calls are beyond this guard.
         if names & set(re.findall(IDENT, text)) and re.search(r'\?|&&|\|\||\b(?:sizeof|_Alignof|typeof|__typeof__)\b|\b[A-Z_][A-Z_0-9]*\s*\(', text):
             return None

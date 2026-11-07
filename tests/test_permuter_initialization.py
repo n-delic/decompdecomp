@@ -361,3 +361,29 @@ def test_record_field_spelling_is_not_a_read_of_the_temporary(record):
 def test_complex_or_macro_record_declarations_keep_no_verdict(record, header):
     candidate = 'int f(int condition) { int temp; '+record+' return temp; }'
     assert not unsafe_temporary(PARENT, candidate, 'f', header)
+
+
+@pytest.mark.parametrize("store", ["p->x=x;", "p . x=x;", "p->child.x=x;"])
+def test_member_name_does_not_hide_lost_local_initialization(store):
+    parent = 'int f(int condition) { int x; x=1; '+store+' return x; }'
+    candidate = parent.replace('x=1;', 'if(condition) x=1;')
+    assert not unsafe_temporary(parent, parent, 'f')
+    assert unsafe_temporary(parent, candidate, 'f')
+
+
+@pytest.mark.parametrize("statement", ["p->x=1;", "p.x=1;", "items[x].x=1;", "p->x=x;"])
+def test_member_store_does_not_initialize_same_named_local(statement):
+    candidate = 'int f(int condition) { int x; '+statement+' return x; }'
+    assert unsafe_temporary('int f(int condition) { return 0; }', candidate, 'f')
+
+
+def test_member_mask_does_not_hide_embedded_local_write():
+    from decompnet.app.permuter_initialization import _initialization_verdicts
+    candidate = 'int f(void) { int x; p->x=(x=1); return x; }'
+    assert _initialization_verdicts(candidate, 'f', '')['x'] is None
+
+
+def test_member_macro_stays_opaque_before_field_names_are_hidden():
+    from decompnet.app.permuter_initialization import _initialization_verdicts
+    candidate = 'int f(void) { int x; p->x=1; return x; }'
+    assert _initialization_verdicts(candidate, 'f', '#define x hidden()') == {}
