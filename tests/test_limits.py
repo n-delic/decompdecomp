@@ -49,6 +49,20 @@ def test_project_build_timeout_when_parent_exits_but_child_holds_pipe(tmp_path):
     assert not marker.exists()
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='Windows uses a Job Object')
+def test_group_signal_permission_error_falls_back_to_child_pids(tmp_path, monkeypatch):
+    marker = tmp_path / 'child-finished'
+    child = f"import time,pathlib; time.sleep(0.8); pathlib.Path({str(marker)!r}).write_text('finished')"
+    parent = f"import subprocess,time,sys; subprocess.Popen([sys.executable,'-c',{child!r}]); time.sleep(3)"
+    monkeypatch.setattr(limits.os, 'killpg', lambda *_: (_ for _ in ()).throw(PermissionError()))
+    proc = subprocess.Popen([sys.executable, '-c', parent], start_new_session=True)
+    time.sleep(0.1)
+    limits.stop_group(proc)
+    proc.wait(timeout=2)
+    time.sleep(0.9)
+    assert not marker.exists()
+
+
 def test_compiler_limit_configuration(monkeypatch):
     monkeypatch.setenv('DECOMP_COMPILER_MEMORY_MB', '64')
     monkeypatch.setenv('DECOMP_COMPILER_TIMEOUT_SECONDS', '12')

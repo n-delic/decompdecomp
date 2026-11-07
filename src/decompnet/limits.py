@@ -157,6 +157,19 @@ def stop_group(proc) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # macOS can refuse a group signal after the driver exits or while its
+        # descendants change state. Stop the processes we still own individually.
+        for pid, _ in reversed(_process_memory_tree(proc.pid)):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except (ProcessLookupError, PermissionError):
+                pass
 
 
 class CompilerMemoryWatchdog:
