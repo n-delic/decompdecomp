@@ -876,6 +876,7 @@ async function renderProjectSettings() {
   const ov = S.ov;
   if (!ov) return;
   const fork = ov.kind === "fork";
+  if (!fork) refreshCompilerComparison();
   $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
   // project's flags its build's and nothing for the ROM engine's survey to check
@@ -1416,26 +1417,88 @@ for (const id of ["compilerFlagsOnly", "compilerUsedProfilesOnly", "compilerRete
   if (id === "compilerFlagsOnly" && $(id).checked) $("compilerUsedProfilesOnly").checked = false;
   updateCompilerTestScope();
 };
-$("testInstalledCompilers").onclick = async () => {
-  const slug = S.slug;
-  const button = $("testInstalledCompilers"), log = $("installedCompilerLog");
+$("testInstalledCompilers").onclick = () => {
+  const button = $("testInstalledCompilers");
   if (button._compilerRun) return button._compilerRun.cancel();
+  return followCompilerComparison();
+};
+let compilerComparisonFollowing = null, compilerComparisonRequest = 0, compilerComparisonDiscovery = null;
+const compilerComparisonSeen = new Map();
+function compilerComparisonHeading(running) {
+  $("installedCompilerTest").querySelector("summary").textContent = "Find better compiler settings" + (running ? " · Running" : "");
+}
+async function refreshCompilerComparison() {
+  if (!S.slug || S.tab !== "settings") return;
+  const slug = S.slug, gen = S.gen;
+  if (compilerComparisonFollowing) {
+    if (compilerComparisonFollowing.slug === slug && compilerComparisonFollowing.gen === gen) return;
+    compilerComparisonFollowing.detach();
+  }
+  if (compilerComparisonDiscovery?.slug === slug && compilerComparisonDiscovery.gen === gen) return;
+  const request = ++compilerComparisonRequest, discovery = {slug, gen};
+  compilerComparisonDiscovery = discovery;
+  try {
+    const state = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}&view=comparison`);
+    if (request !== compilerComparisonRequest || slug !== S.slug || gen !== S.gen) return;
+    if ($("compilerStopError").dataset.discoveryError) {
+      delete $("compilerStopError").dataset.discoveryError; $("compilerStopError").hidden = true;
+    }
+    if (state.job && (state.state === "running" || compilerComparisonSeen.get(`${slug}:${gen}`) !== state.job)) {
+      followCompilerComparison(state);
+    }
+  } catch (error) {
+    if (request === compilerComparisonRequest && slug === S.slug && gen === S.gen) {
+      $("compilerStopError").textContent = `Could not load compiler activity: ${error.message}. Retrying automatically.`;
+      $("compilerStopError").dataset.discoveryError = "true"; $("compilerStopError").hidden = false;
+    }
+  } finally {
+    if (compilerComparisonDiscovery === discovery) compilerComparisonDiscovery = null;
+  }
+}
+if (typeof setInterval === "function") setInterval(refreshCompilerComparison, 5000);
+async function followCompilerComparison(existing = null) {
+  const slug = S.slug, gen = S.gen;
+  const button = $("testInstalledCompilers"), log = $("installedCompilerLog");
+  if (compilerComparisonFollowing) {
+    if (compilerComparisonFollowing.slug === slug && compilerComparisonFollowing.gen === gen) return;
+    compilerComparisonFollowing.detach();
+  }
+  ++compilerComparisonRequest;
+  const run = {slug, gen};
+  compilerComparisonFollowing = run;
+  const active = () => compilerComparisonFollowing === run && S.slug === slug && S.gen === gen;
   const work = $("installedCompilerWork");
   const stop = button, stopError = $("compilerStopError");
-  let jobId = null;
+  let jobId = existing?.job || null;
   const controls = [$("compilerUsedProfilesOnly"), $("compilerFlagsOnly"), $("compilerRetest"), $("compilerAutoApply")];
   const disabled = controls.map(control => control.disabled);
+  run.detach = () => {
+    if (compilerComparisonFollowing !== run) return;
+    compilerComparisonFollowing = null; delete button._compilerRun;
+    controls.forEach((control, index) => { control.disabled = disabled[index]; });
+    button.disabled = false; compilerComparisonHeading(false); updateCompilerTestScope();
+  };
+  const restoreOptions = scope => {
+    if (!scope) return;
+    $("compilerFlagsOnly").checked = !!scope.flags_only;
+    $("compilerUsedProfilesOnly").checked = !!scope.used_profiles_only;
+    $("compilerRetest").checked = scope.untested_only === false;
+    $("compilerAutoApply").checked = !!scope.auto_apply;
+    updateCompilerTestScope();
+  };
+  restoreOptions(existing?.scope);
+  compilerComparisonHeading(true);
   controls.forEach(control => { control.disabled = true; });
   button.disabled = true; button.textContent = "Starting…";
   stopError.hidden = true; stopError.textContent = "";
   button._compilerRun = {cancel: async () => {
-    if (!jobId) return;
+    if (!jobId || !active()) return;
     stop.disabled = true; stop.textContent = "Stopping…";
     stopError.hidden = true; stopError.textContent = "";
     try {
       await api("/api/job/cancel", {method: "POST", body: {id: jobId}});
     } catch (e) {
-      if (!jobId) return;
+      if (!jobId || !active()) return;
       stop.disabled = false; stop.textContent = "Stop comparison";
       stopError.textContent = `Could not stop: ${e.message}. Try again.`; stopError.hidden = false;
     }
@@ -1459,28 +1522,60 @@ $("testInstalledCompilers").onclick = async () => {
   delete $("compilerImprovements").dataset.filter;
   $("compilerProgress").dataset.slug = slug;
   renderCompilerProgress(null);
+  if (existing?.progress) renderCompilerProgress(existing.progress);
   showJobError(work, "");
   try {
-    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked, untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked } });
+    const started = existing || await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked, untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked } });
+    if (!active()) return;
+    const {job} = started;
+    restoreOptions(started.scope);
+    if (started.progress) renderCompilerProgress(started.progress);
     jobId = job; stop.disabled = false; stop.textContent = "Stop comparison";
-    const result = await followJob(job, log, (_lines, snapshot) => {
-      if (S.slug === slug && snapshot.progress) renderCompilerProgress(snapshot.progress);
-    });
-    if (S.slug !== slug) return;
+    let result;
+    while (active()) {
+      try {
+        result = await followJob(job, null, (lines, snapshot) => {
+          if (active()) {
+            const top = log.scrollTop;
+            log.textContent = lines.join("\n");
+            log.scrollTop = log._followTail ? log.scrollHeight : top;
+            if (snapshot.progress) renderCompilerProgress(snapshot.progress);
+          }
+        }, active);
+        break;
+      } catch (error) {
+        if (error.job || !active()) throw error;
+        work.textContent = "Connection interrupted. Reconnecting to the running comparison…";
+        work.hidden = false;
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        if (!active()) return;
+        try {
+          const current = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}&view=comparison`);
+          if (current.job !== job) {
+            const lost = new Error("This comparison is no longer available. Start a comparison to continue saved work.");
+            lost.job = {state:"error"}; throw lost;
+          }
+        } catch (checkError) { if (checkError.job) throw checkError; }
+        if (active()) work.textContent = "";
+      }
+    }
+    if (!active() || !result) return;
     renderCompilerProgress(null, result);
     if (!$("compilerImprovements").dataset.filter) renderCompilerImprovements(slug, compilerResultRows(result.results || result.improvements || [], "improved"));
     log.textContent += `\n${result.tried} functions tested; ${result.skipped || 0} completed comparisons skipped. Results saved.`;
   } catch (e) {
+    if (!active()) return;
     if (e.job?.state === "cancelled") {
-      if (S.slug === slug) {
+      if (active()) {
         $("compilerProgress").querySelector("[data-current]").textContent = "Comparison stopped";
         $("compilerProgress").querySelector("[data-profile]").textContent = "Completed results remain available. Find better settings resumes with the unfinished work.";
       }
     } else showJobError(work, e.message);
   } finally {
-    jobId = null; delete button._compilerRun; button.disabled = false;
-    controls.forEach((control, index) => { control.disabled = disabled[index]; });
-    updateCompilerTestScope();
+    if (active()) {
+      if (jobId) compilerComparisonSeen.set(`${slug}:${gen}`, jobId);
+      jobId = null; run.detach();
+    }
   }
 };
 
