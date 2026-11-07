@@ -55,9 +55,23 @@ class Sweeps:
         self.active = {}
         self.queue_cache = {}
         self.lock = threading.RLock()
-        with net.store.tx() as db:
+        self.ready = set()
+        self._prepare(net.store)
+
+    def _prepare(self, store):
+        with self.lock:
+            if store in self.ready:return store
+            self._install(store)
+            self.ready.add(store)
+        return store
+
+    def _store(self, project):
+        return self._prepare(self.net.project_store(project))
+
+    def _install(self, store):
+        with store.tx() as db:
             db.execute(SCHEMA)
-            net.store._track_reads('deep_permutation_passes', 'passes')
+            store._track_reads('deep_permutation_passes', 'passes')
             db.execute('''CREATE TABLE IF NOT EXISTS deep_permutation_recipes(
                 function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE, family TEXT NOT NULL,
                 tested INTEGER NOT NULL, skipped INTEGER NOT NULL, rejected INTEGER NOT NULL,
@@ -78,9 +92,11 @@ class Sweeps:
                 starting_percent REAL, new_score INTEGER NOT NULL,
                 new_percent REAL, updated_at REAL NOT NULL)''')
 
-    def record_recipes(self, function_id, totals, wins, measurements=None):
+    def record_recipes(self, function_id, totals, wins, measurements=None, *, project=None):
         """Save counts and individual verified improvements, including searches stopped part way through."""
-        with self.net.store.tx() as db:
+        store = self._store(project) if project is not None else self.net.function_store(function_id)
+        if store is None:raise NetworkError('This function no longer exists.')
+        with self._prepare(store).tx() as db:
             for family, values in totals.items():
                 db.execute("""INSERT INTO deep_permutation_recipes
                     (function_id,family,tested,skipped,rejected,improvements,matches,score_gain)
@@ -110,7 +126,7 @@ class Sweeps:
         if any(job.get('state') == 'running' and job.get('kind') in {'deep-permuter', 'deep-permutation-pass'}
                for job in self.jobs.jobs.values()):
             raise NetworkError('Stop active deep permuter searches before resetting metrics.')
-        with self.net.store.tx() as db:
+        with self._store(project_id).tx() as db:
             for table in ('deep_permutation_recipes', 'deep_permutation_improvements', 'deep_permutation_measurements'):
                 db.execute(f'DELETE FROM {table} WHERE function_id IN '
                            '(SELECT id FROM functions WHERE project_id=?)', (project_id,))
@@ -123,7 +139,7 @@ class Sweeps:
         return self.status(slug)
 
     def recipes(self, project_id):
-        rows = self.net.store.all("""SELECT r.family, SUM(r.tested) tested, SUM(r.skipped) skipped,
+        rows = self._store(project_id).all("""SELECT r.family, SUM(r.tested) tested, SUM(r.skipped) skipped,
             SUM(r.rejected) rejected, SUM(r.improvements) improvements, SUM(r.matches) matches,
             SUM(r.score_gain) score_gain, COUNT(DISTINCT r.function_id) functions
             FROM deep_permutation_recipes r JOIN functions f ON f.id=r.function_id
@@ -131,7 +147,7 @@ class Sweeps:
         return [dict(row) for row in rows]
 
     def measurements(self, project_id):
-        rows = self.net.store.all("""SELECT m.family,m.phase,SUM(m.attempted) attempted,
+        rows = self._store(project_id).all("""SELECT m.family,m.phase,SUM(m.attempted) attempted,
             SUM(m.compile_failed) compile_failed,SUM(m.unscored) unscored,SUM(m.unchanged) unchanged,
             SUM(m.worse) worse,SUM(m.improved) improved,SUM(m.matched) matched,SUM(m.elapsed_ms) elapsed_ms,
             SUM(m.score_gain) score_gain
@@ -140,7 +156,7 @@ class Sweeps:
         return [dict(row) for row in rows]
 
     def recipe_wins(self, project_id):
-        rows = self.net.store.all("""SELECT w.family,w.previous_score,w.new_score,w.provenance,w.created_at,
+        rows = self._store(project_id).all("""SELECT w.family,w.previous_score,w.new_score,w.provenance,w.created_at,
             f.name AS function FROM deep_permutation_recipe_wins w JOIN functions f ON f.id=w.function_id
             WHERE f.project_id=? AND w.id>COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key=?),0)
             ORDER BY w.id DESC LIMIT 50""", project_id, f'deep-metrics-reset:{project_id}')
@@ -148,17 +164,17 @@ class Sweeps:
 
     def config(self, slug):
         proj = self.net.project_row(slug)
-        row = self.net.store.one('SELECT value FROM settings WHERE key=?', f'deep-sweep:{proj["id"]}')
+        row = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-sweep:{proj["id"]}')
         return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': 10000})
 
     def save(self, slug, cfg):
         proj = self.net.project_row(slug)
-        with self.net.store.tx() as db:
+        with self._store(slug).tx() as db:
             db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',
                        (f'deep-sweep:{proj["id"]}', json.dumps(cfg)))
 
     def history(self, slug, fn):
-        row = self.net.store.one('SELECT * FROM deep_permutation_passes WHERE function_id=?', fn['id'])
+        row = self._store(slug).one('SELECT * FROM deep_permutation_passes WHERE function_id=?', fn['id'])
         if not row:
             return {'state': 'not tried', 'completed': False}
         result = dict(row)
@@ -180,7 +196,7 @@ class Sweeps:
                 return None
             return max(0.0, min(99.9 if value else 100.0,
                                100.0 * (1 - value / max(1, before['n_insns'] * 100))))
-        with self.net.store.tx() as db:
+        with self._store(before['project_id']).tx() as db:
             db.execute('''INSERT INTO deep_permutation_improvements
                 (function_id,starting_score,starting_percent,new_score,new_percent,updated_at)
                 VALUES(?,?,?,?,?,?) ON CONFLICT(function_id) DO UPDATE SET
@@ -189,19 +205,19 @@ class Sweeps:
                 (before['id'], start, percent(start), score, percent(score), time.time()))
 
     def improvements(self, project_id):
-        rows = self.net.store.all('''SELECT i.*, f.name AS function FROM deep_permutation_improvements i
+        rows = self._store(project_id).all('''SELECT i.*, f.name AS function FROM deep_permutation_improvements i
             JOIN functions f ON f.id=i.function_id WHERE f.project_id=? ORDER BY i.updated_at DESC,f.id''', project_id)
         return [dict(row) | {'starting_percent_text': scoring.percent_text(row['starting_percent']),
                              'new_percent_text': scoring.percent_text(row['new_percent'])} for row in rows]
 
     def attention(self, proj):
-        return self.net.store.read_cache.get(('deep-attention', proj['id']),
-            (self.config(proj['slug']).get('compiler_profiles',1), self.net.store.read_version('inputs', proj['id']), self.net.store.read_version('passes', proj['id']), claim_stalls.repair_rules()),
+        return self._store(proj['id']).read_cache.get(('deep-attention', proj['id']),
+            (self.config(proj['slug']).get('compiler_profiles',1), self._store(proj['id']).read_version('inputs', proj['id']), self._store(proj['id']).read_version('passes', proj['id']), claim_stalls.repair_rules()),
             lambda: self._attention(proj), ttl=QUEUE_CACHE_SECONDS if self.net.fork_slug(proj['slug']) else None)
 
     def _attention(self, proj):
         """Only failures that still block this build's unchanged, eligible candidates."""
-        rows = self.net.store.all(
+        rows = self._store(proj['id']).all(
             f'SELECT {SCOPE_COLUMNS},d.scope AS pass_scope,d.error AS pass_error,d.minutes AS pass_minutes, '
             'd.max_variants AS pass_variants FROM functions f '
             'JOIN deep_permutation_passes d ON d.function_id=f.id '
@@ -237,10 +253,10 @@ class Sweeps:
         """Requeue transient failures and turns cut short by the retired budget policy."""
         from .deep_room import unavailable
         proj=self.net.project_row(slug)
-        rows=self.net.store.all("SELECT function_id,state,error FROM deep_permutation_passes WHERE state IN ('error','rotated') AND function_id IN (SELECT id FROM functions WHERE project_id=?)",proj['id'])
+        rows=self._store(slug).all("SELECT function_id,state,error FROM deep_permutation_passes WHERE state IN ('error','rotated') AND function_id IN (SELECT id FROM functions WHERE project_id=?)",proj['id'])
         ids=[r['function_id'] for r in rows if r['state']=='rotated' or unavailable(r['error'])]
         if ids:
-            with self.net.store.tx() as db:
+            with self._store(slug).tx() as db:
                 db.executemany("UPDATE deep_permutation_passes SET state='pending',error='' WHERE function_id=?",[(fid,) for fid in ids])
             with self.lock:self.queue_cache.clear()
 
@@ -259,9 +275,9 @@ class Sweeps:
         # A status poll must never queue behind a writer to repair old pass records.
         # The search worker performs recovery; until then transport errors and rotations are retryable.
         proj = self.net.project_row(slug)
-        counts = self.net.store.one("SELECT COUNT(*) total, SUM(best_source IS NOT NULL AND best_score IS NOT NULL) ready "
+        counts = self._store(slug).one("SELECT COUNT(*) total, SUM(best_source IS NOT NULL AND best_score IS NOT NULL) ready "
                                     f"FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])
-        completed = self.net.store.one("SELECT COUNT(*) n FROM deep_permutation_passes d JOIN functions f ON f.id=d.function_id "
+        completed = self._store(slug).one("SELECT COUNT(*) n FROM deep_permutation_passes d JOIN functions f ON f.id=d.function_id "
                                       "WHERE f.project_id=? AND d.state='completed'", proj['id'])['n']
 
         improvements = self.improvements(proj['id'])
@@ -276,7 +292,7 @@ class Sweeps:
         def count_queue():
             shared = candidate_scope.batch_context(self.net, proj)
             done_open = done_matched = rotated = blocked = 0
-            rows = self.net.store.all(f"""SELECT {SCOPE_COLUMNS},d.error AS pass_error,d.scope AS pass_scope,d.minutes AS pass_minutes,
+            rows = self._store(slug).all(f"""SELECT {SCOPE_COLUMNS},d.error AS pass_error,d.scope AS pass_scope,d.minutes AS pass_minutes,
                 d.max_variants AS pass_variants,d.state AS pass_state FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
                 WHERE f.project_id=? AND f.gone_mark IS NULL AND f.status IN ('open','matched')
                 AND d.state IN ('completed','error') AND f.best_source IS NOT NULL AND f.best_score IS NOT NULL
@@ -296,13 +312,13 @@ class Sweeps:
                     elif row['status'] == 'open':
                         blocked += int(row['pass_state'] == 'error')
             return done_open, done_matched, rotated, blocked
-        done_open, done_matched, rotated, blocked = self.net.store.read_cache.get(
+        done_open, done_matched, rotated, blocked = self._store(slug).read_cache.get(
             ('deep-queue', proj['id']),
-            (cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles',1), self.net.store.read_version('inputs', proj['id']), self.net.store.read_version('passes', proj['id']), claim_stalls.repair_rules()),
+            (cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles',1), self._store(slug).read_version('inputs', proj['id']), self._store(slug).read_version('passes', proj['id']), claim_stalls.repair_rules()),
             count_queue, ttl=QUEUE_CACHE_SECONDS if self.net.fork_slug(slug) else None)
         job = self.jobs.jobs.get(current.get('job'), {})
         recipes, measurements, wins = self.recipes(proj['id']), self.measurements(proj['id']), self.recipe_wins(proj['id'])
-        reset = self.net.store.one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')
+        reset = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')
         has_activity = bool(job or improvements or recipes or measurements or wins
                             or cfg.get('metrics_started', bool((completed or errors) and not reset)))
         return cfg | {'has_activity': has_activity, 'threads_default': workers.default_workers(),
@@ -334,7 +350,7 @@ class Sweeps:
                 return self.control(slug)
             if repeat:
                 self.queue_cache.clear()
-                with self.net.store.tx() as db:
+                with self._store(slug).tx() as db:
                     db.execute("DELETE FROM deep_permutation_passes WHERE function_id IN "
                                "(SELECT id FROM functions WHERE project_id=? AND status='open')",
                                (self.net.project_row(slug)['id'],))
@@ -355,13 +371,14 @@ class Sweeps:
 
     def resume(self):
         """Leave interrupted passes stopped; the user starts them again when ready."""
-        with self.net.store.tx() as db:
-            rows = db.execute("SELECT key,value FROM settings WHERE key LIKE 'deep-sweep:%'").fetchall()
-            for row in rows:
-                cfg = json.loads(row['value'])
-                if cfg.get('enabled'):
-                    cfg['enabled'] = False
-                    db.execute('UPDATE settings SET value=? WHERE key=?', (json.dumps(cfg), row['key']))
+        for store, _ in self.net.project_stores():
+            with store.tx() as db:
+                rows = db.execute("SELECT key,value FROM settings WHERE key LIKE 'deep-sweep:%'").fetchall()
+                for row in rows:
+                    cfg = json.loads(row['value'])
+                    if cfg.get('enabled'):
+                        cfg['enabled'] = False
+                        db.execute('UPDATE settings SET value=? WHERE key=?', (json.dumps(cfg), row['key']))
 
     def shutdown(self):
         from . import release_repairs
@@ -382,7 +399,7 @@ class Sweeps:
     def record(self, fn, scope, state, minutes, variants, result=None, error=''):
         with self.lock:
             self.queue_cache.clear()
-        with self.net.store.tx() as db:
+        with self._store(fn['project_id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO deep_permutation_passes '
                        '(function_id,scope,state,minutes,max_variants,completed_at,result,error) VALUES(?,?,?,?,?,?,?,?)',
                        (fn['id'], scope, state, minutes, variants, time.time() if state == 'completed' else None,
@@ -411,7 +428,7 @@ class Sweeps:
                 pending = waiting = 0
                 # Shuffle lightweight identities first. Never fingerprint the entire project before
                 # dispatching work; keep at most two turns per worker queued ahead of execution.
-                identities = [dict(r) for r in self.net.store.all(f"SELECT id,name,size FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])]
+                identities = [dict(r) for r in self._store(slug).all(f"SELECT id,name,size FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])]
                 from .boundary_repairs import blocked as boundary_blocked
                 held=boundary_blocked(self.net,proj)
                 identities=[r for r in identities if r["id"] not in held]
@@ -432,16 +449,16 @@ class Sweeps:
                 failed = threading.Event()
                 def execute(item, blocked, proj=proj, total=total):
                     log.check_cancel()
-                    fn = self.net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?', item['id'], proj['id'])
+                    fn = self._store(slug).one('SELECT * FROM functions WHERE id=? AND project_id=?', item['id'], proj['id'])
                     if not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
                         return
                     # Dispatch always uses fresh inputs, never the producer's shared snapshot.
                     scope = signature(self.net, proj, fn, minutes, variants)
-                    previous = self.net.store.one('SELECT scope,state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
+                    previous = self._store(slug).one('SELECT scope,state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
                     if previous and previous['scope'] == scope and (previous['state'] == 'error' or (not loop and previous['state'] == 'completed')):
                         return
                     self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked)
-                    previous = self.net.store.one('SELECT state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
+                    previous = self._store(slug).one('SELECT state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
                     if previous and (previous['state'] == 'rotated' or (loop and previous['state'] == 'completed')):
                         with lock:
                             visited_turns.add(fn['id'])
@@ -460,7 +477,7 @@ class Sweeps:
                 for offset in range(0, total, chunk):
                     log.check_cancel()
                     ids = [r['id'] for r in identities[offset:offset + chunk]]
-                    rows = {r['id']: r for r in self.net.store.all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
+                    rows = {r['id']: r for r in self._store(slug).all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
                         f.best_source,f.target,f.relocs,f.asm,f.seed,d.scope AS pass_scope,d.state AS pass_state,
                         c.expires_at AS claim_expires FROM functions f
                         LEFT JOIN deep_permutation_passes d ON d.function_id=f.id
@@ -565,7 +582,7 @@ class Sweeps:
         except NetworkError as error:
             # Claim races are temporary. A bad unchanged candidate stays visible as an error,
             # not completed, and a changed source/header or an explicit repeat retries it.
-            busy = self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time())
+            busy = self._store(slug).one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time())
             from .deep_room import unavailable
             claim_wait = unavailable(error) or bool((busy and slug in self.net.links) or 'claim' in str(error).lower() or str(error).startswith('This function is working'))
             self.record(fn, scope, 'pending' if claim_wait else 'error', minutes, variants, error=str(error))

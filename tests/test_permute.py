@@ -328,7 +328,7 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
     monkeypatch.setattr(p, "_permute", lambda *a: (_ for _ in ()).throw(NetworkError("send the function definition\nmore")),
                         raising=False)
     with caplog.at_level("INFO", logger="decompdecomp"):
-        p._turn(None, None, {"name": "f", "id": 1}, None)
+        p._turn(None, net._project("g"), {"name": "f", "id": 1, "project_id": 1}, None)
     assert caplog.records[-1].getMessage() == "permuter: f: send the function definition (left to agents)"
     assert caplog.records[-1].exc_info is None
     # the same best attempt is refused every time: its other turns go too

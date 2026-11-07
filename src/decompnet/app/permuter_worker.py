@@ -226,8 +226,9 @@ class PermuterWorker:
         # permuter identity is cleared; agent and other background claims remain.
         agent = self.net.store.one("SELECT id FROM agents WHERE name='permuter' AND origin='local'")
         if agent:
-            with self.net.store.tx() as db:
-                db.execute("DELETE FROM claims WHERE agent_id=?", (agent["id"],))
+            for store, _ in self.net.project_stores():
+                with store.tx() as db:
+                    db.execute("DELETE FROM claims WHERE agent_id=?", (agent["id"],))
 
     def _restart(self) -> None:
         with self._update_mutex:

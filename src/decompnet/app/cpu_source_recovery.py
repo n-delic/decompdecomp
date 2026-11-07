@@ -88,5 +88,5 @@ def trial_key(state, source, header, cfg):
 def pending(net, fn, state, cfg, variants, origins, exclude):
     """Let pending structural CPU trials run before spending the pass on broader flag profiles."""
     return any(pair!=exclude and origins.get(pair,{}).get('family','').startswith('cpu-')
-               and not net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',
+               and not net.project_store(fn['project_id']).one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',
                                      fn['id'],trial_key(state,*pair,cfg)) for pair in variants)

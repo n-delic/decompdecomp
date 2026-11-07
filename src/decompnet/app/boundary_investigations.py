@@ -100,7 +100,7 @@ def report(net, agent, slug, function, action, supporting, counter, uncertainty,
             'supporting': supporting, 'counter': counter, 'uncertainty': uncertainty,
             'citations': addresses, 'agent': session.label, 'model': session.model,
             'time': time.time(), 'revision': packet['revision'], 'image': packet['image']}
-    with net.store.tx() as db:
+    with net.project_store(slug).tx() as db:
         if db.execute('SELECT 1 FROM settings WHERE key=?', (_key(session),)).fetchone():
             raise NetworkError('This investigation already saved its recommendation. Start another investigation for a second opinion.')
         db.execute('INSERT INTO settings VALUES(?,?)', (_key(session), json.dumps({**item, 'slug': slug})))
@@ -110,7 +110,7 @@ def report(net, agent, slug, function, action, supporting, counter, uncertainty,
 def suggestions(net, slug, packet):
     """Keep advice attributable and visible after restart, with changed inputs labelled stale."""
     items = []
-    for row in net.store.all('SELECT value FROM settings WHERE key LIKE ?', PREFIX+'%'):
+    for row in net.project_store(slug).all('SELECT value FROM settings WHERE key LIKE ?', PREFIX+'%'):
         item = json.loads(row['value'])
         if item['slug'] == slug and item['function'] == packet['function']:
             items.append({**item, 'stale': any(item[k] != packet[k] for k in ('revision', 'image'))})
@@ -118,7 +118,7 @@ def suggestions(net, slug, packet):
 
 
 def reported(net, session):
-    return bool(net.store.one('SELECT 1 FROM settings WHERE key=?', _key(session)))
+    return bool(net.project_store(session.slug).one('SELECT 1 FROM settings WHERE key=?', _key(session)))
 
 
 def run(manager, session):

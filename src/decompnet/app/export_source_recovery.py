@@ -16,7 +16,7 @@ def run(net, proj, names, st, log, budget=4, deadline=None):
     agent,_=net.local_agent('autopilot')
     for name in sorted(names):
         if st.stop.is_set() or time.monotonic()>=deadline or report['tested']>=budget:break
-        fn=net.store.one("SELECT * FROM functions WHERE project_id=? AND name=? AND status='matched'",proj['id'],name)
+        fn=net.project_store(proj['id']).one("SELECT * FROM functions WHERE project_id=? AND name=? AND status='matched'",proj['id'],name)
         if not fn or not net.permuter._hold(agent,fn,count_turn=False,seconds=60):continue
         try:
             proj=net.project_row(proj['slug']);fn=net._function(name,proj['slug'])
@@ -31,7 +31,7 @@ def run(net, proj, names, st, log, budget=4, deadline=None):
             for _,body,private in pairs:
                 if st.stop.is_set() or time.monotonic()>=deadline or report['tested']>=budget:break
                 key=trial_key(expected,body,private,{'export-recovery':2})
-                if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
+                if net.project_store(proj['id']).one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
                 report['tested']+=1;st.add(variants=1)
                 result=net._compile(proj,private,body,fn)
                 exact=False
@@ -42,7 +42,7 @@ def run(net, proj, names, st, log, budget=4, deadline=None):
                 if exact:
                     def guard(name=name,proj=proj,fn=fn,source=source,expected=expected):
                         current=net._function(name,proj['slug'])
-                        claim=net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?',fn['id'])
+                        claim=net.project_store(proj['id']).one('SELECT agent_id,expires_at FROM claims WHERE function_id=?',fn['id'])
                         if (current['status']!='matched' or current['matched_source']!=source
                                 or inputs(net,net.project_row(proj['slug']),current)!=expected or not claim
                                 or claim['agent_id']!=agent.id or claim['expires_at']<=time.time()):
@@ -52,7 +52,7 @@ def run(net, proj, names, st, log, budget=4, deadline=None):
                                     effective_settings=result.effective_settings,before_record=guard)
                     report['export_repaired']+=1;log(name+': exact source now passes export layout checks; full repository rebuild is still required.')
                     break
-                with net.store.tx() as db:
+                with net.project_store(proj['id']).tx() as db:
                     db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                                (fn['id'],key,'miss','Exact export repair failed byte/data or layout checks'))
         finally:net.permuter._let_go(agent,fn)

@@ -42,7 +42,7 @@ def checkpoint(net, fn):
     if not source:
         return
     key=PREFIX+str(fn['id'])
-    row=net.store.one('SELECT value FROM settings WHERE key=?',key)
+    row=net.project_store(fn['project_id']).one('SELECT value FROM settings WHERE key=?',key)
     saved=json.loads(row['value']) if row else []
     digest=hashlib.sha256(source.encode()).hexdigest()
     if any(item['source_hash']==digest for item in saved):
@@ -51,12 +51,12 @@ def checkpoint(net, fn):
           'quality':'unverified; saved before random rewriting'}
     # Keep the first checkpoint as well as two recent alternatives, even across restarts.
     saved=(saved[:1]+saved[-1:]+[item]) if len(saved)>=3 else saved+[item]
-    with net.store.tx() as db:
+    with net.project_store(fn['project_id']).tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(saved)))
 
 
 def view(net, fn):
-    row=net.store.one('SELECT value FROM settings WHERE key=?',PREFIX+str(fn['id']))
+    row=net.project_store(fn['project_id']).one('SELECT value FROM settings WHERE key=?',PREFIX+str(fn['id']))
     if not row:
         return []
     out=['### Before random search (quality unverified)',

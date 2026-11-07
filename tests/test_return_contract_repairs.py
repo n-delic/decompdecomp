@@ -61,6 +61,7 @@ def test_loaded_result_requires_a_real_caller_and_never_enables_unbacked_rewrite
     net=SimpleNamespace(xrefs=lambda p:dict(called_by={123:{10}}),
         _asm_text=lambda row,p:target if row is fn else CALLER,
         store=SimpleNamespace(one=lambda *a:dict(name='caller')))
+    net.project_store = lambda project:net.store
     context=return_contract_evidence.m2c_context(net,proj,fn,'original','')
     assert 'int f();' in context
     assert return_contract_evidence.m2c_context(net,proj,fn,'original','void f(void);')=='original'
@@ -137,6 +138,7 @@ def test_m2c_context_hint_is_caller_backed_and_never_changes_shared_prototypes()
     net=SimpleNamespace(xrefs=lambda p:dict(called_by={123:{10}}),
         _asm_text=lambda row,p:TARGET if row is fn else CALLER,
         store=SimpleNamespace(one=lambda *a:dict(name='caller')))
+    net.project_store = lambda project:net.store
     context=return_contract_evidence.m2c_context(net,proj,fn,'int allocate();','')
     assert 'int f();' in context
     assert return_contract_evidence.m2c_context(net,proj,fn,'original','void f(void);')=='original'
@@ -219,6 +221,7 @@ def test_deep_pipeline_connects_storage_return_and_expression_repairs(monkeypatc
     from tests.test_permute import AGENT
     generate=draft_repairs.variants
     net=setup(monkeypatch,imported)
+    net.project_store = lambda project:net.store
     monkeypatch.setattr(draft_repairs,'variants',generate)
     source='''void f(int n) {
  volatile float a;

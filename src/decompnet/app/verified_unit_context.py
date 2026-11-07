@@ -53,7 +53,7 @@ def apply(source, name, donors):
 def donors(net, proj, fn, source):
     if not net.is_rom(proj) or not fn['unit'] or net.fork_slug(proj['slug']):return []
     settings=compiler_for(net.cfg(proj),fn['vram'], fn)
-    rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND unit=? AND id!=? AND status='matched' ORDER BY id DESC LIMIT 24",
+    rows=net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND unit=? AND id!=? AND status='matched' ORDER BY id DESC LIMIT 24",
                        proj['id'],fn['unit'],fn['id'])
     result=[]
     for row in rows:

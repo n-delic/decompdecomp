@@ -10,7 +10,7 @@ def remember(net, agent, proj, fn, source, score):
     if score is None:
         return
     cache = net.__dict__.setdefault('_search_evidence',{})
-    current = net.store.one('SELECT * FROM functions WHERE id=?',fn['id']) or fn
+    current = net.project_store(fn['project_id']).one('SELECT * FROM functions WHERE id=?',fn['id']) or fn
     key = (fn['id'],experiment_evidence.build_scope(net,proj,current))
     pool = cache.setdefault(key,{})
     rows = permuter_focus.normalized(repair_ranking.evidence(net,fn['id'],agent.id))
@@ -67,10 +67,10 @@ def brief(net, proj, fn):
             lines.append(allocation_evidence.text(rows,proj['arch']))
             if clue := allocation_search.brief(net,proj,fn,source,rows):lines.append(clue)
     experiment_evidence.prepare(net)
-    rows = net.store.all('SELECT family,attempted,same_output,no_edit,improved,worse,failed FROM repair_input_effects WHERE function_id=? AND scope=? ORDER BY attempted DESC LIMIT 3',fn['id'],experiment_evidence.scope(net,proj,fn))
+    rows = net.project_store(fn['project_id']).all('SELECT family,attempted,same_output,no_edit,improved,worse,failed FROM repair_input_effects WHERE function_id=? AND scope=? ORDER BY attempted DESC LIMIT 3',fn['id'],experiment_evidence.scope(net,proj,fn))
     if rows:
         lines.append('Current-input local trials: '+'; '.join(f"{r['family']}: {r['attempted']} proposals, {r['same_output']} identical output, {r['no_edit']} no edits, {r['worse']} worse, {r['failed']} failed, {r['improved']} improvements" for r in rows)+'. Unchanged source/build inputs need not repeat ineffective trials; a changed lifetime or declaration shape starts fresh evidence. These families remain available.')
-    cached = net.store.all("SELECT family,COUNT(*) AS n FROM agent_family_targets WHERE function_id=? AND scope=? AND family IN ('compiled-miss','compiled-error') GROUP BY family", fn['id'], agent_tokens.target_scope(net,fn,''))
+    cached = net.project_store(fn['project_id']).all("SELECT family,COUNT(*) AS n FROM agent_family_targets WHERE function_id=? AND scope=? AND family IN ('compiled-miss','compiled-error') GROUP BY family", fn['id'], agent_tokens.target_scope(net,fn,''))
     if cached:
         lines.append('Previously tested candidates under current build inputs: '+', '.join(f"{r['n']} {r['family']}" for r in cached)+'. Local repairs skip these exact source hashes; change source/build inputs before retrying. This is not proof that a whole family is exhausted.')
     return '\n\nLocal search evidence:\n'+'\n'.join(lines)+'\nPage full evidence if needed.' if lines else ''
