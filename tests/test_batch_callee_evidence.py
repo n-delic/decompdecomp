@@ -77,3 +77,30 @@ def test_selected_payload_still_checks_checksum_in_a_new_batch(data):
         db.execute('DELETE FROM text_payloads WHERE hash=?',(payload_storage.digest(('void helper_a(){}\n')*100),))
     with pytest.raises(Exception,match='user-defined function'):
         candidate_scope.state(net,proj,fn,candidate_scope.batch_context(net,proj))
+
+
+def test_batch_resolves_owner_once_per_function_even_with_warm_inputs(data,monkeypatch):
+    net,store,proj=data
+    rows=store.all("SELECT * FROM functions WHERE status='open' ORDER BY id")
+    batch=candidate_scope.batch_context(net,proj)
+    expected=[candidate_scope.key(net,proj,row,batch) for row in rows]
+    calls=[];resolve=net.project_store
+    def owner(project):
+        calls.append(project)
+        return resolve(project)
+    monkeypatch.setattr(net,'project_store',owner)
+    assert [candidate_scope.key(net,proj,row,batch) for row in rows]==expected
+    assert calls==[proj['id']]*len(rows)
+
+
+def test_warm_batch_still_checks_catalog_and_rejects_replaced_store(data,monkeypatch):
+    from decompnet.network import NetworkError
+    net,store,proj=data;fn=net._function('f0','game')
+    batch=candidate_scope.batch_context(net,proj)
+    candidate_scope.key(net,proj,fn,batch)
+    def removed(project):raise NetworkError('Project was removed')
+    monkeypatch.setattr(net,'project_store',removed)
+    with pytest.raises(NetworkError,match='removed'):candidate_scope.key(net,proj,fn,batch)
+    with pytest.raises(NetworkError,match='removed'):candidate_scope.context(net,proj,fn['unit'],batch)
+    monkeypatch.setattr(net,'project_store',lambda _:object())
+    with pytest.raises(NetworkError,match='another project or database'):candidate_scope.key(net,proj,fn,batch)

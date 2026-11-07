@@ -114,3 +114,50 @@ def test_transcript_writer_is_independent_of_operational_writer(scoped, tmp_path
     assert data['sessions'][0]['tokens'] == 100
     assert data['sessions'][0]['events'][-1]['text'] == 'reply '*1000
     assert target.one('SELECT COUNT(*) n FROM text_payloads')['n'] == 1
+
+
+def test_cleanup_reads_only_session_summaries_with_remaining_transcripts(scoped,monkeypatch):
+    net,stores=scoped
+    transcripts=seed(net)
+    from decompnet.app.agents import SCHEMA
+    with net.store.tx() as db:
+        db.execute(SCHEMA[0])
+        db.execute("INSERT INTO helpers(id,project,kind,name,label,state) VALUES(1,'first','codex','worker','worker','stopped')")
+    with stores[1].tx() as db:
+        db.executemany('INSERT INTO helper_sessions(id,helper_id,project,kind,model,agent,started_at,ended_at) '
+                       "VALUES(?,99,'first','codex','test','removed',0,1)",[(sid,) for sid in range(100,2100)])
+        db.execute("INSERT INTO helper_sessions(id,helper_id,project,kind,model,agent,started_at,ended_at) "
+                   "VALUES(50,1,'first','codex','test','old-name',0,NULL)")
+    transcripts.append(50,'text','old identity',helper=1,project='first')
+    counts=[]
+    original=stores[1].all
+    def select(sql,*args):
+        rows=original(sql,*args)
+        if 'FROM helper_sessions' in sql:counts.append(len(rows))
+        return rows
+    monkeypatch.setattr(stores[1],'all',select)
+    rows=database_cleanup.eligible(net,{'removed':True})
+    assert {r['id'] for r in rows}=={2,50}
+    assert counts==[2]  # 2,000 retained cost summaries have no transcripts to clear.
+    assert len(database_cleanup.eligible(net,{'removed':False,'before':'2000-01-01'}))==2
+    transcripts.clear_helper(1,'first','worker')
+    # No stale eligibility cache: old-name remains independently eligible.
+    assert {r['id'] for r in database_cleanup.eligible(net,{'removed':True})}=={2,50}
+
+
+def test_cleanup_seeks_over_long_transcripts_and_handles_empty_files(scoped):
+    net,stores=scoped
+    transcripts=seed(net)
+    from decompnet.app.agents import SCHEMA
+    with net.store.tx() as db:db.execute(SCHEMA[0])
+    messages=transcripts.for_project('first').store
+    with messages.tx() as db:
+        db.executemany("INSERT INTO helper_messages(session_id,created_at,kind,text) VALUES(1,0,'text','event')",[()]*20000)
+    reader=messages._reader();steps=[]
+    reader.set_progress_handler(lambda:steps.append(1) or 0,100)
+    try:
+        assert {r['id'] for r in database_cleanup.eligible(net,{'removed':True})}=={1,2}
+    finally:reader.set_progress_handler(None,0)
+    assert len(steps)<30  # An index-wide DISTINCT would visit all 20,001 messages.
+    transcripts.clear_helper(1,'first','worker')
+    assert {r['id'] for r in database_cleanup.eligible(net,{'removed':True})}=={2}

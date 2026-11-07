@@ -303,3 +303,14 @@ baseline verification or explicit historical/unverified labels. A read does not
 promote saved C merely because a saved recheck is pending. Recovery selections
 (`saved_best`, `last_compiling`, `reported_corrected`) remain serialized, as do
 ordinary imports when no ready recheck is active.
+
+### Scheduling owners and cleared transcript history
+
+Candidate-scope construction resolves the operational owner once per function and passes that
+store to its nested header/version reads. Each function still checks the catalog; a scheduling
+batch cannot retain access after project removal or reuse another store's cached inputs.
+
+In separate transcript databases, retention seeks distinct session IDs through the existing
+`(session_id,id)` index before fetching session summaries by primary key. It skips already-cleared
+history without scanning each message of long transcripts. Removed-helper identity and completed
+session cutoff rules remain unchanged; session summaries and lifetime costs are retained.

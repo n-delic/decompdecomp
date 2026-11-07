@@ -98,8 +98,7 @@ def _check_batch(shared, proj, store):
             raise NetworkError('Scheduling inputs belong to another project or database. Rebuild this scheduling batch.')
 
 
-def _version(net, proj, kind, shared):
-    store = net.project_store(proj['id'])
+def _version(store, proj, kind, shared):
     if shared is not None and kind in shared.get('versions',{}):
         return shared['versions'][kind]
     return store.read_version(kind,proj['id'])
@@ -108,10 +107,14 @@ def _version(net, proj, kind, shared):
 def context(net, proj, unit, shared=None):
     store = net.project_store(proj['id'])
     _check_batch(shared, proj, store)
+    return _context(net,proj,unit,shared,store)
+
+
+def _context(net,proj,unit,shared,store):
     def load():
         if hasattr(store, 'read_cache'):
             return store.read_cache.get(('candidate-header', proj['id'], unit),
-                (_version(net,proj,'scope_context',shared), getattr(net._context, '__func__', net._context)),
+                (_version(store,proj,'scope_context',shared), getattr(net._context, '__func__', net._context)),
                 lambda: net._context(proj['id'], unit))
         return net._context(proj['id'], unit)
     if shared is None:
@@ -127,7 +130,7 @@ def state(net,proj,fn,shared=None):
     cfg=json.loads(proj['config'])
     build={key:cfg.get(key) for key in ('kind','platform','big_endian','gp')}
     build['compiler']=compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else None
-    ctx=context(net,proj,fn['unit'],shared)
+    ctx=_context(net,proj,fn['unit'],shared,store)
     text='\n'.join(str(fn[key] or '') for key in ('name','asm','best_source','seed','relocs'))
     names=set(re.findall(r'\b[A-Za-z_]\w*\b',text))
     addresses={int(x,16) for x in re.findall(r'\b0x([0-9a-fA-F]+)\b',text)}
@@ -143,7 +146,7 @@ def state(net,proj,fn,shared=None):
         return {'symbols': rows, 'by_name': by_name, 'by_address': by_address}
     lookup = shared.get('symbol_lookup') if shared is not None and 'versions' in shared else None
     if lookup is None:
-        lookup = (store.read_cache.get(('candidate-symbols', proj['id']), _version(net,proj,'scope_symbols',shared), build_index)
+        lookup = (store.read_cache.get(('candidate-symbols', proj['id']), _version(store,proj,'scope_symbols',shared), build_index)
                   if hasattr(store, 'read_cache') else build_index())
         if shared is not None and 'versions' in shared:
             shared['symbol_lookup']=lookup
@@ -159,7 +162,7 @@ def state(net,proj,fn,shared=None):
     # force the next claim in the same batch to recompute every paused function.
     if hasattr(store, 'read_cache') and shared is None:
         evidence = store.read_cache.get(('candidate-callees', proj['id'], fn['name'], hashlib.sha256(source.encode()).hexdigest()),
-            _version(net,proj,'matched_evidence',shared), callee_hashes)
+            _version(store,proj,'matched_evidence',shared), callee_hashes)
     else:
         evidence = callee_hashes()
     result.append(evidence)
@@ -179,11 +182,11 @@ def state(net,proj,fn,shared=None):
 
 
 def key(net,proj,fn,shared=None):
-    store = net.project_store(proj['id'])
     def build():return hashlib.sha256(repr(state(net,proj,fn,shared)).encode()).hexdigest()
     # Imported build files can change without a database revision: always inspect those files.
     if current() is None:return build()
     if shared is not None or getattr(net, 'fork_slug', lambda _: None)(proj['slug']):return build()
+    store = net.project_store(proj['id'])
     if not hasattr(store, 'read_version'):return build()
     token = (id(net), id(store), store.read_version('inputs', proj['id']),
              hashlib.sha256(repr((dict(proj), dict(fn))).encode()).digest())

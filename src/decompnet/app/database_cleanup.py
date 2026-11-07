@@ -54,14 +54,23 @@ def eligible(net,value):
                 value['removed'],cutoff,cutoff)
         else:
             messages = service(net).for_project(pids[0]).store
+            # Cleared sessions keep their lifetime summaries. Start with the
+            # transcript index so retention does not repeatedly hydrate all of
+            # that growing history when most sessions have no messages left.
+            # Seek past each session's messages instead of visiting every row
+            # of a potentially large transcript index for DISTINCT.
+            populated = [r['session_id'] for r in messages.all('''
+                WITH RECURSIVE populated(session_id) AS (
+                    SELECT MIN(session_id) FROM helper_messages
+                    UNION ALL
+                    SELECT (SELECT MIN(session_id) FROM helper_messages WHERE session_id>populated.session_id)
+                    FROM populated WHERE session_id IS NOT NULL)
+                SELECT session_id FROM populated WHERE session_id IS NOT NULL''')]
             found = [row for row in store.all(
-                'SELECT id,helper_id,project,agent,ended_at FROM helper_sessions ORDER BY id')
+                'SELECT id,helper_id,project,agent,ended_at FROM helper_sessions '
+                'WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id',json.dumps(populated))
                 if (value['removed'] and (row['helper_id'],row['project'],row['agent']) not in current) or
-                   (cutoff is not None and row['ended_at'] is not None and row['ended_at'] < cutoff)]
-            populated = {r['session_id'] for r in messages.all(
-                'SELECT DISTINCT session_id FROM helper_messages WHERE session_id IN (SELECT value FROM json_each(?))',
-                json.dumps([r['id'] for r in found]))}
-            found = [row for row in found if row['id'] in populated]
+                   (cutoff is not None and row['ended_at'] is not None and row['ended_at'] < cutoff)] if populated else []
         rows.extend(dict(row) | {'_store':messages,'_sessions':store} for row in found)
 
     return rows
