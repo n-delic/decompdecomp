@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 
 from ... import arch, compiler, compilermap, consoles, toolchains
 from ...compile_sessions import batched
@@ -474,36 +474,37 @@ class CompilerMixin:
                             "skipped": skipped, "results": list(results), "auto_apply": auto_apply, "applied_count": applied_count}
                 report(progress)
                 if n==1:log(f'Compiler preparation · first compile ready: {time.monotonic()-started:.3f}s')
-                for index, (tc, flags) in enumerate(candidates, 1):
-                    check_cancel()
-                    ok, diff, _ = self._judge_with(proj, fn, tc, list(flags), source)
-                    percent = 100.0 if ok else diff.percent if diff is not None else None
-                    if all_installed:
-                        ranked.append({"toolchain": tc, "flags": list(flags), "percent": percent,
-                                       "exact": ok, "current": (tc, flags) == today,
-                                       "default": tc == cfg["compiler"]["toolchain"] and list(flags) == cfg["compiler"]["flags"]})
-                    if percent is not None and (best is None or percent > best):
-                        best, best_profile = percent, [tc, list(flags)]
-                        if not function and (baseline is None or best > baseline + 0.001):
+                from ..compiler_profiles import check_profiles
+                with closing(check_profiles(self, proj, fn, candidates, source, check_cancel)) as checks:
+                    for index, ((tc, flags), (ok, diff, _)) in enumerate(checks, 1):
+                        check_cancel()
+                        percent = 100.0 if ok else diff.percent if diff is not None else None
+                        if all_installed:
+                            ranked.append({"toolchain": tc, "flags": list(flags), "percent": percent,
+                                           "exact": ok, "current": (tc, flags) == today,
+                                           "default": tc == cfg["compiler"]["toolchain"] and list(flags) == cfg["compiler"]["flags"]})
+                        if percent is not None and (best is None or percent > best):
+                            best, best_profile = percent, [tc, list(flags)]
+                            if not function and (baseline is None or best > baseline + 0.001):
+                                before_text = f"{baseline:.2f}%" if baseline is not None else "no previous score"
+                                log(f"{fn['name']}: better settings found: {before_text} → {best:.2f}% "
+                                    f"with {self._short((tc, flags))}. Settings unchanged.")
+                        if function:
+                            score_text = f"{percent:.2f}%" if percent is not None else "could not compile or compare"
+                            log(f"{index}/{len(candidates)} · {self._short((tc, flags))}: {score_text}"
+                                + (" — exact match" if ok else "")
+                                + (" (current settings)" if (tc, flags) == today else ""))
+                        if ok:
+                            matches.append([tc, list(flags)])
+                            log(f"{fn['name']}: MATCH {self._short((tc, flags))}"
+                                + (" (current settings)" if (tc, flags) == today else ""))
+                        progress = {**progress, "tested": index, "best": best, "profile": best_profile, "exact_matches_current": len(matches)}
+                        report(progress)
+                        if index % 10 == 0:
+                            best_text = f"{best:.2f}%" if best is not None else "no usable result"
                             before_text = f"{baseline:.2f}%" if baseline is not None else "no previous score"
-                            log(f"{fn['name']}: better settings found: {before_text} → {best:.2f}% "
-                                f"with {self._short((tc, flags))}. Settings unchanged.")
-                    if function:
-                        score_text = f"{percent:.2f}%" if percent is not None else "could not compile or compare"
-                        log(f"{index}/{len(candidates)} · {self._short((tc, flags))}: {score_text}"
-                            + (" — exact match" if ok else "")
-                            + (" (current settings)" if (tc, flags) == today else ""))
-                    if ok:
-                        matches.append([tc, list(flags)])
-                        log(f"{fn['name']}: MATCH {self._short((tc, flags))}"
-                            + (" (current settings)" if (tc, flags) == today else ""))
-                    progress = {**progress, "tested": index, "best": best, "profile": best_profile, "exact_matches_current": len(matches)}
-                    report(progress)
-                    if index % 10 == 0:
-                        best_text = f"{best:.2f}%" if best is not None else "no usable result"
-                        before_text = f"{baseline:.2f}%" if baseline is not None else "no previous score"
-                        log(f"{fn['name']}: {index}/{len(candidates)} combinations tested; "
-                            f"best {best_text} (saved {before_text}); {len(matches)} exact matches.")
+                            log(f"{fn['name']}: {index}/{len(candidates)} combinations tested; "
+                                f"best {best_text} (saved {before_text}); {len(matches)} exact matches.")
                 improved = best is not None and (baseline is None or best > baseline + 0.001)
                 if improved:
                     improvements.append({"function": fn["name"], "before": baseline, "best": best,

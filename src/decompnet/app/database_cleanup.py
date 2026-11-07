@@ -116,6 +116,10 @@ def run(net,value,log):
             if not removed:break
         done+=1
         report('Clearing old agent transcripts')
+    from ..payload_links import collect
+    for store in dict.fromkeys(row['_store'] for row in rows):
+        collect(store,log)
+    report('Clearing old agent transcripts')
     log(f'Cleanup complete: {deleted:,} transcript records removed from {done:,} sessions. Saved work and usage totals kept.')
     return {'sessions':done,'messages':deleted}
 

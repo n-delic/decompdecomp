@@ -187,14 +187,14 @@ def remember(net, agent, fn, before):
 
 def history(net, fn):
     store = net.project_store(fn['project_id'])
-    rows = store.all('SELECT a.agent_id,a.score,a.source,h.summary FROM attempts a LEFT JOIN attempt_hints h ON h.attempt_id=a.id WHERE a.function_id=? ORDER BY a.id DESC LIMIT 100', fn['id'])
+    rows = store.all('SELECT a.id,a.agent_id,a.score,COALESCE(a.source_digest,a.source_hash) AS digest,h.summary FROM main.attempts a LEFT JOIN attempt_hints h ON h.attempt_id=a.id WHERE a.function_id=? ORDER BY a.id DESC LIMIT 100', fn['id'])
     if not rows:
         return ''
     scores = [r['score'] for r in rows if r['score'] is not None]
     fingerprints = []
     seen = set()
     for r in rows:
-        key = hashlib.sha256((r['source'] or '').encode()).hexdigest()[:12]
+        key = (r['digest'] or 'legacy-'+str(r['id']))[:12]
         if key not in seen:
             fingerprints.append(f"{key}: {r['summary'] or ('compile error' if r['score'] is None else 'score '+str(r['score']))}")
             seen.add(key)
@@ -836,7 +836,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
         if baseline and baseline['source'] != source:
             baseline = None
         if baseline is None:
-            prior = net.project_store(fn['project_id']).one('SELECT score FROM attempts WHERE function_id=? AND source=? ORDER BY id DESC LIMIT 1', fn['id'],source)
+            prior = net.project_store(fn['project_id']).one('SELECT score FROM main.attempts WHERE function_id=? AND COALESCE(source_digest,source_hash)=? ORDER BY id DESC LIMIT 1', fn['id'],hashlib.sha256(source.encode()).hexdigest())
             if prior and prior['score'] is not None:
                 baseline = {'score':prior['score'], 'rows':None}
         if baseline and baseline.get('rows') is None:
