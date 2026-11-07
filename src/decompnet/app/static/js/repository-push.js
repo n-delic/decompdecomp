@@ -174,6 +174,7 @@ async function saveRepositoryScoreCommits() {
   repositoryScoreBusy = true;
   const finish = beginWork(log, "Saving improvement commit preference", [field, threshold], "Improvement commit preference saved.");
   try {
+    if (field.checked && typeof prepareRepositoryCommits === "function") await prepareRepositoryCommits(slug, log);
     const state = await api("/api/repository-score-commits", {method:"POST", body:{slug, enabled:field.checked,
       threshold:Number(threshold.value), folder:typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot}});
     if (S.slug === slug) { repositoryScoreBusy = false; if (S.ov) S.ov.score_commits = state; renderRepositoryScoreCommits(state); }

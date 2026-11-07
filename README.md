@@ -1023,7 +1023,7 @@ prove what a function does, not what its author called it.
 and the export rebuilds the game byte for byte from matched C plus assembly for what isn't matched yet. A game at
 100%, polished, is the goal, and the first one will be announced here.
 
-**How do I commit progress to my standalone repository?** In project Settings, use **Save your progress → Sync to Git repository** and choose the checkout root of an existing decompdecomp `build.json`/`build.py` export. Commit or move its existing changes first, then click **Verify and sync**. The app checks additions in a private copy and requires the complete rebuilt image to equal your original before publishing source, isolated headers, per-function compiler settings and progress metadata. It lists the files ready to commit and explains which app matches could not be integrated. Existing hand-maintained C and build scripts stay intact; later syncs update only their own files, and committed manual edits take those sources out of sync ownership. No commit or push happens automatically. Ordinary `progress/` saves remain separate. Imported projects already keep their source in their own checkout; custom export layouts need an adapter.
+**How do I save and commit progress?** In **Settings → Save your progress**, choose your project folder and click **Save now**. Select the repository root if you have a decompdecomp build checkout: the app detects it and saves into its `progress/` subfolder, preserving build files. Then enable **Automatically commit new matches**. If needed, the app creates the progress repository and prepares its initial checkpoint before enabling the setting. Only saved-progress files are committed; unrelated source edits stay local. Commits remain local unless automatic pushing is enabled. For a detected build repository, **Update build files → Verify, commit and push** separately integrates matching C into the standalone tree and requires a byte-identical full rebuild. This is useful for build-based progress trackers such as ByteMatch. Saving progress alone does not update standalone source selections.
 
 **What do I end up with?** The source code of a game you own, that builds it again. A DS game started from scratch
 reached 2,400 matched functions (58% of its code) in under two days, about half of them matched by free models, and
@@ -1670,8 +1670,10 @@ The checkout, branch and origin are checked again before pushing, so a changed d
 
 ### Commit verified progress from Settings
 
-For ROM projects with a decompdecomp export, open **Settings → Sync to Git repository**,
-choose the checkout root, and click **Verify, commit and push**. The app checks new matches
+For ROM projects with a decompdecomp export, choose its root in
+**Settings → Save your progress → Project folder** and save. The app detects the
+build and uses its `progress/` child for saves and automatic commits. Under
+**Update build files**, click **Verify, commit and push**. The app checks new matches
 in a private build, saves all portable progress under `progress/` (including drafts, names,
 notes, headers and compiler settings), commits those files and pushes the current branch
 to its configured upstream using your existing Git credentials. If the branch has no upstream

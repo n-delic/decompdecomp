@@ -161,7 +161,7 @@ def process(net, slug, output=lambda message: None):
             if log is None:return
             output = log
             root = repository_sync.checkout(settings['folder'], clean=False)
-            if not repository_sync.progress_checkout(net, slug, root) or repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD') != settings['branch']:
+            if not repository_progress.linked_checkout(net, slug, root) or repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD') != settings['branch']:
                 raise NetworkError('The progress checkout or branch changed. Disable and re-enable score-improvement commits.')
             prefix = saves.default_folder(net, slug).resolve().relative_to(root)
             base = json.loads(repository_git.git(root, 'show', 'HEAD:'+(prefix/saves.MANIFEST).as_posix()))

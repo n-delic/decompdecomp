@@ -125,3 +125,80 @@ def test_first_checkpoint_rejects_a_concurrent_initial_commit(project):
     with pytest.raises(NetworkError, match='committed new work'):
         repository_progress.commit_snapshot(folder, {}, set(), lambda line: None, expected_head=None)
     assert git(folder, 'rev-parse', 'HEAD') == head
+
+
+def test_select_build_root_saves_progress_and_enables_existing_repository(project, tmp_path):
+    from decompnet.app import repository_sync
+
+    net, old, _ = project
+    root = tmp_path / 'build-checkout'
+    root.mkdir()
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    (root / 'build.json').write_text('{}')
+    (root / 'build.py').write_text('# build tools')
+    (root / 'src').mkdir()
+    (root / 'src' / 'handwritten.c').write_text('int preserved;')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'build checkout')
+    (root / 'src' / 'handwritten.c').write_text('int newer_hand_written;')
+    result = saves.save(net, 'game', root)
+    assert result['folder'] == str(root / 'progress')
+    assert (root / 'progress' / saves.MANIFEST).is_file()
+    assert not (root / saves.MANIFEST).exists()
+    assert (root / 'src' / 'handwritten.c').read_text() == 'int newer_hand_written;'
+    state = repository_setup.status(net, 'game')
+    assert state['root'] == str(root) and state['build_folder'] == str(root)
+    assert not state['linked']
+    repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)
+    assert saves.default_folder(net, 'game') == root / 'progress'
+    assert match_commits.configure(net, 'game', True, str(root))['enabled']
+    assert not repository_sync.progress_checkout(net, 'game', root), 'build sync must still use the build route'
+    assert repository_progress.linked_checkout(net, 'game', root)
+    assert git(root, 'show', 'HEAD:src/handwritten.c') == 'int preserved;'
+    assert 'progress/decompdecomp.json' in git(root, 'ls-files')
+    assert not (root / 'progress' / '.git').exists()
+    assert (root / 'src' / 'handwritten.c').read_text() == 'int newer_hand_written;'
+    assert 'src/handwritten.c' in git(root, 'diff', '--name-only')
+
+
+def test_detected_progress_does_not_follow_a_child_link(project, tmp_path):
+    net, _, _ = project
+    root = tmp_path / 'build-checkout'
+    root.mkdir()
+    (root / 'build.json').write_text('{}')
+    (root / 'build.py').write_text('# build')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (root / 'progress').symlink_to(outside, target_is_directory=True)
+    with pytest.raises(NetworkError, match='symbolic link'):
+        saves.save(net, 'game', root)
+    assert list(outside.iterdir()) == []
+
+
+def test_detected_progress_rejects_a_different_game(project, tmp_path):
+    import json
+
+    net, _, _ = project
+    root = tmp_path / 'build-checkout'
+    root.mkdir()
+    (root / 'build.json').write_text('{}')
+    (root / 'build.py').write_text('# build')
+    (root / 'progress').mkdir()
+    manifest = root / 'progress' / saves.MANIFEST
+    text = json.dumps({'game': {'sha1': 'another-game'}})
+    manifest.write_text(text)
+    with pytest.raises(NetworkError, match='another game'):
+        saves.save(net, 'game', root)
+    assert manifest.read_text() == text
+
+
+def test_remembered_separate_build_checkout_stays_available(project, tmp_path):
+    net, _, _ = project
+    root = tmp_path / 'separate-build'
+    root.mkdir()
+    (root / 'build.json').write_text('{}')
+    (root / 'build.py').write_text('# build')
+    net._update_cfg('game', lambda cfg: cfg.update(repository_sync_folder=str(root)))
+    assert repository_setup.status(net, 'game')['build_folder'] == str(root)

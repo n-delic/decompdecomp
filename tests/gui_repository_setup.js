@@ -11,7 +11,7 @@ vm.createContext(ctx);vm.runInContext(source,ctx);
 (async()=>{
  const load=ctx.refreshRepositorySetup();
  resolve({folder:'/save',root:'',repository:false,portable:true,checkpoint:false,linked:true,origin:false});await load;
- assert.equal($('repositoryInit').hidden,false);assert.equal($('repositoryAutoCommit').disabled,true);
+ assert.equal($('repositoryInit').hidden,false);assert.equal($('repositoryAutoCommit').disabled,false);
  $('saveFolder').value='/new';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,true);assert.match($('repositorySetupState').textContent,/Save now/);
  $('saveFolder').value='/save';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,false);
  const init=$('repositoryInit').onclick();await init;assert.equal(posted.action,'init');assert.equal(finish,1);assert.equal($('repositoryOriginGroup').hidden,false);
@@ -21,6 +21,7 @@ vm.createContext(ctx);vm.runInContext(source,ctx);
  ctx.renderRepositorySetup({folder:'/source',root:'/source',repository:true,portable:false,checkpoint:true,linked:false,origin:false});assert.equal($('repositoryOriginGo').disabled,false);
  update(['Old project secret'],{});assert.doesNotMatch($('repositorySetupLog').textContent,/Old project/);
 await loadingRegression();
+await simpleSetupRegression();
 })().catch(e=>{console.error(e);process.exit(1);});
 
 async function loadingRegression() {
@@ -79,4 +80,39 @@ async function loadingRegression() {
   context.api=async()=>{throw Error('Could not save to this folder');};
   await field('saveGo').onclick();context.renderRepositorySetup(state('/remembered/first'));
   assert.equal(field('saveFolder').value,'/not/writable','a failed save keeps the chosen path for correction');
+  let finishSave;
+  context.api=()=>new Promise(resolve=>{finishSave=resolve;});
+  field('saveLog').hidden=false;field('saveLog').textContent='Previous error';
+  const retry=field('saveGo').onclick();
+  assert.equal(field('saveLog').hidden,true,'no empty or stale tinted log while saving');
+  assert.equal(field('saveLog').textContent,'');
+  finishSave({folder:'/not/writable',matched:1,best:0});
+  context.api=async()=>state('/not/writable');
+  await retry;
+
+}
+
+async function simpleSetupRegression() {
+ const fields={},get=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false};
+ const actions=[];let failure=false, projectSwitch=false;
+ const state={folder:'/repo/progress',save_folder:'/repo/progress',root:'/repo',repository:true,portable:true,checkpoint:true,linked:false,origin:true,build_folder:'/repo'};
+ const context={$:get,S:{slug:'game',ov:{}},Date,encodeURIComponent,refreshRepositoryPush(){},updateWorkProgress(){},
+   api:async(url,options)=>{actions.push(options.body.action);return{job:'setup'};},
+   followJob:async()=>{if(failure)throw Error('Review staged changes');if(projectSwitch)context.S.slug='other';return{...state,linked:true};}};
+ vm.createContext(context);vm.runInContext(source,context);
+ context.renderRepositorySetup(state);
+ assert.equal(get('repositoryAutoCommit').disabled,false,'a saved folder can prepare its first checkpoint when enabled');
+ assert.equal(get('repositoryDestination').hidden,false);assert.equal(get('repositoryFolder').value,'/repo');
+ assert.match(get('saveFolderHint').textContent,/Build repository detected/);
+ await context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog'));
+ assert.deepEqual(actions,['checkpoint']);assert.equal(vm.runInContext('repositorySaveRoot',context),'/repo');
+ assert.equal(get('saveGo').disabled,false);assert.equal(get('repositorySetupStop').hidden,true);
+ actions.length=0;context.renderRepositorySetup({...state,repository:false,checkpoint:false,linked:false,root:'',build_folder:''});
+ await context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog'));assert.deepEqual(actions,['init','checkpoint']);
+ actions.length=0;context.renderRepositorySetup(state);failure=true;
+ await assert.rejects(context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog')),/staged/);
+ assert.equal(get('saveGo').disabled,false);assert.equal(vm.runInContext('repositorySetupBusy',context),false);
+ failure=false;projectSwitch=true;context.renderRepositorySetup(state);
+ await assert.rejects(context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog')),/Project changed/);
+ assert.equal(get('repositorySetupStop').hidden,true);
 }

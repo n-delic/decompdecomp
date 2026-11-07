@@ -25,15 +25,21 @@ function renderRepositorySetup(state) {
   $("repositoryInit").hidden = state.repository || !state.portable;
   $("repositoryCheckpoint").hidden = !state.repository || !state.portable;
   $("repositoryOriginGroup").hidden = !state.repository || state.origin;
-  $("repositoryAutoCommit").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoCommit").checked && (!state.repository || !state.checkpoint || !state.linked));
-  $("repositoryScoreCommits").disabled = repositorySetupBusy || unsaved || (!$("repositoryScoreCommits").checked && (!state.repository || !state.checkpoint || !state.linked));
+  $("repositoryAutoCommit").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoCommit").checked && !state.portable);
+  $("repositoryScoreCommits").disabled = repositorySetupBusy || unsaved || (!$("repositoryScoreCommits").checked && !state.portable);
   $("repositoryAutoPush").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoPush").checked && (!state.repository || !state.checkpoint || !state.origin));
   $("repositorySetupState").textContent = unsaved ? "Save now to apply the new location before changing its Git settings." : !state.repository
     ? (state.portable ? "Create a Git repository here to keep progress commits. This makes it the ongoing progress folder, adds .gitignore rules and stages nothing." : "This source folder is not a Git repository. Source checkout setup is planned.")
-    : !state.checkpoint ? (state.portable ? "Commit saved progress once before enabling automatic match commits. Only saved C, headers, notes and settings are included." : "Commit your source files with Git before pushing.")
-    : !state.linked && state.portable ? "Commit saved progress to use this folder for ongoing automatic saves and match commits."
+    : !state.checkpoint ? (state.portable ? "Enable automatic commits to create the first progress checkpoint, or commit saved progress now." : "Commit your source files with Git before pushing.")
+    : !state.linked && state.portable ? "Enable automatic commits to use this folder for ongoing saves. The first checkpoint is prepared for you."
     : `Git repository: ${state.root}`;
-  $("repositoryDestination").hidden = !state.portable;
+  const build = state.build_folder || "";
+  $("repositoryDestination").hidden = !state.portable || !build || unsaved;
+  $("repositoryFolder").value = build;
+  $("repositoryBuildPath").textContent = build;
+  $("saveFolderHint").textContent = build
+    ? `Build repository detected. Progress is saved in ${state.save_folder}; build files are updated separately below.`
+    : "Choose a folder for your matches, drafts, notes and settings. No game files are saved.";
   refreshRepositoryPush(true);
 }
 async function refreshRepositorySetup() {
@@ -97,3 +103,39 @@ $("repositorySetupStop").onclick = async () => {
   try { if (repositorySetupJob) await api("/api/job/cancel", {method:"POST", body:{id:repositorySetupJob}}); }
   catch (error) { showJobError($("repositorySetupLog"), error.message); }
 };
+
+// Checking an automatic-commit setting authorizes its initial saved-progress checkpoint.
+// The same cancellable setup jobs retain all existing Git/file safety checks.
+async function prepareRepositoryCommits(slug, log) {
+  let state = repositorySetupState;
+  if (!state || repositorySaveEdited) throw new Error("Save the selected folder before enabling automatic commits.");
+  if (!state.portable) throw new Error("Automatic commits are available for saved ROM projects.");
+  if (state.repository && state.checkpoint && state.linked) return;
+  if (repositorySetupBusy) throw new Error("Repository setup is already running. Wait for it to finish.");
+  repositorySetupBusy = true;
+  const controls = [$("saveGo"), $("saveFolder"), $("repositoryCheckpoint"), $("repositoryInit")];
+  const disabled = controls.map(field => field.disabled);
+  controls.forEach(field => { field.disabled = true; });
+  try {
+    for (const action of state.repository ? ["checkpoint"] : ["init", "checkpoint"]) {
+      const {job} = await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:""}});
+      repositorySetupJob = job;
+      if (S.slug === slug) $("repositorySetupStop").hidden = false;
+      try {
+        state = await followJob(job, null, (lines, snapshot) => {
+          if (S.slug === slug) { log.hidden = !lines.length; log.textContent = lines.join("\n"); updateWorkProgress(log, snapshot.progress); }
+        });
+      } finally {
+        repositorySetupJob = null;
+        if (S.slug === slug) $("repositorySetupStop").hidden = true;
+      }
+      if (S.slug !== slug) throw new Error("Project changed; automatic commits were not enabled.");
+      renderRepositorySetup(state);
+    }
+  } finally {
+    repositorySetupBusy = false; repositorySetupChecked = 0;
+    controls.forEach((field, index) => { field.disabled = disabled[index]; });
+    $("repositorySetupStop").hidden = true;
+    if (S.slug === slug && state) renderRepositorySetup(state);
+  }
+}

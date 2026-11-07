@@ -158,6 +158,7 @@ $("repositoryAutoCommit").onchange = async () => {
   repositoryAutoCommitBusy = true;
   const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [field], "Automatic commit preference saved.");
   try {
+    if (enabled && typeof prepareRepositoryCommits === "function") await prepareRepositoryCommits(slug, $("repositoryAutoCommitLog"));
     const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:(typeof repositorySaveRoot === "undefined" ? "" : repositorySaveRoot) || $("repositoryFolder").value.trim()}});
     if (S.slug === slug) {
       repositoryAutoCommitBusy = false;
@@ -180,7 +181,7 @@ function loadRepositoryFolder(slug) {
   field.value = "";
   field.dataset.progressFolder = "";
   const setMode = progress => {
-    $("repositorySyncGo").textContent = progress ? "Review saved progress" : "Verify and sync";
+    $("repositorySyncGo").textContent = progress ? "Review saved progress" : "Verify and update build files";
     $("repositoryCommitGo").textContent = progress ? "Commit and push" : "Verify, commit and push";
   };
   setMode(false);
@@ -1071,6 +1072,7 @@ $("saveGo").onclick = async () => {
   const slug = S.slug, log = $("saveLog"), folder = $("saveFolder").value.trim();
   const finish = beginWork(log, "Saving progress", [$("saveGo")], "Progress saved.");
   showJobError(log, "");
+  log.textContent = ""; log.hidden = true;
   try {
     const r = await api("/api/save", { method: "POST", body: { slug, folder: folder || undefined } });
     if (S.slug !== slug) return;
