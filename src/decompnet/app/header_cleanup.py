@@ -49,16 +49,33 @@ def _references(store):
     return keep
 
 
-def summary(net):
-    keep = _references(net.store)
-    candidates = [(r['project_id'], r['version']) for r in net.store.all('SELECT project_id,version FROM context_history')
+def _summary_store(store):
+    keep = _references(store)
+    candidates = [(r['project_id'], r['version']) for r in store.all('SELECT project_id,version FROM context_history')
                   if (r['project_id'], r['version']) not in keep]
-    return {**header_storage.stats(net.store), 'unused_versions': len(candidates)}, candidates
+    return {**header_storage.stats(store),'unused_versions':len(candidates)},candidates
+
+
+def summary(net):
+    from .storage_files import operational
+    totals,candidates = {},[]
+    for store in operational(net):
+        values,unused = _summary_store(store)
+        for key,value in values.items():totals[key] = totals.get(key,0)+value
+        candidates.extend(unused)
+    return totals,candidates
 
 
 def prune(net, log):
+    from .storage_files import operational
+    stores = operational(net)
+    results = [_prune_store(net,store,log,legacy=len(stores)==1) for store in stores]
+    return {'removed_versions':sum(r['removed_versions'] for r in results),
+            'removed_contents':sum(r['removed_contents'] for r in results),'headers':summary(net)[0]}
+
+
+def _prune_store(net,store,log, *, legacy=False):
     from . import maintenance
-    store = net.store
     waiting_logged=False
     def waiting():
         nonlocal waiting_logged
@@ -70,7 +87,7 @@ def prune(net, log):
     log('Checking saved header references before cleanup…')
     log.progress({'phase':'Checking saved header references'})
     evidence_revision = store.read_version("repair_profiles")
-    _, candidates = summary(net)
+    _, candidates = summary(net) if legacy else _summary_store(store)
     done = 0
     for start in range(0, len(candidates), BATCH):
         log.check_cancel()
@@ -105,14 +122,18 @@ def prune(net, log):
 
 
 def compact(net, log):
-    """SQLite VACUUM is atomic and interruptible, but deliberately takes the writer lock."""
-    store = net.store
+    from .storage_files import all_files
+    results = [_compact_store(net,store,log,shared=store is net.store) for store in all_files(net)]
+    return {key:sum(row[key] for row in results) for key in ('before_bytes','after_bytes','reclaimed_bytes')}
+
+
+def _compact_store(net,store,log, *, shared=False):
+    """SQLite VACUUM is atomic and interruptible, with one file writer held at a time."""
     path = Path(store.path)
     if not path.is_file(): raise ValueError('Compaction requires a database file on disk.')
-    library=path.parent/'match-library.sqlite3'
-    from ..repair_archive import archive_path
-    repair=archive_path(path)
-    paths=[p for p in (path,library,repair) if p.is_file()]
+    library=path.parent/'match-library.sqlite3' if shared else None
+    repair=Path(net.store.conn.repair_archive.path) if shared else None
+    paths=[p for p in (path,library,repair) if p is not None and p.is_file()]
     size = max(p.stat().st_size for p in paths)
     if shutil.disk_usage(path.parent).free < size*2:
         raise ValueError('Free at least twice the database file size on this drive before compacting.')
@@ -130,7 +151,7 @@ def compact(net, log):
         finally:
             store.conn.set_progress_handler(None, 0)
         store.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-    if library.is_file():
+    if library is not None and library.is_file():
         from .match_library import Library
         log.check_cancel()
         log.progress({'phase':'Compacting match library · library writes wait until this finishes'})
@@ -142,7 +163,7 @@ def compact(net, log):
                 raise
             finally:db.set_progress_handler(None,0)
             db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-    if repair.is_file():
+    if repair is not None and repair.is_file():
         archive=store.conn.repair_archive
         log.check_cancel()
         log.progress({'phase':'Compacting repair evidence · evidence writes wait until this finishes'})

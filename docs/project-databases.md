@@ -233,3 +233,12 @@ allocation local to the project writer and prevents reuse after deletion or
 restart. Opening a namespaced file with another project ID fails explicitly.
 This is preparatory: legacy files must be copied and validated by migration,
 not assigned a namespace in place. Production routing is still unchanged.
+
+Storage maintenance discovers operational and already-created transcript files
+explicitly. Payload statistics, packing, garbage collection and compaction include
+all of them; failed-source/header pruning runs separately on operational stores.
+Each file's references are checked within its own transaction and compaction holds
+only one file writer at a time. Shared match/repair archives are maintained once,
+from their existing catalog-relative/configured locations. Attempt history resolves
+shared author labels separately. ROM exports and console-specific saved-match,
+SDK/stub naming, focused-worker and paused-retry helpers now select project storage.

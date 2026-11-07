@@ -22,7 +22,7 @@ def run(net,slug,log=print):
         raise NetworkError('The analysis image differs from the recorded ROM hash. Restore the original image before auditing.')
     console=net.console(proj)
     functions=[dict(name=f['name'],rom=f['rom_offset'],vram=f['vram'],size=f['size'],
-                    handwritten=bool(console.asm_reason(f['target']))) for f in net.store.all(
+                    handwritten=bool(console.asm_reason(f['target']))) for f in net.project_store(proj['id']).all(
                         f'SELECT name,rom_offset,vram,size,target FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id']) if f['rom_offset'] is not None]
     log('Reading frozen ROM bytes and known code segment mappings; no build or compiler is run.')
     result=audit(image,[vars(s) for s in segments],functions,big_endian=bool(proj['big_endian']),cpu=console.cpu_variant,progress=getattr(log,'progress',lambda _:None),data_mappings=net.cfg(proj).get('audit_data_mappings',[]))

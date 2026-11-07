@@ -8,7 +8,7 @@ git = repository_git.git
 
 
 def checkout(net, slug, folder=''):
-    proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+    proj = net.project_store(slug).one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None:raise NetworkError('Open a project before checking its commits.')
     cfg = net.cfg(proj)
     linked = repository_sync.project_checkout(proj, cfg)

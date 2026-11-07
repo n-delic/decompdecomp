@@ -74,7 +74,8 @@ def summary(net,value=None):
     for row in rows:groups.setdefault(row['_store'], []).append(row['id'])
     count = sum(store.one('SELECT COUNT(*) n FROM helper_messages WHERE session_id IN '
                           '(SELECT value FROM json_each(?))',json.dumps(ids))['n'] for store, ids in groups.items())
-    stores = {net.store, *(store for store, _ in net.project_stores()), *(row['_store'] for row in rows)}
+    from .storage_files import all_files
+    stores = all_files(net)
     paths = {Path(store.path) for store in stores}
     disk = sum(f.stat().st_size for path in paths for f in (path,Path(str(path)+'-wal'),Path(str(path)+'-shm')) if f.is_file())
     return {'options':value,'sessions':len(rows),'messages':count,'disk_bytes':disk}

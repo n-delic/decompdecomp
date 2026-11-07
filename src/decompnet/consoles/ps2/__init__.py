@@ -197,7 +197,7 @@ class PlayStation2(Console):
         for guess in sorted({g for *_, g in parts if g != main}):
             spans = []
             for start, end, g in parts:
-                inside = net.store.all("SELECT name,vram,rom_offset FROM functions WHERE project_id=? AND vram>=? AND vram<?",
+                inside = net.project_store(proj['id']).all("SELECT name,vram,rom_offset FROM functions WHERE project_id=? AND vram>=? AND vram<?",
                                        proj["id"], start, end)
                 if g == guess and inside and not (main_agrees and all(
                         family.get(compiler_for(cfg, r["vram"], r)["toolchain"]) == guess.split("-")[0] for r in inside)):
@@ -208,7 +208,7 @@ class PlayStation2(Console):
                 said.append(f"{by_guess[guess].name} for {len(spans)} stretches of object files, range-checked")
         net._update_cfg(slug, lambda c: c.__setitem__("object_reading", OBJECT_READING))
         if said:
-            with net.store.tx() as db:
+            with net.project_store(proj['id']).tx() as db:
                 net._event(db, proj["id"], None, "analysis", "the program's symbols name its compilers: "
                            + "; ".join(said))
 
@@ -225,7 +225,7 @@ def name_kernel_calls(net, slug: str, log=print) -> int:
     cfg = net.cfg(proj)
     if cfg.get("kind") != "rom" or cfg.get("kernel_calls_named") or net._link(slug):
         return 0  # (a room's guest: the host names them)
-    rows = net.store.all("SELECT name, target FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
+    rows = net.project_store(proj['id']).all("SELECT name, target FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
     pairs = syscalls.stub_names([(r["name"], r["target"]) for r in rows], set(net.symbols(proj["id"]).by_name))
     if pairs:
         agent, _ = net.local_agent("autopilot")

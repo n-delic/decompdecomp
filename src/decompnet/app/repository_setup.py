@@ -11,7 +11,7 @@ IGNORE = '\n# decompdecomp portable progress: never add the game or local app st
 
 
 def folder(net, slug):
-    proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+    proj = net.project_store(slug).one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None:raise NetworkError('Open a project before setting up Git.')
     if not net.is_rom(proj):
         return Path(proj['root']).resolve(), proj

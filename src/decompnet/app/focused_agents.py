@@ -32,7 +32,7 @@ def target(net,agent,project,function=None):
     if focus['stop'].is_set() or time.time()>=focus['until']:
         raise NetworkError('This focused run has ended. Saved improvements are retained.')
     if project and project!=focus['slug']:raise NetworkError('This agent is focused on another project.')
-    fn=net.store.one('SELECT * FROM functions WHERE id=?',focus['id'])
+    fn=net.project_store(focus['slug']).one('SELECT * FROM functions WHERE id=?',focus['id'])
     if not fn:raise NetworkError('The focused function no longer exists.')
     if function and net._function(function,focus['slug'])['id']!=fn['id']:
         raise NetworkError(f"Stay on {fn['name']}; this timed agent cannot claim other functions.")
@@ -42,7 +42,7 @@ def target(net,agent,project,function=None):
 def completion(manager,s,now=None):
     if (time.time() if now is None else now)>=s.options['focus_until']:
         return 'Focused time limit reached; saved improvements are retained.'
-    fn=manager.net.store.one('SELECT status FROM functions WHERE id=?',s.options['focus_id'])
+    fn=manager.net.project_store(s.slug).one('SELECT status FROM functions WHERE id=?',s.options['focus_id'])
     if not fn:return 'Focused function was removed.'
     if fn['status']!='open':return 'Focused function matched or was set aside; this run is complete.'
     return None
@@ -74,7 +74,7 @@ def run(manager,s):
 def ready(manager,s,agent):
     """Wait for an existing owner without spending a model call or stealing its claim."""
     if not s.options.get('focus_id'):return True
-    held=manager.net.store.one('SELECT agent_id FROM claims WHERE function_id=? AND expires_at>?',
+    held=manager.net.project_store(s.slug).one('SELECT agent_id FROM claims WHERE function_id=? AND expires_at>?',
                                s.options['focus_id'],time.time())
     if held and held['agent_id']!=agent.id:
         manager._set(s,'waiting','Focused function is claimed by another worker or the C editor. Waiting without AI calls.')

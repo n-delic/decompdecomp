@@ -93,6 +93,7 @@ def test_export_recovery_does_not_publish_a_stale_or_failed_candidate(monkeypatc
         def tx(self):return nullcontext(self)
         def execute(self,*args):calls.append(args)
     class Net:
+        project_store = lambda self, project:self.store
         store=Store()
         progress=SimpleNamespace(judging=lambda s:nullcontext(),_project_lock=lambda s:nullcontext())
         permuter=SimpleNamespace(_hold=lambda *a,**kw:True,_let_go=lambda *a:released.append(True))

@@ -103,7 +103,7 @@ def fixture(tmp_path):
         db.execute('INSERT INTO repair_examples VALUES(1,1,?)',(json.dumps(evidence),))
         db.execute("INSERT INTO settings VALUES('boundary-repair:2:1','{}')")
     store._track_reads('repair_examples','repair_profiles','evidence,project_id')
-    return SimpleNamespace(store=store)
+    return SimpleNamespace(store=store,project_stores=lambda:[(store,[1,2])])
 
 
 def test_pruning_keeps_attempt_repair_latest_pinned_and_undo_versions(tmp_path):

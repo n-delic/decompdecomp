@@ -86,16 +86,16 @@ def variant(net, proj, fn, source, target, job):
         return None
     context = net._context(proj['id'], fn['unit'])['header']
     settings = compiler_for(net.cfg(proj), fn['vram'], fn)
-    symbols = [(r['name'], r['address']) for r in net.store.all(
+    symbols = [(r['name'], r['address']) for r in net.project_store(proj['id']).all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     key = trial_key(source, context, settings, fn, ['sdk-data-proposal-v1', symbols, target.refs, target.addrs])
-    cached = net.store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
+    cached = net.project_store(proj['id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
     if cached:
         return json.loads(cached['feedback']).get('source')
     proposal = _variant(net, proj, fn, source, target, job)
     # Cancellation or an exhausted budget must not permanently suppress a probe that did not finish.
     if not exhausted(job):
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                        (fn['id'], key, 'proposal', 'SDK data reference probe', json.dumps({'source': proposal})))
     return proposal

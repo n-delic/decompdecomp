@@ -33,7 +33,7 @@ def export_gba(net, slug: str, out: Path, log=print) -> dict:
                 shutil.rmtree(child) if child.is_dir() else child.unlink()
     out.mkdir(parents=True, exist_ok=True)
 
-    rows = net.store.all("SELECT * FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
+    rows = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
     syms = net.symbols(proj["id"])
     units = net._unit_contexts(proj["id"])
     (out / "include").mkdir(exist_ok=True)

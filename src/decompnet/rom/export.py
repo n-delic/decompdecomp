@@ -69,7 +69,7 @@ def _symbol_lines(net, proj) -> list[str]:
     function's size too: spimdisasm ends a function with a switch at its first return, and the import put the cases
     back (split.merge_switch_cases: a PSP game's GCC and EE-GCC 3.2 load jump tables that way), so splat must too."""
     syms = net.symbols(proj["id"])
-    funcs = {r["vram"]: r for r in net.store.all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])}
+    funcs = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])}
     lines = []
     for vram, r in sorted(funcs.items()):
         lines.append(f"{r['name']} = 0x{vram:08X}; // type:func size:0x{r['size']:X}")
@@ -179,7 +179,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     from ..consoles import EXPORT
 
     proj = net._project(slug)
-    if net.store.one("SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*)>1 LIMIT 1", proj["id"]):
+    if net.project_store(proj['id']).one("SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*)>1 LIMIT 1", proj["id"]):
         raise ExportError("Rebuildable export does not yet support overlapping overlay banks. "
                           "Your matches remain saved; continue working in the app until bank-aware export is available.")
     cfg = net.cfg(proj)
@@ -202,7 +202,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     # 1. splat again, with the project's names
     log("writing the assembly with the project's names (splat)")
     split_config = yaml.safe_load(configs[0].read_text(encoding='utf-8'))
-    known = net.store.all('SELECT vram,size FROM functions WHERE project_id=?', proj['id'])
+    known = net.project_store(proj['id']).all('SELECT vram,size FROM functions WHERE project_id=?', proj['id'])
     (out / 'splat.yaml').write_text(yaml.safe_dump(_export_segments(split_config, known), sort_keys=False), encoding='utf-8')
     shutil.copyfile(work / image_name, out / image_name)
     for extra in ("reloc_addrs.txt",):
@@ -219,7 +219,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         ld.rename(out / f"splat-{ld.name}")
 
     # 2. which function is where, and which are matched
-    rows = {r["vram"]: r for r in net.store.all("SELECT * FROM functions WHERE project_id=?", proj["id"])}
+    rows = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=?", proj["id"])}
     units = net._unit_contexts(proj["id"])
     header = net._context(proj["id"])["header"]
     (out / "include").mkdir(exist_ok=True)

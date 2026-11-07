@@ -162,16 +162,17 @@ def install(conn,columns):
             ' BEGIN UPDATE repair_examples SET evidence_archive=repair_archive_put(NEW.evidence),evidence_hash=NULL,evidence=repair_metadata(NEW.evidence) WHERE id=NEW.id; END')
 
 
-def migrate(net,log):
+def migrate(net,log, *, store=None):
     """Move one historical case per short main transaction; stop/resume without a startup scan."""
     from .app.maintenance import checkpoint
+    store = net.store if store is None else store
     cursor=0;done=0
     while True:
         log.check_cancel()
-        row=net.store.one('SELECT id FROM main.repair_examples WHERE id>? AND evidence_archive IS NULL ORDER BY id LIMIT 1',cursor)
+        row=store.one('SELECT id FROM main.repair_examples WHERE id>? AND evidence_archive IS NULL ORDER BY id LIMIT 1',cursor)
         if row is None:break
         cursor=row['id']
-        with net.store.tx(wait=log.check_cancel) as db:
+        with store.tx(wait=log.check_cancel) as db:
             row=db.execute('SELECT evidence FROM repair_examples WHERE id=? AND evidence_archive IS NULL',(cursor,)).fetchone()
             if row:
                 db.execute('UPDATE repair_examples SET evidence=? WHERE id=? AND evidence_archive IS NULL',(row['evidence'],cursor))

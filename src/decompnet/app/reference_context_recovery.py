@@ -131,8 +131,8 @@ def binding_variants(source, header, asm, references):
 
 def neighbours(net, proj, fn, source, header):
     """Bounded exact evidence lookup; conflicting identities remain a manual review."""
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return []
-    rows=net.store.all("SELECT f.id,v.header FROM functions f JOIN verified_matches v ON v.function_id=f.id "
+    if not net.project_store(proj['id']).one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return []
+    rows=net.project_store(proj['id']).all("SELECT f.id,v.header FROM functions f JOIN verified_matches v ON v.function_id=f.id "
                        "WHERE f.project_id=? AND f.status='matched' AND f.best_score=0 AND v.source=f.matched_source "
                        "AND f.vram BETWEEN ? AND ? ORDER BY ABS(f.vram-?) LIMIT 16",
                        proj['id'],fn['vram']-65536,fn['vram']+65536,fn['vram'])

@@ -9,17 +9,21 @@ KEY='database-source-retention'
 
 
 def stats(net):
+    from pathlib import Path
+
     from ..repair_corpus import read_options
+    from .storage_files import all_files
     store=net.store
-    page=store.one('PRAGMA page_size')[0]
-    count=store.one('PRAGMA page_count')[0]
-    free=store.one('PRAGMA freelist_count')[0]
-    blobs=store.one('SELECT COUNT(*) contents,COALESCE(SUM(raw_bytes),0) logical_bytes,COALESCE(SUM(length(payload)),0) stored_bytes FROM text_payloads')
+    totals = dict.fromkeys(('contents','logical_bytes','stored_bytes','allocated_bytes','free_bytes'),0)
+    for selected in all_files(net):
+        page=selected.one('PRAGMA page_size')[0]
+        totals['allocated_bytes'] += page*selected.one('PRAGMA page_count')[0]
+        totals['free_bytes'] += page*selected.one('PRAGMA freelist_count')[0]
+        blobs=selected.one('SELECT COUNT(*) contents,COALESCE(SUM(raw_bytes),0) logical_bytes,COALESCE(SUM(length(payload)),0) stored_bytes FROM text_payloads')
+        for key in ('contents','logical_bytes','stored_bytes'):totals[key] += blobs[key]
     row=store.one('SELECT value FROM settings WHERE key=?',KEY)
-    from ..repair_archive import archive_path
-    path=archive_path(store.path)
-    return {'repair_archive_bytes':path.stat().st_size if path.is_file() else 0,
-            **dict(blobs),'allocated_bytes':page*count,'free_bytes':page*free,
+    path=Path(store.conn.repair_archive.path)
+    return {'repair_archive_bytes':path.stat().st_size if path.is_file() else 0,**totals,
             'repair_evidence':read_options(store),
             'retention':json.loads(row['value']) if row else {'days':0,'automatic':False},
             'history_plan':[r['detail'] for r in store.all('EXPLAIN QUERY PLAN SELECT id,score,compiled,created_at FROM main.attempts WHERE function_id=? AND id<? ORDER BY id DESC LIMIT 101',0,9223372036854775807)]}
@@ -42,13 +46,28 @@ def save(net,value):
 
 def collect(net,log=None):
     from ..payload_links import collect as collect_payloads
-    return collect_payloads(net.store,log)
+    from .storage_files import all_files
+    return sum(collect_payloads(store,log) for store in all_files(net))
 
 
 def pack(net,log):
+    from pathlib import Path
+
+    from .storage_files import all_files
+    done = sum(_pack_store(net,store,log) for store in all_files(net))
+    library_path=Path(net.store.path).parent/'match-library.sqlite3'
+    if library_path.is_file():
+        from .match_library import Library
+        done += Library(net).pack(log)
+    removed=collect(net,log)
+    log(f'Packed {done:,} records; removed {removed:,} unused shared payloads. Compact the database to return free pages to disk.')
+    return {'packed':done,**stats(net)}
+
+
+def _pack_store(net,store,log):
     from ..repair_archive import migrate
     from .maintenance import checkpoint
-    done=migrate(net,log)
+    done=migrate(net,log,store=store) if store.one("SELECT 1 FROM sqlite_master WHERE name='repair_examples'") else 0
     from ..large_text_storage import FIELDS, MIN_BYTES
     from ..payload_storage import digest, metadata
     def prepare(rows, field):
@@ -62,17 +81,18 @@ def pack(net,log):
     def batch(table,field,cursor,eligible):
         # Fetch lengths first: fifty unusually large records must not all enter Python
         # memory together. A single oversized record still advances the cursor.
-        sizes=net.store.all(f'SELECT rowid AS id,length(CAST({field} AS BLOB)) size FROM main.{table} '
+        sizes=store.all(f'SELECT rowid AS id,length(CAST({field} AS BLOB)) size FROM main.{table} '
                             f'WHERE rowid>? AND {eligible} ORDER BY rowid LIMIT ?',cursor,BATCH)
         ids=[];used=0
         for row in sizes:
             if ids and used+row['size']>BATCH_BYTES:break
             ids.append(row['id']);used+=row['size']
         if not ids:return []
-        return net.store.all(f'SELECT rowid AS id,{field} FROM main.{table} '
+        return store.all(f'SELECT rowid AS id,{field} FROM main.{table} '
                              f'WHERE rowid IN (SELECT value FROM json_each(?)) AND {eligible} ORDER BY rowid',json.dumps(ids))
+    installed={r['name'] for r in store.all("SELECT name FROM sqlite_master WHERE type='table'")}
     # No startup scan or monolithic migration: conversion is explicit and resumable.
-    for table,field,ref in (('attempts','source','source_hash'),):
+    for table,field,ref in ([('attempts','source','source_hash')] if 'attempts' in installed else []):
         cursor=0
         while True:
             log.check_cancel()
@@ -80,7 +100,7 @@ def pack(net,log):
             if not rows:break
             log.progress({'phase':'Packing '+table,'done':done,'function':str(rows[0]['id'])})
             values,blobs=prepare(rows,field);changed=0
-            with net.store.tx(wait=log.check_cancel) as db:
+            with store.tx(wait=log.check_cancel) as db:
                 db.executemany('INSERT OR IGNORE INTO text_payloads VALUES(?,?,?)',blobs)
                 for identity,text,key in values:
                     log.check_cancel();cursor=identity
@@ -89,7 +109,7 @@ def pack(net,log):
                                (stored,key,cursor,text)).rowcount
             done+=changed
             checkpoint()
-    installed={r['name'] for r in net.store.all("SELECT name FROM sqlite_master WHERE type='table'")}
+    installed={r['name'] for r in store.all("SELECT name FROM sqlite_master WHERE type='table'")}
     for table,fields in FIELDS.items():
         if table not in installed:continue
         for field in fields:
@@ -101,7 +121,7 @@ def pack(net,log):
                 rows=batch(table,field,cursor,eligible)
                 if not rows:break
                 values,blobs=prepare(rows,field);changed=0
-                with net.store.tx(wait=log.check_cancel) as db:
+                with store.tx(wait=log.check_cancel) as db:
                     db.executemany('INSERT OR IGNORE INTO text_payloads VALUES(?,?,?)',blobs)
                     for identity,text,key in values:
                         log.check_cancel();cursor=identity
@@ -109,19 +129,11 @@ def pack(net,log):
                                    (bytes.fromhex(key),cursor,text)).rowcount
                 done+=changed
                 checkpoint()
-    from pathlib import Path
-    library_path=Path(net.store.path).parent/'match-library.sqlite3'
-    if library_path.is_file():
-        from .match_library import Library
-        done+=Library(net).pack(log)
     log.check_cancel()
-    log.progress({'phase':'Collecting unused shared text','done':done})
-    removed=collect(net,log)
-    with net.store.writer_gate.hold(wait=log.check_cancel),net.store.lock:
-        net.store.conn.execute('PRAGMA analysis_limit=1000')
-        net.store.conn.execute('PRAGMA optimize')
-    log(f'Packed {done:,} records; removed {removed:,} unused shared payloads. Compact the database to return free pages to disk.')
-    return {'packed':done,**stats(net)}
+    with store.writer_gate.hold(wait=log.check_cancel),store.lock:
+        store.conn.execute('PRAGMA analysis_limit=1000')
+        store.conn.execute('PRAGMA optimize')
+    return done
 
 
 def _protection(store):
@@ -148,9 +160,17 @@ def _protection(store):
 
 
 def prune(net,value,log):
+    from .storage_files import operational
+    results = [_prune_store(net,store,value,log) for store in operational(net)]
+    collect(net,log)
+    return {'removed_sources':sum(r['removed_sources'] for r in results),
+            'compacted_search_details':sum(r['compacted_search_details'] for r in results),**stats(net)}
+
+
+def _prune_store(net,store,value,log):
     from .maintenance import checkpoint
     cutoff=time.time()-options(value)['days']*86400
-    protection=_protection(net.store)
+    protection=_protection(store)
     removed=0;cursor=0
     while True:
         log.check_cancel()
@@ -166,7 +186,7 @@ def prune(net,value,log):
             "AND "+protection)
         # Select and clear one bounded batch in the same transaction. Protection is evaluated
         # once per batch and cannot race with a new capture or a current-source update.
-        with net.store.tx(wait=log.check_cancel) as db:
+        with store.tx(wait=log.check_cancel) as db:
             page=db.execute('SELECT id FROM main.attempts WHERE id>? ORDER BY id LIMIT ?',(cursor,BATCH)).fetchall()
             if not page:break
             cursor=page[-1]['id']
@@ -178,9 +198,8 @@ def prune(net,value,log):
         log.progress({'phase':'Removing superseded unsuccessful source payloads','done':removed})
         checkpoint()
     from .search_history import prune as prune_search
-    search_details=prune_search(net.store,log)
-    collect(net,log)
-    return {'removed_sources':removed,'compacted_search_details':search_details,**stats(net)}
+    search_details=prune_search(store,log)
+    return {'removed_sources':removed,'compacted_search_details':search_details}
 
 
 def history(net,slug,function,before=0,attempt=None):
@@ -190,10 +209,11 @@ def history(net,slug,function,before=0,attempt=None):
         row=store.one('SELECT id,source,source_digest FROM attempts WHERE id=? AND function_id=?',attempt,fn['id'])
         if row is None:raise ValueError('This attempt is not part of the selected function.')
         return dict(row)
-    rows=store.all('SELECT t.id,t.score,t.compiled,t.created_at,a.name agent,'
+    rows=store.all('SELECT t.id,t.score,t.compiled,t.created_at,t.agent_id,'
         'COALESCE(t.source_digest,t.source_hash) source_digest,(t.source_hash IS NOT NULL OR t.source IS NOT NULL) source_available FROM main.attempts t '
-        'LEFT JOIN agents a ON a.id=t.agent_id WHERE t.function_id=? AND t.id<? ORDER BY t.id DESC LIMIT 101',fn['id'],before or 9223372036854775807)
-    return {'attempts':[dict(r) for r in rows[:100]],'before':rows[99]['id'] if len(rows)>100 else None}
+        'WHERE t.function_id=? AND t.id<? ORDER BY t.id DESC LIMIT 101',fn['id'],before or 9223372036854775807)
+    from .project_labels import label
+    return {'attempts':label(net,rows[:100],{'agent':'agent_id'}),'before':rows[99]['id'] if len(rows)>100 else None}
 
 
 def start(net,jobs,action,value=None,*,foreground=True):

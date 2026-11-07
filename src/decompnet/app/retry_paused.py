@@ -19,7 +19,7 @@ def retry(net, project, agent, limit=5, log=lambda *_: None):
     # Page metadata only. Stop before loading more functions once the allowance is filled.
     # Recheck filters and stamps under a per-candidate lock so claims cannot race the grant.
     while len(chosen)<limit:
-        rows=net.store.all("SELECT f.id FROM functions f JOIN settings s ON s.key=? || f.id || ? "
+        rows=net.project_store(proj['id']).all("SELECT f.id FROM functions f JOIN settings s ON s.key=? || f.id || ? "
             "WHERE f.project_id=? AND f.status='open' AND f.id>? ORDER BY f.id LIMIT 32",
             claim_stalls.PREFIX,identity[0],proj['id'],after)
         if not rows:break
@@ -29,12 +29,12 @@ def retry(net, project, agent, limit=5, log=lambda *_: None):
             # under the transaction. This lock order also serializes grants with the child.
             net._project(project)
             progress=getattr(net,'progress',None)
-            with progress.view() if progress else nullcontext(), net.store.tx():
-                proj=net.store.one('SELECT * FROM projects WHERE id=?',proj['id'])
+            with progress.view() if progress else nullcontext(), net.project_store(proj['id']).tx():
+                proj=net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id'])
                 if pause_scope.identity(net,proj,agent)!=identity:
                     raise NetworkError('This worker changed models during retry. Check its settings and retry again.')
                 policy=net.selection(project,agent.name)
-                fn=net.store.one("SELECT f.*,s.value AS stall FROM functions f JOIN settings s ON s.key=? || f.id || ? "
+                fn=net.project_store(proj['id']).one("SELECT f.*,s.value AS stall FROM functions f JOIN settings s ON s.key=? || f.id || ? "
                     "WHERE f.id=? AND f.project_id=? AND f.status='open' "
                     "AND NOT EXISTS (SELECT 1 FROM claims WHERE function_id=f.id) "
                     "AND (? IS NULL OR best_score IS NULL OR MAX(0.0,100.0*(1.0-CAST(best_score AS REAL)/MAX(1,n_insns*100)))<?) "
