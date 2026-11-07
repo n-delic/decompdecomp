@@ -1312,6 +1312,58 @@ def test_a_first_sync_keeps_a_same_size_overlay_sibling_by_unit():
     _manifest(merged, {"rom": {"sha1": sha}})
 
 
+def test_adopt_saved_names_renames_a_matched_row_to_its_saved_name(tmp_path):
+    """#174 review 2+3: on a first sync the database may hold the new name while the folder keeps the saved (old)
+    one. Renaming the one matching database row to the saved name before anything renders keeps the saved name --
+    so it is not republished under the new name and survives the next database change -- while a same-size sibling
+    in another overlay is left alone."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) VALUES"
+                   "(?,'ovl_a_disp_004BF720',?,36,9,'matched','ovl_a','void ovl_a_disp_004BF720(void){}')", (pid, 0x4BF720))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'ovl_b_crit_004BF720',?,36,9,'open','ovl_b')", (pid, 0x4BF720))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'ovl_a_disp_004BF720',?,36,'func')", (pid, 0x4BF720))
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"},
+                        {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}]}
+    _adopt_saved_names(net, pid, saved)
+    names = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    assert "draw_sprite" in names and "ovl_a_disp_004BF720" not in names    # the matched row took the saved name
+    assert "ovl_b_crit_004BF720" in names                                   # the sibling is untouched
+    row = net.store.one("SELECT matched_source FROM functions WHERE project_id=? AND name='draw_sprite'", pid)
+    assert "draw_sprite" in row["matched_source"] and "ovl_a_disp" not in row["matched_source"]   # source rewritten
+    assert net.store.one("SELECT 1 FROM symbols WHERE project_id=? AND name='draw_sprite' AND address=?", pid, 0x4BF720)
+
+
+def test_a_first_sync_from_an_old_folder_keeps_both_same_size_siblings():
+    """#174 review 1: an older folder's saved entry has no unit, so two same-size overlay siblings both match it by
+    size. Neither may be taken as its rename and dropped: a saved entry is a rename source for only one database
+    function, so with no way to tell the siblings apart both join as new functions."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "game": {"sha1": sha}, "layout": layout, "headers": {"": "common.h"}}
+        return ({saves.MANIFEST: json.dumps(manifest), "include/common.h": "/* */"}
+                | {f"src/{name}.c": "int x;" for name in sources})
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}   # same size, other overlay
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}                          # old folder: no unit
+    disk = files([renamed])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    names = [f["name"] for f in manifest["layout"]]
+    assert "ovl_a_disp_004BF720" in names and "ovl_b_crit_004BF720" in names, names        # neither sibling dropped
+    assert "src/ovl_a_disp_004BF720.c" in pending and "src/ovl_b_crit_004BF720.c" in pending
+    merged = disk | pending
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})                                               # still saves
+
+
 def test_the_rendered_layout_carries_each_functions_unit(project):
     """#174: each rendered layout entry carries its unit, so a first sync can tell same-size overlay siblings apart."""
     net, folder, _ = project

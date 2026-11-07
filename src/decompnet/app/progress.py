@@ -302,26 +302,33 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
     # database name isn't added back. Other database functions new at that shared address still join -- overlays load
     # different functions at one address (a PS2 game's ovl_* units).
     local_names = {item.get("name") for item in local.get("layout") or []}
-    renamed_db: set[str] = set()  # database names taken as the rename of a saved (now-unknown) name: their src/best
-    for key, identity in identities.items():   # are the saved files, not new ones, so they aren't queued into pending
+    saved_layout = list(manifest.get("layout") or [])
+    saved_names = {entry.get("name") for entry in saved_layout}
+
+    def _renamed_from(saved, dbfn):   # does database function `dbfn` look like the saved entry `saved` renamed?
+        return (saved.get("vram") == dbfn.get("vram") and saved.get("name") not in local_names
+                and (saved.get("unit") == dbfn.get("unit")
+                     if saved.get("unit") is not None and dbfn.get("unit") is not None
+                     else dbfn.get("size") is not None and saved.get("size") == dbfn.get("size")))
+
+    # A database function is a saved function renamed only when it is the one database function matching a saved
+    # entry. Same-size siblings in different overlays with no unit to tell them apart match the same saved entry, so
+    # that entry consumes neither: both join as new functions at the shared address.
+    renamed_db: set[str] = set()  # database names that are a saved (now-unknown) name renamed: their src/best files
+    for saved in saved_layout:                                 # are the saved ones, not new, so they aren't queued
+        matching = [d for d in (local.get("layout") or []) if d.get("name") not in saved_names and _renamed_from(saved, d)]
+        if len(matching) == 1:
+            renamed_db.add(matching[0].get("name"))
+
+    for key, identity in identities.items():
         current = manifest.get(key) or []
         known = {identity(item) for item in current}
         for item in local.get(key) or []:
             ident = identity(item)
             if ident in known:
                 continue
-            if key == "layout":
-                # A saved entry at this address is this database function renamed when it matches by unit (when both
-                # carry one) or else by size, and its saved name is gone from the database. Take it as a rename only
-                # when exactly one saved entry matches, so same-size siblings in different overlays aren't confused.
-                candidates = [row for row in current
-                              if row.get("vram") == item.get("vram") and row.get("name") not in local_names
-                              and (row.get("unit") == item.get("unit")
-                                   if item.get("unit") is not None and row.get("unit") is not None
-                                   else item.get("size") is not None and row.get("size") == item.get("size"))]
-                if len(candidates) == 1:
-                    renamed_db.add(item.get("name"))
-                    continue
+            if key == "layout" and item.get("name") in renamed_db:
+                continue  # this database function is a saved entry renamed: the saved (old) name keeps its place
             current.append(item)
             known.add(ident)
         manifest[key] = current
@@ -359,6 +366,40 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
         return {row["name"] for row in rows
                 if isinstance(row["matched_at"], (int, float)) and row["matched_at"] > saved_at}
     return {row["name"] for row in rows}
+
+
+def _adopt_saved_names(net, pid: int, saved_manifest: dict) -> None:
+    """Before a first sync renders, give a database function the saved (older) name the folder still uses for it:
+    when exactly one database function at a saved entry's address matches it (by unit, or by size when no unit can
+    tell siblings apart) and that saved name is gone from the database, rename the row to the saved name. Then the
+    render, the merge and later publishes all agree on the name, instead of the database's new name being republished
+    or quietly replacing the saved one on the next change (#174)."""
+    saved_layout = saved_manifest.get("layout") or []
+    saved_names = {entry.get("name") for entry in saved_layout}
+    rows = net.store.all("SELECT id, name, vram, size, unit, matched_source, best_source "
+                         "FROM functions WHERE project_id=?", pid)
+    db_names = {r["name"] for r in rows}
+    for saved in saved_layout:
+        new = saved.get("name")
+        if new in db_names:
+            continue  # the saved name is still a database function: nothing was renamed
+        matching = [r for r in rows if r["name"] not in saved_names and r["vram"] == saved.get("vram")
+                    and (r["unit"] == saved.get("unit")
+                         if saved.get("unit") is not None and r["unit"] is not None
+                         else saved.get("size") is not None and r["size"] == saved.get("size"))]
+        if len(matching) != 1:
+            continue  # same-size siblings with no unit to separate them, or no match: leave the database names
+        row = matching[0]
+        word = re.compile(rf"\b{re.escape(row['name'])}\b")
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET name=?, matched_source=?, best_source=? WHERE id=?",
+                       (new, word.sub(new, row["matched_source"]) if row["matched_source"] else None,
+                        word.sub(new, row["best_source"]) if row["best_source"] else None, row["id"]))
+            db.execute("UPDATE symbols SET name=? WHERE project_id=? AND address=? AND name=?",
+                       (new, pid, row["vram"], row["name"]))
+        net._syms.pop(pid, None)
+        db_names.discard(row["name"]); db_names.add(new)
+        rows = [{**r, "name": new} if r["id"] == row["id"] else r for r in rows]
 
 
 class Progress:
@@ -902,6 +943,10 @@ class Progress:
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
+            if before is None and slug not in self.adopting and saves.MANIFEST in disk:
+                # Give a database function the saved (older) name the folder still uses, before anything renders,
+                # so the render, the merge and later publishes agree on the name (#174).
+                _adopt_saved_names(net, pid, json.loads(disk[saves.MANIFEST]))
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
             comparison = None if before is not None else saves._render(net, slug)[0]
             comparison_manifest = before.manifest if before is not None else comparison[saves.MANIFEST]
