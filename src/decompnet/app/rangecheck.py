@@ -133,8 +133,8 @@ class RangeChecks:
     # ------------------------------------------------------------------ evidence
 
     def _rows(self, proj) -> list:
-        return self.net.store.read_cache.get(('compiler-range-rows', proj['id']),
-            self.net.store.read_version('compiler_rows', proj['id']), lambda: self.net.store.all(
+        return self.net.project_store(proj['id']).read_cache.get(('compiler-range-rows', proj['id']),
+            self.net.project_store(proj['id']).read_version('compiler_rows', proj['id']), lambda: self.net.project_store(proj['id']).all(
                 f"SELECT {ROW_COLUMNS} FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram", proj['id']))
 
     @staticmethod
@@ -172,7 +172,7 @@ class RangeChecks:
         other = built if built != label else (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
         if other == label:
             return "neutral"  # the range's compiler is the game's: nothing to tell apart
-        fn = self.net.store.one(f"SELECT {JUDGE_COLUMNS} FROM functions WHERE id=?", fn["id"]) or fn
+        fn = self.net.project_store(proj['id']).one(f"SELECT {JUDGE_COLUMNS} FROM functions WHERE id=?", fn["id"]) or fn
         if cmap is not None and fn["target"] and cmap.never.get(kind) and (
                 set(cmap.never[kind]) & set(compilermap.quirks(fn["target"], bool(cfg.get("big_endian", True))))):
             return "refuted"
@@ -376,7 +376,7 @@ class RangeChecks:
             fn = self._at(rows, vram)
             if fn:
                 self.net.set_priority(proj["slug"], fn["name"], False)
-        with self.net.store.tx() as db:
+        with self.net.project_store(proj['id']).tx() as db:
             self.net._event(db, proj["id"], None, "compiler", f"range check #{c['id']} ({short}): {text}")
 
     def _save(self, proj, c: dict, said: str, resolve: str | None = None) -> None:
@@ -479,7 +479,7 @@ class RangeChecks:
                         s["status"] = "open" if s["status"] == "dismissed" else s["status"]
         self.net._update_cfg(slug, change)
         if again:
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 for c in again:
                     db.execute("DELETE FROM notes WHERE project_id=? AND text LIKE ? AND function_id IN (SELECT id FROM "
                                "functions WHERE project_id=? AND vram=?)",

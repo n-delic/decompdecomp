@@ -17,8 +17,8 @@ def plateau(scores):
 def track(net,agent,slug,fn):
     if net._function(fn['name'],slug)['status']!='open':
         return ''
-    claim=net.store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
-    latest=net.store.one('SELECT id,score,compiled FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
+    claim=net.project_store(fn['project_id']).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+    latest=net.project_store(fn['project_id']).one('SELECT id,score,compiled FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1',fn['id'],agent.id)
     if not claim or not latest or not latest['compiled'] or latest['score'] is None:
         return ''
     from .. import candidate_scope
@@ -26,7 +26,7 @@ def track(net,agent,slug,fn):
     proj=net._project(slug)
     scope=hashlib.sha256(repr((claim['claimed_at'],candidate_scope.key(net,proj,shape))).encode()).hexdigest()
     key=f'progress-rate:{agent.id}:{fn["id"]}'
-    with net.store.tx() as db:
+    with net.project_store(fn['project_id']).tx() as db:
         saved=db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()
         state=json.loads(saved['value']) if saved else {}
         if state.get('scope')!=scope:

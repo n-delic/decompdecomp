@@ -24,12 +24,12 @@ def resolve(net, agent, slug, queries, context_function=''):
     if context_function:
         context=[net._function(net.resolve_function(agent,slug,context_function),slug)]
     else:
-        context=net.store.all('SELECT f.* FROM functions f JOIN claims c ON c.function_id=f.id WHERE f.project_id=? AND c.agent_id=? AND c.expires_at>strftime(\'%s\',\'now\')',proj['id'],agent.id) if agent else []
+        context=net.project_store(proj['id']).all('SELECT f.* FROM functions f JOIN claims c ON c.function_id=f.id WHERE f.project_id=? AND c.agent_id=? AND c.expires_at>strftime(\'%s\',\'now\')',proj['id'],agent.id) if agent else []
     scopes={image(r) for r in context}
     result=[]
     for query in queries:
         query=query.strip().strip('`')
-        exact=net.store.all(f'SELECT {COLUMNS} FROM functions WHERE project_id=? AND name=?',proj['id'],query)
+        exact=net.project_store(proj['id']).all(f'SELECT {COLUMNS} FROM functions WHERE project_id=? AND name=?',proj['id'],query)
         if not exact and not re.fullmatch(r'(?:0[xX][0-9a-fA-F]+|(?:D_|func_)[0-9a-fA-F]{8,16})',query) and '+' not in query:
             exact=getattr(net,'_loose_functions',lambda *args:[])(query,slug)
             if len(exact)>1 and len(scopes)==1:
@@ -42,8 +42,8 @@ def resolve(net, agent, slug, queries, context_function=''):
         suffix=re.fullmatch(r'(.+)\+(0x[0-9a-fA-F]+|[0-9]+)',query)
         if suffix:
             base=suffix[1];offset=int(suffix[2],16 if suffix[2].startswith('0x') else 10)
-        symbols=net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? AND name=?',proj['id'],base)
-        named=net.store.all(f'SELECT {COLUMNS} FROM functions WHERE project_id=? AND name=?',proj['id'],base)
+        symbols=net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? AND name=?',proj['id'],base)
+        named=net.project_store(proj['id']).all(f'SELECT {COLUMNS} FROM functions WHERE project_id=? AND name=?',proj['id'],base)
         numeric=re.fullmatch(r'0[xX]([0-9a-fA-F]+)',base)
         generated=re.fullmatch(r'(?:D_|func_)([0-9a-fA-F]{8,16})',base)
         address=(symbols[0]['address'] if symbols else named[0]['vram'] if named else
@@ -53,14 +53,14 @@ def resolve(net, agent, slug, queries, context_function=''):
                            'next':'Use the exact stored symbol, or a hexadecimal address from read_data/get_assembly.'})
             continue
         address+=offset
-        owners=net.store.all(f'SELECT {COLUMNS} FROM functions WHERE project_id=? AND vram<=? AND vram+MAX(size,1)>? ORDER BY unit,rom_offset,name',proj['id'],address,address)
+        owners=net.project_store(proj['id']).all(f'SELECT {COLUMNS} FROM functions WHERE project_id=? AND vram<=? AND vram+MAX(size,1)>? ORDER BY unit,rom_offset,name',proj['id'],address,address)
         owner_scopes={image(r) for r in named} if named else scopes
         if len(owner_scopes)==1 and len(owners)>1:
             scoped=[r for r in owners if image(r) in owner_scopes]
             if scoped:owners=scoped
         # A registered data name is not silently reinterpreted as code, even when analysis overlaps it.
         if not symbols:
-            symbols=net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? AND address<=? AND address+MAX(size,1)>? ORDER BY name LIMIT 16',proj['id'],address,address)
+            symbols=net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? AND address<=? AND address+MAX(size,1)>? ORDER BY name LIMIT 16',proj['id'],address,address)
         # Saved/imported symbol tables use 'func'; older integrations also use
         # 'function'. Neither spelling turns a conflicting data record into code.
         data=any(r['kind'] not in ('func','function') for r in symbols)
@@ -71,7 +71,7 @@ def resolve(net, agent, slug, queries, context_function=''):
         elif owners:
             kind='function_entry' if owners[0]['vram']==address else 'function_interior'
         else:
-            kind='data' if net.store.one('SELECT 1 FROM symbols WHERE project_id=? AND kind NOT IN (\'func\',\'function\') AND address<=? AND address+MAX(size,1)>?',proj['id'],address,address) else 'unknown'
+            kind='data' if net.project_store(proj['id']).one('SELECT 1 FROM symbols WHERE project_id=? AND kind NOT IN (\'func\',\'function\') AND address<=? AND address+MAX(size,1)>?',proj['id'],address,address) else 'unknown'
         result.append({'query':query,'kind':kind,'address':address,'symbols':[dict(r) for r in symbols],
                        'candidates':[function_info(r,address) for r in owners[:12]],'candidate_count':len(owners),
                        'next':'Choose a full function name or supply context_function to identify the overlay.' if kind=='ambiguous' else

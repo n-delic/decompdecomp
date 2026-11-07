@@ -201,3 +201,12 @@ Sampling and analysis preferences remain global. Store readers explicitly reuse
 the configured shared repair archive, so opening a project file cannot silently
 choose a new archive location. New project stores must receive the catalog's
 archive instance before their schema or captures are prepared.
+
+Durable source-recovery queues now restore per-project state and resolve their
+shared worker identity before cleaning that project's claims. Reuse-cascade
+notifications read the donor and each destination independently. Cross-project
+function peers shortlist metadata per store, select at most 400 candidates overall,
+then load target bytes only for that shortlist. Compiler range checks, profile
+cleanup, SDK naming revisions, address lookup and match reconciliation use explicit
+project storage. Repair schema initialization happens within an already admitted
+record transaction, preserving cancellable writer waits without recompiling.

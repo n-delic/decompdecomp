@@ -18,12 +18,12 @@ class Queue:
         self.active = {}
 
     def _load(self, project_id):
-        row = self.net.store.one('SELECT value FROM settings WHERE key=?', PREFIX+str(project_id))
+        row = self.net.project_store(project_id).one('SELECT value FROM settings WHERE key=?', PREFIX+str(project_id))
         return json.loads(row['value']) if row else {}
 
     def _save(self, project_id, state):
         state['updated_at'] = time.time()
-        with self.net.store.tx() as db:
+        with self.net.project_store(project_id).tx() as db:
             db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)', (PREFIX+str(project_id), json.dumps(state)))
 
     def status(self, slug):
@@ -33,7 +33,7 @@ class Queue:
             return {**state, 'job':self.active.get(slug), 'coverage_note':'Function checks do not verify a complete cartridge. Run repository sync for the full rebuild gate.'}
 
     def bundles(self, proj, name):
-        rows = self.net.store.all('SELECT r.signature,r.feedback FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE f.project_id=? AND f.name=? AND r.signature LIKE ? ORDER BY r.rowid DESC', proj['id'], name, 'local-source-%')
+        rows = self.net.project_store(proj['id']).all('SELECT r.signature,r.feedback FROM reuse_trials r JOIN functions f ON f.id=r.function_id WHERE f.project_id=? AND f.name=? AND r.signature LIKE ? ORDER BY r.rowid DESC', proj['id'], name, 'local-source-%')
         seen = set();result = []
         for row in rows:
             item = json.loads(row['feedback'] or '{}')
@@ -56,7 +56,7 @@ class Queue:
                 cfg = prep.settings(self.net, proj)
                 mapped = {m[0] for m in (prep.mappings(cfg.get('mappings',''))+prep.mappings(cfg.get('assembly_mappings','')))} if cfg.get('enabled') else set()
                 names = []
-                for fn in self.net.store.all("SELECT name,status FROM functions WHERE project_id=? AND status IN ('open','asm') ORDER BY vram", proj['id']):
+                for fn in self.net.project_store(proj['id']).all("SELECT name,status FROM functions WHERE project_id=? AND status IN ('open','asm') ORDER BY vram", proj['id']):
                     if fn['status']=='asm' and not include_assembly:continue
                     if fn['name'] in mapped or self.bundles(proj, fn['name']):names.append(fn['name'])
                 state = {'state':'running','include_assembly':include_assembly,'items':[{'function':n,'state':'pending'} for n in names]}
@@ -89,23 +89,21 @@ class Queue:
 
     def resume(self):
         """Startup only: no old worker survives the app process. Release only this queue's own claim."""
-        rows = self.net.store.all('SELECT key,value FROM settings WHERE key LIKE ?', PREFIX+'%')
-        for row in rows:
-            state = json.loads(row['value'])
+        for item in self.net.store.all('SELECT id,slug FROM projects ORDER BY id'):
+            project_id = item['id']
+            state = self._load(project_id)
             if state.get('state') not in ('running','paused'):continue
-            project_id = int(row['key'][len(PREFIX):])
-            proj = self.net.store.one('SELECT * FROM projects WHERE id=?', project_id)
-            if proj is None:continue
-            with self.net.store.tx() as db:
-                # The dedicated identity is never used by paid helpers or ordinary autopilot.
-                agent = db.execute('SELECT id FROM agents WHERE id=? AND name=?', (state.get('agent_id'), 'source-queue-'+str(project_id))).fetchone()
+            agent = self.net.store.one('SELECT id FROM agents WHERE id=? AND name=?',
+                                      state.get('agent_id'),'source-queue-'+str(project_id))
+            with self.net.project_store(project_id).tx() as db:
                 if agent:
-                    for item in state.get('items', []):
-                        if item['state']=='running':
-                            db.execute('DELETE FROM claims WHERE agent_id=? AND function_id IN (SELECT id FROM functions WHERE project_id=? AND name=?)', (agent['id'], project_id, item['function']))
-                            item['state']='pending'
-            self._save(project_id, state)
-            if state['state']=='running':self.start(proj['slug'],foreground=False)
+                    for queued in state.get('items',[]):
+                        if queued['state']=='running':
+                            db.execute('DELETE FROM claims WHERE agent_id=? AND function_id IN (SELECT id FROM functions WHERE project_id=? AND name=?)',
+                                       (agent['id'],project_id,queued['function']))
+                            queued['state']='pending'
+            self._save(project_id,state)
+            if state['state']=='running':self.start(item['slug'],foreground=False)
 
     def _run(self, slug, agent, log):
         proj = self.net.project_row(slug)
@@ -145,7 +143,7 @@ class Queue:
         before = self.net._function(name, slug)
         if before['status']=='matched':return {'matched':True,'already_matched':True}
         if before['status']=='asm' and not assembly:return {'matched':False,'skipped':'Assembly reconsideration was not approved.'}
-        claim=self.net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?',before['id'])
+        claim=self.net.project_store(slug).one('SELECT agent_id,expires_at FROM claims WHERE function_id=?',before['id'])
         if claim and claim['expires_at']>time.time() and claim['agent_id']!=agent.id:
             return {'matched':False,'deferred':True,'error':'Another worker holds this function. Start a new queue after it is released.'}
         for round_number in range(3):

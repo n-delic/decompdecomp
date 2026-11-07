@@ -35,7 +35,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
         proj = net._project(slug)
         config = net.cfg(proj)
         proposed = copy.deepcopy(config)
-        rows = net.store.all('SELECT * FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram', proj['id'])
+        rows = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram', proj['id'])
         addresses = Counter(fn['vram'] for fn in rows)
         starts = sorted(addresses)
         counts = Counter(profile(compiler_for(config, fn['vram'], fn)) for fn in rows)
@@ -62,7 +62,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
             log(f'Checking {len(candidates)} matched functions from profiles used by at most {rare_limit} functions. Testing up to three more-common installed profiles.')
         for index, fn in enumerate(candidates, 1):
             check_cancel()
-            if addresses[fn['vram']] > 1 or net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
+            if addresses[fn['vram']] > 1 or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
                 skipped += 1
                 log(f'{index}/{len(candidates)}: {fn["name"]} is busy or shares an overlay address; skipped.')
                 continue
@@ -93,7 +93,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
         if changed or proposed.get('compiler_ranges', []) != config.get('compiler_ranges', []):
             # Recheck every affected match and reject concurrent changes before the atomic commit.
             net._apply_compiler_config(proj, proposed, log=log)
-            with net.store.tx() as db:
+            with net.project_store(proj['id']).tx() as db:
                 net._event(db, proj['id'], None, 'compiler', f'Compiler cleanup moved {len(changed)} functions to more common settings; all affected matches verified.')
         after = {profile(compiler_for(proposed, fn['vram'], fn)) for fn in rows}
         log(f'Cleanup complete: {len(changed)} functions moved; {len(counts)} → {len(after)} used profiles. Other functions keep their settings.')

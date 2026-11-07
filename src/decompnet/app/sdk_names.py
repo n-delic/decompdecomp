@@ -16,13 +16,13 @@ def name_functions(net, slug, job=None):
     proj = net.project_row(slug)
     if net.fork_slug(slug):
         return _name_functions(net, slug, job)  # Imported source files can change outside the database.
-    version = (net.store.read_version('inputs', proj['id']), net.store.read_version('sdk_names'))
+    version = (net.project_store(proj['id']).read_version('inputs', proj['id']), net.store.read_version('sdk_names'))
     cache = net.__dict__.setdefault('_sdk_name_checks', {})
     previous = cache.get(proj['id'])
     if previous and previous[0] == version and time.monotonic() - previous[1] < 60 and job is None:
         return 0
     result = _name_functions(net, slug, job)
-    busy = net.store.one('SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=? LIMIT 1', proj['id'])
+    busy = net.project_store(proj['id']).one('SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=? LIMIT 1', proj['id'])
     if not busy and (job is None or not job.stop.is_set()):
         cache[proj['id']] = (version, time.monotonic())
     return result
@@ -48,7 +48,7 @@ def _name_functions(net, slug, job=None):
         return 0
     prints = naming_prints(net, proj)
     multiplicity = Counter(p.key for p in prints.values())
-    rows = net.store.all('SELECT id,name,meta,size FROM functions WHERE project_id=?', proj['id'])
+    rows = net.project_store(proj['id']).all('SELECT id,name,meta,size FROM functions WHERE project_id=?', proj['id'])
     taken = {r['name'] for r in rows}
     if not fork:
         taken |= set(net.symbols(proj['id']).by_name)
@@ -69,7 +69,7 @@ def _name_functions(net, slug, job=None):
         name = names[0]
         if not re.fullmatch(r'[A-Za-z_]\w*', name) or generated(name) or name in BUILTIN_NAMES or name in taken:
             continue
-        if net.store.one('SELECT 1 FROM claims WHERE function_id=?', row['id']):
+        if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', row['id']):
             continue
         candidates.append((row, name, hint, p.key))
     counts = Counter(name for _, name, _, _ in candidates)
@@ -102,10 +102,10 @@ def _name_functions(net, slug, job=None):
         evidence = (f"Exact relocation-normalized {row['size']}-byte function fingerprint {key}; "
                     'one name across selected SDK signatures, unique target fingerprint. Libraries: '
                     + '; '.join(hint['corpora']) + '. Name inferred from library code; not a verified C match.')
-        with net.store.tx() as db:
+        with net.project_store(proj['id']).tx() as db:
             record(db, row['id'], row['name'], name, method='sdk_signature', source_corpora=hint['corpora'],
                    source_name=name, fingerprint=key, evidence=evidence)
-        current = net.store.one('SELECT name FROM functions WHERE id=?', row['id'])
+        current = net.project_store(proj['id']).one('SELECT name FROM functions WHERE id=?', row['id'])
         net.add_note(agent, slug, evidence, current['name'])
         renamed += 1
     return renamed

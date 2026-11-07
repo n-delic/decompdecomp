@@ -57,12 +57,12 @@ class Cascade:
     def notify(self, donor, fid):
         if not self.enabled:
             return
-        fn = self.net.store.one('SELECT name,size,status,best_source FROM functions WHERE id=?', fid)
+        fn = self.net.project_store(donor['id']).one('SELECT name,size,status,best_source FROM functions WHERE id=?', fid)
         if not fn or (fn['status'] != 'matched' and not fn['best_source']):
             return
         from .shared_reuse import compatible
         identity=fn['name'] if fn['status']=='matched' and named_donors.meaningful(fn['name']) else ''
-        projects = [p for p in compatible(self.net, donor) if self.net.store.one(
+        projects = [p for p in compatible(self.net, donor) if self.net.project_store(p['id']).one(
             "SELECT 1 FROM functions WHERE project_id=? AND status IN ('open','nosource') AND (size BETWEEN ? AND ? OR name=?) LIMIT 1",
             p['id'], int(fn['size'] * .9), int(fn['size'] / .9),identity)]
         with self.lock:
@@ -104,7 +104,7 @@ class Cascade:
                     job.matched += free_candidates.run(self.net.twins, slug, job)
                     job.matched += similar_matches.run(self.net.twins, slug, job)
                     proj = self.net.project_row(slug)
-                    with self.net.store.tx() as db:
+                    with self.net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT INTO reuse_runs(project_id,attempts,matched,bytes,seconds,created_at) VALUES(?,?,?,?,?,?)',
                                    (proj['id'], job.reuse_attempts - tries, job.reuse_matched - count,
                                     job.reuse_bytes - size, time.monotonic() - started, time.time()))

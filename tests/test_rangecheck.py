@@ -46,6 +46,7 @@ class FakeNet:
     """What RangeChecks uses of the engine: a project's settings and functions, the judge (scripted: which compilers
     each function's C matches with), priorities, notes and events."""
 
+    project_store = lambda self, project:self.store
     auto_compiler = True
 
     def __init__(self, functions, matches):

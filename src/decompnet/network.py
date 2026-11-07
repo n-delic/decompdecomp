@@ -1845,7 +1845,6 @@ class Network:
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None):
         store = self.project_store(fn["project_id"])
-        self.repair_feedback.for_project(fn["project_id"])
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         improved = False
