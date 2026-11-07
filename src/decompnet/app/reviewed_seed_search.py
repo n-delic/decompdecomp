@@ -49,7 +49,8 @@ def run(search, agent, proj, fn):
         header = root['header']
         def evaluate(source, profile=profile, expected=expected, current=current):
             if not check():return None
-            charge()
+            try:charge()
+            except PhaseLimit:return None
             ok, diff, error = net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
             if current() != expected:raise NetworkError('Reviewed seed inputs changed during search. Run a fresh diagnostic before retrying.')
             return {'exact':bool(ok), 'score':0 if ok else max(1, diff.score) if diff is not None else None,

@@ -725,6 +725,7 @@ def test_an_agent_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "_command", lambda s, token, workdir: ([sys.executable, "-c", code], dict(os.environ), ""))
     s = agents.Session("claude-1", "claude", "Claude Code #1", "game", "claude-1", {})
     monkeypatch.setattr(manager.net, "selection_remaining", lambda *a, **kw: 1)
+    monkeypatch.setattr(manager.net, "selection_counts", lambda *a, **kw: {"available":1})
     token = manager.net.local_agent(s.agent_name)[1]
     assert manager._run_cli(s, token, tmp_path) is False
     assert s.signed_out and "isn't signed in" in s.error and "/login" in s.error
@@ -739,6 +740,7 @@ def test_an_agent_out_of_credit_stops_and_says_so(tmp_path, monkeypatch):
     s = agents.Session("opencode-1", "opencode", "opencode #1", "game", "opencode-1", {})
 
     monkeypatch.setattr(manager.net, "selection_remaining", lambda *a, **kw: 1)
+    monkeypatch.setattr(manager.net, "selection_counts", lambda *a, **kw: {"available":1})
 
     def says(text: str) -> None:
         code = f"print({text!r}); raise SystemExit(1)"
@@ -749,6 +751,7 @@ def test_an_agent_out_of_credit_stops_and_says_so(tmp_path, monkeypatch):
         manager._run_cli(s, manager.net.local_agent(s.agent_name)[1], tmp_path)
     says("AI_APICallError: Too many requests. Your current concurrency is 5, which exceeds your concurrency limit of 5")
     monkeypatch.setattr(manager.net, "selection_remaining", lambda *a, **kw: 1)
+    monkeypatch.setattr(manager.net, "selection_counts", lambda *a, **kw: {"available":1})
     token = manager.net.local_agent(s.agent_name)[1]
     assert manager._run_cli(s, token, tmp_path) is False and s.throttled
 
