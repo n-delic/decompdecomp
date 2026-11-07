@@ -125,8 +125,10 @@ class RoomMixin:
     def apply_remote_best(self, slug: str, vram: int, score: int, source: str) -> None:
         proj = self._project(slug)
         with self.store.tx() as db:
-            db.execute("UPDATE functions SET best_score=?, best_source=? WHERE project_id=? AND vram=? AND status='open' "
-                       "AND (best_score IS NULL OR best_score > ?)", (score, source, proj["id"], vram, score))
+            db.execute("UPDATE functions SET best_score=?, best_source=?, "
+                       "last_improved=CASE WHEN ? < COALESCE(n_insns,0)*100 THEN ? ELSE last_improved END "
+                       "WHERE project_id=? AND vram=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
+                       (score, source, score, time.time(), proj["id"], vram, score))
 
     def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float) -> None:
         proj = self._project(slug)

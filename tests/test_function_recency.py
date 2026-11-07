@@ -57,3 +57,20 @@ def test_new_attempts_update_cached_dates_without_counting_ties_or_ceiling(tmp_p
         assert row["last_improved"] == {1000: None, 900: 20, None: 20, 700: 50}[score]
     row = net.store.one("SELECT last_checked,last_improved FROM functions WHERE id=?", fid)
     assert (row["last_checked"], row["last_improved"]) == (50, 50)
+
+
+def test_remote_best_improves_date_without_inventing_a_local_check(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)",
+                         ("game", "Game", str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        fid = db.execute("INSERT INTO functions(project_id,name,vram,n_insns,status) VALUES(?,?,?,?,?)",
+                         (pid, "f", 0x80000000, 10, "open")).lastrowid
+    monkeypatch.setattr("decompnet.app.engine.rooms.time.time", lambda: 42)
+    net.apply_remote_best("game", 0x80000000, 1000, "ceiling")
+    assert net.store.one("SELECT last_improved FROM functions WHERE id=?", fid)["last_improved"] is None
+    net.apply_remote_best("game", 0x80000000, 900, "remote candidate")
+    row = net.store.one("SELECT last_checked,last_improved FROM functions WHERE id=?", fid)
+    assert (row["last_checked"], row["last_improved"]) == (None, 42)
+    net.apply_remote_best("game", 0x80000000, 900, "tie")
+    assert net.store.one("SELECT last_improved FROM functions WHERE id=?", fid)["last_improved"] == 42
