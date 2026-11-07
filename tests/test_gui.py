@@ -301,3 +301,15 @@ def test_linux_vm_setup_shows_readiness_and_uses_progress():
         pytest.skip('needs node to run GUI scripts')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
                    capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+def test_ps4_decrypted_executables_are_accepted_but_other_elfs_are_not(gui):
+    assert gui["checks"]["ps4"] == ["ps4", "ps4", None, None]
+
+
+def test_a_ps4_drop_never_requests_codewarrior_and_explains_host_restrictions(gui):
+    for drop in gui["checks"]["ps4Drop"]["drops"]:
+        assert drop["pack"] == "" and not drop["consent"] and not drop["disabled"]
+        assert "free" in drop["note"] and "Clang 5.0.2" in drop["note"]
+        assert drop["extras"] == ["game.functions.jsonl"]
+    unsupported = gui["checks"]["ps4Drop"]["unsupported"]
+    assert unsupported["disabled"] and not unsupported["consent"] and "WSL 2" in unsupported["note"]

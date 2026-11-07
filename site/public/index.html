@@ -73,6 +73,7 @@
     <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
     <label title="EE-GCC and CodeWarrior also run on macOS"><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="ps3"><span>PlayStation 3</span></label>
+    <label><input type="radio" name="platform" value="ps4"><span>PlayStation 4</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
     <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
@@ -140,6 +141,16 @@
         <li><small>Built by</small><b>GCC</b><span>the free ps3dev GCC, or your own SDK's compiler; C and C++</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, every reference checked</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C sources</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="ps4" data-file="eboot.elf">
+      <h3><span class="pl-name">PlayStation 4</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>The program, decrypted</b><span>your own eboot.elf; no encrypted SELF, PKG or PRX modules</span></li>
+        <li><small>Split by</small><b>Ghidra or a function map</b><span>drop a functions.jsonl map with the program, or let Ghidra find its functions</span></li>
+        <li><small>Built by</small><b>Public Clang 5.0.2</b><span>free, pinned compiler; Linux x86-64 app only, including inside WSL 2; verify the compiler and flags for your game</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>strict per-function comparison, including relocation identities</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>whole-game relinking and export remain planned; shared features await PS4 validation</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="psp" data-file="game.iso">
@@ -255,6 +266,7 @@ jr      $ra
       <p class="cmd"><code id="cmd-linux">curl -fsSL https://decomp.ndelic.com/install.sh | bash</code><button type="button" class="copy" data-copy-from="cmd-linux">Copy</button></p>
       <p class="step-note">Linux: run it in your terminal. It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">releases page</a>.</p>
       <p class="step-note">Windows 10 and 11: download and open <code>decompdecomp-&lt;version&gt;-windows-x64-setup.exe</code> from the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>. The app opens in a native Windows window, with desktop and Start shortcuts and a tray icon. PS1, PS2 and most N64 games also need WSL 2 for their period compilers: run <code>wsl --install</code> in an administrator PowerShell, restart if asked, then open Ubuntu once. GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't.</p>
+      <p class="step-note">PS4 support needs the Linux x86-64 app and its free Clang 5.0.2 pack. On Windows, install and run the Linux app inside WSL 2; the native Windows and macOS apps cannot build PS4 projects.</p>
       <p class="cmd"><code id="cmd-macos">curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>
       <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS2 Sony EE-GCC uses the optional local Linux runner on macOS 13+: install <code>brew install colima docker</code>, then choose Prepare Linux runner in Compilers &amp; tools. SN Systems EE-GCC and CodeWarrior PS2 use wibo; CodeWarrior requires license acceptance in Setup. Linux-only PS1 builds still need Linux; macOS has no menu bar tray icon yet.</p>
       <p class="step-note">There's also a downloadable macOS app on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>: download macos_arm64 for Apple Silicon or macos_x86_64 for Intel, unzip it, move decompdecomp.app to Applications, and open it from Finder. It isn't signed, so macOS may ask you to approve its first launch in Privacy &amp; Security.</p>
