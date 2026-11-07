@@ -10,13 +10,18 @@ function compilerPartGroups(parts, mode = "settings", sort = "count") {
     groups.get(id).parts.push(part);
   }
   const direction = sort === "address-desc" ? -1 : 1;
+  const statusRank = p => ({confirmed: 0, checking: 1, waiting: 2, quirk: 3})[p.check] ?? 4;
   const result = [...groups.values()];
   for (const group of result) {
-    group.parts.sort((a, b) => direction * (a.start - b.start) || direction * (a.end - b.end));
+    group.parts.sort((a, b) => (sort === "status" ? statusRank(a) - statusRank(b) : 0)
+      || direction * (a.start - b.start) || direction * (a.end - b.end));
+    group.statusRank = Math.min(...group.parts.map(statusRank));
     group.start = Math.min(...group.parts.map(p => p.start));
     group.functions = group.parts.every(p => Number.isFinite(p.functions)) ? group.parts.reduce((n, p) => n + p.functions, 0) : null;
     group.default = group.parts.some(p => p.default);
     group.profiles = new Set(group.parts.map(p => JSON.stringify([p.toolchain || p.compiler, p.flags || ""]))).size;
   }
-  return result.sort((a, b) => Number(b.default) - Number(a.default) || (sort === "count" ? b.parts.length - a.parts.length : sort === "compiler" ? a.compiler.localeCompare(b.compiler) : direction * (a.start - b.start)) || a.start - b.start);
+  return result.sort((a, b) => Number(b.default) - Number(a.default) || (sort === "count" ? b.parts.length - a.parts.length
+    : sort === "status" ? a.statusRank - b.statusRank
+      : sort === "compiler" ? a.compiler.localeCompare(b.compiler) : direction * (a.start - b.start)) || a.start - b.start);
 }

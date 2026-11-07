@@ -89,3 +89,19 @@ assert.match(defaultCard, /<b>GCC A<\/b> <span class="chip-s">Default<\/span> <c
 assert.match(defaultCard, /data-compiler-function="default_function"/);
 ctx.renderCompilerAnswer({compiler:'GCC A', flags:'', default_functions:0, parts:[], elsewhere_count:0});
 assert.match(elements.get('compilerAnswer').innerHTML, /No functions use the default settings/);
+
+// #239: status order is independent of input/address order; unknown states follow verified states.
+const statuses = [
+ {start:10,end:20,toolchain:'a',compiler:'A',flags:'',check:'quirk'},
+ {start:20,end:30,toolchain:'a',compiler:'A',flags:'',check:'waiting'},
+ {start:30,end:40,toolchain:'b',compiler:'B',flags:'',check:'checking'},
+ {start:40,end:50,toolchain:'b',compiler:'B',flags:'',check:'confirmed'},
+ {start:50,end:60,toolchain:'c',compiler:'C',flags:'',check:''},
+];
+assert.deepEqual(Array.from(ctx.compilerPartGroups(statuses,'range','status'),g=>g.parts[0].check),
+ ['confirmed','checking','waiting','quirk','']);
+const byStatus = ctx.compilerPartGroups(statuses,'settings','status');
+assert.deepEqual(Array.from(byStatus,g=>g.compiler),['B','A','C']);
+assert.deepEqual(Array.from(byStatus[0].parts,p=>p.check),['confirmed','checking']);
+assert.deepEqual(Array.from(byStatus[1].parts,p=>p.check),['waiting','quirk']);
+assert.deepEqual(statuses.map(p=>p.start),[10,20,30,40,50]);
