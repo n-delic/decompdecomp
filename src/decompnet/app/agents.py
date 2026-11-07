@@ -956,7 +956,7 @@ class Manager:
             report_start("Refreshing identical-function matches; saved-file verification may need to finish first…")
             self.net.twins.refresh(slug)
             report_start("Preparing background permutation work…")
-            self.net.permuter.start(slug)  # near misses agents leave, on spare CPU
+            self.net.permuter.start(slug, automatic=True)  # near misses agents leave, on spare CPU
         except Exception:  # agents work without them
             log.exception("twins or the permuter didn't start for %s", slug)
         with self._lock:

@@ -22,9 +22,12 @@ def machine(net, proj):
     return proj['arch'], bool(proj['big_endian'])
 
 
-def compatible(net, proj):
+def compatible(net, proj, *, active_only=False):
     wanted = machine(net, proj)
     for catalog in net.store.all('SELECT id,slug FROM projects WHERE id!=?', proj['id']):
+        if active_only:
+            from .project_activity import active
+            if not active(net, catalog['slug']):continue
         other = net.project_store(catalog['id']).one('SELECT * FROM projects WHERE id=?', catalog['id'])
         if other is None:raise NetworkError('A donor project is missing from its database. Restore it before searching.')
         if other['slug'] in net.links:

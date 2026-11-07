@@ -651,3 +651,17 @@ def test_archive_receipt_not_acknowledged_when_library_write_fails(library,monke
     lib.backfill(only_changed=True)
     with lib.connect() as db:
         assert db.execute('SELECT COUNT(*) FROM archive_receipts').fetchone()[0]==2
+
+
+def test_project_startup_archive_does_not_open_idle_donors(library, monkeypatch):
+    net, lib = library
+    original = net.project_store
+    opened = []
+    def selected(project):
+        opened.append(project)
+        assert project != 2 and project != 'game2'
+        return original(project)
+    monkeypatch.setattr(net, 'project_store', selected)
+    monkeypatch.setattr(lib, 'prune_payloads', lambda *_: pytest.fail('global pruning on project view'))
+    lib.backfill(only_changed=True, slug='game1')
+    assert opened and lib.summary()['occurrences'] == 1

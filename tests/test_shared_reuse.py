@@ -122,7 +122,7 @@ def test_restored_batch_discovers_other_projects_once_and_preserves_size_gaps(pa
         db.execute("UPDATE functions SET name='unrelated',size=200 WHERE id=2")
     donor=pair.project_row('source');destination=pair.project_row('destination')
     discoveries=[]
-    monkeypatch.setattr(shared_reuse,'compatible',lambda *a:discoveries.append(1) or [destination])
+    monkeypatch.setattr(shared_reuse,'compatible',lambda *a, **kw:discoveries.append(1) or [destination])
     pair.cascades.enabled=True;pair.cascades.running=True
     pair.store._reader().create_function('payload_read',2,lambda *_:pytest.fail('discovery inflated saved C'))
     pair.cascades.notify_many(donor,[1,3])

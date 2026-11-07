@@ -320,12 +320,13 @@ class Library:
                      ('inputs','scope_context','scope_symbols','matched_evidence','fingerprints')]
         return encoded([ARCHIVE_VERSION,str(self.net.store.path),proj['id'],proj['slug'],revisions,proj['config'],proj['root'],proj['name']])
 
-    def backfill(self, log=None, *, only_changed=False):
-        self.prune_payloads(log)
+    def backfill(self, log=None, *, only_changed=False, slug=None):
+        if slug is None:self.prune_payloads(log)
         failures=[]
         if log:log.progress({'phase':'Counting verified matches','done':0,'total':0})
         projects=[]
-        for catalog in self.net.store.all('SELECT id FROM projects ORDER BY id'):
+        for catalog in self.net.store.all('SELECT id FROM projects' + (' WHERE slug=?' if slug else '') + ' ORDER BY id',
+                                          *((slug,) if slug else ())):
             proj = self.net.project_store(catalog['id']).one('SELECT * FROM projects WHERE id=?', catalog['id'])
             if proj is None:raise NetworkError('A project is missing from its database. Restore it before archiving.')
             if log:log.check_cancel()

@@ -356,7 +356,7 @@ class Sweeps:
                                (self.net.project_row(slug)['id'],))
             self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop})
             job = self.jobs.start('deep-permutation-pass', lambda log: self.run(slug, minutes, max_variants, log, threads, loop),
-                                  cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
+                                  project=slug, cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}
         return self.control(slug)
 

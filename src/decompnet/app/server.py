@@ -44,6 +44,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     jobs = Jobs(home / "logs" / "decomp.log")
     from .startup import StartupQueue
     startup = net.startup = StartupQueue(jobs.logger)
+    from .project_activity import Activity
+    net.project_activity = Activity(manager, jobs, net=net)
     from .deep_sweep import Sweeps
     net.deep_sweeps = Sweeps(net, jobs)
     from .source_queue import Queue
@@ -149,6 +151,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         if not slug:
             raise NetworkError("This MCP connection is no longer assigned to a project. Create or pair one in "
                                "Agents & models.")
+        net.project_activity.touch(slug)
         return agent, slug
 
     threading.Thread(target=collab.local_addresses, daemon=True).start()  # `tailscale status` can take seconds
@@ -168,17 +171,13 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         log("Checking optional console upgrades")
         net.console(row).on_start(net, slug, log=log)
         log.check_cancel()
-    startup_projects = list(net.store.all('SELECT slug FROM projects'))
-    startup_projects.sort(key=lambda r: r['slug'] != settings.data.get('last_project'))
     from ..repair_archive import migrate as migrate_repairs
     startup.add('Move repair evidence',lambda log:migrate_repairs(net,log),with_log=True)
-    startup.add("Archive verified matches", lambda log: net.match_library.backfill(log, only_changed=True), with_log=True)
-    for row in startup_projects:
-        slug = row['slug']
-        startup.add('Console upgrades', lambda log, slug=slug: console_start(slug, log), project=slug, with_log=True)
-    for row in startup_projects:
-        slug = row['slug']
-        startup.add('SDK naming', lambda log, slug=slug: (log.check_cancel(), name_functions(net, slug)), project=slug, with_log=True)
+    net.project_activity.maintain(startup, [
+        ('Console upgrades', console_start),
+        ('SDK naming', lambda slug, log: (log.check_cancel(), name_functions(net, slug))),
+        ('Archive verified matches', lambda slug, log: net.match_library.backfill(log, only_changed=True, slug=slug)),
+    ])
     startup.start()
     from .database_cleanup import Retention
     net.database_retention = Retention(net,jobs)

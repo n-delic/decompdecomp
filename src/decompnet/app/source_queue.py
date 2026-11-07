@@ -72,7 +72,7 @@ class Queue:
             # Reservation precedes job start; the worker cannot outrun publication of its handle.
             self.active[slug] = None
             try:
-                job = self.jobs.start('source-recovery-queue', lambda log:self._run(slug, agent, log),foreground=foreground)
+                job = self.jobs.start('source-recovery-queue', lambda log:self._run(slug, agent, log),foreground=foreground,project=slug)
             except BaseException:
                 self.active.pop(slug,None);state['state']='interrupted';self._save(proj['id'],state)
                 raise

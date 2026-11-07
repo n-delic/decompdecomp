@@ -61,6 +61,7 @@ class PermuterWorker:
         self._statuses: dict[str, dict] = {}
         self.jobs: dict[str, SimpleNamespace] = {}
         self._running: set[str] = set()
+        self.explicit: set[str] = set()
         self._replies: dict[int, queue.Queue] = {}
         self._next_id = 0
         self._settings: dict = {}
@@ -104,11 +105,12 @@ class PermuterWorker:
                 )} | {"threads": workers.WORKERS}
             return None
 
-    def start(self, slug: str):
+    def start(self, slug: str, *, automatic=False):
         if slug in self.net.links:
             return None  # A room member receives its host's matches.
         with self._lock:
             self._running.add(slug)
+            if not automatic:self.explicit.add(slug)
             if self._paused:
                 self._statuses[slug] = empty_status("update_wait")
                 self.jobs[slug] = SimpleNamespace(state="update_wait")
@@ -122,6 +124,7 @@ class PermuterWorker:
     def stop(self, slug: str) -> None:
         with self._lock:
             self._running.discard(slug)
+            self.explicit.discard(slug)
             if self._process is not None and self._process.poll() is None:
                 self._send("stop", slug=slug)
 
