@@ -44,12 +44,20 @@ def record(net, fn, trial_id):
                         trial_id, fn['id'], fn['project_id'])
     if not row:
         raise NetworkError('Choose a diagnostic trial from this project and function.')
-    return json.loads(row['record'])
+    try:
+        trial = json.loads(row['record'])
+    except (ValueError,TypeError) as error:
+        raise NetworkError('Diagnostic record is unreadable; run a fresh compiler_experiments trial.') from error
+    if not isinstance(trial,dict):raise NetworkError('Run a fresh compiler_experiments trial.')
+    return trial
 
 
 def eligible(net, proj, fn, trial):
     if not supported(net, proj):
         return 'Reviewed diagnostic search currently needs a local ROM project; imported builds need an immutable per-file diagnostic snapshot.'
+    if (any(not isinstance(trial.get(key),str) for key in ('source','header','compiler','flags'))
+            or len(trial['source']) > 128*1024):
+        return 'Use a fresh diagnostic source/header/profile snapshot under 128 KiB.'
     if not trial.get('seed_scope') or trial['seed_scope'] != scope(net, proj, fn, trial['source']):
         return 'Diagnostic inputs or caller evidence changed. Rerun compiler_experiments and review the new trial.'
     own = compiler_for(net.cfg(proj), fn['vram'], fn)
@@ -101,7 +109,8 @@ def selected(net, proj, fn):
                          fn['id'], LIMIT)
     result = []
     for row in rows:
-        trial = record(net, fn, row['trial_id'])
+        try:trial = record(net, fn, row['trial_id'])
+        except NetworkError:continue
         if row['scope'] != trial.get('seed_scope') or eligible(net, proj, fn, trial):continue
         result.append(dict(trial, trial_id=row['trial_id'], review_note=row['review_note'],
                            diagnostic_only=contract_changed(fn, trial['source'])))

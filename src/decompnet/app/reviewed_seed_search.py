@@ -79,7 +79,7 @@ def run(search, agent, proj, fn):
             if not measured['exact']:continue
             if current() != expected:raise NetworkError('Reviewed seed inputs changed before recording the diagnostic.')
             trial_id = hashlib.sha256(repr((root['trial_id'], source, expected)).encode()).hexdigest()[:20]
-            compiler_experiments.save_trial(net, fn, trial_id, dict(root, source=source,
+            compiler_experiments.save_trial(net, fn, trial_id, dict(root, slug=proj["slug"], function=fn["name"], source=source,
                 source_sha256=hashlib.sha256(source.encode()).hexdigest(), agent=agent.id,
                 result=measured, seed_scope=reviewed_search_seeds.scope(net,proj,fn,source),
                 scope=expected, revision=hashlib.sha256((fn['best_source'] or '').encode()).hexdigest()[:20]))

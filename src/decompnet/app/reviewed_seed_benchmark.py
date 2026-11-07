@@ -36,7 +36,7 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
     if not ok and seed_diff is None:raise NetworkError('Reviewed seed failed to compile: '+error)
     trial_id=hashlib.sha256((reviewed_source+str(time.time_ns())).encode()).hexdigest()[:20]
     header=net._context(proj['id'],fn['unit'])['header']
-    compiler_experiments.save_trial(net,fn,trial_id,dict(agent=agent.id,source=reviewed_source,header=header,
+    compiler_experiments.save_trial(net,fn,trial_id,dict(agent=agent.id,slug=slug,function=fn["name"],source=reviewed_source,header=header,project_config=net.cfg(proj),
         compiler=profile['toolchain'],flags=' '.join(flags),seed_scope=reviewed_search_seeds.scope(net,proj,fn,reviewed_source),
         result={'exact':ok,'score':0 if ok else max(1,seed_diff.score)}))
     reviewed_search_seeds.review(net,agent,slug,function,trial_id,review_note)

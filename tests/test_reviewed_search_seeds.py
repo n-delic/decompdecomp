@@ -204,3 +204,19 @@ def test_cancellation_does_not_compile_or_adopt(monkeypatch):
     with pytest.raises(RuntimeError,match='cancelled'):
         reviewed_seed_search.run(deep_permuter.Search(net,1,20,log,net.function()),AGENT,net.project_row('game'),net.function())
     assert net.function()['status']=='open'
+
+
+def test_small_api_schema_retains_all_tools_semantics_and_constraints():
+    import copy
+
+    from decompnet.agents.api import _tokens, api_tool_schemas, compact_tool_schema
+    schema=api_tool_schemas();original=copy.deepcopy(schema)
+    compact=compact_tool_schema(schema,16384,[{'role':'system','content':'x'*12000}])
+    assert schema==original and _tokens(compact)<_tokens(schema)
+    for before,after in zip(schema,compact):
+        assert before['function']['description']==after['function']['description']
+        assert before['function']['name']==after['function']['name']
+        assert before['function']['parameters'].get('required')==after['function']['parameters'].get('required')
+    variants=next(t for t in compact if t['function']['name']=='compiler_experiments')
+    assert variants['function']['parameters']['properties']['trials']['maxItems']==6
+    assert compact_tool_schema(schema,131072,[]) is schema

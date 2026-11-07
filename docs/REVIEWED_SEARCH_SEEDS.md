@@ -43,6 +43,10 @@ require a local ROM project: imported builds need immutable per-file diagnostic 
 snapshots, and room guests need host-authorized diagnostic storage. Missing or unsupported GCC
 captures fall back to a small diverse repair shortlist, not speculative allocation claims.
 
+Small-context API sessions omit repeated parameter prose when fixed inputs would crowd out tool
+results. Tool names, main instructions and validation constraints remain; transcripts record the
+actual schema sent. Larger contexts retain the full descriptions.
+
 ## Private checkpoint replay
 
 `decompnet.app.reviewed_seed_benchmark` uses the real ROM linker judge in a disposable copied project.

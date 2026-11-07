@@ -112,12 +112,13 @@ class Api(Agent):
         if s.record:
             s.record('prompt', messages)
             s.record('instructions', messages[0]['content'])
-            s.record('tool_definitions', schema)
         count = int(s.options.get("per_session", PER_SESSION))
         used_tool, start, done = bool(saved), 2, 0
         with httpx.Client(timeout=httpx.Timeout(API_TIMEOUT, connect=API_CONNECT_TIMEOUT)) as client:
             window = context_window(client, base, s.options)
             s.push("info", f"session {s.runs}: {model} via {base} ({window // 1000}K tokens of context)")
+            schema = compact_tool_schema(schema, window, messages)
+            if s.record:s.record('tool_definitions', schema)
             budget = int(window * API_CONTEXT_SHARE) - _tokens(schema)  # room for the reply and the tools' definitions
             focused = bool(s.options.get('focus_id'))
             steps = itertools.count() if focused else range(int(s.options.get("max_steps", API_STEPS)))
@@ -413,6 +414,25 @@ def compact_focus(client, base, headers, model, messages, budget, manager, sessi
     return True
 
 
+def compact_tool_schema(schema, window, messages):
+    """Keep tool semantics and validation, dropping parameter prose only when fixed inputs crowd out replies."""
+    available = int(window*API_CONTEXT_SHARE)-_tokens(schema)-sum(_tokens(m) for m in messages[:2])
+    if available >= 1024:return schema
+    import copy
+    compact = copy.deepcopy(schema)
+    def strip(value):
+        if isinstance(value, dict):
+            # Do not descend into defaults/enums/const values: those are user data.
+            value.pop('description',None)
+            for key in ('properties','$defs','definitions'):
+                for child in value.get(key,{}).values():strip(child)
+            if isinstance(value.get('items'),dict):strip(value['items'])
+            for key in ('oneOf','anyOf','allOf','prefixItems'):
+                for child in value.get(key,[]):strip(child)
+    for tool in compact:strip(tool.get('function',{}).get('parameters',{}))
+    return compact
+
+
 def fit(messages: list[dict], budget: int, keep: int = 2) -> int:
     """Shrink the conversation to `budget` tokens, only from `keep` on (what's before it, finished functions folded
     into a line each, stays as it was sent, for the provider's prompt cache): older tool output goes first (a
@@ -509,8 +529,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                             repair_automation=st("Potential deterministic repair"), occurrence=it("1-based occurrence; 0 requires unique anchor"))),
         "compiler_experiments": ("Bounded diagnostic source/profile trials on one candidate revision. 1–6 compiler profiles (compiler=current uses this function’s current compiler); optional independent old/new/occurrence patches. No compiler choice applied.",
                                  s(function=st("function",True),revision=st("candidate revision",True),trials={"type":"array","minItems":1,"maxItems":6,"req":True,"items":{"type":"object","additionalProperties":False,"properties":{"compiler":{"type":"string","description":"current or an exact compiler ID; use try_local_repairs for repair families"},"flags":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"occurrence":{"type":"integer"}},"required":["compiler"]}})),
-        "get_search_brief": ("Compact current-input allocation, negative-experiment and reviewed-root packet; no compile.",s(function=st("function",True))),
-        "review_search_seed": ("Review a current-profile diagnostic for bounded deep search; changed/unknown signatures stay diagnostic-only. No source adoption.",s(function=st("function",True),trial_id=st("diagnostic trial ID",True),review_note=st("Review the change and caller/interface evidence"),enabled=bo("Enable seed; false disables"))),
+        "get_search_brief": ("Read current allocation lines, failed experiments and reviewed roots; no compile.",s(function=st("function",True))),
+        "review_search_seed": ("Review a diagnostic seed for deep search. Changed/unknown signatures stay diagnostic-only.",s(function=st("function",True),trial_id=st("trial ID",True),review_note=st("Why this seed; caller/interface checks"),enabled=bo("Enable seed; false disables"))),
         "get_compiler_trial": ("Retrieve the saved C/compiler/flags diagnostic pair; no compile/application.",s(function=st("function",True),trial_id=st("trial id",True),include_header=bo("Include historical shared header snapshot; default false to save context"))),
         "try_local_repairs": ("Try applicable local repair families on one snapshot, max six normal compiles/60 seconds. Keeps best continuation; replaces parallel family probes.",
                               s(function=st("function",True),revision=st("candidate revision",True),families={"type":"array","items":{"type":"string"}},max_trials=it("1–6; default 6"))),
