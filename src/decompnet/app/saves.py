@@ -286,10 +286,10 @@ def _function_rows(net, project_id: int, *, sources: bool) -> list:
               "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best ")
     if sources:
         return net.store.all(
-            "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
+            "SELECT name, vram, size, status, unit, matched_source, matched_agent_id, best_source, best_score, "
             f"best_agent_id, readable, meta, {exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
     return net.store.all(
-        "SELECT name, vram, size, status, matched_agent_id, best_score, best_agent_id, readable, meta, "
+        "SELECT name, vram, size, status, unit, matched_agent_id, best_score, best_agent_id, readable, meta, "
         f"{exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
 
 
@@ -322,7 +322,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "auto_compiler": cfg.get("auto_compiler"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
-        "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
+        "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"], "unit": r["unit"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
         "symbols": [dict(r) for r in net.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
                                                     pid) if not AUTO_NAME.match(r["name"])],
@@ -460,7 +460,7 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
         for start in range(0, len(names), 400):
             chunk = names[start:start + 400]
             selected = net.store.all(
-                "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
+                "SELECT name, vram, size, status, unit, matched_source, matched_agent_id, best_source, best_score, "
                 "best_agent_id, readable, meta, "
                 "CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
                 "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best "
