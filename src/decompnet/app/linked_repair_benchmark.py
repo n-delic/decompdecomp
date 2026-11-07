@@ -75,9 +75,11 @@ def evaluator(root, name, header):
                 raw = FunctionObj(name,console.arch,target.big_endian,linked.linked_code,cpu=console.cpu_variant)
                 score = 0 if linked.exact else max(1,scoring.diff(canonical,linked.candidate).score)
                 from ..source_lines import mismatches
+                from .compiler_diagnostics import output_fingerprint
                 from .repair_localisation import bind
                 rows=scoring.diff(linked_target,raw).rows
                 result = dict(score=score,rows=rows,matched=linked.exact,
+                              output_fingerprint=output_fingerprint(built.obj),
                               repair_locations=bind(source,mismatches(built.obj,name,rows,source,arch=console.arch)),
                               outcome='exact_linked' if linked.exact else 'scored',
                               candidate_target=hashlib.sha256(linked.linked_code).hexdigest(),
@@ -127,11 +129,12 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True):
         prepared.append(dict(source=item['source'],baseline_score=baseline['score'],arch=arch,
             scope=hashlib.sha256(repr((scope,item['id']) if 'id' in item else scope).encode()).hexdigest(),
             name=item['name'],header=item['header'],asm=asm,flags=scope['compiler'].get('flags',[]),
+            entry_scope=draft_repairs.promoted_entry_repairs.profile_scope(arch,scope['compiler']),
             evaluate=evaluate,selection={},pool_cache={}))
     def generate(case,source,report):
         return iterative_repairs.targeted_variants(source,report,{'name':case['name'],'asm':case['asm']},
             case['arch'],case['flags'],case['header'],tagged=True,selection=case['selection'],
-            pool_cache=case['pool_cache'],focused=focused)
+            pool_cache=case['pool_cache'],focused=focused,entry_scope=case['entry_scope'])
     result=repair_benchmark.batch(prepared,lambda c,s:c['evaluate'](s),generate,
         trials=trials,seconds=seconds,generate_report=True)
     # Case scope includes precursor ids; count actual functions independently of those ids.
@@ -140,10 +143,30 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True):
                      'focused':focused,'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
 
 
+def audit(root,name,stages,header,*,proposals=256,probes=8,seconds=120):
+    from . import iterative_repairs, repair_sequence_audit
+    if not 1<=seconds<=1800:raise ValueError('Use 1–1800 seconds.')
+    evaluate,scope,arch,asm,cache=evaluator(root,name,header)
+    entry=draft_repairs.promoted_entry_repairs.profile_scope(arch,scope['compiler'])
+    def generate(source,report):
+        return iterative_repairs.targeted_pool(source,report,{'name':name,'asm':asm},arch,
+            scope['compiler'].get('flags',[]),header,entry_scope=entry)
+    def retains(baseline,control,family):
+        node=dict(path=[family],depth=1,ceiling=baseline.get('score') or 0,
+                  parent_score=baseline.get('score'),baseline_rows=baseline.get('rows'),
+                  region_baseline=region_repairs.snapshot(baseline.get('rows'),arch))
+        return iterative_repairs.retention_evidence(node,control,arch)['eligible']
+    deadline=time.monotonic()+seconds
+    result=repair_sequence_audit.audit(stages,evaluate,generate,retains=retains,proposals=proposals,probes=probes,
+                                     stopped=lambda:time.monotonic()>=deadline)
+    return {**result,'scope':scope,'compiler_invocations':len(cache)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project',type=Path,required=True)
     parser.add_argument('--function')
+    parser.add_argument('--audit-path',type=Path,help='Private manifest of intermediate path/source_sha256 stages; no adoption.')
     parser.add_argument('--cases',type=Path,help='Private JSON list of name/before/header paths, frozen before replay.')
     parser.add_argument('--freeze',action='store_true')
     parser.add_argument('--reference',type=Path)
@@ -155,7 +178,17 @@ def main():
     parser.add_argument('--families',default='')
     args = parser.parse_args()
     try:
-        if args.cases:
+        if args.audit_path:
+            if args.cases or args.before or args.freeze or args.reference or args.families or not args.function or not args.header:
+                raise ValueError('Use --audit-path with --function and --header only.')
+            stages=[]
+            for item in json.loads(args.audit_path.read_text())['stages']:
+                source=(args.audit_path.parent/item['path']).read_text()
+                if hashlib.sha256(source.encode()).hexdigest()!=item['source_sha256']:
+                    raise ValueError('An audit source changed; freeze a new manifest.')
+                stages.append({'source':source})
+            report=audit(args.project,args.function,stages,args.header.read_text(),probes=min(args.trials,128),seconds=args.seconds)
+        elif args.cases:
             if args.function or args.before or args.header or args.families:
                 raise ValueError('Choose either frozen cases or single-function arguments.')
             cases,frozen=frozen_repair_cases.load(args.cases,args.project,evaluator,freeze=args.freeze)

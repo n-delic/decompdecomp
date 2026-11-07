@@ -5898,3 +5898,43 @@ The scalar-reuse control illustrates the limitation: the whole before-source is 
 while all five partial token reversions changed output or failed. Those token edits are coupled,
 and this is not evidence that all five are required. Equivalent complete controls no longer
 produce a source-only recipe candidate. Analysis remains bounded and never adopts reduced code.
+
+### Audit sequence coverage before expanding the search budget
+
+For the same KMC GCC 2.7.2 profile (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`), an
+offline audit inspected historical intermediate controls at scores 565, 855, 330 and exact.
+Their literal next sources were absent from inspected complete proposal pools of 303, 309
+and 269 candidates. Eight compiler-output probes per step did not recover the corresponding
+control output. Unmeasured candidates remain unknown: literal absence does not exclude
+equivalent generated sources. The audit separates generation, first-page selection and ordinary
+admission, with immutable source hashes and no adoption callback.
+
+The old loop complement named `debug_constant_initialization`, which stages floats, not this
+case's integer one. `branch_integer_constant` now stages genuine call/member-store operands
+inside a conditional phase at up to three dominating setup positions. It requires proven C32
+invocation and rejects macro-dependent uses and constant-expression contexts. Benchmark suites
+now pass the same invocation proof as the app; omitted proof previously disabled some families.
+
+The first backedge trial scores 1860 and emits 397 instructions against 395, with the correct
+88-byte frame. A one-extra-instruction limit prevented follow-ups. A separate lane now allows
+at most four extra instructions and a fourfold score detour with unchanged known frames:
+six proposals from three parents, two per parent, charged to the ordinary phase budget.
+The backedge/counter prerequisite pair can be tested before visible target-position improvement.
+This is bounded speculation, not proof that a regression repaired the function.
+
+Equal 64-candidate-budget replays, with invocation proof supplied to both policies:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Best score | 565 | 565 |
+| Exact recovery | No | No |
+| Unchanged-output trials | 24 | 16 |
+| Equivalent-output frontier rejections | 20 | 12 |
+| Reserved loop probes | 0 | 6 |
+
+Trials 1–4 now reach backedge (1860), counter (2095), and two integer-constant placements
+(2095). The sequence is tried early, but does not recover the missing historical source changes.
+Two bounded page advances reach unseen families before a measured-inert queue drains.
+Ineffective families retain periodic retries; changed compiler/header/target/rule scopes reset
+feedback. These are controlled efficiency observations, not a new match, held-out transfer
+or demonstrated general wall-clock speedup.

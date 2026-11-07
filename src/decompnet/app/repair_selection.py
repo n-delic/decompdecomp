@@ -12,8 +12,9 @@ FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
     'scalar_storage_reuse': ('row_number_staging','explicit_loop_backedge','debug_constant_initialization'),
-    'row_number_staging': ('scalar_storage_reuse','explicit_loop_backedge'),
-    'explicit_loop_backedge': ('row_number_staging','scalar_storage_reuse','debug_constant_initialization'),
+    'row_number_staging': ('branch_integer_constant','scalar_storage_reuse','explicit_loop_backedge'),
+    'explicit_loop_backedge': ('row_number_staging','branch_integer_constant','scalar_storage_reuse'),
+    'branch_integer_constant': ('row_number_staging','pure_preheader_order'),
     'debug_constant_initialization': ('scalar_storage_reuse','row_number_staging'),
     'divisor_normalization_copy': ('dead_copy_source','divisor_flag_split'),
     'divisor_value_scope': ('dead_copy_source','divisor_flag_split'),

@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="$ROOT/dist"
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/decompdecomp-build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 uv python install 3.12 >/dev/null

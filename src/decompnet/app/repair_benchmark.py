@@ -74,6 +74,8 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             'search_counts': state.get('counts', {}), 'regional_combination_bursts':state.get('regional_bursts',0),
             'productive_followups':state.get('productive_bursts',0), 'allocation_followups':state.get('allocation_bursts',0),
             'sequence_proposals':state.get('sequence_proposals',0), 'sequence_evaluations':state.get('counts',{}).get('sequence_evaluations',0),
+            'loop_proposals':state.get('loop_proposals',0),'loop_evaluations':state.get('counts',{}).get('loop_evaluations',0),
+            'inert_page_advances':state.get('inert_page_advances',0),
             'no_effect_output_families':sum(n>=2 for n in state.get('output_no_effect',{}).values()),
             'no_effect_families':sum(n>=2 for n in state.get('family_no_effect',{}).values()), 'deferred_pages':len(state.get('deferred',[])), 'paired_proposals':state.get('paired_trials',0), 'paired_evaluations':state.get('counts',{}).get('paired_evaluations',0),
             'search_policy':dict(paired_search=paired_search,output_diversity=output_diversity),

@@ -1,5 +1,13 @@
 # Roadmap
 
+- Done: frozen intermediate-source audits separate literal generation, first-page selection and
+  ordinary search-admission gaps; bounded compiler probes can identify equivalent generated output.
+  Unmeasured equivalents remain unknown. A six-proposal loop-combination lane retains measured
+  structural regressions with unchanged frames and at most four extra instructions, inside the existing phase budget.
+  Known-frame guidance currently reaches MIPS; other processor frame readers are planned.
+  Consumed branch integer constants require existing direct C32 invocation proof: external PROJECT
+  commands and unproved profiles remain disabled until language/preprocessing evidence is available.
+
 - Done: one bounded `switch_constant_dispatch` proposal stages consumed comparison
   constants and preserves a four-case forward dispatch graph for eligible loops.
   The shared generator uses existing direct pinned C32 GCC invocation proof;
@@ -635,6 +643,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Existing-record structure-return / typed inline-setter hypotheses | ✓ | ✓ | ✓ | ✓ | ✓ C shapes | ✓ C shapes | ✓ C shapes | by supported C architecture |
 | Separate function and export-layout checks | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — own build | — own build | — own build | — own build |
 | Consumed-constant forward switch repair | ✓ proven C32 GCC ROM profiles | — real-profile validation planned | — invocation/validation planned | — invocation/validation planned | — external invocation proof planned | — external invocation proof planned | — external invocation proof planned | — external invocation proof planned |
+| Branch integer-one staging / measured loop combinations | ✓ proven C32 / known frame | — profile validation planned | — profile validation planned | — profile validation planned | — frame/invocation proof planned | — frame/invocation proof planned | — frame/invocation proof planned | MIPS known-frame lane; invocation/other frame proof planned |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Pieces of functions joined to their function | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |

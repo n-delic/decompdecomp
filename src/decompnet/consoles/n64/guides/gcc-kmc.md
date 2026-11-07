@@ -10,6 +10,12 @@ The automatic compiler survey also checks these debug variants on saved attempts
 
 ## Near-match checklist
 
+For loop-related plateaus, audit intermediate controls before increasing the budget. Integer-one
+staging is separate from float initialization. A backedge may add two instructions before counter
+staging is tried; the bounded loop lane permits small frame-stable detours. A controlled earlier
+checkpoint still did not improve in 64 trials, despite fewer unchanged-output trials (24 → 16).
+Do not mistake reaching the repair sequence for rediscovering the whole solution.
+
 For mutually exclusive scalar phases, try reusing existing integer storage while preserving
 the original narrowing at assignment. Keep the unused old declaration as a separate debug-shape
 control. The app's `scalar_storage_reuse` family requires disjoint CFG lifetimes and dominating

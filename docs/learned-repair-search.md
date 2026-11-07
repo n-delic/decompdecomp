@@ -1,5 +1,21 @@
 # Learned repair search
 
+## Intermediate sequence audits and loop follow-ups
+
+Use `python -m decompnet.app.linked_repair_benchmark --project <copied-export> --function <name>
+--header <context.h> --audit-path <private-path.json> --trials 8 --seconds 120 --output <report.json>`.
+The manifest contains `stages`, each with `path` and `source_sha256`. Source changes invalidate it.
+Reports distinguish missing literal proposals, first-page selection, ordinary admission and
+measured equivalent outputs. Known sources are controls, not discovered repairs. Unmeasured
+equivalent candidates remain unknown; compiler failures are not generation failures.
+
+Loop follow-ups reserve at most six ordinary-budget proposals from three measured parents.
+Backedge → counter staging → consumed integer-constant placement can be explored before numeric
+improvement, with known unchanged frames, at most four extra instructions and a bounded score
+detour. Unknown frames and unsupported invocation profiles stay ineligible. Pauses retain the queue;
+the normal judge alone establishes matches. An inert-only queue can advance up to four saved
+proposal pages, at eight-trial intervals, while retaining periodic retries of deferred families.
+
 ## Replay evidence and independent edit checks
 
 Replay evaluators must return complete `diff.rows`, not `diff.render()` or a shortened listing.

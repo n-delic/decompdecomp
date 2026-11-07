@@ -342,3 +342,13 @@ def test_macos_bundle_check_rejects_checkout_virtual_environment(tmp_path):
     python = runtime/('Scripts/python.exe' if sys.platform=='win32' else 'bin/python')
     result = subprocess.run([str(python),'-c',command[-1]],capture_output=True,text=True)
     assert result.returncode != 0 and 'AssertionError' in result.stderr
+
+
+@pytest.mark.skipif(os.name=='nt' or not shutil.which('bash'),reason='POSIX packaging shell required')
+def test_macos_build_temporary_files_respect_selected_volume(tmp_path):
+    script=(Path(__file__).resolve().parents[1]/'packaging/macos/build.sh').read_text()
+    prefix=script.split('uv python install',1)[0]
+    result=subprocess.run(['bash','-c',prefix+'\nprintf "%s" "$WORK"'],
+                          env={**os.environ,'TMPDIR':str(tmp_path)},capture_output=True,text=True,check=True)
+    created=Path(result.stdout)
+    assert created.parent==tmp_path and not created.exists()

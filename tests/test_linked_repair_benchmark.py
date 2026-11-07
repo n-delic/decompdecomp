@@ -7,6 +7,25 @@ from decompnet import toolchains
 from decompnet.app import linked_repair_benchmark as bench
 
 
+def test_cli_audit_freezes_intermediates_and_rejects_source_edits(tmp_path,monkeypatch):
+    import sys
+    paths=[]
+    for i in range(2):
+        path=tmp_path/f'stage{i}.c';path.write_text(f'int f(void){{return {i};}}')
+        paths.append(dict(path=path.name,source_sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+    manifest=tmp_path/'path.json';manifest.write_text(json.dumps({'stages':paths}))
+    header=tmp_path/'context.h';header.write_text('')
+    output=tmp_path/'out.json';calls=[]
+    monkeypatch.setattr(bench,'audit',lambda root,name,stages,header,**kwargs:calls.append(stages) or {'steps':[]})
+    monkeypatch.setattr(sys,'argv',['replay','--project',str(tmp_path),'--function','f','--header',str(header),
+                                  '--audit-path',str(manifest),'--output',str(output),'--trials','1'])
+    bench.main()
+    assert len(calls[0])==2 and json.loads(output.read_text())=={'steps':[]}
+    (tmp_path/'stage0.c').write_text('changed')
+    with pytest.raises(SystemExit):bench.main()
+    assert len(calls)==1
+
+
 @pytest.mark.skipif(toolchains.installed('gcc-2.7.2-kmc') is None,reason='Needs the installed pinned KMC compiler')
 def test_exported_homemade_rom_uses_exact_linker_without_writing_project(tmp_path):
     code = bytes.fromhex('03e0000824820001')

@@ -46,6 +46,18 @@ def observe(state, node, output, *, score=None, parent_score=None, rows=None):
         del history[next(iter(history))]
 
 
+def ineffective(state,node):
+    local=state.get('family_no_effect',{}).get(key(node),0)
+    shared=state.get('output_no_effect',{}).get(output_scope(node),0)
+    if local==2 and shared<4:return False
+    return local>=3 or shared>=2
+
+
+def needs_page(state):
+    """An entirely measured-inert queue need not block unseen proposal pages."""
+    return bool(state.get('pending') and all(ineffective(state,node) for node in state['pending']))
+
+
 def rotate(state):
     """After two unchanged builds, reserve one in eight slots for deferred exploration.
 
@@ -55,15 +67,8 @@ def rotate(state):
     """
     history = state.get('family_no_effect', {})
     pending = state['pending']
-    shared=state.get('output_no_effect',{})
-    def ineffective(node):
-        local=history.get(key(node),0)
-        # Preserve the third direct sibling: two identical outputs can precede the useful
-        # cast/assignment placement. Equivalent *other* parents still share deferral immediately.
-        if local==2:return False
-        return local>=3 or shared.get(output_scope(node),0)>=2
-    ordinary = [n for n in pending if not ineffective(n)]
-    deferred = [n for n in pending if ineffective(n)]
+    ordinary = [n for n in pending if not ineffective(state,n)]
+    deferred = [n for n in pending if ineffective(state,n)]
     slot = state.get('counts', {}).get('matched', 0)+state.get('counts', {}).get('scored', 0)+state.get('counts', {}).get('compile_failed', 0)
     stalls=state.get('output_stalls',{})
     def redirect(node):
@@ -83,6 +88,9 @@ def rotate(state):
     from .repair_diversity import order
     if not ordinary or history.get(key(ordinary[0]),0) not in {1,2}:
         ordinary = order(state,ordinary,slot)
+    # Reserved loop probes share the ordinary budget and stay ahead of a large
+    # source-only wave. No more than six can be created by the lane.
+    ordinary=[n for n in ordinary if n.get('loop_probe')]+[n for n in ordinary if not n.get('loop_probe')]
     if not deferred:
         state['pending']=ordinary
         return
