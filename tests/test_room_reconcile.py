@@ -188,3 +188,12 @@ def test_inventory_endpoint_requires_membership_and_does_not_accept_unrequested_
     assert result['reconcile']['id']==run
     with pytest.raises(NetworkError,match='not requested'):
         link._req('POST','/collab/reconcile',{'id':run,'action':'apply','key':'forged','matched':True})
+
+
+def test_missing_client_bundle_is_reported_without_claiming_a_host_match(pair):
+    host,slug,guest,gslug,room,member,link=pair
+    run=begin(room,member)
+    reply=reconcile.exchange(room,member,{'id':run,'action':'inventory','items':[inventory(guest,gslug)],'page':0,'total':1})
+    result=reconcile.exchange(room,member,{'id':run,'action':'skip','key':reply['requested'][0]['key'],'reason':'Client function changed'})
+    assert not result['matched'] and 'Client function changed' in result['reason']
+    assert host._function('func_80000808',slug)['status']=='open'

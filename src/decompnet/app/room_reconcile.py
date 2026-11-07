@@ -109,12 +109,16 @@ def exchange(room, member, data):
             entry.update(status='running',total=total,updated=time.time())
             _save(room,state)
             return {'requested':requested}
-        if action != 'apply':raise NetworkError('Choose inventory, apply or finish.')
+        if action not in ('apply','skip'):raise NetworkError('Choose inventory, apply, skip or finish.')
         key = data.get('key')
         row = state['results'].get(key)
         if not row or row['client']!=member.name or not row['host_function']:
             raise NetworkError('This bundle was not requested from this room member.')
         if row['status']!='waiting':return {'matched':row['status']=='applied', 'reason':row['reason']}
+        if action=='skip':
+            row.update(status='not_applied',reason='Client could not supply its bundle: '+str(data.get('reason') or 'Inputs changed; reconcile again.')[:1000])
+            _save(room,state)
+            return {'matched':False,'reason':row['reason']}
         evidence=data.get('evidence')
         if not isinstance(evidence,dict) or evidence.get('target_sha256')!=row['target_sha256']:
             raise NetworkError('The fresh bundle target differs from the inventoried function. Reconcile again.')
@@ -206,11 +210,15 @@ def client_run(link, run):
             page=[{k:r[k] for k in ('name','vram','rom_offset','size')} | {'target_sha256':digest(r['target'] or b'')} for r in rows[offset:offset+PAGE]]
             response=link._req('POST','/collab/reconcile',{'id':run,'action':'inventory','page':offset//PAGE,'total':len(rows),'items':page})
             for item in response['requested']:
-                fn=net._function(item['local'],link.slug)
-                source=fn['matched_source']
-                if fn['status']!='matched' or not source:
-                    raise NetworkError('Client matches changed during reconciliation; start a fresh run.')
-                evidence=room_matches.packet(net,link.slug,fn['name'],source)
+                try:
+                    fn=net._function(item['local'],link.slug)
+                    source=fn['matched_source']
+                    if fn['status']!='matched' or not source:
+                        raise NetworkError('Client inputs changed; reconcile again.')
+                    evidence=room_matches.packet(net,link.slug,fn['name'],source)
+                except NetworkError as exc:
+                    link._req('POST','/collab/reconcile',{'id':run,'action':'skip','key':item['key'],'reason':str(exc)})
+                    continue
                 link._req('POST','/collab/reconcile',{'id':run,'action':'apply','key':item['key'],'source':source,'evidence':evidence})
     except Exception as exc:
         error=str(exc)
