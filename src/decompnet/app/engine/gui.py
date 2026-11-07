@@ -146,16 +146,29 @@ class GuiMixin:
         piece joined to its function, kept for its attempts and notes), which the totals leave out too."""
         proj = self._project(slug)
         rows = self.store.all(
-            "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
+            "SELECT f.id, f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
             "f.readable, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
             f"WHERE f.project_id=? AND f.{IN_BUILD} ORDER BY f.vram, f.unit, f.id", proj["id"])
+        # One indexed pass over attempt metadata; never load historical candidate source into the map.
+        recency = {r["function_id"]: dict(r) for r in self.store.all("""WITH measured AS (
+            SELECT t.function_id, t.created_at, t.compiled, t.score, f.n_insns,
+                   MIN(CASE WHEN t.compiled AND t.score IS NOT NULL THEN t.score END)
+                   OVER (PARTITION BY t.function_id ORDER BY t.id
+                         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous_best
+            FROM functions f JOIN attempts t ON t.function_id=f.id WHERE f.project_id=?
+        ) SELECT function_id, MAX(created_at) AS last_checked,
+                 MAX(CASE WHEN compiled AND score>=0 AND score<COALESCE(previous_best,COALESCE(n_insns,0)*100)
+                          THEN created_at END) AS last_improved
+          FROM measured GROUP BY function_id""", proj["id"])}
         link = self.links.get(slug)
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
         return [{"name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
+                 "last_checked": recency.get(r["id"], {}).get("last_checked"),
+                 "last_improved": recency.get(r["id"], {}).get("last_improved"),
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],
