@@ -1259,3 +1259,13 @@ assignments but left local scratch and scheduling differences (40→35, not exac
 Keep the following pointer chain outside the scope when testing this hypothesis;
 wrapping both can change the competing values' weights together. The generator
 adds no runtime operations, and the ordinary linked-byte judge decides acceptance.
+
+Before increasing reference weights, inspect local allocation and hard-register
+conflicts. In one measured control, parity references 17→33 changed the global
+sort order but not a single linked byte: an overlapping call-lived pointer had
+already taken `s0` locally. Sharing that pointer across real branches made it
+global, but introduced another overlap; first scheduling could also recreate an
+overlap removed by flow analysis. Trace the actual phase that creates the
+conflict before another scope sweep. Raw field-address spelling does not block
+scheduling when GCC already proves the same-base fixed offsets disjoint. Keep
+memory effects and alias contracts honest; no volatile/dummy-work workaround.

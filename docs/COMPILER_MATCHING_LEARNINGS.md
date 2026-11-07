@@ -5441,3 +5441,34 @@ proposes isolated plain scalar pointer loads at depths1/2/3, at most two loads
 and six additional candidates. No following pointer chain is grouped implicitly.
 These are bounded hypotheses judged normally, not a replacement for inspecting
 local allocation, preferences or source validity.
+
+## Global rank does not override earlier local allocation (7 November 2026)
+
+Pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: in a
+468-byte linked function, wrapping two existing consumed parity assignments in
+eight one-shot scopes raised the pseudo's weighted references from 17 to 33
+(live length 59). Its global allocation priority overtook a walker with 25
+references over 44 instructions. The global sort order changed, but the linked
+bytes and score 325 did not. An overlapping, call-lived data pointer had already
+been locally allocated to hard register 16 (`s0`). The parity pseudo's hard-register 16
+conflict prevented using `s0` regardless of its global rank.
+
+A second control bound the same raw data field to an existing consumed C local
+in two return paths. The value became global and the earlier hard-register 16 reservation
+disappeared. A new walker/data live-range overlap nevertheless required another
+saved register: score 888, frame 0x38→0x40. A third control staged the existing
+start-field load before data and combined this with the parity scopes. Flow
+analysis removed the overlap and the desired walker/parity registers were
+recovered, but first scheduling hoisted the tail data load before two node
+stores, recreating the overlap. Result 1013, frame 0x40. Neither control is a match.
+
+Six bounded ordinary/diagnostic compiler calls and independent relinks agree;
+all 2,077 selected sources/profiles were preserved. This is private real-target
+negative evidence, not a controlled compiler regression or an automatic rule.
+No game code is included here. Inspect actual local allocations, global conflict
+sets and the first scheduling pass before spending more trials on reference
+weights. A raw field-address spelling is not automatically an alias barrier:
+the inspected `true_dependence` calls `memrefs_conflict_p` first, and identical
+bases with disjoint fixed offsets can prove non-overlap independently of
+`MEM_IN_STRUCT`. Do not add volatile accesses, dummy references, artificial
+storage or a false alias contract to force a dependency.
