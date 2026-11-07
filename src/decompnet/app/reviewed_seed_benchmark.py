@@ -1,4 +1,4 @@
-"""Replay an original checkpoint plus an explicitly reviewed root in an isolated project copy.
+"""Replay discovery from an original checkpoint, or an optional reviewed root, in an isolated copy.
 
 Unlike normalized-output repair replays, this calls the ROM engine's real linker judge.
 No model is invoked. A changed signature ends at a diagnostic review boundary, not match credit.
@@ -18,6 +18,7 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
     proj = net.project_row(slug)
     # An explicit sentinel plus containment checks prevent accidentally replaying in the live home.
     if (not (root/'.reviewed-search-replay').is_file() or not Path(net.store.path).resolve().is_relative_to(root)
+            or not Path(net.project_store(proj['id']).path).resolve().is_relative_to(root)
             or not Path(proj['root']).resolve().is_relative_to(root)
             or not Path(net.workspace).resolve().is_relative_to(root)):
         raise NetworkError('Replay requires a disposable isolated home, copied project and .reviewed-search-replay marker.')
@@ -32,20 +33,32 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
     ok,diff,error=net._judge_with(proj,fn,profile['toolchain'],flags,checkpoint)
     baseline_seconds=time.monotonic()-start
     if ok or diff is None:raise NetworkError('Replay needs a compiling nonmatching original checkpoint: '+error)
-    ok,seed_diff,error=net._judge_with(proj,fn,profile['toolchain'],flags,reviewed_source)
-    if not ok and seed_diff is None:raise NetworkError('Reviewed seed failed to compile: '+error)
-    trial_id=hashlib.sha256((reviewed_source+str(time.time_ns())).encode()).hexdigest()[:20]
-    header=net._context(proj['id'],fn['unit'])['header']
-    compiler_experiments.save_trial(net,fn,trial_id,dict(agent=agent.id,slug=slug,function=fn["name"],source=reviewed_source,header=header,project_config=net.cfg(proj),
-        compiler=profile['toolchain'],flags=' '.join(flags),seed_scope=reviewed_search_seeds.scope(net,proj,fn,reviewed_source),
-        result={'exact':ok,'score':0 if ok else max(1,seed_diff.score)}))
-    reviewed_search_seeds.review(net,agent,slug,function,trial_id,review_note)
+    setup_compiles=1;seed_score=None
+    if reviewed_source is not None:
+        ok,seed_diff,error=net._judge_with(proj,fn,profile['toolchain'],flags,reviewed_source)
+        setup_compiles+=1
+        if not ok and seed_diff is None:raise NetworkError('Reviewed seed failed to compile: '+error)
+        seed_score=0 if ok else seed_diff.score
+        trial_id=hashlib.sha256((reviewed_source+str(time.time_ns())).encode()).hexdigest()[:20]
+        header=net._context(proj['id'],fn['unit'])['header']
+        compiler_experiments.save_trial(net,fn,trial_id,dict(agent=agent.id,slug=slug,function=fn['name'],source=reviewed_source,header=header,project_config=net.cfg(proj),
+            compiler=profile['toolchain'],flags=' '.join(flags),seed_scope=reviewed_search_seeds.scope(net,proj,fn,reviewed_source),
+            result={'exact':ok,'score':seed_score}))
+        reviewed_search_seeds.review(net,agent,slug,function,trial_id,review_note)
     search=deep_permuter.Search(net,minutes,trials,log,fn)
-    outcome=reviewed_seed_search.run(search,agent,proj,fn)
+    outcome=reviewed_seed_search.run(search,agent,proj,fn,generated_only=reviewed_source is None)
     report=dict(checkpoint_sha256=hashlib.sha256(checkpoint.encode()).hexdigest(),checkpoint_score=diff.score,
-        seed_score=0 if ok else seed_diff.score,setup_judge_compiles=2,baseline_seconds=baseline_seconds,
-        **outcome,search_compiles=search.tested,total_judge_or_diagnostic_compiles=2+search.tested,
+        mode='discovery' if reviewed_source is None else 'reviewed_seed',seed_score=seed_score,setup_judge_compiles=setup_compiles,baseline_seconds=baseline_seconds,
+        **outcome,search_compiles=search.tested,total_judge_or_diagnostic_compiles=setup_compiles+search.tested,verification_compiles=0,
+        diagnostic_verification_seconds=None,diagnostic_verified=None,
         rebuild_seconds=None,rebuild_verified=None)
+    if outcome['diagnostic_exact']:
+        hit=outcome['diagnostic_exact'][0]
+        record=reviewed_search_seeds.record(net,fn,hit['trial_id'])
+        began=time.monotonic()
+        verified,_,_=net._judge_with(proj,fn,record['compiler'],record['flags'].split(),record['source'])
+        report.update(diagnostic_verified=bool(verified),verification_compiles=1,diagnostic_verification_seconds=time.monotonic()-began)
+        report['total_judge_or_diagnostic_compiles']+=1
     if outcome['matched'] and rebuild is not None:
         began=time.monotonic();report['rebuild_verified']=bool(rebuild());report['rebuild_seconds']=time.monotonic()-began
     report['elapsed_seconds']=time.monotonic()-start
@@ -65,8 +78,8 @@ def main():
     parser.add_argument('--project',required=True)
     parser.add_argument('--function',required=True)
     parser.add_argument('--checkpoint',type=Path,required=True)
-    parser.add_argument('--reviewed-source',type=Path,required=True)
-    parser.add_argument('--review-note',required=True)
+    parser.add_argument('--reviewed-source',type=Path,help='Omit for discovery from the original checkpoint only.')
+    parser.add_argument('--review-note',default='')
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
     root=args.home.resolve()
@@ -82,7 +95,7 @@ def main():
         def check_cancel(self):pass
         def progress(self,value):pass
     report=run(RomNetwork(args.database,root),args.project,args.function,args.checkpoint.read_text(),
-               args.reviewed_source.read_text(),args.review_note,root,Log())
+               args.reviewed_source.read_text() if args.reviewed_source else None,args.review_note,root,Log())
     args.output.write_text(json.dumps(report,indent=2)+'\n')
 
 

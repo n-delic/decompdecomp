@@ -31,7 +31,7 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
 
 ## Match through the live app
 
-[Reviewed alternative seeds and compact search briefs](docs/REVIEWED_SEARCH_SEEDS.md) let deep search investigate promising diagnostic shapes without replacing the saved winner. Native GCC allocation evidence targets existing-operation repairs; signature changes stay diagnostic-only until ordinary review.
+[Reviewed alternative seeds and compact search briefs](docs/REVIEWED_SEARCH_SEEDS.md) let deep search investigate promising diagnostic shapes without replacing the saved winner. Native GCC allocation evidence targets existing-operation repairs; signature changes stay diagnostic-only until ordinary review. For supported MIPS tail guards, deep search can now generate a diagnostic return/lifetime pair directly from the saved checkpoint; allocation-mapped middle quotients and compact next-experiment briefs reduce manual searching.
 
 Local source preparation recovers referenced enums/object declarations, tries private MIPS symbol aliases only when instruction layouts fully agree, and combines independently verified small helper context with bounded compiler profiles. Source evidence locates branch/statement differences for review; it does not automatically rewrite behavior. See [local source preparation](docs/LOCAL_SOURCE_PREPARATION.md).
 

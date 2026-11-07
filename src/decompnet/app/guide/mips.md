@@ -99,3 +99,9 @@ remains valid C89. For signed scalar normalization, the local repair recognizes
 both `-value - bias` and `0 - value - bias` under its existing unused-local guards.
 A successful frozen-output replay still needs the ordinary exact game judge before
 it counts as a match.
+
+For branching void drafts, an observed `v0`-preserving signed exit is a partial-return hypothesis,
+not a defined result on every path. Deep search can test a final guard plus a separate scalar
+lifetime diagnostically even when the single edit regresses. Read caller consumption and negative
+experiments in the function brief. Mapped middle quotient scopes and depth estimates are search
+priorities only; the original compiler and linked byte/data judge still decide each trial.

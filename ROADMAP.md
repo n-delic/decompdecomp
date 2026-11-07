@@ -624,6 +624,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Automatic guarded-return diagnostic pairs | ✓ MIPS ROM | ✓ shared MIPS reader | ✓ shared MIPS reader | ✓ shared MIPS reader | — return-path reader | — return-path reader | — return-path reader | — immutable private diagnostics |
 | Reviewed diagnostic-root deep lane | ✓ local ROM | ✓ shared ROM lane | ✓ shared ROM lane | ✓ shared ROM lane | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot |
 | Typed later-local reuse and bounded residual follow-ups | ✓ | ✓ | ✓ 32-bit scalars | ✓ | ✓ 32-bit scalars | ✓ 32-bit scalars | ✓ | ✓ by target ABI |
 | Frozen multi-case exported-ROM repair CLI | ✓ MIPS | ✓ MIPS | ✓ MIPS | ✓ MIPS | — copied evaluator | — copied evaluator | — copied evaluator | — copied evaluator |
@@ -3138,3 +3139,7 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Done: score-improvement batch commits inherit the shared header for units without a dedicated context, preserving explicit unit headers. Revoked match jobs leave the pending commit queue, and unexpected capture failures retain local traceback diagnostics instead of a generic Git-setup warning.
 
 - Done: agent metric reset gives immediate working/progress/error feedback and duplicate-click protection, performs database work off the event loop, reads only the selected helper's billing history, and clears confirmed card counters without waiting for a full poll. Reset boundaries protect the card from stale poll responses while preserving lifetime records and runtime.
+
+### Guarded-return discovery from the saved checkpoint
+
+Done: bounded MIPS return-register reaching definitions (including branch-likely slots/traps), direct-caller use summaries, diagnostic-only final-guard/partial-return plus scalar-lifetime pairs even when the first edit regresses, mapped middle quotient sites and heuristic depth ranking, scoped negative diagnostics and seed-free private replay with independent linked verification. No signatures or callers change automatically. See docs/REVIEWED_SEARCH_SEEDS.md. Non-MIPS return-path readers, broader private-prototype shapes, imported builds and room guests remain explicit gaps; ordinary repairs remain available.

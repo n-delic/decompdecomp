@@ -63,8 +63,8 @@ python -m decompnet.app.reviewed_seed_benchmark \
   --output /absolute/private/report.json
 ```
 
-The report separates two setup judge calls, search candidate builds, allocation-diagnostic builds,
-ordinary promotion builds, CPU-only model tokens (zero) and elapsed time. Full-rebuild verification
+The report separates setup judge calls (one in discovery mode, two with a supplied root), search candidate builds, allocation-diagnostic builds,
+ordinary promotion and independent verification builds, CPU-only model tokens (zero) and elapsed time. Full-rebuild verification
 and duration remain `null` unless a rebuild callback is supplied and actually runs after ordinary
 adoption. A signature-changing exact diagnostic receives no adopted match or rebuild credit.
 
@@ -81,3 +81,49 @@ A control starting from the same score-215 source, with reviewed roots disabled 
 allowance, made no improvement in 12.22 seconds. Both lanes are CPU-only; the reviewed lane is
 given additional human-reviewed information. This is not an equal-information model comparison.
 No game source, ROM bytes or database is included in this repository.
+
+## Automatic return-path discovery
+
+When no reviewed seed is selected, local ROM deep search can now generate a small diagnostic
+pair from the saved source and target alone. The MIPS reader follows reaching definitions of the
+return register through conditional branches, branch-likely delay slots and traps. It distinguishes
+a signed result-preserving exit from other exits that leave scratch results. Direct caller evidence
+in `get_search_brief` distinguishes observed consumption, overwrite and unknown use; it does not
+prove indirect-call closure or a defined return value on every path.
+
+The initial C generator deliberately covers one narrow shape: a final braced signed 32-bit scalar
+guard in a void function. It tests the partial-return hypothesis, then a separate lexical lifetime
+for that existing tail scalar **even when the first edit scores worse**. Shared prototypes and
+callers are not rewritten. Existing own prototypes, recursion, volatile/assembly and control
+transfers in the proposed shape decline generation. Unknown processor readers also decline.
+
+Generated roots use the same 12-slot/30-second/global-budget limits as reviewed roots and always
+remain diagnostic-only, including exact results. Current-input failed scored diagnostics are reused;
+compile failures remain retryable. Relevant quotient sites can include middle assignments: up to six
+mapped sites, with depths 1–3 visited across sites before increasing depth. Estimated weighted-reference
+crossings rank depths; the approximate +2 references per level is only a search heuristic, never
+compiler proof. Captures and the ordinary linker still decide the measured outcome.
+
+### Discovery replay, without a supplied root
+
+Omit `--reviewed-source` and `--review-note` from the replay command above. This discovery mode bypasses
+reviewed-root selection and reads neither a known matching candidate nor a previously reviewed seed
+as search input. It uses the original saved C, frozen target/context/symbol inputs and the current
+repair implementation. Restore those inputs in the disposable copy before comparing runs.
+
+The private score-215 regression generated two roots itself and reached linked exact bytes in
+**5 search compiles** (3 candidate checks and 2 allocation-capture builds). A separate original-baseline
+check and independent final linker recheck bring the total to **7**, with **0 model tokens**.
+Cold diagnostic-cache runs took **7.42, 3.64 and 7.19 seconds**; host/filesystem/toolchain caches can
+change wall time. The saved source remained unchanged, the independent diagnostic recheck passed,
+and full rebuild time remained unmeasured (`null`) because interface review was still required.
+This is a known-case regression for a recipe designed from this investigation, not a held-out model
+evaluation or evidence that arbitrary branching void functions should return integers.
+
+The earlier supplied-seed replay and saved-only control above predate automatic discovery. The
+benchmark now reports `preparation_seconds`, cached diagnostic hits, candidate/diagnostic builds,
+independent verification builds/time, model tokens and full-rebuild time separately.
+
+Planned gaps: analogous return-path readers for non-MIPS processors, broader source shapes with
+immutable private prototype snapshots, imported-project diagnostic roots and room guest storage.
+Ordinary search remains available in those modes.
