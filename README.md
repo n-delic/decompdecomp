@@ -50,7 +50,7 @@ often hash an extracted file rather than the whole disc; a library of disc image
 
 ## Multiple Claude accounts
 
-In **Agents & models → Claude Code → Additional accounts**, add a name for each Claude subscription account. Leave the configuration
+In **Agents & models → Claude Code → Additional accounts**, click **Add account** to open the side drawer and name each Claude subscription account. Leave the configuration
 directory empty to give it a separate directory, or enter an existing one. Run the command shown in a terminal and
 sign in with `/login`. When starting helpers, choose their account. Start another group to use another account.
 Helpers keep their chosen account when they restart, and wait for its usage limit to reset.
