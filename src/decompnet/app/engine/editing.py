@@ -9,7 +9,7 @@ import re
 import time
 
 from ... import arch
-from ...network import Agent, NetworkError
+from ...network import CLAIM_ORDERS, Agent, NetworkError
 from ...rom.symbols import IDENT, Symbol, SymbolTable
 from .common import _ADDRESS
 
@@ -278,6 +278,20 @@ class EditMixin:
 
     def instructions(self, slug: str) -> str:
         return self.cfg(self._project(slug)).get("instructions") or ""
+
+    def set_claim_order(self, slug: str, order: str) -> str:
+        """Which functions helpers claim without a name take first, whatever strategy they ask for; "" is the
+        agent's own choice (easiest, or finish in project mode)."""
+        order = (order or "").strip()
+        if order not in ("", *CLAIM_ORDERS):
+            raise NetworkError(f"claim order must be left empty (the default) or be one of {', '.join(CLAIM_ORDERS)}")
+        self._update_cfg(slug, lambda cfg: cfg.__setitem__("claim_order", order) if order
+                         else cfg.pop("claim_order", None))
+        return order
+
+    def claim_order(self, slug: str) -> str:
+        order = self.cfg(self._project(slug)).get("claim_order") or ""
+        return order if order in CLAIM_ORDERS else ""
 
     def set_title(self, slug: str, title: str) -> str:
         """The name the project shows by, which the user can change: a disc's title is often only its serial

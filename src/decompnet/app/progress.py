@@ -47,11 +47,11 @@ def _config_key(proj, cfg: dict) -> str:
     """A digest of only the settings a progress folder's manifest is rendered from.
 
     Spending, check marks and the stored revision change constantly and must not look like a manifest edit; a title,
-    compiler, instructions, priority, layout source or fingerprint does."""
+    compiler, instructions, claim order, priority, layout source or fingerprint does."""
     rom = cfg.get("rom") or {}
     settings = [proj["name"], cfg.get("platform"), rom.get("sha1"), rom.get("file"), cfg.get("compiler"),
-                cfg.get("compiler_ranges") or [], cfg.get("instructions") or "", cfg.get("priority") or [],
-                cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
+                cfg.get("compiler_ranges") or [], cfg.get("instructions") or "", cfg.get("claim_order") or "",
+                cfg.get("priority") or [], cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
     return hashlib.sha1(json.dumps(settings, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
@@ -283,7 +283,7 @@ def _merge_manifest(old, new, current, key: str = ""):
 def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str]) -> tuple[dict, dict[str, str]]:
     """A first sync has no deletion history, so keep database work while adding saved contributions."""
     local = json.loads(projected[saves.MANIFEST])
-    for key in ("title", "compiler", "compiler_ranges", "instructions", "priority", "auto_compiler",
+    for key in ("title", "compiler", "compiler_ranges", "instructions", "claim_order", "priority", "auto_compiler",
                 "knowledge_auto"):
         manifest[key] = local.get(key)
 
