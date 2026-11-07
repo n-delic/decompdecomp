@@ -1067,14 +1067,14 @@ $("recheckBtn").onclick = async () => {
 };
 
 $("saveGo").onclick = async () => {
-  const slug = S.slug, log = $("saveLog");
+  const slug = S.slug, log = $("saveLog"), folder = $("saveFolder").value.trim();
   const finish = beginWork(log, "Saving progress", [$("saveGo")], "Progress saved.");
   showJobError(log, "");
   try {
-    const r = await api("/api/save", { method: "POST", body: { slug, folder: $("saveFolder").value.trim() || undefined } });
+    const r = await api("/api/save", { method: "POST", body: { slug, folder: folder || undefined } });
     if (S.slug !== slug) return;
     S.ov.save_folder = r.folder;
-    if (typeof refreshRepositorySetup === "function") { repositorySetupSlug = ""; refreshRepositorySetup(); }
+    if (typeof refreshRepositorySetup === "function") { rememberRepositorySave(r.folder, folder); refreshRepositorySetup(); }
     $("saveState").textContent = `saved ${clock(Date.now() / 1000).slice(0, 5)}`;
     $("saveLog").hidden = false;
     $("saveLog").textContent = S.ov.kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
