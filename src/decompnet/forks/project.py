@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -28,7 +29,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW, console_python
+from decompnet.hostenv import NO_WINDOW, console_python, stop_process_tree
 
 from ..limits import capped, killed_for_memory
 from ..network import NetworkError
@@ -100,6 +101,74 @@ _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbo
                     r"Section '\.note\.split' is unknown)")
 
 
+def _said(out: list[str]) -> str:
+    """What a build step said, for agents and the user: what failed, not the warnings after it (dsd's hundreds of
+    "[WARN ] No module for relocation" lines came after a compiler's error and pushed it out of the tail)."""
+    said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
+    return "\n".join(said[-60:])
+
+
+_NO_WORK = "ninja: no work to do."  # what ninja says when everything asked for is built
+UNIT_SECONDS = 600  # a unit's build, at most (a run of several builds them side by side: the same)
+OUTPUT_SECONDS = 30  # after a step ends, how long its output may go on
+
+
+def _descendants(pid: int) -> list[int]:
+    """Every process started under `pid`, by `ps` (Linux and macOS alike)."""
+    try:
+        listed = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    children: dict[int, list[int]] = {}
+    for line in listed.splitlines():
+        p = line.split()
+        if len(p) == 2 and p[0].isdigit() and p[1].isdigit():
+            children.setdefault(int(p[1]), []).append(int(p[0]))
+    found, todo = [], [pid]
+    while todo:
+        for c in children.get(todo.pop(), []):
+            if c not in found:
+                found.append(c)
+                todo.append(c)
+    return found
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _stop_tree(proc: subprocess.Popen) -> None:
+    """Stop a build step and every process it started: on Windows the tree; elsewhere every process under it, each
+    asked first, then killed. Not just its process group: ninja puts each command in a group of its own, so a
+    compiler that ignored being asked outlived the step. The tree is read before anything stops, since a command
+    whose ninja is gone has another parent and can't be found from the step any more."""
+    if os.name == "nt":
+        stop_process_tree(proc)
+        return
+    tree = _descendants(proc.pid)
+
+    def signal_all(sig: int) -> None:
+        for stop in (lambda: os.killpg(proc.pid, sig), *(lambda p=p: os.kill(p, sig) for p in tree)):
+            try:
+                stop()
+            except OSError:
+                pass
+
+    signal_all(signal.SIGTERM)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and (proc.poll() is None or any(_alive(p) for p in tree)):
+        time.sleep(0.1)
+    signal_all(signal.SIGKILL)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def _tool_dirs() -> list[Path]:
     """Where decompdecomp's own build tools (the ninja Python package's ninja) are: beside its Python, or, in the
     Windows setup's bundle (packages installed with --target), in the `bin` folder beside those packages, which the
@@ -136,6 +205,54 @@ def _hash_mismatch(tail: str) -> str | None:
             f"{expected[:8]}..., yours is {got[:8]}...). Your dump is likely fine: some projects are set up from "
             "files that aren't on the retail disc (check the project's README for which file and where it comes "
             "from). Or start the game from your own copy instead: choose New project → Open a game file.")
+
+
+MADE_FROM_MAX = 2000  # targets followed up from a build's failures (failed_units): a few levels in practice
+QUERY_BATCH = 50  # targets per `ninja -t query`
+# never_defined: macros compilers define themselves without a leading underscore (IDO's, on SGI and N64 code; the
+# pinned KMC GCC 2.7.2's MACH, EE-GCC 2.96's R5900, read off their `-dM -E`; Windows projects' own WIN32), where the
+# project's files may never mention them
+PREDEFINED = {"LANGUAGE_C", "LANGUAGE_ASSEMBLY", "MIPSEB", "MIPSEL", "R3000", "R4000", "R5900", "MACH", "WIN32",
+              "WIN64"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".cp", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}
+BUILD_SUFFIXES = {".py", ".ninja", ".mk", ".json", ".toml", ".yml", ".yaml", ".cmake", ".sh", ".bat", ".ps1", ".lcf", ".ld"}
+BUILD_FILES = {"Makefile", "makefile", "GNUmakefile", "CMakeLists.txt"}
+NOT_SEARCHED = {".git", "build", "orig", "extract", "node_modules", STATE}
+SEARCH_MAX = 16 << 20  # bigger files aren't sources or build files
+
+
+def project_macro(name: str) -> bool:
+    """Whether a macro may be the project's own rather than the compiler's: those start with "_", have lowercase
+    letters (`mips`, `unix`) or are known ones (PREDEFINED)."""
+    return not name.startswith("_") and name == name.upper() and name not in PREDEFINED
+
+
+def _ninja_where(args: list[str]) -> list[str]:
+    """Of a project's ninja arguments (objdiff.json `custom_args`), the ones that say which build it is: `-f FILE`
+    and `-C DIR`, apart or joined (`-fother.ninja`). Targets and the rest (`-j8`, `all_source`) aren't a query's."""
+    out, i = [], 0
+    while i < len(args):
+        a = str(args[i])
+        if a in ("-f", "-C") and i + 1 < len(args):
+            out += [a, str(args[i + 1])]
+            i += 1
+        elif a[:2] in ("-f", "-C") and len(a) > 2:
+            out.append(a)
+        i += 1
+    return out
+
+
+def _query_outputs(text: str) -> set[str]:
+    """The targets under "outputs:" in `ninja -t query`'s answer: what each queried target is an input of."""
+    found, section = set(), ""
+    for line in text.splitlines():
+        if not line.startswith(" "):
+            section = ""  # the next queried target
+        elif not line.startswith("    "):
+            section = line.strip().split(":")[0]  # "input", "outputs", "validations"
+        elif section == "outputs":
+            found.add(line.strip())
+    return found
 
 
 class ForkProject:
@@ -448,6 +565,17 @@ class ForkProject:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
         are added to `failed`. `platform`: its console, for a project whose manifest isn't written yet (its import's
         first build: a game built with Visual C++ 2017 then built without wine's settings)."""
+        code, out, hints = self._execute(cmd, log, timeout, failed, platform)
+        return code == 0, _said(out) + ("\n\n" + hints if hints else "")
+
+    def _execute(self, cmd: list[str], log, timeout: float, failed: list[str] | None,
+                 platform: str | None = None) -> tuple[int | None, list[str], str]:
+        """Run a build step: (its exit code, None when it couldn't start or ran out of time; every line it printed,
+        or why it didn't run; what buildhelp.explain makes of a failure, or ""). `platform`: as in run. The time
+        limit holds while the step still prints, or hangs with its output open, and stops it with everything it
+        started: its output used to be read to the end before the limit was looked at, so a compiler that never
+        finished on an agent's code (stuck under wibo, or CodeWarrior looping on one #pragma) kept the build, and
+        the project's build lock, for hours (#114, whose fix this is)."""
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
         # what its console's builds need (Console.build_env)
@@ -455,48 +583,59 @@ class ForkProject:
             from .. import consoles
 
             env.update(consoles.get(platform).build_env())
+        env["NINJA_STATUS"] = "[%f/%t] "  # (ninja's own: its progress lines are what a run of units is read by)
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
         executable = sys.executable if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]
         cmd = [console_python(executable), *cmd[1:]]  # not pythonw.exe: its tools' compilers would flash consoles
         log("$ " + " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd)))
         try:
+            # (in a process group of its own off Windows, so a step stopped at its limit takes its compilers with it)
             proc = subprocess.Popen(capped(cmd), cwd=self.root, env=env, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8", creationflags=NO_WINDOW)
+                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8",
+                                    creationflags=NO_WINDOW, start_new_session=os.name != "nt")
         except FileNotFoundError:
-            return False, f"{cmd[0]} isn't installed"
-        out, seen, quiet = [], collections.Counter(), 0
-        for line in proc.stdout:
-            line = line.rstrip()
-            out.append(line)
-            if failed is not None and (m := _FAILED.match(line)):
-                failed.extend(t for t in (m.group(1) or m.group(2)).split() if t not in failed and not t.startswith("[code="))
-            seen[line] += 1
-            if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
-                quiet += 1
-            elif len(out) <= 400 or len(out) % 50 == 0:
-                log(line)
+            return None, [f"{cmd[0]} isn't installed"], ""
+        out, seen, quiet = [], collections.Counter(), [0]
+
+        def read() -> None:
+            for line in proc.stdout:
+                line = line.rstrip()
+                out.append(line)
+                if failed is not None and (m := _FAILED.match(line)):
+                    failed.extend(t for t in (m.group(1) or m.group(2)).split()
+                                  if t not in failed and not t.startswith("[code="))
+                seen[line] += 1
+                if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
+                    quiet[0] += 1
+                elif len(out) <= 400 or len(out) % 50 == 0:
+                    log(line)
+
+        reader = threading.Thread(target=read, daemon=True, name="build-output")
+        reader.start()
         try:
             code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            return False, "timed out"
-        if quiet:
-            log(f"({quiet} repeated lines and linker warnings not shown)")
+            _stop_tree(proc)  # ninja and the compiler it started: killing ninja alone left the compiler running
+            reader.join(OUTPUT_SECONDS)
+            said = [ln for ln in list(out) if not _NOISE.match(ln)][-40:]
+            return None, [*said, f"stopped: the build didn't finish in {timeout:.0f} seconds, so it was stopped with "
+                                 "everything it started. A compiler that never finishes on this code is the usual "
+                                 "cause: change the code that was just added."], ""
+        reader.join(OUTPUT_SECONDS)  # (the step is over: its output ends with it, or soon after)
+        lines = list(out)  # (what was read: a reader still going adds to its own list, not this one)
+        if quiet[0]:
+            log(f"({quiet[0]} repeated lines and linker warnings not shown)")
         if killed_for_memory(code):
-            out.append("stopped: it used more memory than decompdecomp allows a single tool, so it was stopped "
-                       "before it could slow down or freeze your computer")
-        # what failed, not the warnings after it: dsd's hundreds of "[WARN ] No module for relocation" lines came after
-        # a compiler's error and pushed it out of the tail agents and the user read
-        said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
-        tail = "\n".join(said[-60:])
+            lines.append("stopped: it used more memory than decompdecomp allows a single tool, so it was stopped "
+                         "before it could slow down or freeze your computer")
+        hints = ""
         if code:
             from .buildhelp import explain
 
-            if hints := explain(self.root, executable, "\n".join(out)):
+            if hints := explain(self.root, executable, "\n".join(lines)):
                 log(hints)
-                tail = tail + "\n\n" + hints
-        return code == 0, tail
+        return code, lines, hints
 
     def unpack_disc(self, version: str | None, log=print) -> int:
         """A dtk project that reads an extracted disc (orig/<version>/sys/main.dol, files/...) instead of the disc
@@ -685,12 +824,111 @@ class ForkProject:
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
         rel = os.path.relpath(unit.base, self.root)
-        return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=600)
+        return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=UNIT_SECONDS)
+
+    def build_units(self, units: list[Unit], log=lambda *_: None) -> list[tuple[bool, str]]:
+        """Build several units' objects in one run of the build: (built, the log) for each, in the order given.
+        Builds take turns (they share ninja's log), and a run's own cost (reading the build file, configure's facts)
+        is half a unit's build: 8 units took 5.6 s one by one, 1.3 s in one run (an x86 game's LTCG units). With
+        ninja only (`-k 0`: one unit that doesn't build doesn't stop the others); other builds, and one unit, build
+        alone as before. Each unit gets the verdict building it alone gives: when the run fails, a unit ninja says is
+        built (a dry run, `-n`) built, and every other is built alone, so its verdict and log are its own build's
+        (with buildhelp's hints). What the run printed isn't read for whose failure it was: a step's own output can
+        say `FAILED: <another unit's object>` and blamed that unit. A unit that built gets no log (no caller reads a
+        build's log when it built). A unit whose own build raises gets the exception in its place in the list, for
+        its caller alone (_UnitBuilds)."""
+        cfg = self.objdiff_config()
+        make = cfg.get("custom_make") or "make"
+        tool = _tool(make) or make
+        if len(units) < 2 or any(u.base is None for u in units) or Path(tool).stem.lower() != "ninja":
+            return [self.build_unit(u, log=log) for u in units]
+
+        def alone(u: Unit):
+            try:
+                return self.build_unit(u, log=log)
+            except Exception as e:  # noqa: BLE001 - its caller's, not the others'
+                return e
+
+        rels = [os.path.normpath(os.path.relpath(u.base, self.root)) for u in units]
+        ninja = [tool, *cfg.get("custom_args", [])]
+        code, _, _ = self._execute([*ninja, "-k", "0", *dict.fromkeys(rels)], log, UNIT_SECONDS, None)
+        if code == 0:
+            return [(True, "")] * len(units)
+        if code is None:  # out of time: which unit hung isn't known, and each alone has the whole limit
+            return [alone(u) for u in units]
+        done: dict[str, bool] = {}
+        for r in rels:
+            if r not in done:
+                try:
+                    done[r] = self._no_work(ninja, [r])
+                except (ForkError, OSError):
+                    done[r] = False
+        return [(True, "") if done[r] else alone(u) for u, r in zip(units, rels)]
+
+    def _no_work(self, ninja: list[str], targets: list[str]) -> bool:
+        """Whether ninja has nothing left to build for these targets, by its own word (a dry run): a progress line
+        that's missing says nothing (a project's --quiet), "no work to do" does."""
+        code, said, _ = self._execute([*ninja, "-n", *targets], lambda *_: None, 120, None)
+        return code == 0 and any(line.strip() == _NO_WORK for line in said)
 
     def failed_units(self, targets: list[str]) -> set[str]:
-        """Units whose source object is among the build's failed targets."""
-        want = {os.path.normpath(t) for t in targets}
+        """Units whose source object the build couldn't make: it failed, or a step it's made from did. A unit built
+        in steps (objects linked into one, a generated source) reports only the step: `ninja -k 0` never tries what
+        depends on it. Counting the object alone, an x86 game's edits that broke such a step were kept as breaking
+        nothing, and the next agent to compile there was told the file was broken before it came."""
+        want = {os.path.normpath(t) for t in [*targets, *self._made_from(targets)]}
         return {u.name for u in self.units() if u.base is not None and os.path.normpath(os.path.relpath(u.base, self.root)) in want}
+
+    def never_defined(self, names: set[str]) -> set[str]:
+        """Which of these macros no build of the project can define: not the compiler's own (a name that starts with
+        "_" or has a lowercase letter, or one compilers are known to predefine), not #defined in any of its sources,
+        and named in none of its build files (a -D, a configure script). What csource.hidden_by goes by."""
+        left = {n for n in names if project_macro(n)}
+        if not left:
+            return set()
+        # (after -D or /D too: `/DNAME` has no word boundary before the name)
+        words = re.compile(r"(?:\b|(?<=[-/]D))(" + "|".join(map(re.escape, sorted(left))) + r")\b")
+        defines = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(" + "|".join(map(re.escape, sorted(left))) + r")\b", re.M)
+        for d, dirs, files in os.walk(self.root):
+            dirs[:] = [x for x in dirs if x not in NOT_SEARCHED]
+            for f in files:
+                p = Path(d) / f
+                source = p.suffix.lower() in SOURCE_SUFFIXES
+                if not source and p.suffix.lower() not in BUILD_SUFFIXES and f not in BUILD_FILES:
+                    continue
+                try:
+                    if p.stat().st_size > SEARCH_MAX:
+                        continue
+                    text = p.read_text(errors="replace", encoding="utf-8")
+                except OSError:
+                    continue
+                left -= set((defines if source else words).findall(text))
+                if not left:
+                    return set()
+        return left
+
+    def _made_from(self, targets: list[str]) -> set[str]:
+        """Everything the build makes from these targets, all the way up (ninja's `-t query`, on the build file and
+        folder the project's `custom_args` give ninja). A make-built project has no such query: nothing, so a step's
+        failure there counts against its own target alone, as before (ROADMAP.md)."""
+        cfg = self.objdiff_config()
+        make = cfg.get("custom_make") or "make"
+        if not targets or not (make == "ninja" or Path(make).name.startswith("ninja")):
+            return set()
+        tool = [_tool(make) or make, *_ninja_where(cfg.get("custom_args", []))]
+        found: set[str] = set()
+        todo = list(dict.fromkeys(targets))
+        while todo and len(found) < MADE_FROM_MAX:
+            batch, todo = todo[:QUERY_BATCH], todo[QUERY_BATCH:]
+            try:
+                out = subprocess.run([*tool, "-t", "query", *batch], cwd=self.root, capture_output=True, text=True,
+                                     errors="replace", encoding="utf-8", timeout=60, creationflags=NO_WINDOW).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                break
+            for t in _query_outputs(out) - found:
+                found.add(t)
+                todo.append(t)
+        return found
 
     def _all_source(self) -> bool:
         """dtk-template's `all_source`: every unit's source object, including units the game's link doesn't use yet

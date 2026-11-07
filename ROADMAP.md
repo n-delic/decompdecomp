@@ -769,6 +769,13 @@ and report every address that is still hard-coded ("93% movable, 41 addresses le
 it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
 (tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
 
+### A failed build step counts against its unit in make-built forks too
+
+In a fork built with ninja, a unit whose build fails at a step before its object (objects linked into one, a
+generated source) counts as not building: `ninja -t query` says what each failed step goes into. A make-built fork
+has no such query, so only the failed target itself is counted, and an edit that breaks such a step there can still
+be kept as breaking nothing. Make's own dry run (`make -n -W <file>`) or its database (`make -p`) could say the same.
+
 ### A list of open rooms (to investigate)
 
 Asked for by a user: a page where you see the rooms running now and join one. Hosts would still host their own
