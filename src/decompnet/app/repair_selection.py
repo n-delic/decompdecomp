@@ -11,6 +11,7 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'scratch_role_reuse': ('scratch_role_reuse','scalar_storage_reuse'),
     'one_shot_scope': ('narrow_load_subtraction','parameter_carriers'),
     'narrow_load_subtraction': ('parameter_carriers','one_shot_scope'),
     'parameter_carriers': ('narrow_load_subtraction','one_shot_scope'),

@@ -6062,3 +6062,38 @@ Private evidence: `func80049DB0/live-goal` under the task's Data-volume evidence
 root; saved source SHA-256
 `978ea35c532ffcdb12fc2d1626949c48d38cc4cfd2b948898d3368ce151857ef`.
 No game source, target assembly, ROM or database is included in this finding.
+
+### Automatic replay of disjoint selector/pointer/sentinel storage
+
+The shared `scratch_role_reuse` family now materializes an actual narrow selector
+load, reuses the temporary for a byte-pointer intermediate with casts back at its
+uses, and can reuse it again for a comparison/XOR constant after the pointer dies.
+It retains both the first step and bounded combinations; the existing iterative
+frontier can continue from a partial improvement. Register-only rows rank this
+family before broad mutations in autopilot and deep search, within their existing
+budgets. No physical register is bound.
+
+A private replay started from the original unresolved score-20 source, with the
+same `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` profile and header. The first
+automatically generated combined candidate recovered score 0 and exact linked
+bytes. The test also selects that candidate first through the ordinary targeted
+proposal pool, without reading a matched-source seed. This is recovery of a known
+case, not a new game match or a measured general speedup. Partial-step continuation,
+ROM/PROJECT deep-search admission and stop-on-exact behavior have synthetic tests.
+
+Eligibility is deliberately narrow: known 32-bit ABIs, an ordinary narrow load in
+a braced condition, an unescaped single-definition byte-pointer local and CFG
+checks for disjoint lifetimes and dominating definitions. Sentinel insertion is
+rejected if the old scratch remains live or a reachable path redefines it. Selector calls,
+volatile selector expressions, macros involving the function body, shadows and
+unknown widths are declined. Pointer/integer round trips are target-ABI hypotheses,
+not an ISO C portability claim. The ordinary exact judge is unchanged.
+
+Agent packets include the applicable edit plan and target-register occurrences
+from earlier matching rows when available; existing build-scoped failed-trial
+summaries remain alongside it. Wider carriers and random flag searches should not
+replace a targeted lifetime experiment when ordered instruction forms already
+agree. The opt-in regression uses `DECOMPNET_SCRATCH_ROLE_REPLAY` with a private
+case manifest pinned to source/header/target/compiler hashes; no game data is in
+the test or repository. Whole-image rebuilding and transfer to other games were
+not measured by this replay.

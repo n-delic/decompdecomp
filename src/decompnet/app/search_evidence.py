@@ -32,6 +32,7 @@ def brief(net, proj, fn):
     pool = getattr(net,'_search_evidence',{}).get(key,{})
     current = pool.get(hashlib.sha256(source.encode()).hexdigest())
     lines = []
+    scratch_hint = ''
     if current:
         rows = [r for r in current['rows'] if len(r)==3 and r[0]!=' ']
         from ..diff_summary import advice
@@ -40,6 +41,9 @@ def brief(net, proj, fn):
         if clues:lines.append(clues)
         if allocation_evidence.diagnose(current['rows'],proj['arch'])['register_only']:
             from .copy_lifetime_repairs import hint
+            from .scratch_role_repairs import brief as scratch_brief
+            scratch_hint = scratch_brief(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],proj['arch'],current['rows'])
+            if scratch_hint:lines.append(scratch_hint)
             if clue := hint(source,fn['name']):lines.append(clue)
         from . import allocation_search
         if clue := allocation_search.brief(net,proj,fn,source,current['rows']):lines.append(clue)
@@ -48,7 +52,11 @@ def brief(net, proj, fn):
         plan=allocation_evidence.plan(current['rows'],proj['arch'])
         from .copy_lifetime_repairs import FAMILIES, variants
         applicable = {family for family, _ in variants(source,fn['name'])}
-        families = [family for family in plan['families'] if family not in FAMILIES or family in applicable]
+        from . import parameter_carriers
+        has_carriers=bool(parameter_carriers.variants(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],proj['arch']))
+        families = [family for family in plan['families'] if (family not in FAMILIES or family in applicable)
+                    and (family != 'scratch_role_reuse' or scratch_hint)
+                    and (family != 'parameter_carriers' or has_carriers)]
         next_family=(' Try '+families[0]+'.') if families else ''
         lines.append(f"Remaining mismatch: {plan['category'] or 'mixed'}; {len(rows)} displayed differences.{next_family}")
         lines.extend(f"  {r[0]} {str(r[1])[:80]} => {str(r[2])[:80]}" for r in rows[:4])

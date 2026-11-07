@@ -1,6 +1,6 @@
 """Rank applicable hypotheses by observed mismatches without excluding other families."""
 
-STRUCTURAL = ('scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
+STRUCTURAL = ('scratch_role_reuse','scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
 GUARDED = ('matched_zero_argument_call', 'zero_argument_parameter_alias', 'matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers')
 
 
@@ -20,6 +20,7 @@ def order(families, rows):
     from .matching_investigations import paired_loads
     from .normalization_repairs import frame_gap
     register_priority = (
+            'scratch_role_reuse',
             'parameter_carriers',
             'inline_byte_address_bundle', 'inline_byte_address', 'debug_branch_scope', 'loaded_byte_compound', 'unsigned_byte_increment', 'return_contract', 'narrow_expression_inline', 'plain_float_slots',
             'narrow_call_destination', 'branch_scalar_lifetime', 'embedded_call_assignment', 'inline_call_count', 'typed_pointer_snapshot',
@@ -83,7 +84,7 @@ def order(families, rows):
     # or register-shape heuristics must not spend the whole budget before that operation.
     preferred=GUARDED+('m2c_refinement',)+STRUCTURAL+('mapped_spill_storage','mapped_register_lifetime')+preferred
     if diagnosis['register_only']:
-        preferred=GUARDED+('parameter_carriers',)+preferred
+        preferred=GUARDED+('scratch_role_reuse','parameter_carriers')+preferred
     elif diagnosis['scheduling']:
         preferred=GUARDED+('narrow_load_subtraction','one_shot_scope')+preferred
     ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
