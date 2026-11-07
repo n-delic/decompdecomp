@@ -2,8 +2,8 @@
 import hashlib
 import json
 import os
-import signal
 import queue
+import signal
 import subprocess
 import sys
 import threading
