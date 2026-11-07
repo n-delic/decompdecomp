@@ -1392,3 +1392,19 @@ reload has not allocated yet. Check reload-local changes and later jump
 optimization separately, using retained dumps. An unused target frame gap is
 not permission to add padding or an otherwise unused local. Phase comparison
 includes CSE2, but changes and renumbered pseudos remain investigation leads.
+
+### Measure single-pass quotient scopes before widening a search
+
+A `do { ... } while (0)` scope can retain loop-depth weights in this compiler's
+allocation analysis even when no runtime loop survives. In one 390-instruction
+contact routine, isolating the existing quotient assignment inside its existing
+single-pass calculation raised a scratch pseudo's weighted references 10→12 at
+unchanged live length 91. Its priority then passed a triangle index with
+7 references over 41 instructions and recovered the final 12 register differences:
+the ordinary linked judge was exact.
+Wrapping the whole calculation instead worsened to 280; an initial scratch reuse
+left a 10-point mismatch. Scopes are hypotheses, not guaranteed allocation rules.
+Inspect `.lreg`/`.greg`, local reservations and conflicts, preserve real work, and
+use the ordinary judge. Do not add dummy references or fixed registers. A return-
+lifetime change also needs compatible caller declarations and evidence about
+whether callers consume the result; unused fallthrough is not a defined result.
