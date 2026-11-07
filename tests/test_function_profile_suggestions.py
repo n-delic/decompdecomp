@@ -273,3 +273,62 @@ def test_dismiss_all_requires_explicit_snapshot(monkeypatch, ids):
     net, _ = fixture(monkeypatch)
     with pytest.raises(NetworkError, match='Refresh the compiler suggestions'):
         profiles.dismiss_all(net, 'game', ids)
+
+
+def test_accept_all_starts_without_overview_or_implicit_project_sync(monkeypatch):
+    net, _ = fixture(monkeypatch)
+    items=[{'id':1,'status':'open','toolchain':'gcc','check':''},
+           {'id':2,'status':'dismissed','toolchain':'gcc'},
+           {'id':3,'status':'open','toolchain':'','text':'note'},
+           {'id':4,'status':'open','toolchain':'gcc','check':"doesn't compile"},
+           {'id':5,'status':'open','toolchain':'gcc','check':'does not match'},
+           {'id':6,'status':'open','toolchain':'gcc','check':'verified'}]
+    net._update_cfg('game',lambda cfg:cfg.update(suggestions=items))
+    stages=[];snapshots=[]
+    class Log:
+        def __call__(self,line):pass
+        def check_cancel(self):pass
+        def progress(self,value):snapshots.append(value)
+    def resolve(slug,sid,accept,log):
+        assert snapshots[0]['total']==2 and snapshots[0]['done']==0
+        assert snapshots[-1]['suggestion']==sid
+        stages.append(sid)
+    net.resolve_suggestion=resolve
+    net.project_row=lambda *a:pytest.fail('preparation must not synchronize project files')
+    def overview(slug):
+        assert stages==[1,6,'saved']
+        assert snapshots[-1]['current']['phase']=='Refreshing project overview'
+        stages.append('overview');return {'suggestions':[]}
+    net.overview=overview
+    net.progress=SimpleNamespace(sync=lambda *a,**kw:stages.append('saved'))
+    result=profiles.accept_all(net,'game',Log())
+    assert stages==[1,6,'saved','overview'] and result['applied']==2
+
+
+def test_accept_all_checks_each_suggestion_again_after_snapshot(monkeypatch):
+    net, _ = fixture(monkeypatch)
+    items=[{'id':i,'status':'open','toolchain':'gcc'} for i in (1,2)]
+    net._update_cfg('game',lambda cfg:cfg.update(suggestions=items))
+    checked=[];snapshots=[]
+    class Log:
+        def __call__(self,line):pass
+        def check_cancel(self):pass
+        def progress(self,value):snapshots.append(value)
+    def resolve(slug,sid,accept,log):
+        checked.append(sid)
+        net._update_cfg(slug,lambda cfg:cfg['suggestions'][1].update(status='dismissed'))
+    net.resolve_suggestion=resolve
+    net.overview=lambda *a:{}
+    net.progress=SimpleNamespace(sync=lambda *a,**kw:None)
+    result=profiles.accept_all(net,'game',Log())
+    assert checked==[1] and result['applied']==1 and result['skipped']==1
+    assert 'Already resolved' in result['results'][1]['reason']
+    assert snapshots[0]['total']==2
+
+
+def test_accept_all_cancellation_precedes_config_read(monkeypatch):
+    net, _ = fixture(monkeypatch)
+    class Log:
+        def check_cancel(self):raise RuntimeError('cancelled')
+    monkeypatch.setattr(net.store,'one',lambda *a:pytest.fail('cancelled preparation must not query'))
+    with pytest.raises(RuntimeError,match='cancelled'):profiles.accept_all(net,'game',Log())
