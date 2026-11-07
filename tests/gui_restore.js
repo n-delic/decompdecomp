@@ -10,7 +10,8 @@ const ctx = {
   S: {}, location: {}, JOB_POLL_MS: 1,
   dialog() {
     elements = Object.fromEntries(["rsSource", "rsGame", "rsOwn", "rsGo", "rsCancel", "rsWork", "rsStatus", "rsLog", "dialogBody"]
-      .map((id) => [id, { value: "", checked: false, textContent: "" }]));
+      .map((id) => [id, { value: "", checked: false, textContent: "",attrs:{},style:{setProperty(key,value){this[key]=value;}},
+        setAttribute(key,value){this.attrs[key]=value;},removeAttribute(key){delete this.attrs[key];} }]));
     elements.dialogBody.querySelector = (s) => elements[s.slice(1)];
     elements.dialogBody.querySelectorAll = () => [];
     ctx.S.dialogKind = "restore";
@@ -31,6 +32,8 @@ const ctx = {
   },
 };
 vm.createContext(ctx);
+const base=fs.readFileSync(path.join(__dirname,"../src/decompnet/app/static/js/base.js"),"utf8");
+vm.runInContext(base.slice(base.indexOf("function updateWorkProgress("),base.indexOf("async function followJob(")),ctx);
 const source = fs.readFileSync(path.join(__dirname, "../src/decompnet/app/static/js/home.js"), "utf8");
 vm.runInContext(source.slice(source.indexOf("let restoreJob =")), ctx);
 const tick = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
@@ -74,6 +77,12 @@ async function main() {
   const retry = elements.rsGo.onclick();
   opening({ job: "second" });
   await tick();
+  vm.runInContext("restoreJob.progress={phase:'Verifying saved functions',done:42,total:1098,function:'example'};renderRestore();",ctx);
+  assert.match(elements.rsStatus.textContent,/42.*1,098.*3%/);
+  assert.equal(elements.rsWork.attrs['aria-valuenow'],'42');
+  reopen();
+  assert.match(elements.rsStatus.textContent,/Verifying saved functions/);
+  assert.equal(elements.rsWork.className,'workbar counted');
   rejectCancel = true;
   await elements.rsCancel.onclick();
   assert.equal(elements.rsCancel.disabled, false);

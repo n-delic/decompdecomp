@@ -896,6 +896,11 @@ inside it: that holds the project database and saved matches. The app reconnects
 Did you keep a project outside the `Decomp` folder, in `Documents` for example? Move that project's folder into
 `%USERPROFILE%\Decomp` too, and keep its folder name: the app finds a moved project by its name there.
 
+Saved-project verification uses a private compiler queue (up to four workers, within the global compiler limit),
+reuses each worker's header staging, and publishes exact checks in order. The restore dialog shows verified/total
+counts. Optional match-library indexing and reuse discovery run afterward as **Index restored matches** under
+Background work, where they can be stopped. Every restored match still passes fresh byte verification.
+
 **Open a saved project** is for something else: a `progress/` folder that decompdecomp saved, with a
 `decompdecomp.json` in it. Use it if you only have a project's `progress/` folder, with your own copy of the game.
 A project's own folder isn't a save, and neither is its `.decomp.wtf.json`: that file says how the project builds.

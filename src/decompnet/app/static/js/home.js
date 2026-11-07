@@ -571,6 +571,10 @@ function renderRestore() {
     : restoreCancelling ? "Cancelling saved project opening…" : busy ? "Opening saved project…"
     : restoreJob?.state === "cancelled" ? "Saved project opening cancelled."
     : restoreJob?.state === "done" ? "Saved project opened." : "";
+  if(busy && !message && !restoreCancelling){
+    const log=$("rsLog");log._workStatus=$("rsStatus");log._workBar=$("rsWork");
+    updateWorkProgress(log,restoreJob?.progress || {phase:"Opening saved project…"});
+  }
   $("rsStatus").hidden = !$("rsStatus").textContent;
   $("rsGo").disabled = busy || !restoreInput.own;
   $("rsGo").textContent = busy ? "Opening…" : "Open it";
