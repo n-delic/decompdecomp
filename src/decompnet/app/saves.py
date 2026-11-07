@@ -53,7 +53,8 @@ def _source_text(text: str) -> str:
 def default_folder(net, slug: str) -> Path:
     """The project's progress folder. Reads the project row rather than `net._project`, which synchronizes: a save to
     another folder must not be stopped by the default folder's unresolved git merge (#101 review)."""
-    proj = net.store.one("SELECT * FROM projects WHERE slug=?", slug)
+    store = net.project_store(slug)
+    proj = store.one("SELECT * FROM projects WHERE slug=?", slug)
     if proj is None:
         raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
     return Path(net.cfg(proj).get("progress_folder") or Path(proj["root"]) / SAVE_FOLDER)
@@ -65,7 +66,8 @@ def save_folder(net, slug: str) -> Path:
     This is a local preference, kept out of the shared manifest: another computer has its own paths.
     Saving a backup elsewhere does not move the authoritative progress folder.
     """
-    proj = net.store.one("SELECT * FROM projects WHERE slug=?", slug)
+    store = net.project_store(slug)
+    proj = store.one("SELECT * FROM projects WHERE slug=?", slug)
     if proj is None:
         raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
     return Path(net.cfg(proj).get("save_folder") or default_folder(net, slug))
@@ -73,7 +75,8 @@ def save_folder(net, slug: str) -> Path:
 
 def _remember_folder(net, project_id: int, folder: Path, *, chosen: bool) -> None:
     # A rescue save must work even when synchronizing the authoritative folder fails. Only update local config.
-    with net.store.tx() as db:
+    store = net.project_store(project_id)
+    with store.tx() as db:
         row = db.execute("SELECT config FROM projects WHERE id=?", (project_id,)).fetchone()
         cfg = json.loads(row["config"])
         if chosen:
@@ -210,10 +213,11 @@ def _next_revision(net, proj, folder: Path) -> int:
 
 def _remember_revision(net, slug: str, manifest: dict) -> None:
     """Record the revision of a manifest this project just wrote, for the next first sync without a baseline."""
+    store = net.project_store(slug)
     written = _manifest_revision(manifest)
     if written <= 0:
         return
-    with net.store.tx() as db:
+    with store.tx() as db:
         row = db.execute("SELECT id,config FROM projects WHERE slug=?", (slug,)).fetchone()
         if row is None:
             return
@@ -287,21 +291,29 @@ def _read_owned(folder: Path) -> dict[str, str]:
 def _function_rows(net, project_id: int, *, sources: bool) -> list:
     """The columns a render reads. Without `sources` only whether a file exists is selected: a manifest needs the
     layout and who matched it, not the megabytes of C that make the files."""
+    store = net.project_store(project_id)
     exists = ("CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
               "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best ")
     if sources:
-        return net.store.all(
+        return store.all(
             "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
             f"best_agent_id, readable, meta, {exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
-    return net.store.all(
+    return store.all(
         "SELECT name, vram, size, status, matched_agent_id, best_score, best_agent_id, readable, meta, "
         f"{exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
 
 
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
     """The progress manifest and its function index from function rows (with or without their source text)."""
+    store = net.project_store(proj['id'])
     pid = proj["id"]
-    agent_ids = sorted({r[k] for r in rows for k in ('matched_agent_id', 'best_agent_id') if r[k] is not None})
+    note_rows = store.all(
+        "SELECT n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn "
+        "FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)
+    agent_ids = sorted({r[k] for r in rows for k in ('matched_agent_id', 'best_agent_id') if r[k] is not None}
+                       | {r['agent_id'] for r in note_rows if r['agent_id'] is not None})
+    # Identities remain shared; project notes and functions need not join a copy
+    # of the agent registry inside each operational database.
     names = {r["id"]: r["name"] for r in net.store.all(
         "SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))", json.dumps(agent_ids))}
     functions = {}
@@ -313,13 +325,10 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
             functions[r["name"]] = {"vram": r["vram"], "best_score": r["best_score"],
                                     "best_by": names.get(r["best_agent_id"], "")}
     units = {""} | net._unit_contexts(pid)
-    notes = [{"function": r["fn"], "text": r["text"], "by": r["agent"] or "",
+    notes = [{"function": r["fn"], "text": r["text"], "by": names.get(r['agent_id'], ''),
               "created_at": r["created_at"], "score_before": r["score_before"],
-              "score_after": r["score_after"]} for r in net.store.all(
-        "SELECT n.text,n.created_at,n.score_before,n.score_after, a.name AS agent, f.name AS fn "
-        "FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-        "LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)]
-    knowledge = [r["text"] for r in net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
+              "score_after": r["score_after"]} for r in note_rows]
+    knowledge = [r["text"] for r in store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
     manifest = {
         "format": FORMAT, "saved_at": time.time(), "revision": _next_revision(net, proj, folder),
@@ -334,7 +343,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "functions": functions,
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
-        "symbols": [dict(r) for r in net.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
+        "symbols": [dict(r) for r in store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
                                                     pid) if not AUTO_NAME.match(r["name"])],
         "notes": notes,
         # what's set aside and why: agents' verdicts that no C makes it, the user's, a boundary report's leftover
@@ -460,6 +469,7 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
     A match, a rename or a header edit touches a handful of files; rebuilding the other 17,999 sources' text is what
     made one database change take seconds on a big game. The manifest is always rebuilt, because it carries the
     revision, the layout and who matched what."""
+    store = net.project_store(proj['id'])
     cfg = net.cfg(proj)
     pid = proj["id"]
     rows = _function_rows(net, pid, sources=False)
@@ -471,7 +481,7 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
     if names:
         for start in range(0, len(names), 400):
             chunk = names[start:start + 400]
-            selected = net.store.all(
+            selected = store.all(
                 "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
                 "best_agent_id, readable, meta, "
                 "CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
@@ -487,7 +497,8 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
 def _save_best(net, proj, folder: Path) -> dict:
     """A project-mode game's save: each open function's closest attempt as best/<function>.c, with how close it is,
     who wrote it and its source file in a comment at its top. Its matched C is in the project's own files."""
-    rows = net.store.all("SELECT name, unit, n_insns, best_source, best_score, best_agent_id, meta FROM functions WHERE "
+    store = net.project_store(proj['id'])
+    rows = store.all("SELECT name, unit, n_insns, best_source, best_score, best_agent_id, meta FROM functions WHERE "
                          "project_id=? AND status='open' AND best_source IS NOT NULL AND best_score IS NOT NULL "
                          "ORDER BY unit, name", proj["id"])
     agent_ids = sorted({r['best_agent_id'] for r in rows if r['best_agent_id'] is not None})
@@ -624,15 +635,15 @@ def restore(net, source: str, game: Path, log=print) -> dict:
                         if Path(source).expanduser().is_dir():
                             live = folder.resolve()
                         else:
-                            live = Path(net.store.one("SELECT root FROM projects WHERE slug=?", slug)["root"]) / SAVE_FOLDER
+                            live = Path(net.project_store(slug).one("SELECT root FROM projects WHERE slug=?", slug)["root"]) / SAVE_FOLDER
                             if (live / ".git").exists():
                                 raise NetworkError("This project already has a progress checkout. Pull changes there, or open that local folder.")
                             _publish(live, {}, _read(live))
                             shutil.copytree(folder, live, dirs_exist_ok=True)
                         net._update_cfg(slug, lambda cfg: cfg.__setitem__("progress_folder", str(live)))
-                        project_id = net.store.one("SELECT id FROM projects WHERE slug=?", slug)["id"]
+                        project_id = net.project_store(slug).one("SELECT id FROM projects WHERE slug=?", slug)["id"]
                         if not same_linked_save:
-                            with net.store.tx() as db:
+                            with net.project_store(slug).tx() as db:
                                 db.execute("DELETE FROM progress_state WHERE project_id=?", (project_id,))
                             progress.baselines.pop(project_id, None)
                         progress.disk.pop(slug, None)
@@ -661,7 +672,8 @@ def restore(net, source: str, game: Path, log=print) -> dict:
 
 def _discard_imported(net, slug: str, progress=None) -> None:
     """Remove a project a failed restore imported, without letting its half-applied folder synchronize on the way."""
-    row = net.store.one("SELECT id,root FROM projects WHERE slug=?", slug)
+    store = net.project_store(slug)
+    row = store.one("SELECT id,root FROM projects WHERE slug=?", slug)
     if row is None:
         return
     previous = getattr(progress.local, "busy", False) if progress is not None else False
@@ -682,8 +694,9 @@ def _discard_imported(net, slug: str, progress=None) -> None:
 
 def _restore_counts(net, slug: str) -> dict:
     """Counts for a restore whose linked save already matches the project's known state."""
-    proj = net.store.one("SELECT id FROM projects WHERE slug=?", slug)
-    rows = net.store.all("SELECT status,matched_source,best_source,best_score FROM functions WHERE project_id=?", proj["id"])
+    store = net.project_store(slug)
+    proj = store.one("SELECT id FROM projects WHERE slug=?", slug)
+    rows = store.all("SELECT status,matched_source,best_source,best_score FROM functions WHERE project_id=?", proj["id"])
     return {
         "matched": sum(row["status"] == "matched" and bool(row["matched_source"]) for row in rows),
         "best": sum(row["status"] != "matched" and row["best_source"] is not None
@@ -702,6 +715,7 @@ def _saved_source(folder: Path, files: dict[str, str] | None, name: str) -> str 
 def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
                    files: dict[str, str] | None = None, *, restore_notes: bool = True) -> tuple[dict, dict]:
     """Put back everything a save changes before its C is judged: layout, names, settings, notes, set-aside."""
+    store = net.project_store(slug)
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = net._project(slug)
     pid = proj["id"]
@@ -716,7 +730,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     else:
         _join_saved_layout(net, proj, layout, log)
         net.apply_remote_layout(slug, layout, symbols)
-    with net.store.tx() as db:
+    with store.tx() as db:
         for item in manifest.get("set_aside") or []:
             # A synced layout can already have set it aside before this runs; its reason still has to come back.
             row = _set_aside_row(db, pid, item)
@@ -750,10 +764,10 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
         cfg["knowledge_auto"] = bool(manifest.get("knowledge_auto"))
     net._update_cfg(slug, setup)
     if manifest.get("title"):
-        with net.store.tx() as db:
+        with store.tx() as db:
             db.execute("UPDATE projects SET name=? WHERE id=?", (manifest["title"], pid))
     restorer = net.attribution_agent("restored")
-    with net.store.tx() as db:
+    with store.tx() as db:
         for unit, file in (manifest.get("headers") or {}).items():
             check_cancel()
             header = _saved_source(folder, files, "include/" + file)
@@ -769,10 +783,10 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     # Restored notes are historical records, not new agent handoffs. Going through add_note
     # recalculates attempt/session history once per note and can hold the writer for minutes.
     # Resolve the small identity/function sets once; old saves without measurements stay unknown.
-    functions = {r["name"]: r["id"] for r in net.store.all(
+    functions = {r["name"]: r["id"] for r in store.all(
         "SELECT id,name FROM functions WHERE project_id=?", pid)}
     authors = {}
-    with net.store.tx() as db:
+    with store.tx() as db:
         for note in (manifest.get("notes") or []) if restore_notes else []:
             check_cancel()
             name = note.get("function")
@@ -790,14 +804,14 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) "
                        "VALUES(?,?,?,?,?,?,?)", (pid, functions.get(name), authors[author], note["text"],
                                                at, before, after))
-    with net.store.tx() as db:
+    with store.tx() as db:
         for item in manifest.get("set_aside") or []:
             row = _set_aside_row(db, pid, item)
             if row is not None:
                 why = restored_aside(item)
                 db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",
                            (json.dumps({**json.loads(row["meta"] or "{}"), **why}), row["id"]))
-    by_name = {r["name"]: r for r in net.store.all("SELECT name,vram FROM functions WHERE project_id=?", pid)}
+    by_name = {r["name"]: r for r in store.all("SELECT name,vram FROM functions WHERE project_id=?", pid)}
     return by_name, manifest.get("functions") or {}
 
 
@@ -811,6 +825,7 @@ def _saved_name(old_name, info, by_name, by_vram):
 
 def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
     """Compile a bounded window ahead; only the caller may judge or change project state."""
+    store = net.project_store(proj['id'])
     from . import workers
 
     pending = deque()
@@ -844,7 +859,7 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
                 name = _saved_name(old_name, info, by_name, by_vram)
                 prepared = None
                 if judge_code and name is not None and text is not None:
-                    fn = dict(net.store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
+                    fn = dict(store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
                     if fn["status"] != "matched" and not (kind == "best" and fn["best_source"] == text):
                         ctx = net._context(proj["id"], fn["unit"])
                         if ctx is not None:
@@ -871,6 +886,7 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
 
 def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
                  files: dict[str, str] | None = None, judge_code: bool = True) -> dict:
+    store = net.project_store(slug)
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = dict(net._project(slug))
     pid = proj["id"]
@@ -898,7 +914,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
             active.ready = True
     # Metadata imports run under the project lock and do not compile or change function
     # status. One snapshot replaces thousands of identical point queries in that scan.
-    current_rows = None if judge_code else {row["name"]:row for row in net.store.all(
+    current_rows = None if judge_code else {row["name"]:row for row in store.all(
         "SELECT name,status,best_source FROM functions WHERE project_id=?", pid)}
     last_update = 0
     checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel)
@@ -922,7 +938,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                 if name is None or text is None:
                     lost.append(old_name) if kind == "src" else None
                     continue
-                current = (net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
+                current = (store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
                            if judge_code else current_rows[name])
                 if current["status"] == "matched":
                     matched += kind == "src"
@@ -950,17 +966,17 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                     log(f"{name}: {e}")
                     result = {"matched": False}
                 finally:
-                    with net.store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
+                    with store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
                         db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
                                    "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
-                with net.store.tx() as db:
+                with store.tx() as db:
                     db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
                                (credit.id, pid, name, agent.id))
                     db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
                                (credit.id, pid, name, agent.id))
                 if kind == "src":
                     if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
-                        with net.store.tx() as db:
+                        with store.tx() as db:
                             db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
                     matched += bool(result.get("matched"))
                     if not result.get("matched"):
@@ -983,7 +999,8 @@ def _layout_matches_db(net, project_id: int, layout: list[dict]) -> bool:
 
     A folder this app saved from this database has such a layout; applying it again must not join or split anything,
     and same-address overlay functions are different functions, not split pieces."""
-    rows = net.store.all("SELECT name,vram,size FROM functions WHERE project_id=?", project_id)
+    store = net.project_store(project_id)
+    rows = store.all("SELECT name,vram,size FROM functions WHERE project_id=?", project_id)
     if len(rows) != len(layout):
         return False
     by_name = {row["name"]: row for row in rows}
@@ -1010,13 +1027,14 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
     A join is planned for the layout entry's own function (same name and address, and only pieces in its own source
     unit), so two overlays that share an address are never joined. Every plan is checked before the first write; a gap
     or a matched function among the pieces refuses the whole layout instead of deleting work."""
+    store = net.project_store(proj['id'])
     report = report or (lambda line: None)
     pid = proj["id"]
     console = net.console(proj)
     plans = []
     for entry in layout:
         start, end = entry["vram"], entry["vram"] + entry["size"]
-        candidates = net.store.all("SELECT * FROM functions WHERE project_id=? AND vram=? ORDER BY id", pid, start)
+        candidates = store.all("SELECT * FROM functions WHERE project_id=? AND vram=? ORDER BY id", pid, start)
         head = next((row for row in candidates if row["name"] == entry["name"]), None)
         if head is None:
             if len(candidates) != 1:
@@ -1024,7 +1042,7 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
             head = candidates[0]
         if (head["size"] or 0) >= entry["size"]:
             continue  # already the saved function: there is no split to undo
-        rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? AND unit=? "
+        rows = store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? AND unit=? "
                              "ORDER BY vram, id", pid, start, end, head["unit"])
         if len(rows) < 2 or rows[0]["id"] != head["id"]:
             continue
@@ -1042,7 +1060,7 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
         plans.append((head, tails, joined, target))
     if not plans:
         return
-    with net.store.tx() as db:
+    with store.tx() as db:
         for head, tails, joined, target in plans:
             db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,attempts=attempts+? "
                        "WHERE id=?",
@@ -1150,9 +1168,22 @@ class Autosave:
     def _projects(self):
         store = self.net.store
         if hasattr(store, 'read_cache'):
-            return store.read_cache.get('autosave-projects', store.read_version('project_list'),
-                                        lambda: store.all("SELECT slug,root,config FROM projects"))
-        return store.all("SELECT slug,root,config FROM projects")
+            rows = store.read_cache.get('autosave-projects', store.read_version('project_list'),
+                                       lambda: store.all("SELECT slug,root,config FROM projects"))
+        else:
+            rows = store.all("SELECT slug,root,config FROM projects")
+        projects = []
+        for row in rows:
+            selected = self.net.project_store(row['slug'])
+            # Keep the existing single cached query in the legacy layout. After
+            # the split, worker policy and paths come from the operational store,
+            # not an older catalog snapshot of its configuration.
+            current = row if selected is store else selected.one(
+                'SELECT slug,root,config FROM projects WHERE slug=?', row['slug'])
+            if current is None:
+                raise NetworkError(f"Project {row['slug']!r} is missing from its database. Restore it from backup.")
+            projects.append(current)
+        return projects
 
     def _reconcile(self):
         projects = {}

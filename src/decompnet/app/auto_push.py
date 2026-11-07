@@ -16,7 +16,8 @@ def status(net, proj):
 def _change(net, slug, change):
     # These are local Git preferences, not game settings. _update_cfg synchronizes
     # saved code and can launch a recheck; a network retry must never cause that.
-    with net.store.tx() as db:
+    store = net.project_store(slug)
+    with store.tx() as db:
         row = db.execute('SELECT id,config FROM projects WHERE slug=?', (slug,)).fetchone()
         if row is None:raise NetworkError('This project is no longer open. Refresh the project list.')
         cfg = json.loads(row['config'])
@@ -25,10 +26,11 @@ def _change(net, slug, change):
 
 
 def configure(net, slug, enabled, threshold=10, folder=''):
+    store = net.project_store(slug)
     if not isinstance(enabled, bool):raise NetworkError('Choose automatic pushing with a boolean value.')
     if isinstance(threshold, bool) or not isinstance(threshold, int) or not 1 <= threshold <= 10000:
         raise NetworkError('Choose a push threshold from 1 to 10,000 commits.')
-    proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+    proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None:raise NetworkError('Open a project before configuring automatic pushes.')
     settings = dict(enabled=enabled, threshold=threshold, token=uuid.uuid4().hex, error='', phase='')
     if enabled:
@@ -41,12 +43,13 @@ def configure(net, slug, enabled, threshold=10, folder=''):
         if previous.get('enabled') and any(previous.get(key) != settings[key] for key in ('folder', 'branch', 'ref', 'origin')):
             raise NetworkError('The branch or origin changed. Disable and re-enable automatic pushing for the intended destination.')
     _change(net, slug, lambda cfg: cfg.update(auto_push=settings))
-    return status(net, net.store.one('SELECT * FROM projects WHERE slug=?', slug))
+    return status(net, store.one('SELECT * FROM projects WHERE slug=?', slug))
 
 
 def process(net, slug, log=lambda message: None, check_cancel=lambda: None):
     """Check local refs first; only a threshold crossing may contact the remote. Retry failures once a minute."""
-    proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+    store = net.project_store(slug)
+    proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None:return
     settings = net.cfg(proj).get('auto_push', {})
     if not settings.get('enabled') or settings.get('next_check', 0) > time.time():return
@@ -58,7 +61,7 @@ def process(net, slug, log=lambda message: None, check_cancel=lambda: None):
         _change(net, slug, apply)
     def validate(root=None, branch=None, ref=None, url=None):
         check_cancel()
-        fresh = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+        fresh = store.one('SELECT * FROM projects WHERE slug=?', slug)
         current = net.cfg(fresh).get('auto_push', {}) if fresh else {}
         if not current.get('enabled') or current.get('token') != token:
             raise NetworkError('Automatic pushing was disabled or its settings changed.')

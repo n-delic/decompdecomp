@@ -123,9 +123,9 @@ def test_acknowledges_checkpoint_after_crash_without_duplicate_commit(automatic,
     enable(automatic, 1)
     improve(automatic)
     real = score_commits._acknowledge
-    def crash(net, rows):
+    def crash(net, rows, **scope):
         if rows:raise RuntimeError('simulated interruption after Git commit')
-        return real(net, rows)
+        return real(net, rows, **scope)
     monkeypatch.setattr(score_commits, '_acknowledge', crash)
     with pytest.raises(RuntimeError):score_commits.process(net, 'game')
     head = git(root, 'rev-parse', 'HEAD')

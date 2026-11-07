@@ -440,6 +440,7 @@ def test_autosave_errors_show_cause_folder_build_and_retry_other_projects(tmp_pa
             raise error
         return True
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows), progress=SimpleNamespace(sync=sync))
+    net.project_store = lambda _: net.store
     auto = saves.Autosave(net)
     assert auto.run_once() == ['good']
     assert advice in caplog.text and type(error).__name__ in caplog.text

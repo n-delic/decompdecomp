@@ -29,14 +29,15 @@ def owned(manifest):
 def recover_missing_sources(net, slug, folder, manifest, missing, log):
     """An older partial save could acknowledge a manifest without materializing its C files.
     Restore only still-listed source from the current row, never overwrite a contributor's file."""
-    pid = net.store.one('SELECT id FROM projects WHERE slug=?', slug)['id']
+    store = net.project_store(slug)
+    pid = store.one('SELECT id FROM projects WHERE slug=?', slug)['id']
     recovered = {}
     for path in sorted(missing):
         if not path.startswith(('src/', 'best/')) or not path.endswith('.c'):
             continue
         name = path.split('/', 1)[1][:-2]
         info = manifest['functions'].get(name)
-        row = net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?', pid, name)
+        row = store.one('SELECT * FROM functions WHERE project_id=? AND name=?', pid, name)
         if not info or not row or row['vram'] != info.get('vram'):
             continue
         if path.startswith('src/'):
@@ -60,6 +61,7 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
     Per-function commits may leave unrelated edits in place: their caller selects a strict
     subset of this snapshot for the private index. Whole-progress checkpoints still reject them.
     """
+    store = net.project_store(slug)
     folder = saves.default_folder(net, slug).resolve()
     with net.progress._project_lock(slug):
         net.progress.sync(slug, force=True, logger=log)
@@ -73,7 +75,7 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
         from .progress import _Snapshot
         # project_row synchronizes saved files. A second sync here can rejudge recovered
         # sources and replace the baseline after files were read, producing a false race.
-        proj = net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+        proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
         baseline = net.progress._baseline(proj['id'])
         if baseline is None or any(baseline.disk.files.get(name) != value
                                    for name, value in _Snapshot.of(files).files.items()):

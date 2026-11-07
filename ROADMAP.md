@@ -14,6 +14,10 @@
   pause/retry/model settings now select their project store too. Quality-report
   listing queries projects individually; quick-claim setup no longer takes a
   database mutex. Automatic migration remains planned, not enabled.
+  Saved-progress synchronization, backups, verification history and Git save
+  bookkeeping now select project storage; autosave keeps the shared-layout
+  discovery fast path. A transaction fence defers file sync inside any Store's
+  write transaction. Shared manifest author names remain in the catalog.
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

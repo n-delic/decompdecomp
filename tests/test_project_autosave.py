@@ -40,6 +40,7 @@ def test_project_workers_pause_resume_persist_and_share_one_slot(tmp_path):
     settings = Settings(tmp_path / 'settings.json')
     auto = saves.Autosave(SimpleNamespace(store=SimpleNamespace(all=lambda *_:rows),
                                          progress=SimpleNamespace(sync=sync)), settings)
+    auto.net.project_store = lambda _: auto.net.store
     second = rows.pop(1)
     auto._reconcile()
     try:
@@ -72,6 +73,7 @@ def test_project_removal_retires_worker_and_start_is_idempotent(tmp_path):
     rows = [{'slug':'game', 'root':str(tmp_path), 'config':'{"kind":"rom","rom":{"sha1":"abc"}}'}]
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_:list(rows)),
                           progress=SimpleNamespace(sync=lambda *args, **kw:False))
+    net.project_store = lambda _: net.store
     auto = saves.Autosave(net)
     auto.start()
     try:

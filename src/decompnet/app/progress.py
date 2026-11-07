@@ -31,6 +31,7 @@ from pathlib import Path
 from .. import compiler, toolchains
 from ..network import NetworkError
 from ..rom.symbols import ASM_LOCAL, IDENT
+from ..store import in_transaction
 
 # spimdisasm can name a function piece by the numeric label at its first instruction.
 LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
@@ -151,6 +152,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
       no longer has) moves to unlisted/, kept as it is and not judged, so it stops the project no more. One the
       project still has (a layout edit renamed it) is left: `_manifest` refuses that edit.
     A manifest it can't read, or one with no layout, is left to `_manifest` to say what's wrong."""
+    store = net.project_store(pid)
     try:
         manifest = json.loads(disk[saves.MANIFEST])
         headers = dict(manifest.get("headers") or {})
@@ -170,7 +172,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
             report(f"{name} was missing: written again from the project")
     left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).stem not in layout)
     if left:
-        known = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+        known = {row["name"] for row in store.all("SELECT name FROM functions WHERE project_id=?", pid)}
         left = [name for name in left if Path(name).stem not in known]
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
@@ -337,7 +339,8 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
     save means the folder predates that save. A manifest without a revision is from before revisions: use its
     `saved_at`. With neither, the folder can't be shown to be newer, so the database's matches win: a same-name stale
     file must not overwrite a match made after the folder was saved (#101 review)."""
-    rows = net.store.all("SELECT name, matched_at FROM functions WHERE project_id=? AND status='matched'", proj["id"])
+    store = net.project_store(proj['id'])
+    rows = store.all("SELECT name, matched_at FROM functions WHERE project_id=? AND status='matched'", proj["id"])
     revision = manifest.get("revision")
     if (isinstance(revision, int) and not isinstance(revision, bool) and revision > 0
             and revision < stored_revision):
@@ -505,14 +508,16 @@ class Progress:
 
     def _state(self, project_id: int) -> _State | None:
         """The baseline's small bookkeeping, without loading 18,000 file hashes for a no-op check."""
+        store = self.net.project_store(project_id)
         if project_id not in self.states:
-            row = self.net.store.one("SELECT dirty_token,config_key FROM progress_state WHERE project_id=?",
+            row = store.one("SELECT dirty_token,config_key FROM progress_state WHERE project_id=?",
                                      project_id)
             self.states[project_id] = None if row is None else _State(row["dirty_token"], row["config_key"])
         return self.states[project_id]
 
     def _dirty(self, project_id: int) -> _Dirty:
-        row = self.net.store.one("SELECT token,functions,headers,metadata FROM progress_dirty WHERE project_id=?",
+        store = self.net.project_store(project_id)
+        row = store.one("SELECT token,functions,headers,metadata FROM progress_dirty WHERE project_id=?",
                                  project_id)
         if row is None:
             return _Dirty()
@@ -520,7 +525,8 @@ class Progress:
 
     def _dirty_files(self, project_id: int) -> list:
         """The function files changed since the last publish: (name, the token their last write had)."""
-        return self.net.store.all("SELECT name,token FROM progress_dirty_file WHERE project_id=? ORDER BY name",
+        store = self.net.project_store(project_id)
+        return store.all("SELECT name,token FROM progress_dirty_file WHERE project_id=? ORDER BY name",
                                   project_id)
 
     def _project_lock(self, slug: str):
@@ -528,9 +534,10 @@ class Progress:
             return self.project_locks.setdefault(slug, threading.RLock())
 
     def _baseline(self, project_id: int) -> _Baseline | None:
+        store = self.net.project_store(project_id)
         if project_id in self.baselines:
             return self.baselines[project_id]
-        row = self.net.store.one(
+        row = store.one(
             "SELECT format,disk,projected,disk_manifest,projected_manifest,config_key,dirty_token "
             "FROM progress_state WHERE project_id=?", project_id)
         if row is None:
@@ -542,7 +549,7 @@ class Progress:
             disk = _Snapshot.of(json.loads(row["disk"]))
             projected = _Snapshot.of(json.loads(row["projected"]))
             baseline = _Baseline(disk, projected, row["dirty_token"], row["config_key"])
-            with self.net.store.tx() as db:
+            with store.tx() as db:
                 db.execute("DELETE FROM progress_files WHERE project_id=?", (project_id,))
                 self._write_side(db, project_id, "disk", None, disk)
                 self._write_side(db, project_id, "projected", None, projected)
@@ -551,7 +558,7 @@ class Progress:
                            (disk.manifest, projected.manifest, project_id))
         else:
             files: dict[str, dict[str, str]] = {"disk": {}, "projected": {}}
-            for r in self.net.store.all("SELECT side,name,hash FROM progress_files WHERE project_id=?", project_id):
+            for r in store.all("SELECT side,name,hash FROM progress_files WHERE project_id=?", project_id):
                 files.setdefault(r["side"], {})[r["name"]] = r["hash"]
             baseline = _Baseline(_Snapshot(files["disk"], row["disk_manifest"]),
                                  _Snapshot(files["projected"], row["projected_manifest"]),
@@ -616,11 +623,12 @@ class Progress:
     def _remember(self, project_id: int, disk: dict[str, str], projected: dict[str, str],
                   config_key: str, dirty_token: str | None, dirty_tokens: list[str]) -> None:
         """Record a full sync as per-file hashes, writing only the hashes that changed."""
+        store = self.net.project_store(project_id)
         baseline = _Baseline(_Snapshot.of(disk), _Snapshot.of(projected), dirty_token, config_key)
         old = self.baselines.get(project_id)
         if old is None:
             old = self._baseline(project_id)
-        with self.net.store.tx() as db:
+        with store.tx() as db:
             self._write_side(db, project_id, "disk", old.disk if old else None, baseline.disk)
             self._write_side(db, project_id, "projected", old.projected if old else None, baseline.projected)
             self._write_state(db, project_id, baseline)
@@ -631,12 +639,13 @@ class Progress:
     def _remember_changes(self, project_id: int, changes: dict[str, str | None], manifest: str,
                           config_key: str, dirty_token: str | None, dirty_tokens: list[str]) -> None:
         """Record what an incremental publish wrote, touching only those files' baseline rows."""
+        store = self.net.project_store(project_id)
         old = self._baseline(project_id)
         if old is None:
             return
         baseline = _Baseline(old.disk.changed(changes, manifest), old.projected.changed(changes, manifest),
                              dirty_token, config_key)
-        with self.net.store.tx() as db:
+        with store.tx() as db:
             self._write_side_changes(db, project_id, "disk", changes, old.disk)
             self._write_side_changes(db, project_id, "projected", changes, old.projected)
             self._write_state(db, project_id, baseline)
@@ -646,14 +655,15 @@ class Progress:
 
     def prune_matched_drafts(self, slug: str) -> int:
         """Remove acknowledged drafts only while their verified selected C is still present unchanged."""
+        store = self.net.project_store(slug)
         with self._project_lock(slug):
-            proj = self.net.store.one('SELECT * FROM projects WHERE slug=?', slug)
+            proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
             if not self.net.is_rom(proj):
                 return 0  # PROJECT mode's selected sources belong to its own build tree.
             baseline = self._baseline(proj['id'])
             if baseline is None:
                 return 0
-            names = [row['name'] for row in self.net.store.all("SELECT name FROM functions WHERE project_id=? "
+            names = [row['name'] for row in store.all("SELECT name FROM functions WHERE project_id=? "
                      "AND status='matched'", proj['id'])
                      if f"best/{row['name']}.c" in baseline.disk.files]
             if not names:
@@ -662,7 +672,7 @@ class Progress:
             saves._check_save_paths(folder, chosen=True)
             removed = 0
             for name in names:
-                row = self.net.store.one('SELECT name,status,matched_source FROM functions WHERE project_id=? AND name=?',
+                row = store.one('SELECT name,status,matched_source FROM functions WHERE project_id=? AND name=?',
                                          proj['id'], name)
                 if row['status'] != 'matched' or not row['matched_source']:
                     continue
@@ -675,7 +685,7 @@ class Progress:
                         or _hash(selected) != baseline.disk.files.get(source)
                         or _hash(text) != baseline.disk.files[draft]):
                     continue
-                current = self.net.store.one('SELECT status,matched_source FROM functions WHERE project_id=? AND name=?',
+                current = store.one('SELECT status,matched_source FROM functions WHERE project_id=? AND name=?',
                                              proj['id'], row['name'])
                 if current['status'] != 'matched' or current['matched_source'] != row['matched_source']:
                     continue
@@ -683,7 +693,7 @@ class Progress:
                                       expected={source: selected, draft: text}, chosen=True):
                     continue
                 changes = {draft: None}
-                with self.net.store.tx() as db:
+                with store.tx() as db:
                     self._write_side_changes(db, proj['id'], 'disk', changes, baseline.disk)
                     self._write_side_changes(db, proj['id'], 'projected', changes, baseline.projected)
                 baseline.disk.files.pop(draft, None)
@@ -848,11 +858,17 @@ class Progress:
     def flush(self, *, notify=None) -> dict[str, str]:
         """Publish pending ROM changes without rereading untouched projects on shutdown."""
         failures = {}
-        rows = self.net.store.all(
-            "SELECT p.slug FROM projects p JOIN progress_dirty d ON d.project_id=p.id "
-            "LEFT JOIN progress_state s ON s.project_id=p.id "
-            "WHERE d.functions OR d.headers OR d.metadata OR d.token IS NOT s.dirty_token")
-        pending = {row["slug"] for row in rows} | set(self.failed) | set(self.blocked)
+        stores = {}
+        for row in self.net.store.all('SELECT slug FROM projects'):
+            stores.setdefault(self.net.project_store(row['slug']), []).append(row['slug'])
+        pending = set(self.failed) | set(self.blocked)
+        for store, slugs in stores.items():
+            rows = store.all(
+                "SELECT p.slug FROM projects p JOIN progress_dirty d ON d.project_id=p.id "
+                "LEFT JOIN progress_state s ON s.project_id=p.id "
+                "WHERE p.slug IN (SELECT value FROM json_each(?)) AND "
+                "(d.functions OR d.headers OR d.metadata OR d.token IS NOT s.dirty_token)", json.dumps(slugs))
+            pending.update(row['slug'] for row in rows)
         for slug in sorted(pending):
             if notify:notify(slug)
             try:
@@ -929,7 +945,10 @@ class Progress:
         in-place edit an editor made (which leaves a directory's mtime alone) is never missed by judging, a tool call,
         the routes or a periodic deep autosave check. Nothing is rendered or written unless the folder or a column the render reads
         changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed."""
-        if self._batching(slug) or self.applying or getattr(self.net.store._local, "in_tx", False):
+        if self._batching(slug) or self.applying or in_transaction():
+            return False
+        store = self.net.project_store(slug)
+        if getattr(store._local, "in_tx", False):
             return False
         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
         self._check_paused(slug)
@@ -996,7 +1015,7 @@ class Progress:
                     if rom and result:
                         self.prune_matched_drafts(slug)
                     self.checked[slug] = time.monotonic()
-                    self.sync_changes[slug] = self.net.store.conn.total_changes
+                    self.sync_changes[slug] = store.conn.total_changes
                     if rom:
                         folder = saves.default_folder(self.net, slug)
                         # After a real write, make sure the folder is exactly what this sync rendered and wrote. An edit
@@ -1145,6 +1164,7 @@ class Progress:
 
     def _sync(self, slug: str, logger=None) -> bool:
         net = self.net
+        store = net.project_store(slug)
         proj = net._project(slug)
         if not net.is_rom(proj):
             return False  # PROJECT mode's source files already belong to its build and git repository.
@@ -1257,7 +1277,7 @@ class Progress:
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg)
-                function_rows = net.store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
+                function_rows = store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
                 affected = affected_functions(json.loads(comparison_manifest), merged_manifest, changed, function_rows)
                 if before is None:
                     applied_changed = {name for name in set(candidate) | set(comparison)
@@ -1286,7 +1306,7 @@ class Progress:
                         pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
                         toolchain = local_toolchain
                 code_files = any(name.startswith(("src/", "best/")) for name in candidate)
-                database_code = not code_files and net.store.one(
+                database_code = not code_files and store.one(
                     "SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL "
                     "LIMIT 1", pid) is not None
                 judging_change = all_code or bool(affected) or any(name.startswith(("src/", "best/", "include/"))
@@ -1325,7 +1345,7 @@ class Progress:
             try:
                 # The layout, the database resets and every applied change are one transaction. An error rolls all
                 # of them back; the folder is written inside it, so a failed apply publishes nothing.
-                with net.store.tx() as db:
+                with store.tx() as db:
                     rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
                     for row in rows:
@@ -1455,7 +1475,7 @@ class Progress:
                 promoted_names = [name for name, info in new.items()
                                   if 'matched_by' in info and 'matched_by' not in old.get(name, {})]
                 for name in promoted_names:
-                    row = net.store.one('SELECT id FROM functions WHERE project_id=? AND name=?', pid, name)
+                    row = store.one('SELECT id FROM functions WHERE project_id=? AND name=?', pid, name)
                     if row:match_commits.enqueue(net, proj, row['id'], restored=True)
             return True
         if baseline is None:

@@ -40,6 +40,19 @@ global claim discovery, and supporting candidate diagnostic services must be
 converted before activating project files. No new manifest or runtime switch
 enables them early. The shared repair evidence and reuse databases are unchanged.
 
+Saved-progress synchronization, manual backups, manifest rendering, verification
+history transfer and automatic Git commit/push bookkeeping also select the owning
+project store. Manifest author names are resolved in one bounded query against
+the shared agent registry. Autosave discovery reads catalog slugs, then obtains
+each project's current save policy and root from its operational store; the
+current shared layout retains its cached discovery path without extra project
+queries. README function summaries follow the same project ownership.
+
+A thread-local transaction fence prevents long file synchronization while the
+calling thread holds a write transaction on any Store. It does not select a
+database or block unrelated threads. Tests cover nested stores, rollback,
+callbacks, independent save baselines and score-commit acknowledgements.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
@@ -58,7 +71,9 @@ need explicit ownership during the project split.
 
 1. Convert the remaining engine services, routes, workers and maintenance paths
    to explicit project storage. Separate global settings from the project-owned
-   keys that currently share the `settings` table.
+   keys that currently share the `settings` table. Resolve shared author identities
+   before project write transactions, including saved-progress restoration, rather
+   than introducing nested catalog writes during project transactions.
 2. Replace cross-project operational SQL joins with bounded queries to individual
    project stores. Keep cross-game matching and activity feeds complete without
    loading every project's full history. Preserve global identity and cursor

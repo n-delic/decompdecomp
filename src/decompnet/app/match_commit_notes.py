@@ -2,9 +2,11 @@
 import json
 
 
-def origin(net, attempt_id, credited_name, *, restored=False):
-    row = net.store.one('SELECT a.via,g.name FROM attempts a LEFT JOIN agents g ON g.id=a.agent_id WHERE a.id=?', attempt_id)
-    return {'agent': credited_name or (row['name'] if row else '') or 'unknown',
+def origin(net, attempt_id, credited_name, *, restored=False, project_id=None):
+    store = net.project_store(project_id) if project_id is not None else net.store
+    row = store.one('SELECT via,agent_id FROM attempts WHERE id=?', attempt_id)
+    agent = net.store.one('SELECT name FROM agents WHERE id=?', row['agent_id']) if row and not credited_name else None
+    return {'agent': credited_name or (agent['name'] if agent else '') or 'unknown',
             'method': 'saved progress recheck' if restored else (row['via'] if row else '') or 'recorded match'}
 
 
@@ -13,12 +15,14 @@ def short(value, limit=500):
 
 
 def message(net, job, note):
+    project_id = job['project_id']
+    store = net.project_store(project_id)
     captured = json.loads(job['snapshot'])
-    info = captured.get('origin') or origin(net, job['attempt_id'], captured['info'].get('matched_by'), restored=job['notes_after'] == 0)
+    info = captured.get('origin') or origin(net, job['attempt_id'], captured['info'].get('matched_by'), restored=job['notes_after'] == 0, project_id=project_id)
     text = note['text'].strip() if note is not None and note['text'].strip() else 'Match ' + captured['name']
     lines = ['Matched by: ' + short(info['agent']), 'Match method: ' + short(info['method'])]
     # Read only the compact evidence index. Full sources, assembly and archived payloads stay local.
-    examples = net.store.all('SELECT id,category,status,explanation,evidence FROM repair_examples WHERE attempt_id=? AND function_id=? ORDER BY id LIMIT 5',
+    examples = store.all('SELECT id,category,status,explanation,evidence FROM repair_examples WHERE attempt_id=? AND function_id=? ORDER BY id LIMIT 5',
                              job['attempt_id'], job['function_id'])
     for example in examples:
         evidence = json.loads(example['evidence'])

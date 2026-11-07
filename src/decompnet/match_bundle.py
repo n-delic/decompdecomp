@@ -80,13 +80,14 @@ def capture(db, fn, attempt_id, source, context_version, settings):
 
 
 def status(net, fn):
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
+    store = net.project_store(fn['project_id'])
+    if not store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
         return None
-    row = net.store.one('SELECT * FROM verified_matches WHERE function_id=?',fn['id'])
+    row = store.one('SELECT * FROM verified_matches WHERE function_id=?',fn['id'])
     if not row:
         return None
     details = json.loads(row['details'])
-    proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    proj = store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     cfg = json.loads(proj['config'])
     context = net._context(proj['id'],fn['unit'])
     reasons = []
@@ -98,22 +99,23 @@ def status(net, fn):
     if compiler_identity(compiler) != details['compiler_identity']: reasons.append('compiler installation/registry changed')
     if digest(fn['target'] or b'') != details['target_sha256'] or digest(fn['relocs'] or '') != details['relocations_sha256'] or fn['vram'] != details['vram']: reasons.append('target/address changed')
     if details.get('abi') != abi(proj,cfg): reasons.append('ABI/platform/game identity changed')
-    current_symbols = digest(repr([tuple(row) for row in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])]))
+    current_symbols = digest(repr([tuple(row) for row in store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])]))
     if details.get('symbols_sha256') != current_symbols: reasons.append('symbol table changed')
     if fn['unit'] != details['unit']: reasons.append('function unit changed')
     if details.get('imported'): reasons.append('historical record imported; verify locally before accepting it')
     if details['header_sha256'] is None: reasons.append('header was not captured in the original record')
     if details['mode']=='project': reasons.append('imported build must be rechecked in its own build system')
-    alarm = net.store.one('SELECT * FROM verification_regressions WHERE function_id=?',fn['id']) if net.store.one("SELECT 1 FROM sqlite_master WHERE name='verification_regressions'") else None
+    alarm = store.one('SELECT * FROM verification_regressions WHERE function_id=?',fn['id']) if store.one("SELECT 1 FROM sqlite_master WHERE name='verification_regressions'") else None
     return details | {'regression':dict(alarm) if alarm else None,'changed_inputs':reasons,'source':row['source'],'header':row['header'],
                       'note':'Last recorded exact attempt; recheck with the normal judge after any input change.'}
 
 
 def portable(net, project_id):
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
+    store = net.project_store(project_id)
+    if not store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
         return {}
     sources, headers, matches = {}, {}, {}
-    for row in net.store.all('SELECT b.*,f.name FROM verified_matches b JOIN functions f ON f.id=b.function_id WHERE f.project_id=?',project_id):
+    for row in store.all('SELECT b.*,f.name FROM verified_matches b JOIN functions f ON f.id=b.function_id WHERE f.project_id=?',project_id):
         details = json.loads(row['details'])
         sources[details['source_sha256']] = row['source']
         if details['header_sha256']: headers[details['header_sha256']] = row['header']
@@ -145,17 +147,18 @@ def restore_evidence_many(net, project_id, names, manifest, check_cancel=lambda:
     Existing rows win just as with INSERT OR IGNORE. Historical evidence never selects
     source, changes compiler settings or awards a match; the judge still does that.
     """
+    store = net.project_store(project_id)
     section = manifest.get('verification')
     if not isinstance(section, dict): return
     records, sources, headers = (section.get(key) for key in ('matches','sources','headers'))
     if not all(isinstance(value, dict) for value in (records,sources,headers)): return
     check_cancel()
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
-        with net.store.tx() as db:
+    if not store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
+        with store.tx() as db:
             db.execute(SCHEMA)
             from .large_text_storage import install
             install(db, ('verified_matches',))
-    missing = {row['name']:row['id'] for row in net.store.all(
+    missing = {row['name']:row['id'] for row in store.all(
         'SELECT f.id,f.name FROM functions f LEFT JOIN verified_matches v ON v.function_id=f.id '
         'WHERE f.project_id=? AND v.function_id IS NULL', project_id)}
     if not missing: return
@@ -167,7 +170,7 @@ def restore_evidence_many(net, project_id, names, manifest, check_cancel=lambda:
     pending = []
     def flush():
         check_cancel()
-        with net.store.tx() as db:
+        with store.tx() as db:
             db.executemany('INSERT OR IGNORE INTO verified_matches VALUES(?,?,?,?,?)', pending)
         pending.clear()
     for name, old_name in names:
