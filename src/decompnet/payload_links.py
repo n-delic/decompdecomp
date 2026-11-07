@@ -62,7 +62,7 @@ def collect(store, log=None):
         state=json.loads(row['value']) if row else {'cursor':-9223372036854775808}
         while not state.get('done'):
             check()
-            progress({'phase':'Indexing shared text references: '+owner})
+            progress({'phase':'Indexing shared text references: '+owner,'done':0,'total':None})
             with store.tx(wait=check) as db:
                 expr=f'lower(hex({field}))' if blob else field
                 valid=f"typeof({field})='blob'" if blob else f'{field} IS NOT NULL'
@@ -81,7 +81,7 @@ def collect(store, log=None):
         link_cursor=-9223372036854775808
         while True:
             check()
-            progress({'phase':'Checking shared text references: '+owner})
+            progress({'phase':'Checking shared text references: '+owner,'done':0,'total':None})
             with store.tx(wait=check) as db:
                 links=db.execute('SELECT record_id,hash FROM payload_links WHERE owner=? AND record_id>? '
                                  'ORDER BY record_id LIMIT ?',(owner,link_cursor,BATCH)).fetchall()
@@ -98,7 +98,7 @@ def collect(store, log=None):
     removed=0;cursor=-9223372036854775808
     while True:
         check()
-        progress({'phase':'Collecting unused shared text','done':removed})
+        progress({'phase':'Collecting unused shared text','done':removed,'total':None})
         with store.tx(wait=check) as db:
             current_schema=db.execute('PRAGMA schema_version').fetchone()[0]
             changed_schema=(fields(store)!=owners if schema is None else current_schema!=schema)

@@ -165,3 +165,17 @@ def test_lazy_evidence_table_created_during_collection_gets_backfilled(data):
                 install(db,('verified_matches',))
     assert database_storage.collect(net,RacingLog())==0
     assert net.store.one('SELECT source FROM verified_matches')[0]==text
+
+
+def test_transcript_cleanup_releases_shared_message_payloads(tmp_path):
+    from decompnet.app import database_cleanup
+    from decompnet.app.agents import Manager
+    from decompnet.app.engine import RomNetwork
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    manager=Manager(net,tmp_path,'http://127.0.0.1/mcp')
+    with net.store.tx() as db:
+        sid=db.execute("INSERT INTO helper_sessions(helper_id,project,kind,model,agent,started_at,ended_at) VALUES(999,'game','codex','model','removed',0,1)").lastrowid
+    manager.transcripts.append(sid,'text','a long old transcript '*1000)
+    assert net.store.one('SELECT COUNT(*) FROM text_payloads')[0]>0
+    database_cleanup.run(net,{'removed':True},Log())
+    assert not net.store.one('SELECT 1 FROM text_payloads')
