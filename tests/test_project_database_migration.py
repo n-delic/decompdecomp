@@ -507,3 +507,24 @@ def test_snapshot_and_fence_also_exclude_raw_sqlite_writers(tmp_path):
     restored=Network(path)
     try:assert restored.project_store(1).one('SELECT name FROM functions')['name']=='function'
     finally:close(restored)
+
+
+def test_save_and_restore_initialize_knowledge_in_new_project_database(tmp_path):
+    from decompnet.app import saves
+    from decompnet.app.engine import RomNetwork
+    net=RomNetwork(tmp_path/'catalog.db',tmp_path,project_databases=True)
+    root=tmp_path/'checkout';root.mkdir()
+    net.forks._register('imported','Imported','local',root,{'kind':'fork','platform':'n64','ready':False},'imported')
+    store=net.project_store('imported')
+    assert store is not net.store
+    assert store.one("SELECT name FROM sqlite_master WHERE name='knowledge'") is None
+    try:
+        manifest,_,_=saves._manifest_from_rows(net,net.project_row('imported'),net.cfg(net.project_row('imported')),[],root)
+        assert manifest['knowledge'] == []
+        assert store.one("SELECT name FROM sqlite_master WHERE name='knowledge'") is not None
+        with store.tx() as db:
+            db.execute("INSERT INTO knowledge(project_id,text,status,created_at) VALUES(?,?,'accepted',1)",
+                       (net.project_row('imported')['id'],'Preserved knowledge'))
+        manifest,_,_=saves._manifest_from_rows(net,net.project_row('imported'),net.cfg(net.project_row('imported')),[],root)
+        assert manifest['knowledge'] == ['Preserved knowledge']
+    finally:close(net)

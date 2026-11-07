@@ -590,9 +590,9 @@ function renderRestore() {
 }
 function openRestore() {
   const running = restoreBusy();
-  const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. The game itself is never in a save: you add your own copy, and decompdecomp checks it's the same game.</p>
+  const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. Game files are not included in progress saves. decompdecomp checks for a matching copy in your local project or an already imported game; you can also choose one below.</p>
     <label class="field"><span>The save: its folder, or the git address you pushed it to</span><span class="pick-row"><input id="rsSource" class="mono" placeholder="/home/you/saves/my-game, or a git address"><button class="ghost small-btn" type="button" data-pick="folder" data-for="rsSource" data-title="The saved project's folder">Choose…</button></span></label>
-    <label class="field"><span>Your copy of the game: its path on this computer</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
+    <label class="field"><span>Your copy of the game (optional if available locally)</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="rsOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
     <div class="row"><button class="primary" id="rsGo" type="button" disabled>${running ? "Opening…" : "Open it"}</button><button class="ghost" id="rsCancel" type="button">${running ? "Cancel opening" : "Cancel"}</button></div>
     <p class="muted small" id="rsStatus" role="status" hidden></p>
@@ -623,8 +623,8 @@ function openRestore() {
   body.querySelector("#rsGo").onclick = async () => {
     if (restoreBusy() || !restoreInput.own) return;
     const source = restoreInput.source.trim(), path = restoreInput.path.trim();
-    if (!source || !path) {
-      restoreError = "Say where the save is and where your copy of the game is.";
+    if (!source) {
+      restoreError = "Say where the saved project is. Leave the game path blank to check for a matching local copy.";
       renderRestore(); return;
     }
     restoreStarting = true; restoreJob = null; restoreError = "";

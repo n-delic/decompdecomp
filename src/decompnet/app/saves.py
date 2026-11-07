@@ -14,6 +14,7 @@ what only the database has is each open function's closest attempt, and a save w
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import shutil
@@ -343,9 +344,19 @@ def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | No
                      *params)
 
 
+def _knowledge_store(net, project):
+    # Base Network users (including room recovery) do not own the GUI engine's
+    # Knowledge service, but portable progress still needs its project schema.
+    service = getattr(net, 'knowledge', None)
+    if service is None:
+        from .knowledge import Knowledge
+        service = net.knowledge = Knowledge(net)
+    return service._store(project)
+
+
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
     """The progress manifest and its function index from function rows (with or without their source text)."""
-    store = net.project_store(proj['id'])
+    store = _knowledge_store(net, proj['id'])
     pid = proj["id"]
     note_rows = store.all(
         "SELECT n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn "
@@ -605,7 +616,48 @@ def fetch(source: str, into: Path, log=print) -> Path:
     return into
 
 
-def restore(net, source: str, game: Path, log=print) -> dict:
+def find_local_game(net, source, folder, manifest, log):
+    """Check nearby originals and known local imports, never download or trust a filename."""
+    expected = (manifest.get('game') or {}).get('sha1')
+    if not expected:raise NetworkError('This save has no game fingerprint. Choose your own game file explicitly.')
+    candidates = []
+    for row in net.project_rows():
+        cfg = json.loads(row['config'])
+        rom = cfg.get('rom') or {}
+        if rom.get('sha1') == expected:
+            for key in ('file', 'program'):
+                if rom.get(key):candidates.append(Path(row['root'])/rom[key])
+    # Only local saves may discover adjacent originals. A cloned remote save never
+    # authorizes looking around the temporary clone's parent directory.
+    if Path(source).expanduser().is_dir():
+        locations = [Path(source).expanduser(), folder]
+        if folder.name == SAVE_FOLDER:locations.append(folder.parent)
+        locations = list(dict.fromkeys(locations))
+        locations += [base/sub for base in locations for sub in ('orig', 'rom', 'baserom')]
+        filename = Path(str((manifest.get('game') or {}).get('file') or '')).name
+        for base in locations:
+            if filename:candidates.append(base/filename)
+            if not base.is_dir():continue
+            # Bound directory reads; no recursive walk of checkouts or the user's disk.
+            candidates.extend(path for path in itertools.islice(base.iterdir(), 100) if path.is_file())
+    checked = set()
+    for candidate in candidates:
+        getattr(log, 'check_cancel', lambda: None)()
+        candidate = candidate.resolve()
+        if candidate in checked or not candidate.is_file():continue
+        checked.add(candidate)
+        log('Checking local game candidate: '+str(candidate))
+        try:
+            picked = consoles.identify(candidate).read_game(candidate, candidate.name)
+            if picked.info['sha1'] == expected:
+                log('Using matching local game: '+str(candidate))
+                return candidate
+        except (OSError, ValueError, KeyError):
+            continue
+    raise NetworkError('No matching local game was found. Choose your copy of the game and open the saved project again.')
+
+
+def restore(net, source: str, game: Path | None = None, log=print) -> dict:
     """Rebuild a project from a save (a folder or a git repository) and the user's own copy of the game: import it
     (or find it already imported), check it's the same game, then put back the layout, names, headers, settings and
     notes, and judge every saved function again. Returns the project and what came back."""
@@ -623,6 +675,8 @@ def restore(net, source: str, game: Path, log=print) -> dict:
             raise NetworkError(f"{folder} isn't a decompdecomp save (no {MANIFEST} in it)") from None
         if manifest.get("format") != FORMAT:
             raise NetworkError("this save was written by another version of decompdecomp: update it, then try again")
+        if game is None:
+            game = find_local_game(net, source, folder, manifest, log)
         data = Path(game).expanduser()
         getattr(log, "check_cancel", lambda: None)()
         game_sha1 = consoles.identify(data).read_game(data, data.name).info["sha1"]
@@ -765,7 +819,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
                    files: dict[str, str] | None = None, *, restore_notes: bool = True,
                    agents: dict[str, int] | None = None) -> tuple[dict, dict]:
     """Put back everything a save changes before its C is judged: layout, names, settings, notes, set-aside."""
-    store = net.project_store(slug)
+    store = _knowledge_store(net, slug)
     check_cancel = getattr(log, "check_cancel", lambda: None)
     if agents is None:
         agents = _context_agents(net, store, manifest, check_cancel, restore_notes=restore_notes)

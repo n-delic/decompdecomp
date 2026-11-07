@@ -451,3 +451,21 @@ def test_autosave_errors_show_cause_folder_build_and_retry_other_projects(tmp_pa
     clock[0] += 31
     auto.run_once()
     assert calls.count('bad') == 2
+
+
+def test_restore_reuses_adjacent_demo_game_with_independent_project_database(worked, tmp_path):
+    net, slug, _ = worked
+    pid = net.project_row(slug)['id']
+    with net.knowledge._store(pid).tx() as db:
+        db.execute("INSERT INTO knowledge(project_id,text,status,created_at) VALUES(?,?,'accepted',1)",
+                   (pid, 'Preserve verified knowledge'))
+    save = tmp_path/'portable'
+    saves.save(net, slug, save)
+    shutil.copyfile(ROM, save/ROM.name)
+    (tmp_path/'fresh').mkdir()
+    fresh = RomNetwork(tmp_path/'fresh/app.db', tmp_path/'fresh', project_databases=True)
+    result = saves.restore(fresh, str(save), log=lambda *_:None)
+    assert result['matched'] == 1 and result['best'] == 1 and not result['lost']
+    proj = fresh.project_row(result['slug'])
+    assert fresh.project_store(proj['id']) is not fresh.store
+    assert fresh.knowledge._store(proj['id']).one("SELECT text FROM knowledge WHERE status='accepted'")['text'] == 'Preserve verified knowledge'
