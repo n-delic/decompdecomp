@@ -1,8 +1,8 @@
 """Bounded legacy-GCC allocation hypotheses; the ordinary judge remains authoritative.
 
 One-shot scopes can change loop-weighted pseudo references without adding a runtime
-iteration. Only plain scalar updates or single pointer loads are wrapped, so control transfers
-cannot change target.
+iteration. Only complete scalar updates, pointer loads or quotient assignments are wrapped,
+so control transfers cannot change target.
 """
 import re
 
@@ -12,6 +12,9 @@ from .integer_repair_support import IDENT, INTEGER, edit, locals_for, view
 FAMILIES = ('loop_weight_scope', 'equal_value_increment')
 UPDATE_LIMIT = 12
 LIMIT = 18
+QUOTIENT_LIMIT = 6
+QUOTIENT_UPDATE_LIMIT = 8
+QUOTIENT_LOAD_LIMIT = 4
 
 
 def variants(source, name, header=''):
@@ -66,4 +69,52 @@ def variants(source, name, header=''):
             loads.append((FAMILIES[0],edit(source,[(hit.start(),hit.end(),wrapper)])))
         if len(loads) >= 6:
             break
+    divisions = quotient_scopes(source,part,load_declarations)
+    if divisions:
+        # Reserve room for the new operation even in update-heavy functions.
+        return (divisions[:QUOTIENT_LIMIT]+list(dict.fromkeys(out))[:QUOTIENT_UPDATE_LIMIT]
+                +list(dict.fromkeys(loads))[:QUOTIENT_LOAD_LIMIT])
     return list(dict.fromkeys(out))[:UPDATE_LIMIT]+list(dict.fromkeys(loads))[:LIMIT-UPDATE_LIMIT]
+
+
+def quotient_scopes(source, part, declarations):
+    """Wrap an actual quotient statement, retaining every operand and its evaluation.
+
+    A one-shot scope can change legacy GCC's loop-weighted reference counts. It
+    must not capture a loop-header clause, an unbraced body or hidden control.
+    """
+    if re.search(r'\b(?:goto|__attribute__|__declspec|typeof|__typeof__|__extension__)\b|\(\s*{',part.body):
+        return []
+    assignments=[]
+    pattern=rf'(?<=[;{{}}])\s*(?P<dest>{IDENT})\s*=(?!=)(?P<rhs>[^;{{}}]+);'
+    for hit in re.compile(pattern).finditer(part.clean,part.opening,part.end-1):
+        rhs=hit['rhs']
+        if hit['dest'] not in declarations or '/' not in rhs:
+            continue
+        # No calls, updates, secondary assignments, labels or extensions. Casts,
+        # ordinary arithmetic and array/member reads retain their original text.
+        if (re.search(r'[=?:,#\\]|\+\+|--|\b'+IDENT+r'\s*\(',rhs)
+                or re.search(r'[^\w\s()+*/%<>&|^~!\[\].-]',rhs)):
+            continue
+        prefix=part.clean[part.opening:hit.start()]
+        if prefix.count('(')!=prefix.count(')') or prefix.count('[')!=prefix.count(']'):
+            continue
+        if rhs.count('(')!=rhs.count(')') or rhs.count('[')!=rhs.count(']'):
+            continue
+        assignments.append(hit)
+    # First and last eligible sites give diversity without an unbounded scan's
+    # worth of candidates crowding out the existing update and load hypotheses.
+    selected=assignments[:1]+assignments[-1:] if len(assignments)>1 else assignments
+    result=[]
+    for hit in selected:
+        for depth in (1,2,3):
+            statement=source[hit.start('dest'):hit.end()]
+            leading=source[hit.start():hit.start('dest')]
+            if '\n' in leading and not leading.strip():
+                indent=leading.rsplit('\n',1)[1]
+                wrapper=leading+'/*__repair_loop_weight*/'+'do {\n'+indent
+                wrapper+=('do {\n'+indent)*(depth-1)+statement+('\n'+indent+'} while (0);')*depth
+            else:
+                wrapper='/*__repair_loop_weight*/'+'do {'*depth+source[hit.start():hit.end()]+'} while (0);'*depth
+            result.append((FAMILIES[0],edit(source,[(hit.start(),hit.end(),wrapper)])))
+    return result

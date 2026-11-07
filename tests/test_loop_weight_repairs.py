@@ -74,3 +74,58 @@ def test_pointer_load_scopes_preserve_memory_effects_and_loop_control(tmp_path):
         binary=tmp_path/f'load{index}'
         subprocess.run([compiler,'-O2',str(path),'-o',str(binary)],check=True,timeout=20,capture_output=True)
         subprocess.run([str(binary)],check=True,timeout=5)
+
+
+def test_quotient_scope_keeps_casts_array_reads_and_arithmetic_intact():
+    source='int f(int *p,int n){int value;value=(int)((0U-p[0])*(unsigned)n+3U)/p[1];return value;}'
+    proposals=loop_weight_repairs.variants(source,'f')
+    assert len(proposals)==3
+    assert any('do {value=(int)((0U-p[0])*(unsigned)n+3U)/p[1];} while (0);' in text for _,text in proposals)
+    assert all(family=='loop_weight_scope' for family,_ in proposals)
+    assert all(not loop_weight_repairs.variants(text,'f') for _,text in proposals)
+
+
+@pytest.mark.parametrize('statement',[
+    'if(n) value=n/2;', 'for(;value=n/2;){}', 'for(;;value=n/2){}',
+    'value=call(n)/2;', 'value=(n=3)/2;', 'value=n++/2;',
+    'value=({break; n;})/2;', 'label: value=n/2;',
+    'value=(n?3:4)/2;', 'value=(n,4)/2;',
+])
+def test_quotient_scopes_reject_incomplete_or_hidden_control(statement):
+    source='int f(int n){int value;'+statement+'return 0;}'
+    assert not loop_weight_repairs.variants(source,'f')
+
+
+def test_quotient_scopes_keep_macro_guards_and_have_reserved_diverse_slots():
+    source='int f(int *p){int value;int x;value=p[0]/p[1];'+'++x;'*30+'value=p[2]/p[3];return value;}'
+    proposals=loop_weight_repairs.variants(source,'f')
+    assert len(proposals)<=loop_weight_repairs.LIMIT
+    assert len([text for _,text in proposals if 'do {value=p[0]/p[1];' in text])==3
+    assert len([text for _,text in proposals if 'do {value=p[2]/p[3];' in text])==3
+    assert not loop_weight_repairs.variants(source,'f','#define value break')
+    assert not loop_weight_repairs.variants(source.replace('p[0]/p[1]','HIDE(p[0])/p[1]'),'f','#define HIDE(x) ({break; x;})')
+
+
+@pytest.mark.parametrize('arch',['mips','ppc','arm','thumb','x86'])
+def test_quotient_scope_reaches_shared_draft_pipeline(arch):
+    source='int f(int n){int value;value=n/3;return value;}'
+    labels={}
+    proposals=draft_repairs.variants(source,'f',arch,labels=labels,limit=10000)
+    assert any(labels.get(text)=='loop_weight_scope' and 'do {value=n/3;' in text for text in proposals)
+
+
+def test_quotient_scope_preserves_division_and_surrounding_loop_control(tmp_path):
+    compiler=shutil.which('cc')
+    if not compiler:pytest.skip('Host C compiler unavailable')
+    source='int f(int *p){int value;int sum;int i;sum=0;for(i=0;i<4;i++){value=(p[i]*3+2)/2;sum+=value;if(i==1)continue;sum+=2;}return sum;}\nint main(void){int p[4]={-4,-2,2,4};return f(p)!=10;}'
+    for index,text in enumerate([source]+[text for _,text in loop_weight_repairs.variants(source,'f') if 'do {value=' in text]):
+        path=tmp_path/f'quotient{index}.c';path.write_text(text)
+        binary=tmp_path/f'quotient{index}'
+        subprocess.run([compiler,'-O2',str(path),'-o',str(binary)],check=True,timeout=20,capture_output=True)
+        subprocess.run([str(binary)],check=True,timeout=5)
+
+
+def test_quotient_scope_preserves_existing_line_breaks():
+    source='int f(int n)\n{\n  int value;\n  value=n/3;\n  return value;\n}\n'
+    expected=source.replace('  value=n/3;','  /*__repair_loop_weight*/do {\n  value=n/3;\n  } while (0);')
+    assert expected in [text for _,text in loop_weight_repairs.variants(source,'f')]

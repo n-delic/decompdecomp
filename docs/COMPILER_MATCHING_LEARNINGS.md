@@ -5758,3 +5758,34 @@ profile. Private evidence: `func80029EAC/live-goal-nov7`, exact source SHA-256
 ordinary attempt 345533 and repair example 36991. No game source or target data
 is included here. Full-cartridge verification is tracked separately in the game
 repository; an exact individual function alone does not prove a complete rebuild.
+
+The shared `loop_weight_scope` generator now also proposes bounded one-shot
+scopes around complete scalar quotient assignments, keeping the existing
+expression, casts, array reads and statement order. It reserves six of its
+18 proposal slots for the first and last eligible quotient sites, so updates
+and pointer-load proposals cannot starve this case. Calls, secondary writes,
+labels, loop-header clauses, unbraced bodies, statement expressions and unsafe
+macros are excluded. The existing macro guard is unchanged. The wrapper does
+not infer or change a return contract.
+
+Pure generator reproduction binds the complete pre-edit source SHA-256
+`7424a9e1dfaeff8472e2af32ee3b6bcba664816bea0ca15222f04ec9151efe13`
+to the exact source above: removing only the repair marker from one generated
+proposal reproduces the complete exact file, including line breaks. Conversely,
+removing only the inner quotient wrapper reconstructs that pre-edit file.
+A separate bounded verification then compiled this actual generated candidate,
+including its marker and formatting (SHA-256
+`2c2f31296a3bca09878d3146d140cde62f693fbdf78460e647e6cf1f06294887`).
+Ordinary and `-da` builds both linked exactly to 1,560 bytes, score zero, SHA-256
+`bf6751c4455f1bc2999185da2d8e42f17673b3fed088d89d80b98efd085dad4f`.
+Both persisted objects were independently reopened, relinked and rescored in
+their compiler children, then checked again in two fresh processes with zero
+additional compiler calls.
+All 2,079 selected function rows/effective profiles, the focal hydrated history
+(1,180 attempts), context, symbols and configuration were unchanged. The child
+watchdogs capped aggregate memory at 2 GiB and time at 20 seconds, with a
+180-second/2-GiB outer watchdog; all terminated cleanly. Private receipts are in
+`func80029EAC/generated-quotient-nov7`. This reproduces an already accepted
+individual match, not another new match or a complete cartridge build.
+Synthetic tests cover execution, bounded diversity and the shared MIPS,
+PowerPC, ARM, Thumb and x86 draft path.
