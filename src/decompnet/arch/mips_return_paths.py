@@ -20,6 +20,7 @@ def graph(asm):
     destinations={};delays=set()
     for i,row in enumerate(rows):
         op=row.split()[0]
+        if op in {'eret','deret','syscall','teq','tne','tge','tlt'}:return None
         if op=='jr' and not re.fullmatch(r'jr\s+\$ra',row):return None
         if op in flow.CONDITIONAL|flow.CALLS|flow.JUMPS:
             if i+1>=len(rows):return None
@@ -103,7 +104,8 @@ def caller_use(asm,name):
             if op in flow.CALLS:
                 slot=rows[at+1] if at+1<len(rows) else ''
                 parts=slot.split();registers=re.findall(r'\$(\w+)',slot)
-                reads=registers[1:] if parts and parts[0] in flow.ALU|flow.LOADS else registers
+                if not parts or parts[0] not in flow.ALU|flow.LOADS|flow.STORES|{'nop','mtc1'}:break
+                reads=registers[1:] if parts[0] in flow.ALU|flow.LOADS else registers
                 status='consumed' if 'v0' in reads else 'discarded'
                 break
             if op in flow.CONDITIONAL|flow.STORES|{'mtc1'} and 'v0' in regs:status='consumed';break

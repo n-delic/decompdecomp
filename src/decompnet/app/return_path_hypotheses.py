@@ -4,6 +4,7 @@ import re
 from .. import arch as architectures
 from ..forks.csource import _blank, find
 from . import integer_abi
+from .equal_value_flow import macros_safe
 from .integer_repair_support import IDENT, edit, locals_for, view
 from .pattern_repairs import close
 
@@ -46,6 +47,8 @@ def variants(source,name,header,arch,proof):
         finish=close(part.clean,opening,'{','}')
         if not finish or part.clean[finish:part.end-1].strip():continue
         var=hit['var'];typ=declarations.get(var)
+        if re.search(r'\b'+re.escape(var)+r'\b',hit['expr']):continue
+        if not macros_safe(source,header,source[begin:finish],{var}):continue
         if not typ or integer_abi.scalar(typ,header+'\n'+source,arch)!=(32,True):continue
         guard='> 0' if hit['cmp']=='<=' else '<= 0'
         if guard not in {p['condition'] for p in proof['guarded_exits']}:continue
@@ -60,7 +63,9 @@ def variants(source,name,header,arch,proof):
         out.append(('path_return',base))
         fresh='return_value'
         if re.search(r'\b'+fresh+r'\b',_blank(header+'\n'+source)):continue
-        scoped='{ '+typ+' '+fresh+';\n'+re.sub(r'\b'+re.escape(var)+r'\b',fresh,new)+'\n  }'
+        renames=[(m.start(),m.end(),fresh) for m in re.finditer(r'\b'+re.escape(var)+r'\b',_blank(new))
+                 if not re.search(r'(?:\.|->)\s*$',_blank(new[:m.start()]))]
+        scoped='{ '+typ+' '+fresh+';\n'+edit(new,renames)+'\n  }'
         out.append(('path_return+scalar_scope',edit(source,[(return_type,return_type+4,typ),(begin,finish,scoped)])))
         if len(out)>=LIMIT:break
     return out[:LIMIT]

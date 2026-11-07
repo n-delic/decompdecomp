@@ -27,7 +27,7 @@ def run(search, agent, proj, fn, *, generated_only=False):
     search.reviewed_seed_result = result
     if not roots:return result
     deadline = min(search.deadline, started+min(SECONDS, max(0, search.deadline-started)/4))
-    search.phase = 'reviewed diagnostic seeds'
+    search.phase = 'return-path hypotheses' if not reviewed_count else 'reviewed diagnostic seeds'
     search.log('Searching '+('generated path-return hypotheses' if not reviewed_count else 'reviewed alternatives')+' without replacing saved C. Signature changes stay diagnostic-only.')
     initial_tested = search.tested
     def check():

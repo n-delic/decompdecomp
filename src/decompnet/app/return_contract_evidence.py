@@ -29,4 +29,7 @@ def m2c_context(net,proj,fn,context,header):
 
 def brief(net,proj,fn,source):
     if not source or not re.search(r'\bvoid\s+'+re.escape(fn['name'])+r'\s*\(',_blank(source)):return ''
-    return return_contract_repairs.hint(source,fn['name'],net._asm_text(fn,proj),proj['arch'],caller(net,proj,fn))
+    hint=return_contract_repairs.hint(source,fn['name'],net._asm_text(fn,proj),proj['arch'],caller(net,proj,fn))
+    from . import return_path_hypotheses, return_path_search
+    if not hint:hint=return_path_hypotheses.brief(net,proj,fn)
+    return '\n'.join(filter(None,(hint,return_path_search.history(net,proj,fn))))

@@ -78,7 +78,7 @@ def test_mapped_middle_quotient_and_estimated_depth_are_prioritized():
     assert proposals and all('do {\nx=(a+1)/b;' in s for f,s in proposals)
     assert all('do {\nx=a/b;' not in s and 'do {\nx=(a+2)/b;' not in s for f,s in proposals)
     assert len(proposals)<=6
-    assert not loop_weight_repairs.variants(source,'f',focus_lines=[999])==proposals
+    assert not loop_weight_repairs.variants(source,'f',focus_lines=[999])
 
 
 def test_generated_pair_is_tested_even_when_single_edit_is_worse_and_never_adopted(monkeypatch):
@@ -162,3 +162,28 @@ def test_discovery_benchmark_counts_verification_without_seed_or_rebuild(tmp_pat
     assert report['diagnostic_verified'] and report['verification_compiles']==1
     assert report['total_judge_or_diagnostic_compiles']==len(calls)==4
     assert report['rebuild_seconds'] is None and report['model_tokens']==0 and not report['matched']
+
+
+def test_ordinary_function_brief_includes_the_next_diagnostic_experiment(monkeypatch):
+    from decompnet.app import return_contract_evidence
+    net=setup(monkeypatch);net.is_rom=lambda _:True
+    with net.store.tx() as db:db.execute('UPDATE functions SET best_source=?,asm=?',(SOURCE,TARGET))
+    net._asm_text=lambda fn,proj:fn['asm']
+    text=return_contract_evidence.brief(net,net.project_row('game'),net.function(),SOURCE)
+    assert 'Next diagnostic experiment' in text and 'even if the single edit scores worse' in text
+
+
+def test_own_prototypes_and_recursion_require_private_context_work():
+    proof=mips_return_paths.read(TARGET)
+    assert not hypotheses.variants(SOURCE,'f','void f(int);','mips',proof)
+    assert not hypotheses.variants(SOURCE.replace('emit(value);','f(value);'),'f','','mips',proof)
+
+
+def test_scalar_scope_does_not_rename_members_strings_or_self_initialization():
+    proof=mips_return_paths.read(TARGET)
+    source=SOURCE.replace('emit(value);','record->value = value; say("value");')
+    choices=hypotheses.variants(source,'f','','mips',proof)
+    scoped=choices[1][1]
+    assert 'record->value = return_value;' in scoped and 'say("value")' in scoped
+    assert not hypotheses.variants(SOURCE.replace('value=a+1','value=value+1'),'f','','mips',proof)
+    assert not hypotheses.variants(SOURCE,'f','#define emit(x) hidden(value,x)','mips',proof)

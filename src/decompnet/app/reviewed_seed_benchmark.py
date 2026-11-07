@@ -18,6 +18,7 @@ def run(net, slug, function, checkpoint, reviewed_source, review_note, isolated_
     proj = net.project_row(slug)
     # An explicit sentinel plus containment checks prevent accidentally replaying in the live home.
     if (not (root/'.reviewed-search-replay').is_file() or not Path(net.store.path).resolve().is_relative_to(root)
+            or not Path(net.project_store(proj['id']).path).resolve().is_relative_to(root)
             or not Path(proj['root']).resolve().is_relative_to(root)
             or not Path(net.workspace).resolve().is_relative_to(root)):
         raise NetworkError('Replay requires a disposable isolated home, copied project and .reviewed-search-replay marker.')

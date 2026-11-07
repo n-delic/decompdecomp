@@ -688,8 +688,9 @@ class Manager:
                            (kind, s.model, label, json.dumps(kept), s.id))
             return s
         with self.net.store.tx() as db:
+            # Session history can include external text IDs; reserve numeric IDs without mixing SQLite text/integer ordering.
             # helper_sessions survives Remove; never recycle its helper_id for a new record.
-            latest = db.execute("SELECT MAX(id) FROM (SELECT id FROM helpers UNION ALL "
+            latest = db.execute("SELECT MAX(CAST(id AS INTEGER)) FROM (SELECT id FROM helpers UNION ALL "
                                 "SELECT helper_id AS id FROM helper_sessions)").fetchone()[0] or 0
             floor = db.execute("SELECT value FROM settings WHERE key='helper-id-floor'").fetchone()
             rid = max(latest, int(floor['value']) if floor else 0) + 1
