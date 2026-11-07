@@ -3181,7 +3181,7 @@ def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp
     compilers = [c for copy in (a, b) for c in kits.get("visualcpp").compilers(copy)]
     config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/one.cpp": compilers[0].version,
                                                                         "src/auto/two.cpp": compilers[1].version}))
-    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(pack),
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST",
                     *scratch_pe.own_compiler_args([replace(c, runner="none") for c in compilers])],
                    check=True, capture_output=True, timeout=30, cwd=root)
     ninja = (root / "build.ninja").read_text(encoding="utf-8")
@@ -3528,3 +3528,41 @@ def test_x86_pack_does_not_hide_a_matching_own_x64_copy(tmp_path, monkeypatch):
     toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
     assert scratch_pe.own_copy("9.0", 30729) is None  # exact downloadable x86 build
     assert scratch_pe.own_copy("9.0", 30729, "x64").version == "own-15.0.30729-x64"
+
+
+def test_x64_import_selects_registered_x64_copy(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.44.35229.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    data = _windows_program(machine=0x8664, rich=[(0x105, 35229, 300), (0x102, 35229, 1)])
+    built = scratch_pe.describe(data)
+    assert built.pack_version == "own-19.44.35229-x64"
+    assert built.blockers() == [] and built.cannot_match() == []
+    assert scratch_pe.program_compilers(data)[0][0] == "MSVC/own-19.44.35229-x64"
+
+
+def test_own_wine_compilers_need_neither_a_downloaded_pack_nor_wibo(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.44.35229.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    monkeypatch.setattr(toolchains, "ensure", lambda *a, **k: pytest.fail("an own Wine compiler needs no download"))
+    args = scratch_pe.tool_args(("visualcpp",))
+    assert "--msvc" not in args and "--wibo" not in args
+    assert scratch_pe.own_versions(args) == {"own-19.44.35229-x64"}
+
+
+def test_a_compiler_without_sdk_headers_can_build_from_the_project_header(tmp_path, monkeypatch):
+    compile_py = _template_tool("compile")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["compile.py", "--compiler", "cl.exe", "--config", "functions.json",
+                                    "--source", "sample.c", "--output", "sample.obj", "--", "/c"])
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(compile_py.subprocess, "run", run)
+    assert compile_py.main() == 0
+    assert calls[0] == ["cl.exe", "/c", "/Iinclude", "/Fosample.obj", "sample.c"]
+    assert len(calls) == 2  # successful compile still goes through symbol normalization

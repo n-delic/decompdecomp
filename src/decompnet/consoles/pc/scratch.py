@@ -558,10 +558,9 @@ def describe(data: bytes) -> Build:
     if wrapper is None and len(names) >= DENUVO_MIN_SECTIONS and \
             len({n for n in names if DENUVO_SECTION.fullmatch(n)}) >= DENUVO_MIN_NAMES:
         wrapper = "Denuvo"
-    # (a copy of the user's own is read for its 32-bit compiler only, kits/visualcpp.py: a 64-bit game takes the packs')
     machine = MACHINES.get(machine_id, f"machine type {machine_id:#x}")
     return Build(machine, version, number, whole, sum(files.values()), wrapper,
-                 None if machine == X64 else own_copy(version, number))
+                 own_copy(version, number, "x64" if machine == X64 else "x86"))
 
 
 def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
@@ -578,7 +577,7 @@ def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
     out = []
     machine = describe(data).machine  # (a 64-bit program's files build with a 64-bit compiler)
     for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
-        built = Build(machine, version, number, own=None if machine == X64 else own_copy(version, number))
+        built = Build(machine, version, number, own=own_copy(version, number, "x64" if machine == X64 else "x86"))
         try:
             installed = built.own is not None or toolchains.installed(compiler_pack(built.pack_version)) is not None
         except ForkError:
@@ -2402,14 +2401,17 @@ def tool_args(kit_ids=()) -> list[str]:
     Nothing about wine: a 2017 file finds it when it builds (WindowsPC.build_env), so no configure.py, older or
     new, is given an argument it doesn't know."""
     packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None]
-    if not packs:
+    own = kits.compilers(kit_ids)
+    # A user-supplied compiler is a complete compiler choice; no unrelated pack is needed to configure it.
+    if not packs and not own:
         raise ForkError("PC games are built with Microsoft Visual C++, which is proprietary: install it in Setup "
                         "(Visual C++) if you accept that, then try again")
     args = [arg for p in packs for arg in ("--msvc", str(toolchains.path(p)))]
-    if toolchains.get("wibo").supported and sys.platform != "win32":
+    needs_wibo = any(not toolchains.get(p).wine for p in packs) or any(c.runner == "wibo" for c in own)
+    if needs_wibo and toolchains.get("wibo").supported and sys.platform != "win32":
         toolchains.ensure("wibo", log=lambda *_: None)
         args += ["--wibo", str(toolchains.binary("wibo"))]
-    return [*args, *own_compiler_args(kits.compilers(kit_ids))]
+    return [*args, *own_compiler_args(own)]
 
 
 def own_compiler_args(compilers) -> list[str]:
