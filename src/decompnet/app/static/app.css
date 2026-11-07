@@ -1030,7 +1030,10 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-range-reason summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .compiler-function-links { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; max-height: 240px; overflow: auto; }
 .compiler-function-links button { font-size: 12px; }
-.compiler-profile-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.compiler-profile-card { position: relative; margin: 10px 0; }
+.compiler-profile-card > .compiler-profile { margin: 0; }
+.compiler-profile-card.has-actions > .compiler-profile > summary { padding-right: 48px; }
+.compiler-profile-card > .compiler-profile-menu { position: absolute; top: 8px; right: 8px; }
 .compiler-profile-menu .agent-menu-items { width: min(300px, calc(100vw - 80px)); min-width: 0; }
 .compiler-profile-menu .agent-menu-items button { white-space: normal; line-height: 1.45; }
 .compiler-profile-menu button:disabled { opacity: .5; cursor: not-allowed; }

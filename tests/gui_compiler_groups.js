@@ -47,6 +47,14 @@ assert.match(menuHtml, /<summary aria-label="Actions for [^"]+ profile"[^>]*>⋮
 const menu = menuHtml.match(/<div class="agent-menu-items">(.*?)<\/div>/s)[1];
 assert.equal((menu.match(/<button /g) || []).length, 4);
 assert.doesNotMatch(menu, /class="ghost/);
+assert.doesNotMatch(menuHtml, /Only exact byte matches move/);
+assert.doesNotMatch(menuHtml, /Profile actions<\/span>/);
+// Actions are siblings of the disclosure, so the top-right menu also works on a collapsed card.
+assert.match(menuHtml, /<\/ol><\/details>\s*<details class="agent-menu compiler-profile-menu">/);
+vm.runInContext('compilerProfileJobs.set("demo:" + compilerDisplayedGroups[0].id, {running:true, message:"Comparing"})', ctx);
+ctx.renderCompilerParts({parts});
+assert.match(elements.get('compilerParts').innerHTML, /Only exact byte matches move/);
+vm.runInContext('compilerProfileJobs.clear()', ctx);
 
 // Selecting each option closes the menu and restores focus before opening its workflow.
 const clickStart = steering.indexOf('$("compilerParts").onclick = async (e) => {');
