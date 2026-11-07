@@ -2978,3 +2978,33 @@ def test_single_function_profile_response_does_not_restore_project(app, monkeypa
                            'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}, headers={'X-Decomp':'1'})
     assert response.status_code == 200 and response.json() == {'matched':True}
     assert calls == [(slug,'only','gcc-2.7.2-kmc',['-O2'])]
+
+
+def test_room_reconciliation_discovers_active_scoped_job_and_deduplicates(app,monkeypatch,tmp_path):
+    from decompnet.app import room_reconcile
+    client,net,*_=app
+    slug='reconcile-host'
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,root,config) VALUES(?,?,'{\"kind\":\"rom\"}')",(slug,str(tmp_path)))
+    entered=threading.Event();release=threading.Event()
+    from types import SimpleNamespace
+    room=SimpleNamespace()
+    net.rooms[slug]=room
+    monkeypatch.setattr(room_reconcile,'snapshot',lambda _: {'active':True,'members':{},'results':{}})
+    def work(room,log):
+        entered.set()
+        while not release.wait(.01):log.check_cancel()
+        return {'active':False,'members':{},'results':{}}
+    monkeypatch.setattr(room_reconcile,'run',work)
+    try:
+        first=client.post('/api/collab/matches',json={'slug':slug,'reconcile':True},headers={'X-Decomp':'1'})
+        assert first.status_code==200
+        identity=first.json()['job']
+        assert entered.wait(2)
+        second=client.post('/api/collab/matches',json={'slug':slug,'reconcile':True},headers={'X-Decomp':'1'})
+        assert second.json()['job']==identity
+        attached=client.get('/api/collab/matches?slug='+slug).json()
+        assert attached['reconcile_job']==identity and attached['reconciliation']['active']
+        client.post('/api/job/cancel',json={'id':identity},headers={'X-Decomp':'1'})
+    finally:
+        release.set();net.rooms.pop(slug,None)

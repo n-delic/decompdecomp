@@ -711,6 +711,38 @@ function renderNext(ov) {
 }
 
 /* ------------------------------------------------------------------ team (rooms), in the header's panel */
+function paintRoomReconciliation(box, state) {
+  const output=box.querySelector('[data-reconcile-results]');
+  if(!output || !state)return;
+  const members=Object.entries(state.members || {});
+  box._reconciliationState=state;
+  const order=box._reconcileSort || {key:'client',direction:1};
+  const rows=[...(Array.isArray(state.results) ? state.results : Object.values(state.results || {}))].sort((a,b)=>String(a[order.key] || '').localeCompare(String(b[order.key] || ''),undefined,{numeric:true})*order.direction);
+  const headings=[['client','Client'],['function','Function'],['status','Outcome']].map(([key,label])=>`<th scope="col" aria-sort="${order.key===key ? order.direction===1 ? 'ascending' : 'descending' : 'none'}"><button class="ghost small-btn" data-reconcile-sort="${key}" type="button">${label}${order.key===key ? order.direction===1 ? ' ↑' : ' ↓' : ''}</button></th>`).join('');
+  const labels={waiting:'Waiting for client',running:'Comparing and sending matches',done:'Complete',offline:'Offline — reconnect and run again',update_required:'Update this client to support reconciliation',unresponsive:'Client did not respond — reconnect and run again',interrupted:'Interrupted — run again to resume'};
+  output.innerHTML=`<p class="small muted">${members.map(([name,m])=>`${esc(name)}: ${esc(labels[m.status] || m.status)} · ${m.checked || 0} / ${m.total ?? '?'} inventoried · ${m.shared || 0} already on host${m.error ? ' · '+esc(m.error) : ''}`).join('<br>') || 'No room clients have joined yet.'}</p>
+    <p><b>${rows.filter(r=>r.status==='applied').length} applied</b> · ${rows.filter(r=>r.status==='not_applied').length} not applied · ${rows.filter(r=>['waiting','verifying'].includes(r.status)).length} waiting</p>
+    ${rows.length ? `<div class="project-peer-table"><table><thead><tr>${headings}</tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.client)}</td><td class="mono">${r.host_function ? fnLink(r.host_function) : esc(r.function)}</td><td>${esc(({applied:'Applied — host verified',not_applied:'Not applied',waiting:'Waiting for bundle',verifying:'Verifying on host'})[r.status] || r.status)}<br><span class="small muted">${esc(r.reason)}</span></td></tr>`).join('')}</tbody></table></div>` : ''}`;
+  output.querySelectorAll('[data-reconcile-sort]').forEach(button=>{button.onclick=()=>{const key=button.dataset.reconcileSort;box._reconcileSort={key,direction:order.key===key ? -order.direction : 1};paintRoomReconciliation(box,box._reconciliationState);};});
+}
+async function followRoomReconciliation(box, slug, job) {
+  const log=box.querySelector('[data-reconcile-log]');
+  if(!log || log._jobId===job)return;
+  log._jobId=job;log.hidden=false;log._showJobProgress=true;
+  const button=box.querySelector('[data-reconcile-room]'),stop=box.querySelector('[data-reconcile-stop]');
+  button.disabled=true;stop.hidden=false;
+  stop.onclick=async()=>{stop.disabled=true;try{await api('/api/job/cancel',{method:'POST',body:{id:job}});}catch(e){showJobError(log,e.message);}finally{stop.disabled=false;}};
+  const done=beginWork(log,'Comparing client matches and verifying missing bundles',[button]);
+  const active=()=>log.isConnected && S.slug===slug;
+  try {
+    const result=await followJob(job,log,(_lines,state)=>{
+      if(!active())return;
+      if(state.progress)paintRoomReconciliation(box,{members:state.progress.members,results:state.progress.results});
+    },active);
+    if(active() && result)paintRoomReconciliation(box,result);
+  }catch(e){if(active())showJobError(log,e.message);}
+  finally{done();if(active()){stop.hidden=true;button.disabled=false;}}
+}
 async function openRoomMatchReview() {
   const slug=S.slug;
   const box=dialog('Room match verification','<pre class="joblog" hidden></pre>');
@@ -737,9 +769,22 @@ async function openRoomMatchReview() {
     reviewRows=[...data.rows,...reviewRows.filter(r=>!data.rows.some(n=>n.key===r.key) && retryResults.some(result=>result.key===r.key && (result.matched || result.rejected)))];
     box.innerHTML=`<p class="muted small">Client matches count on the host only after its own byte verification. Compiler profiles and private headers travel with new submissions. Older submissions can be recovered using bounded searches of installed host compilers.</p>
       <section data-room-retry-progress class="default-profile-test" role="status" hidden><b data-room-retry-title>Preparing verification…</b><p class="mono small" data-room-retry-function></p><p class="small muted" data-room-retry-detail></p><progress class="deep-sweep-bar" data-room-retry-bar aria-label="Room submissions verified"></progress></section>
+      ${!data.guest ? `<section><p>Compare every client’s local matches with the host and resend missing source, headers and compiler settings for byte verification. Clients need the updated app.</p><div class="row"><button class="primary" data-reconcile-room type="button">Reconcile room matches</button><button class="ghost" data-reconcile-stop type="button" hidden>Stop</button></div><div data-reconcile-results aria-live="polite"></div><pre class="joblog" data-reconcile-log hidden></pre></section>` : ''}
       ${reviewRows.length ? `<div class="row"><button class="primary" type="button" data-retry-all-matches>Retry all · ${data.rows.length}</button></div><div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Status</th><th></th></tr></thead><tbody>${reviewRows.map(r=>`<tr data-room-match-row="${esc(r.key)}" data-function="${esc(r.function)}"><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td data-room-match-status aria-live="polite">${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}
       <div class="row"><button class="ghost" data-refresh-matches>Refresh</button>${!data.guest ? '<button class="ghost" data-recover-matches>Recover older submissions</button>' : ''}</div><pre class="joblog" id="roomMatchLog" hidden></pre>`;
     renderResults();
+    if(!data.guest){
+      paintRoomReconciliation(box,data.reconciliation);
+      const reconcile=box.querySelector('[data-reconcile-room]');
+      reconcile.onclick=async()=>{
+        reconcile.disabled=true;
+        const log=box.querySelector('[data-reconcile-log]');log.hidden=false;
+        const done=beginWork(log,'Requesting inventories from room clients',[reconcile]);
+        try{const {job}=await api('/api/collab/matches',{method:'POST',body:{slug,reconcile:true}});done();await followRoomReconciliation(box,slug,job);}
+        catch(e){showJobError(log,e.message);}finally{done();reconcile.disabled=false;}
+      };
+      if(data.reconcile_job)followRoomReconciliation(box,slug,data.reconcile_job);
+    }
     let retrying=false;
     const run=async (payload,button)=>{
       if(retrying)return;

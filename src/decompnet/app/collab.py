@@ -496,10 +496,16 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         return {"token": token, "room": room.slug, "name": name, "waiting": room.settings["approve"]}
 
     def whoami(room, member, q):
-        return {"name": member.name, "room": room.slug}
+        from . import room_reconcile
+        return {"name": member.name, "room": room.slug,
+                "reconcile":room_reconcile.command(room, member, q.get("reconcile") == "1")}
 
     def state(room, member, q):
         return room.state(int(q.get("e") or 0), int(q.get("a") or 0), int(q.get("v") or 0), member, q.get("fresh") == "1")
+
+    def reconcile(room, member, d):
+        from .room_reconcile import exchange
+        return exchange(room, member, d)
 
     def claim(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -621,6 +627,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         Route("/collab/join", endpoint(join, auth=False), methods=["POST"]),
         Route("/collab/state", endpoint(state)),
         Route("/collab/whoami", endpoint(whoami)),
+        Route("/collab/reconcile", endpoint(reconcile), methods=["POST"]),
         Route("/collab/claim", endpoint(claim), methods=["POST"]),
         Route("/collab/attempt", endpoint(attempt), methods=["POST"]),
         Route("/collab/best", endpoint(best), methods=["POST"]),
@@ -1031,12 +1038,14 @@ class Link:
                 try:
                     # whoami authenticates (refreshing the host's last_seen) without sending or applying work.
                     # Keep its result separate: a live connection must not erase a failed sync or a refusal.
-                    r = self.client.get(f"{self.url}/collab/whoami", params={"room": self.room},
+                    r = self.client.get(f"{self.url}/collab/whoami", params={"room": self.room, "reconcile": "1"},
                                         headers={"authorization": f"Bearer {self.token}", "x-room": self.room},
                                         timeout=httpx.Timeout(HEARTBEAT_TIMEOUT, connect=5))
                     if r.status_code != 200:
                         raise NetworkError(f"host answered {r.status_code}")
                     self.last_contact = time.time()
+                    from .room_reconcile import launch
+                    launch(self, r.json().get("reconcile"))
                 except Exception as e:
                     current = type(e).__name__ if isinstance(e, httpx.HTTPError) else str(e)
                     if current != problem:

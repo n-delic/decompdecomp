@@ -6,7 +6,7 @@ def nonexclusive(agent):
     name = getattr(agent, 'name', '')
     owner = getattr(agent, 'owner', None)
     if owner and name.startswith(owner+'.'):name=name[len(owner)+1:]
-    return name == 'permuter' or re.fullmatch(r'permuter-[0-9]+(?:-lane-[0-9]+)?', name) is not None
+    return name in ('permuter', 'room-reconcile') or re.fullmatch(r'permuter-[0-9]+(?:-lane-[0-9]+)?', name) is not None
 
 
 def clear(db, *, agent_ids=None):
