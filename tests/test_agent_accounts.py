@@ -232,3 +232,21 @@ def test_a_session_that_hits_its_limit_still_records_its_reported_usage():
     assert ("error", "usage limit reached") in items
     usage = json.loads(next(text for kind, text in items if kind == "usage"))
     assert usage["input"] == 50 and usage["output"] == 25 and usage["usd"] == 0.5
+
+
+
+def test_renaming_an_account_updates_helper_labels_without_changing_the_login(tmp_path):
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    options = {"account_id": "a1", "account_name": "Personal", "account_dir": str(tmp_path / "login")}
+    session = manager._record("game", "claude", "claude-1", "claude-1", options)
+    manager.rename_account("a1", "Second subscription")
+    assert session.snapshot()["account_name"] == "Second subscription"
+    assert session.options["account_dir"] == options["account_dir"] and session.options["account_id"] == "a1"
+    restored = agents.Manager(net, tmp_path, URL)
+    assert restored.sessions[session.id].options == options | {"account_name": "Second subscription"}
+    settings = Settings(tmp_path / "settings.json")
+    account = settings.save_account({"kind": "claude", "name": "Personal"})
+    renamed = settings.save_account({"id": account["id"], "name": "Second subscription"})
+    assert renamed["id"] == account["id"] and renamed["config_dir"] == account["config_dir"]
+    assert renamed["name"] == "Second subscription"

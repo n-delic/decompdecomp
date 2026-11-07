@@ -277,7 +277,8 @@ def register(app: App) -> None:
                     if sess.options.get("account_id") == aid and sess.state in agents.LIVE:
                         await call(manager.stop, sid)
             else:
-                await call(settings.save_account, data)
+                account = await call(settings.save_account, data)
+                await call(manager.rename_account, account["id"], account["name"])
             await call(settings.save)
         except (ValueError, OSError) as e:
             return fail(ValueError(str(e)) if isinstance(e, ValueError) else

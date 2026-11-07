@@ -910,6 +910,17 @@ class Manager:
         if usd or total:
             self.net.add_spend(s.slug, usd, total)
 
+    def rename_account(self, aid: str, name: str) -> None:
+        """An account's label is local UI text: update its helpers without restarting or changing their login."""
+        with self._lock:
+            for session in list(self.sessions.values()):
+                if session.options.get("account_id") != aid:
+                    continue
+                session.options["account_name"] = name
+                kept = {k: v for k, v in session.options.items() if k != "api_key"}
+                with self.net.store.tx() as db:
+                    db.execute("UPDATE helpers SET options=? WHERE id=?", (json.dumps(kept), session.id))
+
     def account_usage(self) -> list[dict]:
         """Finished sessions recorded here, across projects, even after their helper records were removed."""
         rows = self.net.store.all("SELECT kind, account_id, MAX(account_name) AS name, SUM(tokens) AS tokens, "

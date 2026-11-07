@@ -285,6 +285,7 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   ctx.api = async (url, options) => {
     calls.push({ url, body: options.body });
     const settings = ctx.S.st.settings;
+    if (options.body.id) return { ...settings, agent_accounts: settings.agent_accounts.map((a) => a.id === options.body.id ? { ...a, name: options.body.name } : a) };
     if (options.body.remove) return { ...settings, agent_accounts: settings.agent_accounts.filter((a) => a.id !== options.body.remove) };
     return { ...settings, agent_accounts: [...settings.agent_accounts, { id: "new", kind: options.body.kind,
       name: options.body.name, config_dir: options.body.config_dir, signin: "CLAUDE_CONFIG_DIR=/tmp/new claude" }] };
@@ -301,6 +302,12 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
     calls.at(-1).body.config_dir === "/tmp/new account", "adding an account must submit its name and directory");
   requireOk(accountBox.html.includes("New account") && get("dialogBody").html.includes("CLAUDE_CONFIG_DIR=/tmp/new claude"),
     "saving must update the list and show the new account's login command in the drawer");
+  requireOk(get("dialogBody").html.includes("label used only in decompdecomp"), "the name must be explained as a local label");
+  get("dialogBody").querySelector("[data-account-name]").value = "My second subscription";
+  await get("dialogBody").querySelector("[data-account-rename]").onclick();
+  requireOk(calls.at(-1).body.id === "new" && calls.at(-1).body.name === "My second subscription" &&
+    !calls.at(-1).body.config_dir && accountBox.html.includes("My second subscription") &&
+    get("dialogTitle").textContent === "My second subscription", "renaming must update the label without changing the login directory");
   accountBox.querySelector('[data-account-open="a2"]').onclick();
   await get("dialogBody").querySelector("[data-account-remove]").onclick();
   requireOk(calls.at(-1).body.remove === "a2" && get("dialog").hidden,

@@ -83,7 +83,11 @@ function openAgentAccount(kind, id = "") {
   const agent = S.st.agents.find((a) => a.id === kind);
   const account = (S.st.settings.agent_accounts || []).find((a) => a.kind === kind && a.id === id);
   const usage = (S.st.account_usage || []).filter((r) => r.kind === kind);
+  const labelHelp = "This is a label used only in decompdecomp to help you recognize the account. It does not change your sign-in or the account name with your provider.";
   const body = dialog(account ? account.name : `Add ${agent.name} account`, account ? `
+    <label class="field"><span>Account label</span><input data-account-name value="${esc(account.name)}" maxlength="80" autocomplete="off"></label>
+    <p class="muted small">${labelHelp}</p>
+    <button class="primary" data-account-rename type="button">Save label</button>
     <p>Run this command in a terminal, then sign in with <code>/login</code>. Use <code>/status</code> to check the account.</p>
     ${cmdBox(account.signin)}
     <label class="field"><span>Configuration directory</span><code>${esc(account.config_dir)}</code></label>
@@ -93,25 +97,26 @@ function openAgentAccount(kind, id = "") {
     <p class="bad small" data-account-error hidden></p>
     <button class="ghost danger" data-account-remove type="button">Remove account and stop its helpers</button>` : `
     <p>Keep another subscription login separate from your default account. After adding it, you’ll get a command to sign in.</p>
-    <label class="field"><span>Account name</span><input data-account-name placeholder="Personal or work" maxlength="80" autocomplete="off"></label>
+    <label class="field"><span>Account label</span><input data-account-name placeholder="A name you’ll recognize" maxlength="80" autocomplete="off"></label>
+    <p class="muted small">${labelHelp}</p>
     <details><summary>Use an existing configuration directory</summary><label class="field"><span>Directory (optional)</span><input data-account-dir placeholder="Absolute path to an existing account directory"></label></details>
     <p class="muted small">Leave the directory blank to create a separate sign-in. Credentials stay with ${esc(agent.name)}.</p>
     <p class="bad small" data-account-error hidden></p>
     <div class="row"><button class="primary" data-account-save type="button">Add account</button><button class="ghost" data-close type="button">Cancel</button></div>
     ${usage.some((r) => r.account_id && !(S.st.settings.agent_accounts || []).some((a) => a.id === r.account_id)) ? `<details><summary>Removed accounts’ usage</summary>${usage.filter((r) => r.account_id && !(S.st.settings.agent_accounts || []).some((a) => a.id === r.account_id)).map((r) => `<p><b>${esc(r.name)}</b><br>${accountUsageText(r)}</p>`).join("")}</details>` : ""}`, "agent-account");
-  const button = body.querySelector(account ? "[data-account-remove]" : "[data-account-save]");
-  button.onclick = async () => {
+  const save = async (button, remove = false) => {
     button.disabled = true;
     const error = body.querySelector("[data-account-error]");
     error.hidden = true;
     const before = new Set((S.st.settings.agent_accounts || []).map((a) => a.id));
     try {
-      S.st.settings = await api("/api/agent-accounts", { method: "POST", body: account ? { remove: id } : {
+      S.st.settings = await api("/api/agent-accounts", { method: "POST", body: remove ? { remove: id } : account ? { id, name: body.querySelector("[data-account-name]").value } : {
         kind, name: body.querySelector("[data-account-name]").value, config_dir: body.querySelector("[data-account-dir]").value } });
       renderAgentAccounts(kind);
       // A save can finish after this drawer was closed or replaced. Never reopen it over another task.
-      if (!$("dialog").hidden && $("dialogBody") === body && body.querySelector(account ? "[data-account-remove]" : "[data-account-save]") === button) {
-        if (account) closeDialog();
+      if (!$("dialog").hidden && $("dialogBody") === body && body.querySelector(remove ? "[data-account-remove]" : account ? "[data-account-rename]" : "[data-account-save]") === button) {
+        if (remove) closeDialog();
+        else if (account) openAgentAccount(kind, id);
         else {
           const added = S.st.settings.agent_accounts.find((a) => a.kind === kind && !before.has(a.id));
           if (added) openAgentAccount(kind, added.id);
@@ -119,6 +124,14 @@ function openAgentAccount(kind, id = "") {
       }
     } catch (e) { error.textContent = e.message; error.hidden = false; } finally { button.disabled = false; }
   };
+  if (account) {
+    const rename = body.querySelector("[data-account-rename]"), remove = body.querySelector("[data-account-remove]");
+    rename.onclick = () => save(rename);
+    remove.onclick = () => save(remove, true);
+  } else {
+    const add = body.querySelector("[data-account-save]");
+    add.onclick = () => save(add);
+  }
 }
 $("agRefresh").onclick = showAgentsPage;
 
