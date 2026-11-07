@@ -2870,3 +2870,65 @@ def test_score_commit_preferences_require_write_guard_and_default_to_ten(app, mo
     response = client.post('/api/repository-score-commits', json=data, headers={'X-Decomp':'1'})
     assert response.status_code == 200 and response.json()['threshold'] == 10
     assert calls == [('game', True, 10, '/repo')]
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_starting_compiler_comparison_returns_job_without_saved_file_sync(app, monkeypatch, cancel):
+    client, net, *_ = app
+    slug = 'comparison-start-'+str(cancel)
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+                   (slug, 'Comparison', '.', '{}'))
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def fork(project):
+        assert net.progress.viewing  # Initial mode validation must not restore saved files either.
+        return None
+    def compare(project, *, log, **options):
+        calls.append((project, options))
+        log.progress({'phase':'preparation','stage':'Checking installed compiler profiles','elapsed':0})
+        entered.set()
+        while not release.wait(.01):log.check_cancel()
+        log.check_cancel()
+        return {'tried':1}
+    monkeypatch.setattr(net, 'fork_slug', fork)
+    monkeypatch.setattr(net, 'run_compiler_comparison', compare)
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('job startup must not synchronize files'))
+    payload = {'slug':slug,'all_installed':True,'flags_only':True,'auto_apply':True,'untested_only':True}
+    headers = {'X-Decomp':'1'}
+    job = None
+    try:
+        response = client.post('/api/compilermap', json=payload, headers=headers)
+        assert response.status_code == 200
+        job = response.json()['job']
+        assert entered.wait(2)
+        status = client.get('/api/job', params={'id':job}).json()
+        assert status['state'] == 'running'
+        assert status['progress']['stage'] == 'Checking installed compiler profiles'
+        assert calls == [(slug, {'function':'','untested_only':True,'flags_only':True,
+                                 'used_profiles_only':False,'auto_apply':True})]
+        if cancel:
+            assert client.post('/api/job/cancel', json={'id':job}, headers=headers).json()['cancelled']
+        else:release.set()
+        for _ in range(100):
+            status = client.get('/api/job', params={'id':job}).json()
+            if status['state'] != 'running':break
+            time.sleep(.01)
+        assert status['state'] == ('cancelled' if cancel else 'done')
+        if cancel:assert 'Completed results are saved' in status['error']
+        else:assert status['result'] == {'tried':1}
+    finally:
+        release.set()
+
+
+def test_synchronous_compiler_map_updates_still_sync_saved_files(app, monkeypatch):
+    client, net, *_ = app
+    slug = 'comparison-synchronous-update'
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)', (slug,'Comparison','.','{}'))
+    saves = []
+    monkeypatch.setattr(net, 'compiler_answer', lambda slug, **kw:{'checked':True})
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:saves.append((a, kw)))
+    response = client.post('/api/compilermap', json={'slug':slug}, headers={'X-Decomp':'1'})
+    assert response.status_code == 200 and response.json() == {'checked':True}
+    assert saves == [((slug,), {'force':True})]

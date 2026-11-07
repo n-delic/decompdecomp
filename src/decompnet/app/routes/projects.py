@@ -54,7 +54,10 @@ def register(app: App) -> None:
                             net.progress.foreground_changed(slug, str(data.get("function") or data.get("name") or ""))
                             net.progress.sync(slug, force=True)
                             return result
-                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    # A scheduled comparison must return its job ID before any saved-file
+                    # synchronization, so the UI can follow progress and offer Stop immediately.
+                    comparison_started = request.url.path == "/api/compilermap" and data.get("all_installed")
+                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call

@@ -3121,3 +3121,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Planned: independent build workspaces/dependency snapshots before enabling speculative compilation for imported/custom builds; profile-aware reservation before scheduling multiple compiler profiles speculatively. These retain their current build/lane paths meanwhile.
 
 - Done: accepting waiting compiler suggestions reads the pending config snapshot directly, reports its count before per-suggestion verification, and refreshes the full overview only after processing and saving. Preparation no longer loads project-wide diagnostics or implicitly synchronizes project files.
+
+- Done: compiler-comparison startup returns its background job ID without forcing saved-file synchronization in the request wrapper, so progress and Stop attach immediately. Synchronous compiler-map updates retain their save behavior; the comparison's fresh verification and publication guards remain unchanged.
