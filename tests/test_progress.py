@@ -2032,13 +2032,17 @@ def test_foreground_waits_until_saved_verification_evidence_is_installed(project
     assert net._function('g', 'game')['matched_source'].strip() == 'good foreground'
 
 
-def test_final_flush_reports_each_project_before_synchronizing(tmp_path,monkeypatch):
+def test_final_flush_reports_only_pending_projects_before_synchronizing(tmp_path,monkeypatch):
     from decompnet.app.engine import RomNetwork
     from decompnet.network import NetworkError
     net=RomNetwork(tmp_path/'flush.db',tmp_path)
     with net.store.tx() as db:
         db.executemany('INSERT INTO projects(slug,root,config) VALUES(?,?,?)',
-                       [('first',str(tmp_path),'{}'),('second',str(tmp_path),'{}')])
+                       [('first',str(tmp_path),'{}'),('second',str(tmp_path),'{}'),
+                        ('untouched',str(tmp_path),'{}')])
+        db.execute("INSERT INTO progress_dirty(project_id,token,functions) "
+                   "SELECT id,'changed',1 FROM projects WHERE slug='first'")
+    net.progress.failed['second'] = ((), 0)
     events=[]
     def sync(slug,**kwargs):
         events.append(('sync',slug))
@@ -2047,3 +2051,16 @@ def test_final_flush_reports_each_project_before_synchronizing(tmp_path,monkeypa
     failures=net.progress.flush(notify=lambda slug:events.append(('notify',slug)))
     assert events==[('notify','first'),('sync','first'),('notify','second'),('sync','second')]
     assert failures=={'first':'blocked folder'}
+
+
+def test_final_flush_skips_projects_with_acknowledged_progress(tmp_path,monkeypatch):
+    from decompnet.app.engine import RomNetwork
+    net=RomNetwork(tmp_path/'flush.db',tmp_path)
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,root,config) VALUES(?,?,?)',('saved',str(tmp_path),'{}'))
+        pid=db.execute("SELECT id FROM projects WHERE slug='saved'").fetchone()[0]
+        db.execute("INSERT INTO progress_state(project_id,disk,projected,updated_at,dirty_token) "
+                   "VALUES(?,'{}','{}',0,'acknowledged')",(pid,))
+        db.execute("INSERT INTO progress_dirty(project_id,token) VALUES(?,'acknowledged')",(pid,))
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:pytest.fail('clean project was synchronized'))
+    assert net.progress.flush()=={}
