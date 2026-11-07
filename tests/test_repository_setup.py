@@ -202,3 +202,22 @@ def test_remembered_separate_build_checkout_stays_available(project, tmp_path):
     (root / 'build.py').write_text('# build')
     net._update_cfg('game', lambda cfg: cfg.update(repository_sync_folder=str(root)))
     assert repository_setup.status(net, 'game')['build_folder'] == str(root)
+
+
+@pytest.mark.parametrize('linked', [False, True])
+def test_detected_progress_rejects_bad_manifest_without_replacing_it(project, tmp_path, linked):
+    net, _, _ = project
+    root = tmp_path / 'build-checkout'
+    root.mkdir()
+    (root / 'build.json').write_text('{}')
+    (root / 'build.py').write_text('# build')
+    (root / 'progress').mkdir()
+    manifest = root / 'progress' / saves.MANIFEST
+    outside = tmp_path / 'outside.json'
+    outside.write_text('broken JSON')
+    if linked:manifest.symlink_to(outside)
+    else:manifest.write_text('broken JSON')
+    with pytest.raises(NetworkError, match='manifest'):
+        saves.save(net, 'game', root)
+    assert outside.read_text() == 'broken JSON'
+    assert manifest.read_text() == 'broken JSON'

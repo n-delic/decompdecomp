@@ -123,10 +123,18 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
     try:
         proj = net._project(slug)
         _check_save_paths(target, chosen=chosen or bool(net.cfg(proj).get("progress_folder")))
-        if folder is not None and target != Path(folder) and (target / MANIFEST).is_file():
-            existing = json.loads((target / MANIFEST).read_text(encoding="utf-8"))
-            if existing.get('game', {}).get('sha1') != net.cfg(proj).get('rom', {}).get('sha1'):
-                raise NetworkError("This repository's progress folder belongs to another game. Choose a different project folder.")
+        if folder is not None and target != Path(folder):
+            manifest = target / MANIFEST
+            if manifest.is_symlink():
+                raise NetworkError("The detected progress manifest is a symbolic link. Choose a regular progress folder.")
+            if manifest.is_file():
+                try:
+                    existing = json.loads(manifest.read_text(encoding="utf-8"))
+                except ValueError:
+                    raise NetworkError("Fix the saved progress manifest before replacing its files.") from None
+                game = existing.get('game') if isinstance(existing, dict) else None
+                if not isinstance(game, dict) or game.get('sha1') != net.cfg(proj).get('rom', {}).get('sha1'):
+                    raise NetworkError("This repository's progress folder belongs to another game. Choose a different project folder.")
         if not net.is_rom(proj):
             result = _save_best(net, proj, target)
             _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)

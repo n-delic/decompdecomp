@@ -37,9 +37,10 @@ function renderRepositorySetup(state) {
   $("repositoryDestination").hidden = !state.portable || !build || unsaved;
   $("repositoryFolder").value = build;
   $("repositoryBuildPath").textContent = build;
-  $("saveFolderHint").textContent = build
+  $("saveFolderHint").textContent = build && state.portable
     ? `Build repository detected. Progress is saved in ${state.save_folder}; build files are updated separately below.`
-    : "Choose a folder for your matches, drafts, notes and settings. No game files are saved.";
+    : state.portable ? "Choose a folder for your matches, drafts, notes and settings. No game files are saved."
+    : "Closest attempts are saved here. Matched source stays in the imported project's checkout.";
   refreshRepositoryPush(true);
 }
 async function refreshRepositorySetup() {
