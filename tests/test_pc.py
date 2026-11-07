@@ -531,14 +531,18 @@ def test_an_agents_constructor_and_destructor_name_the_functions_they_are(tmp_pa
         net.attempt(agent, "_func_00401060", "CBaz::CBaz() {\n}\nCBaz::~CBaz() {\n}\n", "p")
 
 
-def test_only_32_bit_x86_programs():
+def test_only_32_bit_x86_and_64_bit_x64_programs():
     assert not scratch_pe.is_pe(b"MZ" + bytes(0x3E))
     head = bytearray(0x200)
     head[:2], head[0x3C:0x40], head[0x80:0x84] = b"MZ", struct.pack("<I", 0x80), b"PE\0\0"
     struct.pack_into("<H", head, 0x84, 0x14C)
     struct.pack_into("<H", head, 0x98, 0x10B)
     assert scratch_pe.is_pe(bytes(head))
-    struct.pack_into("<H", head, 0x84, 0x8664)  # x64
+    struct.pack_into("<H", head, 0x84, 0x8664)  # x64, with a 32-bit program's optional header: no program at all
+    assert not scratch_pe.is_pe(bytes(head))
+    struct.pack_into("<H", head, 0x98, 0x20B)  # PE32+
+    assert scratch_pe.is_pe(bytes(head))
+    struct.pack_into("<H", head, 0x84, 0xAA64)  # 64-bit ARM
     assert not scratch_pe.is_pe(bytes(head))
 
 
@@ -569,7 +573,7 @@ def test_a_function_your_object_only_calls_is_not_in_your_build_not_a_match(monk
 def _map(path: Path = MAP) -> dict[str, int]:
     """Symbol -> address of every function and variable, from the linker's map of the demo."""
     return {m.group(1): int(m.group(2), 16)
-            for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", path.read_text(), re.M)}
+            for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8,16}) ", path.read_text(), re.M)}
 
 
 def _addresses(path: Path = MAP) -> dict[str, str]:
@@ -1014,6 +1018,111 @@ def test_a_game_of_2017_imports_with_its_own_visual_cpp_and_all_of_it_matches(tm
     assert len(json.loads((root / "build" / "demoquest" / "rebuild.json").read_text())["c"]) == 18
 
 
+X64_BUILD = DEMO / "build" / "14.16-x64"
+
+
+def _x64_demo() -> Path:
+    """Demo Quest built as a 64-bit game (build.py 14.16-x64), once."""
+    if not (X64_BUILD / "demoquest.exe").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py"), "14.16-x64"], check=True, capture_output=True)
+    return X64_BUILD / "demoquest.exe"
+
+
+def _x64_code(path: Path = X64_BUILD / "symbols.map") -> dict[int, str]:
+    """The 64-bit demo's functions: address -> C name, from its map."""
+    return {a: s for s, a in _map(path).items() if not s.startswith(("$", "?")) and 0x140001000 <= a < 0x140002000}
+
+
+@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
+def test_a_64_bit_game_imports_with_2017s_64_bit_compiler_and_all_of_it_matches(tmp_path):
+    """64-bit games: Demo Quest compiled and linked by Visual C++ 2017's 64-bit compiler (build.py 14.16-x64) imports
+    with it, every function found with its exact extent (.pdata has only the two that call others; the rest come from
+    the code between them), named func_<address> with x64's 9-digit addresses, and rebuilds byte for byte. Split
+    where game.c starts, every function matches from the demo's own C, and the program rebuilds from that C."""
+    from decompnet.app.engine import RomNetwork
+
+    exe = _x64_demo()
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    said = []
+    slug = net.import_rom(exe, confirmed=True, log=said.append)
+    assert any(line.startswith("the program: 64-bit (x64), built with Visual C++ 2017") for line in said), said
+    assert "it can match: decompdecomp builds with Visual C++ 14.16-x64" in said
+    proj = net.project_row(slug)
+    root = Path(proj["root"])
+    assert 'MSVC_VERSION = "14.16-x64"' in (root / "tools" / "configure.py").read_text()
+    assert json.loads((root / "config" / "demoquest" / "functions.json").read_text())["machine"] == "x64"
+    assert "x64 has one calling convention" in (root / "include" / "common.h").read_text()
+    sources = [s.read_text() for s in (root / "src" / "auto").glob("*.cpp")]  # (found from .pdata)
+    assert sources and all("listed in its .pdata" in s and "Ghidra" not in s for s in sources), sources[:2]
+    assert "(.pdata)" in (root / "README.md").read_text()
+    code = _x64_code()
+    sizes = _x64_sizes()
+    rows = {r["name"]: (r["id"], r["size"]) for r in net.store.all("SELECT name, id, size FROM functions WHERE "
+                                                                  "project_id=?", proj["id"])}
+    assert sorted(rows) == sorted(f"func_{a:08X}" for a in code) and len(rows) == 18  # (no _ftol: no x86)
+    assert {name: size for name, (_, size) in rows.items()} == {f"func_{a:08X}": sizes[s] for a, s in code.items()}
+    assert net.overview(slug)["rebuild"]["identical"]
+    agent, _ = net.local_agent("pc-agent")
+    sub = _by_address64()
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    header += "extern s32 g_settings[6];\nextern const char *g_level_names[4];\ns32 level_name_length(s32 level);\n"
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
+    first = next(f"func_{a:08X}" for a, s in code.items() if s == "abs_s32")  # game.c's first function
+    assert net.forks.split_file(agent, slug, first, first).startswith("✅")
+    assert {r["name"]: r["id"] for r in net.store.all("SELECT name, id FROM functions WHERE project_id=?",
+                                                      proj["id"])} == {n: i for n, (i, _) in rows.items()}
+    source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
+    for name in sorted(rows):  # (in address order; one that inlines another matches once both are written)
+        net.attempt(agent, name, sub(csource.get(source, code[int(name[5:], 16)])), slug)
+    left = net.store.all("SELECT name FROM functions WHERE project_id=? AND status != 'matched'", proj["id"])
+    assert [code[int(r["name"][5:], 16)] for r in left] == []
+    result = net.forks.check_rom(slug, log=lambda *_: None)
+    assert result["identical"], result
+    assert len(json.loads((root / "build" / "demoquest" / "rebuild.json").read_text())["c"]) == 18
+
+
+def _x64_sizes() -> dict[str, int]:
+    """Each of the 64-bit demo's functions' size, as its compiler made it: its section in the objects."""
+    rebuild = _template_tool("rebuild")
+    out = {}
+    for obj in ("pcmain.obj", "game.obj"):
+        sections, symbols = rebuild.read_coff((X64_BUILD / obj).read_bytes())
+        for k, sec in enumerate(sections):
+            if sec["name"] == ".text$mn":
+                out[next(s[0] for s in symbols if s and s[2] == k + 1 and s[3] & rebuild.FUNCTION)] = sec["size"]
+    return out
+
+
+def _by_address64():
+    """The demo's C, written with the 64-bit project's names (func_140001000, D_140003000)."""
+    rename = {s: (f"func_{a:08X}" if a < 0x140002000 else f"D_{a:08X}")
+              for s, a in _map(X64_BUILD / "symbols.map").items()
+              if not s.startswith(("$", "?", "_", "__")) and a >= 0x140001000}
+    pattern = re.compile(r"\b(" + "|".join(sorted(rename, key=len, reverse=True)) + r")\b")
+    return lambda text: pattern.sub(lambda m: rename[m.group(1)], text)
+
+
+@pytest.mark.skipif(not _wine_ready() or not ghidra.available(),
+                    reason="needs Visual C++ 2017 (msvc2015), wine off Windows, and Ghidra")
+def test_ghidras_extents_agree_with_pdata_on_the_64_bit_demo():
+    """A 64-bit program's extents come from its .pdata, and Ghidra only names functions; this keeps an eye on the
+    two: every function Ghidra finds starts where the analysis has one, and ends where its code does (a function's
+    jump table, which .pdata counts in, is data to Ghidra), and Ghidra's functions are a subset of the analysis's:
+    on the demo, Ghidra finds only the functions that something calls (7 of 18); the rest are found between
+    .pdata's."""
+    exe = _x64_demo()
+    pe = scratch_pe.read_pe(exe.read_bytes())
+    rows = ghidra.functions(exe)
+    md = scratch_pe.reader(pe)
+    found = {f.addr: f for f in scratch_pe.analyse(pe, rows)}
+    code_end = {a: scratch_pe._tables(md, pe, a, a + f.size, a + f.size)[0] for a, f in found.items()}
+    differ = [(hex(r["entry"]), hex(r["end"]), hex(code_end.get(r["entry"], 0))) for r in rows
+              if code_end.get(r["entry"]) != r["end"]]
+    assert not differ, differ
+    assert len(rows) < len(found) == 18
+    assert {f.addr for f in found.values()} == set(_x64_code())
+
+
 def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
     """A Windows program's headers, made by hand: the DOS header and `stub` bytes of DOS stub, a Rich header of
     (product id, build, count) entries XORed with its key, the PE header with the linker's version, the sections."""
@@ -1089,6 +1198,33 @@ def test_a_game_builds_with_its_own_visual_cpp_or_the_nearest_the_packs_have_and
     assert all(not v.endswith("-x64") for v in scratch_pe.RICH_BUILDS.values())
 
 
+def test_a_64_bit_game_builds_with_the_64_bit_compiler_the_packs_have_and_says_so():
+    """An x64 program builds with an x64 compiler: 2017's 64-bit one, the packs' only one, its very build for a 2017
+    game, the nearest for 2015 (without a word: the same toolset's previous version), 2019 and newer (newer than any
+    64-bit one decompdecomp has), and 2010 or 2012, whose 32-bit compilers the packs have but not their 64-bit ones."""
+    def game(product, build, linker=0x102):
+        return scratch_pe.describe(_windows_program(machine=0x8664, rich=[(product, build, 300), (linker, build, 1)]))
+
+    vs2017 = game(0x105, 27027)
+    assert (vs2017.machine, vs2017.pack_version, vs2017.exact, vs2017.blockers(), vs2017.cannot_match()) == (
+        "64-bit (x64)", "14.16-x64", True, [], [])
+    vs2015 = game(0x105, 24210)
+    assert (vs2015.pack_version, vs2015.exact, vs2015.cannot_match()) == ("14.16-x64", False, [])
+    vs2019 = game(0x105, 30137)
+    assert vs2019.pack_version == "14.16-x64"
+    assert "newer than any 64-bit compiler decompdecomp" in vs2019.cannot_match()[0]
+    assert "Visual C++ 2017 (14.1, build 27027), 64-bit" in vs2019.cannot_match()[0]
+    vs2010 = game(0xAB, 40219, linker=0x9D)
+    assert vs2010.pack_version == "14.16-x64" and not vs2010.exact
+    assert "no 64-bit Visual C++ 2010 yet" in vs2010.cannot_match()[0]
+    unknown = scratch_pe.describe(_windows_program(machine=0x8664, linker=(1, 0)))  # (no Rich header, no MS linker)
+    assert unknown.version is None and unknown.pack_version == "14.16-x64"
+    # the files the Rich header counts build with the 64-bit compiler too (try_compiler's list of the program's)
+    assert [row[0] for row in scratch_pe.program_compilers(_windows_program(
+        machine=0x8664, rich=[(0x105, 27027, 300), (0x105, 24210, 20), (0x102, 27027, 1)]))] == [
+        "MSVC/14.16-x64", "MSVC/14.16-x64"]
+
+
 def test_the_import_says_when_it_builds_with_another_visual_cpp_than_the_games(tmp_path):
     game = tmp_path / "game.exe"
     game.write_bytes(_windows_program(rich=[(0x105, 27027, 300), (0x102, 27027, 1)]))
@@ -1124,10 +1260,9 @@ def test_every_visual_cpp_the_import_picks_is_in_a_compiler_pack():
     lists, so a game's build always finds its compiler where the project looks."""
     from decompnet.consoles.pc import MSVC_VERSIONS
 
-    picked = scratch_pe.RICH_BUILDS.values()
-    # every one but 2005 RTM, whose Rich build is SP1's, and 2017's 64-bit one (64-bit games aren't imported yet):
-    # they're chosen by file (try_compiler, Settings)
-    by_file = ["8.0", "14.16-x64"]
+    picked = [*scratch_pe.RICH_BUILDS.values(), *scratch_pe.RICH_BUILDS_X64.values()]  # (32-bit games', 64-bit's)
+    # every one but 2005 RTM, whose Rich build is SP1's: it's chosen by file (try_compiler, Settings)
+    by_file = ["8.0"]
     assert sorted([*picked, *by_file]) == sorted(v.removeprefix("MSVC/") for v in MSVC_VERSIONS)
     assert {scratch_pe.compiler_pack(v) for v in [*picked, *by_file]} == set(scratch_pe.MSVC_PACKS)
     for version in by_file:  # each in its own folder of its pack
@@ -1347,21 +1482,25 @@ def test_whole_program_optimisation_is_named_and_a_mostly_ltcg_game_refused():
     assert "10 of its 310 compiled files with whole-program optimisation" in some.summary()
 
 
-def test_a_64_bit_program_is_the_pcs_and_told_why_it_cant_start(tmp_path):
-    """The drop refused every 64-bit .exe with "decompdecomp starts PC games from their 32-bit x86 .exe"."""
+def test_a_program_for_another_processor_is_the_pcs_and_told_why_it_cant_start(tmp_path):
+    """The drop refused every 64-bit .exe with "decompdecomp starts PC games from their 32-bit x86 .exe". x64 games
+    start now; a program for another processor (64-bit ARM) is told why it can't."""
     from decompnet.forks.project import ForkError
 
     game = tmp_path / "game.exe"
-    game.write_bytes(_windows_program(machine=0x8664, rich=[(0xCF, 60610, 1204), (0xCC, 50727, 1)]))
+    game.write_bytes(_windows_program(machine=0xAA64, rich=[(0x105, 27027, 300), (0x102, 27027, 1)]))
     assert consoles.identify(game).id == "pc"
     from decompnet.app.engine import RomNetwork
 
     net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
     with pytest.raises(ForkError) as e:  # the import, before it installs or runs anything
         net.import_rom(game, confirmed=True, log=lambda *_: None)
-    assert "64-bit (x64) program" in str(e.value) and "Newer Windows games" in str(e.value)
+    assert "64-bit ARM program" in str(e.value) and "32-bit x86 and 64-bit x64" in str(e.value)
     assert not list((tmp_path / "work").glob("game*"))
-    assert "Visual C++ 2012 Update 3 (11.0, build 60610)" in scratch_pe.describe(game.read_bytes()).summary()
+    game.write_bytes(_windows_program(machine=0x8664, rich=[(0xCF, 60610, 1204), (0xCC, 50727, 1)]))
+    x64 = scratch_pe.describe(game.read_bytes())
+    assert "64-bit (x64), built with Visual C++ 2012 Update 3 (11.0, build 60610)" in x64.summary()
+    assert x64.blockers() == [] and x64.pack_version == "14.16-x64"
     game.write_bytes(_windows_program(rich=[(0x0B, 8966, 148)]))
     info = scratch_pe.game_info(game)
     assert info["compiler"] == "6.0" and info["cannot_match"] == []
@@ -1583,6 +1722,7 @@ def test_a_projects_flags_follow_its_compiler_and_how_it_takes_its_c_runtime():
     assert settings("6.0", own) == ("6.0", ["/nologo", "/c", "/O2", "/W3", "/GX"])
     # a copy of the user's own (kits/visualcpp.py) is named by its cl.exe's version: 19.x is 2015 and newer, 15.0 is
     # 2008 (whose msvcr90 isn't yet), as the Rich header names them (rich_version)
+    assert scratch_pe.builds_md(dll, "own-19.29.30137-x64")
     assert scratch_pe.builds_md(dll, "own-19.29.30137") and not scratch_pe.builds_md(dll, "own-15.0.30411")
     text = scratch_pe.configure_settings(template, "own-19.29.30137", dll, log=lambda _: None, ehsc=True)
     assert re.search(r'^CL_FLAGS = .*"/EHsc", "/MD"\]', text, re.M), text
@@ -1876,7 +2016,7 @@ CALLS_THUNKS = (bytes.fromhex("e80b000000c3").ljust(0x10, b"\x90")  # call 0x401
 def test_import_thunks_are_functions_of_their_own_named_after_their_imports(monkeypatch):
     """Ghidra marks the linker's `jmp [__imp__Name]` thunks as thunks, which analyse used to leave out: their bytes
     went to the function before them, and calls to the second one were calls into its middle (_D_00401016)."""
-    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe: dict(SLOTS))
     pe = scratch_pe.read_pe(_tiny_exe(CALLS_THUNKS))
     assert scratch_pe.import_thunk(pe, 0x401010) == "RtlUnwind" and scratch_pe.import_thunk(pe, 0x401000) is None
     rows = [_row(0x401000, 0x401006), {**_row(0x401010, 0x401016), "name": "RtlUnwind", "thunk": True,
@@ -1895,7 +2035,7 @@ def test_a_project_made_before_gets_its_import_thunks_cut_out_named_and_set_asid
     """The thunks a project made before took for one function (found in a gap) become functions of their own, the
     caller of the second calls it by name, functions.json sets them aside and names them as their imports (so C
     declaring `__stdcall RtlUnwind` pairs with them), and the code still rebuilds byte for byte."""
-    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe: dict(SLOTS))
     rows = [_row(0x401000, 0x401006), _row(0x401020, 0x401026)]
     root = _project(tmp_path, CALLS_THUNKS, rows)
     config = root / "config" / "game" / "functions.json"
@@ -2669,7 +2809,15 @@ def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tm
     monkeypatch.setattr(ghidra, "functions", lambda program, timeout=3600: rows)
     with pytest.raises(NetworkError, match="isn't this project's program"):
         net.forks.reimport("p", ROOT / "README.md")
+    # a Ghidra that isn't installed, or not usable (a Mac's without its decompiler: toolchains._unbuilt), is installed
+    # first, as for an import: a reimport analysed with it, and named every function with no calling convention
+    installed, ensure, ensured = toolchains.installed, toolchains.ensure, []
+    monkeypatch.setattr(ghidra, "available", lambda: False)
+    monkeypatch.setattr(ghidra, "java_home", lambda: None)
+    monkeypatch.setattr(toolchains, "installed", lambda tid, linux=None: None if tid == "ghidra" else installed(tid, linux))
+    monkeypatch.setattr(toolchains, "ensure", lambda tid, log=print: ensured.append(tid) if tid == "ghidra" else ensure(tid, log))
     said = net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)
+    assert ensured == ["ghidra"]
     assert said["said"] == "4 functions (it had 3), 2 of them new or with another extent; its 1 matched functions kept"
     units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
     assert {u: [(f["name"], f["size"]) for f in fns] for u, fns in units.items()} == {
@@ -2805,11 +2953,11 @@ def test_a_forwarded_export_is_another_dlls_code():
 
 def test_a_folder_imports_its_biggest_program_decompdecomp_can_start(tmp_path):
     """Pointing at a game's folder: its .exe is the biggest program decompdecomp can start (a launcher or an
-    uninstaller is smaller; a 64-bit tool can't start), and the GUI knows a PC game's DLLs come with its path, not a
-    dropped file."""
+    uninstaller is smaller; a tool for another processor, 64-bit ARM, can't start), and the GUI knows a PC game's DLLs
+    come with its path, not a dropped file."""
     top = _game_folder(tmp_path)
     (top / "setup.exe").write_bytes(_tiny_program(bytes.fromhex("c3"), 0x400000, dll=False)[:0x400])
-    (top / "tool64.exe").write_bytes(_windows_program(machine=0x8664) + bytes(0x10000))
+    (top / "tool_arm64.exe").write_bytes(_windows_program(machine=0xAA64) + bytes(0x10000))
     assert consoles.game_in(top) == top / "game.exe"
     with pytest.raises(Exception, match="holds no game file"):
         consoles.game_in(top / "data")
@@ -3033,7 +3181,7 @@ def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp
     compilers = [c for copy in (a, b) for c in kits.get("visualcpp").compilers(copy)]
     config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/one.cpp": compilers[0].version,
                                                                         "src/auto/two.cpp": compilers[1].version}))
-    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(pack),
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST",
                     *scratch_pe.own_compiler_args([replace(c, runner="none") for c in compilers])],
                    check=True, capture_output=True, timeout=30, cwd=root)
     ninja = (root / "build.ninja").read_text(encoding="utf-8")
@@ -3073,3 +3221,348 @@ def test_a_game_without_a_rich_header_names_old_visual_cpp_by_its_linker_and_tak
     path.write_bytes(game)
     why = scratch_pe.game_info(path)["compiler_why"]
     assert "your newest copy of it" in why and "by its linker's version" in why
+
+
+# ---------------------------------------------------------------------------------------------------- 64-bit programs
+X64_BASE = 0x140000000
+X64_SWITCH = bytes.fromhex(  # the 64-bit demo's entity_points, at 0x140001000: a switch read through __ImageBase
+    "83f906773d4863c1488d15f1efffff8b8c82481000004803caffe133c0c3b80a000000c3b819000000c3b832000000c3b8f4010000c3"
+    "b801000000c3b84b000000c3b8ffffffffc31b1000001e100000241000002a10000030100000361000003c100000")
+
+
+def _tiny_exe64(code: bytes, data: bytes = b"", directories: dict[int, tuple[int, int]] | None = None) -> bytes:
+    """A 64-bit Windows program (PE32+) whose .text (at 0x140001000) is `code` and .rdata (at 0x140002000) `data`,
+    with these data directories (number -> (address relative to the image base, size))."""
+    pe_at, opt_bytes, raw = 0x40, 0xF0, 0x200
+    data_at = raw + -(-len(code) // raw) * raw
+    head = bytearray(raw)
+    head[:2] = b"MZ"
+    struct.pack_into("<I", head, 0x3C, pe_at)
+    head[pe_at:pe_at + 4] = b"PE\0\0"
+    struct.pack_into("<HHIIIHH", head, pe_at + 4, 0x8664, 2, 0, 0, 0, opt_bytes, 0x22)
+    opt = pe_at + 24
+    struct.pack_into("<H", head, opt, 0x20B)
+    struct.pack_into("<I", head, opt + 16, 0x1000)  # entry
+    struct.pack_into("<Q", head, opt + 24, X64_BASE)
+    struct.pack_into("<I", head, opt + 56, 0x3000)  # image size
+    struct.pack_into("<I", head, opt + 108, 16)  # data directories
+    for number, (rva, size) in (directories or {}).items():
+        struct.pack_into("<II", head, opt + 112 + 8 * number, rva, size)
+    struct.pack_into("<8sIIIIIIHHI", head, opt + opt_bytes, b".text", len(code), 0x1000, data_at - raw, raw, 0, 0, 0,
+                     0, 0x60000020)
+    struct.pack_into("<8sIIIIIIHHI", head, opt + opt_bytes + 40, b".rdata", len(data), 0x2000,
+                     -(-len(data) // raw) * raw, data_at, 0, 0, 0, 0, 0x40000040)
+    return bytes(head) + code.ljust(data_at - raw, b"\0") + data.ljust(-(-len(data) // raw) * raw, b"\0")
+
+
+def _x64_program() -> bytes:
+    """A small 64-bit program in the shapes x64 games have, its code at 0x140001000:
+    - 0x1000 a switch (X64_SWITCH), a leaf function: no .pdata entry
+    - 0x1070 a function in two parts, the second chained to the first (.pdata has an entry for each), with C++
+      exception data (a FuncInfo) naming two funclets; it calls 0x1000 and stores 5 at 0x140002000
+      (`mov dword ptr [rip + x], 5`: REL32_4)
+    - 0x1090 and 0x1097 two leaf functions, one right after the other (nothing calls the second)
+    - 0x10A0 an import thunk for KERNEL32's Sleep
+    - 0x10B0 an unwind funclet (`lea rcx, [rdx+0x48]; jmp <a destructor>`), a leaf: no entry
+    - 0x10C0 a catch funclet, which has an entry; it returns where the function goes on (0x1083)"""
+    def rel(at: int, size: int, target: int) -> bytes:  # (what follows an instruction's opcode bytes at `at`)
+        return struct.pack("<i", target - (at + size))
+
+    t = X64_BASE
+    owner = bytes.fromhex("4883ec28e8") + rel(t + 0x1074, 5, t + 0x1000)
+    owner += bytes.fromhex("c705") + rel(t + 0x1079, 6, t + 0x2000 - 4) + struct.pack("<I", 5)
+    owner += bytes.fromhex("4883c428c3")
+    leaves = bytes.fromhex("8b05") + rel(t + 0x1090, 6, t + 0x2000) + b"\xc3" + bytes.fromhex("33c0c3")
+    thunk = bytes.fromhex("ff25") + rel(t + 0x10A0, 6, t + 0x2120)
+    unwind = bytes.fromhex("488d8a48000000e9") + rel(t + 0x10B7, 5, t + 0x1000)
+    catch = bytes.fromhex("4889542410554883ec20488bea488d05") + rel(t + 0x10CD, 7, t + 0x1083)
+    catch += bytes.fromhex("4883c4205dc3")
+    code = bytearray(b"\xcc" * 0xDA)
+    for at, part in ((0, X64_SWITCH), (0x70, owner), (0x90, leaves), (0xA0, thunk), (0xB0, unwind), (0xC0, catch)):
+        code[at:at + len(part)] = part
+    data = bytearray(0x200)
+    put = lambda at, form, *values: struct.pack_into(form, data, at - 0x2000, *values)  # noqa: E731
+    put(0x2010, "<BBBBBBxxII", 0x09, 4, 1, 0, 4, 0x42, 0x10A0, 0x2040)  # its unwind info: a handler, the FuncInfo
+    put(0x2020, "<BBBBIII", 0x21, 0, 0, 0, 0x1070, 0x1079, 0x2010)  # the second part's: chained to the first
+    put(0x2030, "<BBBB", 0x01, 0, 0, 0)  # the catch funclet's
+    put(0x2040, "<IiIIIIIiII", 0x19930522, 1, 0x2070, 1, 0x2080, 0, 0, 0x40, 0, 1)  # FuncInfo
+    put(0x2070, "<iI", -1, 0x10B0)  # its unwind map: the unwind funclet
+    put(0x2080, "<iiiiI", 0, 0, 1, 1, 0x20A0)  # a try block with one catch
+    put(0x20A0, "<IIiIi", 0x40, 0, 0, 0x10C0, 0x38)  # the catch: its funclet
+    put(0x20C0, "<IIIII", 0x2100, 0, 0, 0x2140, 0x2120)  # KERNEL32.dll's imports: Sleep, and its ordinal 7
+    for table in (0x2100, 0x2120):
+        put(table, "<QQ", 0x2150, (1 << 63) | 7)
+    data[0x140:0x14D] = b"KERNEL32.dll\0"
+    data[0x152:0x158] = b"Sleep\0"
+    put(0x2180, "<IIIIIIIII", 0x1070, 0x1079, 0x2010, 0x1079, 0x1088, 0x2020, 0x10C0, 0x10DA, 0x2030)  # .pdata
+    return _tiny_exe64(bytes(code), bytes(data), {scratch_pe.IMPORTS: (0x20C0, 40),
+                                                  scratch_pe.EXCEPTIONS: (0x2180, 36)})
+
+
+def test_a_64_bit_programs_headers_and_imports_are_read():
+    """PE32+: an 8-byte image base at 24 of the optional header, the data directories 16 bytes later than PE32's, and
+    import tables of 8-byte entries (an ordinal's flag their top bit). The project's rebuild.py reads them alike."""
+    pe = scratch_pe.read_pe(_x64_program())
+    assert (pe.x64, pe.image_base, pe.entry) == (True, X64_BASE, X64_BASE + 0x1000)
+    assert [(s.name, s.va, s.code) for s in pe.sections] == [(".text", X64_BASE + 0x1000, True),
+                                                             (".rdata", X64_BASE + 0x2000, False)]
+    assert pe.imports == {X64_BASE + 0x2120: "Sleep", X64_BASE + 0x2128: "KERNEL32_7"} and pe.dlls == ["KERNEL32.dll"]
+    assert scratch_pe.describe(_x64_program()).machine == "64-bit (x64)"
+    program = _template_tool("rebuild").Program({"units": {}}, _x64_program())
+    assert (program.x64, program.base) == (True, X64_BASE)
+    assert program.address("__imp_Sleep") == X64_BASE + 0x2120 and program.address("__ImageBase") == X64_BASE
+
+
+def test_a_64_bit_programs_functions_are_its_pdata_and_the_code_between():
+    """.pdata gives each function's extent (a function's second part, chained to its first, joined to it); the leaf
+    functions it has no entry for are read between them, one after another; the funclets its C++ exception data
+    names are set aside; an import thunk is named after its import. x64's relocations: rip-relative ones (REL32, and
+    REL32_4 with an immediate after), __ImageBase and the jump table's addresses relative to it (ADDR32NB)."""
+    pe = scratch_pe.read_pe(_x64_program())
+    assert scratch_pe.pdata_extents(pe) == [(X64_BASE + 0x1070, X64_BASE + 0x1088),
+                                            (X64_BASE + 0x10C0, X64_BASE + 0x10DA)]
+    functions = scratch_pe.analyse(pe, [])
+    assert [(f.addr - X64_BASE, f.size, f.name) for f in functions] == [
+        (0x1000, 0x64, "func_140001000"), (0x1070, 0x18, "func_140001070"), (0x1090, 7, "func_140001090"),
+        (0x1097, 3, "func_140001097"), (0x10A0, 6, "Sleep"), (0x10B0, 0xC, "func_1400010B0"),
+        (0x10C0, 0x1A, "func_1400010C0")]
+    by = {f.addr - X64_BASE: f.relocs for f in functions}
+    assert by[0x1070] == [(5, scratch_pe.REL32_64, "func_140001000", 0),
+                          (0xB, scratch_pe.REL32_64 + 4, "D_140002000", 0)]
+    assert by[0x1090] == [(2, scratch_pe.REL32_64, "D_140002000", 0)]
+    assert by[0x10A0] == [(2, scratch_pe.REL32_64, "__imp_Sleep", 0)]
+    assert by[0x10C0] == [(0x10, scratch_pe.REL32_64, "D_140001083", 0)]  # (the middle of the function: by address)
+    entries = [0x1B, 0x1E, 0x24, 0x2A, 0x30, 0x36, 0x3C]  # the switch's cases
+    assert by[0x1000] == [(0xB, scratch_pe.REL32_64, "__ImageBase", 0), (0x12, scratch_pe.ADDR32NB, None, 0x48),
+                          *((0x48 + 4 * k, scratch_pe.ADDR32NB, None, case) for k, case in enumerate(entries))]
+    assert scratch_pe.funclets_x64(pe) == {X64_BASE + 0x10B0, X64_BASE + 0x10C0}
+    assert scratch_pe.exception_stubs(pe, [(f.addr, f.size) for f in functions]) == {X64_BASE + 0x10B0,
+                                                                                    X64_BASE + 0x10C0}
+    # (Ghidra's pieces: there are none to join, .pdata says where each function ends)
+    assert scratch_pe.merge_pieces(pe, functions, log=lambda *_: None) == (functions, {})
+
+
+@pytest.mark.parametrize("shape", ["rvas", "offsets", "a constant"])
+def test_data_past_a_64_bit_functions_pdata_end_is_not_a_function(shape):
+    """A function's .pdata entry can end before data its code reads (code a compiler other than Visual C++ made, or
+    hand-written assembly): a table read through the address a lea took, its entries RVAs or offsets from the table
+    (a switch), or a constant read through rip. The data isn't a function, and the leaf after it still is one; the
+    callback whose address the function takes (lea rcx, [rip + it]) is a function too."""
+    def rel(at: int, size: int, target: int) -> bytes:
+        return struct.pack("<i", target - (at + size))
+
+    t = X64_BASE
+    code = bytes.fromhex("4883ec28488d0d") + rel(t + 0x1004, 7, t + 0x1040)  # sub rsp, 0x28; lea rcx, [callback]
+    cases = (0x1000, 0x1004, 0x100B)  # (where its entries point: in the function)
+    if shape == "rvas":  # lea rax, [rip + table]; mov eax, [rax + rdx*4]; add rsp, 0x28; ret
+        end = 0x101A
+        code += bytes.fromhex("488d05") + rel(t + 0x100B, 7, t + end) + bytes.fromhex("8b04904883c428c3")
+        data = struct.pack("<3I", *cases)
+    elif shape == "offsets":  # lea rcx, [rip + table]; movsxd rax, [rcx + rdx*4]; add rax, rcx; add rsp, 0x28; jmp rax
+        end = 0x101F
+        code += bytes.fromhex("488d0d") + rel(t + 0x100B, 7, t + end) + bytes.fromhex("486304914801c84883c428ffe0")
+        data = struct.pack("<3i", *(c - end for c in cases))
+    else:  # mov eax, [rip + constant]; add rsp, 0x28; ret
+        end = 0x1016
+        code += bytes.fromhex("8b05") + rel(t + 0x100B, 6, t + end) + bytes.fromhex("4883c428c3")
+        data = struct.pack("<I", 0x12345678)
+    assert len(code) == end - 0x1000
+    code = (code + data).ljust(0x30, b"\xcc") + bytes.fromhex("33c0c3")  # 0x1030 a leaf nothing calls
+    code = code.ljust(0x40, b"\xcc") + bytes.fromhex("b801000000c3")  # 0x1040 the callback
+    unwind = bytes.fromhex("0104010004420000")  # (sub rsp, 0x28)
+    pe = scratch_pe.read_pe(_tiny_exe64(code, unwind + struct.pack("<III", 0x1000, end, 0x2000), {3: (0x2008, 12)}))
+    functions = scratch_pe.analyse(pe, [])
+    assert [(f.addr - t, f.size) for f in functions] == [(0x1000, end - 0x1000), (0x1030, 3), (0x1040, 6)]
+
+
+def test_a_64_bit_programs_functions_are_cut_out_as_amd64_objects_and_put_back(tmp_path):
+    """tools/delink.py writes a 64-bit game's functions as AMD64 COFF objects (x64's relocation types, an 8-byte
+    addend for a 64-bit address), and tools/rebuild.py puts each back from them byte for byte: rip-relative
+    addresses from where their instruction ends, ADDR32NB ones relative to the image base."""
+    exe = _x64_program()
+    pe = scratch_pe.read_pe(exe)
+    functions = [scratch_pe._entry(pe, f) for f in scratch_pe.analyse(pe, [])]
+    delink, rebuild = _template_tool("delink"), _template_tool("rebuild")
+    obj = delink.coff(functions, exe, "x64")
+    assert struct.unpack_from("<H", obj)[0] == 0x8664
+    info = {"machine": "x64", "units": {"text": functions}}
+    program = rebuild.Program(info, exe)
+    placed = rebuild.delinked(program, obj)
+    assert [(name, at - X64_BASE) for name, at, _ in placed] == [(f["name"], f["addr"] - X64_BASE) for f in functions]
+    assert all(code == pe.read(at, len(code)) for _, at, code in placed)
+    # a 64-bit address in code (`mov rax, imm64`) keeps its 8 bytes
+    code = bytearray(exe)
+    mov = bytes.fromhex("48b8") + struct.pack("<Q", X64_BASE + 0x2000) + b"\xc3"
+    offset = pe.offset(X64_BASE + 0x1090)
+    code[offset:offset + len(mov)] = mov
+    pe = scratch_pe.read_pe(bytes(code))
+    leaf = next(f for f in scratch_pe.analyse(pe, []) if f.addr == X64_BASE + 0x1090)
+    assert leaf.relocs == [(2, scratch_pe.ADDR64, "D_140002000", 0)]
+    one = [scratch_pe._entry(pe, leaf)]
+    placed = rebuild.delinked(rebuild.Program({"machine": "x64", "units": {"t": one}}, bytes(code)),
+                              delink.coff(one, bytes(code), "x64"))
+    assert placed[0][2] == pe.read(leaf.addr, leaf.size)
+
+
+def test_a_64_bit_dll_is_moved_by_its_64_bit_base_relocations():
+    """A 64-bit DLL another program has the address of is moved as Windows moves it: its base relocations are DIR64,
+    8-byte addresses, and its header's image base is 8 bytes."""
+    data = bytearray(0x200)
+    struct.pack_into("<Q", data, 0, X64_BASE + 0x2100)  # a pointer
+    struct.pack_into("<IIHH", data, 0x80, 0x2000, 12, 0xA000, 0)  # its base relocation: DIR64 at 0x2000 (and padding)
+    exe = _tiny_exe64(b"\xc3", bytes(data), {scratch_pe.BASE_RELOCATIONS: (0x2080, 12)})
+    moved = scratch_pe.rebase(exe, X64_BASE + 0x10000)
+    pe = scratch_pe.read_pe(moved)
+    assert pe.image_base == X64_BASE + 0x10000
+    assert struct.unpack("<Q", pe.read(pe.image_base + 0x2000, 8))[0] == X64_BASE + 0x10000 + 0x2100
+
+
+def test_a_64_bit_programs_classes_come_from_its_rtti_and_code():
+    """x64's RTTI: the Complete Object Locator's signature is 1 and its fields are RVAs (its own RVA last), a type
+    descriptor's name is 16 bytes in, and the vtable's slots and the word before it are 8-byte pointers. A
+    constructor takes the vtable's address with a lea and stores it (`lea rax, [rip + vtable]; mov [rcx], rax`), and
+    the fields come from what its functions do through rcx, the first argument (`this`)."""
+    from decompnet import classes, structs
+    from decompnet.arch import x86_fields
+    from decompnet.consoles.pc import rtti
+
+    t = X64_BASE
+    vtable = t + 0x2090
+    ctor = bytes.fromhex("488d05") + struct.pack("<i", vtable - (t + 0x1007))
+    ctor += bytes.fromhex("488901c7410805000000488bc1c3")
+    method = bytes.fromhex("8b4108c3")  # mov eax, [rcx+8]; ret
+    code = (ctor.ljust(0x20, b"\xcc") + method).ljust(0x30, b"\xcc")
+    data = bytearray(0x100)
+    put = lambda at, form, *values: struct.pack_into(form, data, at - 0x2000, *values)  # noqa: E731
+    put(0x2000, "<QQ", t + 0x20F0, 0)  # the type descriptor: type_info's vtable, a spare word, its name
+    data[0x10:0x1B] = b".?AVTown@@\0"
+    put(0x2028, "<IIII", 0, 0, 1, 0x2038)  # the hierarchy: one class, its descriptors' RVAs
+    put(0x2038, "<I", 0x2040)
+    put(0x2040, "<IIiiiII", 0x2000, 0, 0, -1, 0, 0, 0x2028)
+    put(0x2070, "<IIIIII", 1, 0, 0, 0x2000, 0x2028, 0x2070)  # the locator: signature 1, its own RVA last
+    put(0x2088, "<QQ", t + 0x2070, t + 0x1020)  # the word before the vtable, its one slot
+    pe = scratch_pe.read_pe(_tiny_exe64(code, bytes(data)))
+    functions = scratch_pe.analyse(pe, [])
+    assert [(f.addr - t, f.relocs) for f in functions] == [(0x1000, [(3, scratch_pe.REL32_64, "D_140002090", 0)]),
+                                                           (0x1020, [])]
+    found = rtti.recover(pe, {f.addr: f.name for f in functions}, {f.addr: f.relocs for f in functions})
+    town = found.by_vtable[vtable]
+    assert (found.names[vtable], town.slots, town.ctors, town.width) == ("Town", [t + 0x1020], {t + 0x1000}, 8)
+    entries = [{"addr": f.addr, "size": f.size, "name": f.name, "relocs": f.relocs} for f in functions]
+    rtti.read_code(scratch_pe.Programs([pe]), entries, found)
+    assert {off: f.size for off, f in town.fields.items()} == {8: 4} and town.size_seen() == 0xC
+    assert "+0x00: vtable pointer" in classes.describe(town, found, lambda a: found.labels.get(a, hex(a)))
+    # the arguments after the first: rdx, r8, r9, and a pointer loaded through one is 8 bytes
+    facts = x86_fields.read_facts(t, bytes.fromhex("488b4210 8b4004 c3".replace(" ", "")), [], wide=True)
+    assert (((structs.ARGUMENT, 1), 0x10, 8, "") in facts.accesses and
+            ((structs.FIELD, (structs.ARGUMENT, 1), 0x10), 4, 4, "") in facts.accesses)
+
+
+@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
+def test_the_features_agents_use_work_on_a_64_bit_game(tmp_path):
+    """What agents do on a project, on the 64-bit demo, through the engine's own calls: real names for a function
+    and a global (the function still matches, and read_data reads the global by its new name, its pointers 8
+    bytes), polishing, search_flags, the struct behind the first argument (rcx), the classes listing, twins'
+    fingerprints of the AMD64 objects, a reimport that keeps the matches, and a function's end reported by agents."""
+    from decompnet.app import twins
+    from decompnet.app.engine import RomNetwork
+
+    exe = _x64_demo()
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(exe, confirmed=True, log=lambda *_: None)
+    root = Path(net.project_row(slug)["root"])
+    agent, _ = net.local_agent("pc-agent")
+    sub = _by_address64()
+    code = {s: a for a, s in _x64_code().items()}
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    header += "extern s32 g_settings[6];\nextern const char *g_level_names[4];\ns32 level_name_length(s32 level);\n"
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
+    source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
+    getter, clamp = f"func_{code['settings_get']:08X}", f"func_{code['clamp_s32']:08X}"
+    for name, c_name in ((getter, "settings_get"), (clamp, "clamp_s32")):
+        res = net.attempt(agent, name, sub(csource.get(source, c_name)), slug)
+        assert res["matched"], res["text"]
+    settings = f"D_{_map(X64_BUILD / 'symbols.map')['g_settings']:08X}"
+    assert net.rename_symbol(agent, slug, settings, "g_settings").startswith("✅")
+    assert net.rename_symbol(agent, slug, getter, "settings_get").startswith("✅")
+    assert net._function("settings_get", slug)["status"] == "matched"
+    assert net.forks.read_data(agent, slug, "g_settings", 24).startswith(f"g_settings = {settings} (")
+    names = net.forks.read_data(agent, slug, f"D_{_map(X64_BUILD / 'symbols.map')['g_level_names']:08X}", 32)
+    assert "pointers in it: +0x0 -> 0x1400020" in names and "+0x8 -> 0x1400020" in names  # (8-byte pointers)
+    polished = sub(csource.get(source, "clamp_s32")).strip() + "\n"
+    assert "readable now" in net.readability.submit(agent, slug, clamp, "// Keeps v within lo and hi.\n" + polished)
+    assert "// Keeps v within lo and hi." in "".join(p.read_text() for p in (root / "src").rglob("*.cpp"))
+    flags = net.forks.search_flags(agent, slug, f"func_{code['entity_points']:08X}",
+                                   source=sub(csource.get(source, "entity_points")))
+    assert "nothing to change" in flags and "other names than the original" not in flags, flags  # (labels: local)
+    physics = f"func_{code['entity_update_physics']:08X}"
+    assert "s32 unk_04" in net.guess_struct(slug, physics, "arg0")  # (rcx: arg0 and `this` both)
+    assert net.forks.get_class(slug).startswith("No C++ classes found")  # (the demo is C: the program is read)
+    prints = twins.object_prints((root / "build" / "demoquest" / "target" / "text_140001000.obj").read_bytes())
+    assert len(prints) == 18 and prints[clamp].size == _x64_sizes()["clamp_s32"]
+    said = net.forks.reimport(slug, root / "orig" / "demoquest.exe", log=lambda *_: None)
+    assert said["said"].startswith("the new analysis changed nothing"), said
+    assert net._function("settings_get", slug)["status"] == "matched"
+    # start's switch table (entity_points inlined), after its code, reported as data by three agents of two models
+    start = f"func_{code['start']:08X}"
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
+        said = net.request_boundary(net.local_agent(who)[0], slug, start, "+0x178", "its jump table: data, no code")
+    assert said.endswith("set aside as not code. The game still builds byte for byte."), said
+
+
+def test_own_compiler_selection_never_crosses_targets(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.29.30137.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    assert scratch_pe.own_copy("14.2", 30137) is None
+    assert scratch_pe.own_copy("14.2", 30137, "x64").version == "own-19.29.30137-x64"
+    assert scratch_pe.own_copy("14.2", 30137, "arm64") is None
+    make_vc(tmp_path, "19.29.30136.0", "VC/bin/Hostx64/x86")
+    assert scratch_pe.own_copy("14.2", 30137).version == "own-19.29.30136"
+    assert scratch_pe.own_copy("14.2", None, "x64").version == "own-19.29.30137-x64"
+
+
+def test_x86_pack_does_not_hide_a_matching_own_x64_copy(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "15.0.30729.1", "VC/bin/amd64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    assert scratch_pe.own_copy("9.0", 30729) is None  # exact downloadable x86 build
+    assert scratch_pe.own_copy("9.0", 30729, "x64").version == "own-15.0.30729-x64"
+
+
+def test_x64_import_selects_registered_x64_copy(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.44.35229.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    data = _windows_program(machine=0x8664, rich=[(0x105, 35229, 300), (0x102, 35229, 1)])
+    built = scratch_pe.describe(data)
+    assert built.pack_version == "own-19.44.35229-x64"
+    assert built.blockers() == [] and built.cannot_match() == []
+    assert scratch_pe.program_compilers(data)[0][0] == "MSVC/own-19.44.35229-x64"
+
+
+def test_own_wine_compilers_need_neither_a_downloaded_pack_nor_wibo(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.44.35229.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    monkeypatch.setattr(toolchains, "ensure", lambda *a, **k: pytest.fail("an own Wine compiler needs no download"))
+    args = scratch_pe.tool_args(("visualcpp",))
+    assert "--msvc" not in args and "--wibo" not in args
+    assert scratch_pe.own_versions(args) == {"own-19.44.35229-x64"}
+
+
+def test_a_compiler_without_sdk_headers_can_build_from_the_project_header(tmp_path, monkeypatch):
+    compile_py = _template_tool("compile")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["compile.py", "--compiler", "cl.exe", "--config", "functions.json",
+                                    "--source", "sample.c", "--output", "sample.obj", "--", "/c"])
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(compile_py.subprocess, "run", run)
+    assert compile_py.main() == 0
+    assert calls[0] == ["cl.exe", "/c", "/Iinclude", "/Fosample.obj", "sample.c"]
+    assert len(calls) == 2  # successful compile still goes through symbol normalization

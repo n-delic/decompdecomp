@@ -48,6 +48,11 @@ def test_x86_float_operands_by_address():
     assert x86.float_operands("fstp dword ptr [D_00412340]") == []  # a store, not a constant
     assert x86.float_operands("fild dword ptr [D_00412340]") == []  # an integer
     assert x86.float_operands("mulss xmm0, xmm1") == []
+    # a 64-bit game's data has 9 hex digits or more (objdiff shows its rip-relative operand by the symbol; capstone's
+    # own text keeps the rip)
+    assert x86.float_operands("movss xmm2, dword ptr [D_140002020]") == [(0x140002020, "f")]
+    assert x86.float_operands("mulsd xmm0, qword ptr [rip + D_140002028+0x8]") == [(0x140002030, "d")]
+    assert x86.float_operands("mov eax, dword ptr [D_140003000]") == []
 
 
 class _Console:

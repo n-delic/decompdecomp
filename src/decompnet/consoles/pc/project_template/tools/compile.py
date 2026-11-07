@@ -60,7 +60,7 @@ def main() -> int:
     """Keep the compiler's arguments intact, and never rename symbols after a failed compile."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--compiler", required=True)
-    parser.add_argument("--include", required=True, action="append")  # each searched in turn: Visual C++'s, an SDK's
+    parser.add_argument("--include", default=[], action="append")  # each searched in turn: Visual C++'s, an SDK's
     parser.add_argument("--config", required=True)
     parser.add_argument("--wrapper", default="")  # wibo
     parser.add_argument("--wine", action="store_true")  # through wine: Visual C++ 2015+ (configure.py's WINE_FROM)

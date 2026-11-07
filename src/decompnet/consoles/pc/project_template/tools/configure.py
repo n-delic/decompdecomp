@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 parser = argparse.ArgumentParser(description="Writes build.ninja and objdiff.json")
 parser.add_argument("version", help="game version (a directory in config/)")
-parser.add_argument("--msvc", required=True, action="append",
+parser.add_argument("--msvc", default=[], action="append",
                     help="Visual C++ directory (holds 6.0/Bin/CL.EXE, 10.0SP1/Bin/cl.exe, ...); several: the first "
                          "with MSVC_VERSION")
 parser.add_argument("--wibo", default="", help="runs the Windows compilers on Linux and macOS")
