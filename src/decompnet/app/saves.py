@@ -913,9 +913,10 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
             # it must never replace a new match's verification bundle.
             active.ready = True
     # Metadata imports run under the project lock and do not compile or change function
-    # status. One snapshot replaces thousands of identical point queries in that scan.
+    # status. One status snapshot replaces thousands of identical point queries;
+    # reading best_source here would inflate every candidate without using it.
     current_rows = None if judge_code else {row["name"]:row for row in store.all(
-        "SELECT name,status,best_source FROM functions WHERE project_id=?", pid)}
+        "SELECT name,status FROM functions WHERE project_id=?", pid)}
     last_update = 0
     checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel)
     with closing(checks):
@@ -943,7 +944,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                 if current["status"] == "matched":
                     matched += kind == "src"
                     continue
-                if kind == "best" and current["best_source"] == text:
+                if judge_code and kind == "best" and current["best_source"] == text:
                     best += 1
                     continue
                 if not judge_code:
