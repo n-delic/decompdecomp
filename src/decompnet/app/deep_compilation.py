@@ -40,8 +40,17 @@ class Pool:
         self.workers = []
         self.lock = threading.Lock()
         self.baselines = {}
+        self.proposals = None
         self.capacity = threading.BoundedSemaphore(self.count*2)
         self.admission = threading.Lock()
+
+    def proposal_pool(self):
+        with self.lock:
+            if self.proposals is None:
+                from .deep_proposals import Pool
+                self.proposals = Pool(self.count)
+                self.metrics.proposals = self.proposals
+            return self.proposals
 
     @contextmanager
     def window(self, count, check):
@@ -90,6 +99,7 @@ class Pool:
 
     def close(self):
         # Search chunk contexts cancel their own pending/running tickets first.
+        if self.proposals is not None:self.proposals.close()
         for _ in self.workers:self.queue.put(None)
         for worker in self.workers:worker.join()
 
