@@ -70,7 +70,10 @@ def run(net,agent,slug,function,revision,trials):
         for i,(t,text) in enumerate(planned,1):
             if out and time.monotonic()-began>=60:
                 out.append('60-second budget reached; remaining profiles untested.');break
-            key=hashlib.sha256(repr((agent.id,slug,fn['id'],scope,text,t['compiler'],t.get('flags',''))).encode()).hexdigest()[:20]
+            from . import reviewed_search_seeds
+            seed_scope = (reviewed_search_seeds.scope(net,proj,fn,text)
+                          if reviewed_search_seeds.supported(net,proj) else None)
+            key=hashlib.sha256(repr((agent.id,slug,fn['id'],scope,seed_scope,text,t['compiler'],t.get('flags',''))).encode()).hexdigest()[:20]
             if key in seen:
                 continue
             seen.add(key)
@@ -84,7 +87,7 @@ def run(net,agent,slug,function,revision,trials):
                 ledger[key]={'agent':agent.id,'slug':slug,'function':fn['name'],'source':text,'compiler':t['compiler'],
                              'flags':t.get('flags',''),'revision':revision,'scope':scope,'project_config':cfg,'flags_source':'project build owns per-file flags' if fork else 'explicit effective flags','result':result}
                 header = (net._context(fn['project_id'],fn['unit']) or {'header':''})['header']
-                ledger[key].update(header=header,source_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                ledger[key].update(seed_scope=seed_scope,header=header,source_sha256=hashlib.sha256(text.encode()).hexdigest(),
                                    header_sha256=hashlib.sha256(header.encode()).hexdigest())
                 save_trial(net,fn,key,ledger[key])
                 while len(ledger)>64:

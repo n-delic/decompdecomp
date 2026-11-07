@@ -8,13 +8,13 @@ REQUIRED = {'project_info', 'claim_function', 'get_function', 'compile_and_diff'
 KEY = 'agent-disabled-tools'
 
 
-MATCHING = REQUIRED | {'get_claims','get_candidate','compile_patch','compile_variants','get_assembly','last_diff',
+MATCHING = REQUIRED | {'get_search_brief','get_claims','get_candidate','compile_patch','compile_variants','get_assembly','last_diff',
     'try_local_repairs','compile_family','family_targets','get_context','edit_context','redraft',
     'report_candidate_issue','add_note','search_notes','share_knowledge','find_similar','guide',
     'read_file','search_code','edit_file','file_status','standins_for'}
 PRESETS = {'full': ('All tools', None), 'matching': ('Matching essentials', MATCHING),
            'investigation': ('Compiler and data investigation', MATCHING | {'read_data','resolve_addresses','get_class','guess_struct',
-               'compiler_map','try_compiler','search_flags','compiler_experiments','get_compiler_trial','suggest','report_boundary','report_data_region',
+               'compiler_map','try_compiler','search_flags','compiler_experiments','get_compiler_trial','review_search_seed','suggest','report_boundary','report_data_region',
                'get_boundary_evidence','suggest_boundary'}),
            'polishing': ('Polishing and names', REQUIRED | {'claim_readable','make_readable','tidy_done','rename_symbol',
                'get_claims','guide','get_context','edit_context','read_file','edit_file','file_status','search_code','add_note','find_similar'})}

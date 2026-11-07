@@ -83,7 +83,10 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
                'pointer_index_scope','pointer_argument_alias','paired_pointer_declarations','copy_register_reuse',
                'spill_declaration_order','pointer_index_order','dead_pointer_clear'}
     selected = [(labels.get(c,''),c) for c in choices if labels.get(c) in allowed]
-    selected = extra+selected
+    from . import allocation_targeting
+    targeted = allocation_targeting.proposals(source,name,header,rows,evidence,arch)
+    for family,candidate in targeted:labels[candidate]=family
+    selected = targeted+extra+selected
     lines = rtl_value_trace.focus(trace,source,rows,header)
     if lines:
         selected.sort(key=lambda pair:not value_trace_repairs.touches(source,value_trace_repairs.changes(source,pair[1]),lines,1))
@@ -98,6 +101,7 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
         pools={}
         for item in selected:pools.setdefault(item[0],[]).append(item)
         selected=[p for row in zip_longest(*pools.values()) for p in row if p]
+    selected = targeted+[item for item in selected if item not in targeted]
     return selected[:budget]
 
 
@@ -107,4 +111,7 @@ def brief(net, proj, fn, source, rows):
         return ''
     # Reading an agent brief never starts compiler tools.
     evidence = saved(net,proj,fn,source) or {}
-    return gcc_allocation.brief(evidence.get('allocation'),allocation_evidence.diagnose(rows,proj['arch'])['register_cycles'])
+    from . import allocation_targeting
+    header = (net._context(proj['id'],fn['unit']) or {'header':''})['header']
+    return '\n'.join(filter(None, (gcc_allocation.brief(evidence.get('allocation'),allocation_evidence.diagnose(rows,proj['arch'])['register_cycles']),
+                                  allocation_targeting.brief(source,header,rows,evidence,proj['arch']))))

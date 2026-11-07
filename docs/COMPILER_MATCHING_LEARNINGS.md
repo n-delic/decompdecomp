@@ -5789,3 +5789,14 @@ watchdogs capped aggregate memory at 2 GiB and time at 20 seconds, with a
 individual match, not another new match or a complete cartridge build.
 Synthetic tests cover execution, bounded diversity and the shared MIPS,
 PowerPC, ARM, Thumb and x86 draft path.
+
+### Reviewed-root allocation replay (7 November 2026)
+
+A private N64 GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`) replay starts from saved
+score 215 and an explicitly reviewed scoped partial-return alternative scoring 60. Actual native
+GCC allocation evidence prioritized a loop-weight scope around the existing quotient. The cold
+real-linker replay found exact bytes in 4 search builds (2 diagnostic captures, 2 candidate builds)
+plus 2 setup checks, 5.33 seconds, zero model tokens. This is known-repair regression evidence,
+not a held-out discovery or proof of smaller-model speedup. The changed interface stayed diagnostic-only;
+no saved-source replacement, adopted match credit or full rebuild occurred in this replay.
+See [reviewed search seeds](REVIEWED_SEARCH_SEEDS.md) for input/caller invalidation and separate metrics.

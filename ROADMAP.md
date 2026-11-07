@@ -2397,6 +2397,11 @@ Compiler/private-header preparation waits until the claim is free. One deep sear
 prevents duplicate worker credentials. Room hosts use the local path; room guests still need the
 host lease. Concurrent guest proposals without a lease remain planned protocol work.
 
+### Reviewed diagnostic search roots
+
+- Done: explicitly reviewed local-ROM compiler diagnostics, bounded shared-budget deep search, caller/input/installation invalidation, diagnostic-only signature changes, compact source/priority/negative-experiment briefs and isolated real-target replay metrics. See docs/REVIEWED_SEARCH_SEEDS.md.
+- Planned: immutable per-file PROJECT diagnostic snapshots and host-authorized room guest roots (—); the ordinary PROJECT/room search paths remain available. Native GCC allocation targeting is advisory; other compiler/processor capture adapters and held-out smaller-model evaluations remain planned.
+
 ### Register-cycle lifetime search
 
 - Done: closed MIPS register substitutions are diagnosed from physical linked operands without

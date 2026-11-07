@@ -84,3 +84,5 @@ fingerprints stay unknown. Repeatedly inert families receive fewer early slots; 
 remain available, with exploration and complementary-pair slots reserved. Region advice
 names improved/regressed target blocks, not inferred C blocks. Preserve useful regional
 progress and inspect regressions before requesting another full assembly dump.
+
+Before a long investigation, get_search_brief(function) reads a compact current-input packet with allocation source lines/priorities, negative experiments and textual caller references; it never compiles. Native GCC priorities are advisory, not original variable identities. Try scopes around existing operations before broad declaration shuffling; preserve line breaks and never add dummy uses. A promising current-profile compiler_experiments trial can be explicitly reviewed with review_search_seed(function, trial_id, review_note) for the next deep pass. Changed or unknown signatures stay diagnostic-only even if exact: review caller use and declarations, then submit normally. Reviews do not authorize ABI changes. Historical trials need fresh diagnostics before review; use enabled=false to retire a root.

@@ -13,9 +13,10 @@ def validate_threads(count):
 
 
 class Lane:
-    def __init__(self, index, count, deadline, ready):
+    def __init__(self, index, count, deadline, ready, preparation=None):
         self.index, self.count, self.deadline, self.ready = index, count, deadline, ready
         self.preflight_done = False
+        self.preparation = preparation if preparation is not None else {}
 
     def prepared(self):
         self.preflight_done = True
@@ -35,6 +36,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
     deadline = time.monotonic()+min(minutes*60, getattr(log, 'maximum_seconds', minutes*60))
     ready, stopped, lock = threading.Event(), threading.Event(), threading.RLock()
     updates, results = {}, []
+    preparation = {}
 
     def check():
         log.check_cancel()
@@ -64,7 +66,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
             log.progress(aggregate)
 
     def work(index):
-        lane = Lane(index, count, deadline, ready)
+        lane = Lane(index, count, deadline, ready, preparation)
         def output(line):
             with lock:
                 log(f'Thread {index+1}/{count}: {line}')
@@ -117,7 +119,8 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
         result[field] = sum(v.get(field, 0) for v in results)
     matched = current['status'] == 'matched'
     reason = ('Matched' if matched else 'Time limit reached' if time.monotonic() >= deadline
-              else 'Variant limit reached' if result['tested'] >= variants else 'Search paths finished')
+              else 'Variant limit reached' if result['tested'] >= variants else 'Exact diagnostic needs ordinary review' if preparation.get('diagnostic_exact') else 'Search paths finished')
+    result['reviewed_seeds'] = preparation
     result.update(function=name, matched=matched, reason=reason, compiler_profiles=profiles,
                   threads_per_function=count, best_score=current['best_score'], starting_score=before['best_score'],
                   variant_limit=variants)
