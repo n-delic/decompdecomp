@@ -1,4 +1,4 @@
-"""Keep unchanged adjacent assignments on their original shared physical line.
+"""Keep adjacent assignments on their proven original shared physical line.
 
 Old compilers can use line boundaries during scheduling. This preserves an input
 formatting choice, not C equivalence or absolute line numbers. Unsupported or
@@ -39,9 +39,20 @@ def _pairs(function):
                     yield left, right
 
 
+def _origin(node):
+    coord = node.coord
+    return (coord.file, coord.line, coord.column) if coord else None
+
+
+def _unique_origins(function):
+    return Counter(_origin(node) for node in _walk(function)
+                   if type(node).__name__ == 'Assignment' and node.coord)
+
+
 class LineGroups:
     def __init__(self, original, header, name, parse_unit):
         self.parse_unit, self.name, self.groups = parse_unit, name, ()
+        self.origins = set()
         try:
             context = original+'\n'+header
             if re.search(r'\b__(?:LINE|COUNTER)__\b|##|(?m:^\s*#\s*include\b)', context):
@@ -65,11 +76,33 @@ class LineGroups:
             raise ValueError('ambiguous function')
         return functions[0]
 
-    def apply(self, source):
+    def bind_origins(self, function):
+        """Bind only proven input pairs before the native AST is randomized.
+
+        Native copies preserve parent coordinates when changing an expression.
+        Coordinates identify those parents, never a newly inserted assignment.
+        """
+        counts = _unique_origins(function)
+        pairs = list(_pairs(function))
+        keys = Counter((_tree(left), _tree(right)) for left, right in pairs)
+        self.origins = {(_origin(left), _origin(right)) for left, right in pairs
+                        if (_tree(left), _tree(right)) in self.groups
+                        and keys[(_tree(left), _tree(right))] == 1
+                        and _origin(left) is not None and _origin(right) is not None
+                        and counts[_origin(left)] == counts[_origin(right)] == 1}
+
+    def apply(self, source, function=None):
         if not self.groups:
             return source
         original = source
         try:
+            keys = set(self.groups)
+            if function is not None and self.origins:
+                counts = _unique_origins(function)
+                for left, right in _pairs(function):
+                    if ((_origin(left), _origin(right)) in self.origins
+                            and counts[_origin(left)] == counts[_origin(right)] == 1):
+                        keys.add((_tree(left), _tree(right)))
             function = self._parse(source)
             before = _tree(function)
             pairs = {}
@@ -79,7 +112,7 @@ class LineGroups:
             for line in source.splitlines(keepends=True):
                 offsets.append(offsets[-1]+len(line))
             edits = []
-            for key in self.groups:
+            for key in keys:
                 hits = pairs.get(key, [])
                 if len(hits) != 1:
                     continue
