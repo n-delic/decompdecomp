@@ -274,7 +274,9 @@ def expand_wave(state, variants, arch):
         count=summarize(node['report'].get('rows') or [])['position_differences']
         return (count if count is not None else float('inf'),node['score'])
     positioned=sorted(ordinary,key=position_rank)[:1]
-    best = list(dict.fromkeys(n['source'] for n in retained[:1]+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
+    bridges=[n for n in ranked if n['score']<=n['ceiling']*2 and
+             search_frontier.allocation_bridge(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+bridges+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
@@ -327,13 +329,16 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
     from . import targeted_storage_repairs
     storage=targeted_storage_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
+    from . import narrow_load_subtraction, parameter_carriers
+    carriers=parameter_carriers.variants(source,fn["name"],header,arch)
+    load_subtractions=narrow_load_subtraction.variants(source,fn["name"],header,arch)
     from . import scalar_storage_reuse
     reuse=scalar_storage_reuse.variants(source,fn['name'],header,arch,report.get('repair_locations'))
     from . import loop_storage_shapes
     loops=loop_storage_shapes.variants(source,fn['name'],header,arch,report.get('repair_locations'))
     from . import scan_load_repairs
     scans=scan_load_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
-    operand_focused = loops + reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    operand_focused = carriers + load_subtractions + loops + reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
     labels.update({text: family for family, text in operand_focused})
     for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):
@@ -364,7 +369,13 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     # compile. Broad families remain in the page and the ordinary judge is unchanged.
     from .repair_ranking import GUARDED
     guarded=[item for item in tagged if item[0] in GUARDED]
-    return list(dict.fromkeys(guarded+near_loops[:3]+tagged))
+    diagnosis=allocation_evidence.diagnose(report.get('rows'),arch)
+    # Source-token proximity can demote a coordinated storage cycle because its
+    # edits span both arms. Reserve a finite lane after operand/localisation ranking.
+    preferred=('parameter_carriers',) if diagnosis['register_only'] else (
+        ('narrow_load_subtraction','one_shot_scope') if diagnosis['scheduling'] else ())
+    storage_lane=[item for item in tagged if item[0] in preferred][:12]
+    return list(dict.fromkeys(guarded+near_loops[:3]+storage_lane+tagged))
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
@@ -458,7 +469,7 @@ def _run(twins, slug, job):
         donor_signature=(prototype_reuse.signature(net,proj,fn['best_source']),
                          verified_unit_context.signature(net,proj,fn,fn['best_source']))
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v14', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v15', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.project_store(proj['id']).one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:

@@ -1411,6 +1411,17 @@ optimization separately, using retained dumps. An unused target frame gap is
 not permission to add padding or an otherwise unused local. Phase comparison
 includes CSE2, but changes and renumbered pseudos remain investigation leads.
 
+### Reuse dead parameter storage before widening a search
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a known-checkpoint replay reached exact
+linked bytes through scores 240 → 60 → 65 → 0: remove a redundant single-pass
+latch while retaining scope, combine safe halfword subtraction, then permute
+dead incoming integer storage with locals. The shared `parameter_carriers` and
+`narrow_load_subtraction` families offer bounded guarded proposals; keep a
+scheduling-to-register bridge even if its numeric score briefly worsens. Preserve
+the ABI and original incoming uses. Never substitute a pointer after its base
+has been overwritten. This replay is not evidence of fresh-draft discovery.
+
 ### Measure single-pass quotient scopes before widening a search
 
 A `do { ... } while (0)` scope can retain loop-depth weights in this compiler's

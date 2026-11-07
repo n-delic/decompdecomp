@@ -83,6 +83,13 @@ def structure_recovery(before, after, arch=None):
                 and (not a['register_only'] or a['target_frame']!=a['candidate_frame']))
 
 
+def allocation_bridge(before, after, arch=None):
+    """A scheduled sequence with only register differences earns the next bounded lane."""
+    a=allocation_evidence.diagnose(before,arch)
+    return bool(a['scheduling'] and a['target_frame'] is not None
+                and a['target_frame']==a['candidate_frame'] and structure_recovery(before,after,arch))
+
+
 class Frontier:
     def __init__(self):
         self.nodes = []
@@ -112,6 +119,13 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        # A slightly worse register-only sibling may be one storage permutation
+        # from exact. Reserve it before the other structural slots fill the beam.
+        bridges=[n for n in pool if baseline_score is not None and n['score']<=baseline_score*2
+                 and allocation_bridge(baseline,n['rows'],arch)]
+        if bridges:
+            candidate=min(bridges,key=lambda n:n['score'])
+            if candidate not in selected:selected.append(candidate)
         # Reserve this before regional/operation slots can consume the whole beam.
         positioned = [n for n in pool if n['summary']['position_differences'] is not None]
         if positioned:

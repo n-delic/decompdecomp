@@ -1,4 +1,4 @@
-"""Exclude native self-read/cancellation insertion before it enters either walk."""
+"""Exclude native self reads and unconstrained variable removal before either walk."""
 import json
 import subprocess
 from pathlib import Path
@@ -17,7 +17,10 @@ def test_filter_preserves_other_methods_and_weights():
     def useful_rewrite():
         return 'kept'
 
-    assert supported_methods([(perm_add_self_assignment, 2), (useful_rewrite, 3)]) == [(useful_rewrite, 3)]
+    def perm_remove_var():
+        raise AssertionError('captured base must not become the overwritten address pointer')
+
+    assert supported_methods([(perm_add_self_assignment, 2), (perm_remove_var, 5), (useful_rewrite, 3)]) == [(useful_rewrite, 3)]
     assert useful_rewrite() == 'kept'
 
 
@@ -37,7 +40,7 @@ def checked(methods):
     global calls
     assert any(m.__name__=='perm_add_self_assignment' for m,w in methods)
     result=original(methods)
-    assert result and all(m.__name__!='perm_add_self_assignment' for m,w in result)
+    assert result and all(m.__name__ not in {'perm_add_self_assignment','perm_remove_var'} for m,w in result)
     calls+=1
     return result
 permuter_gen.supported_methods=checked
@@ -55,4 +58,4 @@ assert calls>0
     assert rows[-1] == {'done': True}
     variants = [r for r in rows if 'variant' in r]
     assert variants and not any('error' in r for r in rows)
-    assert all('perm_add_self_assignment' not in r.get('lineage', []) for r in variants)
+    assert all(not set(r.get('lineage', [])) & {'perm_add_self_assignment','perm_remove_var'} for r in variants)
