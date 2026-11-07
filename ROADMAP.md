@@ -3125,3 +3125,5 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 - Done: accepting waiting compiler suggestions reads the pending config snapshot directly, reports its count before per-suggestion verification, and refreshes the full overview only after processing and saving. Preparation no longer loads project-wide diagnostics or implicitly synchronizes project files.
 
 - Done: compiler-comparison startup returns its background job ID without forcing saved-file synchronization in the request wrapper, so progress and Stop attach immediately. Synchronous compiler-map updates retain their save behavior; the comparison's fresh verification and publication guards remain unchanged.
+
+- Done: score-improvement batch commits inherit the shared header for units without a dedicated context, preserving explicit unit headers. Revoked match jobs leave the pending commit queue, and unexpected capture failures retain local traceback diagnostics instead of a generic Git-setup warning.

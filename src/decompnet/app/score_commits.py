@@ -1,5 +1,6 @@
 """Batch distinct functions' improved best drafts into scoped local progress commits."""
 import json
+import logging
 import re
 import time
 import uuid
@@ -15,6 +16,8 @@ from . import (
     repository_sync,
     saves,
 )
+
+logger = logging.getLogger('decompdecomp')
 
 # Lower judge distance is better; exact matches have their own commit pipeline.
 # Presence is metadata: packed sources are nonempty hash blobs (only large text is
@@ -115,8 +118,13 @@ def scoped_snapshot(net, proj, root, rows, output):
         base['functions'][name] = info
         path = prefix+f'best/{name}.c'
         chosen[path] = files[path]
-        header = current['headers'][unit]
-        base.setdefault('headers', {})[unit] = header
+        # Overlay/source units without their own context inherit the shared header,
+        # just as Network._context does. A unit name alone does not imply a header file.
+        context_unit = unit if unit in current['headers'] else ''
+        header = current['headers'].get(context_unit)
+        if not header:
+            raise NetworkError('The saved shared header is missing. Save current progress before retrying improvement commits.')
+        base.setdefault('headers', {})[context_unit] = header
         needed.append(prefix+'include/'+header)
         key = function_compiler_key(row) or 'function:'+name
         base.setdefault('function_compilers', {})[key] = {**compiler_for(current, row['vram'], row), 'function':name, 'vram':row['vram']}
@@ -129,6 +137,10 @@ def scoped_snapshot(net, proj, root, rows, output):
         if path not in files:raise NetworkError('A saved draft header is missing. Save current progress and retry.')
         chosen[path] = files[path]
         needed.extend(prefix+'include/'+item.decode() for item in include.findall(files[path]))
+    # Private headers pulled in by the draft must also remain owned by the portable save.
+    for context_unit, header in current['headers'].items():
+        if prefix+'include/'+header in chosen:
+            base.setdefault('headers', {})[context_unit] = header
     base['notes'] = [note for note in base.get('notes', []) if note.get('function') not in names] + [note for note in current.get('notes', []) if note.get('function') in names]
     base['saved_at'], base['revision'] = current['saved_at'], current.get('revision')
     chosen[manifest_path] = (json.dumps(base, indent=1)+'\n').encode()
@@ -172,7 +184,17 @@ def process(net, slug, output=lambda message: None):
             _change(net, slug, settings['token'], error='', last_commit=commit, retry_at=0)
             output(f'Committed improved drafts for {len(selected)} functions. Automatic push uses its own commit threshold.')
     except (NetworkError, OSError, ValueError, KeyError) as error:
-        _change(net, slug, settings['token'], error=str(error) if isinstance(error, NetworkError) else
-                'Could not capture improved drafts. Review saved progress and Git setup, then retry.', retry_at=time.time()+15)
+        if isinstance(error, NetworkError):
+            message = str(error)
+        else:
+            # Keep the real cause in the local log; a missing manifest field is not a Git credential failure.
+            logger.exception('Could not capture improved drafts for %s', slug)
+            if isinstance(error, KeyError):
+                message = 'Saved progress is missing required metadata. Save current progress and retry; the application log has details.'
+            elif isinstance(error, OSError):
+                message = 'Could not read saved progress. Check the folder permissions and available disk space, then retry; the application log has details.'
+            else:
+                message = 'Saved progress metadata could not be read. Save current progress and retry; the application log has details.'
+        _change(net, slug, settings['token'], error=message, retry_at=time.time()+15)
     finally:
         project_lock.release()

@@ -333,3 +333,23 @@ def test_waiting_push_interrupts_match_batch_after_current_commit(automatic, mon
     match_commits.process(net, 'game')
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
     assert git(root, 'rev-parse', 'HEAD^') == pushed
+
+
+def test_revoked_match_job_is_retired_and_a_later_exact_verdict_can_commit(automatic):
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic, note='Initial exact verdict')
+    store = net.project_store('game')
+    with store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE name='f'")
+        db.execute("UPDATE auto_match_commits SET error='The queued function no longer matches.' WHERE state='pending'")
+    before = git(root, 'rev-parse', 'HEAD')
+    match_commits.process(net, 'game')
+    assert git(root, 'rev-parse', 'HEAD') == before
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    retired = store.one("SELECT state,error FROM auto_match_commits WHERE state='cancelled'")
+    assert retired is not None and retired['error'] is None
+    match(automatic, note='Fresh exact verdict')
+    match_commits.process(net, 'game')
+    assert git(root, 'log', '-1', '--format=%s') == 'Fresh exact verdict'
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
