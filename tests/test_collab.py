@@ -193,6 +193,7 @@ def test_saved_progress_retry_preserves_fork_mode(tmp_path, monkeypatch):
 
     net = Net()
     net.store = store
+    net.project_store = lambda _: store
     link = collab.Link(net, "project", "http://host", "room", "token", "member", client=object())
     assert link.saved_progress == ([candidate], False)
     assert [(row["name"], row["kind"], row["source"]) for row in
@@ -310,6 +311,7 @@ def test_saved_progress_for_another_room_stays_there(tmp_path):
 
     net = Net()
     net.store = store
+    net.project_store = lambda _: store
     link = collab.Link(net, "project", "http://new-host", "new-room", "token", "member", client=object())
     assert link.saved_progress is None
     assert store.all("SELECT name FROM saved_progress") == []
@@ -384,6 +386,9 @@ def test_saved_fork_progress_excludes_projects_linked_to_another_room(monkeypatc
 
     class Net:
         store = Store()
+
+        def project_store(self, _project):
+            return self.store
 
         def project_row(self, slug):
             return {"id": ids[slug]}

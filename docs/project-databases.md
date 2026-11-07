@@ -66,6 +66,21 @@ roll back atomically. The preparation helper refuses cross-store preparation
 inside an existing transaction. Tests exercise both layouts and real disk-note
 imports, without issuing runner credentials for attribution identities.
 
+Host ROM and source-project snapshots, event pagination and contributor rollups
+now read the owning operational store. Snapshot author labels are resolved with
+bounded shared-registry queries rather than joins to project-local identity
+copies. Guest cursor/cache markers, queued saved-progress transfers, host compiler
+inputs and source-tree heads also use project storage. Cursor/queue/head writes
+read current configuration within their write transaction, preserving concurrent
+configuration edits. The existing constant-time attempt high-water query runs on
+the selected store; cursor bounds are captured before reading incremental work.
+
+Guest batch imports prepare shared remote identities before opening a separate
+project transaction and roll project changes back as a batch on failure. The
+legacy layout retains its transactional identity rollback. Room discovery reads
+operational link configuration after catalog slug discovery, without adding
+per-project configuration queries to the legacy single-store path.
+
 ## Ownership for the completed split
 
 | Storage | Contents |
@@ -86,8 +101,10 @@ need explicit ownership during the project split.
    to explicit project storage. Separate global settings from the project-owned
    keys that currently share the `settings` table. Audit remaining shared identity
    writes for lock ordering; saved-progress restoration now resolves them before
-   separate project transactions. The room transport, snapshots and host/client
-   service discovery still need conversion beyond the engine's mirror methods.
+   separate project transactions. Host membership approval/join/removal still mix
+   catalog identity changes with operational event/claim writes and need explicit
+   coordination. Claim-expiry machine identity reads, pending match verification,
+   provider services and other room helpers also remain to be converted.
 2. Replace cross-project operational SQL joins with bounded queries to individual
    project stores. Keep cross-game matching and activity feeds complete without
    loading every project's full history. Preserve global identity and cursor

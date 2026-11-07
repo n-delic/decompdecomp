@@ -31,6 +31,11 @@
   Room-engine mirrors and saved link configuration now select project storage.
   Split-store progress imports prepare shared author identities before locking
   project data; legacy failed imports retain atomic rollback.
+  Host room snapshots/event pages/member rollups, client queues/cursors and
+  reconnect discovery now select project storage. Snapshot labels stay shared;
+  guest batches resolve identities before taking a separate project write lock.
+  Cursor/config writes preserve concurrent edits. Host membership mutations and
+  pending-verification services still gate migration activation.
 
 - Done: ROM splitting can re-disassemble dropped raw-word text at uniquely mapped,
   directly called, balanced scalar-MIPS frames. Existing emitted targets are anchored

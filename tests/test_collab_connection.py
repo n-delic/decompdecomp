@@ -286,6 +286,7 @@ def test_gateway_failure_keeps_saved_candidate_until_retry_succeeds(connection, 
     link.net.local_agent = lambda _: (SimpleNamespace(name="saved-progress"), None)
     link.net.project_row = lambda _: {"id": 1}
     link.net.store = SimpleNamespace(all=lambda *_: [{"name": "saved"}])
+    link.net.project_store = lambda _: link.net.store
     monkeypatch.setattr(link, "attempt", lambda agent, function, source: link._req(
         "POST", "/collab/attempt", {"function": function, "source": source}))
     candidates = [{"name": "saved", "vram": 0x1000, "size": 4, "status": "matched" if matched else "open",

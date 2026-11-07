@@ -687,3 +687,177 @@ def test_room_lease_can_infer_the_only_project_without_catalog_claims(scoped, tm
     assert stores[1].one('SELECT function_id FROM claims')['function_id'] == 10
     assert stores[2].one('SELECT 1 FROM claims') is None
     assert net.store.one('SELECT 1 FROM claims') is None
+
+
+def _scoped_room(net, slug):
+    from decompnet.app.collab import Room
+
+    net.project_row = net._project
+    net.fork_slug = lambda _: None
+    return Room(net, slug)
+
+
+def test_host_snapshots_read_project_rows_and_shared_author_names(scoped, tmp_path):
+    import time
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    first, second = _scoped_room(net, 'first'), _scoped_room(net, 'second')
+    agent = Agent(1, 'worker', None)
+    net._record(net._function('same_name', 'first'), agent, 40, 'first candidate', 1)
+    net._record(net._function('same_name', 'second'), agent, 0, 'second exact', 1, matched=True)
+    net.add_note(agent, 'first', 'first note', 'same_name', score_before=40, score_after=40)
+    net.add_note(agent, 'second', 'second note', 'same_name', score_before=4, score_after=0)
+    for pid in (1, 2):
+        with stores[pid].tx() as db:
+            db.execute("UPDATE agents SET name='stale project author'")
+    with stores[1].tx() as db:
+        db.execute('INSERT INTO claims(function_id,agent_id,expires_at) VALUES(10,1,?)', (time.time()+60,))
+    with stores[2].tx() as db:
+        db.execute('INSERT INTO attempts(id,function_id,agent_id,compiled,score,created_at) VALUES(900,20,1,1,0,0)')
+    a = first.state(0, 0, 0, agent)
+    b = second.state(0, 0, 0, agent)
+    assert a['best'][0]['source'] == 'first candidate' and not a['matched']
+    assert b['matched'][0]['matched_source'] == 'second exact' and not b['best']
+    assert a['a'] == 1 and b['a'] == 900
+    assert [r['text'] for r in a['notes']] == ['first note']
+    assert [r['text'] for r in b['notes']] == ['second note']
+    assert a['claims'] == [{'name': 'same_name', 'vram': 4096, 'agent': 'worker'}]
+    assert all(row['agent'] == 'worker' for row in a['notes']+b['notes']+b['matched'])
+    assert all(row['agent'] in (None, 'worker') for row in a['events']+b['events'])
+    # Fork snapshots use named matches/notes and the same storage boundary.
+    first.fork = second.fork = True
+    from unittest.mock import patch
+    with patch('decompnet.app.forkroom.head', return_value='tip'), patch('decompnet.app.forkroom.branch', return_value='branch'):
+        fa, fb = first.state(0, 0, 0, agent), second.state(0, 0, 0, agent)
+    assert fa['notes'][0]['function'] == 'same_name'
+    assert fb['matched'] == [{'name': 'same_name', 'agent': 'worker'}]
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == 0
+
+
+def test_host_event_pages_do_not_use_another_projects_cursor(scoped, tmp_path, monkeypatch):
+    from decompnet.app import collab
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    room = _scoped_room(net, 'first')
+    with stores[1].tx() as db:
+        for i in range(5):
+            db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(1,1,'test',?,0)", (str(i),))
+    with stores[2].tx() as db:
+        db.execute("INSERT INTO events(id,project_id,kind,detail,created_at) VALUES(1000,2,'test','other',0)")
+    monkeypatch.setattr(collab, 'EVENTS_PAGE', 2)
+    first = room._events(0, False)
+    assert len(first['events']) == 2 and first['behind'] == 3
+    second = room._events(first['e'], False)
+    assert [r['detail'] for r in second['events']] == ['2', '3']
+    assert second['behind'] == 1
+    fresh = room._events(0, True)
+    assert fresh == {'e': 5, 'events': [], 'behind': 0}
+
+
+def test_guest_batches_rollback_project_data_without_nested_catalog_writes(scoped, tmp_path, monkeypatch):
+    from decompnet.app.collab import _in_batches
+    from decompnet.store import in_transaction
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    original = net._remote_agent
+    def remote(name):
+        # A cache hit during apply does not touch the shared registry.
+        if '@'+name not in net._remote_ids:
+            assert not in_transaction()
+        return original(name)
+    monkeypatch.setattr(net, '_remote_agent', remote)
+    items = [{'agent': 'guest', 'text': 'first'}, {'agent': 'guest', 'text': 'fail'}]
+    def apply(item):
+        net.apply_remote_note_named('first', 'same_name', item['text'], item['agent'], 1)
+        if item['text'] == 'fail':
+            raise RuntimeError('interrupted')
+    with pytest.raises(RuntimeError, match='interrupted'):
+        _in_batches(net, items, apply, project='first')
+    assert stores[1].one('SELECT COUNT(*) n FROM notes')['n'] == 0
+    assert stores[2].one('SELECT COUNT(*) n FROM notes')['n'] == 0
+    assert net.store.one("SELECT COUNT(*) n FROM agents WHERE name='@guest'")['n'] == 1
+    assert not net._remote_ids  # no stale transactional identity cache after a failed apply
+    _in_batches(net, items[:1], apply, project='first')
+    assert stores[1].one('SELECT text FROM notes')['text'] == 'first'
+
+
+def test_guest_restart_keeps_project_local_queues_cursors_and_concurrent_config(scoped, tmp_path, monkeypatch):
+    import httpx
+
+    from decompnet.app import collab, forkroom
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    _scoped_room(net, 'first')
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))) as client:
+        links = []
+        for slug in ('first', 'second'):
+            link = net.link_project(slug, {'url': 'https://example.invalid', 'room': slug,
+                                          'token': 'test', 'member': 'guest'}, client=client, start=False)
+            link.saved_progress = ([{'name': 'same_name', 'status': 'open', 'best_score': 8,
+                                     'best_source': slug+' queued', 'vram': 4096, 'size': 4}], True)
+            link._save_saved_progress()
+            links.append(link)
+        first, second = links
+        first.cursor = {'e': 8, 'a': 9, 'v': 2}
+        first.cached = True
+        original = net.project_row
+        def concurrent_change(slug):
+            row = original(slug)
+            with stores[1].tx() as db:
+                db.execute("UPDATE projects SET config=json_set(config,'$.instructions','concurrent edit')")
+            return row  # intentionally stale config from before the write
+        monkeypatch.setattr(net, 'project_row', concurrent_change)
+        first._save_cursor()
+        monkeypatch.setattr(net, 'project_row', original)
+        cfg = net.cfg(original('first'))
+        assert cfg['instructions'] == 'concurrent edit'
+        assert cfg['link']['cursor'] == first.cursor
+        forkroom.save_head(net, 'first', 'new-tip')
+        assert net.cfg(original('first'))['link']['cursor'] == first.cursor
+        restarted = collab.Link(net, 'first', first.url, first.room, 'test', 'guest', client)
+        assert restarted.cursor == first.cursor and restarted.cached and not restarted.synced
+        assert restarted.saved_progress[0][0]['best_source'] == 'first queued'
+        assert second.saved_progress[0][0]['best_source'] == 'second queued'
+        restarted._forget_saved_progress('same_name')
+        assert stores[1].one('SELECT 1 FROM saved_progress') is None
+        assert stores[2].one('SELECT source FROM saved_progress')['source'] == 'second queued'
+        assert collab._linked_project(net, 'synthetic-1', 'first')[0] == 'first'
+        with stores[1].tx() as db:
+            db.execute("UPDATE functions SET best_source='first local',best_score=5")
+        with stores[2].tx() as db:
+            db.execute("UPDATE functions SET best_source='second local',best_score=4")
+        assert [row['best_source'] for row in collab._saved_progress(net, identity='synthetic-1')] == ['first local']
+        assert net.store.one('SELECT COUNT(*) n FROM saved_progress')['n'] == 0
+        assert net.store.one('SELECT config FROM projects WHERE id=1')['config'] == '{}'
+        with stores[1].tx() as db:
+            db.execute("UPDATE projects SET config=json_remove(config,'$.link')")
+        first.cursor['e'] = 100
+        first._save_cursor()
+        first._save_saved_progress()
+        forkroom.save_head(net, 'first', 'late-pull')
+        assert 'link' not in net.cfg(original('first'))
+
+
+def test_room_member_rollups_combine_shared_members_with_project_history(scoped, tmp_path):
+    import time
+
+    net, stores = scoped
+    _room_projects(net, stores, tmp_path)
+    room = _scoped_room(net, 'first')
+    with net.store.tx() as db:
+        db.execute("INSERT INTO agents(id,name,owner,origin,token_hash,created_at) VALUES(2,'sam',NULL,'collab:first','member',0)")
+        db.execute("INSERT INTO agents(id,name,owner,origin,token_hash) VALUES(3,'sam.one','sam','collab:first','child')")
+    net._record(net._function('same_name', 'first'), Agent(3, 'sam.one', 'sam'), 50, 'first improvement', 1)
+    net._record(net._function('same_name', 'second'), Agent(3, 'sam.one', 'sam'), 0, 'foreign exact', 1, matched=True)
+    with stores[1].tx() as db:
+        db.execute('INSERT INTO claims(function_id,agent_id,expires_at) VALUES(10,3,?)', (time.time()+60,))
+    board = room._members_now()
+    assert len(board) == 1
+    assert board[0]['name'] == 'sam' and board[0]['agents'] == ['one']
+    assert board[0]['improved'] == 1 and board[0]['matched'] == 0
+    assert board[0]['working'] == ['same_name']
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == 0
