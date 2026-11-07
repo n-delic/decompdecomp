@@ -13,17 +13,22 @@ class PhaseLimit(Exception):
     """Stop this optional lane without consuming the broad search remainder."""
 
 
-def run(search, agent, proj, fn):
+def run(search, agent, proj, fn, *, generated_only=False):
     net = search.net
-    roots = reviewed_search_seeds.selected(net, proj, fn)
-    result = {'reviewed_roots':len(roots), 'diagnostic_compiles':0, 'candidate_compiles':0,
-              'promotion_compiles':0, 'diagnostic_exact':[], 'matched':False, 'elapsed_seconds':0, 'model_tokens':0}
+    search.check()
+    started = time.monotonic()
+    roots = [] if generated_only else reviewed_search_seeds.selected(net, proj, fn)
+    reviewed_count=len(roots)
+    if not roots:
+        from . import return_path_search
+        roots=return_path_search.roots(net,proj,fn)
+    result = {'reviewed_roots':reviewed_count, 'generated_roots':len(roots)-reviewed_count, 'diagnostic_compiles':0, 'candidate_compiles':0,
+              'preparation_seconds':time.monotonic()-started, 'promotion_compiles':0, 'cached_diagnostics':0, 'diagnostic_exact':[], 'matched':False, 'elapsed_seconds':0, 'model_tokens':0}
     search.reviewed_seed_result = result
     if not roots:return result
-    started = time.monotonic()
     deadline = min(search.deadline, started+min(SECONDS, max(0, search.deadline-started)/4))
     search.phase = 'reviewed diagnostic seeds'
-    search.log('Searching reviewed alternatives without replacing saved C. Signature changes stay diagnostic-only.')
+    search.log('Searching '+('generated path-return hypotheses' if not reviewed_count else 'reviewed alternatives')+' without replacing saved C. Signature changes stay diagnostic-only.')
     initial_tested = search.tested
     def check():
         search.log.check_cancel()
@@ -55,8 +60,21 @@ def run(search, agent, proj, fn):
             if current() != expected:raise NetworkError('Reviewed seed inputs changed during search. Run a fresh diagnostic before retrying.')
             return {'exact':bool(ok), 'score':0 if ok else max(1, diff.score) if diff is not None else None,
                     'rows':diff.rows if diff is not None else [], 'text':error or ('Exact diagnostic.' if ok else 'Not exact.')}
-        baseline = evaluate(root['source'])
+        baseline=None
+        if root.get('generated'):
+            try:cached=reviewed_search_seeds.record(net,fn,root['trial_id'])
+            except NetworkError:cached={}
+            if cached and not reviewed_search_seeds.eligible(net,proj,fn,cached) and not cached['result'].get('exact'):
+                baseline=cached['result'];result['cached_diagnostics']+=1
+        if baseline is None:baseline = evaluate(root['source'])
         if not baseline or baseline['score'] is None:continue
+        if root.get('generated'):
+            compiler_experiments.save_trial(net,fn,root['trial_id'],dict(root,agent=agent.id,slug=proj['slug'],function=fn['name'],
+                scope=expected,revision=hashlib.sha256((fn['best_source'] or '').encode()).hexdigest()[:20],result=baseline,
+                source_sha256=hashlib.sha256(root['source'].encode()).hexdigest(),flags_source='current function profile'))
+            # Measure the single edit, then try its paired scalar scope regardless of score.
+            # Do not spend its follow-up allowance before measuring that paired shape.
+            if root['family']=='path_return' and not baseline['exact']:continue
         evidence = allocation_search.saved(net, proj, fn, root['source']) or {}
         # Two bounded captures only when a judge trial still fits in both allowances.
         if (not baseline['exact'] and not evidence and search.tested+3 <= search.limit
@@ -89,11 +107,11 @@ def run(search, agent, proj, fn):
             trial_id = hashlib.sha256(repr((root['trial_id'], source, expected)).encode()).hexdigest()[:20]
             compiler_experiments.save_trial(net, fn, trial_id, dict(root, slug=proj["slug"], function=fn["name"], source=source,
                 source_sha256=hashlib.sha256(source.encode()).hexdigest(), agent=agent.id,
-                result=measured, seed_scope=reviewed_search_seeds.scope(net,proj,fn,source),
+                result=measured, family=family, seed_scope=reviewed_search_seeds.scope(net,proj,fn,source),
                 scope=expected, revision=hashlib.sha256((fn['best_source'] or '').encode()).hexdigest()[:20]))
             hit = {'trial_id':trial_id, 'seed_trial_id':root['trial_id'], 'family':family,
                    'source_sha256':hashlib.sha256(source.encode()).hexdigest(),
-                   'diagnostic_only':reviewed_search_seeds.contract_changed(net._function(fn['name'],proj['slug']), source)}
+                   'diagnostic_only':bool(root.get('generated')) or reviewed_search_seeds.contract_changed(net._function(fn['name'],proj['slug']), source)}
             result['diagnostic_exact'].append(hit)
             if hit['diagnostic_only']:
                 search.log('Exact diagnostic '+trial_id+'; interface differs or is uncertain. Saved C is unchanged. '

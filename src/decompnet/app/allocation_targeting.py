@@ -41,11 +41,14 @@ def proposals(source, name, header, rows, evidence, arch="mips"):
     points = targets(source, header, rows, evidence, arch)
     if not points:return []
     lines = set(n for p in points if p['additional_weighted_refs'] is not None for n in p['source_lines'])
-    candidates = loop_weight_repairs.variants(source, name, header)
+    needed=min((p['additional_weighted_refs'] for p in points if p['additional_weighted_refs'] is not None),default=1)
+    estimated=min(3,max(1,(needed+1)//2))
+    depths=tuple(sorted((1,2,3),key=lambda n:abs(n-estimated)))
+    candidates = loop_weight_repairs.variants(source, name, header,focus_lines=lines,depths=depths)
     selected = []
     for family, candidate in candidates:
         if touches(source, changes(source, candidate), lines, 0):selected.append((family, candidate))
-    return list(dict.fromkeys(selected))[:6]
+    return list(dict.fromkeys(selected))[:18]
 
 
 def brief(source, header, rows, evidence, arch="mips"):
@@ -61,4 +64,4 @@ def brief(source, header, rows, evidence, arch="mips"):
         snippets = [f"L{n}: {lines[n-1].strip()[:140]}" for n in point['source_lines'][:2]]
         parts.append(text+'; '+' / '.join(snippets))
     return ('Targeted allocation brief (candidate evidence, not original C identities): '+'; '.join(parts)+
-            '. Try existing-operation quotient scopes first. Counts alone do not override local reservations/conflicts; never add dummy uses.')
+            '. Next local experiment: try a quotient scope at these mapped lines (including middle assignments); rank depths 1–3 by the approximate +2 weighted refs per nesting level, then verify actual output. This depth estimate is a heuristic, not a measured compiler rule. Counts alone do not override local reservations/conflicts; never add dummy uses.')

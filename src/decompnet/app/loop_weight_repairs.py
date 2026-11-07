@@ -17,7 +17,7 @@ QUOTIENT_UPDATE_LIMIT = 8
 QUOTIENT_LOAD_LIMIT = 4
 
 
-def variants(source, name, header=''):
+def variants(source, name, header='', *, focus_lines=(), depths=(1,2,3)):
     part = view(source, name)
     if not part or '__repair_loop_weight' in source or '__repair_equal_value' in source or re.search(r'\b(?:volatile|asm|__asm__)\b', part.clean):
         return []
@@ -69,15 +69,16 @@ def variants(source, name, header=''):
             loads.append((FAMILIES[0],edit(source,[(hit.start(),hit.end(),wrapper)])))
         if len(loads) >= 6:
             break
-    divisions = quotient_scopes(source,part,load_declarations)
+    divisions = quotient_scopes(source,part,load_declarations,focus_lines=focus_lines,depths=depths)
     if divisions:
+        if focus_lines:return divisions[:18]
         # Reserve room for the new operation even in update-heavy functions.
         return (divisions[:QUOTIENT_LIMIT]+list(dict.fromkeys(out))[:QUOTIENT_UPDATE_LIMIT]
                 +list(dict.fromkeys(loads))[:QUOTIENT_LOAD_LIMIT])
     return list(dict.fromkeys(out))[:UPDATE_LIMIT]+list(dict.fromkeys(loads))[:LIMIT-UPDATE_LIMIT]
 
 
-def quotient_scopes(source, part, declarations):
+def quotient_scopes(source, part, declarations, *, focus_lines=(), depths=(1,2,3)):
     """Wrap an actual quotient statement, retaining every operand and its evaluation.
 
     A one-shot scope can change legacy GCC's loop-weighted reference counts. It
@@ -104,17 +105,23 @@ def quotient_scopes(source, part, declarations):
         assignments.append(hit)
     # First and last eligible sites give diversity without an unbounded scan's
     # worth of candidates crowding out the existing update and load hypotheses.
-    selected=assignments[:1]+assignments[-1:] if len(assignments)>1 else assignments
+    if focus_lines:
+        def distance(hit):
+            first=source.count('\n',0,hit.start('dest'))+1;last=source.count('\n',0,hit.end())+1
+            return min(0 if first<=n<=last else min(abs(n-first),abs(n-last)) for n in focus_lines)
+        selected=[hit for hit in sorted(assignments,key=distance) if distance(hit)==0][:6]
+    else:selected=assignments[:1]+assignments[-1:] if len(assignments)>1 else assignments
     result=[]
-    for hit in selected:
-        for depth in (1,2,3):
-            statement=source[hit.start('dest'):hit.end()]
-            leading=source[hit.start():hit.start('dest')]
-            if '\n' in leading and not leading.strip():
-                indent=leading.rsplit('\n',1)[1]
-                wrapper=leading+'/*__repair_loop_weight*/'+'do {\n'+indent
-                wrapper+=('do {\n'+indent)*(depth-1)+statement+('\n'+indent+'} while (0);')*depth
-            else:
-                wrapper='/*__repair_loop_weight*/'+'do {'*depth+source[hit.start():hit.end()]+'} while (0);'*depth
-            result.append((FAMILIES[0],edit(source,[(hit.start(),hit.end(),wrapper)])))
+    pairs=[(h,d) for d in depths for h in selected] if focus_lines else [(h,d) for h in selected for d in depths]
+    for hit,depth in pairs:
+        if depth not in (1,2,3):continue
+        statement=source[hit.start('dest'):hit.end()]
+        leading=source[hit.start():hit.start('dest')]
+        if '\n' in leading and not leading.strip():
+            indent=leading.rsplit('\n',1)[1]
+            wrapper=leading+'/*__repair_loop_weight*/'+'do {\n'+indent
+            wrapper+=('do {\n'+indent)*(depth-1)+statement+('\n'+indent+'} while (0);')*depth
+        else:
+            wrapper='/*__repair_loop_weight*/'+'do {'*depth+source[hit.start():hit.end()]+'} while (0);'*depth
+        result.append((FAMILIES[0],edit(source,[(hit.start(),hit.end(),wrapper)])))
     return result

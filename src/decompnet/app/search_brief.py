@@ -27,6 +27,9 @@ def read(net, agent, slug, function):
                      '. These are textual references, not exhaustive caller or indirect-call proof; check return use before changing interfaces.')
     else:
         lines.append('Reviewed diagnostic roots need local ROM snapshots; imported builds keep their ordinary search path.')
+    from . import return_path_hypotheses, return_path_search
+    if next_step := return_path_hypotheses.brief(net,proj,fn):lines.append(next_step)
+    if history := return_path_search.history(net,proj,fn):lines.append(history)
     notes = search_evidence.brief(net,proj,fn)
     lines.append(notes[:6500] if notes else 'No current negative-experiment evidence. Do not treat missing evidence as an exhausted family.')
     lines.append('Use get_candidate only when source is needed. Preserve real operations and line breaks; never add dummy uses to influence allocation.')

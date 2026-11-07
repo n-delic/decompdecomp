@@ -86,3 +86,5 @@ names improved/regressed target blocks, not inferred C blocks. Preserve useful r
 progress and inspect regressions before requesting another full assembly dump.
 
 Use get_search_brief(function) before long searches. Explicitly review promising current-profile diagnostics with review_search_seed; changed/unknown interfaces remain diagnostic-only even when exact. Review callers and submit normally. Never add dummy uses.
+
+For a result-preserving target exit, get_search_brief can suggest a diagnostic return/lifetime pair and list current failed trials. Deep search can generate supported pairs without a supplied seed, even if the first edit regresses; interfaces still need review. Allocation-mapped middle quotient sites are eligible. Scope-depth estimates are heuristics; judge actual output and do not add dummy uses.
