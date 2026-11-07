@@ -604,6 +604,7 @@ The original Xbox is a beta PROJECT-mode console: decompdecomp reads your defaul
 makes it a Windows program at the same addresses, and from there it is the PC path (Ghidra, COFF objects, objdiff,
 `ninja rebuild`, which writes your default.xbe back byte for byte). With your own XDK set up in Setup (a kit:
 `kits/`), its library code in .text is set aside and a game of an early XDK builds with that XDK's own Visual C++.
+On Windows a game of Visual C++ 7.1 needs your XDK: the msvc pack's 7.1 doesn't start there, the XDK's copy does.
 Three retail games imported and rebuilt byte for byte (thousands of functions each). All three were built with
 link-time code generation (/GL, /LTCG), as most Xbox games were: the import tells it from the program (or the import
 dialog says), units build in harness mode (`tools/ltcg.py`: the unit, a driver calling its functions as the game's
