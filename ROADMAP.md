@@ -743,9 +743,6 @@ The answer goes here: build it, build part of it, or not, and why.
 
 ## Later
 
-- **ARM/Thumb padding.** `Arch.is_padding` covers MIPS, x86 and PowerPC; ARM and Thumb nop encodings vary by
-  ISA version and aren't grounded against a console here, so their padding heads stay open. Add their fillers
-  when there's an ARM console to test against.
 - **Better look-alikes.** A second measure (edit distance over opcodes) next to today's, and shared runs of
   instructions, which find inlined helpers and macros. Needs PowerPC and x86 opcode readers.
 - **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command

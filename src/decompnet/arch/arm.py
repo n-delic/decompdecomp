@@ -57,6 +57,25 @@ for _md in _READERS.values():
     _md.detail = True
 
 
+ARM_NOP = 0xE1A00000           # mov r0, r0
+THUMB_NOPS = (0x46C0, 0xBF00)  # mov r8, r8 ; the Thumb-2 nop
+
+
+def is_padding(code: bytes, big_endian: bool = False) -> bool:
+    """Alignment padding an ARM or Thumb function can be trimmed down to: zero fill, the ARM nop (mov r0, r0)
+    repeated, or a Thumb nop (mov r8, r8, or the Thumb-2 nop) repeated. The pattern itself tells ARM from Thumb,
+    so no mode flag is needed."""
+    if not code:
+        return False
+    if not any(code):
+        return True
+    order = "big" if big_endian else "little"
+    if len(code) % 4 == 0 and all(int.from_bytes(code[i:i + 4], order) == ARM_NOP for i in range(0, len(code), 4)):
+        return True
+    return len(code) % 2 == 0 and all(int.from_bytes(code[i:i + 2], order) in THUMB_NOPS
+                                      for i in range(0, len(code), 2))
+
+
 def asm_reason(code: bytes, big_endian: bool = False, thumb: bool | None = None, **_facts) -> str | None:
     """Why this ARM or Thumb function can't come from a compiler (a BIOS call stub; in ARM code, the CPU's mode or
     coprocessor 15), or None. `thumb`: whether it's Thumb code, None when the object doesn't say."""

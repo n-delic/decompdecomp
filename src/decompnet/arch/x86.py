@@ -214,6 +214,22 @@ def method_draft(draft: str, key: str, cls: str, name: str, role: str, why: str)
     return f"{draft[:found.start()]}{note}\n{found.group('ret')}{cls}::{name}({', '.join(params)}){body}"
 
 
+_X86_NOPS = sorted((
+    b"\x66\x0f\x1f\x84\x00\x00\x00\x00\x00", b"\x0f\x1f\x84\x00\x00\x00\x00\x00",
+    b"\x0f\x1f\x80\x00\x00\x00\x00", b"\x66\x0f\x1f\x44\x00\x00", b"\x0f\x1f\x44\x00\x00",
+    b"\x0f\x1f\x40\x00", b"\x0f\x1f\x00", b"\x66\x90", b"\x90", b"\xcc",
+), key=len, reverse=True)  # longest first: each 0f 1f form's modrm fixes its length, so the match is unambiguous
+
+
 def is_padding(code: bytes, big_endian: bool) -> bool:
-    """VC++/linker padding between functions is nop (0x90) or int3 (0xCC) bytes (multi-byte nops not covered)."""
-    return bool(code) and all(b in (0x90, 0xCC) for b in code)
+    """VC++/linker padding between functions: nop (0x90), int3 (0xCC), or a standard multi-byte nop
+    (66 90, 0F 1F 00, 0F 1F 40 00, and the 5- to 9-byte forms)."""
+    if not code:
+        return False
+    i = 0
+    while i < len(code):
+        form = next((f for f in _X86_NOPS if code[i:i + len(f)] == f), None)
+        if form is None:
+            return False
+        i += len(form)
+    return True
