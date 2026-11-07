@@ -1,4 +1,4 @@
-"""Independent match storage survives deletion; shared identities and texts are deduplicated."""
+"""Compact match references survive deletion; source requires an available donor project."""
 import json
 from pathlib import Path
 
@@ -19,6 +19,7 @@ def library(tmp_path, monkeypatch):
             db.execute("INSERT INTO functions(id,project_id,name,status,size,vram,matched_source,matched_at) VALUES(?,?,?,'matched',32,4096,?,1)",
                        (i,i,f'f{i}',f'int f{i}(void) {{return 42;}}'))
     monkeypatch.setattr(net.twins,'prints',lambda proj:{proj['id']:Print('same-code',[],32)})
+    for i in (1,2):(tmp_path/f'game{i}').mkdir()
     return net,net.match_library
 
 
@@ -29,7 +30,7 @@ def test_deduplicates_functions_and_source_with_multiple_game_memberships(librar
     assert (data['functions'],data['solutions'],data['games'],data['occurrences'])==(1,1,2,2)
     assert data['items'][0]['games']==2 and 'First game' in data['items'][0]['game_names']
     with lib.connect() as db:
-        assert db.execute('SELECT COUNT(*) n FROM texts WHERE text LIKE ?',('%return 42%',)).fetchone()['n']==1
+        assert db.execute('SELECT COUNT(*) n FROM texts WHERE text LIKE ?',('%return 42%',)).fetchone()['n']==0
     assert lib.summary('Second')['items'][0]['games']==2
 
 
@@ -40,7 +41,7 @@ def test_reopen_database_and_remove_project_preserves_matches(library):
     assert net.store.one("SELECT 1 FROM projects WHERE slug='game1'") is None
     reopened=RomNetwork(net.store.path,net.workspace)
     assert reopened.match_library.summary()['items'][0]['game_names']=='First game'
-    assert lib.candidates('mips',1,'same-code',32)[0]['source']=='int __library_function(void) {return 42;}'
+    assert lib.candidates('mips',1,'same-code',32)==[]
 
 
 def test_only_committed_matches_are_archived(library):
@@ -69,7 +70,7 @@ def test_store_nested_commit_callbacks_run_once_and_not_on_rollback(tmp_path):
     assert calls==[1]
 
 
-def test_library_candidates_reach_destination_judge_after_donor_removed(library,monkeypatch):
+def test_missing_donor_reference_does_not_reach_destination_judge(library,monkeypatch):
     net,lib=library
     net.remove_project('game1')
     with net.store.tx() as db:db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE id=2")
@@ -79,8 +80,8 @@ def test_library_candidates_reach_destination_judge_after_donor_removed(library,
         assert 'int f2(void)' in source and 'return 42' in source
         return 'match',''
     monkeypatch.setattr(net.twins,'_attempt_twin',judge)
-    assert lib.reuse(net.twins,net.project_row('game2'))==1
-    assert len(sources)==1
+    assert lib.reuse(net.twins,net.project_row('game2'))==0
+    assert sources==[]
     assert lib.candidates('ppc',1,'same-code',32)==[]
     assert lib.candidates('mips',0,'same-code',32)==[]
 
@@ -101,7 +102,7 @@ def test_archive_failure_prevents_project_deletion(library,monkeypatch):
     assert net.project_row('game1')
 
 
-def test_removed_rom_donor_still_matches_another_game_with_real_judge(tmp_path, built, monkeypatch):  # noqa: F811
+def test_available_rom_donor_reference_matches_another_game_with_real_judge(tmp_path, built, monkeypatch):  # noqa: F811
     from tests.test_app_engine import CLAMP
     from tests.test_rom import ROM
     from tests.test_twins_across_games import copy_project
@@ -114,14 +115,12 @@ def test_removed_rom_donor_still_matches_another_game_with_real_judge(tmp_path, 
     copy_project(net,slug,'other-game')
     assert net.compile_and_diff(agent,'func_800007D0',CLAMP,slug).startswith('✅ MATCH')
     import shutil
-    old_root=Path(net.project_row(slug)['root'])
     target_root=tmp_path/'retained-target'
     shutil.move(str(net.project_row('other-game')['root']),target_root)
     with net.store.tx() as db:
         db.execute("UPDATE projects SET root=? WHERE slug='other-game'",(str(target_root),))
-    net.remove_project(slug)
-    shutil.rmtree(old_root)
-    assert net.twins.across_games('other-game')>=1
+    net.match_library.archive_project(net.project_row(slug))
+    assert net.match_library.reuse(net.twins,net.project_row('other-game'))>=1
     assert net._function('func_800007D0','other-game')['status']=='matched'
     assert net.match_library.summary()['games']==2
 
@@ -132,7 +131,7 @@ from tests.test_rom import built  # noqa: E402,F401
 @pytest.mark.parametrize('destination_fork',[False,True])
 def test_archived_candidate_reaches_both_destination_modes(library,monkeypatch,destination_fork):
     net,lib=library
-    net.remove_project('game1')
+    lib.archive_project(net.project_row('game1'))
     monkeypatch.setattr(net,'fork_slug',lambda slug:slug if slug=='game2' and destination_fork else None)
     if destination_fork:
         cfg=net.cfg
@@ -149,7 +148,7 @@ def test_archived_candidate_reaches_both_destination_modes(library,monkeypatch,d
     assert len(calls)==1
 
 
-def test_imported_match_is_retained_with_its_compiler_and_reusable_after_removal(library,monkeypatch):
+def test_imported_reference_loads_its_compiler_and_source_from_available_project(library,monkeypatch):
     from types import SimpleNamespace
 
     from decompnet.app import twins
@@ -157,7 +156,7 @@ def test_imported_match_is_retained_with_its_compiler_and_reusable_after_removal
     monkeypatch.setattr(net,'fork_slug',lambda slug:slug if slug=='game1' else None)
     monkeypatch.setattr(net.forks,'get',lambda slug:(net.project_row(slug),SimpleNamespace(),{}))
     monkeypatch.setattr(twins,'_file_compiler',lambda *args:'original-file-compiler')
-    net.remove_project('game1')
+    lib.archive_project(net.project_row('game1'))
     item=lib.candidates('mips',1,'same-code',32)[0]
     assert item['mode']=='fork'
     assert json.loads(item['compiler'])['toolchain']=='original-file-compiler'
@@ -380,7 +379,7 @@ def test_reindex_avoids_unchanged_writes_and_refreshes_game_and_seen_metadata(li
         lib.write([{**item,'game_name':'Renamed game','seen':20}])
         assert db.total_changes==changes+2
         saved=lib.candidates('mips',1,'same-code',32)[0]
-        assert saved['game']=='Renamed game'
+        assert saved['game']=='First game'  # Live donor metadata is authoritative.
         assert db.execute('SELECT seen FROM occurrences').fetchone()['seen']==20
 
 
@@ -458,7 +457,8 @@ def test_library_shortlists_shared_fingerprints_before_fetching_source(library,m
         db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE id=2")
         db.executemany("INSERT INTO functions(id,project_id,name,status,size,vram) VALUES(?,2,?,'open',32,4096)",[(i,f'unrelated_{i}') for i in range(3,103)])
     prints={i:Print('same-code' if i==2 else f'unrelated-{i}',[],32) for i in range(2,103)}
-    monkeypatch.setattr(net.twins,'prints',lambda _:prints)
+    original_prints=net.twins.prints
+    monkeypatch.setattr(net.twins,'prints',lambda proj:prints if proj['id']==2 else original_prints(proj))
     queried=[];candidates=lib.candidates
     monkeypatch.setattr(lib,'candidates',lambda *args:(queried.append(args[2]),candidates(*args))[-1])
     monkeypatch.setattr(net.twins,'_attempt_twin',lambda *args,**kwargs:('match','verified'))
@@ -547,19 +547,18 @@ def test_library_write_admission_leaves_readers_available(library):
         assert writer.result(timeout=2)=='shared_name'
 
 
-def test_library_compresses_new_text_and_cancellable_legacy_backfill(library):
+def test_library_keeps_source_in_project_and_prunes_legacy_payloads(library):
     import hashlib
 
-    from decompnet.app.match_library import read_text
     net,lib=library
     source='int f1(void) {return 42;}\n'+'/* café */\n'*1000
     with net.store.tx() as db:
         db.execute('UPDATE functions SET matched_source=? WHERE id=1',(source,))
     lib.backfill()
     candidate=next(c for c in lib.candidates('mips',1,'same-code',32) if 'café' in c['source'])
-    with lib.connect() as db:
-        assert db.execute("SELECT COUNT(*) FROM texts WHERE typeof(text)='blob'").fetchone()[0]>0
     assert 'café' in candidate['source']
+    with lib.connect() as db:
+        assert db.execute('SELECT 1 FROM texts WHERE hash IN (SELECT source FROM solutions UNION SELECT header FROM solutions)').fetchone() is None
     legacy='legacy header\n'*1000;key=hashlib.sha256(legacy.encode()).hexdigest()
     with lib.connect(write=True) as db:db.execute('INSERT INTO texts VALUES(?,?)',(key,legacy))
     class Log:
@@ -567,11 +566,49 @@ def test_library_compresses_new_text_and_cancellable_legacy_backfill(library):
         def progress(self,event):pass
     class Cancel(Log):
         def check_cancel(self):raise RuntimeError('cancel')
-    with pytest.raises(RuntimeError):lib.pack(Cancel())
-    assert lib.pack(Log())==1
-    assert lib.pack(Log())==0
+    with pytest.raises(RuntimeError):lib.prune_payloads(Cancel())
+    assert lib.prune_payloads(Log())==1
+    assert lib.prune_payloads(Log())==0
     with lib.connect() as db:
-        raw=db.execute('SELECT text FROM texts WHERE hash=?',(key,)).fetchone()[0]
-    assert isinstance(raw,bytes) and len(raw)<len(legacy)/10
-    assert read_text(key,raw)==legacy
-    with pytest.raises(ValueError):read_text('wrong',raw)
+        assert db.execute('SELECT text FROM texts WHERE hash=?',(key,)).fetchone() is None
+    assert any('café' in item['source'] for item in lib.candidates('mips',1,'same-code',32))
+
+
+def test_reference_reads_current_source_header_and_rejects_changed_identity(library,monkeypatch):
+    net,lib=library
+    lib.archive_project(net.project_row('game1'))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='int f1(void) {return 6*7;}' WHERE id=1")
+        db.execute("INSERT INTO context_versions(project_id,unit,version,header) VALUES(1,'',1,'new header')")
+    item=lib.candidates('mips',1,'same-code',32)[0]
+    assert '6*7' in item['source'] and item['header']=='new header'
+    monkeypatch.setattr(net.twins,'prints',lambda proj:{1:Print('different-code',[],32)})
+    assert lib.candidates('mips',1,'same-code',32)==[]
+
+
+def test_reference_unavailable_without_project_folder(library):
+    net,lib=library
+    lib.archive_project(net.project_row('game1'))
+    Path(net.project_row('game1')['root']).rmdir()
+    assert lib.candidates('mips',1,'same-code',32)==[]
+    assert lib.summary()['functions']==1
+    Path(net.project_row('game1')['root']).mkdir()
+    assert len(lib.candidates('mips',1,'same-code',32))==1
+
+
+def test_legacy_payload_cleanup_is_resumable_and_preserves_index(library):
+    import hashlib
+    net,lib=library
+    lib.backfill()
+    with lib.connect(write=True) as db:
+        db.executemany('INSERT INTO texts VALUES(?,?)',
+                       [(hashlib.sha256(str(i).encode()).hexdigest(),'old source '+str(i)) for i in range(600)])
+    class Stop:
+        stopped=False
+        def check_cancel(self):
+            if self.stopped:raise RuntimeError('cancelled')
+        def progress(self,event):self.stopped=True
+    with pytest.raises(RuntimeError,match='cancelled'):lib.prune_payloads(Stop())
+    assert lib.prune_payloads()==344
+    assert lib.summary()['occurrences']==2
+    assert len(lib.candidates('mips',1,'same-code',32))==2
