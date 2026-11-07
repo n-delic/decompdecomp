@@ -241,6 +241,34 @@ such scopes around control transfers whose targets would change. This is a bound
 KMC-specific hypothesis, not evidence that the original game used those wrappers.
 See the 2 November one-shot-scope case in `docs/COMPILER_MATCHING_LEARNINGS.md`.
 
+### Separate global priority from hard-register preference
+
+For the registered KMC-compatible GCC 2.7.2 macOS x86_64 build, the actual
+`allocno_compare` binary sorts allocation units by this integer priority:
+
+`trunc(((double)(floor_log2(refs) * refs) / live_length) * 10000.0 * size)`
+
+Higher priorities sort first; equal truncated priorities use the lower allocation
+number first. An allocation number is not necessarily a raw pseudo number. The
+allocator sums reference counts and takes the maximum live length for pseudos in
+one unit; `size` is the number of target register words. Use compiler RTL counts,
+not the number of identifier spellings in C. For one-word units, 10 references
+over live length 18 yields 16,666; 9 over 17 yields 15,882; 5 over 5 yields 20,000.
+
+The comparator does **not** read hard-register preferences. Sorting precedes
+preference pruning; a return preference can influence the later register choice,
+without adding a sorting bonus. Local allocations and interference still constrain
+that choice. A new result temporary can change reference density as well as return
+preference, so a changed order does not establish which effect caused the output.
+Inspect both stages before proposing a lifetime repair. Do not add dummy references,
+padding, fake parameters or canceled work to increase priority.
+
+This rule was verified from the installed `cc1` (SHA-256 `3160c6f0fb4697cdc6bd3412333a5a8e64b23e9e4dd6d01951422a63bee2c60a`),
+not inferred only from nearby GCC sources. It explains two retained allocation
+orders but did not recover a new match. Recheck other compiler builds rather than
+assuming the same comparator. Details: `docs/COMPILER_MATCHING_LEARNINGS.md`,
+“Installed KMC global allocation priority”.
+
 For allocator-only near misses, `balanced_pointer_calls` tries initialized pointer guards with
 identical call leaves, including bounded nesting. `paired_integer_lifetimes` combines a CFG-proven
 value-phase split with disjoint reuse. `initialization_cluster` groups independent pointer/scalar

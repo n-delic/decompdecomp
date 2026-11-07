@@ -5390,3 +5390,34 @@ caller evidence is still needed before treating that signature as a documented A
 This is a useful return-value lifetime hypothesis for a leaf with a surviving base
 in the return register, not evidence that arbitrary register differences need
 return-type changes. Game source and target bytes remain outside this repository.
+
+
+### Installed KMC global allocation priority
+
+A read-only audit of the registered macOS x86_64 `gcc-2.7.2-kmc` compiler
+identified `allocno_compare` in the installed `cc1`, SHA-256
+`3160c6f0fb4697cdc6bd3412333a5a8e64b23e9e4dd6d01951422a63bee2c60a`.
+Its comparator computes
+`trunc(((double)(floor_log2(refs) * refs) / live_length) * 10000.0 * size)`.
+The integer product is converted to double before division; the final value is
+truncated to int. Higher priorities sort first; ties use allocation number,
+which is not automatically the raw pseudo number. Actual aggregation sums
+references, takes maximum live length and rounds mode size to target words.
+
+For the retained one-word units, 10 references over live length 18 gives 16,666;
+9 over 17 gives 15,882; 3 over 7 gives 4,285. A separate result with 5 over 5
+gives 20,000; the other pointer then has 5 over 14, giving 7,142. These independently reproduce
+both recorded sort orders. The scale 10000.0 was decoded from the actual binary.
+The sort call precedes preference pruning, and the comparator has no preference
+lookup. Earlier investigation wording “preference-sensitive priority” was
+incorrect: sorting uses reference counts, live lengths and sizes; preferences can affect
+later hard-register assignment. Local allocations are a separate limit.
+
+The [registered compiler source](https://github.com/decompals/mips-gcc-2.7.2/blob/e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14/global.c)
+corroborates the formula, but source proximity alone was not used to establish
+installed-binary behavior. No compiler execution or new candidate was needed;
+all 2,077 selected source/profile records and 907 hydrated focal attempts were
+unchanged. This corrects a diagnostic explanation, not an automatic matching
+rule or proof that every GCC release uses this formula. Do not invent references,
+parameters or work to manipulate the score; investigate real lifetimes and
+verify ordinary linked output before accepting any source repair.
