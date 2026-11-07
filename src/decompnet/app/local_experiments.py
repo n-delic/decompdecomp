@@ -253,6 +253,13 @@ def _available(net, agent, slug, fn, source, revision, requested):
             header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
             for family,text in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],measured.get('rows') or [],measured.get('repair_locations')):
                 if family in pools:pools[family].append(text)
+    if 'scalar_storage_reuse' in pools:
+        from . import scalar_storage_reuse
+        measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
+        if measured and measured.get('source')==source and measured.get('input_scope')==agent_evidence.build_key(net,fn)[0]:
+            ctx=net._context(proj['id'],fn['unit'])
+            header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+            pools['scalar_storage_reuse']=[s for _,s in scalar_storage_reuse.variants(source,fn['name'],header,proj['arch'],measured.get('repair_locations'))]
     if 'hazard_statement_lines' in pools:
         from . import hazard_line_repairs
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))

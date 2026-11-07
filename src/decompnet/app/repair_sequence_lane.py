@@ -6,7 +6,8 @@ MAX_PROPOSALS = 4
 MAX_PARENTS = 2
 PER_PARENT = 2
 FAMILIES = {'narrow_call_destination','typed_pointer_snapshot','branch_scalar_lifetime',
-            'inline_call_count','embedded_call_assignment'}
+            'inline_call_count','embedded_call_assignment','scalar_storage_reuse',
+            'row_number_staging','explicit_loop_backedge','debug_constant_initialization'}
 
 
 def eligible(parent, depth, arch=None):

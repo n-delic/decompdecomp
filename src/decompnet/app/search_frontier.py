@@ -112,6 +112,11 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        # Reserve this before regional/operation slots can consume the whole beam.
+        positioned = [n for n in pool if n['summary']['position_differences'] is not None]
+        if positioned:
+            candidate = min(positioned, key=lambda n:(n['summary']['position_differences'],n['score']))
+            if candidate not in selected:selected.append(candidate)
         # Keep a root-operation recovery even if compensating instructions gave a lower score.
         operations = [n for n in pool if baseline_score is not None and n['score']<=baseline_score*2
                       and n['missing_operations']<missing_operations(baseline)]

@@ -10,6 +10,14 @@ The automatic compiler survey also checks these debug variants on saved attempts
 
 ## Near-match checklist
 
+For mutually exclusive scalar phases, try reusing existing integer storage while preserving
+the original narrowing at assignment. Keep the unused old declaration as a separate debug-shape
+control. The app's `scalar_storage_reuse` family requires disjoint CFG lifetimes and dominating
+initialization; it does not force registers. Optional `explicit_loop_backedge` and
+`row_number_staging` alternatives can compose with it, without replacing the original draft.
+Keep a candidate with few differing instruction positions beside the lowest-score candidate.
+An exact linked-byte judge is still required; see the compiler learnings for measured replay limits.
+
 Keep the compiler, flags, header and symbol addresses fixed while comparing source repairs.
 
 1. **Too few instructions:** inspect shared tails in repeated branch bodies, then check for missing

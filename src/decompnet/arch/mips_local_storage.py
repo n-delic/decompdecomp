@@ -2,6 +2,12 @@
 import re
 
 
+def scalar_destination(instruction):
+    """A saved-register definition, for source-line ranking rather than variable identity."""
+    hit=re.match(r'(?:move|addiu|addu|subu|lui|ori|andi|sll|sra|srl|lw|lh|lhu|lb|lbu|sltu?|sltiu?)\s+(\$(?:s[0-7]|fp)),',instruction)
+    return hit[1] if hit else None
+
+
 def read(rows):
     if not rows or any(not isinstance(r,(tuple,list)) or len(r)!=3 or not all(isinstance(x,str) for x in r) for r in rows):return None
     differences=[r for r in rows if r[0]!=' ']

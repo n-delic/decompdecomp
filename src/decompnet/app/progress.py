@@ -945,6 +945,26 @@ class Progress:
         # Judging and edits also hold the project lock; they are not a saved-progress check.
         return self.status(slug) is not None
 
+    @contextmanager
+    def _verification(self, slug: str, logger=None):
+        """Wait for the shared compiler lane without monopolizing this project's lock.
+
+        Condition.wait releases every recursive acquisition, including an outer batch.
+        The caller reloads project and disk inputs once the lane is acquired; another
+        sync may have completed while we waited. No import or judgment runs here.
+        """
+        from ..request_timing import span
+        with span('progress_verification_wait'):
+            while True:
+                if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
+                self._check_paused(slug)
+                if self.verification_slot.acquire(blocking=False):break
+                threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
+        try:
+            yield
+        finally:
+            self.verification_slot.release()
+
     def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
 
@@ -1020,12 +1040,14 @@ class Progress:
                         result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
                         if result is not None:self.blocked.pop(slug, None)
                 if result is None:
-                    with timed_lock(self.verification_slot, 'progress_verification_wait'):
+                    with self._verification(slug, logger):
                         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
                         self._check_paused(slug)
                         if self._batching(slug):
                             return False
-                        # Another project may have changed shared state while we waited.
+                        # Our project lock was released while waiting too: refresh the
+                        # acknowledgement baseline as well as the project's inputs.
+                        cached_signature = self.signatures.get(slug)
                         # _sync reloads its inputs too; post-sync acknowledgement uses fresh metadata.
                         proj = self.net._project(slug)
                         rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))

@@ -1,6 +1,20 @@
 from decompnet.app import permuter_focus, repair_ranking, search_frontier
 
 
+def test_numeric_and_small_position_residual_survive_crowded_frontier():
+    frontier=search_frontier.Frontier()
+    target=['move $s0, $a0']*20
+    def rows(count):
+        return [('r' if i<count else ' ',op,'move $s1, $a0' if i<count else op) for i,op in enumerate(target)]
+    baseline=rows(20)
+    frontier.offer('numeric',315,rows(18),arch='mips',baseline=baseline,baseline_score=565)
+    frontier.offer('few-positions',330,rows(6),arch='mips',baseline=baseline,baseline_score=565)
+    for i in range(12):
+        frontier.offer('sibling'+str(i),340+i,rows(8+i),arch='mips',baseline=baseline,baseline_score=565)
+    assert {'numeric','few-positions'} <= {n['source'] for n in frontier.nodes}
+    assert len(frontier.nodes)<=search_frontier.WIDTH
+
+
 def test_known_relocation_rendering_does_not_hide_register_misses():
     rows = [('i','lw $a0, -0x7ce0($a0)','lw $a0, %lo(D_800C8320)($a0)'),
             ('r','andi $s0, $s0, 0xffff','andi $v1, $s0, 0xffff')]

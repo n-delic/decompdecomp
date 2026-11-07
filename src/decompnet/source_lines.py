@@ -158,7 +158,29 @@ def annotate(rows, offsets, spans, source, first_line=1):
             'Source mapping unavailable: this object has no supported, unambiguous line information. Compiler settings are unchanged.'}
 
 
-def mismatches(data, name, rows, source, filename='func.c', first_line=1, offsets=None):
+def scalar_registers(rows, offsets, spans, source, arch, first_line=1):
+    """Include matched regions when associating target register definitions with C lines.
+
+    These associations only rank repairs; optimized line notes do not prove C identities.
+    Unsupported architecture adapters return no register guidance.
+    """
+    from .arch import get
+    reader=get(arch).source_scalar_destination if arch else None
+    if not reader:return {}
+    grouped={};candidate=0
+    for _,target,own in rows:
+        if not own:continue
+        offset=offsets[candidate] if candidate<len(offsets) else None;candidate+=1
+        lines={line-first_line+1 for lo,hi,line in spans if offset is not None and lo<=offset<hi}
+        if len(lines)!=1:continue
+        line=lines.pop()
+        if not 1<=line<=len(source.splitlines()):continue
+        reg=reader(target)
+        if reg:grouped.setdefault(line,set()).add(reg)
+    return {line:next(iter(regs)) for line,regs in grouped.items() if len(regs)==1}
+
+
+def mismatches(data, name, rows, source, filename='func.c', first_line=1, offsets=None, arch=None):
     spans = locations(data, name, filename)
     if offsets is None:
         try:
@@ -168,7 +190,9 @@ def mismatches(data, name, rows, source, filename='func.c', first_line=1, offset
             offsets = []
     if len(offsets) != sum(bool(row[2]) for row in rows):
         spans = []  # A different instruction stream must not borrow this object's locations.
-    return annotate(rows, offsets, spans, source, first_line)
+    result=annotate(rows, offsets, spans, source, first_line)
+    if arch:result['scalar_registers']=scalar_registers(rows,offsets,spans,source,arch,first_line)
+    return result
 
 
 def render(info, source, limit=8):

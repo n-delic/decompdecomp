@@ -1,6 +1,6 @@
 """Rank applicable hypotheses by observed mismatches without excluding other families."""
 
-STRUCTURAL = ('integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
+STRUCTURAL = ('scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
 GUARDED = ('matched_zero_argument_call', 'zero_argument_parameter_alias', 'matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers')
 
 

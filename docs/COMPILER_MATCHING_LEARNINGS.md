@@ -5829,3 +5829,43 @@ evidence, both linked source verdicts and a byte-identical 12,582,912-byte image
 minimal control retained one existing C caller and used original assembly elsewhere.
 The full 2,079-match snapshot instead hit an unrelated export constant-mapping failure
 and was rejected unchanged. These are different controls, not equivalent success claims.
+
+### Disjoint branch storage, conversion boundaries and loop shape
+
+Pinned KMC GCC 2.7.2, flags `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: a private
+395-instruction function reached exact linked bytes after reusing a signed 32-bit resource
+local for a signed 16-bit coordinate in a mutually exclusive branch. The narrow assignment
+became `resource = (s16)(expression)` and subsequent coordinate operands used `resource`.
+Retaining the original, now-unused narrow declaration avoided changing declaration/debug shape.
+Normalization belongs at the original assignment: casting only at a later call can change
+promotions or intervening uses. CFG-disjoint lifetimes alone do not prove initialization;
+each rewritten read also needs a dominating definition, no address escape and safe macro use.
+
+The accepted composition also used a real loop backedge, staged the next row number before
+committing the counter at the latch, and retained a genuinely consumed branch-local constant.
+This does not prove every component independently necessary. A scalar-only regression replay
+regenerated the accepted source at candidate 6, unchanged compiler/header/symbols, zero AI calls.
+However, an independent baseline check found that undoing scalar reuse was also exact; this
+does not establish a scalar-reuse speedup or an independent necessity for that transformation.
+The recovered source SHA256 was
+`91d362c45a0e233abd5a934bf875a002a3218f8f0b501ea69893c4c2517ba6e8`.
+Separately, undoing row staging produced an unresolved score-270 control. The loop-shape
+generator's first alternative scored 5851 and its second (`row_number_staging`) reached exact
+linked bytes. The ordinary beam replay took two candidate compiles plus its baseline check,
+1.73 seconds on this machine, within a 12-trial budget. This is known-case replay evidence,
+not discovery from a fresh draft or a new match count.
+
+Negative evidence: the first five generated alternatives scored 2770, 4627, 45, 710 and 600;
+the third looked promising but was not exact. Earlier callback/resource unions and scheduler
+flag changes also failed. A score-330 alternative with six differing positions was more useful
+than a score-315 alternative with broader allocation differences. Reserve a small-position
+frontier slot beside the numeric winner, then try bounded complementary repairs. Never accept
+instruction similarity, a line/register association or a fingerprint as a match verdict.
+
+The optional loop forms preserve scope and the original latch, reject loop-directed transfers
+and prove that staged reads cannot bypass their new definition. Source-line register guidance
+is advisory and source-hash bound; unsupported architectures retain unguided scalar proposals.
+Search feedback now prefers fingerprints of all allocatable sections, BSS sizes and named
+relocations. Equivalent failed outputs may defer redundant families, with periodic retries;
+unknown object formats provide no full-output equivalence evidence. Compiler/header/target/
+symbol/rule changes invalidate persisted search scopes. No compiler settings change is implied.

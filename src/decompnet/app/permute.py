@@ -904,7 +904,7 @@ class Permuter:
         if not self._compact_trial:
             with compile_timing.phase('search_diagnostics'):
                 self._trial_locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
-                    filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
+                    filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c',arch=proj['arch']))
         rows = (self.net._search_rows(fn,proj,result.obj,d.rows)
                 if not self._compact_trial and hasattr(self.net,'_search_rows') else d.rows)
         self.net.keep_diff(agent.id, fn['id'], rows)

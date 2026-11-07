@@ -1579,6 +1579,11 @@ def test_sync_reports_project_and_verification_waits_without_changing_lock_behav
                 raise RuntimeError('synthetic lock failure')
         def __exit__(self, *args):
             events.append('exit '+self.name)
+        def acquire(self, *, blocking):
+            assert blocking is False
+            self.__enter__()
+            return True
+        def release(self):self.__exit__()
     monkeypatch.setattr(worker, '_batching', lambda slug: False)
     monkeypatch.setattr(worker, '_state', lambda pid: None)
     monkeypatch.setattr(worker, '_sync', lambda *args: False)
@@ -1636,11 +1641,10 @@ def test_real_progress_edit_still_waits_for_shared_verification(project, monkeyp
     entered = threading.Event()
     slot = worker.verification_slot
     class Slot:
-        def __enter__(self):
+        def acquire(self, *, blocking):
             entered.set()
-            slot.acquire()
-        def __exit__(self, *args):
-            slot.release()
+            return slot.acquire(blocking=blocking)
+        def release(self):slot.release()
     monkeypatch.setattr(worker, 'verification_slot', Slot())
     slot.acquire()
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -1713,10 +1717,10 @@ def test_racing_edit_during_local_publication_falls_back_to_verification(project
     entered = threading.Event()
     slot = net.progress.verification_slot
     class Slot:
-        def __enter__(self):
+        def acquire(self, *, blocking):
             entered.set()
-            slot.acquire()
-        def __exit__(self, *args):slot.release()
+            return slot.acquire(blocking=blocking)
+        def release(self):slot.release()
     monkeypatch.setattr(net.progress, 'verification_slot', Slot())
     slot.acquire()
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -2160,3 +2164,96 @@ def test_first_sync_keeps_private_verified_header_bindings():
     merged, pending = progress._initial_merge({"headers": {"": "common.h"}}, projected, {})
     assert merged["function_headers"] == local["function_headers"]
     assert pending["include/common_exact_match_1_2.h"] == "typedef int s32;"
+
+
+@pytest.mark.parametrize('depth', [0, 2])
+def test_waiting_verification_releases_recursive_project_lock_and_reloads_files(project, depth, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import ExitStack
+
+    from decompnet import request_timing
+    net, folder, judged = project
+    worker=net.progress
+    manifest(folder,instructions='first external edit')
+    waiting=threading.Event()
+    slot=worker.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            acquired=slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+        def __enter__(self):
+            waiting.set()
+            slot.acquire()
+        def __exit__(self,*args):slot.release()
+    monkeypatch.setattr(worker,'verification_slot',Slot())
+    lock=worker._project_lock('game')
+    slot.acquire()
+    def sync():
+        with ExitStack() as stack,request_timing.capture() as metrics:
+            for _ in range(depth):stack.enter_context(lock)
+            result=worker.sync('game',force=True)
+            return result,metrics
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(sync)
+        try:
+            assert waiting.wait(2)
+            acquired=lock.acquire(timeout=1)
+            try:
+                assert acquired,'Waiting for another project must not hold this project lock'
+                assert not future.done() and not judged
+                manifest(folder,instructions='newer external edit')
+                (folder/'src').mkdir(exist_ok=True)
+                (folder/'src/f.c').write_text('good newer source')
+            finally:
+                if acquired:lock.release()
+        finally:slot.release()
+        result,metrics=future.result(timeout=5)
+    assert result and metrics['progress_verification_wait']>0
+    assert net.cfg(net._project('game'))['instructions']=='newer external edit'
+    assert judged==[('f','good newer source')]
+    assert net._function('f','game')['matched_source']=='good newer source'
+    assert not worker.sync('game',force=True)
+
+
+@pytest.mark.parametrize('abort', ['cancel', 'pause'])
+def test_verification_wait_is_cancellable_without_releasing_someone_elses_slot(project, monkeypatch, abort):
+    from concurrent.futures import ThreadPoolExecutor
+    net,folder,_=project
+    worker=net.progress
+    manifest(folder,instructions='external edit')
+    waiting=threading.Event();cancel=threading.Event()
+    slot=worker.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            acquired=slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+        def __enter__(self):
+            waiting.set()
+            slot.acquire()
+        def __exit__(self,*args):slot.release()
+    monkeypatch.setattr(worker,'verification_slot',Slot())
+    class Log:
+        def check_cancel(self):
+            if cancel.is_set():raise RuntimeError('cancelled wait')
+    slot.acquire()
+    busy=[]
+    def sync():
+        try:return worker.sync('game',force=True,logger=Log())
+        finally:busy.append(worker.applying)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(sync)
+        try:
+            assert waiting.wait(2)
+            if abort=='pause':worker.pause('game')
+            else:cancel.set()
+            error,pattern=(NetworkError,'verification is paused') if abort=='pause' else (RuntimeError,'cancelled wait')
+            with pytest.raises(error,match=pattern):future.result(timeout=2)
+            assert not slot.acquire(blocking=False),'Cancellation must not release the active verifier slot'
+        finally:slot.release()
+    assert busy==[False]
+    worker.resume('game')
+    assert worker.sync('game',force=True)

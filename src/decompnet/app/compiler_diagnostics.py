@@ -20,6 +20,14 @@ PHASE_ORDER = ('rtl','jump','cse','loop','cse2','flow','combine','sched','lreg',
 PHASES = set(PHASE_ORDER)
 
 
+def output_fingerprint(raw):
+    """Unknown object formats carry no equivalence evidence; judging is unchanged."""
+    try:
+        return allocated_output(raw)
+    except (ELFError, ValueError, TypeError, IndexError, KeyError):
+        return None
+
+
 def allocated_output(raw):
     """Include static helper code, initialized data, BSS sizes and named relocations."""
     elf = ELFFile(BytesIO(raw))

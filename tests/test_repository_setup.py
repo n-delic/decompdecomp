@@ -221,3 +221,20 @@ def test_detected_progress_rejects_bad_manifest_without_replacing_it(project, tm
         saves.save(net, 'game', root)
     assert outside.read_text() == 'broken JSON'
     assert manifest.read_text() == 'broken JSON'
+
+
+def test_github_creation_is_scoped_and_does_not_repeat(project, monkeypatch):
+    from decompnet.app import repository_github
+    net, folder, _ = project
+    repository_setup.run(net, 'game', 'init', '', print)
+    calls = []
+    def create(root, name, visibility, log):
+        calls.append((root, name, visibility))
+        git(root, 'remote', 'add', 'origin', 'https://github.com/person/progress.git')
+    monkeypatch.setattr(repository_github, 'create', create)
+    state = repository_setup.run(net, 'game', 'github', '', print, github_name='person/progress')
+    assert state['origin']
+    assert calls == [(folder, 'person/progress', 'private')]
+    with pytest.raises(NetworkError, match='already configured'):
+        repository_setup.run(net, 'game', 'github', '', print, github_name='person/another')
+    assert len(calls) == 1
