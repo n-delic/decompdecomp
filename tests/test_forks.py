@@ -120,6 +120,11 @@ def test_the_comment_above_a_definition_is_its_own_up_to_a_blank_line_or_a_marke
     # only reccmp's words are markers: a comment with `// NOTE:` in it was dropped
     text = "// Sums them.\n// NOTE: wraps at 65521.\nint f(void) { return 0; }\n"
     assert csource.comment_above(text, text.index("int")) == 0
+    # the annotation right above the comment (a parked definition's, carried with it: ForkEngine._attempt)
+    text = "int g;\n// FUNCTION: 0x00401000 (NONMATCHING: frame size)\n// Adds.\nint add(int a, int b) { return a + b; }\n"
+    lo = csource.comment_above(text, text.index("int add"))
+    assert text[csource.marker_above(text, lo):lo].startswith("// FUNCTION: 0x00401000")
+    assert csource.marker_above(text, text.index("// FUNCTION")) == text.index("// FUNCTION")  # none above it
 
 
 def test_a_wrapper_is_taken_with_the_comment_inside_it():
@@ -261,6 +266,32 @@ def test_search_globs_as_agents_write_them():
         list(Path(".").glob(want))  # pathlib takes it (it raised ValueError for the given form)
 
 
+def test_file_scope_is_outside_every_block_but_a_namespace_or_extern_c():
+    """A definition past a parked one is taken only at file scope: find() reads a call followed by a block as one."""
+    text = 'namespace a {\nextern "C" {\nint f(void) {\n    if (x) {\n        g();\n    }\n}\n}\n}\nint h;\n'
+    assert csource.at_file_scope(text, text.index("int f"))
+    assert not csource.at_file_scope(text, text.index("g();"))
+    assert not csource.at_file_scope(text, text.index("    }\n}"))
+    assert csource.at_file_scope(text, text.index("int h"))
+    call = "int t(int x) {\n    y = scale(x) * 2.0;\n    if (y) {\n        y = 1;\n    }\n}\n"
+    assert csource.find(call, "scale") is not None  # (why the check is needed)
+    assert not csource.at_file_scope(call, csource.find(call, "scale")[0])
+
+
+def test_the_definition_the_build_sees_beside_a_parked_one_is_at_file_scope():
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fp = SimpleNamespace(never_defined=lambda names: set(names))  # (no build defines PARKED)
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#else\nint f(void) {\n    return 1;\n}\n#endif\n"
+    seen = ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
+    # past the parked copy, a call in g followed by a block isn't the build's definition
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\nint g(void) {\n    x = f() * 2;\n    if (x) {\n    }\n}\n"
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+
+
 def test_csource_finds_definitions_and_stubs():
     src = ('s32 f(s32 a) {\n    return a; /* } */\n}\nINCLUDE_ASM("asm/nonmatchings/x", g);\n'
            'uLong h(a)\n    uLong a;\n{\n    return a;\n}\nvoid C::m(int x) {\n}\n')
@@ -270,6 +301,18 @@ def test_csource_finds_definitions_and_stubs():
     assert csource.get(src, "C::m").startswith("void C::m")
     assert csource.get(src, "missing") is None
     assert "return 1" in csource.replace(src, "g", "int g(void) { return 1; }")
+
+
+def test_not_in_your_build_names_the_symbol_not_the_rows_unique_name():
+    """A function whose row name was made unique with a trailing "'" (a re-sync after a split) was reported as "its
+    object doesn't define _f@4'": agents spent days saying no C makes a name with a quote, and never looked further."""
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fn = {"name": "_f@4'", "meta": json.dumps({"symbol": "_f@4"}), "vram": None}
+    note = ForkEngine._missing_note(SimpleNamespace(name="u", base=None), fn)
+    assert "doesn't define _f@4," in note and "_f@4'" not in note
 
 
 def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for():
@@ -913,3 +956,115 @@ def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_cha
     parts()
     parts()
     assert len(asked) == 3
+
+
+def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
+    """A unit built in steps (here a part compiled, then linked into the unit's object) reports only the step that
+    failed: ninja never tries the object. Counted by the object alone, an x86 game's header edits that broke a step
+    were kept as breaking nothing, and the next compile there was told the file had been broken before it came."""
+    import sys
+
+    from decompnet.forks.project import ForkProject, _tool
+
+    if _tool("ninja") is None:
+        pytest.skip("needs ninja")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "step.py").write_text(
+        "import shutil, sys\n"
+        "if 'BROKEN' in open(sys.argv[1]).read():\n    sys.exit('error: a broken step')\n"
+        "shutil.copy(sys.argv[1], sys.argv[2])\n")
+    for name, text in (("a", "fine\n"), ("b", "BROKEN\n"), ("c", "fine\n")):
+        (tmp_path / "src" / f"{name}.c").write_text(text)
+    py = sys.executable.replace("\\", "/")
+    rules = f'rule step\n  command = "{py}" step.py $in $out\n'
+    for name in "abc":
+        rules += f"build build/{name}/part.o: step src/{name}.c\nbuild build/{name}.o: step build/{name}/part.o\n"
+    rules += "build all_source: phony build/a.o build/b.o build/c.o\n"
+    (tmp_path / "build.ninja").write_text(rules)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
+        {"name": n, "target_path": f"expected/{n}.o", "base_path": f"build/{n}.o",
+         "metadata": {"source_path": f"src/{n}.c"}} for n in "abc"]}))
+    fp = ForkProject(tmp_path)
+    failed: list[str] = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and [Path(t).as_posix() for t in failed] == ["build/b/part.o"]  # the step, not the object
+    assert fp.failed_units(failed) == {"b"}
+    assert fp.failed_units([]) == set()
+    # the build file custom_args names is the one queried (the query ran on build.ninja: no unit failed)
+    (tmp_path / "build.ninja").rename(tmp_path / "other.ninja")
+    cfg = json.loads((tmp_path / "objdiff.json").read_text())
+    (tmp_path / "objdiff.json").write_text(json.dumps({**cfg, "custom_args": ["-f", "other.ninja"]}))
+    shutil.rmtree(tmp_path / "build", ignore_errors=True)
+    fp = ForkProject(tmp_path)
+    failed = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and fp.failed_units(failed) == {"b"}
+
+
+def test_which_if_branch_leaves_code_out_is_told_only_when_certain():
+    """An x86 game's agents parked drafts in `#if defined(SOME_FLAG)` blocks no build defines; the brief showed them as
+    current and every compile wrote into them, judged on other code. A test of a macro that may be defined (the
+    compiler's own, one the build passes) hides nothing: only what is certain is said."""
+    text = ("int a(void) { return 0; }\n"
+            "#if defined(DRAFTS) || defined(MORE_DRAFTS) // parked\n"
+            "int b(void) { return 1; }\n"
+            "#elif defined(_M_IX86)\n"
+            "int c(void) { return 2; }\n"
+            "#else\n"
+            "int d(void) { return 3; }\n"
+            "#endif\n"
+            "#ifndef DRAFTS\n"
+            "int e(void) { return 4; }\n"
+            "#endif\n"
+            "#if 0\n"
+            "/* #endif */ int f(void) { return 5; }\n"
+            "#endif\n"
+            "#if VERSION >= 2\n"
+            "int g(void) { return 6; }\n"
+            "#endif\n")
+    at = {n: text.index(f"int {n}(") for n in "abcdefg"}
+    undefined = {"DRAFTS", "MORE_DRAFTS"}
+    assert csource.condition_names(text, at["d"]) == {"DRAFTS", "MORE_DRAFTS", "_M_IX86"}
+    hidden = {n: csource.hidden_by(text, at[n], undefined) for n in at}
+    assert hidden["b"] == (2, "#if defined(DRAFTS) || defined(MORE_DRAFTS) // parked")
+    assert hidden["a"] is None and hidden["e"] is None
+    assert hidden["c"] is None and hidden["d"] is None  # _M_IX86 may be defined: either branch may be built
+    assert hidden["f"] == (12, "#if 0")  # an #endif in a comment ends nothing
+    assert hidden["g"] is None  # a comparison can't be told
+    assert csource.hidden_by(text, at["b"], {"DRAFTS"}) is None  # MORE_DRAFTS may be defined
+    # with every macro known, each branch is told: the #elif's is out, the #else's is built
+    assert csource.hidden_by(text, at["c"], undefined | {"_M_IX86"}) == (4, "#elif defined(_M_IX86)")
+    assert csource.hidden_by(text, at["d"], undefined | {"_M_IX86"}) is None
+
+
+def test_a_macro_counts_as_never_defined_only_when_nothing_could_define_it(tmp_path):
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include").mkdir()
+    (tmp_path / "build").mkdir()
+    (tmp_path / "src" / "a.c").write_text("#ifdef PARKED\nint f(void) { return 1; }\n#endif\n#if HAS_SOUND\n#endif\n")
+    (tmp_path / "include" / "cfg.h").write_text("#define HAS_SOUND 1\n")
+    (tmp_path / "build.ninja").write_text("cflags = -DFROM_BUILD /DFROM_MSVC\n")
+    (tmp_path / "build" / "flags.txt").write_text("#define PARKED\n")  # build output isn't the project's
+    fp = ForkProject(tmp_path)
+    names = {"PARKED", "HAS_SOUND", "FROM_BUILD", "FROM_MSVC", "_WIN32", "mips", "WIN32"}
+    assert fp.never_defined(names) == {"PARKED"}
+    text = (tmp_path / "src" / "a.c").read_text()
+    assert ForkEngine._hidden(fp, text, text.index("int f")) == (1, "#ifdef PARKED")
+    (tmp_path / "include" / "cfg.h").write_text("#define PARKED\n")
+    assert ForkEngine._hidden(fp, text, text.index("int f")) is None
+
+
+@pytest.mark.parametrize("macro", ["MACH", "R5900"])
+def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
+    """The pinned KMC GCC 2.7.2 defines MACH and EE-GCC 2.96 R5900 (their `-dM -E`): code under `#ifdef MACH` was
+    said to be left out of the build, though it's compiled."""
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
+    (tmp_path / "src" / "a.c").write_text(text)
+    assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None

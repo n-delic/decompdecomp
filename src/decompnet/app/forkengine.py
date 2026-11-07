@@ -39,7 +39,7 @@ from ..forks import (
     unresolved,
 )
 from ..forks.objdiff import MappingConflict, ObjdiffError
-from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
+from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject, project_macro
 from ..hostenv import NO_WINDOW
 from ..network import (
     GAME_CODE,
@@ -2080,6 +2080,31 @@ class ForkEngine:
                 return n, span
         return None, None
 
+    @classmethod
+    def _seen_beside(cls, fp: ForkProject, text: str, span: tuple[int, int], hit: str,
+                     names: list[str]) -> tuple[int, int] | None:
+        """The definition the build sees after one an `#if` hides at `span`, or None: found by `hit`, then by the
+        function's other `names`. Only one at file scope counts: a call in another function's body followed by a
+        block reads as a definition (`y = f(x) * 2.0;` then `if (y) {`), and taken for it, that function was cut from
+        the call on and the try put inside it."""
+        for look in dict.fromkeys([hit, *names]):
+            at = span
+            while (later := csource.find(text[at[1]:], look)) is not None:
+                at = (at[1] + later[0], at[1] + later[1])
+                if csource.at_file_scope(text, at[0]) and not cls._hidden(fp, text, at[0]):
+                    return at
+        return None
+
+    @staticmethod
+    def _hidden(fp: ForkProject, text: str, at: int) -> tuple[int, str] | None:
+        """(line, directive) of the `#if` branch that leaves the code at `at` of a source out of the build. The search
+        for definitions (a second or so in a big project) runs only when the code would be hidden with every macro
+        that may be the project's own undefined: knowing more macros undefined only ever hides more."""
+        names = {n for n in csource.condition_names(text, at) if project_macro(n)}
+        if csource.hidden_by(text, at, names) is None:
+            return None
+        return csource.hidden_by(text, at, fp.never_defined(names))
+
     def _held(self, proj, unit: str, text: str | None = None) -> set[str]:
         """Functions of a unit whose source is still the very text judged to load the wrong constants: objdiff's
         progress rules count them, decompdecomp doesn't (see forks/literals.py)."""
@@ -2123,10 +2148,12 @@ class ForkEngine:
     @staticmethod
     def _missing_note(unit, fn) -> str:
         """What to tell an agent whose compile built, but whose unit's object has no such function: with what the
-        build said about its address (an LTCG harness's <object>.ltcg.json `problems`)."""
+        build said about its address (an LTCG harness's <object>.ltcg.json `problems`). It names the symbol, not the
+        row: a name made unique with a trailing "'" sent agents after a symbol no C could make."""
         at = f"0x{fn['vram']:08X}" if "vram" in fn.keys() and fn["vram"] else None
         said = [p for p in objdiff.ltcg_problems(unit.base) if at and at.lower() in p.lower()]
-        note = (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {fn['name']}, so there "
+        sym = ForkEngine._meta(fn).get("symbol") or fn["name"]
+        note = (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {sym}, so there "
                 "is nothing to compare yet")
         if not said:
             return note + "."
@@ -2401,6 +2428,10 @@ class ForkEngine:
         _, span = self._find(src_text, self._names(meta, fn)) if src_text else (None, None)
         if span:
             lines += ["", "### Current source", "```c", src_text[span[0]:span[1]].strip(), "```"]
+            if hidden := self._hidden(fp, src_text, span[0]):
+                lines.append(f"⚠️ It's inside `{hidden[1]}` (line {hidden[0]} of {unit.source}), which the build leaves "
+                             "out: the state above is not this code's. compile_and_diff compiles yours where the build "
+                             "sees it, without that copy; kept, the function is visible from then on.")
         else:
             lines += ["", f"### Not in {unit.source or 'the source'} yet: compile_and_diff adds it at the end."]
         if fn["best_source"] and fn["status"] != "matched":
@@ -2894,6 +2925,23 @@ class ForkEngine:
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
             hit, old_span = self._find(before, names)
+            base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
+            parked = self._hidden(fp, before, old_span[0]) if old_span else None
+            if parked and (seen := self._seen_beside(fp, before, old_span, hit, names)):
+                # a draft parked in `#ifdef` before the build's own definition in its `#else`: the one the build sees
+                # is the one tried (the parked one taken out, a new one put in, the visible one stayed: defined twice)
+                old_span, parked = seen, None
+            if parked:
+                # parked in an #if branch the build leaves out: written there, the compile was judged on other code,
+                # and moved out with edit_file it was refused when it broke a matched neighbour (where whole-program
+                # optimisation couples them), so an agent could do nothing with it. It goes where the build sees it,
+                # without the parked copy: kept, the function is visible from then on; else the file is undone. Its
+                # annotation (`// FUNCTION: 0x...`, often with the notes of earlier tries) comes along, and its
+                # comment too unless the agent sent one
+                lo = csource.comment_above(before, old_span[0])
+                mark = csource.marker_above(before, lo)
+                carried = before[mark:lo] + ("" if commented else before[lo:old_span[0]])
+                base, old_span = before[:mark] + before[old_span[1]:], None
             pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
             if old_span:
                 lo, hi = old_span
@@ -2908,7 +2956,10 @@ class ForkEngine:
                     lo = wrapped
                 after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
             else:
-                after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
+                placed = pre + carried + code.rstrip("\n") + "\n" + post
+                after = self._insert_in_order(proj, fp, unit, fn, base, placed)
+                if base is not before and (span := self._find(after, names)[1]) and self._hidden(fp, after, span[0]):
+                    after = base.rstrip("\n") + "\n\n" + placed  # (its neighbours are parked too: after them all)
             after = _with_includes(after, includes, prelude)
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
@@ -2983,12 +3034,33 @@ class ForkEngine:
             broken = sorted(n for n in protected if n and (d.unit_scores.get(n) or 0) < 100)
             if broken:
                 undo()
-                if quiet is None:
-                    self.net._record(fn, agent, None, code, 0, compiled=True)
-                return {"text": remembered(f"❌ REJECTED and undone: your change breaks matched function(s) "
-                                           f"{', '.join(broken[:8])}. Check you replaced the right definition "
-                                           "(overloads?) and didn't change shared code.", None),
-                        "score": None, "matched": False, "broken": broken}
+                # the function's own result still counts: where whole-program optimisation (or inlining) makes a
+                # function's code change how its neighbours compile, a draft short of exact breaks them, and without
+                # its score an x86 game's agents parked drafts behind #if flags and rebuilt by hand to measure them
+                own = None
+                if d.match_percent is not None:
+                    own = max(1, len(d.literals)) if d.literals else scaled(d.match_percent, fn["n_insns"])
+                if quiet is None:  # an attempt, never the best: release puts the best back in the file
+                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False)
+                listed = ", ".join(broken[:8])
+                if own is None:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. Check you "
+                            "replaced the right definition (overloads?) and didn't change shared code.")
+                elif d.matched:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}, though "
+                            f"{fn['name']} itself matches. What changed them is how it's declared or what else you "
+                            "sent (its calling convention, static or inline, a shared declaration): check you "
+                            "replaced the right definition (overloads?).")
+                else:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. {fn['name']} "
+                            f"itself came out at {percent_text(d.match_percent)} (score {own}): recorded as an "
+                            f"attempt, not kept in {unit.source}. If they changed only because of how {fn['name']} "
+                            "compiles into them (inlined, or whole-program optimisation choosing registers across "
+                            f"functions), they match again once {fn['name']} matches exactly: work from the diff "
+                            "below. Otherwise check you replaced the right definition (overloads?) and didn't change "
+                            f"shared code.\n{d.render()}")
+                return {"text": remembered(text, own), "score": None, "held_score": own, "matched": False,
+                        "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
