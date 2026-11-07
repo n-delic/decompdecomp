@@ -370,10 +370,10 @@
       <section class="panel" id="compilerPanel" aria-labelledby="compilerH">
         <header class="panel-head"><h2 id="compilerH">Compiler</h2><span class="muted small" id="compilerState"></span></header>
         <div class="pad">
-          <p class="answer" id="compilerAnswer"></p>
+          <div class="answer" id="compilerAnswer"></div>
           <div class="compiler-view-controls" id="compilerViewControls" hidden>
-            <label>Group by <select id="compilerGroup"><option value="settings">Compiler + arguments</option><option value="family">Compiler family</option><option value="range">Address ranges</option></select></label>
-            <label>Sort <select id="compilerSort"><option value="count">Most ranges</option><option value="address">Address ↑</option><option value="address-desc">Address ↓</option><option value="compiler">Compiler name</option></select></label>
+            <label class="field">Group by <select id="compilerGroup"><option value="settings">Compiler + arguments</option><option value="family">Compiler family</option><option value="range">Address ranges</option></select></label>
+            <label class="field">Sort <select id="compilerSort"><option value="count">Most ranges</option><option value="address">Address ↑</option><option value="address-desc">Address ↓</option><option value="compiler">Compiler name</option></select></label>
           </div>
           <div id="compilerParts"></div>
           <div id="compilerWaiting"></div>

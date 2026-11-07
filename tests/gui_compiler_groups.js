@@ -69,3 +69,15 @@ ctx.compareProfileWithDefault = async () => routed.push('compare');
     assert.equal(routed.at(-1), action);
   }
 })().catch(error => {console.error(error);process.exitCode=1;});
+
+// The default is an expandable profile card with the same heading treatment and linked functions.
+vm.runInContext(steering.slice(steering.indexOf('function renderCompilerAnswer'), steering.indexOf('  const sv = a.survey', steering.indexOf('function renderCompilerAnswer'))) + '}', ctx);
+ctx.$('compilerAnswer').querySelector = () => ({open: true});
+ctx.renderCompilerAnswer({compiler:'GCC A', flags:'-O2 -g', default_functions:1,
+  default_function_list:[{name:'default_function'}], parts:[], elsewhere_count:0});
+const defaultCard = elements.get('compilerAnswer').innerHTML;
+assert.match(defaultCard, /<details class="compiler-profile compiler-default" data-default-functions open>/);
+assert.match(defaultCard, /<b>GCC A<\/b> <span class="chip-s">Default<\/span> <code class="compiler-arguments">-O2 -g<\/code>/);
+assert.match(defaultCard, /data-compiler-function="default_function"/);
+ctx.renderCompilerAnswer({compiler:'GCC A', flags:'', default_functions:0, parts:[], elsewhere_count:0});
+assert.match(elements.get('compilerAnswer').innerHTML, /No functions use the default settings/);

@@ -1017,7 +1017,10 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-profile { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0; }
 .compiler-profile > summary { padding: 12px; cursor: pointer; }
 .compiler-profile-count { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
-.compiler-arguments { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; margin-top: 5px; color: var(--muted); background: transparent; }
+.compiler-arguments, .pad code.compiler-arguments { display: inline; white-space: normal; overflow-wrap: anywhere; font-size: 12px; font-weight: 400; line-height: 1.6; margin: 0; padding: 0; color: var(--muted); background: none; border: 0; border-radius: 0; }
+.compiler-profile code.compiler-arguments { margin-inline-start: .5em; }
+.compiler-default-functions { padding: 0 12px 12px; }
+.compiler-default-functions > p { margin: 0; }
 .compiler-range-list { list-style: none; margin: 0; padding: 0; }
 .compiler-range { padding: 10px 12px; border-top: 1px solid var(--line); }
 .compiler-range-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }

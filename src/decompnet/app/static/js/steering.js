@@ -854,9 +854,10 @@ for (const id of ["compilerGroup", "compilerSort"]) $(id).onchange = () => { if 
 function renderCompilerAnswer(a) {
   const parts = a.parts || [];
   const defaultOpen = compilerPartsSlug === S.slug && $("compilerAnswer").querySelector("[data-default-functions]")?.open;
-  setHtml($("compilerAnswer"), `<div class="compiler-default"><span class="small muted">Default settings</span><div><b>${esc(a.compiler)}</b></div><code class="compiler-arguments">${esc(a.flags || "No arguments")}</code></div>
-    ${a.default_function_list?.length ? `<details data-default-functions${defaultOpen ? " open" : ""}><summary>Functions using the default settings (${a.default_function_list.length})</summary><div class="compiler-function-links">${compilerFunctionLinks(a.default_function_list)}</div></details>` : ""}
-    <p class="small muted">${a.default_functions != null ? `${plural(a.default_functions, "function")} use the default. ` : ""}${plural(parts.length, "explicit range")}${a.elsewhere_count ? ` · ${plural(a.elsewhere_count, "other range")} look like a different compiler; not applied.` : "."}</p>`);
+  setHtml($("compilerAnswer"), `<details class="compiler-profile compiler-default" data-default-functions${defaultOpen ? " open" : ""}>
+    <summary><span><b>${esc(a.compiler)}</b> <span class="chip-s">Default</span> <code class="compiler-arguments">${esc(a.flags || "No arguments")}</code>${a.default_functions != null ? `<span class="compiler-profile-count">${plural(a.default_functions, "function")}</span>` : ""}</span></summary>
+    <div class="compiler-default-functions">${a.default_function_list?.length ? `<div class="compiler-function-links">${compilerFunctionLinks(a.default_function_list)}</div>` : `<p class="small muted">${a.default_functions === 0 ? "No functions use the default settings." : "Function details are provided by the project's build."}</p>`}</div>
+    </details><p class="small muted">${plural(parts.length, "explicit range")}${a.elsewhere_count ? ` · ${plural(a.elsewhere_count, "other range")} look like a different compiler; not applied.` : "."}</p>`);
   $("compilerState").textContent = a.checking ? "checking…" : "";
   renderCompilerParts(a);
   const sv = a.survey || {};
