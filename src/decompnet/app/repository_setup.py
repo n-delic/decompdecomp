@@ -32,13 +32,20 @@ def status(net, slug):
     head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True) if root else None
     origin = bool(root and 'origin' in git(root, 'remote').splitlines())
     checkpoint = bool(head)
+    build = saves.build_checkout(path)
+    remembered = net.cfg(proj).get('repository_sync_folder')
+    if build is None and remembered:
+        candidate = Path(remembered).expanduser().resolve()
+        if saves.build_checkout(candidate) == candidate:
+            build = candidate
     if head and net.is_rom(proj):
         manifest = (path.relative_to(root)/saves.MANIFEST).as_posix()
         checkpoint = manifest in git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--', manifest).splitlines()
     return {'folder': str(path), 'save_folder':str(saves.save_folder(net, slug).expanduser().resolve()),
             'root': str(root) if root else '', 'repository': bool(root),
             'origin': origin, 'checkpoint': checkpoint, 'portable': net.is_rom(proj),
-            'linked': path == saves.default_folder(net, slug).resolve()}
+            'linked': path == saves.default_folder(net, slug).resolve(),
+            'build_folder': str(build or '')}
 
 
 def bind(net, slug, path, proj):
@@ -98,7 +105,7 @@ def run(net, slug, action, origin, log):
                 head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)
                 branch = git(root, 'symbolic-ref', '--quiet', 'HEAD', error='Switch to a named branch before committing saved progress.')
                 if head:
-                    files, paths, _ = repository_progress.snapshot(net, slug, root, log)
+                    files, paths, _ = repository_progress.snapshot(net, slug, root, log, allow_unrelated_edits=True)
                 else:
                     net.progress.sync(slug, force=True, logger=log)
                     if net.progress.errors.get(slug):raise NetworkError(net.progress.errors[slug])

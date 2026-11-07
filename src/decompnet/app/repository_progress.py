@@ -11,6 +11,19 @@ from ..network import NetworkError
 from . import repository_git, repository_sync, saves
 
 
+def linked_checkout(net, slug, root):
+    """A build repository can also version its bound progress/ subfolder.
+
+    Build sync still treats the root as a build; automatic commits only own the
+    manifest-listed files under the linked save, never standalone source files.
+    """
+    folder = saves.default_folder(net, slug).resolve()
+    root = root.resolve()
+    if folder == root and ((root / 'build.json').is_file() or (root / 'build.py').is_file()):
+        return False
+    return folder.is_relative_to(root) and (folder / saves.MANIFEST).is_file()
+
+
 def owned(manifest):
     """Only manifest-listed C, headers and portable metadata belong to a progress checkpoint."""
     if (not isinstance(manifest, dict) or not isinstance(manifest.get('functions'), dict)

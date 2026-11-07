@@ -353,3 +353,35 @@ def test_revoked_match_job_is_retired_and_a_later_exact_verdict_can_commit(autom
     match_commits.process(net, 'game')
     assert git(root, 'log', '-1', '--format=%s') == 'Fresh exact verdict'
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+
+
+def test_automatic_match_in_build_progress_child_never_changes_build_sources(automatic):
+    from decompnet.app import repository_setup, repository_sync
+
+    net, root, _, _ = automatic
+    child = root / 'progress'
+    child.mkdir()
+    for name in ('src', 'best', 'include', 'decompdecomp.json', 'README.md', 'decompdecomp-progress.svg'):
+        path = root / name
+        if path.exists():path.rename(child / name)
+    (root / 'src').mkdir()
+    (root / 'src' / 'manual.c').write_text('int hand_written;')
+    (root / 'build.json').write_text('{}')
+    (root / 'build.py').write_text('# do not execute')
+    net._update_cfg('game', lambda cfg: cfg.update(progress_folder=str(child), save_folder=str(child)))
+    net.progress.sync('game', force=True)
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'combined build and progress checkpoint')
+    before = git(root, 'rev-parse', 'HEAD')
+    assert repository_setup.status(net, 'game')['build_folder'] == str(root)
+    assert not repository_sync.progress_checkout(net, 'game', root)
+    assert enable(automatic)['enabled']
+    match(automatic, 'f')
+    match_commits.process(net, 'game')
+    assert git(root, 'rev-parse', 'HEAD') != before
+    assert git(root, 'show', 'HEAD:src/manual.c') == 'int hand_written;'
+    assert git(root, 'show', 'HEAD:build.json') == '{}'
+    changed = git(root, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').splitlines()
+    assert changed and all(path.startswith('progress/') for path in changed)
+    assert 'progress/src/f.c' in changed
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0

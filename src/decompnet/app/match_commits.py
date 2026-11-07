@@ -45,7 +45,7 @@ def checkout_settings(net, slug, folder):
     if not net.is_rom(proj):
         raise NetworkError('Automatic per-function commits need a linked portable progress checkout. Imported-build commit support is planned.')
     root = repository_sync.checkout(folder, clean=False)
-    if not repository_sync.progress_checkout(net, slug, root):
+    if not repository_progress.linked_checkout(net, slug, root):
         raise NetworkError('Choose this project’s linked progress checkout before enabling automatic commits.')
     branch = repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD',
                                  error='Switch to a named Git branch before enabling automatic commits.')
@@ -197,7 +197,7 @@ def process(net, slug, output=log.info):
                 note = store.one('SELECT text FROM notes WHERE function_id=? AND agent_id=? AND created_at>=? ORDER BY id DESC LIMIT 1',
                                      job['function_id'], job['agent_id'], job['notes_after'])
                 message = match_commit_notes.message(net, job, note)
-                if not repository_sync.progress_checkout(net, slug, root):
+                if not repository_progress.linked_checkout(net, slug, root):
                     raise NetworkError('The linked progress checkout changed. Disable and re-enable automatic commits for the new folder.')
                 branch = repository_git.git(root, 'symbolic-ref', '--quiet', 'HEAD')
                 if repository_git.git(root, 'diff', '--cached', '--name-only'):

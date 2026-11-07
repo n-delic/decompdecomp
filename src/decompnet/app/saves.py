@@ -86,13 +86,32 @@ def _remember_folder(net, project_id: int, folder: Path, *, chosen: bool) -> Non
         db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), project_id))
 
 
+def build_checkout(folder: Path) -> Path | None:
+    """A selected build root, or its progress child, has one safe progress destination."""
+    for root in (folder, folder.parent):
+        if (root / 'build.json').is_file() and (root / 'build.py').is_file():
+            return root
+    return None
+
+
+def progress_destination(folder: Path) -> Path:
+    """Never mix a portable save's flat src/include tree with a standalone build."""
+    root = build_checkout(folder)
+    if root == folder:
+        target = root / SAVE_FOLDER
+        if target.is_symlink():
+            raise NetworkError("The detected progress subfolder is a symbolic link. Choose its actual location explicitly.")
+        return target
+    return folder
+
+
 def save(net, slug: str, folder: Path | None = None) -> dict:
     """Write the project's work to `folder` (default: progress/ in the project's folder). Returns what was saved.
 
     A folder chosen here is written from the database alone: the default progress folder can be in the middle of a
     git merge or a failed write, and "Save now" elsewhere must still get the work out."""
     default = default_folder(net, slug)
-    target = Path(folder) if folder is not None else default
+    target = progress_destination(Path(folder)) if folder is not None else default
     try:
         chosen = target.resolve() != default.resolve()
     except OSError:  # a path that can't be resolved (a broken link): compare it as written
@@ -104,6 +123,18 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
     try:
         proj = net._project(slug)
         _check_save_paths(target, chosen=chosen or bool(net.cfg(proj).get("progress_folder")))
+        if folder is not None and target != Path(folder):
+            manifest = target / MANIFEST
+            if manifest.is_symlink():
+                raise NetworkError("The detected progress manifest is a symbolic link. Choose a regular progress folder.")
+            if manifest.is_file():
+                try:
+                    existing = json.loads(manifest.read_text(encoding="utf-8"))
+                except ValueError:
+                    raise NetworkError("Fix the saved progress manifest before replacing its files.") from None
+                game = existing.get('game') if isinstance(existing, dict) else None
+                if not isinstance(game, dict) or game.get('sha1') != net.cfg(proj).get('rom', {}).get('sha1'):
+                    raise NetworkError("This repository's progress folder belongs to another game. Choose a different project folder.")
         if not net.is_rom(proj):
             result = _save_best(net, proj, target)
             _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)
