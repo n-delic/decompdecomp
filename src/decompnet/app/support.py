@@ -102,7 +102,8 @@ class Jobs:
 
     def start(self, kind: str, fn) -> str:
         jid = uuid.uuid4().hex[:JOB_ID_CHARS]
-        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None,
+               "progress": None, "t": time.time()}
         cancel = self.cancel_events[jid] = threading.Event()
         self.jobs[jid] = job
         logger = self.logger
@@ -118,6 +119,7 @@ class Jobs:
                 raise RuntimeError("opening the saved project was cancelled")
 
         log.check_cancel = check_cancel
+        log.progress = lambda value: job.__setitem__("progress", value)
 
         def run():
             try:

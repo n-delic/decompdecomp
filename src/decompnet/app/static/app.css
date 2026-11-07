@@ -1011,3 +1011,34 @@ details.more[open] > summary::before { content: "− "; }
 .copy-path { overflow-wrap: anywhere; }
 .local-form { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .local-form input[type=text] { width: 100%; box-sizing: border-box; }
+/* The Settings comparison follows the fork's stacked choices and live score card. */
+.compiler-test-body { display: grid; gap: 16px; padding: 16px; }
+.compiler-test-body > p { margin: 0; }
+.compiler-test-options { border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.compiler-test-options .check { margin: 0; border: 0; border-radius: 0; padding: 12px; }
+.compiler-test-options .check + .check { border-top: 1px solid var(--line-soft); }
+.compiler-test-options small { display: block; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+.compiler-progress { border: 1px solid var(--hl); border-radius: var(--r); background: var(--raise); padding: 16px; display: grid; gap: 14px; }
+.compiler-progress[hidden] { display: none; }
+.compiler-queue-count, .compiler-progress-count { display: grid; gap: 8px; font-size: 12px; }
+.compiler-queue-count { font-weight: 600; }
+.compiler-progress-heading { display: grid; gap: 4px; }
+.compiler-progress-heading b { font-size: 15px; overflow-wrap: anywhere; }
+.compiler-progress progress { width: 100%; height: 8px; accent-color: var(--match); }
+.compiler-progress-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; margin: 0; }
+.compiler-progress-stats > div { grid-column: span 2; }
+.compiler-progress-stats > .compiler-percent { grid-column: span 3; }
+.compiler-progress-stats dt { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.compiler-progress-stats dd { margin: 0; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.compiler-progress-stats [data-exact] { color: var(--match); }
+.compiler-progress p { margin: 0; line-height: 1.6; }
+.compiler-progress-profile { overflow-wrap: anywhere; }
+.compiler-progress[data-finished="true"] .compiler-percent,
+.compiler-progress[data-finished="true"] .compiler-current-label { display: none; }
+.compiler-progress[data-finished="true"] .compiler-progress-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.compiler-progress[data-finished="true"] .compiler-progress-stats > div { grid-column: auto; }
+#installedCompilerLog { max-height: 220px; overflow: auto; overflow-anchor: none; font-size: 11px; }
+.compiler-results { display: grid; gap: .5rem; margin-top: .8rem; }
+.compiler-result { padding: .7rem; border: 1px solid var(--line); border-radius: .4rem; }
+.compiler-result summary { cursor: pointer; }
+.compiler-result-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
