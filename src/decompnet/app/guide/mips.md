@@ -105,3 +105,10 @@ not a defined result on every path. Deep search can test a final guard plus a se
 lifetime diagnostically even when the single edit regresses. Read caller consumption and negative
 experiments in the function brief. Mapped middle quotient scopes and depth estimates are search
 priorities only; the original compiler and linked byte/data judge still decide each trial.
+
+Generated exact void-to-word hypotheses can now apply through ordinary autopilot/deep search
+after discarded-direct-caller checks, private declaration reconciliation, affected-function
+judging and a complete byte-identical image rebuild with all existing matched C retained.
+Consuming/unknown results, address-taken references and stale inputs remain diagnostic. An
+unrelated store between a call and a later `v0` overwrite does not consume the result; a store
+of `v0` does. This distinction must be made before inferring a discarded direct-call result.

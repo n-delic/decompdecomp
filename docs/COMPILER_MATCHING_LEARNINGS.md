@@ -5812,6 +5812,24 @@ This is known-case regression evidence; final signature remains diagnostic-only 
 rebuild was claimed. Mixed exit-register definitions do not imply a defined C return on every path.
 The +2-weighted-reference-per-scope estimate ranks trials only; it is not a general GCC rule.
 
+## Discarded MIPS call results across unrelated stores
+
+**Controlled reader regression, 7 November 2026:** the N64 GCC 2.7.2 KMC caller
+(`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`) stores unrelated loop state after a call
+and later overwrites `v0` with `sltiu`. Stopping on every store incorrectly classifies
+this use as unknown. The bounded reader now crosses known stores that do not read
+`v0`; a store of `v0` is still consumption. Synthetic instruction tests cover both.
+This is a reader correction, not a new compiler scheduling rule. Automatic
+return-type publication additionally needs reconciled caller declarations, ordinary
+byte/data verdicts and a complete image rebuild; caller evidence alone is insufficient.
+
+**Controlled application regression:** the original guarded-return/lifetime checkpoint
+now reaches ordinary adoption without an agent: 5 search builds, discarded direct caller
+evidence, both linked source verdicts and a byte-identical 12,582,912-byte image. The
+minimal control retained one existing C caller and used original assembly elsewhere.
+The full 2,079-match snapshot instead hit an unrelated export constant-mapping failure
+and was rejected unchanged. These are different controls, not equivalent success claims.
+
 ### Disjoint branch storage, conversion boundaries and loop shape
 
 Pinned KMC GCC 2.7.2, flags `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: a private

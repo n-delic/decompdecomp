@@ -77,4 +77,4 @@ def brief(net,proj,fn):
     uses=[r['name']+': '+','.join(u['use'] for u in r['uses']) for r in proof['callers']]
     guards=', '.join('result '+r['condition'] for r in proof['guarded_exits'])
     return ('Next diagnostic experiment: target has a result-preserving exit ('+guards+'). Test a final scalar guard/partial-return hypothesis, then a separate lifetime for that scalar, even if the single edit scores worse. '
-            'Known direct callers: '+('; '.join(uses) or 'not established')+'. No automatic interface change; other exits may leave scratch results. Indirect callers remain unproven.')
+            'Known direct callers: '+('; '.join(uses) or 'not established')+'. Automatic return repair requires staged discarded-caller and full-image checks; other exits may leave scratch results. Indirect callers remain unproven.')

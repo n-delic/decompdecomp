@@ -187,3 +187,10 @@ def test_scalar_scope_does_not_rename_members_strings_or_self_initialization():
     assert 'record->value = return_value;' in scoped and 'say("value")' in scoped
     assert not hypotheses.variants(SOURCE.replace('value=a+1','value=value+1'),'f','','mips',proof)
     assert not hypotheses.variants(SOURCE,'f','#define emit(x) hidden(value,x)','mips',proof)
+
+
+def test_unrelated_stores_do_not_hide_a_later_return_overwrite():
+    caller=asm('jal f','nop','lw $t0, 0($sp)','sw $t0, 4($sp)','sltiu $v0, $s7, 12','jr $ra','nop')
+    assert mips_return_paths.caller_use(caller,'f')[0]['use']=='discarded'
+    consumed=caller.replace('sw $t0, 4($sp)','sw $v0, 4($sp)')
+    assert mips_return_paths.caller_use(consumed,'f')[0]['use']=='consumed'

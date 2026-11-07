@@ -28,7 +28,7 @@ def run(search, agent, proj, fn, *, generated_only=False):
     if not roots:return result
     deadline = min(search.deadline, started+min(SECONDS, max(0, search.deadline-started)/4))
     search.phase = 'return-path hypotheses' if not reviewed_count else 'reviewed diagnostic seeds'
-    search.log('Searching '+('generated path-return hypotheses' if not reviewed_count else 'reviewed alternatives')+' without replacing saved C. Signature changes stay diagnostic-only.')
+    search.log('Searching '+('generated path-return hypotheses' if not reviewed_count else 'reviewed alternatives')+' without replacing saved C. Return changes require staged caller and complete-image verification.')
     initial_tested = search.tested
     def check():
         search.log.check_cancel()
@@ -113,10 +113,21 @@ def run(search, agent, proj, fn, *, generated_only=False):
                    'source_sha256':hashlib.sha256(source.encode()).hexdigest(),
                    'diagnostic_only':bool(root.get('generated')) or reviewed_search_seeds.contract_changed(net._function(fn['name'],proj['slug']), source)}
             result['diagnostic_exact'].append(hit)
+            if hit['diagnostic_only'] and root.get('generated'):
+                from . import return_repair_apply
+                result['discovery_seconds'] = time.monotonic()-started
+                search.phase = 'verifying exact return repair'
+                search.report(force=True)
+                result['application'] = return_repair_apply.apply(net, agent, proj, fn, source, search.log)
+                result['matched'] = result['application']['matched']
+                if result['matched']:
+                    hit['diagnostic_only'] = False
+                    search.best = 0
+                    search.improvements += 1
             if hit['diagnostic_only']:
                 search.log('Exact diagnostic '+trial_id+'; interface differs or is uncertain. Saved C is unchanged. '
                            'Review callers, retrieve get_compiler_trial, then submit through the ordinary judge.')
-            elif check():
+            elif not result['matched'] and check():
                 search.log('Exact reviewed alternative; rechecking through the ordinary save path.')
                 before = search.tested
                 if not search._hold(agent, fn, count_turn=False):

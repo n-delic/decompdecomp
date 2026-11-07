@@ -855,7 +855,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
             proj, fn = net.project_row(slug), net._function(name, slug)
             search.best = fn['best_score']
         # Reviewed alternatives have a bounded share of the same global allowance.
-        # Their ABI-changing exact results are evidence, never permission to publish.
+        # Manual ABI changes remain diagnostic; narrow generated returns need staged full-image verification.
         if lane is None or lane.index == 0:
             from . import reviewed_seed_search
             outcome = reviewed_seed_search.run(search, agent, proj, fn)

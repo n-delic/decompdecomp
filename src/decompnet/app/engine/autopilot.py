@@ -234,6 +234,9 @@ class AutopilotMixin:
                 return "skip"
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
         try:
+            from ..return_repair_autopilot import run as return_repair
+            if return_repair(self, agent, proj, fn):
+                return 'match'
             seed = self._seed_for(fn, proj)  # keep one valid-syntax draft for the brief and the compiler
             ctx = self._context(proj["id"], fn["unit"])
             plan, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
@@ -356,6 +359,9 @@ class AutopilotMixin:
                     break
             report['complete'] = True
             draft_reports.save(self, fid, report, project_id=proj['id'])
+            fresh = self._function(fn['name'], proj['slug'])
+            if fresh['status'] == 'open' and fresh['best_source'] != fn['best_source'] and return_repair(self, agent, proj, fresh):
+                return 'match'
             return min(outcomes or ['fail'], key=("match", "near", "far", "skip", "fail").index)
         finally:
             with self.project_store(proj['id']).tx() as db:
