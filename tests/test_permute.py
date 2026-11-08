@@ -213,12 +213,17 @@ def test_workers_yield_the_cpu_to_the_app():
     assert workers.WORKERS >= 1
 
 
-def test_drafts_and_the_permuter_share_one_pool_of_workers(monkeypatch):
-    """Two pools of four made eight background threads beside the agents' compiles: both submit to the one pool."""
+def test_drafts_and_permuter_own_separate_stoppable_groups(monkeypatch):
+    """Each purpose has its own identity, project and stop callback."""
     from decompnet.app import drafts
 
     used = []
-    monkeypatch.setattr(workers, "pool", lambda: used.append("pool") or workers.ThreadPoolExecutor(1))
+    from decompnet.app import purpose_work
+    real = purpose_work.Executor
+    def create(*args, **kwargs):
+        used.append((kwargs['purpose'],kwargs['project'],callable(kwargs['stop'])))
+        return real(1,**kwargs)
+    monkeypatch.setattr(purpose_work, 'Executor', create)
     net = FakeNet()
     net.local_agent = lambda name: (AGENT, "")
     p = Permuter(net)
@@ -229,7 +234,7 @@ def test_drafts_and_the_permuter_share_one_pool_of_workers(monkeypatch):
     net.draft_mark, net.can_draft, net.stale_drafts = (lambda proj: 1), (lambda proj: True), (lambda proj: [1])
     d._one = lambda *args: d.stop("game")
     d._loop("game", d.jobs.setdefault("game", drafts.State()))
-    assert used == ["pool", "pool"]
+    assert used == [('Background permutation','game',True),('Machine drafts','game',True)]
     assert workers.WORKERS == workers.default_workers()
 
 
@@ -385,9 +390,8 @@ def test_traced_generator_keeps_successful_rewrite_lineage_without_changing_cand
 
 def test_the_worker_count_defaults_to_what_the_computer_can_spare_and_is_a_setting(monkeypatch):
     """Cores less two by default; a setting of 0 or nothing is automatic; anything above is taken as it is. A new
-    count replaces the pool, and what the old one was given finishes there."""
+    count applies to new purpose groups; existing groups retain their width."""
     monkeypatch.setattr(workers, "CORES", 16)
-    monkeypatch.setattr(workers, "_pool", None)
     monkeypatch.setattr(workers, "WORKERS", workers.default_workers())
     assert workers.default_workers() == 14
     assert [workers.clamp(v) for v in (None, 0, "junk", -3, 1, 6, 99)] == [14, 14, 14, 14, 1, 6, 99]
@@ -399,7 +403,9 @@ def test_the_worker_count_defaults_to_what_the_computer_can_spare_and_is_a_setti
     assert workers.configure(3) == 3
     second = workers.pool()
     assert second is not first and second._max_workers == 3
-    assert workers.configure(3) == 3 and workers.pool() is second  # (the same count keeps the pool)
+    assert workers.configure(3) == 3
+    assert first._max_workers == 14  # Running groups keep their configured width.
+    first.shutdown();second.shutdown()
     assert workers.configure(None) == 14 and workers.pool()._max_workers == 14
     workers.pool().shutdown(wait=False)
 

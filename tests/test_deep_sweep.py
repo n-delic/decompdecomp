@@ -302,8 +302,8 @@ def test_one_thread_searches_serially_and_zero_means_what_the_computer_can_spare
     obj.run('game', 1, 10, Log(), 1)
     assert calls == ['f0', 'f1']
     sizes = []
-    real = deep_sweep.ThreadPoolExecutor
-    monkeypatch.setattr(deep_sweep, 'ThreadPoolExecutor', lambda n, **kw: sizes.append(n) or real(n, **kw))
+    real = deep_sweep.Executor
+    monkeypatch.setattr(deep_sweep, 'Executor', lambda max_workers=None, **kw: sizes.append(max_workers) or real(max_workers, **kw))
     obj.run('game', 2, 10, Log(), 0)
     obj.run('game', 3, 10, Log(), 5000)  # (no limit)
     assert sizes == [workers.default_workers(), 5000]

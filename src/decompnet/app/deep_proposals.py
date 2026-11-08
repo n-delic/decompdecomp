@@ -10,12 +10,13 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import TimeoutError
 from pathlib import Path
 
 from .. import limits
 from ..hostenv import NO_WINDOW, stop_process_tree
 from ..network import NetworkError
+from .purpose_work import Executor
 
 MAX_CACHE = 32*1024*1024
 
@@ -72,7 +73,7 @@ class Worker:
 
 class Pool:
     def __init__(self, count):
-        self.executor = ThreadPoolExecutor(count,thread_name_prefix='deep-proposals')
+        self.executor = Executor(max_workers=count, purpose='Repair proposal generation',thread_name_prefix='deep-proposals')
         self.capacity = threading.BoundedSemaphore(count*2)
         self.local = threading.local()
         self.workers = []
@@ -93,6 +94,8 @@ class Pool:
                 with self.lock:
                     self.workers = [w for w in self.workers if not w.closed.is_set()]+[worker]
             def checkpoint():
+                from .purpose_work import checkpoint as check_owner
+                check_owner()
                 if self.stop.is_set():raise RuntimeError('Proposal generation stopped')
                 check()
             result = worker.run(request,checkpoint)

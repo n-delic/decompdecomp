@@ -5,12 +5,12 @@ import sqlite3
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 
 from .. import candidate_scope, compiler, match_bundle
 from ..network import NetworkError
 from . import function_names, source_preparation
+from .purpose_work import Executor
 
 SCHEMA = "CREATE TABLE IF NOT EXISTS reconcile_visits(function_id INTEGER PRIMARY KEY,scope TEXT,cursor INTEGER,visited REAL)"
 
@@ -143,7 +143,7 @@ def run(net, slug, seconds, attempts, log):
     # Use independent low-priority compiler threads: shared background workers can be
     # waiting for our project lock. The compiler's global slots still cap subprocesses.
     width=max(1,min(8,workers.WORKERS,compile_limit))
-    executor=ThreadPoolExecutor(width,thread_name_prefix='saved-recovery',initializer=workers.lower_priority)
+    executor=Executor(max_workers=width, purpose='Saved match recovery', project=slug,thread_name_prefix='saved-recovery',initializer=workers.lower_priority)
     agent=None
     try:
         with judging(), view():

@@ -4,12 +4,13 @@ import json
 import random
 import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, wait
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
 from . import agent_tokens, deep_permuter, deep_throughput, workers
 from .deep_activity import Activity
+from .purpose_work import Executor
 
 POLL_SECONDS = 15
 QUEUE_CACHE_SECONDS = 10
@@ -423,7 +424,7 @@ class Sweeps:
         cycle = 1
         order = []
         futures = {}
-        pool = ThreadPoolExecutor(count, thread_name_prefix='deep-pass', initializer=None if maximum else workers.lower_priority)
+        pool = Executor(max_workers=count, purpose='Deep search functions', project=slug, thread_name_prefix='deep-pass', initializer=None if maximum else workers.lower_priority)
         stats['activity'].publish({'cycle': cycle, 'loop': loop,
             'preparation': {'checked': 0, 'total': 0, 'eligible': 0, 'waiting': 0, 'done': False}}, force=True)
         try:

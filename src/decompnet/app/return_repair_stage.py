@@ -4,12 +4,12 @@ import json
 import shutil
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import yaml
 
 from ..network import NetworkError
+from .purpose_work import Executor
 
 FUNCTION_COLUMNS = ('id','project_id','name','vram','rom_offset','size','n_insns','target','relocs','asm',
                     'unit','best_source','best_score','matched_source','status','meta')
@@ -77,7 +77,7 @@ def verify(net, state, updates, files, directory, log):
             error.verification=dict(rebuild_verified=False,rebuild_seconds=time.monotonic()-began,
                                     judge_compiles=len(updates),matched_source_rechecks=result.get('matched',0))
         return error
-    compiles=ThreadPoolExecutor(max_workers=4)
+    compiles=Executor(purpose='Repair verification build', project=proj['slug'], max_workers=4)
     try:
         with staged.store.tx() as db:
             db.execute('INSERT INTO projects(id,slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)',

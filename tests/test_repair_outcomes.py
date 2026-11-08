@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 
 from decompnet.app import adaptive_repairs, compiler_diagnostics, repair_outcomes, repair_sequences
 from tests.test_repair_feedback import fn, match, setup  # noqa: F401
@@ -13,7 +12,7 @@ def test_background_analysis_saves_evidence_without_adopting_or_reviewing(setup,
     net.forks=object()
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
     queue=[]
-    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda purpose,project,fn:queue.append(fn))
     monkeypatch.setattr(repair_outcomes,'analyze',lambda example:{'baseline_output_equivalent':True,
         'minimization':{'source':'private reduced C','reverted':2,
                         'individual_checks':{'output_preserved':[0,1],'output_not_preserved':[],'untested':[2]}}})
@@ -37,12 +36,12 @@ def test_disabled_analysis_and_failed_jobs_do_not_lose_matches(setup,monkeypatch
     case_id=match(setup);net.forks=object()
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
     repair_outcomes.configure(net.repair_feedback,False)
-    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:(_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda *args:(_ for _ in ()).throw(AssertionError()))
     repair_outcomes.schedule(net.repair_feedback,case_id)
     assert not repair_outcomes.enabled(net.repair_feedback)
     repair_outcomes.configure(net.repair_feedback,True)
     queue=[]
-    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda purpose,project,fn:queue.append(fn))
     monkeypatch.setattr(repair_outcomes,'analyze',lambda _:(_ for _ in ()).throw(ValueError('compile failed')))
     repair_outcomes.schedule(net.repair_feedback,case_id);queue.pop()()
     assert repair_outcomes.result(net.repair_feedback,case_id)['state']=='failed'
@@ -123,7 +122,7 @@ def test_match_capture_enqueues_the_new_evidence_hash(setup,monkeypatch):  # noq
 def test_busy_captures_are_durable_and_drained_by_one_worker(setup,monkeypatch):  # noqa: F811
     net,*_=setup;net.forks=object();queue=[]
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
-    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda purpose,project,fn:queue.append(fn))
     first=match(setup)
     # A second independent capture can wait while the first worker is scheduled.
     with net.store.tx() as db:
@@ -140,7 +139,7 @@ def test_busy_captures_are_durable_and_drained_by_one_worker(setup,monkeypatch):
 def test_disabled_analysis_retains_queue_for_resume(setup,monkeypatch):  # noqa: F811
     net,*_=setup;net.forks=object();queue=[]
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
-    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda purpose,project,fn:queue.append(fn))
     repair_outcomes.configure(net.repair_feedback,False)
     case_id=match(setup)
     assert not queue and repair_outcomes.backlog(net.repair_feedback)['pending']==1
@@ -158,7 +157,7 @@ def test_restart_resumes_durable_interrupted_work(setup,monkeypatch):  # noqa: F
         db.execute('INSERT INTO repair_outcome_analysis VALUES(?,?,?,?)',(case_id,'running','{}',0))
         db.execute('INSERT INTO repair_analysis_queue VALUES(?,?,?)',(case_id,None,0))
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
-    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda purpose,project,fn:queue.append(fn))
     monkeypatch.setattr(repair_outcomes,'analyze',lambda _: {'summary':{}})
     assert repair_outcomes.result(net.repair_feedback,case_id)['state']=='pending'
     repair_outcomes.resume(net.repair_feedback);queue.pop()()

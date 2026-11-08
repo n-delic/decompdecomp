@@ -2575,8 +2575,11 @@ mode still needs the temporary own-build implementation described above.
 Background work has a global inventory for GUI jobs, managed agents, machine drafts, the
 background permuter, autopilot, twin reuse, saved-file verification, compiler surveys and room
 services, plus all live app thread names. It delegates Stop to existing safe worker controls and
-exposes the shared draft/permuter thread limit. CPU is measured for the Python process only
-(100% per core); accurate per-job and compiler-subprocess attribution remains planned work.
+uses independent purpose-owned worker groups for drafts, permutation, reuse, compiler checks,
+repair generation and automatic Git pushes. Active groups show project, real thread IDs,
+working/queued counts and cooperative Stop; cancellation reaches nested compiler contexts.
+The thread setting supplies a default width for new groups. CPU uses real active-thread counters
+(100% per core); compiler-subprocess attribution remains planned work.
 Automatic evidence checks and room services remain read-only here and use their project controls.
 
 - Done: explicit ROM export **Verify, commit and push** saves all portable progress and

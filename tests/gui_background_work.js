@@ -20,6 +20,8 @@ vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js'
  ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'SDK naming',kind:'startup',key:'task-1',project:'game',state:'running',detail:'Checking 1 / 10',stoppable:true}],thread_details:[]});
  assert.match($('backgroundRows').innerHTML,/role="progressbar"/);
  await stopButton.onclick();assert.equal(stopped,'task-1');
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Compiler profile comparisons',kind:'purpose',key:'purpose-1',project:'game',state:'running',detail:'2 working · 1 queued',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/2 working/);await stopButton.onclick();assert.equal(stopped,'purpose-1');
  ctx.document.hidden=true;await ctx.readBackgroundWork();assert.equal(reads,1);
  let autosaveAction;
  ctx.api=async(url,options)=>{autosaveAction=options.body;};

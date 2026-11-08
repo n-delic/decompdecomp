@@ -19,6 +19,7 @@ from ...network import Agent, NetworkError
 from ...project import compiler_for, unknown_compiler_message
 from ...repair_feedback import trial as repair_trial
 from ..draft_context import candidate_context
+from ..purpose_work import Executor
 
 
 class AutopilotMixin:
@@ -94,8 +95,6 @@ class AutopilotMixin:
             self._autopilot_work(slug,ids,state,workers,try_one)
 
     def _autopilot_work(self, slug, ids, state, workers, try_one):
-        from concurrent.futures import ThreadPoolExecutor
-
         from .. import maintenance
 
         automatic_workers, width = workers if isinstance(workers, tuple) else (workers, workers)
@@ -157,7 +156,7 @@ class AutopilotMixin:
         try:
             count = min(len(ids), max(automatic_workers, width))
             if count:
-                with ThreadPoolExecutor(max_workers=count) as pool:
+                with Executor(max_workers=count, purpose='Autopilot repair search', project=slug, stop=state['stop'].set) as pool:
                     list(pool.map(lambda _: lane(), range(count)))
         finally:
             state["state"] = "stopped" if state["stop"].is_set() else "done"

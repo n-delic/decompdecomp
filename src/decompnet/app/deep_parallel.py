@@ -1,9 +1,10 @@
 """Independent deep-search paths with one function budget and one published result."""
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 
 from ..network import NetworkError
+from .purpose_work import Executor
 
 
 def validate_threads(count):
@@ -101,7 +102,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
             lane.prepared()
 
     log(f'Searching {name} with {count} threads; sharing {minutes} minutes and {variants:,} candidate checks.')
-    with ThreadPoolExecutor(count, thread_name_prefix='deep-function', initializer=None if getattr(getattr(log, 'compile_pool', None), 'maximum', False) else workers.lower_priority) as pool:
+    with Executor(max_workers=count, purpose='Per-function deep search', project=slug, thread_name_prefix='deep-function', initializer=None if getattr(getattr(log, 'compile_pool', None), 'maximum', False) else workers.lower_priority) as pool:
         futures = [pool.submit(work, index) for index in range(count)]
         for future in as_completed(futures):
             results.append(future.result())

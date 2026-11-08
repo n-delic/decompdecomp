@@ -110,3 +110,23 @@ def test_autosave_has_project_controls_and_thread_attribution():
     m.resume('autosave','game')
     assert calls == [('game',), ('game',False)]
     with pytest.raises(NetworkError):m.resume('job','game')
+
+
+def test_purpose_group_threads_and_stop_are_exposed_in_inventory():
+    from decompnet.app.purpose_work import Executor
+    m,_=monitor()
+    entered,release,stopped=threading.Event(),threading.Event(),threading.Event()
+    def work():
+        entered.set()
+        assert release.wait(5)
+    with Executor(1,purpose='Verify compiler matches',project='game',stop=stopped.set) as pool:
+        future=pool.submit(work)
+        try:
+            assert entered.wait(5)
+            row=next(r for r in m.snapshot()['items'] if r['kind']=='purpose' and r['key']==pool.key)
+            assert row['project']=='game' and row['stoppable'] and len(row['thread_ids'])==1
+            m.stop('purpose',pool.key)
+            assert stopped.is_set()
+            assert next(r for r in m.snapshot()['items'] if r['key']==pool.key)['state']=='stopping'
+        finally:release.set()
+        future.result()

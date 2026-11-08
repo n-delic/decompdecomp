@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from . import repair_replay, workers
+from . import purpose_work, repair_replay
 
 _SLOT = threading.BoundedSemaphore(1)
 KEY = 'automatic_repair_analysis'
@@ -86,6 +86,8 @@ def resume(feedback):
     def run():
         try:
             while enabled(root) and not getattr(root.net,'source_update_pending',False):
+                from .purpose_work import checkpoint
+                checkpoint()
                 candidates = []
                 for service in root.services():
                     prepare(service)
@@ -117,7 +119,8 @@ def resume(feedback):
         # Close the empty-queue/enqueue race without allocating a future per capture.
         if enabled(root) and any(service.store.one('SELECT 1 FROM repair_analysis_queue LIMIT 1') for service in root.services()):
             resume(root)
-    try:workers.pool().submit(run)
+    try:
+        purpose_work.start('Repair outcome analysis', '', run)
     except Exception as error:
         _SLOT.release()
         logging.getLogger('decompdecomp').warning('Unable to schedule repair analysis: %s',error)

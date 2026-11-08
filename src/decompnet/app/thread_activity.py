@@ -42,6 +42,7 @@ def cpu_reader():
 
 def purpose(name):
     exact = {
+        'automatic-git-push':('Git push scheduler','Checks enabled automatic pushes; active project pushes have separate Stop controls.'),
         'MainThread':('Server','Runs the local HTTP/MCP event loop and coordinates app requests.'),
         'AnyIO worker thread':('Requests','Runs synchronous request handlers off the server event loop; may be idle.'),
         'autosave':('Saved progress','Checks saved project files and synchronizes verified progress.'),
@@ -85,7 +86,10 @@ def purpose(name):
         ('preflight-','Project preparation','Checks project build prerequisites.'),
         ('index-','Project indexing','Indexes project sources and symbols.'),
         ('job-','Background job','Runs background work or handles agent process completion; see the activity list above.'),
-        ('ThreadPoolExecutor-','Shared executor','Executes queued app tasks; its assignment can change between requests.'),
+        ('autopilot-repair-search','Autopilot','Tries machine drafts with the selected concurrency.'),
+        ('identical-function-reuse','Code reuse','Verifies identical functions; stop the owning reuse group.'),
+        ('import-compiler-detection','Compiler detection','Checks candidate import compilers.'),
+        ('ThreadPoolExecutor-','Library executor','Unregistered library executor; app worker groups have their own purpose and Stop controls.'),
         ('source-','Source updates','Prepares or downloads the source runtime.'),
         ('window','Window bridge','Communicates with or watches the separate app window process.'),
         ('tray','Tray','Coordinates the tray icon and its events.'),

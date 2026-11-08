@@ -177,7 +177,8 @@ class Jobs:
                 from ..compiler import background_thread
                 if not interactive.is_set():background_thread()
                 from . import maintenance
-                with maintenance.foreground(interactive):
+                from .purpose_work import owner
+                with maintenance.foreground(interactive), owner(job.get('activity_project'), lambda:self.cancel(jid)):
                     result = fn(log)
                 with self._lock:
                     check_cancel()

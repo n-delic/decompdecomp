@@ -1,18 +1,12 @@
-"""The background workers machine drafts (drafts.py) and the permuter (permute.py) share, for every project.
-
-One pool, so the number of workers holds for the app as a whole: each part with a pool of its own made eight threads
-on a big computer, beside the agents' compiles. How many is a setting (Settings, "Background worker threads"),
-by default what the computer can spare. Each worker lowers its own CPU priority as it starts (on Linux a
-thread's own, inherited by what it runs; on macOS, the thread's QoS), so the app and
-the agents come first.
-"""
+"""Thread defaults and priority for independent, purpose-owned background groups."""
 
 from __future__ import annotations
 
 import os
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
+
+from .purpose_work import Executor
 
 RESERVED_CORES = 2  # left to the app itself and the agents' compiles
 # More workers match faster when a compile is slow (a period compiler run through Rosetta or WSL) and cost the app
@@ -37,10 +31,9 @@ def clamp(threads) -> int:
     return default_workers() if wanted <= 0 else wanted
 
 
-WORKERS = default_workers()  # how many the pool has (or will have when it starts): configure() changes it
+WORKERS = default_workers()  # default width of new purpose-owned groups
 NICE = 10  # how much lower the workers' CPU priority is
 
-_pool: ThreadPoolExecutor | None = None
 _lock = threading.Lock()
 
 
@@ -68,23 +61,12 @@ def lower_priority() -> None:
 
 
 def configure(threads=None) -> int:
-    """Use `threads` workers from now on (nothing or 0: automatic). A pool that is running is let go: what it was
-    given finishes there, and the next thing submitted starts a pool of the new size. Returns the count."""
-    global _pool, WORKERS
-    count = clamp(threads)
-    with _lock:
-        if count != WORKERS:
-            WORKERS = count
-            old, _pool = _pool, None
-            if old is not None:
-                old.shutdown(wait=False)
+    """Set the default width of newly created task groups; running groups keep theirs."""
+    global WORKERS
+    with _lock:WORKERS = clamp(threads)
     return WORKERS
 
 
-def pool() -> ThreadPoolExecutor:
-    """The shared workers, started the first time something needs them."""
-    global _pool
-    with _lock:
-        if _pool is None:
-            _pool = ThreadPoolExecutor(WORKERS, thread_name_prefix="background-worker", initializer=lower_priority)
-        return _pool
+def pool(purpose='Background task', project='', stop=None) -> Executor:
+    """Return an independent group; callers must close it after their operation."""
+    return Executor(WORKERS, purpose=purpose, project=project, stop=stop, initializer=lower_priority)

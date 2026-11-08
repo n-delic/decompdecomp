@@ -68,6 +68,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         # No persistence or mutex acquisition may precede these cancellation signals.
         net.shutting_down=True
         jobs.shutdown()
+        from . import purpose_work
+        purpose_work.shutdown()
         status.step('Signalling all agent processes',manager.request_shutdown)
         def bounded(label, action, limit):
             remaining=max(0,deadline-time.monotonic())
