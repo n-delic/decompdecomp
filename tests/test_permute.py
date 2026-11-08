@@ -16,6 +16,12 @@ from decompnet.app.permute import MAX_TURNS, Permuter, State, weight_family
 from decompnet.network import Agent
 from decompnet.store import IN_MEMORY, Store
 
+
+@pytest.fixture(autouse=True)
+def isolate_random_generator(monkeypatch):
+    monkeypatch.setattr(permute.local_repairs, "variants", lambda *args, **kwargs: [])
+
+
 SOURCE = "s32 f(s32 a) {\n    s32 b = a + 1;\n    return b * 2;\n}\n"
 HEADER = "/* the game's types */\n#define TWO 2\ntypedef int s32;\n"
 

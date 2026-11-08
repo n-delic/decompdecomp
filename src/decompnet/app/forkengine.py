@@ -2314,6 +2314,15 @@ class ForkEngine:
 
     DATA_LISTED = 12  # data symbols a brief describes
 
+    def permuter_flags(self, slug: str, function: str):
+        """Known per-file compiler flags for source-only guards; unknown builds supply no evidence."""
+        _, fp, cfg = self.get(slug)
+        unit = fp.unit(self._fn(slug, function)["unit"])
+        console = consoles.get(cfg.get("platform"))
+        if unit.source and console.file_flags:
+            return console.file_flags(fp, unit.source) or ()
+        return (unit.scratch or {}).get("c_flags", "")
+
     def permuter_header(self, slug: str, function: str) -> str:
         """What decomp-permuter must read before a function of a fork: the headers its source file includes, then
         the file's own declarations. It got none, so it refused every DS function ("Syntax error in base.c": `u16`

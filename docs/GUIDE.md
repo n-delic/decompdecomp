@@ -104,7 +104,7 @@ decompdecomp helps with these steps:
 | :-- | :-- |
 | **Live view** | A map of all the functions in the game. You see the tool calls and the scores of each agent in real time. |
 | **Autopilot** | Matches without cost. Code that occurs more than one time gets the C of its matched twin. Then machine drafts go to the judge. (Mario Party 6: 762 functions in 12 minutes.) |
-| **Permuter** | Rewrites near misses (at most 6% of the function differs) thousands of ways in the background, with decomp-permuter (install it in Compilers & tools). It uses spare cores at a low priority. The judge decides what matches. Without decomp-permuter, a few simple rewrites run instead. |
+| **Permuter** | Rewrites near misses (at most 6% of the function differs) thousands of ways in the background, with decomp-permuter (install it in Compilers & tools). It uses spare cores at a low priority. The judge decides what matches. A bounded [local source repair pass](LOCAL_SOURCE_REPAIRS.md) first tries expression, lifetime, declaration and scheduling changes through the same judge, with no AI tokens. Without decomp-permuter, simple random rewrites follow instead. |
 | **Batches** | Agents write many small functions in one turn. decompdecomp judges them in one call. |
 | **Editor** | Each function has an editor. Write C, push Ctrl+Enter and look at the diff. |
 | **Suggestions** | Agents can suggest a different compiler, for the full game or for address ranges. decompdecomp tests each suggestion first. You apply it with one click, or let proven suggestions apply automatically (a setting of each game). |

@@ -107,6 +107,14 @@ Where to start on a gap:
 
 ## Recently done
 
+### Local source repairs before random permutation
+
+The background permuter tries bounded deterministic expression, declaration, lifetime, loop and
+scheduling hypotheses in both ROM and imported-project mode. It uses the existing claims, turn
+limits and exact judge, with no AI tokens. Flags and ABI evidence guard compiler-specific shapes;
+unknown context declines them. See [the scope and generator inventory](docs/LOCAL_SOURCE_REPAIRS.md).
+
+
 - **The project's owner chooses which functions helpers take first (#205).** Beside the instructions, a project's
   Agents tab picks Default (the helper's own choice), Smallest first, Largest first, Closest to matching first (the
   near misses), or Not yet tried first (a first pass over every function nobody compiled, then the smallest). The

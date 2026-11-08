@@ -13,7 +13,8 @@ weights decomp-permuter tuned for the function's compiler. Our own judge scores 
 doesn't compile is skipped. Its rewrites don't all keep the meaning (it moves statements, retypes, deletes code), so
 only what the judge says settles anything: a match is the same machine code as the game's, and an improvement is
 only closer code for an agent to start from. Without the tool, or for C it can't read (a macro call of the source's
-own), the six simple rewrites of permuter.py make the variants instead.
+own), the six simple rewrites of permuter.py make the variants instead. Before either path, bounded local
+source repairs try expressions, declarations, lifetimes and scheduling without using AI tokens.
 
 It runs on the background workers every project shares with the machine drafts (workers.py: one per spare core, up
 to four), each at a lower CPU priority that the compilers it runs inherit: the app and the agents' compiles come first.
@@ -37,7 +38,7 @@ from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
-from . import workers
+from . import local_repairs, workers
 
 log = logging.getLogger("decompdecomp")
 NEAR = 0.06  # a near miss: at most this much of the function differs (best_score <= 6% of n_insns * 100)
@@ -257,11 +258,14 @@ class Permuter:
         rng = random.Random(f"{fn['id']}-{fn['permuted']}")
         gen = None
         try:
+            # Local proposals need the real current header even without decomp-permuter installed.
+            header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
+                                  self.net._context(proj["id"], fn["unit"])["header"])
+            cfg = self.net.cfg(proj)
+            compiler = compiler_for(cfg, fn["vram"]) if cfg.get("compiler") else {}
+            flags = self.net.forks.permuter_flags(fork, fn["name"]) if fork else compiler.get("flags", "")
             if available():
-                # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
-                header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
-                                      self.net._context(proj["id"], fn["unit"])["header"])
-                family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
+                family = weight_family(cfg, fn["vram"], bool(fork))
                 try:
                     gen = Generator()
                 except OSError as e:  # its environment is broken: the simple rewrites still work
@@ -269,6 +273,23 @@ class Permuter:
             start_src = best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
             deadline = time.monotonic() + SECONDS
+            # A short deterministic phase shares the turn's deadline and the ordinary score/persist
+            # path for ROMs and imported projects. Families rotate so later turns reach other shapes.
+            local = local_repairs.variants(best_src, fn["name"], proj["arch"], flags, header,
+                                           deadline=deadline, stopped=st.stop.is_set,
+                                           offset=fn["permuted"] * 29)
+            for _, candidate in local:
+                if st.stop.is_set() or time.monotonic() >= deadline or best == 0:
+                    break
+                st.add(variants=1)
+                score = self._score(agent, proj, fn, candidate, best, fork)
+                if score is not None and score < best:
+                    best, best_src = score, candidate
+                    st.add(improved=1)
+                    if score == 0:
+                        st.add(matched=1)
+                        log.info("permuter: %s matched", fn["name"])
+            cur, cur_src = best, best_src
             batches = misses = 0
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
                 if gen is not None:
