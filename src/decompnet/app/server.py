@@ -28,7 +28,19 @@ from .. import hostenv, wine
 from ..network import NetworkError
 from . import agents, collab, maintenance, routes, saves, tools, updates, window, workers
 from .engine import RomNetwork
-from .routes import browser_bridge, forks, life, pages, projects, repair_feedback, repository_sync, rooms, setup, state
+from .routes import (
+    browser_bridge,
+    data_directories,
+    forks,
+    life,
+    pages,
+    projects,
+    repair_feedback,
+    repository_sync,
+    rooms,
+    setup,
+    state,
+)
 from .shutdown_progress import RUNTIME_STOP_SECONDS, SHUTDOWN_SECONDS, terminal_note
 from .shutdown_progress import Progress as ShutdownProgress
 from .support import Jobs, Settings, session_options
@@ -336,7 +348,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
                      busy=busy, quit_app=quit_app, web_login=net.web_login, headless=headless)
     from . import web_login
     web_login.register(app)
-    for part in (pages, state, projects, repair_feedback, repository_sync, forks, setup, life, rooms, pairing, browser_bridge):
+    for part in (pages, state, projects, repair_feedback, repository_sync, forks, setup, life, rooms, pairing, browser_bridge, data_directories):
         part.register(app)
 
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=sorted(allowed_hosts),

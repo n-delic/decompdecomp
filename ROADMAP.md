@@ -3227,3 +3227,9 @@ broad header-qualifier guard. Macro-expanded pointer expressions still need alia
 proof. The frozen exported-ROM CLI is MIPS-only; other targets need their copied
 ordinary build/objdiff evaluator. Neither diagnostic expansion nor recipe hashes
 replace that exact judge.
+
+- Done: Settings offers a project-directory picker and machine-local remembered directories.
+  Desktop users can switch between independent project catalogues at runtime through a graceful
+  save/stop/reopen handoff. Files stay in place; the successfully opened directory becomes the
+  next-launch default. Explicit DECOMP_HOME retains precedence, release/development histories
+  are separate, unavailable drives are not recreated, and switching rotates window credentials.

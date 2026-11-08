@@ -163,6 +163,11 @@ def run(args) -> int:
         os.environ.update(DECOMP_SERVE='1', DECOMP_WINDOW='0', DECOMP_TRAY='0')
     use_own_wine_prefix()
     home = home_dir()
+    from .data_directories import preferred
+    if not os.environ.get('DECOMP_HOME') and preferred() and not home.is_dir():
+        message = f'The remembered project directory is unavailable: {home}. Connect its drive or choose a directory using DECOMP_HOME.'
+        print(message, file=sys.stderr);window.tell_desktop(edition.NAME, message)
+        return 1
     internal = home / ".decomp"
     internal.mkdir(parents=True, exist_ok=True)
     log = file_log(internal / "logs" / "decomp.log")  # from the first line on: whatever stops the app is in it
@@ -198,7 +203,7 @@ def run(args) -> int:
     # launcher from starting a second server/workers while this home is opening.
     from ..writer_gate import WriterGate
     instance = WriterGate(internal / 'server-instance')
-    with instance.hold(blocking=bool(restarted)) as admitted:
+    with instance.hold(blocking=bool(restarted) and not restarted.get('switch_home',False)) as admitted:
         if not admitted:
             print('decompdecomp is already starting for this home. Wait for its database upgrade to finish.')
             return 0
@@ -229,13 +234,16 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         print(str(error), file=sys.stderr, flush=True)
         return 1
     mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if headless else {}))
+    if restarted and restarted.get('switch_home'):
+        from .data_directories import remember
+        remember(home,selected=True)
     app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
     from ..ui_diagnostics import Diagnostics
     app = Diagnostics(app, stack_path=internal / "logs" / "event-loop-stacks.log")
     # with a tray icon, helpers kept working without the window have a way back to it
     window.IN_TRAY = False if headless else tray.start(window.open_app, quit_app)
     print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
-          + ("\nupdated and restarted" if restarted else "" if headless else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
+          + ("\nproject directory switched" if restarted and restarted.get("switch_home") else "\nupdated and restarted" if restarted else "" if headless else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
     # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)
     if headless:
         print(f"Server: http://127.0.0.1:{port}/\nWeb sign-in code: {net.web_login.code}\nStop with Ctrl-C or `decomp stop`.", flush=True)

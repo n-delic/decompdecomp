@@ -32,8 +32,9 @@ def default_home(*, dev: bool | None = None) -> Path:
 
 
 def home_dir() -> Path:
-    """Use an explicit DECOMP_HOME, otherwise this fork's own installed or development home."""
-    return Path(os.environ.get("DECOMP_HOME") or default_home()).expanduser()
+    """Use DECOMP_HOME, a remembered directory, or this fork's edition-specific default."""
+    from .data_directories import preferred
+    return Path(os.environ.get("DECOMP_HOME") or preferred() or default_home()).expanduser()
 
 
 def icon_svg() -> str:

@@ -43,6 +43,7 @@ def cpu_reader():
 def purpose(name):
     exact = {
         'automatic-git-push':('Git push scheduler','Checks enabled automatic pushes; active project pushes have separate Stop controls.'),
+        'data-directory-switch':('Directory switch','Saves and stops this runtime before reopening a different project directory.'),
         'MainThread':('Server','Runs the local HTTP/MCP event loop and coordinates app requests.'),
         'AnyIO worker thread':('Requests','Runs synchronous request handlers off the server event loop; may be idle.'),
         'autosave':('Saved progress','Checks saved project files and synchronizes verified progress.'),

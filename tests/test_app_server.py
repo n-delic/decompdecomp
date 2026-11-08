@@ -3128,3 +3128,22 @@ def test_repository_fork_owner_job_guard_and_rediscovery(app,monkeypatch):
         assert client.get('/api/job?id='+job).json()['scope']=={'slug':'game','folder':'/repo'}
         assert calls==[('game','/repo','team','revision')]
     finally:release.set()
+
+
+def test_project_directory_history_requires_guard_and_native_switch(app,tmp_path,monkeypatch):
+    from decompnet.app import data_directories
+    client,net,_=app
+    monkeypatch.setenv('DECOMP_DIRECTORIES_FILE',str(tmp_path/'locations.json'))
+    state=client.get('/api/data-directories').json()
+    assert state['current']==str(net.workspace.resolve()) and state['switchable']
+    calls=[]
+    def choose(self,path,switch=False):
+        calls.append((path,switch))
+        return self.status()
+    monkeypatch.setattr(data_directories.Controller,'choose',choose)
+    payload={'path':str(tmp_path),'action':'switch'}
+    assert client.post('/api/data-directories',json=payload).status_code==403
+    assert client.post('/api/data-directories',json=payload,headers={'X-Decomp':'1'}).status_code==200
+    assert calls==[(str(tmp_path),True)]
+    assert client.post('/api/data-directories',json={**payload,'action':'unsafe'},headers={'X-Decomp':'1'}).status_code==400
+    assert not (tmp_path/'locations.json').exists()
