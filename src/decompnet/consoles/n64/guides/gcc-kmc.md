@@ -1493,3 +1493,18 @@ capture/update repairs above. It preserves intermediate narrowing and still uses
 the ordinary exact judge. A frozen 386-instruction case recovered from its original
 485 score in two candidate compiles; this is a solved-case replay, not a general
 success-rate claim. See COMPILER_MATCHING_LEARNINGS.md for the limits.
+
+### A shared emitted tail may come from duplicated source
+
+When a near match differs only in a root pointer and its derived induction pointer,
+try keeping the real packing/store tail inside each selecting branch, while leaving
+cursor/count increments shared. In one live 350-instruction case this corrected
+the final register pair: GCC emitted the same shared target tail from duplicated
+source. Duplicating the increment too worsened it. Preserve unsigned conversions
+and operation order; do not duplicate side effects or assume a particular compiler
+pass merged the tail. The exact judge decides.
+
+That case also needed explicit inferred stack padding to reproduce an unaccessed
+16-byte frame reservation. Its original purpose remains unknown; padding does not
+prove an enlarged object or recovered source. See COMPILER_MATCHING_LEARNINGS.md
+for the measured limits and function-level verification scope.

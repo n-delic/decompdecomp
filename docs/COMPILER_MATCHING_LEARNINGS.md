@@ -6242,3 +6242,40 @@ yet reconstruct the entire raw-address private example from its earlier source.
 Generated aggregate helpers keep the original prototype and require object-level
 proof of full inlining. Supported 32-bit repair targets share the source proposals;
 unknown widths/object formats fail closed. The normal judge remains authoritative.
+
+## KMC GCC 2.7.2: branch-local packing before a shared emitted tail (November 2026)
+
+**Evidence:** a live-app match of a 350-instruction N64 lighting routine, using
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -ffast-math -g3`.
+Compiler, header, target, ABI and judging settings stayed fixed.
+
+The saved candidate scored 52: twelve frame/save-offset differences and eight
+register differences in the second vertex loop. The target reserved an unaccessed
+16-byte local region after a proven 32-byte matrix. An explicitly named 16-byte
+stack-padding declaration in that position corrected the frame, reaching 40. This
+is an **inferred matching placeholder**: the original purpose of that reservation
+is unknown. It is not proof of a larger matrix, a recovered discarded temporary,
+or a new callee contract. Earlier audits correctly left that source-origin
+question unresolved; the explicit placeholder does not resolve it.
+
+The decisive remaining change duplicated the unsigned packing additions and final
+vertex-color store into each of the three branches that select the color and tag.
+Cursor/count increments remained shared after the branches. The compiler emitted
+the target's shared tail, with the correct root/derived pointer registers, reaching
+**40 → 0**. The phase that merges the tail was not measured; do not attribute this
+to a particular optimization pass or assume that source duplication always helps.
+Duplicating the cursor increment too worsened to 370. Pointer aliases, scalar-store
+helpers and alternate increment spelling alone did not fix the register pair.
+
+This suggests testing bounded branch-local versus common-tail source alternatives
+before broad register-allocation sweeps. Move only a tail executed exactly once on
+every branch, with local scalar inputs and an ordinary nonvolatile store; preserve
+conversions, arithmetic association, branch effects and subsequent cursor updates.
+Every alternative still requires the exact destination judge.
+
+The live API accepted the candidate, then a fresh function read showed
+`status=matched`, `best=0`, the expected saved source, and exact verification.
+A fresh diff confirmed all 350 rows and 1400 linked bytes identical, with standalone
+layout checked and no data/address mismatches. A complete cartridge rebuild was
+not run. This is function-level byte proof, not original-source provenance or a
+whole-ROM claim. Private inputs and evidence remain outside Git.
