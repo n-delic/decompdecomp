@@ -1065,6 +1065,11 @@ prove what a function does, not what its author called it.
 and the export rebuilds the game byte for byte from matched C plus assembly for what isn't matched yet. A game at
 100%, polished, is the goal, and the first one will be announced here.
 
+A polished function keeps its **matched** badge and adds a badge in the map’s polished colour. In the C editor,
+**Polished / Unpolished** switches between the current C and its saved pre-polish version without changing the match.
+New polishes retain that original in the local database. Older functions use their earliest saved matching attempt
+when available; if no earlier C was retained, the drawer says so. Switching versions protects unsaved editor changes.
+
 **How do I save and commit progress?** In **Settings → Save your progress**, choose your project folder and click **Save now**. Select the repository root if you have a decompdecomp build checkout: the app detects it and saves into its `progress/` subfolder, preserving build files. Then enable **Automatically commit new matches**. If needed, the app creates the progress repository and prepares its initial checkpoint before enabling the setting. Older copied saves refresh automatically when their only changes are appended notes and improved drafts proven by the project’s compiled attempt history; unknown source edits or changed headers/settings remain protected for review. Only saved-progress files are committed; unrelated source edits stay local. Commits remain local unless automatic pushing is enabled. For a detected build repository, **Update build files → Verify, commit and push** separately integrates matching C into the standalone tree and requires a byte-identical full rebuild. This is useful for build-based progress trackers such as ByteMatch. Saving progress alone does not update standalone source selections.
 
 **What do I end up with?** The source code of a game you own, that builds it again. A DS game started from scratch

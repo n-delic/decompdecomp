@@ -240,6 +240,8 @@ async function openFn(name) {
     $("fnSdkEvidence").hidden = true; $("fnSdkEvidence").open = false;
     $("fnSdkEvidenceText").textContent = "";
     $("fnStatus").textContent = "";
+    $("fnPolished").hidden = true; $("fnPolishWhich").hidden = true; $("fnPolishNote").hidden = true;
+    S.polishWhich = "polished";
     $("fnCompilerMatches").replaceChildren();
     $("fnApplyCompiler").hidden = true;
     $("fnCompilerSummary").hidden = true;
@@ -279,10 +281,35 @@ async function openFn(name) {
 
 function fnBadge(d = S.fnDetail) {
   if (!d) return;
+  $("fnPolished").hidden = !(d.status === "matched" && d.polished);
   const working = S.claims.find((c) => c.name === d.name);
   const st = $("fnStatus");
   st.className = "badge " + (d.status === "matched" ? "matched" : d.not_c ? "not-c" : working ? "working" : "");
   st.textContent = d.boundary_override ? "reviewed · intentional entry" : d.boundary_review ? "incomplete · boundary review" : d.status === "matched" ? "matched" : d.status === "asm" ? (d.assembly_verification?.verified ? "verified source assembly" : "set aside · assessment") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
+}
+
+function renderFunctionSource(d, replaceEditor = true) {
+  const polished = d.status === "matched" && !!d.polished;
+  const choice = $("fnPolishWhich"), note = $("fnPolishNote");
+  choice.hidden = !polished;
+  const before = polished && S.polishWhich === "unpolished" && typeof d.unpolished_source === "string";
+  $("fnSrcKind").textContent = polished ? (before ? "Unpolished C" : "Polished C") :
+    ({matched:"Matching C", best:"Best attempt so far", latest:S.ov.kind === "fork" ? "In the source now" : "Latest attempt", draft:"Machine draft (m2c)"}[d.source_kind] || "No C yet");
+  note.hidden = !polished || (!!d.unpolished_source && !before);
+  note.textContent = before ? "Saved C before polishing. Viewing it does not change the saved function." :
+    d.details_pending ? "Loading the version before polishing…" : "No version from before polishing was saved for this function.";
+  choice.querySelectorAll('[data-polish]').forEach(button => {
+    const selected = button.dataset.polish === (before ? "unpolished" : "polished");
+    button.classList.toggle('on', selected); button.setAttribute('aria-pressed', String(selected));
+    button.disabled = button.dataset.polish === "unpolished" && !d.unpolished_source;
+    button.onclick = () => {
+      if (S.editDirty) { toast('Compile or copy your unsaved C before switching versions.'); return; }
+      S.polishWhich = button.dataset.polish;
+      renderFunctionSource(S.fnDetail);
+      setEditorSourceMapping(null);
+    };
+  });
+  if (replaceEditor) setEditor(before ? d.unpolished_source : d.source || "", d);
 }
 
 function showFnTab(tab) {
@@ -470,8 +497,7 @@ async function refreshFn(first) {
     const renderTiming=typeof uiTimingEnabled==='function' && uiTimingEnabled() ? performance.now() : null;
     $("fnAsm").innerHTML = highlightAsm(d.asm);
     $("copyAsm").onclick = () => copyTargetAssembly(d.asm);
-    const kinds = { matched: "Matching C", best: "Best attempt so far", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt", draft: "Machine draft (m2c)" };
-    $("fnSrcKind").textContent = kinds[d.source_kind] || "No C yet";
+    renderFunctionSource(d, !S.editDirty || first);
     if (d.baseline_status?.state === "historical") {
       const recheck = document.createElement("button");
       recheck.className = "small";
@@ -480,7 +506,6 @@ async function refreshFn(first) {
       recheck.onclick = () => showFnTab("diff");
       $("fnSrcKind").append(" ", recheck);
     }
-    if (!S.editDirty || first) setEditor(d.source || "", d);
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
     $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
@@ -768,8 +793,8 @@ function diffProblemsHTML(detail) {
 }
 
 function renderDiff(d) {
-  if (!S.editDirty && typeof d.source === "string") setEditor(d.source, S.fnDetail);
-  setEditorSourceMapping(d);
+  if (!S.fnDetail?.polished && !S.editDirty && typeof d.source === "string") setEditor(d.source, S.fnDetail);
+  setEditorSourceMapping(S.fnDetail?.polished && S.polishWhich === "unpolished" ? null : d);
   const sum = $("diffSum"), box = $("diff"), probs = $("diffProblems");
   probs.innerHTML = "";
   if (!d.rows) {

@@ -11,7 +11,7 @@ FIELDS = {
     'helper_messages': ('text',),
     'repair_attempt_settings': ('settings',),
     'progress_state': ('disk', 'projected', 'disk_manifest', 'projected_manifest'),
-    'functions': ('asm', 'seed', 'best_source', 'matched_source'),
+    'functions': ('asm', 'seed', 'best_source', 'matched_source', 'unpolished_source'),
     'repair_frontiers': ('state',),
     'verified_matches': ('details', 'source', 'header'),
     'repair_attempt_provenance': ('provenance',),
