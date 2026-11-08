@@ -442,7 +442,10 @@ class Search(Permuter):
                 choices.append(candidate)
             for candidate in choices:self.efficiency.generated(labels.get(candidate,'local_repair'),candidate)
             families = list(dict.fromkeys(labels.get(c, 'local_repair') for c in choices))
-            ranked = adaptive_repairs.order(self.net, proj, fn, rows, repair_ranking.order(families, rows))
+            from . import region_repairs
+            recovery=region_repairs.resolution(feedback.proofs.get(source,{}).get('baseline_rows'),rows)
+            rank_rows=region_repairs.focus(rows,recovery) if recovery.get('removed_count') else rows
+            ranked = adaptive_repairs.order(self.net, proj, fn, rows, repair_ranking.order(families, rank_rows))
             from .repair_selection import order as combination_order
             ranked = combination_order(ranked,path)
             # Every other burst keeps the original order for exploration.
@@ -494,6 +497,7 @@ class Search(Permuter):
                 parent_proof=feedback.proofs.get(parent_source,{})
                 self._trial_parent_output=parent_proof.get('output')
                 self._trial_parent_granularity=parent_proof.get('granularity')
+                sequence_started=time.monotonic()
                 try:
                     with repair_trial({'kind': 'deep local repair', 'family': labels.get(candidate, 'local_repair'),
                                        'lineage': parent_path+[labels.get(candidate, 'local_repair')],
@@ -504,12 +508,15 @@ class Search(Permuter):
                     self._trial_parent_output = self._trial_parent_granularity = None
                 measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
                 measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
+                if not getattr(self,'_trial_reused',False):
+                    from .region_repairs import resolution_text
+                    if change := resolution_text(parent_rows,measured_rows):self.log(change)
                 feedback.record(parent_source,candidate,labels.get(candidate,'local_repair'),parent_path,score,measured_rows,measured_output,getattr(self,'_trial_reused',False),getattr(self,'_trial_output_granularity','function'))
                 if not getattr(self,'_trial_reused',False):
                     proof=feedback.proofs.get(parent_source,{})
                     repair_sequences.observe(self.net,lineage.profile,lineage.focus,parent_path,
                         labels.get(candidate,'local_repair'),proof.get('score'),score,proof.get('output'),
-                        measured_output,exact=score==0)
+                        measured_output,exact=score==0,elapsed_ms=(time.monotonic()-sequence_started)*1000)
                     source_locations[candidate]=getattr(self,'_trial_locations',None)
 
                 if not getattr(self,'_trial_reused',False):

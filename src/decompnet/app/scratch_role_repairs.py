@@ -17,14 +17,24 @@ LIMIT = 12
 POINTER = re.compile(r'\b(?P<type>(?:unsigned\s+char|signed\s+char|[su]8)\s*\*)\s*(?P<name>'+IDENT+r')\s*;')
 
 
-def safe(source, name, header, arch):
+def decline(diagnostics,reason):
+    if diagnostics is not None:diagnostics[reason]=diagnostics.get(reason,0)+1
+
+
+def safe(source, name, header, arch,diagnostics=None):
     part = view(source,name)
     context = source+'\n'+header
-    if not part or arch not in integer_abi.ARCHES:return None
-    if re.search(r'\b(?:__LINE__|__COUNTER__|__FILE__|typeof|__typeof__|_Generic)\b|\\\n',context):return None
-    if re.search(r'\bvolatile\b',part.body):return None
+    if arch not in integer_abi.ARCHES:
+        decline(diagnostics,'unsupported_abi');return None
+    if not part:
+        decline(diagnostics,'unsupported_syntax');return None
+    if re.search(r'\b(?:__LINE__|__COUNTER__|__FILE__|typeof|__typeof__|_Generic)\b|\\\n',context):
+        decline(diagnostics,'type_or_line_observer');return None
+    if re.search(r'\bvolatile\b',part.body):
+        decline(diagnostics,'volatile_access');return None
     macros=set(re.findall(r'(?m)^\s*#\s*define\s+('+IDENT+r')',context))
-    if macros & set(re.findall(IDENT,part.body)):return None
+    if macros & set(re.findall(IDENT,part.body)):
+        decline(diagnostics,'macro_expansion');return None
     return part
 
 
@@ -56,24 +66,31 @@ def selectors(part, context, arch):
         yield start,opening+1+match.start('load'),opening+1+match.end('load'),load
 
 
-def pointer_phases(source,name,header,arch):
-    part=safe(source,name,header,arch)
+def pointer_phases(source,name,header,arch,diagnostics=None):
+    part=safe(source,name,header,arch,diagnostics)
     if not part:return []
     context=header+'\n'+source
     pointers=[d for d in POINTER.finditer(part.clean,part.opening+1,part.end)
               if block_path(part,d.start())==[part.opening]
               and part.clean[part.opening+1:d.start()].rstrip()[-1:] in ('',';','{','}')]
     result=[]
+    if not pointers:decline(diagnostics,'no_plain_byte_pointer')
+    eligible_selectors=list(selectors(part,context,arch))
+    if not eligible_selectors:decline(diagnostics,'unsupported_selector')
     for decl in pointers[:6]:
         var=decl['name']
-        if integer_abi.scalar(decl['type'].rstrip().rstrip('*').strip(),context,arch) not in {(8,True),(8,False)}:continue
+        if integer_abi.scalar(decl['type'].rstrip().rstrip('*').strip(),context,arch) not in {(8,True),(8,False)}:
+            decline(diagnostics,'unknown_pointer_width');continue
         # No shadows, escaped address, preprocessor use or type observers. Other
         # pointer operations retain their original pointer type through casts.
-        if len(re.findall(r'\b'+IDENT+r'(?:\s*\*+\s*|\s+)'+re.escape(var)+r'\s*[;=,\[]',part.body))!=1:continue
-        if re.search(r'(?<!&)&(?!&)\s*(?:\(\s*)*'+re.escape(var)+r'\b',part.body):continue
-        if re.search(r'\b(?:sizeof|_Alignof)\s*\(?\s*'+re.escape(var)+r'\b',part.body):continue
+        if len(re.findall(r'\b'+IDENT+r'(?:\s*\*+\s*|\s+)'+re.escape(var)+r'\s*[;=,\[]',part.body))!=1:
+            decline(diagnostics,'shadowed_pointer');continue
+        if re.search(r'(?<!&)&(?!&)\s*(?:\(\s*)*'+re.escape(var)+r'\b',part.body):
+            decline(diagnostics,'escaped_pointer');continue
+        if re.search(r'\b(?:sizeof|_Alignof)\s*\(?\s*'+re.escape(var)+r'\b',part.body):
+            decline(diagnostics,'type_or_line_observer');continue
         if any(re.search(r'\b'+re.escape(var)+r'\b',m) for m in re.findall(r'(?m)^\s*#.*',context)):continue
-        for at,begin,end,load in selectors(part,context,arch):
+        for at,begin,end,load in eligible_selectors:
             if at<decl.end():continue
             fresh='repair_scratch'
             while re.search(r'\b'+fresh+r'\b',context):fresh+='_'  # not a compiler/register directive
@@ -82,20 +99,26 @@ def pointer_phases(source,name,header,arch):
             staged_part=view(staged,name)
             pointer=next((d for d in POINTER.finditer(staged_part.clean) if d['name']==var),None)
             flow=local_flow.analyze(staged,name,declarations=locals_for(staged_part)+[pointer]) if pointer else None
-            if not flow:continue
+            if not flow:
+                decline(diagnostics,'unsupported_control_flow');continue
             donor=next((d for d in flow.locals if d['name']==fresh),None)
-            if not donor or not local_flow.disjoint(flow,donor,pointer):continue
+            if not donor or not local_flow.disjoint(flow,donor,pointer):
+                decline(diagnostics,'overlapping_lifetimes');continue
             definitions=[n for n in flow.nodes if var in n.defines and not n.start<=pointer.start()<n.end]
-            if len(definitions)!=1:continue
+            if len(definitions)!=1:
+                decline(diagnostics,'pointer_definition_count');continue
             node=definitions[0]
             assignment=re.fullmatch(r'\s*'+re.escape(var)+r'\s*=\s*(?P<rhs>[^;{}]+);\s*',flow.part.clean[node.start:node.end])
-            if not assignment or var in node.uses:continue
+            if not assignment or var in node.uses:
+                decline(diagnostics,'pointer_assignment_shape');continue
             dom=dominators(flow);definition=flow.nodes.index(node)
-            if any(var in n.uses and definition not in dom.get(i,set()) for i,n in enumerate(flow.nodes)):continue
+            if any(var in n.uses and definition not in dom.get(i,set()) for i,n in enumerate(flow.nodes)):
+                decline(diagnostics,'pointer_not_dominated');continue
             uses=refs(flow.part,pointer)
             # All writes must be the one recognized assignment; ++/compound stores
             # are reads to the CFG and cannot silently become cast lvalues.
-            if any(re.search(r'(?:\+\+|--)\s*(?:\(\s*)*'+re.escape(var)+r'\b|\b'+re.escape(var)+r'\s*\)*\s*(?:\+\+|--|(?:<<|>>|[+*/%&|^\-])=|=(?!=))',flow.part.clean[n.start:n.end]) for n in flow.nodes if n is not node):continue
+            if any(re.search(r'(?:\+\+|--)\s*(?:\(\s*)*'+re.escape(var)+r'\b|\b'+re.escape(var)+r'\s*\)*\s*(?:\+\+|--|(?:<<|>>|[+*/%&|^\-])=|=(?!=))',flow.part.clean[n.start:n.end]) for n in flow.nodes if n is not node):
+                decline(diagnostics,'mutable_pointer');continue
             rhs=staged[node.start+assignment.start('rhs'):node.start+assignment.end('rhs')].strip()
             changes=[(pointer.start(),pointer.end(),''),(node.start,node.end,fresh+' = (int)('+rhs+');')]
             changes += [(h.start(),h.end(),'('+decl['type']+')'+fresh) for h in uses if not node.start<=h.start()<node.end]
@@ -110,11 +133,12 @@ def pointer_phases(source,name,header,arch):
     return list(dict.fromkeys(result))[:LIMIT]
 
 
-def sentinel_phases(source,name,header,arch):
-    part=safe(source,name,header,arch)
+def sentinel_phases(source,name,header,arch,diagnostics=None):
+    part=safe(source,name,header,arch,diagnostics)
     if not part:return []
     flow=local_flow.analyze(source,name)
-    if not flow:return []
+    if not flow:
+        decline(diagnostics,'unsupported_control_flow');return []
     dom=dominators(flow);result=[]
     donors=[d for d in flow.locals if integer_abi.scalar(d['type'],source+'\n'+header,arch)==(32,True)
             and block_path(part,d.start())==[part.opening]]
@@ -133,7 +157,11 @@ def sentinel_phases(source,name,header,arch):
             reachable.add(i);pending.extend(flow.nodes[i].successors-reachable)
         for donor in donors:
             var=donor['name']
-            if donor.end()>at or var in node.live or any(var in flow.nodes[i].defines for i in reachable):continue
+            if donor.end()>at:continue
+            if var in node.live:
+                decline(diagnostics,'scratch_still_live');continue
+            if any(var in flow.nodes[i].defines for i in reachable):
+                decline(diagnostics,'reachable_redefinition');continue
             if not any(var in n.defines and n.start>=donor.end() and n.start<at for n in flow.nodes):continue
             changes=[(at,at,var+' = '+literal+';\n  '),(begin,end,var)]
             for i in reachable:
@@ -150,12 +178,12 @@ def sentinel_phases(source,name,header,arch):
     return list(dict.fromkeys(result))[:LIMIT]
 
 
-def variants(source,name,header='',arch=None):
-    phases=pointer_phases(source,name,header,arch)
+def variants(source,name,header='',arch=None,*,diagnostics=None):
+    phases=pointer_phases(source,name,header,arch,diagnostics)
     # Keep both the first measurable step and the bounded composition. The same
     # sentinel step can resume from a saved partially improved source next run.
     combined=[v for _,candidate in phases for v in sentinel_phases(candidate,name,header,arch)]
-    return list(dict.fromkeys(combined+phases+sentinel_phases(source,name,header,arch)))[:LIMIT]
+    return list(dict.fromkeys(combined+phases+sentinel_phases(source,name,header,arch,diagnostics)))[:LIMIT]
 
 
 def brief(source,name,header,arch,rows):
@@ -180,3 +208,42 @@ def brief(source,name,header,arch,rows):
             'earlier matching rows too; it ranks a hypothesis, never binds a register. Keep the compiler, real reads, scopes and '
             'unrelated line breaks fixed. Retain a partial improvement and extend it; use local variants before rewriting C. '
             'Skip exact source/build trials already recorded as ineffective; no dummy uses or wider carriers.')
+
+
+REASONS={
+ 'unsupported_abi':'unknown 32-bit ABI',
+ 'unsupported_syntax':'unsupported function syntax',
+ 'volatile_access':'volatile access must stay unchanged',
+ 'macro_expansion':'body macros need richer analysis',
+ 'type_or_line_observer':'type or source-line observer present',
+ 'no_plain_byte_pointer':'no supported plain byte-pointer local',
+ 'unsupported_selector':'no supported standalone narrow-load condition',
+ 'unknown_pointer_width':'pointer base width is unknown',
+ 'shadowed_pointer':'pointer name is shadowed',
+ 'escaped_pointer':'pointer local address escapes',
+ 'unsupported_control_flow':'control flow cannot be established',
+ 'overlapping_lifetimes':'selector and pointer remain live together',
+ 'pointer_definition_count':'pointer needs one plain definition',
+ 'pointer_assignment_shape':'pointer assignment needs a plain non-self-referential RHS',
+ 'mutable_pointer':'additional pointer updates need richer analysis',
+ 'unsupported_shape':'no supported disjoint selector/pointer/sentinel combination',
+ 'pointer_not_dominated':'pointer definition does not dominate all reads',
+ 'scratch_still_live':'scratch remains live at the sentinel',
+ 'reachable_redefinition':'a reachable path redefines the scratch',
+}
+
+
+def explain(source,name,header='',arch=None):
+    reasons={}
+    proposals=variants(source,name,header,arch,diagnostics=reasons)
+    return dict(family=FAMILY,candidates=len(proposals),declined=reasons,
+                note='Counts describe considered alternatives; a decline is not proof that no equivalent C exists.')
+
+
+def explanation(source,name,header='',arch=None):
+    report=explain(source,name,header,arch)
+    if report['candidates']:return ''
+    specific=[k for k in report['declined'] if k not in {'no_plain_byte_pointer','unsupported_selector'}]
+    selected=(specific or list(report['declined']))[:3]
+    if not selected:selected=['unsupported_shape']
+    return 'Scratch repair declined: '+'; '.join(REASONS[k] for k in selected)+'. Preserve these guards; try a different repair family. This is not exhaustion.'

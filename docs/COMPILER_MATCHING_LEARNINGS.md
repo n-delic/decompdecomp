@@ -6134,6 +6134,35 @@ case manifest pinned to source/header/target/compiler hashes; no game data is in
 the test or repository. Whole-image rebuilding and transfer to other games were
 not measured by this replay.
 
+### Broader scratch-role holdout and measured feedback
+
+A distinct-function replay excluded the scratch-rule development example and froze
+six saved sources selected by stable name hash, with historical saved scores at
+most 200. Targets, compiler identities, headers and sources were frozen in a
+private copied export before candidate trials. Fresh baseline scores were 9038,
+107, 22, 107, 170 and 10: the first historical score did not survive the exported
+context, so this is not a claim about six current near-100% candidates.
+
+Under equal limits of 12 candidate checks / 10 seconds per case, both with and
+without `scratch_role_reuse` used 63 candidate checks, recovered no exact outputs,
+and improved one case from 22 to 10 through existing repairs. The scratch family
+produced no applicable proposals on these six inputs. Four sources encountered
+body-macro guards; the other two lacked a supported selector/pointer shape.
+Some stages report multiple guard checks for the same case. This is a negative
+transfer result, not evidence that the original first-candidate recovery was a
+general speedup. No live candidate was adopted; no game data is committed.
+
+The app now exposes guard-derived rejection reasons rather than suggesting that
+these cases exhausted C search. Connected-prefix measurements record fresh trial
+costs, identical/unknown output, improvements and exact outcomes, scoped to the
+compiler identity and mismatch shape. Costs influence ordering only after four
+samples; existing exploration remains available. Compact instruction-site recovery
+feedback reaches deep search, agent evidence and replay reports. These indices
+are advisory target locations, never inferred C source lines or exact verdicts.
+Private evidence: Data-volume task folder `measured-feedback`, frozen manifest,
+with/without-family reports and comparison; whole-image rebuilding and model-token
+savings were not measured by this run.
+
 ## KMC GCC 2.7.2: rediscover the complete record-lifetime repair (November 2026)
 
 The earlier typed-store replay started at 410. Replaying the **original 485-point

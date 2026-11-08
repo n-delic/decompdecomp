@@ -36,10 +36,13 @@ def learn(net, profile, focus, steps, *, max_steps=MAX_STEPS):
                    (profile,focus,json.dumps(steps),time.time()))
 
 
-def observe(net, profile, focus, prefix, family, before, after, prior_output, output, *, exact=False):
+def observe(net, profile, focus, prefix, family, before, after, prior_output, output, *, exact=False, elapsed_ms=None):
     """Fresh compiler trials only; retain aggregate outcomes, never source or addresses."""
     if (not family or len(prefix)>5 or not isinstance(before,(int,float))
-            or not isinstance(after,(int,float)) or not math.isfinite(before) or not math.isfinite(after) or prior_output is None or output is None):return
+            or not math.isfinite(before) or (after is not None and (not isinstance(after,(int,float)) or not math.isfinite(after)))):return
+    from . import repair_sequence_metrics
+    repair_sequence_metrics.record(net,profile,focus,prefix,family,prior_output,output,elapsed_ms,failed=after is None,improved=after is not None and after<before,exact=exact and after==0)
+    if after is None or prior_output is None or output is None:return
     prepare(net)
     with net.store.tx() as db:
         db.execute("""CREATE TABLE IF NOT EXISTS repair_sequence_outcomes(
@@ -57,10 +60,11 @@ def productive(net, profile, focus, prefix):
     # Existing exact recipes lead, and callers retain ordinary exploration.
     table=net.store.one("SELECT name FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'")
     if not table:return []
-    rows=net.store.all("""SELECT family FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?
+    rows=net.store.all("""SELECT * FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?
       AND ((improved>=2 AND changed>=2) OR (attempted>=4 AND changed>=4 AND changed*2>=attempted)) ORDER BY (improved+3.0*exact)/attempted DESC,changed*1.0/attempted DESC,family LIMIT 8""",
       profile,focus,json.dumps(list(prefix)))
-    return [r['family'] for r in rows]
+    from .repair_sequence_metrics import rank
+    return [r['family'] for r in rank(net,profile,focus,prefix,rows)]
 
 
 def next_families(net, profile, focus, prefix):
@@ -71,7 +75,8 @@ def next_families(net, profile, focus, prefix):
         steps = json.loads(row['steps'])
         if len(prefix) < len(steps) and steps[:len(prefix)] == list(prefix) and steps[len(prefix)] not in result:
             result.append(steps[len(prefix)])
-    return list(dict.fromkeys(result+productive(net,profile,focus,prefix)))
+    from .repair_sequence_metrics import order_families
+    return list(dict.fromkeys(order_families(net,profile,focus,prefix,result)+productive(net,profile,focus,prefix)))
 
 
 def profile(net, proj, fn):

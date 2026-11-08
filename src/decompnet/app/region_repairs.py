@@ -91,7 +91,7 @@ def summary(rows, arch=None):
     return ' '.join(parts)+' Advisory only; no source-line or lifetime-conflict proof.'
 
 
-def focus(rows):
+def focus(rows,evidence=None):
     """First differing target block plus adjacent context for family ranking only."""
     valid = clean(rows)
     positions = []; index = 0; first = None
@@ -102,16 +102,23 @@ def focus(rows):
         index += bool(row[1])
     if first is None:
         return []
+    if evidence and evidence.get('available') and evidence.get('removed_count'):
+        import hashlib
+        targets=[r[1] for r in valid if r[1]]
+        if evidence.get('target_sha256')==hashlib.sha256(repr(targets).encode()).hexdigest():
+            from collections import Counter
+            remaining=Counter(i//REGION_INSNS for i in evidence.get('remaining',[]))
+            if remaining:first=remaining.most_common(1)[0][0]
     return [r for r,i in zip(valid,positions) if max(0,first-1)<=i//REGION_INSNS<=first+1]
 
 
-def order(families, rows):
+def order(families, rows, evidence=None):
     """Interleave region-focused and whole-function hypotheses; exclude neither."""
     from itertools import zip_longest
 
     from . import repair_ranking
     whole = repair_ranking.order(families,rows)
-    focused = focus(rows)
+    focused = focus(rows,evidence)
     local = repair_ranking.order(families,focused) if focused else whole
     return list(dict.fromkeys(x for pair in zip_longest(local,whole) for x in pair if x is not None))
 
@@ -119,16 +126,45 @@ def order(families, rows):
 def progress(before, after, arch=None, *, reference='explicit parent'):
     """At most three improved/regressed target blocks, never an inferred C line or verdict."""
     left, right = snapshot(clean(before),arch), snapshot(clean(after),arch)
+    instruction_note=resolution_text(before,after)
     if not left or not right or left['target'] != right['target'] or left['scheme'] != right['scheme']:
-        return ''
+        return instruction_note
     changed = [(block,left['losses'].get(block,0)-right['losses'].get(block,0))
                for block in left['losses'].keys() | right['losses'].keys()]
     improved = sorted((item for item in changed if item[1]>0),key=lambda item:(-item[1],item[0]))[:3]
     regressed = sorted((item for item in changed if item[1]<0),key=lambda item:(item[1],item[0]))[:3]
     if not improved and not regressed:
-        return ''
+        return instruction_note
     label = 'blocks' if right['scheme']=='control-flow' else '16-instruction windows'
     parts = []
     for kind, items in [('improved',improved),('regressed',regressed)]:
         if items:parts.append(kind+' '+', '.join(f'{block} ({abs(delta)} differences)' for block,delta in items))
-    return 'Target '+label+': '+'; '.join(parts)+f'. Advisory comparison with the {reference}; not C source regions.'
+    return 'Target '+label+': '+'; '.join(parts)+f'. Advisory comparison with the {reference}; not C source regions. '+instruction_note
+
+
+def resolution(before,after):
+    """Compare target indices, including insertions; a moved candidate row cannot hide a miss."""
+    left,right=clean(before),clean(after)
+    def positions(rows):
+        targets=[];bad=set()
+        for marker,target,_ in rows:
+            if target:targets.append(target)
+            if marker!=' ':bad.add(max(0,len(targets)-1))
+        return targets,bad
+    a,old=positions(left);b,new=positions(right)
+    if not a or a!=b:return dict(available=False,reason='Complete matching target streams required.')
+    import hashlib
+    digest=hashlib.sha256(repr(a).encode()).hexdigest()
+    return dict(available=True,target_sha256=digest,removed_count=len(old-new),introduced_count=len(new-old),remaining_count=len(new),
+                removed=sorted(old-new)[:32],introduced=sorted(new-old)[:32],remaining=sorted(new)[:32],
+                note='Zero-based target instruction indices, not C lines; lists limited to 32.')
+
+
+def resolution_text(before,after):
+    result=resolution(before,after)
+    if not result['available']:return ''
+    if not result['removed_count'] and not result['introduced_count']:return ''
+    remaining=', '.join(str(i+1) for i in result['remaining'][:6]) or 'none'
+    return (f"Target mismatch sites: {result['removed_count']} removed, {result['introduced_count']} introduced, "
+            f"{result['remaining_count']} remaining; next target instructions {remaining} (one-based, not C lines). "
+            'Focus subsequent repairs on the surviving differences while preserving the recovered operations.')
