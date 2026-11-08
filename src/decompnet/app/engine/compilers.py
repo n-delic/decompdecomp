@@ -976,14 +976,16 @@ class CompilerMixin:
         self._update_cfg(slug, lambda cfg: next(s for s in cfg["suggestions"] if s["id"] == sid).__setitem__(
             "status", "applied" if apply else "dismissed"))
 
+    @batched
     def apply_function_compiler(self, slug: str, function: str, toolchain: str, flags: list[str],
                                 allow_non_improving: bool = False, preserve_other_profiles: bool = False) -> dict:
         """Revalidate a selected profile, apply one function's range, and recheck its C."""
         # Saved-file watching owns imports. Applying one DB comparison must not restore
         # the whole project through implicit _project reads or the judge's save wrapper.
         with self.progress.view() if hasattr(self, 'progress') else nullcontext():
-            return self._apply_function_compiler(slug, function, toolchain, flags,
-                                                 allow_non_improving, preserve_other_profiles)
+            from ..restore_effects import batched as defer_effects
+            return defer_effects(CompilerMixin._apply_function_compiler)(
+                self, slug, function, toolchain, flags, allow_non_improving, preserve_other_profiles)
 
     def _apply_function_compiler(self, slug, function, toolchain, flags,
                                  allow_non_improving, preserve_other_profiles):
@@ -1109,7 +1111,28 @@ class CompilerMixin:
         keys = ("compiler", "compiler_ranges",'function_compilers')
         # Profile selection needs identity only. Narrow range edits must not load every source/target blob.
         identities = "id,name,vram,rom_offset"
-        rows = self.project_store(proj['id']).all(f"SELECT {identities} FROM functions WHERE project_id=? ORDER BY id", proj["id"])
+        # An original-image override cannot change unrelated entry selectors. Keep
+        # the broad path for ranges/defaults, including their overlapping overlays.
+        old_profiles = before.get('function_compilers') or {}
+        new_profiles = cfg.get('function_compilers') or {}
+        changed = {k for k in old_profiles.keys() | new_profiles.keys() if old_profiles.get(k) != new_profiles.get(k)}
+        scoped = (before.get('compiler') == cfg.get('compiler') and
+                  before.get('compiler_ranges') == cfg.get('compiler_ranges') and len(changed) == 1)
+        selector = next(iter(changed)) if scoped else None
+        where, parameters = "project_id=?", (proj['id'],)
+        if selector and ':' in selector:
+            try:
+                offset, address = map(int, selector.split(':'))
+            except ValueError:
+                pass
+            else:
+                profiles = [p for p in (old_profiles.get(selector), new_profiles.get(selector)) if p]
+                if selector == f'{offset}:{address}' and all(p.get('vram') == address for p in profiles):
+                    # Null-offset legacy entries can resolve an override by name.
+                    names = [p.get('function') for p in profiles]
+                    where += " AND ((rom_offset=? AND vram=?) OR (rom_offset IS NULL AND vram=? AND name IN (SELECT value FROM json_each(?))))"
+                    parameters += (offset, address, address, json.dumps(names))
+        rows = self.project_store(proj['id']).all(f"SELECT {identities} FROM functions WHERE {where} ORDER BY id", *parameters)
         ids = [f['id'] for f in rows if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
         affected = self.project_store(proj['id']).all("SELECT * FROM functions WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id", json.dumps(ids))
         trial = dict(proj) | {"config": json.dumps(cfg)}
@@ -1141,7 +1164,10 @@ class CompilerMixin:
             return fn['id'], diff.score if diff is not None else None, fn['name']
         report({'phase':'Updating saved scores', 'done':0, 'total':len(rescored), 'affected':len(affected)})
         # Reuse the bounded judge pool; agents keep seeing the old settings until every result is validated.
-        for done, (fid, score, name) in enumerate(self._pool.map(rescore, rescored), 1):
+        # A single-entry apply stays in its private compile session, reusing exact
+        # compiler output from validation while still judging the current target.
+        rescoring = map(rescore, rescored) if len(rescored) == 1 else self._pool.map(rescore, rescored)
+        for done, (fid, score, name) in enumerate(rescoring, 1):
             scores[fid] = score
             report({'phase':'Updating saved scores', 'done':done, 'total':len(rescored),
                     'affected':len(affected), 'function':name})
@@ -1153,7 +1179,7 @@ class CompilerMixin:
                                          "status", "matched_source", "best_source", "best_score")) for r in items]
         with self.project_store(proj['id']).tx() as db:
             current = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
-            latest = db.execute(f"SELECT {identities} FROM functions WHERE project_id=? ORDER BY id", (proj["id"],)).fetchall()
+            latest = db.execute(f"SELECT {identities} FROM functions WHERE {where} ORDER BY id", parameters).fetchall()
             headers = [tuple(r) for r in db.execute("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", (proj["id"],))]
             latest_ids = [f['id'] for f in latest if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
             latest_affected = db.execute("SELECT id,name,vram,rom_offset,unit,size,target,relocs,meta,status,matched_source,best_source,best_score "
