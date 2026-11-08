@@ -392,8 +392,13 @@ def recover_client(link,state):
     accepted={(r.get('name'),r['vram']) for r in state.get('matched',[])}
     agent,_=link.net.local_agent('saved-progress')
     proj=link.net.project_row(link.slug)
-    for fn in link.net.project_store(link.slug).all("SELECT name,vram,matched_source FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL",proj['id']):
-        if (fn['name'],fn['vram']) not in accepted:
+    store=link.net.project_store(link.slug)
+    # A reconnect usually confirms the same matches. Do not decompress all saved
+    # source just to discard the entries already present in the host snapshot.
+    rows=store.all("SELECT id,name,vram FROM main.functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL",proj['id'])
+    missing=[r['id'] for r in rows if (r['name'],r['vram']) not in accepted]
+    for offset in range(0,len(missing),100):
+        for fn in store.all("SELECT name,vram,matched_source FROM functions WHERE id IN (SELECT value FROM json_each(?)) AND status='matched' AND matched_source IS NOT NULL",json.dumps(missing[offset:offset+100])):
             evidence=packet(link.net,link.slug,fn['name'],fn['matched_source'])
             key,item=save(link.net,link.slug,'client',agent,fn['name'],fn['matched_source'],evidence,link.url+'/'+link.room)
             if item['status']=='accepted':
@@ -438,15 +443,17 @@ def sync_inputs(net,slug,state):
     with net.project_store(proj['id']).tx() as db:
         if profiles:
             cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=?',(proj['id'],)).fetchone()['config'])
+            before=json.dumps(cfg,sort_keys=True)
             cfg['compiler']=profiles['compiler'];cfg['compiler_ranges']=profiles.get('compiler_ranges',[])
             cfg['function_compilers']=profiles.get('function_compilers',{})
-            db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+            if json.dumps(cfg,sort_keys=True)!=before:
+                db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
         for item in contexts:
             if item.get('rom_offset') is not None:
-                fn=db.execute('SELECT * FROM functions WHERE project_id=? AND vram=? AND rom_offset=?',
+                fn=db.execute('SELECT id,unit FROM functions WHERE project_id=? AND vram=? AND rom_offset=?',
                                (proj['id'],item['vram'],item['rom_offset'])).fetchone()
             else:
-                rows=db.execute('SELECT * FROM functions WHERE project_id=? AND vram=?',(proj['id'],item['vram'])).fetchall()
+                rows=db.execute('SELECT id,unit FROM functions WHERE project_id=? AND vram=?',(proj['id'],item['vram'])).fetchall()
                 fn=rows[0] if len(rows)==1 else None
             if not fn or not isinstance(item.get('header'),str):continue
             unit='room_verified_'+str(fn['id'])
@@ -455,7 +462,8 @@ def sync_inputs(net,slug,state):
                 version=net._next_version(db,proj['id'])
                 db.execute('INSERT INTO context_versions(project_id,version,header,message,created_at,unit) VALUES(?,?,?,?,?,?)',
                            (proj['id'],version,item['header'],'Host-verified room context',time.time(),unit))
-            db.execute('UPDATE functions SET unit=? WHERE id=?',(unit,fn['id']))
+            if fn['unit']!=unit:
+                db.execute('UPDATE functions SET unit=? WHERE id=?',(unit,fn['id']))
 
 
 def recover_legacy(net,slug):
