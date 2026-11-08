@@ -1,4 +1,5 @@
 import ctypes
+import os
 import re
 import shutil
 import subprocess
@@ -126,7 +127,7 @@ def test_octal_byte_displacement_keeps_c_value():
 
 
 def test_real_host_evaluation_and_effect_order_preserved(tmp_path):
-    cc = shutil.which('clang') or shutil.which('cc')
+    cc = (shutil.which('cc') or shutil.which('clang')) if os.name == 'nt' else (shutil.which('clang') or shutil.which('cc'))
     if not cc:
         pytest.skip('needs host compiler')
     code = HEADER+'\nint calls; int order;\nvoid ping(void *p){calls++;order=order*10+1;}\nvoid pong(void *p){calls++;order=order*10+2;}\n'
@@ -138,9 +139,9 @@ def test_real_host_evaluation_and_effect_order_preserved(tmp_path):
         candidate = candidate.replace('__repair_byte_address', f'address{i}').replace('demo(', f'candidate{i}(')
         code += candidate
         names.append(f'candidate{i}')
-    path, libpath = tmp_path/'test.c', tmp_path/'test.so'
+    path, libpath = tmp_path/'test.c', tmp_path/('test.dll' if os.name == 'nt' else 'test.so')
     path.write_text(code)
-    subprocess.run([cc, '-shared', '-fPIC', '-std=c99', str(path), '-o', str(libpath)], check=True, capture_output=True)
+    subprocess.run([cc, '-shared', '-std=c99', str(path), '-o', str(libpath)], check=True)
     lib = ctypes.CDLL(str(libpath))
     for value in (-32768, -1, 0, 1, 32767):
         for flag in (0, 1):
