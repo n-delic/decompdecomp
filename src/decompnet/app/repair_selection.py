@@ -11,6 +11,9 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'aggregate_pointer_dispatch': ('call_preparation_bundle', 'aggregate_call_preparation', 'revisit_one_shot_scope'),
+    'call_preparation_bundle': ('aggregate_pointer_dispatch', 'revisit_one_shot_scope'),
+    'aggregate_call_preparation': ('revisit_one_shot_scope',),
     'pointer_result_reuse': ('coordinated_field_store_order','narrow_store_sequence'),
     'coordinated_field_store_order': ('narrow_store_sequence','pointer_result_reuse'),
     'dead_assignment_narrow_capture': ('narrow_field_update_fold','independent_field_store_order'),

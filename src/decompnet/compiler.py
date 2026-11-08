@@ -398,6 +398,10 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
                 result = shared_compile(key, build)
         else:
             result = build()
+        if result.ok:
+            from .inline_helpers import check as check_inline_helpers
+            if reason := check_inline_helpers(source, result.obj):
+                result = CompileResult(False, None, reason)
         if sink := _ARTIFACT_SINK.get():
             sink(work)
         return result

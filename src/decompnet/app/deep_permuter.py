@@ -463,6 +463,13 @@ class Search(Permuter):
             progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
             complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
             queue = list(dict.fromkeys(complete+[c for _,c in progressed]))
+            # Revisit scaffolding from the new winner before another broad family wave.
+            # Fresh source/build scope and the existing local_seen/cache keep this finite.
+            from . import repair_cleanup
+            cleanup = repair_cleanup.variants(source, fn['name'], header, proj['arch'])
+            for family, child in cleanup:
+                labels[child] = family
+            queue = list(dict.fromkeys([c for _, c in cleanup]+queue))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             lane = getattr(self, "parallel_lane", None)
             if lane is not None:

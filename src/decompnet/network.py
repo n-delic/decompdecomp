@@ -771,7 +771,7 @@ class Network:
         for k, r in enumerate(rows[:-1], 1):  # (the last row is this compile)
             if r["score"] == score and normalized_source(r["source"] or "") != mine:
                 return (f"\nSame score as your compile #{k} of this claim ({score}) with a different source: this "
-                        "change made no difference the judge sees. Try a different kind of change.")
+                        "score alone does not prove identical assembly. Check the remaining differences before repeating this kind of change.")
         return ""
 
     def _agent_name(self, agent_id) -> str:
@@ -1709,6 +1709,7 @@ class Network:
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
         self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, effective_settings=getattr(result,"effective_settings",None))
         self.keep_diff(agent.id, fn["id"], self._search_rows(fn, proj, result.obj, d.rows))
+        compiled_output = {'fingerprint': cand.fingerprint(), 'granularity': 'function'}
 
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
@@ -1717,7 +1718,7 @@ class Network:
                             f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
                             f"{self.dependents_note(fn['id'], project_id=fn['project_id'])}"
                             + ("\n" + checks["message"] if checks.get("message") else ""),
-                    "score": 0, "matched": True, "checks": checks}
+                    "score": 0, "matched": True, "checks": checks, "compiled_output": compiled_output}
         else:
             best = store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
             head = (f"score {d.score} ({scoring.percent_text(d.percent)} match) — best so far {best}. "
@@ -1742,7 +1743,7 @@ class Network:
         if not scratch:
             self.remember_compile(key, agent, fn, text, d.score)
             text += self.same_score_note(fn["id"], agent.id, d.score, source, project_id=fn["project_id"])
-        return {"text": text + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": d.score, "matched": False, "checks": checks}
+        return {"text": text + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": d.score, "matched": False, "checks": checks, "compiled_output": compiled_output}
 
     @staticmethod
     def _what_changed(d: scoring.DiffResult, last: int | None, best: int | None = None) -> str:
