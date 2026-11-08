@@ -80,6 +80,7 @@ class JudgeMixin:
     def _evaluate(self, fn, proj, obj: bytes):
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
+        link_scope=self._diagnostic_scope(fn,proj)
         with compile_timing.phase('link'):
             target = self._rom_target(fn)
             res = match.link(obj, fn["name"], target, self.symbols(proj["id"]), self.reader(proj, fn))
@@ -87,9 +88,31 @@ class JudgeMixin:
             # The exact verdict always comes from the full linker. Only advisory diagnostics wait.
             local = self.__dict__.setdefault('_search_link_local', threading.local())
             local.last = (fn['id'], hashlib.sha256(obj).digest(), res, target)
+            local.guard=link_scope
             return res.candidate, res.exact if res.candidate is not None else None, res.problems
         local = self.__dict__.get('_search_link_local')
         if local is not None and hasattr(local, 'last'):del local.last
+        return self._link_diagnostics(fn,proj,obj,res,target)
+
+    def _diagnostic_scope(self,fn,proj):
+        if not hasattr(self,'project_store'):return None
+        store=self.project_store(proj['id'])
+        if not hasattr(store,'read_version'):return None
+        return (store.read_version('inputs',proj['id']),getattr(self,'_generation',{}).get(proj['id'],0),
+                proj.get('config') if isinstance(proj,dict) else proj['config'],
+                tuple((key,dict(fn).get(key)) for key in ('name','target','relocs','vram','meta','size','unit','rom_offset')))
+
+    def _complete_search_evaluation(self,fn,proj,obj):
+        local=self.__dict__.get('_search_link_local')
+        last=getattr(local,'last',None)
+        if (last is not None and last[:2]==(fn['id'],hashlib.sha256(obj).digest())
+                and getattr(local,'guard',None) is not None
+                and local.guard==self._diagnostic_scope(fn,proj)):
+            del local.last
+            return self._link_diagnostics(fn,proj,obj,*last[2:])
+        return self._evaluate(fn,proj,obj)
+
+    def _link_diagnostics(self,fn,proj,obj,res,target):
         from ...object_emission import inspect as emission_inventory
         from ..candidate_diagnostics import export_layout, text, unresolved
         checks = {'linked_bytes': {'exact': res.exact}, 'link': unresolved(res.problems),

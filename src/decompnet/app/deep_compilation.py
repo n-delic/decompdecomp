@@ -128,6 +128,8 @@ def chunk(search, agent, proj, fn, sources, fork):
             if random_safety.unsafe_update(fn['best_source'], source) or invalid_call(source, fn['name'], header):continue
             key = search._recent_key(proj, fn, source, fork)
             if key is None:continue  # External includes/custom compilers need ordinary fresh capture.
+            recent=getattr(search,'_recent_candidates',{}).get(key)
+            if recent is not None and recent[0]>=search.best:continue
             scope = getattr(search, '_primed_scopes', {}).get(key)
             if scope is not None:
                 import hashlib

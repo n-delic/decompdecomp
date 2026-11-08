@@ -146,3 +146,23 @@ def test_lean_search_retains_physical_register_cycles_without_relinking(monkeypa
     with search_evaluation():assert net._evaluate(fn, proj, b'object')[1] is False
     assert net._search_rows(fn, proj, b'object', ['fallback']) == expected
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize('changed',[False,True])
+def test_winner_diagnostics_reuse_guarded_link_result(monkeypatch,changed):
+    calls=[];revision=[1]
+    candidate=object()
+    monkeypatch.setattr('decompnet.rom.match.link',lambda *a:calls.append(1) or LinkResult(candidate,True,[],{}))
+    monkeypatch.setattr('decompnet.app.candidate_diagnostics.export_layout',lambda *a:{'ready':True})
+    class Net(JudgeMixin):
+        def is_rom(self,proj):return True
+        def _rom_target(self,fn):return None
+        def symbols(self,pid):return None
+        def reader(self,proj,fn):return None
+        def project_store(self,pid):return SimpleNamespace(read_version=lambda *a:revision[0])
+    net=Net();fn={'id':1,'name':'f'};proj={'id':1,'config':'same'}
+    with search_evaluation():assert net._evaluate(fn,proj,object_file())[1]
+    if changed:revision[0]+=1
+    assert net._complete_search_evaluation(fn,proj,object_file())[1]
+    assert len(calls)==(2 if changed else 1)
+    assert net._candidate_checks(fn,proj,object_file())['linked_bytes']['exact']

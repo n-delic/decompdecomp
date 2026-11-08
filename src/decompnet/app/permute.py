@@ -908,7 +908,8 @@ class Permuter:
         if d.score < best or d.bytes_match or source == fn['best_source']:
             # Winners and baselines feed subsequent local repairs and saved evidence.
             # Ordinary misses skip export/address reports; search feedback remains available.
-            self.net._evaluate(fn, proj, result.obj)
+            finish=getattr(self.net,'_complete_search_evaluation',self.net._evaluate)
+            finish(fn,proj,result.obj)
         from ..repair_feedback import current_trial
         self._compact_trial = ((current_trial() or {}).get('kind') == 'random rewrite'
                                and source != fn['best_source'] and d.score >= best and not d.bytes_match)

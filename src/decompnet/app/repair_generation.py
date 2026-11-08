@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 ACTIVE = contextvars.ContextVar('repair_generation', default=None)
+PARTITION = contextvars.ContextVar('repair_generation_partition',default=None)
 MAX_CACHE_BYTES = 16000000
 CACHE_LOCK = threading.RLock()
 
@@ -48,6 +49,17 @@ def session(net, scope, deadline, families, *, accept=None, goal=0):
 
 
 def call(function, *args, **kwargs):
+    if partition:=PARTITION.get():
+        index,count=partition
+        stage=function.__module__+'.'+function.__qualname__
+        if int.from_bytes(hashlib.sha256(stage.encode()).digest()[:4],'big')%count!=index:return []
+        token=PARTITION.set(None)
+        try:return _call(function,*args,**kwargs)
+        finally:PARTITION.reset(token)
+    return _call(function,*args,**kwargs)
+
+
+def _call(function,*args,**kwargs):
     state = ACTIVE.get()
     if state is None:
         return function(*args, **kwargs)

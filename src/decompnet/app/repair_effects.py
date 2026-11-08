@@ -7,6 +7,7 @@ REDIRECT = {"return_contract","plain_float_slots","narrow_expression_inline"}
 
 
 def key(node):
+    if '_feedback_key' in node:return node['_feedback_key']
     if not node.get('parent_source') or not node.get('path'):
         return None
     return hashlib.sha256(repr((node['parent_source'], node['path'][-1])).encode()).hexdigest()
@@ -14,8 +15,14 @@ def key(node):
 
 def output_scope(node):
     """Equivalent compiler outputs share feedback, while changed build/source output starts fresh."""
+    if '_output_scope' in node:return node['_output_scope']
     if node.get('parent_output') is None or not node.get('path'):return None
     return hashlib.sha256(repr((node['parent_output'],node['path'][-1])).encode()).hexdigest()
+
+
+def parent_key(node):
+    if '_parent_key' in node:return node['_parent_key']
+    return hashlib.sha256(repr(node.get('parent_output')).encode()).hexdigest()
 
 
 def observe(state, node, output, *, score=None, parent_score=None, rows=None):
@@ -74,7 +81,7 @@ def rotate(state):
     def redirect(node):
         output=node.get('parent_output')
         return (output is not None and (node.get('path') or [''])[-1] in REDIRECT
-                and stalls.get(hashlib.sha256(repr(output).encode()).hexdigest(),0)>=3)
+                and stalls.get(parent_key(node),0)>=3)
     # Preserve the third direct sibling and one ordinary slot in four.
     if ordinary and history.get(key(ordinary[0]),0)!=2 and slot%4!=3:
         ordinary=[n for n in ordinary if redirect(n)]+[n for n in ordinary if not redirect(n)]

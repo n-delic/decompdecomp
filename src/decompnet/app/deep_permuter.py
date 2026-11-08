@@ -438,6 +438,7 @@ class Search(Permuter):
             cleanup = [(family, child) for family, child in repair_cleanup.variants(
                 source, fn['name'], header, proj['arch']) if child not in self.local_seen]
             branch_frames=[]
+            incoming=None
             cleanup_pass = bool(cleanup)
             if cleanup_pass:
                 choices = [child for _, child in cleanup]
@@ -449,7 +450,12 @@ class Search(Permuter):
                     def generation_check():
                         self.check()
                         self.report()
-                    choices, generated_labels, elapsed = pool.proposal_pool().generate(args,options,generation_check)
+                    proposals=pool.proposal_pool()
+                    if hasattr(proposals,'stream'):
+                        incoming=iter(proposals.stream(args,options,generation_check))
+                        choices,generated_labels,elapsed=next(incoming,([],{},0))
+                    else:
+                        choices,generated_labels,elapsed=proposals.generate(args,options,generation_check)
                     labels.update(generated_labels)
                     pool.metrics.add('local_generation',elapsed)
                     self.phase = ordinary_phase
@@ -489,186 +495,205 @@ class Search(Permuter):
                 for family, candidate in permuter_local.variants(source, fn['name']):
                     labels.setdefault(candidate, family)
                     choices.append(candidate)
-            for candidate in choices:self.efficiency.generated(labels.get(candidate,'local_repair'),candidate)
-            families = list(dict.fromkeys(labels.get(c, 'local_repair') for c in choices))
-            from . import region_repairs
-            recovery=region_repairs.resolution(feedback.proofs.get(source,{}).get('baseline_rows'),rows)
-            rank_rows=region_repairs.focus(rows,recovery) if recovery.get('removed_count') else rows
-            ranked = adaptive_repairs.order(self.net, proj, fn, rows, repair_ranking.order(families, rank_rows))
-            from .repair_selection import order as combination_order
-            ranked = combination_order(ranked,path)
-            # Every other burst keeps the original order for exploration.
-            if self.refinement_rounds % 2 == 0:
-                preferred = lineage.preferred(source)
-                choices.sort(key=lambda c: (labels.get(c,'local_repair') not in preferred, ranked.index(labels.get(c, 'local_repair'))))
+            def prepare_choices(choices,labels=labels,feedback=feedback,source=source,rows=rows,
+                                proj=proj,fn=fn,lineage=lineage,path=path,header=header,
+                                source_locations=source_locations,branch_frames=branch_frames,loan=loan):
+                for candidate in choices:self.efficiency.generated(labels.get(candidate,'local_repair'),candidate)
+                families = list(dict.fromkeys(labels.get(c, 'local_repair') for c in choices))
+                from . import region_repairs
+                recovery=region_repairs.resolution(feedback.proofs.get(source,{}).get('baseline_rows'),rows)
+                rank_rows=region_repairs.focus(rows,recovery) if recovery.get('removed_count') else rows
+                ranked = adaptive_repairs.order(self.net, proj, fn, rows, repair_ranking.order(families, rank_rows))
+                from .repair_selection import order as combination_order
+                ranked = combination_order(ranked,path)
+                # Every other burst keeps the original order for exploration.
+                if self.refinement_rounds % 2 == 0:
+                    preferred = lineage.preferred(source)
+                    priority={family:index for index,family in enumerate(ranked)}
+                    choices.sort(key=lambda c: (labels.get(c,'local_repair') not in preferred, priority[labels.get(c,'local_repair')]))
 
-            choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
-            if not fork:
-                from . import compiler_phase_routing
-                phase_evidence=allocation_search.saved(self.net,proj,fn,source) or {}
-                choices=[c for _,c in compiler_phase_routing.order(source,
-                    [(labels.get(c,'local_repair'),c) for c in choices],phase_evidence.get('value_trace'),header)]
+                choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
+                if not fork:
+                    from . import compiler_phase_routing
+                    phase_evidence=allocation_search.saved(self.net,proj,fn,source) or {}
+                    choices=[c for _,c in compiler_phase_routing.order(source,
+                        [(labels.get(c,'local_repair'),c) for c in choices],phase_evidence.get('value_trace'),header)]
 
-            from . import repair_localisation
-            localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
-            choices=[c for family,c in localised]
-            labels.update({c:family for family,c in localised})
-            from . import proposal_progress
-            progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
-            complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
-            frame_sources={c for _,c in branch_frames}
-            frame_prefix=[c for _,c in progressed if c in frame_sources]
-            dispatch_prefix=[c for family,c in progressed if family=='effectful_dispatch_specialization'][:2]
-            queue = list(dict.fromkeys(frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
-            if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
-            lane = getattr(self, "parallel_lane", None)
-            if lane is not None:
-                queue = [c for c in queue if int(hashlib.sha256(c.encode()).hexdigest(),16)%lane.count == lane.index]
-            parents = {}
-            while queue:
-                feedback.order(queue,labels,source,parents)
-                queue=repair_ranking.guarded_first(queue,labels)
-                candidate=queue.pop(0)
+                from . import repair_localisation
+                localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
+                choices=[c for family,c in localised]
+                labels.update({c:family for family,c in localised})
+                from . import proposal_progress
+                progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
+                complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
+                frame_sources={c for _,c in branch_frames}
+                frame_prefix=[c for _,c in progressed if c in frame_sources]
+                dispatch_prefix=[c for family,c in progressed if family=='effectful_dispatch_specialization'][:2]
+                queue = list(dict.fromkeys(frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
+                if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
                 lane = getattr(self, "parallel_lane", None)
-                if lane is not None and int(hashlib.sha256(candidate.encode()).hexdigest(), 16) % lane.count != lane.index:
-                    continue
-                if phase_deadline is not None and time.monotonic() >= phase_deadline:
-                    self.local_status = {'reason': 'phase_budget', **counters}
-                    self.log('Local phase budget reached; reserving the remaining search for random rewrites.')
-                    return best, self.net._function(fn['name'], proj['slug'])['best_source']
-                if candidate in self.local_seen:
-                    continue
-                if max_trials is not None and trials >= max_trials:
-                    self.local_status = {'reason': 'burst_budget', **counters}
-                    self.log(f'Local search paused at its burst budget; {trials} proposals visited.')
-                    return best, self.net._function(fn['name'], proj['slug'])['best_source']
-                if candidate in allocation_lane:
-                    self.phase = 'register allocation lifetimes'
-                    self.allocation_trials += 1
-                else:
-                    self.phase = ordinary_phase
-                self.local_seen.add(candidate)
-                trials += 1
-                parent_source,parent_rows,parent_path = parents.get(candidate,(source,rows,path))
-                self._parent_rows = parent_rows
-                parent_proof=feedback.proofs.get(parent_source,{})
-                self._trial_parent_output=parent_proof.get('output')
-                self._trial_parent_granularity=parent_proof.get('granularity')
-                sequence_started=time.monotonic()
-                try:
-                    with repair_trial({'kind': 'deep local repair', 'family': labels.get(candidate, 'local_repair'),
-                                       'lineage': parent_path+[labels.get(candidate, 'local_repair')],
-                                       'base_source_sha256': hashlib.sha256(parent_source.encode()).hexdigest()}):
-                        score = self._score(agent, proj, fn, candidate, best, fork)
-                finally:
-                    del self._parent_rows
-                    self._trial_parent_output = self._trial_parent_granularity = None
-                measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
-                measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
-                if not getattr(self,'_trial_reused',False):
-                    from .region_repairs import resolution_text
-                    if change := resolution_text(parent_rows,measured_rows):self.log(change)
-                feedback.record(parent_source,candidate,labels.get(candidate,'local_repair'),parent_path,score,measured_rows,measured_output,getattr(self,'_trial_reused',False),getattr(self,'_trial_output_granularity','function'))
-                layout_frontiers.offer(layout_state,candidate,header)
-                if score is not None and 0<score<feedback.proofs.get(parent_source,{}).get('score',score) and layout_probes<6:
-                    for family,child in layout_frontiers.followups(layout_state,parent_source,candidate,labels.get(candidate,''),header):
-                        if child in self.local_seen or child in queue:continue
-                        labels[child]=family
-                        parents[child]=(candidate,measured_rows,parent_path+[labels.get(candidate,'local_repair')])
-                        queue.insert(0,child)
-                        layout_probes+=1
-                        if layout_probes>=6:break
-                if not getattr(self,'_trial_reused',False):
-                    proof=feedback.proofs.get(parent_source,{})
-                    repair_sequences.observe(self.net,lineage.profile,lineage.focus,parent_path,
-                        labels.get(candidate,'local_repair'),proof.get('score'),score,proof.get('output'),
-                        measured_output,exact=score==0,elapsed_ms=(time.monotonic()-sequence_started)*1000)
-                    source_locations[candidate]=getattr(self,'_trial_locations',None)
-
-                if not getattr(self,'_trial_reused',False):
-                    for pair in feedback.pairs(parent_source,candidate,labels.get(candidate,'local_repair'),score,measured_output,header,parent_path):
-                        child = pair['source']
-                        if child in self.local_seen or child in queue:continue
-                        labels[child] = 'paired_inert'
-                        parents[child] = (parent_source,parent_rows,pair['path'][:-1])
-                        queue.insert(min(3,len(queue)),child)
-                if cursor and parent_source == source:cursor.measured(labels.get(candidate),candidate,score)
-                counters['output_feedback'] = feedback.summary()
-                self.local_status.update(counters)
-                if candidate in feedback.loan_sources:counters['sequence_evaluations']=counters.get('sequence_evaluations',0)+1
-                if score is None:
-                    counters['compile_failed'] += 1
-                if score is not None and score > 0:
-                    measured_rows = (self._cached_rows if getattr(self, '_trial_reused', False)
-                                     else repair_ranking.evidence(self.net, fn['id'], agent.id))
-                    if getattr(self, '_trial_reused', False) and not measured_rows:
+                if lane is not None:
+                    queue = [c for c in queue if int(hashlib.sha256(c.encode()).hexdigest(),16)%lane.count == lane.index]
+                return queue,allocation_lane,cursor
+            queue,allocation_lane,cursor=prepare_choices(choices)
+            parents = {}
+            from .deep_lookahead import Window
+            with Window(self,agent,proj,fn,fork) as ahead:
+                while queue or incoming is not None:
+                    if not queue:
+                        try:choices,generated_labels,elapsed=next(incoming)
+                        except StopIteration:
+                            incoming=None;continue
+                        labels.update(generated_labels)
+                        pool.metrics.add('local_generation',elapsed)
+                        queue,allocation_lane,cursor=prepare_choices(choices)
+                        queue=[candidate for candidate in queue if candidate not in self.local_seen]
+                        if not queue:continue
+                    feedback.order(queue,labels,source,parents)
+                    queue=repair_ranking.guarded_first(queue,labels)
+                    candidate=queue.pop(0)
+                    lane = getattr(self, "parallel_lane", None)
+                    if lane is not None and int(hashlib.sha256(candidate.encode()).hexdigest(), 16) % lane.count != lane.index:
                         continue
-                    alternatives.offer(candidate, score, measured_rows, arch=proj['arch'], baseline=parent_rows, baseline_score=best)
-                    if not any(n['source'] == candidate for n in alternatives.nodes):
-                        counters['frontier_pruned'] += 1
-                    source_rows[candidate] = measured_rows
-                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),max_steps=repair_sequences.MAX_STEPS+repair_sequence_lane.EXTRA_DEPTH if candidate in feedback.loan_sources else repair_sequences.MAX_STEPS)
-                    if (score<=best*2 and len(parent_path)+1<repair_sequences.MAX_STEPS
-                            and residual_bursts<residual_followups.BURSTS
-                            and residual_followups.kind(parent_rows,measured_rows,proj['arch'])):
-                        followup_labels = {}
-                        followup = draft_repairs.variants(candidate,fn['name'],proj['arch'],fn['asm'] or '',flags,
-                            followup_labels,limit=None,header=header,entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
-                        selected = residual_followups.select([(followup_labels[c],c) for c in followup
-                            if c not in self.local_seen and c not in queue],parent_rows,measured_rows,proj['arch'])
-                        if selected:
-                            residual_bursts += 1
-                            self.log('Original mismatch repaired; trying two bounded follow-ups on the remaining '+
-                                     residual_followups.kind(parent_rows,measured_rows,proj['arch'])+' difference.')
-                            for family,child in selected:
-                                labels[child] = family
-                                parents[child] = (candidate,measured_rows,parent_path+[labels.get(candidate,'local_repair')])
-                            offset = 0
-                            # Preserve the short direct-family lane before trying a residual detour.
-                            siblings=[c for c in queue[offset:] if c not in parents
-                                      and labels.get(c)==labels.get(candidate)][:3]
-                            for sibling in siblings:queue.remove(sibling)
-                            queue[offset:offset] = siblings
-                            offset += len(siblings)
-                            queue[offset:offset] = [c for _,c in selected]
-                if score is not None and score < best:
-                    source_rows[candidate] = repair_ranking.evidence(self.net,fn['id'],agent.id)
-                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),exact=score==0,max_steps=repair_sequences.MAX_STEPS+repair_sequence_lane.EXTRA_DEPTH if candidate in feedback.loan_sources else repair_sequences.MAX_STEPS)
-                    best = score
-                    fresh = self.net._function(fn['name'], proj['slug'])
-                    if score > 0 and fresh['best_source'] == candidate:
-                        best = self._repair_preflight(agent, proj, fresh, best, fork)
-                        proj = self.net.project_row(proj['slug'])
-                        flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
-                    fn = self.net._function(fn['name'], proj['slug'])
-                    source = fn['best_source']
-                    if best > 0 and (source != candidate or repair_sequences.profile(self.net,proj,fn) != lineage.profile):
-                        # Do not credit source steps across a compiler/input change or reuse old-profile advice.
-                        self.local_seen.clear()
-                        alternatives = search_frontier.Frontier()
-                        detours_used.clear()
-                        source_rows = {source:[]}
-                        expanded.clear()
-                        lineage = repair_sequences.Lineage(self.net,proj,fn,source,[])
-                        feedback=deep_repair_feedback.Feedback(source,best,[])
-                        self.winner_diff = None
+                    if phase_deadline is not None and time.monotonic() >= phase_deadline:
+                        self.local_status = {'reason': 'phase_budget', **counters}
+                        self.log('Local phase budget reached; reserving the remaining search for random rewrites.')
+                        return best, self.net._function(fn['name'], proj['slug'])['best_source']
+                    if candidate in self.local_seen:
+                        continue
+                    if max_trials is not None and trials >= max_trials:
+                        self.local_status = {'reason': 'burst_budget', **counters}
+                        self.log(f'Local search paused at its burst budget; {trials} proposals visited.')
+                        return best, self.net._function(fn['name'], proj['slug'])['best_source']
+                    lookahead=min(4,max_trials-trials) if max_trials is not None else 4
+                    ahead.ensure([candidate]+queue[:max(0,lookahead-1)])
+                    if candidate in allocation_lane:
+                        self.phase = 'register allocation lifetimes'
+                        self.allocation_trials += 1
+                    else:
+                        self.phase = ordinary_phase
+                    self.local_seen.add(candidate)
+                    trials += 1
+                    parent_source,parent_rows,parent_path = parents.get(candidate,(source,rows,path))
+                    self._parent_rows = parent_rows
+                    parent_proof=feedback.proofs.get(parent_source,{})
+                    self._trial_parent_output=parent_proof.get('output')
+                    self._trial_parent_granularity=parent_proof.get('granularity')
+                    sequence_started=time.monotonic()
+                    try:
+                        with repair_trial({'kind': 'deep local repair', 'family': labels.get(candidate, 'local_repair'),
+                                           'lineage': parent_path+[labels.get(candidate, 'local_repair')],
+                                           'base_source_sha256': hashlib.sha256(parent_source.encode()).hexdigest()}):
+                            score = self._score(agent, proj, fn, candidate, best, fork)
+                    finally:
+                        del self._parent_rows
+                        self._trial_parent_output = self._trial_parent_granularity = None
+                    measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
+                    measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
+                    if not getattr(self,'_trial_reused',False):
+                        from .region_repairs import resolution_text
+                        if change := resolution_text(parent_rows,measured_rows):self.log(change)
+                    feedback.record(parent_source,candidate,labels.get(candidate,'local_repair'),parent_path,score,measured_rows,measured_output,getattr(self,'_trial_reused',False),getattr(self,'_trial_output_granularity','function'))
+                    layout_frontiers.offer(layout_state,candidate,header)
+                    if score is not None and 0<score<feedback.proofs.get(parent_source,{}).get('score',score) and layout_probes<6:
+                        for family,child in layout_frontiers.followups(layout_state,parent_source,candidate,labels.get(candidate,''),header):
+                            if child in self.local_seen or child in queue:continue
+                            labels[child]=family
+                            parents[child]=(candidate,measured_rows,parent_path+[labels.get(candidate,'local_repair')])
+                            queue.insert(0,child)
+                            layout_probes+=1
+                            if layout_probes>=6:break
+                    if not getattr(self,'_trial_reused',False):
+                        proof=feedback.proofs.get(parent_source,{})
+                        repair_sequences.observe(self.net,lineage.profile,lineage.focus,parent_path,
+                            labels.get(candidate,'local_repair'),proof.get('score'),score,proof.get('output'),
+                            measured_output,exact=score==0,elapsed_ms=(time.monotonic()-sequence_started)*1000)
+                        source_locations[candidate]=getattr(self,'_trial_locations',None)
+
+                    if not getattr(self,'_trial_reused',False):
+                        for pair in feedback.pairs(parent_source,candidate,labels.get(candidate,'local_repair'),score,measured_output,header,parent_path):
+                            child = pair['source']
+                            if child in self.local_seen or child in queue:continue
+                            labels[child] = 'paired_inert'
+                            parents[child] = (parent_source,parent_rows,pair['path'][:-1])
+                            queue.insert(min(3,len(queue)),child)
+                    if cursor and parent_source == source:cursor.measured(labels.get(candidate),candidate,score)
+                    counters['output_feedback'] = feedback.summary()
+                    self.local_status.update(counters)
+                    if candidate in feedback.loan_sources:counters['sequence_evaluations']=counters.get('sequence_evaluations',0)+1
+                    if score is None:
+                        counters['compile_failed'] += 1
+                    if score is not None and score > 0:
+                        measured_rows = (self._cached_rows if getattr(self, '_trial_reused', False)
+                                         else repair_ranking.evidence(self.net, fn['id'], agent.id))
+                        if getattr(self, '_trial_reused', False) and not measured_rows:
+                            continue
+                        alternatives.offer(candidate, score, measured_rows, arch=proj['arch'], baseline=parent_rows, baseline_score=best)
+                        if not any(n['source'] == candidate for n in alternatives.nodes):
+                            counters['frontier_pruned'] += 1
+                        source_rows[candidate] = measured_rows
+                        lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),max_steps=repair_sequences.MAX_STEPS+repair_sequence_lane.EXTRA_DEPTH if candidate in feedback.loan_sources else repair_sequences.MAX_STEPS)
+                        if (score<=best*2 and len(parent_path)+1<repair_sequences.MAX_STEPS
+                                and residual_bursts<residual_followups.BURSTS
+                                and residual_followups.kind(parent_rows,measured_rows,proj['arch'])):
+                            followup_labels = {}
+                            followup = draft_repairs.variants(candidate,fn['name'],proj['arch'],fn['asm'] or '',flags,
+                                followup_labels,limit=None,header=header,entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
+                            selected = residual_followups.select([(followup_labels[c],c) for c in followup
+                                if c not in self.local_seen and c not in queue],parent_rows,measured_rows,proj['arch'])
+                            if selected:
+                                residual_bursts += 1
+                                self.log('Original mismatch repaired; trying two bounded follow-ups on the remaining '+
+                                         residual_followups.kind(parent_rows,measured_rows,proj['arch'])+' difference.')
+                                for family,child in selected:
+                                    labels[child] = family
+                                    parents[child] = (candidate,measured_rows,parent_path+[labels.get(candidate,'local_repair')])
+                                offset = 0
+                                # Preserve the short direct-family lane before trying a residual detour.
+                                siblings=[c for c in queue[offset:] if c not in parents
+                                          and labels.get(c)==labels.get(candidate)][:3]
+                                for sibling in siblings:queue.remove(sibling)
+                                queue[offset:offset] = siblings
+                                offset += len(siblings)
+                                queue[offset:offset] = [c for _,c in selected]
+                    if score is not None and score < best:
+                        source_rows[candidate] = repair_ranking.evidence(self.net,fn['id'],agent.id)
+                        lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),exact=score==0,max_steps=repair_sequences.MAX_STEPS+repair_sequence_lane.EXTRA_DEPTH if candidate in feedback.loan_sources else repair_sequences.MAX_STEPS)
+                        best = score
+                        fresh = self.net._function(fn['name'], proj['slug'])
+                        if score > 0 and fresh['best_source'] == candidate:
+                            best = self._repair_preflight(agent, proj, fresh, best, fork)
+                            proj = self.net.project_row(proj['slug'])
+                            flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
+                        fn = self.net._function(fn['name'], proj['slug'])
+                        source = fn['best_source']
+                        if best > 0 and (source != candidate or repair_sequences.profile(self.net,proj,fn) != lineage.profile):
+                            # Do not credit source steps across a compiler/input change or reuse old-profile advice.
+                            self.local_seen.clear()
+                            alternatives = search_frontier.Frontier()
+                            detours_used.clear()
+                            source_rows = {source:[]}
+                            expanded.clear()
+                            lineage = repair_sequences.Lineage(self.net,proj,fn,source,[])
+                            feedback=deep_repair_feedback.Feedback(source,best,[])
+                            self.winner_diff = None
+                        break
+                else:
+                    if cleanup_pass:
+                        # All inverses were measured/cache-checked. Resume the broad page once;
+                        # do not treat a failed cleanup as exhaustion of ordinary repair families.
+                        continue
+                    detour = next((node for node in alternatives.nodes
+                                   if node['source'] not in detours_used and node['source'] not in expanded and node['source'] not in self.local_seen), None)
+                    # Local trials are already in local_seen; allow each retained source one expansion.
+                    if detour is None:
+                        detour = next((node for node in alternatives.nodes if node['source'] not in detours_used and node['source'] not in expanded), None)
+                    if detour and len(detours_used) < 3 and detour['source'] not in expanded:
+                        detours_used.add(detour['source'])
+                        source = detour['source']
+                        self.log('Trying a bounded repair combination on a retained alternative; saved best C is unchanged.')
+                        continue
                     break
-            else:
-                if cleanup_pass:
-                    # All inverses were measured/cache-checked. Resume the broad page once;
-                    # do not treat a failed cleanup as exhaustion of ordinary repair families.
-                    continue
-                detour = next((node for node in alternatives.nodes
-                               if node['source'] not in detours_used and node['source'] not in expanded and node['source'] not in self.local_seen), None)
-                # Local trials are already in local_seen; allow each retained source one expansion.
-                if detour is None:
-                    detour = next((node for node in alternatives.nodes if node['source'] not in detours_used and node['source'] not in expanded), None)
-                if detour and len(detours_used) < 3 and detour['source'] not in expanded:
-                    detours_used.add(detour['source'])
-                    source = detour['source']
-                    self.log('Trying a bounded repair combination on a retained alternative; saved best C is unchanged.')
-                    continue
-                break
         self.local_status = {'reason': 'matched' if best == 0 else 'depth_limit' if counters['depth_limit']
                              else 'supported_variants_exhausted', **counters}
         self.log(f"Local search: {self.local_status['reason']}; {trials} proposals visited; "
@@ -748,9 +773,20 @@ class Search(Permuter):
         ctx = context(self.net, proj, fn['unit'])
         if not compiler._stable_inputs([source.encode(), (ctx['header'] if ctx else '').encode()]):return None
         rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
-        return (self.net.project_store(proj['id']).read_version('inputs', proj['id']),
-                hashlib.sha256(repr((dict(proj), dict(fn), source, compiler_identity(own), rules,
-                                     sorted(os.environ.items()))).encode()).digest())
+        version=self.net.project_store(proj['id']).read_version('inputs',proj['id'])
+        environment=sorted(os.environ.items())
+        identity=compiler_identity(own)
+        capture=(version,tuple(dict(proj).items()),tuple(dict(fn).items()),identity,repr(rules),environment,
+                 ctx['header'] if ctx else '')
+        if capture!=getattr(self,'_recent_capture',None):
+            self._recent_capture=capture;self._recent_keys=OrderedDict()
+        cache=self._recent_keys
+        if source in cache:
+            cache.move_to_end(source);return cache[source][0]
+        result=(version,hashlib.sha256(repr((dict(proj),dict(fn),source,identity,rules,environment)).encode()).digest())
+        cache[source]=(result,len(source.encode()))
+        while len(cache)>64 or sum(size for _,size in cache.values())>8*1024*1024:cache.popitem(last=False)
+        return result
 
     def _prime_trials(self, agent, proj, fn, sources, fork):
         # Scope each candidate exactly as the single-candidate path does. The map

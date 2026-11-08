@@ -461,3 +461,33 @@ selection separates the longest registered ID or alias from a helper name, so
 `cursor-cli-claude-…` is attributed to the model family rather than `cli`. CLI messages
 that explicitly require authentication or say `use /login` enter the existing
 signed-out handling before the fatal-error/reconnection fallback.
+
+### Deep-permuter local pipeline
+
+Maximum-mode proposal generation splits independent pure generator stages across
+up to four persistent processes. Identical search lanes share each shard's bounded
+future/cache. Completed shards arrive independently, so local candidates can be
+compiled and judged while slower families are still being generated. Nested stages
+stay with their parent generator, preserving macro and combined-repair coverage.
+Arrival order can change which hypotheses fit inside a finite search budget.
+
+The adaptive local loop uses lookahead windows of at most four independent ROM
+compiles and primes their history lookups in one bounded read. Judging, feedback and
+publication stay on the search lane. Reordering or a new parent closes the old window;
+queued work is cancelled and discarded running work is charged to the original
+candidate allowance. Imported builds, multiple-profile trials, external inputs and
+unsupported compiler-ahead routes retain their ordinary synchronous behavior.
+
+Pending feedback nodes retain their parent/family hashes until the proof changes,
+rather than reconstructing and hashing full parent C for every queued candidate on
+every trial. A synthetic 500-candidate, 30-reordering check preserved ordering and
+took 1.420s before versus 0.069s with retained metadata (20.5x for ordering alone).
+Repeated candidate identity requests share a 64-entry / 8 MiB worker-local cache;
+complete captured inputs, revision, header, environment and repair rules still
+invalidate it, and persisted history signatures remain unchanged.
+
+After a lean link, winner/baseline diagnostics may reuse that thread's link result
+only for the identical object, function snapshot, project config, input revision
+and symbol/layout generation. A changed or unavailable guard runs the full linker
+again. This avoids relinking solely to build advisory diagnostics; it never reuses
+a historical match verdict for a new candidate or authorizes publication.
