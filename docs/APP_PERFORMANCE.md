@@ -547,3 +547,29 @@ lookup from about 300,000 SQLite VM operations to fewer than 100 (approximately
 latency. New-event ordering, delivery cursors and transaction boundaries are unchanged.
 It does not establish that the separately observed multi-minute saved-source reads
 or project-lock waits are resolved.
+
+### Saved-manifest metadata under Python CPU contention
+
+Partial progress saves still read one SQLite snapshot, but return metadata in JSON
+pages of at most 128 functions before expanding them in Python. This reduces
+native SQLite/Python row handoffs: 1,500 function records now cross that boundary
+as 12 rows. Names, numeric addresses, nullable fields, source-presence flags and
+function ordering are preserved. Metadata reads never decode saved C; full-source
+exports retain their existing checksum-validated detail reads.
+
+A bounded synthetic fixture with 10,000 functions and a competing Python CPU thread
+measured median metadata fetch/conversion time of **1.81 s before, 0.150 s after**
+over three paired trials. Idle medians were 25.7 ms and 29.4 ms. Scheduling varies:
+old contended times ranged from 1.55 to 2.22 s, new times from 0.085 to 0.275 s.
+Smaller 1,000-function repeats did not show a consistent median win. JSON transport
+adds work when there is little contention; this targets large contended reads.
+These are component measurements, not a prediction of live-app speed. The fixture
+reproduces GIL handoff contention, but does not establish the cause of every observed
+multi-minute source read or project-lock wait. Those remain separate investigations.
+
+Thread-local query readers also avoid acquiring their connection lock during
+interpreter finalization. CPython may already have stopped the daemon that owned
+it, so a destructor cannot wait for that daemon to release it. Normal worker
+teardown still closes the reader. A synthetic child process previously hung at
+exit with a daemon holding that lock; it now exits normally. This does not bypass
+writer commits or the application's graceful worker shutdown.

@@ -372,6 +372,10 @@ class _ThreadReader:
             raise
 
     def __del__(self):
+        # A daemon may have owned the connection's Python lock when finalization
+        # stopped it permanently. Waiting for that lock now deadlocks process exit.
+        # These are query-only readers; normal worker teardown still closes them.
+        if sys.is_finalizing():return
         # Only its owning thread reads this connection. Allow finalization from
         # another thread too, if the Store itself is collected after workers exit.
         try:self.conn.close()

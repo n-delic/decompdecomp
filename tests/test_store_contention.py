@@ -246,3 +246,38 @@ def test_windows_writer_region_lock_retries_and_unlocks(tmp_path,monkeypatch):
     with gate.hold(wait=lambda:waits.append(1)) as acquired:
         assert acquired and gate.path.stat().st_size==0
     assert waits==[1] and calls==[1,1,2]
+
+
+def test_query_reader_does_not_wait_on_stopped_daemon_during_interpreter_exit(tmp_path):
+    """CPython clears daemon thread locals after those threads can no longer run."""
+    import subprocess
+    import sys
+    code = '''
+import threading,time,sys
+from decompnet.store import Store
+store=Store(sys.argv[1]);ready=threading.Event()
+def read():
+    connection=store._reader()
+    connection.call_lock.acquire()
+    ready.set()
+    time.sleep(30)
+threading.Thread(target=read,daemon=True).start()
+assert ready.wait(2)
+print('ready to finalize',flush=True)
+'''
+    result = subprocess.run([sys.executable,'-c',code,str(tmp_path/'exit.db')],
+                            capture_output=True,text=True,timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'ready to finalize'
+
+
+def test_query_reader_still_closes_at_normal_worker_teardown(tmp_path):
+    store = Store(tmp_path/'close-reader.db')
+    connections = []
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            pool.submit(lambda:connections.append(store._reader())).result(timeout=3)
+        with pytest.raises(sqlite3.ProgrammingError,match='closed database'):
+            connections[0].execute('SELECT 1')
+    finally:
+        store.conn.close()

@@ -356,6 +356,26 @@ def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | No
         join = " JOIN functions f ON f.id=r.id"
     selected = "" if names is None else " AND r.name IN (SELECT value FROM json_each(?))"
     params = (project_id,) if names is None else (project_id, json.dumps(names))
+    if not sources:
+        # sqlite3 releases/reacquires the GIL while stepping each returned row.
+        # CPU-heavy background Python work can turn thousands of cheap metadata
+        # rows into seconds of fetch waits. Transport bounded JSON pages in one
+        # snapshot; source payloads still use the checksum-validated detail path.
+        fields = ('name','unit','vram','size','status','matched_agent_id','best_score',
+                  'best_agent_id','readable','meta','has_matched','has_best')
+        pairs = ','.join(f"'{field}',{field}" for field in fields)
+        batches = store.all(f"""WITH numbered AS (
+            SELECT {columns},row_number() OVER (ORDER BY r.vram) AS ordinal
+            FROM main.functions r WHERE r.project_id=?{selected})
+            SELECT json_group_array(json_object({pairs})) AS batch FROM numbered
+            GROUP BY (ordinal-1)/128 ORDER BY min(ordinal)""", *params)
+        rows = []
+        while batches:
+            rows.extend(json.loads(batches.pop()['batch']))
+        # Aggregate input order is not a SQL guarantee; retain ORDER BY vram,
+        # including SQLite's NULL-first ordering, after expanding the pages.
+        rows.sort(key=lambda row: (row['vram'] is not None, row['vram']))
+        return rows
     return store.all(f"SELECT {columns} FROM main.functions r{join} WHERE r.project_id=?{selected} ORDER BY r.vram",
                      *params)
 

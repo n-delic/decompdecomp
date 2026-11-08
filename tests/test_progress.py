@@ -653,7 +653,10 @@ def test_background_compile_discards_results_if_progress_changes(worker, project
 
     monkeypatch.setattr(net, "_compile", compile_with_pull)
     monkeypatch.setattr(net, "_evaluate", lambda *_: (object(), None, []))
-    monkeypatch.setattr(net, "_target_obj", lambda *_: object())
+    monkeypatch.setattr(net, "_target_obj", lambda *_: SimpleNamespace(cpu="mips"))
+    # The fake compiler objects have no instructions; this test exercises the
+    # stale-progress recorder guard after scoring, not diagnostic disassembly.
+    monkeypatch.setattr("decompnet.scoring.disassemble", lambda *_: [])
     monkeypatch.setattr("decompnet.scoring.diff", lambda *_: DiffResult(1, 1, [], False))
     if worker == "autopilot":
         from decompnet.app.engine import autopilot
