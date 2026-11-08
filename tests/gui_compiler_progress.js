@@ -29,6 +29,10 @@ assert.equal(fields.get("[data-bar]").value, 80);
 assert.equal(fields.get("[data-bar]").max, 196);
 assert.equal(box.dataset.improved, "true");
 assert.equal(fields.get("[data-exact]").textContent, 1);
+ctx.renderCompilerProgress({function:'next-function',tested:2,combinations:8,completed:1,
+  improved:1,exact:1,applying_function:'previous-match',apply_pending:1});
+assert.equal(fields.get('[data-current]').textContent,'next-function');
+assert.match(fields.get('[data-tested]').textContent,/rechecking previous-match/);
 const results = [
  {function: "exact", before: 99, best: 100, improved: true, exact: true},
  {function: "near", before: 90, best: 99, improved: true, exact: false},

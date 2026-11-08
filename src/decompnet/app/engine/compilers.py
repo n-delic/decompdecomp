@@ -303,12 +303,19 @@ class CompilerMixin:
         # Saved-file watching owns synchronization. A comparison uses current DB inputs and
         # rejudges before applying; loading a project here must not restore/reverify its files.
         with self.progress.view() if hasattr(self,'progress') else nullcontext():
+            if auto_apply and all_installed and not function:
+                from ..compiler_apply_queue import Queue
+                queue = Queue(self, log)
+                try:
+                    return self._survey_compilers(slug,queue,limit,state,all_installed,function,untested_only,
+                                                  flags_only,auto_apply,used_profiles_only,apply_queue=queue)
+                finally:queue.close()
             return self._survey_compilers(slug,log,limit,state,all_installed,function,untested_only,
                                           flags_only,auto_apply,used_profiles_only)
 
     def _survey_compilers(self, slug: str, log=lambda line: None, limit: int | None = None, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
-                         auto_apply: bool = False, used_profiles_only: bool = False) -> dict:
+                         auto_apply: bool = False, used_profiles_only: bool = False, apply_queue=None) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
         compiler the project uses: C that matches the game with another compiler (and not with today's) confirms that
         compiler for its function. Contradicted functions first, then the closest attempts; C already tried is
@@ -518,33 +525,44 @@ class CompilerMixin:
                     db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
                                (fn["id"], input_digest, time.time(), json.dumps(completed)))
                 applied = False
-                apply_error = ""
+                result_row = {"function": fn["name"], "before": baseline, "best": best,
+                              "profile": best_profile, "improved": improved, "exact": bool(matches),
+                              "applied": False, "apply_error": ""}
+                results.append(result_row)
                 if auto_apply and best_profile and (improved or matches):
-                    report({**progress, 'phase':'applying', 'stage':'Rechecking and applying best settings'})
-                    log(f"{fn['name']}: rechecking and applying best settings.")
-                    check_cancel()
-                    try:
-                        current = self._function(fn["name"], slug)
-                        current_proj = self._project(slug)
-                        if (self._comparison_source(current) != source or
-                                self._comparison_digest(current_proj, current, source, candidates) != input_digest):
-                            raise NetworkError("Code or build inputs changed during comparison; review a fresh result before applying.")
-                        self.apply_function_compiler(slug, fn["name"], best_profile[0], best_profile[1])
-                        applied = True
-                        applied_count += 1
-                        log(f"{fn['name']}: best settings applied and rechecked.")
-                        fresh = self._function(fn["name"], slug)
-                        input_digest = self._comparison_digest(self._project(slug), fresh, self._comparison_source(fresh), candidates)
-                    except NetworkError as error:
-                        apply_error = str(error)
-                        log(f"{fn['name']}: auto-apply skipped: {error}")
-                    completed.update(applied=applied, apply_error=apply_error)
-                    with self.project_store(proj['id']).tx() as db:
-                        db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
-                                   (fn["id"], input_digest, time.time(), json.dumps(completed)))
-                results.append({"function": fn["name"], "before": baseline, "best": best,
-                                "profile": best_profile, "improved": improved, "exact": bool(matches),
-                                "applied": applied, "apply_error": apply_error})
+                    def apply(fn=fn, source=source, candidates=candidates, input_digest=input_digest,
+                              best_profile=best_profile, completed=completed, result_row=result_row):
+                        nonlocal applied_count
+                        applied, apply_error = False, ""
+                        check_cancel()
+                        log(f"{fn['name']}: rechecking and applying best settings.")
+                        try:
+                            current = self._function(fn["name"], slug)
+                            current_proj = self._project(slug)
+                            if (self._comparison_source(current) != source or
+                                    self._comparison_digest(current_proj, current, source, candidates) != input_digest):
+                                raise NetworkError("Code or build inputs changed during comparison; review a fresh result before applying.")
+                            check_cancel()
+                            self.apply_function_compiler(slug, fn["name"], best_profile[0], best_profile[1])
+                            applied = True
+                            applied_count += 1
+                            log(f"{fn['name']}: best settings applied and rechecked.")
+                            fresh = self._function(fn["name"], slug)
+                            input_digest = self._comparison_digest(self._project(slug), fresh, self._comparison_source(fresh), candidates)
+                        except NetworkError as error:
+                            apply_error = str(error)
+                            log(f"{fn['name']}: auto-apply skipped: {error}")
+                        completed.update(applied=applied, apply_error=apply_error)
+                        result_row.update(applied=applied, apply_error=apply_error)
+                        with self.project_store(proj['id']).tx() as db:
+                            db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
+                                       (fn["id"], input_digest, time.time(), json.dumps(completed)))
+                    if apply_queue:
+                        apply_queue.submit(fn['name'], apply)
+                    else:
+                        report({**progress, 'phase':'applying', 'stage':'Rechecking and applying best settings'})
+                        apply()
+                        applied = result_row['applied']
                 if function:
                     comparison = completed
                 if matches:
@@ -574,6 +592,7 @@ class CompilerMixin:
             state.update(tried=n, confirmed=found)
             if n % 25 == 0:
                 log(f"{n} functions tried, {found} confirmed")
+        if apply_queue:apply_queue.finish()
         if all_installed:
             # Auto-apply is explicit for this run; the compiler-map agreement preference is separate.
             log(f"Finished: {n} functions tested; {len(improvements)} have better tested settings; "
