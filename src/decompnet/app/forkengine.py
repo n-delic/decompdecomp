@@ -25,6 +25,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
+from ..arch import advice as arch_advice
 from ..forks import (
     convention,
     csource,
@@ -2390,10 +2391,12 @@ class ForkEngine:
             pct = ("not in your build yet" if d.match_percent is None else
                    d.why_not() if d.literals else
                    f"{percent_text(d.match_percent)} match")
-            asm = d.target_asm().splitlines()
+            target_assembly = d.target_asm()
+            asm = target_assembly.splitlines()
             if len(asm) > 500:
                 asm = asm[:500] + [f"... ({len(asm) - 500} more instructions)"]
             lines += [f"current state: {pct}", "", "### Target assembly", "```asm", *asm, "```"]
+            lines += arch_advice.assembly_lines(proj['arch'], target_assembly)
             if cfg.get("origin") == "scratch":
                 lines += self._data_used(proj, d.refs)
             if d.literals:
@@ -2401,6 +2404,7 @@ class ForkEngine:
             elif d.match_percent is not None and not d.matched:
                 d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
                 lines += ["", "### Diff against the current build", d.render()]
+                lines += arch_advice.diff_lines(proj['arch'], d.rows)
         except (ObjdiffError, ForkError) as e:
             lines.append(f"(objdiff couldn't diff this function: {e})")
         _, span = self._find(src_text, self._names(meta, fn)) if src_text else (None, None)
@@ -3058,6 +3062,7 @@ class ForkEngine:
             text = f"score {score} (0 = identical). {d.literals_note()}{missing}"
         else:
             text = f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{missing}"
+        text += "\n".join(arch_advice.diff_lines(proj['arch'], d.rows))
         return {"text": remembered(text, score) + stall, "score": score, "matched": False}
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",

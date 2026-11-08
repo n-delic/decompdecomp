@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import agents, scoring
+from .arch import advice as arch_advice
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
@@ -948,7 +949,9 @@ class Network:
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
                       "```c", fn["matched_source"].strip(), "```"]
-        lines += ["", "### Target assembly", "```asm", scoring.compact_asm(self._asm_text(fn, proj)), "```"]
+        assembly = self._asm_text(fn, proj)
+        lines += ["", "### Target assembly", "```asm", scoring.compact_asm(assembly), "```"]
+        lines += arch_advice.assembly_lines(proj['arch'], assembly)
         lines += self._extra_brief(fn, proj)
         if fn["status"] != "matched":
             if fn["best_source"]:
@@ -1061,6 +1064,9 @@ class Network:
         if problems:
             warn += "\nwhen linking your code at the function's address:\n" + "\n".join(f"- {p}" for p in problems)
         text = f"{head}\n{d.render()}{warn}"
+        relocated = {r[0] for r in json.loads(fn['relocs'])} | {r.offset for r in cand.relocs}
+        text += "\n".join(arch_advice.diff_lines(proj['arch'], d.rows, candidate=cand.code,
+                                              target=fn['target'], relocated=relocated, big_endian=bool(proj['big_endian'])))
         if not scratch:
             self.remember_compile(key, agent, fn, text, d.score)
             text += self.same_score_note(fn["id"], agent.id, d.score, source)

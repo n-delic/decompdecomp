@@ -107,6 +107,11 @@ Where to start on a gap:
 
 ## Recently done
 
+- **MIPS processor observations** in ROM and public-project briefs and compile feedback: stack-frame and
+  saved-register shifts, register mismatch chains, delay-slot/control-flow observations, and bounded return paths.
+  Raw ROM comparisons can also describe consistent argument-register position shifts. These readers supply
+  advisory evidence through `Arch`; they do not edit source, infer a C ABI, change scores or accept a match.
+
 - **The project's owner chooses which functions helpers take first (#205).** Beside the instructions, a project's
   Agents tab picks Default (the helper's own choice), Smallest first, Largest first, Closest to matching first (the
   near misses), or Not yet tried first (a first pass over every function nobody compiled, then the smallest). The
