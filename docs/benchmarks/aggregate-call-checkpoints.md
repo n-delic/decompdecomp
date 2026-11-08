@@ -105,3 +105,9 @@ The shared reduction callback accepts any copied exact judge, including PROJECT
 mode. This CLI's frozen exported-ROM adapter remains MIPS-only; other modes must
 supply their normal copied build/objdiff evaluator. Native GCC preprocessing is an
 explicit adapter limitation, not evidence from a substituted host compiler.
+
+Recipe verification also fingerprints tentative ELF `COMMON` definitions by name,
+size, alignment and binding. They do not yet occupy an allocated section, so
+section bytes alone would miss their removal or resizing. A pinned KMC control
+with a 28-byte tentative global versus an `extern` declaration now has distinct
+fingerprints. Objects without `COMMON` keep their historical fingerprints.
