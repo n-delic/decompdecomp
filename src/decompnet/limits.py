@@ -137,8 +137,8 @@ def attach_job(proc) -> None:
     proc._decomp_job = job
 
 
-def stop_group(proc) -> None:
-    """Stop a tool and descendants launched in their own process group."""
+def stop_group(proc, descendants: set[int] | None = None) -> None:
+    """Stop a tool and descendants, including build commands in their own process groups."""
     if os.name == 'nt':
         if job := getattr(proc, '_decomp_job', None):
             import ctypes
@@ -153,23 +153,34 @@ def stop_group(proc) -> None:
         stop_process_tree(proc)
         return
     import signal
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        # macOS can refuse a group signal after the driver exits or while its
-        # descendants change state. Stop the processes we still own individually.
-        for pid, _ in reversed(_process_memory_tree(proc.pid)):
+    import time
+    pids = {proc.pid, *(descendants or ()), *(pid for pid, _ in _process_memory_tree(proc.pid))}
+    own_group = os.getpgrp()
+    groups = {proc.pid}
+    for pid in pids:
+        try:
+            group = os.getpgid(pid)
+            if group != own_group:
+                groups.add(group)
+        except (ProcessLookupError, PermissionError):
+            pass
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for group in groups:
+            if group == own_group:
+                continue
             try:
-                os.kill(pid, signal.SIGKILL)
+                os.killpg(group, sig)
             except (ProcessLookupError, PermissionError):
                 pass
-        if proc.poll() is None:
+        for pid in pids:
+            if pid == os.getpid():
+                continue
             try:
-                proc.kill()
+                os.kill(pid, sig)
             except (ProcessLookupError, PermissionError):
                 pass
+        if sig == signal.SIGTERM:
+            time.sleep(0.2)
 
 
 class CompilerMemoryWatchdog:
@@ -196,11 +207,14 @@ class CompilerMemoryWatchdog:
         import sys
         import time
         started = time.monotonic()
+        descendants = set()
         while not self._stop.wait(0.25):
+            tree = _process_memory_tree(self.proc.pid)
+            descendants.update(pid for pid, _ in tree)
             self.timed_out = self.timeout is not None and time.monotonic() - started >= self.timeout
-            self.exceeded = sys.platform == 'darwin' and any(rss > self.limit for _, rss in _process_memory_tree(self.proc.pid))
+            self.exceeded = sys.platform == 'darwin' and any(rss > self.limit for _, rss in tree)
             if self.timed_out or self.exceeded:
-                stop_group(self.proc)
+                stop_group(self.proc, descendants)
                 return
 
     def __exit__(self, *_):

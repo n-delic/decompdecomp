@@ -1,5 +1,7 @@
 """Limits on the tools decompdecomp runs (limits.py)."""
 
+import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -36,6 +38,19 @@ def test_project_build_timeout_stops_its_child(tmp_path):
     ok, message = ForkProject(tmp_path).run([sys.executable, '-c', parent], timeout=0.3)
     assert not ok and 'timed out' in message
     time.sleep(0.9)
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(sys.platform == 'win32' or not shutil.which('ninja'), reason='needs POSIX ninja')
+def test_ninja_build_timeout_stops_command_in_another_process_group(tmp_path):
+    marker = tmp_path / 'ninja-command-finished'
+    child = f"import time,pathlib; time.sleep(1.2); pathlib.Path({str(marker)!r}).write_text('finished')"
+    (tmp_path / 'build.ninja').write_text(
+        f"rule delayed\n  command = {shlex.quote(sys.executable)} -c {shlex.quote(child)}\n"
+        "build result: delayed\n")
+    ok, message = ForkProject(tmp_path).run(['ninja', 'result'], timeout=0.4)
+    assert not ok and 'timed out' in message
+    time.sleep(1.3)
     assert not marker.exists()
 
 
