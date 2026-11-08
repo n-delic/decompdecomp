@@ -116,12 +116,14 @@ def test_oversized_deep_feedback_keeps_negative_cache_and_other_search_evidence(
     assert search_history.prune(net.store,Log())==0
 
 
-def test_zero_day_cleanup_and_reference_map_recreation(data):
+def test_zero_day_cleanup_is_rejected_and_reference_map_can_rebuild(data):
     net,a,_,fid=data
     old=attempt(net,a,fid,'loss');attempt(net,a,fid,'latest')
     with net.store.tx() as db:
         db.execute("UPDATE attempts SET created_at=strftime('%s','now') WHERE id=?",(old,))
-    assert database_storage.prune(net,{'days':0},Log())['removed_sources']==1
+    with pytest.raises(ValueError,match='positive age'):
+        database_storage.prune(net,{'days':0},Log())
+    assert net.store.one('SELECT source FROM attempts WHERE id=?',old)[0]=='loss'
     with net.store.tx() as db:
         for suffix in ('insert','update','delete'):
             db.execute('DROP TRIGGER payload_link_attempts_source_hash_'+suffix)

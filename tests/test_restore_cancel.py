@@ -55,7 +55,9 @@ def test_restore_import_uses_the_same_cancellation_scope_as_judging(tmp_path, mo
     log.check_cancel = lambda: checks.append(True)
 
     def importing(*args, **kwargs):
-        assert compiler._CANCEL_CHECK.get() is log.check_cancel
+        before = len(checks)
+        compiler._CANCEL_CHECK.get()()
+        assert len(checks) > before
         raise RuntimeError("cancelled at import")
 
     with pytest.raises(RuntimeError, match="cancelled at import"):
@@ -112,14 +114,24 @@ def test_wsl_cancellation_signals_linux_before_removing_its_script(tmp_path, mon
     assert not marker.exists()
 
 
-def test_wsl_compiler_receives_cancellation_check(tmp_path, monkeypatch):
+@pytest.mark.parametrize('cancel', [False, True])
+def test_wsl_compiler_receives_cancellation_check(tmp_path, monkeypatch, cancel):
+    forwarded = []
+    checks = []
     def check():
-        pass
+        checks.append(1)
+        if forwarded and cancel:raise RuntimeError('cancelled in remote stage')
 
     def run(*args, **kwargs):
-        assert kwargs["check_cancel"] is check
+        forwarded.append(True)
+        kwargs["check_cancel"]()
         return "stopped"
 
     monkeypatch.setattr(wsl, "run", run)
     with compiler.cancellable(check):
-        assert compiler._exec(compiler.CompilerConfig(["unused"], wsl=True), tmp_path, [], 60) == "stopped"
+        if cancel:
+            with pytest.raises(RuntimeError, match='cancelled in remote stage'):
+                compiler._exec(compiler.CompilerConfig(["unused"], wsl=True), tmp_path, [], 60)
+        else:
+            assert compiler._exec(compiler.CompilerConfig(["unused"], wsl=True), tmp_path, [], 60) == "stopped"
+    assert forwarded and checks

@@ -34,7 +34,7 @@ def test_failed_verification_does_not_block_the_next_submission(setup,monkeypatc
     monkeypatch.setattr(net,'_record',lambda *args,**kwargs:None)
     for name in ['func_1','func_2']:
         result=room_matches.verify(net,'game',agent,name,'int candidate;')
-        assert result['pending'] and 'another claim' not in result['reason']
+        assert result['rejected'] and not result['pending'] and 'another claim' not in result['reason'], result
         assert [dict(row) for row in net.store.all('SELECT * FROM claims')]==[original]
     assert compiled==['func_1','func_2']
 

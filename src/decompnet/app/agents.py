@@ -1729,7 +1729,7 @@ class Manager:
         # Keep detailed guides on demand; the work prompt already teaches the matching loop.
         ov = agent_startup.project_facts(self.net, s.slug)
         text += "\nGuides to load when needed:\n\n" + tools.up_front(
-            ov.get("platform") or "", ov.get("kind") or "", ov["compiler"]["toolchain"])
+            ov.get("platform") or "", ov.get("kind") or "", (ov.get("compiler") or {}).get("toolchain", ""))
         knowledge_agent = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
         knowledge_agent = network.Agent(knowledge_agent['id'],knowledge_agent['name'],knowledge_agent['owner'],bool(knowledge_agent['trusted'])) if knowledge_agent else None
         if (known := self.net.knowledge.for_prompt(s.slug, knowledge_agent)):
@@ -1765,7 +1765,7 @@ class Manager:
             return templates['initial_project'].format(title=ov["title"], what=what.format(platform=platform),
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
-        guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])
+        guide = consoles.get(ov.get("platform")).up_front_guide((ov.get("compiler") or {}).get("toolchain", ""))
         return templates['initial_rom'].format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
 

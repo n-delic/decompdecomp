@@ -93,11 +93,11 @@ def test_session_history_and_efficiency_cache_invalidate_for_edits_context_and_c
 
 def test_blocked_function_ids_reuse_the_same_project_revision(tmp_path,monkeypatch):
     net,proj=coverage_fixture(tmp_path)
-    calls=[];original=net.store.all
+    calls=[];original=net.store.one
     def read(sql,*args):
         if 'SELECT id,name,gone_mark FROM functions' in sql:calls.append(sql)
         return original(sql,*args)
-    monkeypatch.setattr(net.store,'all',read)
+    monkeypatch.setattr(net.store,'one',read)
     assert boundary_repairs.blocked(net,proj)
     assert boundary_repairs.blocked(net,proj) and len(calls)==1
     with net.store.tx() as db:db.execute("UPDATE functions SET meta=?",('{"boundary_override":true}',))

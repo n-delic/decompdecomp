@@ -418,6 +418,7 @@ class Progress:
         self.paused: set[str] = set()
         self.batches: dict[str, int] = {}
         self.verification_slot = threading.Semaphore(1)
+        self.verification_owner: tuple[str, float] | None = None
         from .progress_file_cache import FileCache
         self.file_cache = FileCache()
         self.disk: dict[str, dict[str, str]] = {}
@@ -965,15 +966,42 @@ class Progress:
         sync may have completed while we waited. No import or judgment runs here.
         """
         from ..request_timing import span
+        began = time.monotonic()
+        next_report = began + 5
         with span('progress_verification_wait'):
             while True:
                 if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
                 self._check_paused(slug)
-                if self.verification_slot.acquire(blocking=False):break
+                active = self.rechecking.get(slug)
+                if getattr(self.local, 'foreground', False) and active is not None and active.ready:
+                    self._check_rechecking_files(slug)
+                    acquired = False
+                    break
+                if self.verification_slot.acquire(blocking=False):
+                    acquired = True
+                    break
+                now = time.monotonic()
+                if now >= next_report:
+                    with self.activity_lock:
+                        owner = self.verification_owner
+                        phase = self.activity.get(owner[0], {}).get('phase', 'unknown') if owner else 'unknown'
+                    saves.log.warning('Saved verification admission wait project=%s wait=%.3fs owner=%s owner_elapsed=%.3fs phase=%s',
+                                      slug, now-began, owner[0] if owner else 'unknown',
+                                      now-owner[1] if owner else 0., phase)
+                    next_report = now + 30
                 threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
+        if not acquired:
+            # An importer that overtook this waiter has now committed its inputs.
+            # Use the ordinary foreground guards without borrowing its compiler lane.
+            yield False
+            return
+        with self.activity_lock:
+            self.verification_owner = (slug, time.monotonic())
         try:
-            yield
+            yield True
         finally:
+            with self.activity_lock:
+                self.verification_owner = None
             self.verification_slot.release()
 
     def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
@@ -1010,6 +1038,10 @@ class Progress:
             try:
                 proj = self.net._project(slug)
                 rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
+                # PROJECT mode owns its build files, and incomplete ROM imports have
+                # nothing for _sync to judge. Neither needs another project's lane.
+                if not rom or self.net._context(proj['id']) is None:
+                    return False
                 if rom:
                     pid = proj["id"]
                     folder = saves.default_folder(self.net, slug)
@@ -1059,7 +1091,9 @@ class Progress:
                                       if changed_db else False)
                             if result is not None:self.blocked.pop(slug, None)
                 if result is None:
-                    with self._verification(slug, logger):
+                    with self._verification(slug, logger) as acquired:
+                        if not acquired:
+                            return False
                         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
                         self._check_paused(slug)
                         if self._batching(slug):
@@ -1124,7 +1158,7 @@ class Progress:
             finally:
                 self.local.busy = False
                 with self.activity_lock:
-                    if slug not in self.paused:
+                    if slug not in self.paused and slug not in self.rechecking:
                         self.activity.pop(slug, None)
 
     def _failed(self, slug: str) -> None:

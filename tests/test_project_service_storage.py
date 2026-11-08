@@ -51,7 +51,7 @@ def test_reuse_cascade_checks_donor_and_destination_owners(scoped, monkeypatch):
     with stores[2].tx() as db:db.execute('UPDATE functions SET size=4')
     monkeypatch.setattr('decompnet.app.shared_reuse.compatible',lambda *args, **kw:[net._project('second')])
     launched = []
-    monkeypatch.setattr(reuse_cascade.workers,'pool',lambda:SimpleNamespace(submit=launched.append))
+    monkeypatch.setattr(reuse_cascade.purpose_work,'start',lambda purpose,project,work,*a,**kw:launched.append(work))
     cascade = reuse_cascade.Cascade(net)
     cascade.enabled = True
     cascade.notify(net._project('first'),10)

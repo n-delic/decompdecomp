@@ -39,7 +39,7 @@ def test_templates_expand_by_mode_and_session_snapshot_is_stable(tmp_path,monkey
     manager.sessions['1'] = session
     ov={'title':'Synthetic game','kind':'fork' if mode=='fork' else 'rom','platform':'n64',
         'platform_name':'Nintendo 64','compiler':{'toolchain':'gcc-2.7.2-kmc'}}
-    monkeypatch.setattr(net,'overview',lambda _:ov)
+    monkeypatch.setattr('decompnet.app.agent_startup.project_facts',lambda *_:ov)
     prompt_settings.save_global(net,{key:'Global {title}; {count} functions.'})
     assert manager._prompt(session) == 'Global Synthetic game; 3 functions.'
     manager.set_prompts('1',{key:'Agent {title}; {count}.','instructions':'Agent system'})

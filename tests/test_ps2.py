@@ -19,6 +19,7 @@ from decompnet.app import tools
 from decompnet.app.engine import RomNetwork
 from decompnet.forks import csource
 from decompnet.network import NetworkError
+from decompnet.project import compiler_for
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-ps2"
@@ -179,9 +180,9 @@ def test_a_librarys_note_does_not_name_the_compiler(monkeypatch):
 
 
 def test_agents_suggest_a_compiler_and_the_user_applies_it(tmp_path):
-    """GTA San Andreas: agents worked out the compiler was wrong (one said EE-GCC 2.96, another 2.95.3). They suggest
-    it; each suggestion naming a function is checked with that function's C before the user sees it, agreement is
-    counted, and applying it switches the project."""
+    """A PS2 game: agents worked out the compiler was wrong (one said EE-GCC 2.96, another 2.95.3). They suggest
+    it; each suggestion naming a function is checked with that function's C before the user sees it. Applying
+    the exact bundle changes that function alone, preserving neighbouring compiler settings."""
     tc = "ee-gcc-2.95.3"
     if any(toolchains.installed(t) is None for t in (tc, "ee-gcc-2.96", "wibo")):
         pytest.skip(f"needs {tc}, ee-gcc-2.96 and wibo")
@@ -209,18 +210,26 @@ def test_agents_suggest_a_compiler_and_the_user_applies_it(tmp_path):
     b, _ = net.local_agent("agent-b")
     assert "matches the game" in net.suggest(b, slug, "sd $ra, filled delay slots: SN's 2.95.3", tc, function=name)
     c, _ = net.local_agent("agent-c")
-    net.suggest(c, slug, "agreed", tc)
+    net.suggest(c, slug, "agreed", tc, function=name)
     with pytest.raises(NetworkError):
         net.suggest(c, slug, "?", "gcc-9000")
     shown = net.overview(slug)["suggestions"]
     right = next(s for s in shown if s["toolchain"] == tc)
     assert right["agents"] == ["agent-b", "agent-c"] and "matches the game" in right["check"] and len(shown) == 1
 
+    proj = net.project_row(slug)
+    fn = net._function(name, slug)
+    neighbor = net.project_store(proj['id']).one('SELECT * FROM functions WHERE project_id=? AND id!=? LIMIT 1',proj['id'],fn['id'])
+    before_neighbor = compiler_for(net.cfg(proj),neighbor['vram'],neighbor)
     net.resolve_suggestion(slug, right["id"], apply=True)
     ov = net.overview(slug)
-    assert ov["compiler"]["toolchain"] == tc and ov["compiler"]["flags"] == ["-O2", "-G8"]
+    cfg = net.cfg(net.project_row(slug))
+    fn = net._function(name, slug)
+    assert ov["compiler"]["toolchain"] == "ee-gcc-3.2" and ov["compiler"]["flags"] == ["-O2", "-G8"]
+    assert compiler_for(cfg,fn['vram'],fn)['toolchain'] == tc
+    assert compiler_for(cfg,neighbor['vram'],neighbor) == before_neighbor
     assert ov["suggestions"] == []
-    assert net.attempt(a, name, source, slug)["matched"]
+    assert fn['status'] == 'matched' and fn['matched_source'] == source
 
 
 def test_auto_adjust_applies_a_proven_compiler(tmp_path):
@@ -239,7 +248,7 @@ def test_auto_adjust_applies_a_proven_compiler(tmp_path):
     for k, a in enumerate(agents_[:2]):  # agreement without proof: two isn't enough
         assert net.suggest(a, slug, "looks like 2.9", "ee-gcc-2.9-991111").startswith("Suggested")
     assert net.overview(slug)["compiler"]["toolchain"] == "ee-gcc-3.2"
-    assert "Open suggestions" in tools.project_info(net, slug)
+    assert "Open suggestions" in tools.project_info(net, slug, detail=True)
     assert net.suggest(agents_[2], slug, "me too", "ee-gcc-2.9-991111").startswith("Applied")
     assert net.overview(slug)["compiler"]["toolchain"] == "ee-gcc-2.9-991111"
     with pytest.raises(NetworkError):

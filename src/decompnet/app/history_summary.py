@@ -39,7 +39,7 @@ def summary(store, project):
         args = (project, last_id) if incremental else (project,)
         for row in store.all(
                 'SELECT t.id,t.function_id,t.agent_id,t.compiled,t.score,t.score_improved,t.created_at,f.n_insns '
-                'FROM functions f JOIN attempts t ON t.function_id=f.id WHERE f.project_id=?' + since +
+                'FROM main.functions f JOIN main.attempts t ON t.function_id=f.id WHERE f.project_id=?' + since +
                 ' ORDER BY t.function_id,t.id', *args):
             last_id = row['id'] if last_id is None else max(last_id, row['id'])
             fid, aid, score = row['function_id'], row['agent_id'], row['score']
@@ -88,7 +88,7 @@ def recency(store, project, function_ids=None):
                    MIN(CASE WHEN t.compiled AND t.score IS NOT NULL THEN t.score END)
                    OVER (PARTITION BY t.function_id ORDER BY t.id
                          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous_best
-            FROM functions f JOIN attempts t ON t.function_id=f.id WHERE f.project_id=?''' + subset + '''
+            FROM main.functions f JOIN main.attempts t ON t.function_id=f.id WHERE f.project_id=?''' + subset + '''
         ) SELECT function_id,MAX(created_at) AS last_checked,
                  MAX(CASE WHEN compiled AND score>=0 AND score<COALESCE(previous_best,COALESCE(n_insns,0)*100)
                           THEN created_at END) AS last_improved

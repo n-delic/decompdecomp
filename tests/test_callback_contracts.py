@@ -56,7 +56,7 @@ def test_repeated_sites_deduplicate_and_queries_are_reused():
     def read(*args):
         calls.append(args)
         return [{'name':name,'matched_source':text}for name,text in SELECTED.items()]
-    message = wrapper_contracts.brief(SimpleNamespace(store=SimpleNamespace(all=read)),{'id':1},{'name':'caller'},source)
+    message = wrapper_contracts.brief(SimpleNamespace(project_store=lambda _project: SimpleNamespace(all=read)),{'id':1},{'name':'caller'},source)
     assert len(calls)==1
     assert message.count('install argument 2')==1
     assert 'Callback-contract review' in message

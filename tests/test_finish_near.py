@@ -55,6 +55,7 @@ def test_finish_pass_uses_cancel_event_and_existing_iterative_budget(monkeypatch
 def test_stale_or_regressed_donors_never_supply_prototypes(monkeypatch):
     net=SimpleNamespace(is_rom=lambda p:True,cfg=lambda p:{'compiler':{'toolchain':'test'}},
         store=SimpleNamespace(all=lambda *args:[{'vram':2}]))
+    net.project_store = lambda _project: net.store
     monkeypatch.setattr(prototype_reuse,'compiler_for',lambda *args:{'toolchain':'test'})
     source='short read(int); int f(void){return read(2);}'
     for details in [None,dict(changed_inputs=['header changed'],source='int read(int);'),dict(changed_inputs=[],regression={'score':1},source='int read(int);')]:

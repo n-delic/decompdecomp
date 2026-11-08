@@ -400,6 +400,10 @@ def test_local_source_preparation_uses_real_rom_judge_and_private_context(game, 
     net.on_match = lambda *args: None
     with net.store.tx() as db:
         db.execute('UPDATE projects SET root=? WHERE slug=?', (str(folder), slug))
+        # Earlier tests add synthetic twins outside the cartridge's mapped image.
+        # They test reuse, not export; this copy must describe only real demo bytes.
+        db.execute('DELETE FROM functions WHERE project_id=? AND vram>=0x80400000', (proj['id'],))
+        db.execute('DELETE FROM symbols WHERE project_id=? AND address>=0x80400000', (proj['id'],))
         db.execute("UPDATE functions SET status='open',matched_source=NULL,best_source='int clamp_s32(int x,int lo,int hi){return 0;}',best_score=10000 WHERE project_id=? AND name='clamp_s32'", (proj['id'],))
         db.execute('DELETE FROM claims')
     fn = net._function('clamp_s32', slug)

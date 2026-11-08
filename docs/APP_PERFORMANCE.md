@@ -492,6 +492,33 @@ and symbol/layout generation. A changed or unavailable guard runs the full linke
 again. This avoids relinking solely to build advisory diagnostics; it never reuses
 a historical match verdict for a new candidate or authorizes publication.
 
+### Verification admission races and regression repair
+
+A project with no saved-ROM verification work (PROJECT mode, no ROM fingerprint,
+or no imported context) returns before the shared verification lane. Previously it
+could wait behind a large unrelated ROM recheck before `_sync` returned immediately.
+
+A foreground request already waiting for admission now rechecks whether its own
+project's importer has installed the new inputs and restored saved evidence. Once
+that recheck is ready, the request uses the existing foreground lane, retains the
+full saved-file signature guard and leaves the active verifier's semaphore owned.
+Not-ready imports still block; a racing file edit is rejected. A queued foreground
+request also preserves the active import's progress indicator when it leaves.
+Seven bounded regressions fail the old policy and pass the corrected policy while
+the unrelated verification slot remains held. This demonstrates removal of these
+queue blocks; it does not measure the running app's end-to-end latency.
+
+Admission waits longer than five seconds report the actual lane holder, elapsed
+time and current phase in the private app log, at most once per waiting call every
+30 seconds. No source text or SQL payload is logged. Cancellation, pause and exact
+verification rules remain in force.
+
+Contributor summaries and map recency read numeric history directly from the
+selected operational database's physical tables. They avoid expanding source-bearing
+read views; existing regressions prohibit source reads and verify covering indexes.
+The overview also reuses a mode-specific library report, including a reported absence,
+instead of computing a duplicate report before discarding it.
+
 ### Deep-search scoring overhead
 
 Candidate disassembly uses per-thread decoders and an eight-function instruction

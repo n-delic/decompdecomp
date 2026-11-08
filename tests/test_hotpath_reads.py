@@ -119,7 +119,7 @@ def test_room_match_updates_fetch_only_changed_function(tmp_path,monkeypatch):
     all_rows=net.store.all;loaded=[]
     def read(sql,*args):
         rows=all_rows(sql,*args)
-        if 'f.matched_source, a.name AS agent' in sql:loaded.append(len(rows))
+        if 'f.matched_source' in sql and 'FROM functions f' in sql:loaded.append(len(rows))
         return rows
     monkeypatch.setattr(net.store,'all',read)
     state=room.state(event,0,1,None)

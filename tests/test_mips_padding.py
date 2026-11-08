@@ -80,7 +80,9 @@ def test_import_keeps_padding_bytes_and_symbols_but_never_queues_them(tmp_path, 
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='open',meta=NULL WHERE id=?", (padding["id"],))
     other, _ = net.local_agent("padding-agent")
-    net.claim_row(other, slug, "padding")
+    # Simulate a lease persisted by a pre-boundary-review app version.
+    with net.store.tx() as db:
+        db.execute('INSERT INTO claims VALUES(?,?,0,9999999999)',(padding['id'],other.id))
     assert net.twins.set_aside_asm(net.project_row(slug)) == 1
     assert net._function("padding", slug)["target"] == bytes(4)
     assert not net.store.one("SELECT 1 FROM claims WHERE function_id=?", padding["id"])

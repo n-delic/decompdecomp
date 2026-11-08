@@ -58,9 +58,9 @@ def test_splat_generated_target_uses_original_rom_versions(tmp_path, monkeypatch
     (tmp_path / "Makefile").write_text("VERSION ?= us.v10\nBASEROM := baserom.$(VERSION).z64\n"
                                        "DECOMPRESSED_BASEROM := decompressed.$(VERSION).z64\n")
     (tmp_path / "README.md").write_text("\n".join(f"`baserom.{v}.z64`: `{sha1}`" for v, sha1 in hashes.items()))
-    (tmp_path / "decompressed.pal.yaml").write_text("options:\n  target_path: decompressed.pal.z64\n"
+    (tmp_path / "decompressed.pal.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.pal.z64\n"
                                                       f"  sha1: {'e' * 40}\nsegments: []\n")
-    (tmp_path / "decompressed.us.v10.yaml").write_text("options:\n  target_path: decompressed.us.v10.z64\n"
+    (tmp_path / "decompressed.us.v10.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.us.v10.z64\n"
                                                          f"  sha1: {'f' * 40}\nsegments: []\n")
     fp = ForkProject(tmp_path)
     assert fp.needs()["sha1"] == hashes["us.v10"]
@@ -94,7 +94,7 @@ def test_splat_accepts_other_n64_byte_orders(tmp_path, monkeypatch, fmt):
     (tmp_path / "Makefile").write_text("VERSION ?= pal\nBASEROM := baserom.$(VERSION).z64\n"
                                        "DECOMPRESSED_BASEROM := decompressed.$(VERSION).z64\n")
     (tmp_path / "README.md").write_text(f"`baserom.pal.z64`: `{digest}`\n")
-    (tmp_path / "decompressed.pal.yaml").write_text("options:\n  target_path: decompressed.pal.z64\n"
+    (tmp_path / "decompressed.pal.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.pal.z64\n"
                                                       f"  sha1: {'e' * 40}\nsegments: []\n")
     width = 2 if fmt == "v64" else 4
     game = tmp_path / f"my-copy.{fmt}"
@@ -963,7 +963,7 @@ def test_direct_splat_version_follows_rom_on_import_and_retry(tmp_path, monkeypa
     data = {v: b'\x80\x37\x12\x40' + v.encode() * 32 for v in ('eu', 'us')}
     for v, rom in data.items():
         (tmp_path / f'game.{v}.yaml').write_text(
-            f'sha1: {hashlib.sha1(rom).hexdigest()}\noptions:\n  base_path: .\n'
+            f'sha1: {hashlib.sha1(rom).hexdigest()}\noptions:\n  platform: n64\n  base_path: .\n'
             f'  target_path: baserom.{v}.z64\nsegments: []\n')
     fp = ForkProject(tmp_path)
     assert fp.splat_default_version() == 'us'  # Alphabetically first YAML is EU.

@@ -68,16 +68,16 @@ class GuiMixin:
         cfg = self.cfg(proj)
         from ..view_snapshots import cache
         revision = self.project_store(proj['id']).one('SELECT map_revision FROM project_totals WHERE project_id=?', proj['id'])
+        base = self._overview(slug, proj, room_members=room_members)
         def diagnostics():
             from ..libultra import report
             from ..source_assembly import breakdown
-            return {'status_breakdown':breakdown(self,proj), 'libultra':report(self,proj),
+            return {'status_breakdown':breakdown(self,proj), 'libultra':base['libultra'] if 'libultra' in base else report(self,proj),
                     'readable':self.readability.counts(proj)['readable'],
                     'helper_matches':self._helper_match_count(proj)}
         details = diagnostics() if getattr(self.project_store(proj['id'])._local, 'in_tx', False) else cache(self).get(
             ('overview',slug,revision['map_revision'] if revision else proj['config']),diagnostics,ttl=5)
         twins = self.twins.jobs.get(proj["slug"])
-        base = self._overview(slug, proj, room_members=room_members)
         from ..code_coverage import snapshot as coverage_snapshot
         from ..source_preparation import settings as source_settings
         return details | base | {"code_coverage": coverage_snapshot(self, proj), "last_activity": last, "autopilot": self.autopilot_status(slug),

@@ -179,7 +179,8 @@ def test_deleted_old_attempt_cannot_be_replaced_with_unrelated_reused_id(setup):
     assert net.repair_feedback.detail('demo', case)['evidence']['before']['source'] == 'int target(void) { return 2; }\n'
 
 
-def test_mcp_and_api_accept_inline_feedback_without_an_extra_model_call(setup, monkeypatch):
+@pytest.mark.parametrize('transport', ['mcp', 'api'])
+def test_mcp_and_api_accept_inline_feedback_without_an_extra_model_call(setup, monkeypatch, transport):
     import anyio
 
     from decompnet.agents.api import api_tool_schemas
@@ -190,9 +191,14 @@ def test_mcp_and_api_accept_inline_feedback_without_an_extra_model_call(setup, m
     monkeypatch.setattr(net, 'compile_and_diff', attempt, raising=False)
     monkeypatch.setattr(tools, '_named', lambda net, agent, slug, args, name: args)
     mcp = tools.build_mcp(net, lambda context: (winner, 'demo'))
-    anyio.run(mcp.call_tool, 'compile_and_diff', {'function': 'target', 'source': 'winning C',
-                                               'repair_note': 'Changed signedness.', 'repair_category': 'types',
-                                               'repair_automation': 'Try a signedness repair.'})
+    args = {'function': 'target', 'source': 'winning C',
+            'repair_note': 'Changed signedness.', 'repair_category': 'types',
+            'repair_automation': 'Try a signedness repair.'}
+    if transport == 'mcp':
+        anyio.run(mcp.call_tool, 'compile_and_diff', args)
+    else:
+        reply = tools.call(net, winner, 'demo', 'compile_and_diff', args)
+        assert 'matched' in reply and not reply.startswith('error:')
     row = net.repair_feedback.listing('demo')['examples'][0]
     assert row['explanation'] == 'Changed signedness.'
     schema = {row['function']['name']: row['function'] for row in api_tool_schemas(names=['compile_and_diff', 'report_repair'])}

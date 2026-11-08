@@ -245,7 +245,7 @@ def test_deep_trial_alongside_agent_preserves_claim_and_rejects_stale_context(bu
     net = RomNetwork(tmp_path/'parallel.db', tmp_path)
     slug = net.import_rom(built, confirmed=True, log=lambda _: None)
     owner, _ = net.local_agent('owner')
-    search_agent, _ = net.local_agent('side-search')
+    search_agent = net.attribution_agent('permuter')
     net.split_function(owner, slug, 'func_800007C4', '0x800007D0')
     name = 'func_800007D0'
     net.claim(owner, slug, name)

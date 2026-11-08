@@ -1,4 +1,6 @@
 """Repairs stay bounded and source-scoped; profile matches are still made by the normal judge."""
+from dataclasses import replace
+
 import pytest
 
 from decompnet.app import deep_permuter, draft_repairs, operand_order_repairs, source_diagnostics
@@ -40,30 +42,40 @@ def test_advisory_type_and_retail_diagnostics_do_not_modify_source():
     assert source_diagnostics.hints('int g(void){return 1;}','f')==[]
 
 
-def test_improved_source_profile_check_releases_claim_and_reacquires(monkeypatch):
+@pytest.mark.parametrize('speculative', [False, True])
+def test_improved_source_profile_check_preserves_claim_policy(monkeypatch, speculative):
     net=setup(monkeypatch);net._comparison_digest=lambda *a:'digest'
+    agent=AGENT if speculative else replace(AGENT,name='manual-check')
     search=deep_permuter.Search(net,1,10,Log(),net.function())
     fn=net.function();proj=net.project_row('game')
-    assert search._hold(AGENT,fn,count_turn=False)
+    assert search._hold(agent,fn,count_turn=False)
     def preflight(*args):
         assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
         with net.store.tx() as db:db.execute('UPDATE functions SET best_score=20')
         return {'tested':2}
     monkeypatch.setattr(search,'_compiler_preflight',preflight)
-    assert search._repair_preflight(AGENT,proj,fn,40,None)==20
-    assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?',fn['id'])['agent_id']==AGENT.id
-    search._let_go(AGENT,fn)
+    assert search._repair_preflight(agent,proj,fn,40,None)==20
+    claim=net.store.one('SELECT agent_id FROM claims WHERE function_id=?',fn['id'])
+    assert claim is None if speculative else claim['agent_id']==agent.id
+    search._let_go(agent,fn)
 
 
-def test_profile_repair_does_not_steal_a_concurrent_claim(monkeypatch):
+@pytest.mark.parametrize('speculative', [False, True])
+def test_profile_repair_does_not_steal_a_concurrent_claim(monkeypatch, speculative):
     net=setup(monkeypatch);net._comparison_digest=lambda *a:'digest'
+    agent=AGENT if speculative else replace(AGENT,name='manual-check')
     search=deep_permuter.Search(net,1,10,Log(),net.function());fn=net.function()
     def preflight(*args):
-        with net.store.tx() as db:db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],AGENT.id,0,9999999999))
+        with net.store.tx() as db:
+            db.execute("INSERT INTO agents(id,name,token_hash) VALUES(2,'other-worker','other')")
+            db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],2,0,9999999999))
     monkeypatch.setattr(search,'_compiler_preflight',preflight)
-    with pytest.raises(NetworkError,match='Another worker'):
-        search._repair_preflight(AGENT,net.project_row('game'),fn,40,None)
-    assert net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
+    if speculative:
+        assert search._repair_preflight(agent,net.project_row('game'),fn,40,None)==fn['best_score']
+    else:
+        with pytest.raises(NetworkError,match='Another worker'):
+            search._repair_preflight(agent,net.project_row('game'),fn,40,None)
+    assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?',fn['id'])[0]==2
 
 
 def test_newly_matched_profile_is_not_reclaimed(monkeypatch):

@@ -24,13 +24,13 @@ def test_new_attempt_annotations_do_not_recount_old_history(tmp_path):
     net.store._reader().set_trace_callback(queries.append)
     assert summary(net.store, 1)['agents'][agent.id]['compiles'] == 2
     assert results(net, 'game', sessions)['worker']['compiles'] == 2
-    reads = [q for q in queries if 'JOIN attempts t' in q]
+    reads = [q for q in queries if 'JOIN main.attempts t' in q]
     assert len(reads) == 2 and all('t.id>1' in q for q in reads)
     with net.store.tx() as db:
         db.execute('UPDATE attempts SET score=10000 WHERE id=1')
     queries.clear()
     summary(net.store, 1); results(net, 'game', sessions)
-    assert any('JOIN attempts t' in q and 't.id>0' in q for q in queries)
+    assert any('JOIN main.attempts t' in q and 't.id>0' in q for q in queries)
 
 
 def test_map_reads_only_changed_rows_and_retains_previous_snapshot(tmp_path, monkeypatch):
@@ -75,9 +75,10 @@ def test_handoff_lookup_uses_worker_sessions_and_latest_handoff(tmp_path):
     from decompnet.app.transcripts import Transcripts
     net, _ = _game(tmp_path, [('f', 40, 'open')])
     Transcripts(net.store)
+    from decompnet.app.session_storage import prepare
+    prepare(net, 'game')
     with net.store.tx() as db:
-        db.execute('CREATE TABLE helper_sessions(id INTEGER PRIMARY KEY,helper_id INTEGER,project TEXT)')
-        db.execute("INSERT INTO helper_sessions VALUES(1,1,'game'),(2,2,'game'),(3,1,'game')")
+        db.execute("INSERT INTO helper_sessions(id,helper_id,project,model,kind,agent,started_at) VALUES(1,1,'game','model','api','worker',0),(2,2,'game','model','api','other',0),(3,1,'game','model','api','worker',0)")
         for sid, text in [(1, 'old'), (2, 'other worker'), (3, 'latest')]:
             db.execute('INSERT INTO helper_messages(session_id,created_at,kind,text) VALUES(?,0,?,?)',
                        (sid, 'handoff', json.dumps({'last_reply': text, 'functions': []})))

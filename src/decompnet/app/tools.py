@@ -366,7 +366,7 @@ def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: st
     except NetworkError as e:
         if focused or not function or not re.search(r"already matched|is set aside|is claimed by|outside this agent|Max tries reached", str(e)):
             raise
-        return packet(agent_tokens.brief(net, net.claim(agent, slug, None, strategy), slug, agent))
+        return packet(str(e) + '\n\n' + agent_tokens.brief(net, net.claim(agent, slug, None, strategy), slug, agent))
 
 
 def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: str,
@@ -627,7 +627,8 @@ def _tool_foreground(net, agent, slug, name, args):
         name == 'get_candidate' and args.get('base','current') == 'current') or (
         name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
     notes = allowed and name in {'add_note','release_function'}
-    with net.progress.foreground() if allowed else nullcontext():
+    progress = getattr(net, 'progress', None)
+    with progress.foreground() if allowed and progress is not None else nullcontext():
         attempt = nullcontext()
         if notes and name == 'release_function':
             # Compiles own the candidate lock before publishing under the project
@@ -640,11 +641,11 @@ def _tool_foreground(net, agent, slug, name, args):
             attempt = timed_lock(lock,'candidate_lock_wait')
         # Keep note writes and their publication marker together so a finishing
         # saved worker cannot acknowledge them before they are published.
-        with attempt, net.progress._project_lock(slug) if notes else nullcontext():
+        with attempt, progress._project_lock(slug) if notes and progress is not None else nullcontext():
             if notes and name == 'release_function' and net._function(args['function'],slug)['id'] != fn['id']:
                 raise NetworkError('The function changed while this release waited. Read its current claim before releasing.')
             yield
-            if notes:net.progress.foreground_changed(slug)
+            if notes and progress is not None:progress.foreground_changed(slug)
 
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
@@ -656,10 +657,11 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
         return _dispatch(net, agent, slug, name, args)
     # Enter before this wrapper's sync, not only inside the engine's attempt.
     with _tool_foreground(net, agent, slug, name, args):
-        net.progress.sync(slug, force=True)
+        progress = getattr(net, 'progress', None)
+        if progress is not None:progress.sync(slug, force=True)
         result = _dispatch(net,agent,slug,name,args)
-        if name not in READ_ONLY:
-            net.progress.sync(slug, force=True)
+        if progress is not None and name not in READ_ONLY:
+            progress.sync(slug, force=True)
         return result
 
 

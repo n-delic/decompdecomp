@@ -33,6 +33,7 @@ def fixture(tmp_path,monkeypatch,exact=True):
         permuter=SimpleNamespace(_hold=lambda *a,**kw:True,_let_go=lambda *a:None),
         progress=SimpleNamespace(judging=lambda s:nullcontext(),_project_lock=lambda s:nullcontext()),
         _evaluate=lambda *a:(object(),exact,[]))
+    net.project_store = lambda _project: net.store
     monkeypatch.setattr(prep,'inputs',lambda *a:('stable',))
     monkeypatch.setattr(assembly,'compiler_config',lambda *a:object())
     monkeypatch.setattr(assembly.toolchains,'installed',lambda t:Path('/installed'))

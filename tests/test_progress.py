@@ -2490,3 +2490,118 @@ def test_tool_entry_rejects_saved_file_edit_during_recheck_before_dispatch(proje
             tools._invoke(net,agent,'game','compile_and_diff',{'function':'f'})
     finally:worker.rechecking.pop('game',None)
     assert not getattr(worker.local,'foreground',False)
+
+
+@pytest.mark.parametrize('mode', ['project', 'missing-fingerprint', 'missing-context'])
+def test_no_saved_judging_work_never_waits_for_unrelated_verifier(project, monkeypatch, mode):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net, folder, judged = project
+    cfg = json.loads(net._project('game')['config'])
+    if mode == 'project':
+        cfg['kind'] = 'project'
+    elif mode == 'missing-fingerprint':
+        cfg.pop('rom')
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+        if mode == 'missing-context':
+            db.execute('DELETE FROM context_versions')
+    worker = net.progress
+    def forbidden(*args):
+        raise AssertionError('No saved verification work should enter _sync')
+    monkeypatch.setattr(worker, '_sync', forbidden)
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            assert future.result(timeout=2) is False
+            assert not worker.verification_slot.acquire(blocking=False)
+            assert not judged
+        finally:
+            worker.verification_slot.release()
+        future.result(timeout=5)
+
+
+@pytest.mark.parametrize('stale', [False, True])
+@pytest.mark.parametrize('depth', [0, 2])
+def test_queued_foreground_uses_recheck_inputs_when_they_become_ready(project, monkeypatch, stale, depth):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import ExitStack
+
+    from decompnet.app.progress import _Recheck
+    net, folder, judged = project
+    worker = net.progress
+    manifest(folder, instructions='external edit before admission')
+    waiting = threading.Event()
+    slot = worker.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            acquired = slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+    monkeypatch.setattr(worker, 'verification_slot', Slot())
+    lock = worker._project_lock('game')
+    def synchronize():
+        with ExitStack() as stack, worker.foreground():
+            for _ in range(depth):stack.enter_context(lock)
+            return worker.sync('game', force=True)
+    slot.acquire()
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(synchronize)
+        try:
+            if not waiting.wait(2):
+                assert not future.done(), future.result(timeout=1)
+                raise AssertionError("admission not reached")
+            # A verifier overtakes the waiter while Condition.wait releases all
+            # recursive acquisitions. Only its committed, ready inputs qualify.
+            with lock:
+                active = _Recheck(folder, worker._signature(folder), ready=False)
+                worker.rechecking['game'] = active
+                worker._activity('game', phase='Preparing saved verification', done=0, total=100)
+                waiting.clear()
+            assert waiting.wait(2), 'Queued work must still wait before evidence is ready'
+            assert not future.done()
+            with lock:
+                active.ready = True
+                worker._activity('game', phase='Judging saved code', done=1, total=100)
+                if stale:manifest(folder, instructions='racing disk edit')
+            if stale:
+                with pytest.raises(NetworkError, match='Saved files changed'):
+                    future.result(timeout=2)
+            else:
+                assert future.result(timeout=2) is False
+            assert not slot.acquire(blocking=False), 'The active verifier still owns its slot'
+            assert worker.status('game')['phase'] == 'Judging saved code'
+            assert not judged and worker.rechecking['game'] is active
+        finally:
+            with lock:worker.rechecking.pop('game', None)
+            slot.release()
+
+
+def test_slow_verification_wait_reports_actual_owner_phase_and_clears_owner(project, monkeypatch, caplog):
+    net, _, _ = project
+    worker = net.progress
+    # Two independent project locks, with no compiler or live project required.
+    clock = [0.]
+    monkeypatch.setattr('decompnet.app.progress.time.monotonic', lambda: clock[0])
+    class Slot:
+        available = False
+        def acquire(self, *, blocking):
+            clock[0] += 6
+            return self.available
+        def release(self):self.available = True
+    slot = Slot()
+    monkeypatch.setattr(worker, 'verification_slot', slot)
+    worker.verification_owner = ('other', 0.)
+    worker._activity('other', phase='Preparing saved verification')
+    class Condition:
+        def __init__(self, lock):pass
+        def wait(self, *, timeout):slot.available = True
+    monkeypatch.setattr('decompnet.app.progress.threading.Condition', Condition)
+    with worker._project_lock('game'), caplog.at_level('WARNING'):
+        with worker._verification('game') as acquired:
+            assert acquired and worker.verification_owner[0] == 'game'
+    assert worker.verification_owner is None
+    assert 'owner=other' in caplog.text and 'phase=Preparing saved verification' in caplog.text
+    assert 'wait=6.000s' in caplog.text

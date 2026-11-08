@@ -46,8 +46,6 @@ def test_project_review_reads_shared_author_and_archive_on_reader_threads(scoped
 
 
 def test_global_listing_exports_and_analysis_visit_owning_files(scoped, tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
     import pytest
 
     from decompnet.app import repair_outcomes
@@ -67,7 +65,7 @@ def test_global_listing_exports_and_analysis_visit_owning_files(scoped, tmp_path
     net.forks = object()
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
     queue = []
-    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda purpose,project,work:queue.append(work))
     monkeypatch.setattr(repair_outcomes,'analyze',lambda row:{'summary':{'project':row['slug']}})
     owner = feedback.for_project('second')
     with pytest.raises(RuntimeError,match='rollback'):

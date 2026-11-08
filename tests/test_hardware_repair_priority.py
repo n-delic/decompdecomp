@@ -6,7 +6,7 @@ def test_target_backed_families_precede_generic_delay_slot_rewrites():
     rows=[(' ','jr $ra','jr $ra'),('|','move $v0, $a0','nop')]
     assert allocation_evidence.diagnose(rows,'mips')['delay_slot']
     families=['debug_statement_boundary','live_return_address_initializers','live_return_address','mips_debug_break','structured_backedge']
-    assert repair_ranking.order(families,rows)[:3]==list(repair_ranking.GUARDED)
+    assert repair_ranking.order(families,rows)[:3]==[f for f in repair_ranking.GUARDED if f in families]
     # A hardware family is never invented when its target/source guard generated nothing.
     assert repair_ranking.order(['structured_backedge','debug_statement_boundary'],rows)[0]=='debug_statement_boundary'
 

@@ -94,6 +94,7 @@ def test_overlapping_export_stops_before_writing_files(tmp_path):
 
     net = SimpleNamespace(_project=lambda _: {'id': 1},
                           store=SimpleNamespace(one=lambda *_: {'vram': 0x80300000}))
+    net.project_store = lambda _project: net.store
     with pytest.raises(ExportError, match='overlapping overlay banks'):
         export_rom(net, 'synthetic', tmp_path / 'export', None)
     assert not (tmp_path / 'export').exists()

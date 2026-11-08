@@ -49,7 +49,7 @@ def test_full_brief_reuses_single_bounded_lookup_and_existing_budget():
         calls.append(args)
         return [{'name':'helper'+str(i),'matched_source':f'void helper{i}(s32 x) {{}}'} for i in range(5)]
     source=''.join(f'void helper{i}(u8);' for i in range(5))+'void caller(void) {'+''.join(f'helper{i}(1);' for i in range(5))+'}'
-    hint=wrapper_contracts.brief(SimpleNamespace(store=SimpleNamespace(all=read)), {'id':1}, {'name':'caller'}, source)
+    hint=wrapper_contracts.brief(SimpleNamespace(project_store=lambda _project: SimpleNamespace(all=read)), {'id':1}, {'name':'caller'}, source)
     assert len(calls)==1
     assert all('helper'+str(i) in hint for i in range(3))
     assert 'helper3' not in hint
@@ -94,7 +94,7 @@ def test_full_brief_keeps_partial_contract_warning_in_shared_budget():
     def read(*args):
         return [{'name': 'helper', 'matched_source': 'void helper(u8 *p, s16 x) {}'}]
     source = 'void helper(Widget *, s32); void caller(void) { helper(p, 1); }'
-    hint = wrapper_contracts.brief(SimpleNamespace(store=SimpleNamespace(all=read)),
+    hint = wrapper_contracts.brief(SimpleNamespace(project_store=lambda _project: SimpleNamespace(all=read)),
                                    {'id': 1}, {'name': 'caller'}, source)
     assert 'caller void(?,s32), selected definition void(u8*,s16)' in hint
     assert 'No type or signature was changed' in hint

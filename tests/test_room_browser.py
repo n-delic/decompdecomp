@@ -83,6 +83,8 @@ def test_compile_dispatches_to_normal_engine_without_leaking_diff(room, monkeypa
         seen.append((agent.name, function, source, project))
         return {'score': 10, 'matched': False, 'text': 'SECRET TARGET ASSEMBLY'}
     if fork:
+        # This test isolates engine dispatch; build-scope hashing is covered with real project trees.
+        monkeypatch.setattr(room.net, '_remember_search_output', lambda *a:None)
         monkeypatch.setattr(room.net, 'fork_slug', lambda slug: slug)
         monkeypatch.setattr(room.net.forks, 'attempt', lambda agent, slug, name, source: attempt(agent, name, source, slug))
     else:
@@ -90,7 +92,7 @@ def test_compile_dispatches_to_normal_engine_without_leaking_diff(room, monkeypa
         monkeypatch.setattr(Network, 'attempt', lambda self, agent, name, source, project: attempt(agent, name, source, project))
     response = room.client.post('/collab/browser/compile', headers=room.headers,
                                 json={'function': 'shared_fn', 'source': 'int work(void){return 2;}'})
-    assert response.status_code == 200 and response.json()['score'] == 10
+    assert response.status_code == 200 and response.json()['score'] == 10, response.text
     assert 'SECRET' not in response.text
     assert seen == [('alex.browser', 'shared_fn', 'int work(void){return 2;}', 'shared')]
 

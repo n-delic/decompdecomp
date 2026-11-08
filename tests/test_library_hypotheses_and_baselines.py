@@ -10,6 +10,7 @@ def test_similar_library_is_only_a_hint(monkeypatch):
     rows=[dict(corpus='local',name='format',ops=json.dumps(['lw']*40),size=160)]
     net=SimpleNamespace(store=SimpleNamespace(all=lambda *args:rows),cfg=lambda p:{},
                         _target_obj=lambda f,p:FunctionObj('f','mips',True,b'',[]))
+    net.project_store = lambda _project: net.store
     monkeypatch.setattr(sdk_hypotheses.scoring,'disassemble',lambda obj:[SimpleNamespace(mnemonic='lw')]*40)
     hints=sdk_hypotheses.hints(net,{'arch':'mips','big_endian':1},{'size':160})
     assert hints[0]['kind']=='similar library code; unverified'
@@ -23,6 +24,7 @@ def test_historical_baseline_records_why():
     net=SimpleNamespace(store=SimpleNamespace(one=lambda *args:{'settings':json.dumps(settings)}),
                         is_rom=lambda p:True,cfg=lambda p:{'compiler':{'toolchain':'gcc','flags':['-O2']}},
                         _context=lambda *a:{'header':'new'})
+    net.project_store = lambda _project: net.store
     fn={'id':1,'status':'open','best_source':'source','best_score':10,'vram':0,'unit':''}
     result=baseline_status.status(net,{'id':1},fn)
     assert result['state']=='historical' and len(result['reasons'])==3

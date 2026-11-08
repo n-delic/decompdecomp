@@ -51,7 +51,7 @@ def test_current_compiler_uses_function_range_flags(tmp_path,monkeypatch):
         db.execute('UPDATE functions SET vram=4,best_source=?,best_score=5,asm=?',(source,'\n'.join('line'+str(i) for i in range(80))))
     net.claim_row(agent,'game','f');_,revision=agent_tokens.candidate(net,agent,'game','f');seen=[]
     monkeypatch.setattr(net,'_toolchain_named',lambda cfg,c:c)
-    monkeypatch.setattr(net,'try_compiler',lambda a,s,f,c,flags,source,keep_match:seen.append((c,flags,keep_match)) or 'score 1')
+    monkeypatch.setattr(net,'try_compiler',lambda a,s,f,c,flags,source,keep_match,**kw:seen.append((c,flags,keep_match)) or 'score 1')
     compiler_experiments.run(net,agent,'game','f',revision,[{'compiler':'current'}])
     assert seen==[('range','-O2 -g3',False)]
     fn=net._function('f','game')

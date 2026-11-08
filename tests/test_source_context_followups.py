@@ -79,6 +79,7 @@ def test_private_profile_keeps_unpromoted_context_without_changing_working_setti
             evidence.append(json.loads(args[-1]))
     class Net:
         store=Store()
+        def project_store(self, project):return self.store
         def is_rom(self,p):return True
         def project_row(self,slug):return proj
         def flag_variants(self,*args):return [['-O2'],['-O3']]
@@ -90,7 +91,7 @@ def test_private_profile_keeps_unpromoted_context_without_changing_working_setti
         def _evaluate(self,*args):return object(),True,[]
         def _target_obj(self,*args):return object()
     proj={'id':1,'arch':'mips','slug':'sample','root':'.','config':json.dumps({'compiler':{'toolchain':'ido-5.3','flags':['-O2']}})}
-    fn={'id':1,'vram':0x80001000,'name':'example','best_score':10,'asm':''}
+    fn={'id':1,'project_id':1,'vram':0x80001000,'name':'example','best_score':10,'asm':''}
     monkeypatch.setattr(prep,'inputs',lambda *args:('unchanged',))
     monkeypatch.setattr(source_lead_analysis,'destination',lambda *args:'unchanged')
     monkeypatch.setattr(toolchains,'installed',lambda *args:True)

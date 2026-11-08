@@ -117,6 +117,7 @@ def test_installed_compiler_comparison_is_local_and_report_only(tmp_path, monkey
         pass
     log.progress = snapshots.append
     result = net.survey_compilers("demo", all_installed=True, function=function, log=log)
+    snapshots = [row for row in snapshots if "tested" in row]
     assert snapshots[0]["tested"] == 0 and snapshots[0]["completed"] == 0
     assert snapshots[1]["tested"] == 1 and snapshots[1]["best"] == 100
     assert snapshots[0]["exact_matches_current"] == 0
@@ -164,7 +165,7 @@ def test_installed_compiler_comparison_is_local_and_report_only(tmp_path, monkey
         assert all(r["percent"] == 80.0 for r in missed["comparison"]["ranked"])
         assert not any("400" in line for line in messages)
 
-        score_lines = [line for line in messages if " · " in line]
+        score_lines = [line for line in messages if " · " in line and line.split(" · ")[0].split("/")[0].isdigit()]
         assert len(score_lines) == missed["comparison"]["tested"]
         assert all("80.00%" in line for line in score_lines)
         monkeypatch.setattr(net, "_judge_with", lambda *a: (False, None, "compile error"))
@@ -245,6 +246,7 @@ def test_apply_comparison_uses_scoped_claim_while_autopilot_holds_other_work(tmp
     before = net.cfg(net._project("demo"))
     with net.store.tx() as db:
         db.execute("INSERT INTO claims VALUES(?,?,?,?)", (ids[0], agent.id, 0, 9999999999))
+    monkeypatch.setattr(net, "_judge_with", lambda *a: (False, SimpleNamespace(score=1), ""))
     with pytest.raises(Exception, match="being worked on"):
         net.apply_function_compiler("demo", "f", "gcc-2.8.0-psx", ["-O3"])
     assert net.cfg(net._project("demo")) == before

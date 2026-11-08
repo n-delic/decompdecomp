@@ -54,6 +54,7 @@ def test_thin_function_row_recovers_its_physical_offset(tmp_path):
             return {'rom_offset': 4}
     class Fake:
         store = Store()
+        project_store = lambda self, project: self.store
         _rom = lambda self, proj: (b'AAAABBBB', [Segment('a', 0, 4, 100), Segment('b', 4, 8, 100)])
         cfg = lambda self, proj: {'rom': {'sha1': 'original'}}
     assert Core.reader(Fake(), {'id': 1, 'root': str(tmp_path)}, {'name': 'function_b'})(100, 4) == b'BBBB'

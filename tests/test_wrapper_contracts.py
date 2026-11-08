@@ -47,6 +47,7 @@ def test_callee_lookup_is_bounded_and_advice_does_not_copy_source():
                 {'name': 'known', 'matched_source': 'void known(void) {}'}]
 
     net = SimpleNamespace(store=SimpleNamespace(all=all_rows))
+    net.project_store = lambda _project: net.store
     note = wrappers.brief(net, {'id': 7}, {'name': 'caller'}, 'void caller(void) { stub(); }')
     assert len(calls) == 1 and calls[0][1] == 7
     assert calls[0][3] == 64000 and 'length(matched_source)<=?' in calls[0][0]
@@ -60,13 +61,14 @@ def test_callee_lookup_is_bounded_and_advice_does_not_copy_source():
 def test_project_brief_receives_advice_before_mode_specific_rendering(monkeypatch):
     from decompnet.app import draft_reports, search_evidence
 
-    monkeypatch.setattr(draft_reports, 'read', lambda *_: {})
+    monkeypatch.setattr(draft_reports, 'read', lambda *_, **kw: {})
     monkeypatch.setattr(draft_reports, 'summary', lambda *_: '')
     monkeypatch.setattr(search_evidence, 'brief', lambda *_: '')
     proj = {'id': 7}
     net = SimpleNamespace(store=SimpleNamespace(one=lambda *_: proj, all=lambda *_: []),
                           cfg=lambda _: {'kind': 'fork'}, forks=SimpleNamespace(brief=lambda *_: 'project brief'),
                           _lifetime_hints=lambda _: '')
+    net.project_store = lambda _project: net.store
     fn = dict(id=1, project_id=7, status='matched', name='stub', matched_source=SOURCE,
               best_source=None, seed=None)
     text = BriefMixin._brief(net, fn, None, 'FUNCTION')
@@ -77,11 +79,12 @@ def test_claim_hint_does_not_query_callees(monkeypatch):
     from decompnet.app import agent_tokens, claim_state, draft_reports
 
     monkeypatch.setattr(agent_tokens, 'candidate', lambda *_: (SOURCE, 'revision'))
-    monkeypatch.setattr(draft_reports, 'read', lambda *_: {})
+    monkeypatch.setattr(draft_reports, 'read', lambda *_, **kw: {})
     monkeypatch.setattr(draft_reports, 'summary', lambda *_: '')
     monkeypatch.setattr(claim_state, 'current', lambda *_: 'claim')
     net = SimpleNamespace(store=SimpleNamespace(
         one=lambda sql, *_: {'slug': 'sample', 'name': 'Sample'} if 'FROM projects' in sql else None))
+    net.project_store = lambda _project: net.store
     fn = dict(id=1, project_id=7, status='open', name='stub', matched_source=None,
               best_source=SOURCE, seed=None, unit='', size=28)
     text = claim_state.brief(net, fn, SimpleNamespace(id=2), 'CLAIMED')
@@ -92,6 +95,7 @@ def test_claim_hint_does_not_query_callees(monkeypatch):
 def test_extra_caller_arguments_to_plain_stub_need_joint_review(definition):
     rows = [{'name': 'empty', 'matched_source': definition}]
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows))
+    net.project_store = lambda _project: net.store
     note = wrappers.brief(net, {'id': 1}, {'name': 'caller'},
                           'void empty(int); void caller(int n) { empty(n); }')
     assert 'Ignored-argument stub review' in note
@@ -119,12 +123,14 @@ def test_only_explicit_simple_stubs_trigger_argument_review(definition):
 def test_no_argument_advice_for_declarations_comments_macros_or_zero_argument_calls(caller):
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: [
         {'name': 'empty', 'matched_source': 'void empty(void) {}'}]))
+    net.project_store = lambda _project: net.store
     assert wrappers.brief(net, {'id': 1}, {'name': 'caller'}, caller) == ''
 
 
 def test_mixed_contract_hints_share_the_existing_budget():
     rows = [{'name': 'empty'+str(i), 'matched_source': 'void empty'+str(i)+'(void) {}'} for i in range(5)]
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows))
+    net.project_store = lambda _project: net.store
     source = 'void caller(void) {' + ''.join('empty'+str(i)+'(1);' for i in range(5)) + '}'
     note = wrappers.brief(net, {'id': 1}, {'name': 'caller'}, source)
     assert all('empty'+str(i) in note for i in range(3))

@@ -53,18 +53,21 @@ def test_observed_repair_families_are_bounded_and_preserve_neighbours():
 
 
 def test_handoff_is_structured_and_read_back_as_historical_data(monkeypatch):
-    from decompnet.app import session_handoffs
+    from decompnet.app import session_handoffs, transcripts
     class Store:
         def all(self, sql, *args):
+            if 'FROM helper_sessions' in sql:return [{'id':1}]
             if 'JOIN claims' in sql:
                 return [{'id': 1, 'name': 'demo', 'status': 'open', 'best_score': 15}]
             if 'FROM attempts' in sql:
                 return [{'score': 20, 'source': 'old'}]
             return [{'text': 'Tried a cast; next try branch layout.'}]
-    net = SimpleNamespace(store=Store())
+    net = SimpleNamespace(store=Store(), _project=lambda _: {'id':1})
+    net.project_store = lambda _project: net.store
     monkeypatch.setattr('decompnet.app.agent_tokens.history', lambda *args: 'Already tried a cast.')
     monkeypatch.setattr('decompnet.app.agent_tokens.candidate', lambda *args: ('saved C','revision123'))
     monkeypatch.setattr('decompnet.app.local_experiments.summary', lambda *args: 'No untried repairs.')
+    monkeypatch.setattr(transcripts, 'service', lambda _: SimpleNamespace(for_project=lambda _: SimpleNamespace(store=net.store)))
     report = session_handoffs.capture(net, SimpleNamespace(id=1), 'project', 0)
     assert report['functions'][0]['recent_scores'] == [20]
     assert report['functions'][0]['revision'] == 'revision123'
@@ -85,12 +88,13 @@ def test_preflight_verifies_recovered_source_and_never_selects_failed_recovery(m
     monkeypatch.setattr('decompnet.app.agent_evidence.preflight', diagnostic)
     store = SimpleNamespace(all=lambda *args: [{'source': 'extern int missing;\nint demo(void){return missing;}'}])
     net = SimpleNamespace(store=store, project_row=lambda slug: {'id': 1}, fork_slug=lambda slug: True)
+    net.project_store = lambda _project: net.store
     source = 'int demo(void){return missing;}'
-    repaired, report = preflight(net, object(), 'project', {'id': 1}, source)
+    repaired, report = preflight(net, object(), 'project', {'id': 1, 'project_id':1}, source)
     assert repaired.startswith('extern int missing;') and report['declaration_recovery']
     assert len(seen) == 2
     monkeypatch.setattr('decompnet.app.agent_evidence.preflight', lambda *args: {'score': None, 'error': "'missing' undeclared"})
-    assert preflight(net, object(), 'project', {'id': 1}, source)[0] == source
+    assert preflight(net, object(), 'project', {'id': 1, 'project_id':1}, source)[0] == source
 
 
 def test_new_candidates_compile_against_independent_compiler_controls(tmp_path):

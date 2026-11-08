@@ -172,6 +172,7 @@ def test_helper_discovery_is_independently_linked_and_unit_rechecked_with_real_i
     net=SimpleNamespace(is_rom=lambda p:True,fork_slug=lambda s:None,store=Store(),symbols=lambda pid:table,
                         reader=lambda p,r:lambda a,n:None,
                         _rom_target=lambda r:RomTarget(r['name'],r['vram'],r['target'],[]))
+    net.project_store=lambda _:net.store
     proj={'id':1,'slug':'sample','arch':'mips'}
     original=source.replace('known','original_helper')
     baseline=compile_source(compiler_config(tmp_path,{'compiler':{'toolchain':'ido-5.3','flags':['-O2']+flags[1:]}}),header,original)
@@ -195,7 +196,7 @@ def test_profile_helper_retry_survives_budget_boundary_and_keeps_settings_privat
     from decompnet import toolchains
     from decompnet.app import compiler_context, prepared_evidence, profile_hypotheses, source_lead_analysis
     cached={};calls=[]
-    fn={'id':1,'name':'entry','vram':0x80002000,'target':b'target','status':'open','best_score':10}
+    fn={'id':1,'project_id':1,'name':'entry','vram':0x80002000,'target':b'target','status':'open','best_score':10}
     class Store:
         def one(self,sql,*args):
             if sql.startswith('SELECT * FROM functions'):return fn
@@ -207,6 +208,7 @@ def test_profile_helper_retry_survives_budget_boundary_and_keeps_settings_privat
     proj={'id':1,'slug':'sample','arch':'mips','config':json.dumps({'compiler':{'toolchain':'ido-5.3','flags':['-O2']}})}
     class Net:
         store=Store()
+        def project_store(self, project):return self.store
         def is_rom(self,p):return True
         def project_row(self,s):return proj
         def flag_variants(self,*a):return [['-O3']]

@@ -28,6 +28,9 @@ def test_neighbour_profiles_are_bounded_hypotheses_of_the_same_toolchain():
             return [{'vram':10},{'vram':20},{'vram':30}]
     class Net:
         store=Store()
+        def project_store(self, project):
+            assert project == 1
+            return self.store
         def cfg(self,p):return {'compiler':{'toolchain':'ido-5.3','flags':['-O2']},'compiler_ranges':[
             {'start':10,'end':11,'toolchain':'ido-5.3','flags':['-O1']},
             {'start':20,'end':21,'toolchain':'gcc','flags':['-O1']},

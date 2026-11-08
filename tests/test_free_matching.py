@@ -276,7 +276,7 @@ def test_free_candidate_capture_identifies_its_automatic_origin_without_reviewin
     case=pair.repair_feedback.listing('destination')['examples'][0]['id']
     detail=pair.repair_feedback.detail('destination',case)
     assert detail['evidence']['provenance']=={'kind':'automatic candidate','family':'template','origin':'MIPS leaf template'}
-    assert detail['status']=='new' and _TRIAL.get() is None
+    assert detail['status']=='implemented' and _TRIAL.get() is None
 
 
 def test_cached_discovery_yields_time_and_resumes_after_last_visited_function(pair, monkeypatch):

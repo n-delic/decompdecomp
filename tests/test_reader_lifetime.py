@@ -9,11 +9,12 @@ from decompnet.store import Store
 def test_worker_readers_close_at_thread_exit_without_gc(tmp_path,monkeypatch):
     store=Store(tmp_path/'test.db');closed=[];errors=[]
     connect=sqlite3.connect
-    class Connection(sqlite3.Connection):
+    from decompnet.payload_storage import Connection as PayloadConnection
+    class Connection(PayloadConnection):
         def close(self):
             closed.append(threading.get_ident())
             super().close()
-    monkeypatch.setattr(sqlite3,'connect',lambda *a,**kw:connect(*a,factory=Connection,**kw))
+    monkeypatch.setattr(sqlite3,'connect',lambda *a,**kw:connect(*a,**(kw | {'factory':Connection})))
     def read():
         try:
             assert store.one('SELECT 1 AS value')['value']==1

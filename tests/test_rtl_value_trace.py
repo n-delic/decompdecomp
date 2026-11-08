@@ -58,10 +58,11 @@ def test_saved_trace_rejects_changed_compiler_without_starting_tools(monkeypatch
     state=dict(value_trace=proof,value_trace_rows=[('r','move $v1, $a0','move $v0, $a0')])
     net=SimpleNamespace(is_rom=lambda p:True,fork_slug=lambda s:False,cfg=lambda p:{},
                         store=SimpleNamespace(one=lambda *a:dict(state=json.dumps(state))))
+    net.project_store = lambda _project: net.store
     monkeypatch.setattr(project,'compiler_for',lambda *a:profile)
-    assert trace.saved(net,dict(slug='p',config='{}'),dict(id=1,vram=1),source,'')[0]
+    assert trace.saved(net,dict(id=1,slug='p',config='{}'),dict(id=1,project_id=1,vram=1),source,'')[0]
     monkeypatch.setattr(project,'compiler_for',lambda *a:{**profile,'flags':['-O1']})
-    assert trace.saved(net,dict(slug='p',config='{}'),dict(id=1,vram=1),source,'')==({},[])
+    assert trace.saved(net,dict(id=1,slug='p',config='{}'),dict(id=1,project_id=1,vram=1),source,'')==({},[])
 
 
 def test_cross_build_trace_uses_unique_source_anchors_not_pseudo_numbers():

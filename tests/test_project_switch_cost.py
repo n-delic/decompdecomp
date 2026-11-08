@@ -44,5 +44,5 @@ def test_overview_reuses_imported_library_report_including_none(tmp_path,monkeyp
     net,_=project(tmp_path)
     monkeypatch.setattr('decompnet.app.libultra.report',lambda *args: (_ for _ in ()).throw(AssertionError('duplicate library report')))
     for value in [None,{'header_version':'2.0I'}]:
-        monkeypatch.setattr(net,'_overview',lambda *args, value=value: {'libultra':value})
+        monkeypatch.setattr(net,'_overview',lambda *args, value=value, **kwargs: {'libultra':value})
         assert net.overview('demo')['libultra']==value

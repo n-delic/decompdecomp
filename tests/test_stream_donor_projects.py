@@ -1,4 +1,4 @@
-"""Try one donor before opening the next, and never fingerprint unmatched imported units."""
+"""Exact donors precede unfinished candidates; unmatched imported units are never fingerprinted."""
 import json
 import threading
 from types import SimpleNamespace
@@ -13,7 +13,7 @@ pair=pytest.fixture(pair_fixture.__wrapped__)
 
 
 @pytest.mark.parametrize('fork_destination',[False,True])
-def test_donor_is_tried_before_next_project_load(pair,monkeypatch,fork_destination):
+def test_exact_donors_are_tried_before_partial_candidates(pair,monkeypatch,fork_destination):
     net=pair
     with net.store.tx() as db:
         cfg=db.execute('SELECT config FROM projects WHERE id=1').fetchone()['config']
@@ -37,9 +37,9 @@ def test_donor_is_tried_before_next_project_load(pair,monkeypatch,fork_destinati
     monkeypatch.setattr(partial_reuse,'run',lambda *a,**kw:events.append(('partial',kw['projects'][0]['id'])) or 0)
     net.twins.across_games('destination')
     if fork_destination:
-        assert events==[('discover',1),('try',1),('partial',1),('discover',3),('try',3),('partial',3)]
+        assert events==[('discover',1),('try',1),('discover',3),('try',3),('partial',1),('partial',3)]
     else:
-        assert events==[('load',1),('try',1),('partial',1),('discover',1),('load',3),('try',3),('partial',3),('discover',3)]
+        assert events==[('load',1),('try',1),('load',3),('try',3),('partial',1),('discover',1),('partial',3),('discover',3)]
 
 
 @pytest.mark.parametrize('selected',[False,True])
