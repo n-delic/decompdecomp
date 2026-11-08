@@ -1566,3 +1566,20 @@ survive in a frontier slot, but is never saved as an improvement on that basis. 
 `docs/COMPILER_MATCHING_LEARNINGS.md` for the measured final-checkpoint regression and
 its limits. A symbolic relocation display discrepancy is not a reason to keep editing
 once the normal linker proves all bytes equal.
+
+#### A body-exact function can still need a real narrowing boundary
+
+A verified 251-instruction example had all body/spill instructions correct but a frame
+eight bytes too small. Explicit inline signed-halfword normalization of an existing `u16`
+local immediately before its actual `u16` store recovered the target frame without adding
+runtime instructions. All 65,536 inputs preserve the final stored bits; ordinary and
+phase-dump builds linked to the same exact bytes. The compiler retained an unallocated
+normalization pseudo and reserved an additional spill slot. This is observed compiler
+behaviour, not proof of the original author's source.
+
+Inspect actual narrow stores after a frame-only plateau. Placement matters: normalizing a
+call expression did nothing and a byte-store variant regressed. Existing automatic
+`spill_normalization` handles masked word locals, not this halfword-store shape; do not
+assume a local-repair run already tested it. Keep the true destination width, accesses,
+ABI and compiler fixed. Never add dummy uses or an unread padding object to force the frame.
+See the 2026-11-08 halfword-store entry in `docs/COMPILER_MATCHING_LEARNINGS.md`.
