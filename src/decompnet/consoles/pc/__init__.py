@@ -2,15 +2,16 @@
 newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows program: decompdecomp runs on Linux and
 macOS, and so do the compilers (through wibo; Visual C++ 2017's, which wibo can't run, through wine: wine.py).
 Visual C++ 2017 (its 32-bit and 64-bit compilers) can also be chosen for a source file in Settings; its 64-bit
-compiler is for 64-bit games, which come next (ROADMAP.md, Newer Windows games). The user's own Visual C++ copies
+compiler builds every 64-bit x64 game (the packs have no other 64-bit one), whose functions come from its .pdata,
+not Ghidra's guesses (scratch._analyse_x64). The user's own Visual C++ copies
 (kits/visualcpp.py, any number, any version from 2.0 on) build a game whose compiler build the packs don't have:
 its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
-MSVC/own-<version>.
+MSVC/own-<version>. A copy is read for its 32-bit compiler only, so a 64-bit game builds with the pack's.
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
   of its own (the target objdiff compares with); which Visual C++ built it comes from the program's Rich header,
-  which also says (with its sections) whether decompdecomp can start it at all: 64-bit, mostly whole-program
+  which also says (with its sections) whether decompdecomp can start it at all: for ARM, mostly whole-program
   optimised, or wrapped in DRM (scratch.describe). The rebuild check, which is also the
   project's export, puts the whole program back together from the project (`ninja rebuild`, check_code): each
   function from its C where that compiles to the game's code, else from those objects. Visual C++'s
@@ -114,12 +115,14 @@ class WindowsPC(Console):
 
     def describe(self) -> dict:
         """With the pack each Visual C++ version's games build with (by what the Rich header or the linker names; "":
-        none), and where 2015 and newer's builds start, for the drop zone (home.js pcPack): no numbers of its own."""
-        from .scratch import MSVC_DEFAULT, VC14_BUILDS, VISUAL_STUDIO, X86, Build, compiler_pack
+        none), and where 2015 and newer's builds start, for the drop zone (home.js pcPack): no numbers of its own. A
+        64-bit game's pack is `pack_x64`, whichever version built it (the packs have one 64-bit compiler)."""
+        from .scratch import MSVC_DEFAULT, VC14_BUILDS, VISUAL_STUDIO, X64_DEFAULT, X86, Build, compiler_pack
 
         return {**super().describe(), "vc14_builds": [list(b) for b in VC14_BUILDS],
                 "pack_by_version": {"": compiler_pack(MSVC_DEFAULT),
-                                    **{v: compiler_pack(Build(X86, v, None).pack_version) for v in VISUAL_STUDIO}}}
+                                    **{v: compiler_pack(Build(X86, v, None).pack_version) for v in VISUAL_STUDIO}},
+                "pack_x64": compiler_pack(X64_DEFAULT)}
 
     def sniff(self, head: bytes, file) -> bool:
         """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""
@@ -290,6 +293,7 @@ class WindowsPC(Console):
         if scratch.missing(fp.root, manifest["version"]):
             raise NetworkError("the project is missing the game's DLLs it was made with (in orig/): put your copies "
                                "there, then reimport")
+        scratch.ensure_ghidra(log)  # (as the import does: a Mac's Ghidra without its decompiler is installed again)
         log(f"analysing {game.name} with Ghidra again (a big game takes a few minutes)")
         found = {"": ghidra.functions(game)}
         for m in _functions_json(fp, manifest["version"]).get("modules", []):
@@ -453,8 +457,12 @@ class WindowsPC(Console):
         return path.relative_to(fp.root).as_posix()
 
     def exact_drafts(self, fp, symbol: str, known: str = "") -> list[tuple[str, str]]:
+        """drafts.exact's shapes are 32-bit x86's: a 64-bit game gets none yet (ROADMAP.md, Newer Windows games), only
+        Ghidra's drafts made compilable."""
         from . import drafts, scratch
 
+        if self.target(fp) == "x64":
+            return []
         entry = _entries(fp).get(symbol)
         code = entry and scratch.data_bytes(fp.root, fp.manifest or {}, entry["addr"], entry["size"])
         return drafts.exact(code, entry["addr"], entry["relocs"], known) if code else []
@@ -541,10 +549,11 @@ def _entries(fp) -> dict[str, dict]:
 
 
 def _address_key(name: str) -> str | None:
-    """func_XXXXXXXX / D_XXXXXXXX (upper case address) in a name, as tools/names.py keys them; None without one."""
+    """func_<address> / D_<address> (the address in upper case: 8 hex digits, a 64-bit game's 9 or more) in a name, as
+    tools/names.py keys them; None without one."""
     import re
 
-    m = re.search(r"\b_*(func|D)_([0-9A-Fa-f]{8})(?![0-9A-Fa-f])", name)
+    m = re.search(r"\b_*(func|D)_([0-9A-Fa-f]{8,16})(?![0-9A-Fa-f])", name)
     return f"{m.group(1)}_{m.group(2).upper()}" if m else None
 
 

@@ -410,11 +410,11 @@ def from_map(text: str, timestamp: int, image_base: int | None = None) -> DebugI
     stamp = re.search(r"Timestamp is ([0-9a-fA-F]{8})", text)
     if stamp is None or int(stamp.group(1), 16) != timestamp:
         return None
-    preferred = re.search(r"Preferred load address is ([0-9a-fA-F]{8})", text)
+    preferred = re.search(r"Preferred load address is ([0-9a-fA-F]{8,16})", text)  # (16 digits: a 64-bit program's)
     moved = image_base - int(preferred.group(1), 16) if image_base is not None and preferred else 0
     info, used = DebugInfo(), set()
     seen = set()
-    for m in re.finditer(r"^\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8}\s+(\S+)\s+([0-9a-fA-F]{8})\s+(f\s+)?(?:i\s+)?(\S+)\s*$",
+    for m in re.finditer(r"^\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8}\s+(\S+)\s+([0-9a-fA-F]{8,16})\s+(f\s+)?(?:i\s+)?(\S+)\s*$",
                          text, re.M):
         symbol, at, function, obj = m.group(1), int(m.group(2), 16), bool(m.group(3)), m.group(4)
         name = plain_name(symbol)
