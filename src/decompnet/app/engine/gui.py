@@ -201,7 +201,7 @@ class GuiMixin:
             return {"role": "host", "members": self.rooms[slug].members(refresh=refresh)}
         return None
 
-    def function_map(self, slug: str, *, function_ids=None) -> list[dict]:
+    def function_map(self, slug: str, *, function_ids=None, quick=False) -> list[dict]:
         """Every function of the project for the map and the list; not one gone from the build (network.IN_BUILD: a
         piece joined to its function, kept for its attempts and notes), which the totals leave out too."""
         proj = self._project(slug)
@@ -222,12 +222,12 @@ class GuiMixin:
         searching = {r['name']:r['agent'] for r in activity(self,proj)}
         from ..function_names import state as name_state
         from ..history_summary import recency as map_recency
-        recency = map_recency(self.project_store(proj['id']), proj['id'], function_ids)
+        recency = {} if quick else map_recency(self.project_store(proj['id']), proj['id'], function_ids)
         from ..view_snapshots import cross_project_ids
-        cross_project = cross_project_ids(self, proj)
+        cross_project = frozenset() if quick else cross_project_ids(self, proj)
         from ..code_coverage import boundaries
-        incomplete = {r["function"]: r["reason"] for r in boundaries(self, proj) if not r.get("override")}
-        sdk = self.sdk_functions(proj)
+        incomplete = {r["function"]: r["reason"] for r in ([] if quick else boundaries(self, proj)) if not r.get("override")}
+        sdk = {} if quick else self.sdk_functions(proj)
         return [{"id": r["id"], "cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote or r["name"] in searching) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)) or searching.get(r["name"]),

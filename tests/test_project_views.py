@@ -153,3 +153,28 @@ def test_lightweight_requests_have_capacity_while_diff_readers_are_blocked(tmp_p
             await asyncio.gather(*tasks)
     try:asyncio.run(check())
     finally:manager.shutdown()
+
+
+def test_initial_map_skips_annotations_and_keeps_full_cache_separate(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path/'db', tmp_path)
+    tiny_game(net)
+    slug = net.store.one('SELECT slug FROM projects')['slug']
+    from decompnet.app import code_coverage, history_summary, view_snapshots
+    def forbidden(*args, **kwargs):
+        pytest.fail('Initial map must not scan history, other projects or SDKs')
+    with monkeypatch.context() as patch:
+        patch.setattr(history_summary, 'recency', forbidden)
+        patch.setattr(view_snapshots, 'cross_project_ids', forbidden)
+        patch.setattr(code_coverage, 'boundaries', forbidden)
+        patch.setattr(net, 'sdk_functions', forbidden)
+        with net.progress.view():
+            quick = map_payload(net, slug, quick=True)
+    assert quick['rows'] and quick['annotations_pending']
+    with net.progress.view():
+        full = map_payload(net, slug, since=quick['sig'])
+    assert full['sig'] != quick['sig'] and not full.get('same')
+    assert len(full['rows']) == len(quick['rows'])
+    keys = ('id', 'name', 'vram', 'size', 'status', 'best', 'attempts')
+    for first, final in zip(quick['rows'], full['rows']):
+        a, b = dict(zip(quick['keys'], first)), dict(zip(full['keys'], final))
+        assert all(a[k] == b[k] for k in keys)
