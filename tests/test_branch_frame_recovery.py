@@ -124,6 +124,7 @@ def test_normal_selector_keeps_frame_control_and_targeted_composition_near_front
     next_=iterative_repairs.targeted_variants(framed,{'rows':SWAP,'repair_path':['inferred_frame_reservation']},fn,'mips',[],HEADER,tagged=True,limit=4)
     assert next_[0][0]=='branch_packing_tail'
     assert not branch_frame_recovery.variants(SOURCE,'f',HEADER,'mips',[])
+    assert {f for f,_ in branch_frame_recovery.variants(SOURCE,'f',HEADER,'mips',FRAME)}=={'inferred_frame_reservation'}
 
 
 def test_tail_choices_bounded_without_rewriting_other_functions():

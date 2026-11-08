@@ -12,7 +12,7 @@ def variants(source,name,header,arch,rows):
     tails=branch_tail_distribution.variants(source,name,header,arch) if evidence.get('pointer_swap') else []
     result=list(frames)
     # Keep the independently judged frame and tail controls before the composition.
-    if frames:
+    if frames and evidence.get('pointer_swap'):
         for _,framed in frames[:1]:
             result.extend(('frame_branch_tail_sequence',s) for _,s in branch_tail_distribution.variants(framed,name,header,arch)[:2])
     result.extend(tails[:2])
