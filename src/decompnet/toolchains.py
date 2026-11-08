@@ -156,8 +156,12 @@ def compiler_family(tid: str) -> str:
     if tid.startswith("sn-n64-"):
         return "sn64"
     prefix = tid.split("/", 1)[0].lower()
-    if prefix in ("msvc", "xdk"):
+    if prefix == "msvc":
         return "msvc"
+    from . import kits
+    for kit in kits.KITS:
+        if prefix == kit.id and (family := getattr(kit, "compiler_family", None)):
+            return family
     if prefix in ("gc", "wii", "ds"):
         return "metrowerks"
     for family in ("gcc", "ido", "sn64", "metrowerks", "msvc"):

@@ -18,6 +18,7 @@ VERSION = "xdk"  # the compiler's version in a project's build, with the XDK's b
 
 class Xdk(Kit):
     id = "xdk"
+    compiler_family = "msvc"
     name = "Microsoft Xbox Development Kit (your own copy)"
     platform = "Xbox"
     description = ("The libraries of original Xbox games, and the compiler of early ones. Give the folder of your own "
