@@ -608,7 +608,7 @@ Changing or clearing the trusted remote address revokes browser sessions. Disabl
 browser access even if the Tailscale proxy remains configured. Use `tailscale serve --https=443 off` to stop that
 proxy. Remote addresses must be set from the native app; remote browsers cannot authorize a new destination.
 
-`serve` uses the usual home (`~/Decomp` for an installed copy; `~/Decomp-dev` from a checkout). If an app is already
+`serve` uses the usual home (`~/Decomp-RetroReversing` for an installed copy; `~/Decomp-RetroReversing-dev` from a checkout). If an app is already
 running for that home, it refuses to replace it. Stop that app deliberately with `decomp stop`, or choose another
 home and port, for example `DECOMP_HOME=/path/to/server-projects decomp serve --port 6484`. A checkout can use
 `uv run decomp serve --port 6474`. Stop the server with Ctrl-C or `decomp stop` using the same home. Updates preserve
@@ -654,7 +654,7 @@ decomp
 ```
 
 The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
-brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp` folder.
+brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp-RetroReversing` folder.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
@@ -685,7 +685,7 @@ bash site/public/install.sh
 ```
 
 The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets the free tools, and creates
-`~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp`;
+`~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp-RetroReversing`;
 toolchains live in `~/Library/Application Support/decompnet/toolchains`. Xcode Command Line Tools
 (`xcode-select --install`) are needed on Intel Macs for N64's MIPS binutils, and on both Mac architectures to
 build PS1 GCC 2.6.0, 2.6.3 and 2.8.0 from pinned source on first use. The ready-made 2.7.2 (PSX and CDK) and 2.8.1 compiler binaries are for
@@ -726,11 +726,11 @@ When launched from a terminal, quitting reports each shutdown stage and the proj
 Stages taking more than five seconds print elapsed-time updates. Closing just the window while
 keeping work running is reported explicitly; it does not mean the app has quit.
 
-For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`.
+For development: `uv sync`, `uv run decomp` (separate `~/Decomp-RetroReversing-dev` state), and `uv run pytest -q`.
 
 To avoid rebuilding a packaged app for each code update, open Settings → Run from Git / update when
 idle. Choose a clean `main` checkout from the configured update repository (Git and uv required).
-Choose separate `~/Decomp-dev` data, or explicitly keep this app's current projects/settings. This
+Choose separate `~/Decomp-RetroReversing-dev` data, or explicitly keep this app's current projects/settings. This
 replaces the current process when keeping current data. Separate development data launches another
 app and leaves this one running. Neither copies/migrates data nor alters the installed app bundle.
 New managed agent sessions and jobs are held until existing work finishes. Continuous background
@@ -894,18 +894,17 @@ and reports when a size or depth limit means you should scan a smaller folder.
 When you close the window while agents work, decompdecomp asks you: stop them and quit, or keep them working.
 **Quit** ends the app and everything it started.
 
-## Coming from decomp.wtf or an older version (1.0.x)
+## Trying this fork alongside upstream
 
-Your projects stay, decomp.wtf's too: decompdecomp continues decomp.wtf and reads the same folder and database. On
-Linux, the new version opens the same `~/Decomp` folder, with every match, name and note in it.
-The old Windows installer kept its projects inside a WSL distribution. The Windows app now runs natively and uses
-`%USERPROFILE%\Decomp`; it uses WSL for some Linux-only compilers, but doesn't scan WSL for projects automatically.
+The RetroReversing fork uses `~/Decomp-RetroReversing` by default on macOS and Linux,
+and `%USERPROFILE%\Decomp-RetroReversing` on Windows. Source checkouts use
+`~/Decomp-RetroReversing-dev`. Upstream's `~/Decomp` and `~/Decomp-dev` folders are left alone.
+The fork's database format differs, so it does not automatically open or migrate upstream projects.
+Start a new fork project from your own game, or use **Open a saved project** with a compatible save.
 
-To move projects from the old Windows install, close its app, then copy the whole `Decomp` folder from
-`\\wsl.localhost\decomp-wtf\home\decomp\Decomp` to `%USERPROFILE%\Decomp`. Include the hidden `.decomp` folder
-inside it: that holds the project database and saved matches. The app reconnects projects to their copied folders.
-Did you keep a project outside the `Decomp` folder, in `Documents` for example? Move that project's folder into
-`%USERPROFILE%\Decomp` too, and keep its folder name: the app finds a moved project by its name there.
+`DECOMP_HOME` still selects an explicit data folder. Existing fork users who deliberately used another
+folder can keep that setting; without it, the new default starts with separate projects and settings.
+Keep an upstream database separate instead of pointing both apps at the same home.
 
 Saved-project verification uses a private compiler queue (up to four workers, within the global compiler limit),
 reuses each worker's header staging, and publishes exact checks in order. The restore dialog shows verified/total
@@ -944,7 +943,7 @@ so you can keep it in a git repository. You can edit these files or pull another
 `progress/`; decompdecomp reads them on the next project action and checks the saved functions again. GameCube, Wii
 and PC projects and community decomps are git repositories already: push them.
 
-The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer. Copy the hidden
+The simplest way is to copy your whole `~/Decomp-RetroReversing` folder to the same place on the new computer. Copy the hidden
 `.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a
 single N64, PlayStation or PlayStation 2 project, or to keep it in git:
 
@@ -952,7 +951,7 @@ single N64, PlayStation or PlayStation 2 project, or to keep it in git:
 game's code is its rights holder's: keep it to yourself.
 
 ```
-~/Decomp/<project>/
+~/Decomp-RetroReversing/<project>/
 ├── progress/         your work: share this, commit this
 │   ├── src/              each matched function's C
 │   ├── best/             the closest attempt at each function that doesn't match yet

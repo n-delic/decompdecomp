@@ -94,7 +94,7 @@ def _state(state_file: Path) -> dict | None:
 def replace_older(state_file: Path, log=print) -> dict | None:
     """The running app's {port, secret} when it's this version or newer. An older one (still running after an
     upgrade) is stopped, so the new version starts in its place: returns None then, and when nothing runs. One
-    instance is one per home: a development copy (~/Decomp-dev) never meets the installed app (~/Decomp)."""
+    instance is one per home: a development copy (~/Decomp-RetroReversing-dev) never meets the installed app (~/Decomp-RetroReversing)."""
     prev = _state(state_file)
     if prev is None:
         return None

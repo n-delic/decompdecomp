@@ -11,7 +11,7 @@
 #   4. downloads the free compilers and the m2c draft decompiler (pinned and checksum-verified)
 #   5. adds decompdecomp to your apps menu (replacing an older .deb or .rpm of it) and opens it
 #
-# Your projects go to ~/Decomp. Nothing is sent anywhere.
+# Your projects go to ~/Decomp-RetroReversing. Nothing is sent anywhere.
 # Uninstall: uv tool uninstall decompnet
 #
 # Options:

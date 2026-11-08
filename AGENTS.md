@@ -10,17 +10,20 @@ archived at 0.10.6): `origin` is n-delic/decompdecomp, `upstream` the archived o
 
 Naming: the project is **decompdecomp** in everything users read. Internal names stay as decomp.wtf left them, so
 existing installs and projects keep working: the `decomp` command, the `decompnet` package and data folder,
-`~/Decomp`, `.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch. Installs and updates
+`.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch. Installs and updates
 come from GitHub (`REPO` in app/updates.py and install.sh); the decomp.wtf domain isn't ours, so nothing may point
 at it. `site/` is the website (decomp.ndelic.com, published to GitHub Pages by `.github/workflows/site.yml` on every
 push to main that changes `site/public/`); `site/public/` also holds the installer, `install.sh`, which updates read
 from GitHub. `main` is what users update from.
 
+This fork defaults to `~/Decomp-RetroReversing` (checkouts: `~/Decomp-RetroReversing-dev`),
+separate from upstream databases. Respect explicit `DECOMP_HOME` settings; do not auto-migrate old data.
+
 ## Commands
 
 ```bash
 uv sync
-uv run decomp                 # the development copy of the app, in its own window; projects in ~/Decomp-dev
+uv run decomp                 # the development copy of the app, in its own window; projects in ~/Decomp-RetroReversing-dev
 uv run pytest -q              # the test suite; many tests skip when a compiler or tool isn't installed
 uv run pytest tests/test_forks.py -q   # one file
 uv run ruff check src tests projects   # the linter (CI runs it and the tests)
@@ -28,11 +31,11 @@ uv run ruff check src tests projects   # the linter (CI runs it and the tests)
 
 ## Never disturb the user's own decompdecomp
 
-The user usually has decompdecomp running (installed, port 6464, projects in `~/Decomp`) with agents working in it.
+The user usually has decompdecomp running (installed, port 6464, in its configured data home) with agents working in it.
 Testing a change must not touch it:
-- A checkout is "decompdecomp dev" (app/edition.py): its own home `~/Decomp-dev`, port 6474, its own window class,
-  no launcher. One instance is one per home, so it never replaces the installed app. Never point it at `~/Decomp`
-  (`DECOMP_HOME`). For experiments, give it a throwaway home: `DECOMP_HOME=<scratch dir> DECOMP_TRAY=0 uv run decomp`
+- A checkout is "decompdecomp dev" (app/edition.py): its own home `~/Decomp-RetroReversing-dev`, port 6474, its own window class,
+  no launcher. One instance is one per home, so it never replaces the installed app. Never point it at the live app's data home
+  (`DECOMP_HOME`), or at upstream's `~/Decomp`. For experiments, give it a throwaway home: `DECOMP_HOME=<scratch dir> DECOMP_TRAY=0 uv run decomp`
   (`DECOMP_WINDOW=0`: no window).
 - The agent CLIs the app lists (`agy models` above all) start the MCP servers in their own settings. The app finds
   them outside PATH too (`~/.local/bin`, `~/.opencode/bin`, ...), so a running experiment also needs a scratch `HOME`
@@ -40,7 +43,7 @@ Testing a change must not touch it:
 - Tests already run with a throwaway `DECOMP_HOME` and no window (tests/conftest.py). When the user's
   app runs from this checkout's `.venv`, run them in another environment so uv doesn't rebuild it underneath:
   `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
-- To try a change on a real project, work on a copy: `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro"
+- To try a change on a real project, work on a copy: `sqlite3 "file:$HOME/Decomp-RetroReversing/.decomp/decomp.db?mode=ro"
   ".backup <copy>/.decomp/decomp.db"`, copy the project folder, point `projects.root` in the copy at it. Read the
   live database only with `?mode=ro`.
 - Don't restart, update or quit the user's app, and don't change its projects, without asking.

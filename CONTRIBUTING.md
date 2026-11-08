@@ -9,7 +9,7 @@ executables, and no code, assembly or assets taken from them. That includes the 
 the game, and it belongs to you and the game's owner, not to this repository. Sam's request from decomp.wtf still
 stands: only use decompdecomp on games you own, and respect the rules of the decomp projects you work with.
 
-Before you attach a log (`~/Decomp/.decomp/logs/decomp.log`), read it, and cut out any code or assembly.
+Before you attach a log (`~/Decomp-RetroReversing/.decomp/logs/decomp.log`), read it, and cut out any code or assembly.
 
 ## Reporting a bug
 
@@ -26,14 +26,14 @@ decompdecomp is Python 3.12+, managed with [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/n-delic/decompdecomp && cd decompdecomp
 uv sync
-uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-dev, or $DECOMP_HOME)
+uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-RetroReversing-dev, or $DECOMP_HOME)
 uv run pytest -q              # the tests
 uv run pytest tests/test_ps2.py -q   # one file
 uv run ruff check src tests projects   # the linter
 ```
 
-A checkout is a separate app, "decompdecomp dev": its own folder (`~/Decomp-dev`), port and window. It never
-replaces the decompdecomp you have installed, and never touches its projects in `~/Decomp`. For an experiment, give
+A checkout is a separate app, "decompdecomp dev": its own folder (`~/Decomp-RetroReversing-dev`), port and window. It never
+replaces the decompdecomp you have installed, and never touches its projects in `~/Decomp-RetroReversing`. For an experiment, give
 it a scratch folder: `DECOMP_HOME=/some/scratch/folder DECOMP_TRAY=0 uv run decomp`. The tests already use a folder
 of their own.
 
@@ -61,7 +61,7 @@ Some things we won't merge:
   the pinned ones.
 - Letting agents edit a project's build setup. They're limited to source and header files on purpose.
 - Links to the decomp.wtf website. That domain isn't ours. Keep the internal names (`decomp`, `decompnet`,
-  `~/Decomp`, `.decomp.wtf.json`): existing installs depend on them.
+  `.decomp.wtf.json`): existing installs depend on them.
 
 Not sure what to work on? [ROADMAP.md](ROADMAP.md) lists what's planned and why, and has a table of which feature
 works on which platform: every — in it is a gap to fill.

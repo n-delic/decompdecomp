@@ -1,9 +1,9 @@
 """Which decompdecomp this is: the release people install, or a development copy run from a git checkout.
 
-The two are separate apps that never touch each other. A development copy has its own home (~/Decomp-dev), its own
+The two are separate apps that never touch each other. A development copy has its own home (~/Decomp-RetroReversing-dev), its own
 first port, its own name and window class, and a highlighter of another colour in its icon. Until the rewrite they
-shared everything, and a test run from the checkout quit the owner's running app with agents at work on GTA San
-Andreas: a newer copy finding an older one running replaces it (cli.replace_older), within one home.
+shared everything, and a test run from the checkout quit the owner's running app with agents at work on a large
+game: a newer copy finding an older one running replaces it (cli.replace_older), within one home.
 """
 
 from __future__ import annotations
@@ -25,10 +25,15 @@ DEV_HIGHLIGHT = (0x3A, 0xC8, 0xF6)  # a development copy's: blue
 HIGHLIGHT = DEV_HIGHLIGHT if DEV else RELEASE_HIGHLIGHT
 
 
+def default_home(*, dev: bool | None = None) -> Path:
+    """Keep this fork's incompatible database apart from upstream, including source handoffs."""
+    development = DEV if dev is None else dev
+    return Path.home() / ("Decomp-RetroReversing-dev" if development else "Decomp-RetroReversing")
+
+
 def home_dir() -> Path:
-    """Where projects and the app's own state live: DECOMP_HOME, else ~/Decomp (a development copy: ~/Decomp-dev)."""
-    default = Path.home() / ("Decomp-dev" if DEV else "Decomp")
-    return Path(os.environ.get("DECOMP_HOME") or default).expanduser()
+    """Use an explicit DECOMP_HOME, otherwise this fork's own installed or development home."""
+    return Path(os.environ.get("DECOMP_HOME") or default_home()).expanduser()
 
 
 def icon_svg() -> str:
