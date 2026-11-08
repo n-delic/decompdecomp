@@ -178,3 +178,18 @@ def test_initial_map_skips_annotations_and_keeps_full_cache_separate(tmp_path, m
     for first, final in zip(quick['rows'], full['rows']):
         a, b = dict(zip(quick['keys'], first)), dict(zip(full['keys'], final))
         assert all(a[k] == b[k] for k in keys)
+
+
+def test_quick_map_batch_preserves_nulls_unicode_and_metadata(tmp_path):
+    net=RomNetwork(tmp_path/'db',tmp_path)
+    tiny_game(net)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name=?,meta=?,best_score=NULL,vram=NULL WHERE id=(SELECT MIN(id) FROM functions)",
+                   ('entry_雪_é','{"label":"quote \\\" and snow 雪"}'))
+    with net.progress.view():
+        quick=net.function_map('game',quick=True)
+        full=net.function_map('game')
+    assert len(quick)==len(full)
+    for a,b in zip(quick,full):
+        for key in ('id','name','vram','size','insns','unit','status','best','attempts','polished','not_c','boundary_review'):
+            assert a[key]==b[key],key
