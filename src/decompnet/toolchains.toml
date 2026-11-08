@@ -1232,6 +1232,18 @@ url = "https://github.com/encounter/sjiswrap/releases/download/v1.2.2/sjiswrap-w
 sha256 = "01d50fa1148cfc3c3b16658c6c9b1c0d9f5324cde79ed6c09ef8353af9d63adf"
 binary = "sjiswrap.exe"
 
+[dtk-signatures]
+name = "decomp-toolkit SDK fingerprints"
+kind = "tool"
+license = "MIT OR Apache-2.0"
+source = "encounter/decomp-toolkit v1.8.4"
+description = "Public relocation-masked GameCube/Wii SDK fingerprints; no SDK source or compiler."
+[[dtk-signatures.parts]]
+url = "https://github.com/encounter/decomp-toolkit/archive/refs/tags/v1.8.4.tar.gz"
+sha256 = "d28a44cdbc2a112838ef242b2a53a690f5884eeee215eb01d0c4da92c88096a8"
+subdir = "decomp-toolkit-1.8.4"
+keep = { "assets/signatures" = "signatures", "LICENSE-MIT" = "LICENSE-MIT", "LICENSE-APACHE" = "LICENSE-APACHE" }
+
 [dtk-template]
 name = "dtk-template"
 kind = "template"

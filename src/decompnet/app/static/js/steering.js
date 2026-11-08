@@ -677,7 +677,7 @@ async function renderSdkSelection() {
   $("sdkMode").value = data.selection === null ? "auto" : "manual";
   const detected = data.libraries.filter(r => r.detected);
   $("sdkDetected").textContent = detected.length
-    ? `${detected.length} local libraries share exact function signatures with this game.`
+    ? `${detected.length} SDK signature collections share function patterns with this game.`
     : "No library signatures detected yet. Add folders in global Settings or build the imported project's target objects first.";
   $("sdkChoices").innerHTML = data.libraries.map(r => `<label class="check"><input type="checkbox" data-sdk-corpus="${esc(r.corpus)}" ${r.enabled ? "checked" : ""}><span>${esc(r.corpus.split(" / sha256:")[0])} · ${r.detected} fingerprints</span></label>`).join("");
   const toggle = () => { $("sdkChoices").hidden = $("sdkMode").value === "auto"; };

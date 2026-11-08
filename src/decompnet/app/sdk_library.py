@@ -26,6 +26,8 @@ def allowed(net, proj, corpus):
 def choose(net, slug, selection):
     if selection is not None:
         known = {r['corpus'] for r in net.store.all('SELECT DISTINCT corpus FROM sdk_signatures')}
+        if corpus := net.console(net.project_row(slug)).sdk_corpus:
+            known.add(corpus)
         if not isinstance(selection, list) or any(not isinstance(c, str) or c not in known for c in selection):
             raise NetworkError('Choose libraries from the indexed local inventory, or use automatic detection.')
         selection = sorted(set(selection))
@@ -58,6 +60,13 @@ def state(net, slug=None):
     for row in libraries:
         row['detected'] = len(detected.get(row['corpus'], ()))
         row['enabled'] = selection is None or row['corpus'] in selection
+    if slug and net.console(proj).sdk_corpus:
+        from .sdk_evidence import identities
+        corpus = net.console(proj).sdk_corpus
+        matches = identities(net, proj, include_asm=True, selected=False)
+        libraries.append({'corpus': corpus, 'signatures': None, 'builtin': True,
+                          'detected': sum(corpus in hint['corpora'] for hint in matches.values()),
+                          'enabled': selection is None or corpus in selection})
     return {'folders': saved['folders'], 'libraries': libraries, 'selection': selection}
 
 

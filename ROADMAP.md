@@ -645,6 +645,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Stack slot layout diagnostics | ✓ | ✓ | ✓ | ✓ | — reader planned | — reader planned | — reader planned | — GUI adapter planned |
 | Learned repair sequences, scoped brief evidence and sweep rotation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ build-scoped |
 | Last-exact failed-recheck alerts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ local judgments only |
+| Public dtk SDK binary identification | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — own corpus planned; local archives supported | ✓ built targets; direct evidence, advisory references | — own corpus planned; local archives supported | — own corpus planned; local archives supported | ✓ GameCube/Wii targets; other corpora planned |
 | Status | recommended | beta | beta | beta | beta | beta | beta | the project's own |
 | Start from your own copy | ✓ bounded TLB boot-map recovery | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ | ✓ | ✓ | fork by address |
 | Called framed recovery inside dropped raw text | ✓ | ✓ | ✓ scalar MIPS | ✓ scalar MIPS | — build-owned adapter planned | — reader/build adapter planned | — ARM/build adapter planned | — own-build adapter planned |
@@ -764,6 +765,13 @@ ROM projects now keep an indexed library of verified functions from the user's o
 cross-game transfer, suggest nearby code and names, and can index names and fingerprints from user-selected local
 SDK object archives. Global SDK folders are scanned once for every project, with unchanged-file caching and
 per-project automatic or explicit library selection. Imported project target objects supply detection evidence too.
+GameCube/Wii target objects now also use a checksum-pinned public dtk pattern pack, automatically checked
+by the SDK naming task. Direct identities retain the pattern hash, target SHA-256, object/unit and symbol.
+Repeated target fingerprints, conflicting pattern names, mismatched relocation layouts and contradictory
+named referents are rejected. Referenced names remain advisory. Exact SDK release identification, C
+prototype recovery and public fingerprint corpora for other consoles remain planned; local archive
+identification continues to work across modes. Full feature checks on real games beyond this SDK scan
+remain the existing platform validation work, not implied by these detections.
 SDK identities now have a separate badge in function lists. Automatic claims and small-function batches leave
 identified SDK code until after game code, across ROM and imported projects; explicit claims and user stars
 still take precedence. Identification uses recorded provenance or unambiguous full-size archive signatures,

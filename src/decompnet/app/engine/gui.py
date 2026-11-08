@@ -368,8 +368,10 @@ class GuiMixin:
         sweep = getattr(self, 'deep_sweeps', None)
         fn = self._function(name, slug)
         deep_pass = sweep.history(slug, fn) if sweep else {'state': 'not tried', 'completed': False}
+        proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+        sdk = self.sdk_functions(proj).get(fn['id'])
         if (fork := self.fork_slug(slug)):
-            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'id':fn['id'], 'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'],project_id=fn['project_id'])}
+            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'sdk':sdk, 'id':fn['id'], 'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'],project_id=fn['project_id'])}
         proj = self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         from ..function_history import history
         saved_history = history(self.project_store(fn['project_id']), fn, net=self)
@@ -383,7 +385,7 @@ class GuiMixin:
         from ..source_assembly import detail as assembly_detail
         initial_report = draft_report(self,fn['id'],project_id=fn['project_id'])
         return {
-            "assembly_verification":assembly_detail(proj,fn),
+            "sdk": sdk, "assembly_verification":assembly_detail(proj,fn),
             "machine_draft_report": initial_report,
             **name_state(fn), "id":fn["id"], "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
             "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),

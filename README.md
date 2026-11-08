@@ -416,6 +416,12 @@ Every accepted candidate must compile and link to the destination's exact bytes.
   mappings need two independent matching pairs and no conflicting evidence. Named struct definitions are not rewritten.
 - **Tiny functions:** constants, arithmetic, getters, setters and simple forwarding wrappers can be proposed
   without another project containing matched C.
+- **GameCube/Wii SDK detection:** built target objects are checked automatically against pinned public
+  decomp-toolkit patterns during SDK naming. Function lists, details and agent briefs show direct evidence;
+  reference names remain advisory. Deliberate names stay intact, and detection never awards a C match.
+  Choose or disable the built-in corpus under **Libraries for this game**. The first check downloads only
+  public fingerprints and their licences; SDK source and compilers are not included. See
+  [SDK identification](docs/GAMECUBE_SDK_IDENTIFICATION.md) for coverage and limits.
 - **Local libraries:** add SDK archive folders once in global **Settings → Local SDK libraries**. Each game
   detects matching signatures automatically; its Settings can select libraries explicitly, including disabling all.
   For advanced source matching, in the project SDK panel, supply an object archive and optionally its C source file/folder and a
