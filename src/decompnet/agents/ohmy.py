@@ -77,18 +77,28 @@ NODE_INTERNALS = "B:/~BUN/root/"  # where an error in omp's own bundle came from
 
 
 def agent_dir() -> Path:
-    """The folder omp keeps its settings, sign-in and mcp.json in: `PI_CODING_AGENT_DIR`, a profile's (OMP_PROFILE),
-    or the user's own `~/.omp/agent`. `PI_CONFIG_DIR` moves the `.omp` root."""
+    """The folder omp keeps its settings, sign-in and mcp.json in, resolved as omp resolves it: a named profile
+    (`OMP_PROFILE`; empty or `default` means the default one) is `<root>/profiles/<name>/agent` and ignores
+    `PI_CODING_AGENT_DIR`; otherwise `PI_CODING_AGENT_DIR`, or `<root>/agent`. `PI_CONFIG_DIR` names the root under
+    the home folder (omp joins it to the home folder even when it's absolute); with neither, `~/.omp`."""
+    root = Path.home() / (os.environ.get("PI_CONFIG_DIR") or ".omp")
+    profile = os.environ.get("OMP_PROFILE") or ""
+    if profile and profile != "default":
+        return root / "profiles" / profile / "agent"
     if own := os.environ.get("PI_CODING_AGENT_DIR"):
         return Path(own)
-    root = Path(os.environ.get("PI_CONFIG_DIR") or Path.home() / ".omp")
-    profile = os.environ.get("OMP_PROFILE") or os.environ.get("PI_PROFILE")
-    return root / "profiles" / profile / "agent" if profile else root / "agent"
+    return root / "agent"
+
+
+def _model(value: str) -> str | None:
+    """A YAML scalar's model name: its inline comment off, quotes off, or None when it says nothing."""
+    return value.split(" #", 1)[0].strip().strip("'\"") or None
 
 
 def default_model(path: Path) -> str | None:
-    """`modelRoles.default` in omp's config.yml, read without a YAML library (the file is omp's, and one key is all
-    the app wants): the `default:` line of the `modelRoles:` block."""
+    """`modelRoles.default` in an omp settings file, read without a YAML library (the file is omp's, and one key is
+    all the app wants): a `default:` line of the `modelRoles:` block, or `default: ...` inside a one-line
+    `modelRoles: {default: ...}`. `modelRoles: # comment` still opens the block."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
@@ -98,13 +108,22 @@ def default_model(path: Path) -> str | None:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if not inside:
-            inside = re.fullmatch(r"modelRoles:\s*", line) is not None
+            match = re.fullmatch(r"modelRoles:\s*(.*)", line)
+            if not match:
+                continue
+            rest = match.group(1).strip()
+            if rest.startswith("{"):
+                body = rest.removeprefix("{").split("}", 1)[0]
+                found = re.search(r"(?:^|,)\s*default:\s*([^,}]+)", body)
+                return _model(found.group(1)) if found else None
+            if not rest or rest.startswith("#"):  # `modelRoles:` or `modelRoles: # comment`: the block follows
+                inside = True
             continue
         if not line[:1].isspace():
             break  # the next top-level key: modelRoles had no default
         match = re.fullmatch(r"\s+default:\s*(.+?)\s*", line)
         if match:
-            return match.group(1).split(" #", 1)[0].strip().strip("'\"") or None
+            return _model(match.group(1))
     return None
 
 
@@ -144,8 +163,13 @@ class OhMyPi(Agent):
         return [row for round_ in zip_longest(*groups.values()) for row in round_ if row is not None]
 
     def config_model(self) -> str | None:
-        """The default model in omp's settings: a helper started without a model is named after it."""
-        return default_model(agent_dir() / "config.yml") or default_model(agent_dir() / "config.yaml")
+        """The default model in omp's settings: a helper started without a model is named after it. omp reads
+        `config.yml`, or `config.yaml` when there is no `config.yml`; a stale `config.yaml` must not win over it."""
+        folder = agent_dir()
+        for name in ("config.yml", "config.yaml"):
+            if (path := folder / name).is_file():
+                return default_model(path)
+        return None
 
     def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
         (workdir / MCP_FILE).write_text(

@@ -324,6 +324,49 @@ def test_omp_default_model_is_the_one_in_its_own_settings(tmp_path, monkeypatch)
     assert ohmy.OMP.config_model() == "opencode-go/deepseek-v4.1-flash:max"
     (agent_home / "config.yml").write_text("modelRoles:\n  smol: zai/glm-5.3-flash\n", encoding="utf-8")
     assert ohmy.OMP.config_model() is None
+    # a one-line flow mapping and a block opened by a comment are the same setting
+    (agent_home / "config.yml").write_text("modelRoles: {smol: zai/glm-5.3, default: zai/glm-5.4:high}\n")
+    assert ohmy.OMP.config_model() == "zai/glm-5.4:high"
+    (agent_home / "config.yml").write_text("modelRoles:  # who does what\n  default: 'zai/glm-5.4'  # quoted\n")
+    assert ohmy.OMP.config_model() == "zai/glm-5.4"
+    # omp reads config.yml, or config.yaml when there is no config.yml: a stale config.yaml never wins
+    (agent_home / "config.yml").write_text("modelRoles:\n  smol: zai/glm-5.3\n", encoding="utf-8")
+    (agent_home / "config.yaml").write_text("modelRoles:\n  default: stale/model\n", encoding="utf-8")
+    assert ohmy.OMP.config_model() is None
+    (agent_home / "config.yml").unlink()
+    assert ohmy.OMP.config_model() == "stale/model"
+
+
+def test_omp_settings_folder_is_the_one_omp_resolves(tmp_path, monkeypatch):
+    """omp joins PI_CONFIG_DIR to the home folder (even an absolute one), takes a named profile before
+    PI_CODING_AGENT_DIR, and treats an empty or `default` OMP_PROFILE as the default profile."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(ohmy.Path, "home", classmethod(lambda cls: tmp_path))
+    for name in ("PI_CODING_AGENT_DIR", "PI_CONFIG_DIR", "OMP_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    assert ohmy.agent_dir() == tmp_path / ".omp" / "agent"
+    monkeypatch.setenv("PI_CONFIG_DIR", ".omp2")
+    assert ohmy.agent_dir() == tmp_path / ".omp2" / "agent"
+    monkeypatch.setenv("PI_CONFIG_DIR", str(tmp_path / "abs"))
+    assert ohmy.agent_dir() == tmp_path / str(tmp_path / "abs") / "agent"  # joined, as omp does
+    monkeypatch.delenv("PI_CONFIG_DIR")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "own"))
+    for profile in ("", "default"):
+        monkeypatch.setenv("OMP_PROFILE", profile)
+        assert ohmy.agent_dir() == tmp_path / "own"  # the default profile still uses PI_CODING_AGENT_DIR
+    monkeypatch.setenv("OMP_PROFILE", "work")
+    assert ohmy.agent_dir() == tmp_path / ".omp" / "profiles" / "work" / "agent"  # a profile ignores it
+
+
+def test_an_omp_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
+    """omp with no sign-in exits at once and says "No API key found for openai." (or a 401 / "Use /login, ..."):
+    that is a signed-out helper, paused on the first failure, not a plain exit retried five times."""
+    manager = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, "http://127.0.0.1:9/mcp")
+    code = "import sys; print('No API key found for openai.', file=sys.stderr); raise SystemExit(1)"
+    monkeypatch.setattr(manager, "_command", lambda s, token, workdir: ([sys.executable, "-c", code], dict(os.environ), ""))
+    s = agents.Session("omp-1", "omp", "Oh My Pi #1", "game", "omp-1", {})
+    assert manager._run_cli(s, "token", tmp_path) is False
+    assert s.signed_out and "isn't signed in" in s.error and "omp login" in s.error
 
 
 def test_opencode_2_starts_and_its_quota_error_says_so(tmp_path, monkeypatch):
