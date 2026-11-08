@@ -73,6 +73,7 @@ class Worker:
 
 class Pool:
     def __init__(self, count):
+        self.count=count
         self.executor = Executor(max_workers=count, purpose='Repair proposal generation',thread_name_prefix='deep-proposals')
         self.capacity = threading.BoundedSemaphore(count*2)
         self.local = threading.local()
@@ -103,7 +104,7 @@ class Pool:
         finally:
             with self.lock:self.running -= 1
 
-    def generate(self, args, kwargs, check):
+    def submit(self, args, kwargs, check):
         request = json.dumps([args,kwargs],sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()
         key = hashlib.sha256(request).digest()
         with self.lock:future = self.cache.get(key)
@@ -132,6 +133,9 @@ class Pool:
             except BaseException:
                 self.capacity.release()
                 raise
+        return future
+
+    def result(self,future,check):
         started=time.monotonic()
         while True:
             check()
@@ -146,6 +150,27 @@ class Pool:
                 if name in {'proposal_generation', 'cleanup_generation'} and isinstance(value,(int,float)) and value >= 0:
                     compile_timing.add(name,value)
         return list(result['choices']),dict(result['labels']),time.monotonic()-started
+
+    def generate(self,args,kwargs,check):
+        return self.result(self.submit(args,kwargs,check),check)
+
+    def stream(self,args,kwargs,check):
+        # Split pure generation by stage identity; identical lanes share each shard.
+        # Arrival order changes exploration order, never compiler/judge authority.
+        started=time.monotonic()
+        count=min(4,self.count)
+        pending=[self.submit(args,{**kwargs,'_partition':(index,count)},check) for index in range(count)]
+        while pending:
+            check()
+            ready=next((future for future in pending if future.done()),None)
+            if ready is None:
+                try:pending[0].result(timeout=.05)
+                except TimeoutError:pass
+                continue
+            pending.remove(ready)
+            choices,labels,_=self.result(ready,check)
+            yield choices,labels,time.monotonic()-started
+            started=time.monotonic()
 
     def close(self):
         self.stop.set()

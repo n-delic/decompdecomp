@@ -296,3 +296,42 @@ def test_consumed_ticket_plus_lane_retry_invocations_are_both_measured(monkeypat
         assert sum(c.get('compiler_invocations',0) for c in counts.values())==5
         assert search.compile_pool.metrics.snapshot()['pool_compiler_invocations']==3
     finally:search.compile_pool.close()
+
+
+def test_local_lookahead_overlaps_compiles_and_primes_history(monkeypatch):
+    from decompnet.app.deep_lookahead import Window
+    net,search=setup(monkeypatch,limit=4)
+    barrier=threading.Barrier(3);primed=[]
+    original=search._prime_trials
+    def prime(*args):primed.append(list(args[3]));return original(*args)
+    monkeypatch.setattr(search,'_prime_trials',prime)
+    def compile_(*args):
+        barrier.wait(4)
+        return compiler.CompileResult(True,b'object','')
+    net._compile=compile_
+    sources=['int f(){return 7;}','int f(){return 8;}']
+    try:
+        with Window(search,AGENT,net.project_row('game'),net.function(),None) as window:
+            window.ensure(sources)
+            barrier.wait(4)
+            for ticket in search._ahead.values():ticket.counted=True;ticket.future.result(3)
+        assert primed==[sources]
+    finally:search.compile_pool.close()
+
+
+def test_recent_identity_cache_preserves_keys_and_invalidates_every_capture(monkeypatch):
+    net,search=setup(monkeypatch)
+    proj=net.project_row('game');fn=net.function();source='int f(){return 7;}'
+    try:
+        first=search._recent_key(proj,fn,source,None)
+        assert first is not None and search._recent_key(proj,fn,source,None)==first
+        assert len(search._recent_keys)==1
+        monkeypatch.setenv('SYNTHETIC_DEEP_ENV','changed')
+        assert search._recent_key(proj,fn,source,None)!=first
+        before=search._recent_key(proj,fn,source,None)
+        assert search._recent_key(proj,{**dict(fn),'name':'renamed'},source,None)!=before
+        with net.store.tx() as db:db.execute("UPDATE projects SET config=json_set(config,'$.compiler.flags','-O1')")
+        assert search._recent_key(net.project_row('game'),fn,source,None)!=before
+        for index in range(80):search._recent_key(net.project_row('game'),fn,f'int f(){{return {index};}}',None)
+        assert len(search._recent_keys)<=64
+    finally:search.compile_pool.close()

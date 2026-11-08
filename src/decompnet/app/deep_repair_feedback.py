@@ -11,6 +11,7 @@ class Feedback:
         self.proofs={source:dict(source=source,score=score,depth=0,path=[],productive_steps=0,
                                 report={'rows':rows},output=output,granularity=granularity)}
         self.loan_sources=set()
+        self.nodes={}
 
     def record(self, parent, candidate, family, path, score, rows, output, reused=False, granularity="function"):
         before=self.proofs.get(parent,{})
@@ -28,9 +29,22 @@ class Feedback:
                 'unchanged_steps':int(output is not None and output==before.get('output'))}
 
     def order(self, queue, labels, source, parents):
-        self.state['pending']=[dict(source=c,parent_source=parents.get(c,(source,))[0],
-            parent_output=self.proofs.get(parents.get(c,(source,))[0],{}).get('output'),
-            path=self.proofs.get(parents.get(c,(source,))[0],{}).get('path',[])+[labels.get(c,'local_repair')]) for c in queue]
+        nodes={};pending=[]
+        for candidate in queue:
+            parent=parents.get(candidate,(source,))[0]
+            proof=self.proofs.get(parent,{})
+            family=labels.get(candidate,'local_repair')
+            cached=self.nodes.get(candidate)
+            if cached is None or (cached[0]!=parent or cached[1] is not proof or cached[2]!=family):
+                node=dict(source=candidate,parent_source=parent,parent_output=proof.get('output'),
+                          path=proof.get('path',[])+[family])
+                node['_feedback_key']=repair_effects.key(node)
+                node['_output_scope']=repair_effects.output_scope(node)
+                node['_parent_key']=repair_effects.parent_key(node)
+                cached=(parent,proof,family,node)
+            nodes[candidate]=cached;pending.append(cached[3])
+        self.nodes=nodes
+        self.state['pending']=pending
         repair_effects.rotate(self.state)
         queue[:]=[n['source'] for n in self.state['pending']]
 

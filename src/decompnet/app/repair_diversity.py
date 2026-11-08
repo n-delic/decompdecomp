@@ -64,7 +64,8 @@ def order(state, nodes, slot):
     def priority(node):
         parent = node.get('parent_output')
         family = (node.get('path') or [''])[-1]
-        key = hashlib.sha256(repr(parent).encode()).hexdigest()
+        from .repair_effects import parent_key
+        key = parent_key(node)
         row = parents.get(key,{}) if parent is not None else {}
         stalled = plateau(row)
         # A new source shape is a hypothesis; only a compiled output teaches novelty.
