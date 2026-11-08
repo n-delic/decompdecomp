@@ -612,14 +612,22 @@ const PART_STATE = {
   "": ["not checked yet", ""],
 };
 const hexShort = (n) => "0x" + n.toString(16).toUpperCase();
-async function loadCompilerAnswer() {
+let compilerAnswerCache = null;
+async function loadCompilerAnswer(summary = false) {
   clearTimeout(S.answerTimer);
   const slug = S.slug;
+  summary = summary && compilerAnswerCache?.slug === slug;
   let a;
-  try { a = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}`); } catch (e) { $("compilerAnswer").textContent = e.message; return; }
+  try { a = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}${summary ? "&summary=1" : ""}`); } catch (e) { $("compilerAnswer").textContent = e.message; return; }
   if (slug !== S.slug || S.tab !== "settings") return;
+  if (summary && !a.checking) return loadCompilerAnswer();
+  if (summary) {
+    const previous = new Map(compilerAnswerCache.parts.map(p => [JSON.stringify([p.start, p.end, p.toolchain, p.flags]), p.function_list]));
+    for (const p of a.parts || []) p.function_list = previous.get(JSON.stringify([p.start, p.end, p.toolchain, p.flags]));
+    a.default_function_list = compilerAnswerCache.default_function_list;
+  } else compilerAnswerCache = {slug, parts:a.parts || [], default_function_list:a.default_function_list};
   renderCompilerAnswer(a);
-  if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
+  if (a.checking) S.answerTimer = setTimeout(() => loadCompilerAnswer(true), COMPILER_ANSWER_EVERY_MS);
 }
 $("compilerAnswer").addEventListener("click", e => {
   const fn = e.target.closest("[data-compiler-function]");
@@ -829,7 +837,7 @@ function renderCompilerParts(a) {
     return `<li class="compiler-range"><div class="compiler-range-heading"><code>${hexShort(p.start)}–${hexShort(p.end)}</code>
       <span class="part-state ${esc(p.check || "none")}">${esc(word)}</span>
       ${p.functions != null ? `<span class="muted small">${plural(p.functions, "function")}</span>` : ""}
-      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" title="Return this range to the default compiler">Remove</button></div>
+      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with the default compiler again" title="Return this range to the default compiler">Remove</button></div>
       ${showProfile ? `<div class="small"><b>${esc(p.compiler)}</b><code class="compiler-arguments">${esc(p.flags)}</code></div>` : ""}
       ${p.file ? `<div class="muted small mono">${esc(p.file)}</div>` : ""}
       <div class="compiler-function-links">${compilerFunctionLinks(p.function_list)}</div>
@@ -862,7 +870,7 @@ function renderCompilerAnswer(a) {
   setHtml($("compilerAnswer"), `<details class="compiler-profile compiler-default" data-default-functions${defaultOpen ? " open" : ""}>
     <summary><span><b>${esc(a.compiler)}</b> <span class="chip-s">Default</span> <code class="compiler-arguments">${esc(a.flags || "No arguments")}</code>${a.default_functions != null ? `<span class="compiler-profile-count">${plural(a.default_functions, "function")}</span>` : ""}</span></summary>
     <div class="compiler-default-functions">${a.default_function_list?.length ? `<div class="compiler-function-links">${compilerFunctionLinks(a.default_function_list)}</div>` : `<p class="small muted">${a.default_functions === 0 ? "No functions use the default settings." : "Function details are provided by the project's build."}</p>`}</div>
-    </details>`);
+    </details>${a.elsewhere_count ? ` <span class="muted">${a.elsewhere_count === 1 ? "One more stretch of code looks" : `${a.elsewhere_count.toLocaleString()} more stretches of code look`} like another compiler's work; the app suggests a change once agents' C proves it.</span>` : ""}`);
   $("compilerState").textContent = a.checking ? "checking…" : "";
   renderCompilerParts(a);
   const sv = a.survey || {};
@@ -876,7 +884,7 @@ function renderCompilerAnswer(a) {
   $("checkNow").onclick = async () => {
     try { renderCompilerAnswer(await api("/api/compilermap", { method: "POST", body: { slug: S.slug } })); } catch (e) { return toast(esc(e.message), "err"); }
     clearTimeout(S.answerTimer);
-    S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
+    S.answerTimer = setTimeout(() => loadCompilerAnswer(true), COMPILER_ANSWER_EVERY_MS);
   };
 }
 function renderCompilerWaiting(ov) {

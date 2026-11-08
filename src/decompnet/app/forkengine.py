@@ -3900,7 +3900,7 @@ class ForkEngine:
                 "compilers": [c.id for c in consoles.get(cfg.get("platform")).project_compilers(fp)],
                 "compiler_ranges": parts}
 
-    def compiler_answer(self, slug: str) -> dict:
+    def compiler_answer(self, slug: str, *, include_functions: bool = True) -> dict:
         """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
         with another, each kept because its matched functions match with it."""
         proj, fp, cfg = self.get(slug)
@@ -3927,7 +3927,7 @@ class ForkEngine:
                             "ranges": c["spans"], "compiler": consoles.compiler_name(c["toolchain"])} for c in checks],
                 "parts": [{"start": p["start"], "end": p["end"], "compiler": p["name"], "flags": "", "file": p["file"],
                            "toolchain": p["toolchain"], "family": toolchains.compiler_family(p["toolchain"]) or p["toolchain"],
-                           "function_list": part_functions(p),
+                           **({"function_list": part_functions(p)} if include_functions else {}),
                            "functions": len(part_functions(p)) if p["end"] > p["start"] else None,
                            "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
                           for p in parts]}

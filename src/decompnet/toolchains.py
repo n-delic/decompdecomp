@@ -53,6 +53,7 @@ class Toolchain:
     license: str
     source: str
     description: str = ""
+    family: str = ""  # display grouping for related compiler builds
     kind: str = "compiler"  # compiler | runtime | tool
     platform: str = ""
     arch: str = ""
@@ -152,6 +153,8 @@ def compiler_family(tid: str) -> str:
     declared = _registry_data().get(tid, {}).get("family")
     if declared:
         return declared
+    if tid.startswith("sn-n64-"):
+        return "sn64"
     for family in ("gcc", "ido", "sn64", "metrowerks", "msvc"):
         if family in tid.split("-"):
             return family

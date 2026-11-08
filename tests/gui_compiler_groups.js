@@ -42,6 +42,7 @@ ctx.S.ov.kind=undefined;ctx.renderCompilerParts({parts});
 assert.match(elements.get('compilerParts').innerHTML, /Replace default with this profile/);
 assert.match(elements.get('compilerParts').innerHTML, /Test all non-matches/);
 const menuHtml = elements.get('compilerParts').innerHTML;
+assert.match(menuHtml, /aria-label="Build 30 to 40 with the default compiler again"/);
 assert.match(menuHtml, /class="agent-menu compiler-profile-menu"/);
 assert.match(menuHtml, /<summary aria-label="Actions for [^"]+ profile"[^>]*>⋮<\/summary>/);
 const menu = menuHtml.match(/<div class="agent-menu-items">(.*?)<\/div>/s)[1];
@@ -89,6 +90,8 @@ assert.match(defaultCard, /<b>GCC A<\/b> <span class="chip-s">Default<\/span> <c
 assert.match(defaultCard, /data-compiler-function="default_function"/);
 ctx.renderCompilerAnswer({compiler:'GCC A', flags:'', default_functions:0, parts:[], elsewhere_count:0});
 assert.match(elements.get('compilerAnswer').innerHTML, /No functions use the default settings/);
+ctx.renderCompilerAnswer({compiler:'GCC A', flags:'', default_functions:0, parts:[], elsewhere_count:3});
+assert.match(elements.get('compilerAnswer').innerHTML, /3 more stretches of code look like another compiler's work/);
 
 // #239: status order is independent of input/address order; unknown states follow verified states.
 const statuses = [

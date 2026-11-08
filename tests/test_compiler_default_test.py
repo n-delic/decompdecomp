@@ -31,6 +31,19 @@ def net(tmp_path, monkeypatch):
 PROFILE={'toolchain':'ido-5.3','flags':['-O1']}
 
 
+def test_compiler_answer_summary_omits_function_lists_but_preserves_counts(net, monkeypatch):
+    monkeypatch.setattr(net, 'compiler_map', lambda *args, **kwargs: None)
+    monkeypatch.setattr('decompnet.app.engine.compilers.consoles.compiler_name', lambda tc: tc)
+    full = net.compiler_answer('game')
+    summary = net.compiler_answer('game', include_functions=False)
+    assert full['default_functions'] == summary['default_functions'] == 2
+    assert len(full['default_function_list']) == 2
+    assert 'default_function_list' not in summary
+    assert full['parts'][0]['functions'] == summary['parts'][0]['functions'] == 2
+    assert len(full['parts'][0]['function_list']) == 2
+    assert 'function_list' not in summary['parts'][0]
+
+
 def test_only_default_matches_are_checked_and_nothing_is_changed(net, monkeypatch):
     before_config=net._project('game')['config']
     before_rows=[dict(r) for r in net.store.all('SELECT * FROM functions ORDER BY id')]

@@ -10,6 +10,7 @@ import logging
 import re
 import threading
 import time
+from bisect import bisect_left, bisect_right
 
 from ... import arch, compilermap, consoles, toolchains
 from ...network import Agent, NetworkError
@@ -345,7 +346,7 @@ class CompilerMixin:
         own = self.cfg(proj).get("auto_compiler")
         return self.auto_compiler if own is None else bool(own)
 
-    def compiler_answer(self, slug: str, check_now: bool = False) -> dict:
+    def compiler_answer(self, slug: str, check_now: bool = False, *, include_functions: bool = True) -> dict:
         """Which compiler built the game, as one answer for the GUI: the project's compiler, the parts built with
         another one (each with what checking it said), and the stretches whose code looks like another compiler's
         that nothing applies yet. The app does the checking itself: the judge's survey runs in the background when
@@ -361,7 +362,7 @@ class CompilerMixin:
                     files.start_survey(slug)
                 if check_now:
                     files.recheck(slug)
-            return self.forks.compiler_answer(slug)
+            return self.forks.compiler_answer(slug, include_functions=include_functions)
         self._rom_only(slug, "the compiler answer")
         proj = self._project(slug)
         cfg = self.cfg(proj)
@@ -381,24 +382,36 @@ class CompilerMixin:
         checks = cfg.get("range_checks", [])
         audits = {tuple(map(tuple, c["spans"])): c for c in checks if c.get("audit")}
         parts = []
-        function_rows = self.rangechecks._rows(proj)
+        function_rows = sorted(self.rangechecks._rows(proj), key=lambda f: f["vram"])
+        addresses = [f["vram"] for f in function_rows]
         for r in ranges:
             c = audits.get(((r["start"], r["end"]),)) or {}
+            members = function_rows[bisect_left(addresses, r["start"]):bisect_left(addresses, r["end"])]
             parts.append({"start": r["start"], "end": r["end"], "compiler": consoles.compiler_name(r["toolchain"]),
                           "flags": " ".join(r["flags"]), "flag_list": list(r["flags"]), "toolchain": r["toolchain"],
                           "default": (r["toolchain"], tuple(r["flags"])) == main,
                           "family": toolchains.compiler_family(r["toolchain"]) or r["toolchain"],
-                          "functions": sum(r["start"] <= f["vram"] < r["end"] for f in function_rows),
-                          "function_list": [{k: f[k] for k in ("name", "vram", "status")} for f in function_rows if r["start"] <= f["vram"] < r["end"]],
+                          "functions": len(members),
+                          **({"function_list": [{k: f[k] for k in ("name", "vram", "status")} for f in members]}
+                             if include_functions else {}),
                           "check": c.get("status", ""), "said": c.get("said", "")})
         elsewhere = sorted((r for r in (cmap.runs if cmap else []) if r.differs()), key=lambda r: -r.functions)
+        ordered = sorted(ranges, key=lambda r: r["start"])
+        starts = [r["start"] for r in ordered]
+        disjoint = all(a["end"] <= b["start"] for a, b in zip(ordered, ordered[1:]))
         def uses_default(fn):
-            own = compiler_for(cfg, fn["vram"])
+            if disjoint:
+                index = bisect_right(starts, fn["vram"]) - 1
+                part = ordered[index] if index >= 0 and fn["vram"] < ordered[index]["end"] else None
+                own = part or cfg["compiler"]
+            else:
+                own = compiler_for(cfg, fn["vram"])
             return (own["toolchain"], tuple(own["flags"])) == main
+        default_rows = [f for f in function_rows if uses_default(f)]
         # the compiler's name and its flags apart: "built with KMC GCC 2.7.2" reads at a glance, the flags are details
         return {"compiler": consoles.compiler_name(main[0]), "flags": " ".join(main[1]), "parts": parts,
-                "default_function_list": [dict(f) for f in function_rows if uses_default(f)],
-                "default_functions": sum(uses_default(f) for f in function_rows), "mips": cmap is not None,
+                **({"default_function_list": [dict(f) for f in default_rows]} if include_functions else {}),
+                "default_functions": len(default_rows), "mips": cmap is not None,
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": self._short(r.label), "functions": r.functions,
                                "confirmed": r.confirmed} for r in elsewhere[:self.ANSWER_STRETCHES]],
                 "elsewhere_count": len(elsewhere),

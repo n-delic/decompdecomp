@@ -12,6 +12,13 @@ import pytest
 
 from decompnet import limits, toolchains
 
+
+def test_compiler_family_groups_registered_builds():
+    assert toolchains.compiler_family('sn-n64-272-0001') == 'sn64'
+    assert toolchains.compiler_family('mwcps2-2.3.3') == 'metrowerks'
+    assert toolchains.compiler_family('mwccpsp-3.0.1-b121') == 'metrowerks'
+    assert toolchains.compiler_family('gcc-2.7.2-kmc') == 'gcc'
+
 # Archives _extract opens with a third-party module rather than the standard library.
 _EXTERNAL_EXTRACTORS = {".zst": "zstandard"}
 

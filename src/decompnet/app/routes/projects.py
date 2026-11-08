@@ -141,7 +141,8 @@ def register(app: App) -> None:
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
         answer is old. POST: check again now (the survey and the applied ranges)."""
-        return net.compiler_answer(slug, check_now=request.method == "POST")
+        return net.compiler_answer(slug, check_now=request.method == "POST",
+                                   include_functions=request.query_params.get("summary") != "1")
 
     def p_open(slug, request, data):
         why = hostenv.open_folder(Path(net.project_row(slug)["root"]))
