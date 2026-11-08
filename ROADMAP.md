@@ -3188,3 +3188,17 @@ unit's object reader before enabling this family for imported builds. Existing
 - Planned: corresponding mixed frame/pointer evidence readers for non-MIPS
   architectures. Their supported 32-bit source-tail families already work;
   inferred frame proposals remain unavailable without an architecture witness.
+
+### Repair analysis: remaining adapter and macro mapping gaps
+
+Done: call-preparation guard reasons in agent feedback and frozen checkpoint
+reports; opt-in installed native GCC preprocessing evidence; bounded private
+exact-verdict/allocated-output recipe reduction. The shared recipe callback works
+with ROM or PROJECT judges; no live adoption is performed.
+
+Remaining: preprocessing adapters for non-GCC/custom drivers, source-span mapping
+from expanded macros back to original C, and evidence-backed narrowing of the
+broad header-qualifier guard. Macro-expanded pointer expressions still need alias
+proof. The frozen exported-ROM CLI is MIPS-only; other targets need their copied
+ordinary build/objdiff evaluator. Neither diagnostic expansion nor recipe hashes
+replace that exact judge.
