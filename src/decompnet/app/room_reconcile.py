@@ -4,11 +4,13 @@ import json
 import threading
 import time
 import uuid
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from ..network import NetworkError
 from . import room_matches
 
 PAGE = 128
+VERIFY_WORKERS = 4
 
 
 def _key(room):
@@ -90,8 +92,15 @@ def exchange(room, member, data):
                         or not isinstance(item.get('vram'),int) or not isinstance(item.get('size'),int)
                         or not isinstance(item.get('target_sha256'),str) or len(item['target_sha256'])!=64):
                     raise NetworkError('Match inventory needs a function name, location, size and target hash.')
-                rows = room.store.all('SELECT id,name,status,target FROM functions WHERE project_id=? AND vram=? AND size=? '
-                                      'AND rom_offset IS ?', room.proj['id'], item['vram'], item['size'], item.get('rom_offset'))
+                if item is items[0]:
+                    # One bounded target read per page rather than a query per function.
+                    addresses=list({value.get('vram') for value in items if isinstance(value,dict) and isinstance(value.get('vram'),int)})
+                    candidates=room.store.all('SELECT id,name,status,target,vram,size,rom_offset FROM functions WHERE project_id=? '
+                        'AND vram IN ('+','.join('?' for _ in addresses)+')',room.proj['id'],*addresses)
+                    by_location={}
+                    for candidate in candidates:
+                        by_location.setdefault((candidate['vram'],candidate['size'],candidate['rom_offset']),[]).append(candidate)
+                rows=by_location.get((item['vram'],item['size'],item.get('rom_offset')),[])
                 from ..match_bundle import digest
                 same = [r for r in rows if digest(r['target'] or b'') == item['target_sha256']]
                 ident = member.name+':'+_identity(item)
@@ -109,12 +118,12 @@ def exchange(room, member, data):
             entry.update(status='running',total=total,updated=time.time())
             _save(room,state)
             return {'requested':requested}
-        if action not in ('apply','skip'):raise NetworkError('Choose inventory, apply, skip or finish.')
+        if action not in ('apply','enqueue','skip'):raise NetworkError('Choose inventory, apply, skip or finish.')
         key = data.get('key')
         row = state['results'].get(key)
         if not row or row['client']!=member.name or not row['host_function']:
             raise NetworkError('This bundle was not requested from this room member.')
-        if row['status']!='waiting':return {'matched':row['status']=='applied', 'reason':row['reason']}
+        if row['status']!='waiting':return {'matched':row['status']=='applied', 'queued':row['status'] in ('queued','verifying'), 'reason':row['reason']}
         if action=='skip':
             row.update(status='not_applied',reason='Client could not supply its bundle: '+str(data.get('reason') or 'Inputs changed; reconcile again.')[:1000])
             _save(room,state)
@@ -122,13 +131,30 @@ def exchange(room, member, data):
         evidence=data.get('evidence')
         if not isinstance(evidence,dict) or evidence.get('target_sha256')!=row['target_sha256']:
             raise NetworkError('The fresh bundle target differs from the inventoried function. Reconcile again.')
+        if action=='enqueue':
+            agent=room.agent_for(member,'room-reconcile')
+            submission,_=room_matches.save(room.net,room.slug,'host',agent,row['host_function'],data.get('source'),evidence)
+            row.update(status='queued',reason='Uploaded — waiting for host byte verification',submission=submission)
+            entry['updated']=time.time()
+            _save(room,state)  # Acknowledge only after both source and queue position are durable.
+            resume(room)
+            return {'queued':True}
         function=row['host_function']
         row.update(status='verifying',reason='Host compiling client source, header and compiler settings')
         entry['updated']=time.time()
         _save(room,state)
     try:
-        agent=room.agent_for(member,'room-reconcile')
-        result=room_matches.verify(room.net,room.slug,agent,function,data.get('source'),evidence,preserve_exact=True)
+        # Share capacity across clients and rooms, not four new compiles per member.
+        gate=room.net.__dict__.setdefault('_room_verification_gate',threading.BoundedSemaphore(VERIFY_WORKERS))
+        while not gate.acquire(timeout=.1):
+            with lock(room):_current(room,member,data.get('id'))
+        try:
+            with lock(room):_current(room,member,data.get('id'))
+            from .. import compile_sessions
+            with compile_sessions.session():
+                agent=room.agent_for(member,'room-reconcile')
+                result=room_matches.verify(room.net,room.slug,agent,function,data.get('source'),evidence,preserve_exact=True)
+        finally:gate.release()
     except (NetworkError,ValueError) as error:
         result={'matched':False,'reason':str(error)}
     with lock(room):
@@ -141,13 +167,73 @@ def exchange(room, member, data):
     return result
 
 
+def resume(room):
+    """Drain persisted host submissions independently of connected upload clients."""
+    if room.fork:return
+    with lock(room):
+        worker=room.__dict__.get('_verification_worker')
+        if worker and worker.is_alive():return
+        state=snapshot(room)
+        if not state or not state['active']:return
+        changed=False
+        for row in state['results'].values():
+            if row['status']=='verifying' and row.get('submission'):
+                row.update(status='queued',reason='Resuming host verification after restart');changed=True
+        if changed:_save(room,state)
+        if not any(r['status']=='queued' for r in state['results'].values()):return
+        run=state['id']
+        def verify(key,submission):
+            gate=room.net.__dict__.setdefault('_room_verification_gate',threading.BoundedSemaphore(VERIFY_WORKERS))
+            while not gate.acquire(timeout=.1):
+                current=snapshot(room)
+                if not current or not current['active'] or current['id']!=run:return {'matched':False,'reason':'Verification stopped; uploaded evidence retained'}
+            try:
+                current=snapshot(room)
+                if not current or not current['active'] or current['id']!=run:return {'matched':False,'reason':'Verification stopped; uploaded evidence retained'}
+                from .. import compile_sessions
+                with compile_sessions.session():
+                    return room_matches.retry(room.net,room.slug,submission,preserve_exact=True)
+            except Exception as error:
+                return {'matched':False,'reason':str(error)}
+            finally:gate.release()
+        def work():
+            pending={}
+            with ThreadPoolExecutor(max_workers=VERIFY_WORKERS,thread_name_prefix='room-verify') as pool:
+                while True:
+                    with lock(room):
+                        current=snapshot(room)
+                        if not current or not current['active'] or current['id']!=run:
+                            room._verification_worker=None
+                            return
+                        changed=False
+                        for future in list(pending):
+                            if not future.done():continue
+                            key=pending.pop(future);result=future.result();changed=True
+                            current['results'][key].update(status='applied' if result.get('matched') else 'not_applied',
+                                reason=result.get('reason') or 'Host could not verify uploaded bundle')
+                        for key,row in current['results'].items():
+                            if len(pending)>=VERIFY_WORKERS:break
+                            if row['status']!='queued':continue
+                            changed=True
+                            row.update(status='verifying',reason='Host compiling uploaded source and checking linked bytes')
+                            pending[pool.submit(verify,key,row['submission'])]=key
+                        if changed:_save(room,current)
+                        if not pending:
+                            room._verification_worker=None
+                            return
+                    wait(pending,timeout=.1,return_when=FIRST_COMPLETED)
+        worker=threading.Thread(target=work,daemon=True,name='room-verification-'+room.slug)
+        room._verification_worker=worker
+        worker.start()
+
+
 def close(room):
     with lock(room):
         state=snapshot(room)
         if state:
             state['active']=False
             for row in state['results'].values():
-                if row['status'] in ('waiting','verifying'):
+                if row['status'] in ('waiting','queued','verifying'):
                     row.update(status='not_applied',reason='Reconciliation interrupted. Run again to resume; an in-flight host check may still finish.')
             for entry in state['members'].values():
                 if entry['status'] in ('running','waiting'):entry['status']='interrupted'
@@ -157,19 +243,24 @@ def close(room):
 def run(room, log):
     state=start(room)
     settle_pending(room)
+    resume(room)
     try:
         while True:
             log.check_cancel()
             with lock(room):
                 state=snapshot(room)
+                changed=False
                 for entry in state['members'].values():
-                    if entry['status']=='waiting' and time.time()-state['started']>45:entry['status']='unresponsive'
-                    if entry['status']=='running' and time.time()-entry.get('updated',state['started'])>180:entry['status']='interrupted'
-                _save(room,state)
+                    if entry['status']=='waiting' and time.time()-state['started']>45:
+                        entry['status']='unresponsive';changed=True
+                    if entry['status']=='running' and time.time()-entry.get('updated',state['started'])>180:
+                        entry['status']='interrupted';changed=True
+                if changed:_save(room,state)
             rows=list(state['results'].values())
             log.progress({'phase':'Reconciling room matches', 'finished':sum(r['status'] in ('applied','not_applied') for r in rows),
                           'total':len(rows), 'members':state['members'], 'results':rows})
-            if not any(m['status'] in ('waiting','running') for m in state['members'].values()):break
+            if (not any(m['status'] in ('waiting','running') for m in state['members'].values())
+                    and not any(r['status'] in ('queued','verifying') for r in rows)):break
             log.cancel_event.wait(0.5)
         log(f"Reconciliation complete: {sum(r['status']=='applied' for r in rows)} matches applied; "
             f"{sum(r['status']=='not_applied' for r in rows)} need attention.")
@@ -204,22 +295,45 @@ def client_run(link, run):
     rows=net.project_store(link.slug).all("SELECT name,vram,rom_offset,size,target FROM functions WHERE project_id=? "
                                          "AND status='matched' AND matched_source IS NOT NULL ORDER BY id",proj['id'])
     error=''
+    pending=set()
+    def check():
+        if link._stop.is_set():
+            raise NetworkError('Client disconnected during reconciliation; run it again after reconnecting.')
+    def send(item):
+        check()
+        try:
+            fn=net._function(item['local'],link.slug)
+            source=fn['matched_source']
+            if fn['status']!='matched' or not source:
+                raise NetworkError('Client inputs changed; reconcile again.')
+            evidence=room_matches.packet(net,link.slug,fn['name'],source)
+        except NetworkError as exc:
+            return link._req('POST','/collab/reconcile',{'id':run,'action':'skip','key':item['key'],'reason':str(exc)})
+        check()
+        return link._req('POST','/collab/reconcile',{'id':run,'action':'enqueue','key':item['key'],'source':source,'evidence':evidence})
+    def drain():
+        nonlocal pending
+        while True:
+            check()
+            done,remaining=wait(pending,timeout=.1,return_when=FIRST_COMPLETED)
+            if done:
+                pending=remaining
+                for future in done:future.result()
+                return
     try:
-        for offset in range(0,len(rows),PAGE):
-            if link._stop.is_set():raise NetworkError('Client disconnected during reconciliation; run it again after reconnecting.')
-            page=[{k:r[k] for k in ('name','vram','rom_offset','size')} | {'target_sha256':digest(r['target'] or b'')} for r in rows[offset:offset+PAGE]]
-            response=link._req('POST','/collab/reconcile',{'id':run,'action':'inventory','page':offset//PAGE,'total':len(rows),'items':page})
-            for item in response['requested']:
-                try:
-                    fn=net._function(item['local'],link.slug)
-                    source=fn['matched_source']
-                    if fn['status']!='matched' or not source:
-                        raise NetworkError('Client inputs changed; reconcile again.')
-                    evidence=room_matches.packet(net,link.slug,fn['name'],source)
-                except NetworkError as exc:
-                    link._req('POST','/collab/reconcile',{'id':run,'action':'skip','key':item['key'],'reason':str(exc)})
-                    continue
-                link._req('POST','/collab/reconcile',{'id':run,'action':'apply','key':item['key'],'source':source,'evidence':evidence})
+        with ThreadPoolExecutor(max_workers=VERIFY_WORKERS,thread_name_prefix='room-bundle') as pool:
+            try:
+                for offset in range(0,len(rows),PAGE):
+                    check()
+                    page=[{k:r[k] for k in ('name','vram','rom_offset','size')} | {'target_sha256':digest(r['target'] or b'')} for r in rows[offset:offset+PAGE]]
+                    response=link._req('POST','/collab/reconcile',{'id':run,'action':'inventory','page':offset//PAGE,'total':len(rows),'items':page})
+                    for item in response['requested']:
+                        check()
+                        while len(pending)>=VERIFY_WORKERS:drain()
+                        pending.add(pool.submit(send,item))
+                while pending:drain()
+            finally:
+                for future in pending:future.cancel()
     except Exception as exc:
         error=str(exc)
     try:

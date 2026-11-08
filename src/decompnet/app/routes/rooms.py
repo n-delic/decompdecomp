@@ -147,21 +147,24 @@ def register(app: App) -> None:
             def reconciliation_job():
                 with jobs._lock:current=list(jobs.jobs.values())
                 return next((j['id'] for j in current if j.get('scope')=={'slug':slug,'task':'room-reconcile'} and j['state']=='running'),None)
+            def start_reconciliation():
+                with room_reconcile.lock(room):
+                    identity=reconciliation_job()
+                    if not identity:
+                        identity=jobs.start('room match reconciliation',lambda log:room_reconcile.run(room,log),
+                                            cancel_message='Reconciliation stopped. Verified matches are kept; run again to resume missing matches.')
+                        jobs.jobs[identity]['scope']={'slug':slug,'task':'room-reconcile'}
+                    return {'job':identity}
             if request.method=='GET':
+                state=await app.read(room_reconcile.snapshot,room) if room else None
+                if (state and state['active'] and any(r['status'] in ('queued','verifying') for r in state['results'].values())
+                        and not reconciliation_job()):
+                    await app.read(start_reconciliation)
                 return JSONResponse({'rows':await app.read(room_matches.public,net,slug),'guest':slug in net.links,
-                                     'reconciliation':await app.read(room_reconcile.snapshot,room) if room else None,
-                                     'reconcile_job':reconciliation_job()})
+                                     'reconciliation':state,'reconcile_job':reconciliation_job()})
             if data.get('reconcile'):
                 if not room or slug in net.links:
                     raise NetworkError('Start sharing this project from the host before reconciling room matches.')
-                def start_reconciliation():
-                    with room_reconcile.lock(room):
-                        identity=reconciliation_job()
-                        if not identity:
-                            identity=jobs.start('room match reconciliation',lambda log:room_reconcile.run(room,log),
-                                                cancel_message='Reconciliation stopped. Verified matches are kept; run again to resume missing matches.')
-                            jobs.jobs[identity]['scope']={'slug':slug,'task':'room-reconcile'}
-                        return {'job':identity}
                 return JSONResponse(await app.read(start_reconciliation))
             if await app.read(net.fork_slug, slug):
                 raise NetworkError('Imported-project rooms verify their source tree/build settings; portable compiler/header bundles currently support ROM projects.')

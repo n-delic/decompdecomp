@@ -77,6 +77,8 @@ class Room:
         self._hits: dict[str, deque] = defaultdict(lambda: deque(maxlen=900))
         self._members: tuple[float, list] = (0.0, [])  # cached: every member polls, the list changes slowly
         self._drain_membership()
+        from .room_reconcile import resume
+        resume(self)
 
     @property
     def store(self):

@@ -61,6 +61,8 @@ def test_client_inventory_resends_exact_bundle_despite_host_claim(pair,monkeypat
     monkeypatch.setattr(host,'_compile',concurrent_compile)
     run=begin(room,member)
     reconcile.client_run(link,run)
+    worker=room.__dict__.get('_verification_worker')
+    if worker:worker.join(10)
     state=reconcile.snapshot(room)
     assert state['members'][member.name]['status']=='done'
     rows=list(state['results'].values())
@@ -74,6 +76,8 @@ def test_client_inventory_resends_exact_bundle_despite_host_claim(pair,monkeypat
     reconcile.close(room)
     run=begin(room,member)
     reconcile.client_run(link,run)
+    worker=room.__dict__.get('_verification_worker')
+    if worker:worker.join(10)
     state=reconcile.snapshot(room)
     assert state['members'][member.name]['shared']==1 and not state['results']
 
@@ -197,3 +201,83 @@ def test_missing_client_bundle_is_reported_without_claiming_a_host_match(pair):
     result=reconcile.exchange(room,member,{'id':run,'action':'skip','key':reply['requested'][0]['key'],'reason':'Client function changed'})
     assert not result['matched'] and 'Client function changed' in result['reason']
     assert host._function('func_80000808',slug)['status']=='open'
+
+
+def test_uploaded_bundles_verify_after_client_disconnects(pair,monkeypatch):
+    host,slug,guest,gslug,room,member,link=pair
+    agent,_=guest.local_agent('author')
+    assert guest.attempt(agent,'func_80000808',DAMAGE,gslug)['matched']
+    entered=threading.Event();release=threading.Event()
+    retry=room_matches.retry
+    def blocked(*args,**kwargs):
+        entered.set()
+        assert release.wait(10)
+        return retry(*args,**kwargs)
+    monkeypatch.setattr(room_matches,'retry',blocked)
+    run=begin(room,member)
+    try:
+        reconcile.client_run(link,run)
+        assert entered.wait(2)
+        state=reconcile.snapshot(room)
+        assert state['members'][member.name]['status']=='done'
+        row=next(iter(state['results'].values()))
+        assert row['status']=='verifying'
+        saved=json.loads(room.store.one('SELECT value FROM settings WHERE key=?',row['submission'])['value'])
+        assert saved['source']==DAMAGE and saved['evidence']['header'] is not None
+        link._stop.set()  # All uploaded data now belongs to the host queue.
+    finally:
+        release.set()
+        worker=room.__dict__.get('_verification_worker')
+        if worker:worker.join(10)
+    assert next(iter(reconcile.snapshot(room)['results'].values()))['status']=='applied'
+    assert host._function('func_80000808',slug)['status']=='matched'
+
+
+def test_host_queue_resumes_persisted_upload_after_room_recreation(pair,monkeypatch):
+    host,slug,guest,gslug,room,member,link=pair
+    run=begin(room,member)
+    reply=reconcile.exchange(room,member,{'id':run,'action':'inventory','items':[inventory(guest,gslug)],'page':0,'total':1})
+    evidence=room_matches.packet(guest,gslug,'func_80000808',DAMAGE)
+    resume=reconcile.resume
+    monkeypatch.setattr(reconcile,'resume',lambda room:None)
+    data={'id':run,'action':'enqueue','key':reply['requested'][0]['key'],'source':DAMAGE,'evidence':evidence}
+    assert reconcile.exchange(room,member,data)['queued']
+    assert reconcile.exchange(room,member,data)['queued']  # Idempotent acknowledgement.
+    monkeypatch.setattr(reconcile,'resume',resume)
+    reopened=collab.Room(host,slug)
+    worker=reopened.__dict__.get('_verification_worker')
+    if worker:worker.join(10)
+    state=reconcile.snapshot(reopened)
+    assert next(iter(state['results'].values()))['status']=='applied'
+    assert host._function('func_80000808',slug)['status']=='matched'
+
+
+def test_host_queue_bounds_parallel_checks_and_stop_preserves_unsent_work(pair,monkeypatch):
+    host,slug,guest,gslug,room,member,link=pair
+    names=[r['name'] for r in guest.project_store(gslug).all('SELECT name FROM functions WHERE project_id=? LIMIT 6',guest.project_row(gslug)['id'])]
+    assert len(names)>4
+    run=begin(room,member)
+    reply=reconcile.exchange(room,member,{'id':run,'action':'inventory','items':[inventory(guest,gslug,n) for n in names],'page':0,'total':len(names)})
+    entered=threading.Event();release=threading.Event();guard=threading.Lock();calls=[]
+    def blocked(net,slug,submission,**kwargs):
+        with guard:
+            calls.append(submission)
+            if len(calls)==4:entered.set()
+        assert release.wait(10)
+        return {'matched':False,'reason':'Test byte mismatch'}
+    monkeypatch.setattr(room_matches,'retry',blocked)
+    try:
+        for item in reply['requested']:
+            evidence=room_matches.packet(guest,gslug,item['local'],DAMAGE)
+            assert reconcile.exchange(room,member,{'id':run,'action':'enqueue','key':item['key'],'source':DAMAGE,'evidence':evidence})['queued']
+        assert entered.wait(3)
+        assert len(calls)==4
+        state=reconcile.snapshot(room)
+        assert any(r['status']=='queued' for r in state['results'].values())
+        reconcile.close(room)
+    finally:
+        release.set()
+        worker=room.__dict__.get('_verification_worker')
+        if worker:worker.join(10)
+    assert len(calls)==4
+    assert all(r['status']=='not_applied' for r in reconcile.snapshot(room)['results'].values())
