@@ -122,7 +122,7 @@ def _docs(out: Path, title: str, matched: int, total: int, fallback) -> None:
     notes = "".join(f"\n- `{n}`: kept as assembly, {why}" for n, why in fallback)
     (out / "README.md").write_text(f"""# {title} (decompilation)
 
-A matching decompilation of {title} for the Game Boy Advance, started with [decompdecomp](https://github.com/n-delic/decompdecomp).
+A matching decompilation of {title} for the Game Boy Advance, started with [decompdecomp](https://github.com/RetroReversing/decompdecomp).
 {matched} of {total} functions are C that agbcc compiles to exactly the original code; the rest is still assembly.
 `build.py` rebuilds the ROM from this tree and checks it against your original, byte for byte.
 

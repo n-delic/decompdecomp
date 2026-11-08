@@ -924,7 +924,7 @@ write_asm: true
         f.write("\n# decompdecomp\n.decomp-wtf/\n")
     (root / "README.md").write_text(f"""# {info['title']} ({gid}) decompilation
 
-Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp) on [dtk-template](https://github.com/encounter/dtk-template),
+Started from scratch with [decompdecomp](https://github.com/RetroReversing/decompdecomp) on [dtk-template](https://github.com/encounter/dtk-template),
 the layout GameCube and Wii decomps use. Every build rebuilds `main.dol` and checks it against your copy, byte for byte.
 
 1. Put your own copy of the game in `orig/{gid}/` (never commit it).

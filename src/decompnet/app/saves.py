@@ -489,7 +489,7 @@ def _write_readme(net, proj, folder: Path, manifest: dict, functions: dict) -> N
                f"- **Compiler:** {compiler_name}")
     readme = f"""# {proj['name']}: decompdecomp progress
 
-This is a saved decompilation project created with [decompdecomp](https://github.com/n-delic/decompdecomp).
+This is a saved decompilation project created with [decompdecomp](https://github.com/RetroReversing/decompdecomp).
 AI agents were used during the decompilation; their C attempts were kept only when decompdecomp's byte-for-byte
 judge accepted them as matches.
 
@@ -612,7 +612,7 @@ def _save_best(net, proj, folder: Path) -> dict:
             f"{names.get(r['best_agent_id'], '?')}; it belongs in {source} */\n\n" + r["best_source"].strip() + "\n")
     readme = f"""# {proj['name']}: the closest attempts so far
 
-Saved by [decompdecomp](https://github.com/n-delic/decompdecomp). Each file in `best/` is the closest C an agent wrote
+Saved by [decompdecomp](https://github.com/RetroReversing/decompdecomp). Each file in `best/` is the closest C an agent wrote
 for a function of the game that doesn't match byte for byte yet: its comment says how close,
 who wrote it and which source file it belongs in. They compile, but they're not the original's code.
 
