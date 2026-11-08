@@ -55,6 +55,7 @@ async function showHome() {
 
 function resetDrop() {
   picked = null;
+  $("errRetry").onclick = null;
   $("dropIdle").hidden = false;
   $("dropPicked").hidden = true;
   $("dropBusy").hidden = true;
@@ -434,7 +435,12 @@ function fillCompilers(select, current, platform, only) {
   }).join("");
 }
 
+let importRunning = false;
 async function runImport(query, file, title, name = "") {
+  if (importRunning) return;
+  importRunning = true;
+  $("dropError").hidden = true;
+  $("errRetry").onclick = null;
   $("dropIdle").hidden = true;
   $("dropPicked").hidden = true;
   $("dropBusy").hidden = false;
@@ -465,12 +471,20 @@ async function runImport(query, file, title, name = "") {
     loadNav();
     location.hash = `#/p/${res.slug}`;
   } catch (e) {
-    importFailed(name || title.replace(/^\w+ |…$/g, ""), e, $("jobLog").textContent);
-  } finally { clearInterval(tick); $("busyTime").textContent = ""; $("impWork").hidden = true; }
+    importFailed(name || title.replace(/^\w+ |…$/g, ""), e, $("jobLog").textContent, () => runImport(query, file, title, name));
+  } finally { importRunning = false; clearInterval(tick); $("busyTime").textContent = ""; $("impWork").hidden = true; }
 }
 
 /* A failed import stays on screen with what happened, ready to report: a toast is gone before it's read. */
-function importFailed(name, e, logText) {
+function importFailed(name, e, logText, retry) {
+  $("errRetry").hidden = !retry;
+  $("errRetry").onclick = retry ? (event) => {
+    event.stopPropagation();
+    // Consume the action immediately, before any upload or prerequisite request.
+    $("errRetry").onclick = null;
+    $("dropError").hidden = true;
+    return retry();
+  } : null;
   const job = e.job || {};
   const log = (job.log ? job.log.join("\n") : logText || "").trim();
   $("dropIdle").hidden = true; $("dropPicked").hidden = true; $("dropBusy").hidden = true;
@@ -510,7 +524,7 @@ $("analyse").onclick = async () => {
   if (!$("mwConsent").hidden) {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
     try { await ensureCodeWarrior(); } catch (e) {
-      importFailed(cwPack(packOf(picked.info)).title, e, $("jobLog").textContent);
+      importFailed(cwPack(packOf(picked.info)).title, e, $("jobLog").textContent, () => $("analyse").onclick());
       return;
     }
   }
