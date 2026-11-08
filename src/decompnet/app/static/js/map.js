@@ -23,7 +23,7 @@ function cssColor(name) {
   return [...swatch.getImageData(0, 0, 1, 1).data.slice(0, 3)];
 }
 function readColors() {
-  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
+  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), boundary: cssColor("--boundary-review"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
              notC: cssColor("--not-c"), cc: CC_COLORS.map(cssColor) };
 }
 
@@ -131,7 +131,7 @@ function applyAttempts(attempts) {
 function cellColor(f) {
   if (S.mapView === "compiler" && f.cc) return [colors.cc[ccIndex.get(f.cc) ?? 0], 1];
   if (f.status === "matched") return [f.polished ? colors.polished : colors.match, 1];
-  if (f.analysis_state === "boundary_review") return [colors.work, 1];
+  if (f.analysis_state === "boundary_review") return [colors.boundary, 1];
   // Set-aside assessments are not assembly provenance; incomplete extents stay yellow.
   if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
@@ -207,7 +207,7 @@ function drawMap() {
   for (const i of moving) {
     const [x, y] = at(i);
     if (!whole) restore(i, 1);
-    ctx.fillStyle = rgb(colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
+    ctx.fillStyle = rgb(S.map[i].analysis_state === "boundary_review" ? colors.boundary : colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
     ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
   }
   for (const [name, fl] of S.flash) {
