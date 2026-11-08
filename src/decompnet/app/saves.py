@@ -718,6 +718,7 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
     log("checking the saved project and your game copy")
     with tempfile.TemporaryDirectory(prefix="decomp-restore-") as tmp:
         folder = fetch(source, Path(tmp) / "save", log)
+        checkout = folder
         from ..forks.project import ForkProject
         if not (folder / MANIFEST).exists() and (saved := ForkProject(folder).progress_save()):
             folder = saved[0]
@@ -776,11 +777,23 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
                         if Path(source).expanduser().is_dir():
                             live = folder.resolve()
                         else:
-                            live = Path(net.project_store(slug).one("SELECT root FROM projects WHERE slug=?", slug)["root"]) / SAVE_FOLDER
+                            project_root = Path(net.project_store(slug).one("SELECT root FROM projects WHERE slug=?", slug)["root"])
+                            live = project_root / SAVE_FOLDER
                             if (live / ".git").exists():
                                 raise NetworkError("This project already has a progress checkout. Pull changes there, or open that local folder.")
                             _publish(live, {}, _read(live))
-                            shutil.copytree(folder, live, dirs_exist_ok=True)
+                            if folder != checkout:
+                                # Retain the complete source checkout and Git history when
+                                # the portable manifest is nested inside a rebuildable repository.
+                                destination = project_root / "source"
+                                if destination.exists():
+                                    raise NetworkError("The source checkout destination already exists. Open it locally instead.")
+                                shutil.copytree(checkout, destination)
+                                live = destination / folder.relative_to(checkout)
+                            else:
+                                shutil.copytree(folder, live, dirs_exist_ok=True)
+                        if build_checkout(live):
+                            net._update_cfg(slug, lambda cfg: cfg.update(repository_sync_folder=str(build_checkout(live))))
                         net._update_cfg(slug, lambda cfg: cfg.__setitem__("progress_folder", str(live)))
                         project_id = net.project_store(slug).one("SELECT id FROM projects WHERE slug=?", slug)["id"]
                         if not same_linked_save:
@@ -889,6 +902,15 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     else:
         _join_saved_layout(net, proj, layout, log)
         net.apply_remote_layout(slug, layout, symbols)
+    # Saved data names are compiler/linker inputs too. Room layout mirroring only
+    # renames functions; without these globals, valid saved C links at wrong addresses.
+    with store.tx() as db:
+        for symbol in symbols:
+            if symbol.get("kind", "data") == "func":continue
+            if db.execute("SELECT 1 FROM functions WHERE project_id=? AND name=?", (pid, symbol["name"])).fetchone():continue
+            db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                       (pid, symbol["name"], symbol["address"], symbol.get("size", 0), symbol.get("kind", "data")))
+    net._syms.pop(pid, None)
     with store.tx() as db:
         for item in manifest.get("set_aside") or []:
             # A synced layout can already have set it aside before this runs; its reason still has to come back.
