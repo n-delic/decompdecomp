@@ -1,21 +1,27 @@
 /* Existing commits only: polling reads local refs; the explicit push refreshes origin first. */
 let repositoryPushKey = "", repositoryPushState = null, repositoryPushChecked = 0;
 let repositoryPushRequest = 0, repositoryPushPending = false, repositoryPushBusy = false, repositoryPushJob = null;
-let repositoryPushFollowing = null;
+let repositoryPushFollowing = null, repositoryForkFollowing = null;
 function currentRepositoryPushKey() { return `${S.slug || ""}\n${(typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot)}`; }
 function renderRepositoryPush(state) {
   repositoryPushState = state;
+  $("repositoryForkGo").hidden = !state?.github_origin && !state?.fork_job;
+  $("repositoryForkGo").disabled = repositoryPushBusy || !!repositoryForkFollowing;
   const status = $("repositoryPushState"), details = $("repositoryUnpushedDetails");
   details.hidden = !state?.commits?.length;
   details.textContent = `${state?.unpushed || 0} unpushed commit${state?.unpushed === 1 ? "" : "s"}`;
-  status.textContent = state?.job ? state.progress?.phase || "Push queued or running; reconnecting…" : state ? `${state.destination} · ${state.new_branch ? "Branch may be new on origin. " : ""}${state.behind ? `${state.behind} remote commits ahead; pull or merge first.` : state.unpushed ? "Ready to push committed changes." : "No unpushed commits since the last fetch."}` : "Choose a linked Git checkout to see unpushed commits.";
+  status.textContent = state?.fork_job ? "Setting up GitHub fork…" : state?.job ? state.progress?.phase || "Push queued or running; reconnecting…" : state ? `${state.destination} · ${state.new_branch ? "Branch may be new on origin. " : ""}${state.behind ? `${state.behind} remote commits ahead; pull or merge first.` : state.unpushed ? "Ready to push committed changes." : "No unpushed commits since the last fetch."}` : "Choose a linked Git checkout to see unpushed commits.";
   $("repositoryPushBasis").textContent = state?.basis || "";
-  $("repositoryPushGo").disabled = repositoryPushBusy || !state?.can_push;
+  $("repositoryPushGo").disabled = repositoryPushBusy || !!repositoryForkFollowing || !state?.can_push;
 }
 async function refreshRepositoryPush(force = false) {
   if (!S.slug || S.tab !== "settings") return;
   const key = currentRepositoryPushKey();
   if (key !== repositoryPushKey) {
+    if (repositoryForkFollowing) { repositoryForkFollowing.finish(); repositoryForkFollowing = null; }
+    $("repositoryForkLog").textContent = ""; $("repositoryForkLog").hidden = true;
+    if ($("repositoryForkLog")._workStatus) $("repositoryForkLog")._workStatus.hidden = true;
+    $("repositoryForkStop").hidden = true;
     if (repositoryPushFollowing) {
       repositoryPushFollowing.finish(); repositoryPushFollowing = null;
     }
@@ -27,7 +33,7 @@ async function refreshRepositoryPush(force = false) {
     $("repositoryPushStop").hidden = true;
     renderRepositoryPush(null);
   }
-  if (repositoryPushPending || repositoryPushBusy || (!force && Date.now() - repositoryPushChecked < 10000)) return;
+  if (repositoryPushPending || repositoryPushBusy || repositoryForkFollowing || (!force && Date.now() - repositoryPushChecked < 10000)) return;
   const request = ++repositoryPushRequest;
   repositoryPushPending = true;
   try {
@@ -35,6 +41,7 @@ async function refreshRepositoryPush(force = false) {
     if (key === currentRepositoryPushKey() && request === repositoryPushRequest) {
       renderRepositoryPush(state);
       if (state.job) followRepositoryPush(key, state.job);
+      if (state.fork_job) followRepositoryFork(key, state.fork_job);
     }
   } catch (error) {
     if (key === currentRepositoryPushKey() && request === repositoryPushRequest) {
@@ -97,7 +104,7 @@ async function followRepositoryPush(key, existingJob = null, payload = null) {
   }
 }
 $("repositoryPushGo").onclick = async () => {
-  if (repositoryPushBusy || !repositoryPushState?.can_push) return;
+  if (repositoryPushBusy || repositoryForkFollowing || !repositoryPushState?.can_push) return;
   const key = currentRepositoryPushKey(), slug = S.slug;
   const folder = typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot;
   repositoryPushRequest++; repositoryPushPending = false;
@@ -198,4 +205,70 @@ $("repositoryScoreThreshold").onchange = saveRepositoryScoreCommits;
 $("repositoryScoreDetails").onclick = () => {
   const state = repositoryScoreState;
   dialog("Pending improved functions", `<p>Each function counts once in the current batch. Lower judge distance is better.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}<br><span class="small muted">Distance ${esc(item.before ?? "unscored")} → ${esc(item.score)}</span></p>`).join("")}${state.pending > (state.items || []).length ? "<p>Showing the first 20 functions.</p>" : ""}<button class="ghost" data-close type="button">Close</button>`);
+};
+
+
+async function followRepositoryFork(key, job) {
+  if (repositoryForkFollowing?.key === key) return;
+  const log = $("repositoryForkLog"), stop = $("repositoryForkStop");
+  const following = {key, job}; repositoryForkFollowing = following;
+  const active = () => repositoryForkFollowing === following && key === currentRepositoryPushKey();
+  const finish = beginWork(log, "Setting up GitHub fork", [$("repositoryForkGo"), $("repositoryPushGo")], "GitHub fork connected. Ready to push.");
+  following.finish = finish; stop.hidden = false; log.hidden = false; showJobError(log, "");
+  try {
+    const result = await followJob(job, null, (lines, state) => {
+      if (active()) { log.textContent = lines.join("\n"); updateWorkProgress(log, state.progress); }
+    }, active);
+    if (active() && result) {
+      renderRepositoryPush(result.status);
+      if (result.warning) showJobError(log, result.warning);
+    }
+  } catch (error) { if (active()) showJobError(log, error.message); }
+  finally {
+    if (repositoryForkFollowing === following) {
+      finish(); repositoryForkFollowing = null; stop.hidden = true;
+      repositoryPushChecked = 0; renderRepositoryPush(repositoryPushState); refreshRepositoryPush(true);
+    }
+  }
+}
+$("repositoryForkStop").onclick = async () => {
+  try { if (repositoryForkFollowing) await api("/api/job/cancel", {method:"POST", body:{id:repositoryForkFollowing.job}}); }
+  catch (error) { showJobError($("repositoryForkLog"), error.message); }
+};
+$("repositoryForkGo").onclick = async () => {
+  if (repositoryPushBusy || repositoryForkFollowing) return;
+  const slug = S.slug, key = currentRepositoryPushKey();
+  const folder = typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot;
+  const body = dialog("Set up a GitHub fork", `<p>Create or reuse a fork under your account or organization, connect it as origin, and preserve the original repository as upstream. No local commits are uploaded by this action.</p>
+    <p id="repositoryForkSource" class="small mono"></p>
+    <label class="field"><span>Fork owner (GitHub account or organization)</span><input id="repositoryForkOwner" list="repositoryForkOwners" autocomplete="off" placeholder="Choose or enter an owner"><datalist id="repositoryForkOwners"></datalist></label>
+    <p id="repositoryForkOwnerHint" class="small muted"></p>
+    <div class="row"><button id="repositoryForkCreate" class="primary" type="button" disabled>Create fork and update origin</button><button class="ghost" type="button" data-close>Cancel</button></div>
+    <pre id="repositoryForkDialogLog" class="joblog" hidden></pre>`, "repository-fork");
+  const go = body.querySelector("#repositoryForkCreate"), log = body.querySelector("#repositoryForkDialogLog");
+  const active = () => S.dialogKind === "repository-fork" && key === currentRepositoryPushKey() && $("repositoryForkCreate") === go;
+  const finish = beginWork(log, "Loading GitHub fork destinations", [go]);
+  let info;
+  try {
+    info = await api(`/api/repository-fork?slug=${encodeURIComponent(slug)}&folder=${encodeURIComponent(folder)}`);
+    if (!active()) return;
+    if (info.job) { closeDialog(); followRepositoryFork(key, info.job); return; }
+    $("repositoryForkSource").textContent = "Original: " + info.source;
+    $("repositoryForkOwners").replaceChildren(...info.owners.map(name => { const option = document.createElement("option"); option.value = name; return option; }));
+    $("repositoryForkOwnerHint").textContent = info.warning || "Choose an owner above, or type an organization name. Uses this computer’s GitHub CLI login.";
+    go.disabled = false;
+  } catch (error) { if (active()) showJobError(log, error.message); }
+  finally { finish(); if (active()) go.disabled = !info || !!info.job; }
+  go.onclick = async () => {
+    if (go.disabled || !active() || !info) return;
+    const owner = $("repositoryForkOwner").value.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner)) { showJobError(log, "Choose or enter the GitHub owner for this fork."); return; }
+    go.disabled = true;
+    const done = beginWork(log, "Starting GitHub fork setup", [go]);
+    try {
+      const {job} = await api("/api/repository-fork", {method:"POST", body:{slug, folder, owner, origin_revision:info.origin_revision}});
+      if (active()) { closeDialog(); followRepositoryFork(key, job); }
+    } catch (error) { if (active()) showJobError(log, error.message); }
+    finally { done(); if (active()) go.disabled = false; }
+  };
 };
