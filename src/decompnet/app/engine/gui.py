@@ -220,9 +220,8 @@ class GuiMixin:
             # metadata-only read. Aggregate in SQLite and cross the boundary once.
             columns = ('id','name','vram','size','n_insns','status','best_score','attempts',
                        'unit','matched_at','meta','readable','agent_id','matched_agent_id')
-            packed = store.one('SELECT json_group_array(json_array(' + ','.join(columns) +
-                               ')) AS rows FROM (' + query + ')', *args)
-            rows = [dict(zip(columns, row)) for row in json.loads(packed['rows'])]
+            from ..metadata_rows import rows as metadata_rows
+            rows = metadata_rows(store, columns, query, *args)
         else:
             rows = store.all(query, *args)
         from ..project_labels import label

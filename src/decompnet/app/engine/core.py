@@ -259,7 +259,8 @@ class Core(Network):
         sym = name.strip().strip("`'\"").split("@", 1)[0].split("(", 1)[0].strip()
         if len(sym) < 3:
             return []
-        rows = self.project_store(proj["id"]).all("SELECT name FROM functions WHERE project_id=? AND (name LIKE ? OR name LIKE ?) LIMIT 4000",
+        from ..metadata_rows import rows as metadata_rows
+        rows = metadata_rows(self.project_store(proj["id"]), ('name',), "SELECT name FROM functions WHERE project_id=? AND (name LIKE ? OR name LIKE ?) LIMIT 4000",
                               proj["id"], f"%{sym[-6:]}%", f"{sym[:4]}%")
         names = [r["name"] for r in rows]
         return difflib.get_close_matches(sym, names, n=n, cutoff=0.6) or [x for x in names if sym in x][:n]

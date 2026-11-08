@@ -81,3 +81,20 @@ def test_bootstrap_rolls_back_duplicate_legacy_ids_and_does_not_publish_ready(sc
     with pytest.raises(sqlite3.IntegrityError):activity_index.bootstrap(net)
     assert not net.store.one('SELECT 1 FROM settings WHERE key=?',activity_index.READY)
     assert not net.store.one("SELECT 1 FROM sqlite_master WHERE name='activity_events'")
+
+
+def test_sync_reads_source_cursors_in_one_catalog_query(scoped,monkeypatch):
+    net,_=scoped
+    activity_index.bootstrap(net)
+    original_one,original_all=net.store.one,net.store.all
+    cursor_reads=[]
+    def one(sql,*args):
+        assert not sql.startswith('SELECT value FROM settings WHERE key=?'), 'No per-project cursor reads'
+        return original_one(sql,*args)
+    def all_rows(sql,*args):
+        if sql.startswith('SELECT key,value FROM settings'):cursor_reads.append(sql)
+        return original_all(sql,*args)
+    monkeypatch.setattr(net.store,'one',one)
+    monkeypatch.setattr(net.store,'all',all_rows)
+    activity_index.sync(net)
+    assert len(cursor_reads)==1

@@ -57,11 +57,12 @@ def sync(net, *, drain=False):
     lock = net.__dict__.setdefault('_activity_delivery_lock',threading.RLock())
     with lock:
         sources = []
+        cursors = {row['key']:row['value'] for row in net.store.all(
+            "SELECT key,value FROM settings WHERE key GLOB ?", PREFIX+'*')}
         for store,pids in net.project_stores():
             for pid in pids:
                 key = PREFIX+str(pid)
-                cursor = net.store.one('SELECT value FROM settings WHERE key=?',key)
-                after = int(cursor['value']) if cursor else 0
+                after = int(cursors.get(key,'0'))
                 maximum = store.one('SELECT COALESCE(MAX(id),0) n FROM events WHERE project_id=?',pid)['n']
                 sources.append([store,pid,key,after,maximum])
         while True:
