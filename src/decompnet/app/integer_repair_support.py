@@ -1,6 +1,7 @@
 """Small, conservative C spans shared by integer repair hypotheses, not a replacement C parser."""
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 from ..forks.csource import _blank, find
 from .pattern_repairs import close
@@ -24,6 +25,12 @@ class View:
 
 
 def view(source, name):
+    part = _view(source, name)
+    return View(part.source, part.clean, part.opening, part.end) if part else None
+
+
+@lru_cache(maxsize=1)
+def _view(source, name):
     span = find(source, name)
     if not span:
         return None

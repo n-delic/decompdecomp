@@ -8,7 +8,8 @@ from __future__ import annotations
 import difflib
 import math
 import re
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 
 import capstone
@@ -56,7 +57,26 @@ def percent_text(p: float | None) -> str:
 VARIANT_INSN_BYTES = 4  # what a variant's own reader decodes (arch.Arch.variants): fixed-width words
 
 
+_decoders = threading.local()
+
+
 def disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
+    key = (_comparison_key(fn), cpu)
+    cache = getattr(_decoders, "instructions", None)
+    if cache is None:
+        cache = _decoders.instructions = OrderedDict()
+    if key in cache:
+        cache.move_to_end(key)
+        return [Insn(*values) for values in cache[key]]
+    result = _disassemble(fn, cpu)
+    if len(fn.code) <= 32768:
+        cache[key] = tuple((ins.offset, ins.mnemonic, ins.operands, ins.text, ins.encoding) for ins in result)
+        while len(cache) > 8:
+            cache.popitem(last=False)
+    return result
+
+
+def _disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
     """A function's instructions, with relocated fields masked and named after their symbols, so the target and a
     candidate compare by what they do, not by where they were linked. `cpu`: the processor's variant (fn.cpu by
     default); one capstone can't decode (the PSP's Allegrex) is read by its processor's own reader (arch/)."""
@@ -66,14 +86,25 @@ def disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
         lines = [(at, VARIANT_INSN_BYTES, name, ops, None) for at, name, ops in own(code, fn.big_endian)]
     else:
         cs_arch, mode = _CS[(fn.arch, fn.big_endian)]
-        md = capstone.Cs(cs_arch, mode)
-        md.detail = True
-        md.skipdata = True
+        decoders = getattr(_decoders, "values", None)
+        if decoders is None:
+            decoders = _decoders.values = {}
+        md = decoders.get((cs_arch, mode))
+        if md is None:
+            md = decoders[cs_arch, mode] = capstone.Cs(cs_arch, mode)
+            md.detail = True
+            md.skipdata = True
         lines = [(ins.address, ins.size, ins.mnemonic, ins.op_str, ins) for ins in md.disasm(code, 0)]
     mips_names = _mips_reloc_names(fn.relocs) if fn.arch == "mips" else {}
+    # Preserve original relocation precedence, including duplicate offsets.
+    relocation_order = {id(r): index for index, r in reversed(list(enumerate(fn.relocs)))}
+    relocations = {}
+    for relocation in fn.relocs:
+        relocations.setdefault(relocation.offset, relocation)
     out: list[Insn] = []
     for address, size, mnemonic, ops, ins in lines:
-        rel = next((r for r in fn.relocs if address <= r.offset < address + size), None)
+        nearby = [relocations[offset] for offset in range(address, address + size) if offset in relocations]
+        rel = min(nearby, key=lambda r: relocation_order[id(r)]) if nearby else None
         if rel is not None and rel.offset in mips_names:
             ops = _mips_symbolize(ops, mips_names[rel.offset])
         elif rel is not None:
@@ -280,6 +311,11 @@ def _comparison_key(fn):
     return (fn.name, fn.arch, fn.big_endian, fn.cpu, bytes(fn.code), tuple(r.key() for r in fn.relocs))
 
 
+def score(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+    """Identical scoring without allocating diagnostic rows for ordinary misses."""
+    return _diff(target, candidate, details=False)
+
+
 def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     # Advisory instruction comparisons only. Link verdicts and source locations are
     # computed by callers for the actual object, even when two C variants emit alike.
@@ -307,7 +343,7 @@ def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     return result
 
 
-def _diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffResult:
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
     t_ins, target_fingerprint = _prepared_target(target)
@@ -325,6 +361,8 @@ def _diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
             for a, b in zip(t_ins[a0:a1], c_ins[b0:b1]):
                 pen, mark = _classify(a, b)
                 score += pen
+                if not details:
+                    continue
                 if not bytes_match and a.text == b.text and a.encoding != b.encoding:
                     # e.g. 32-bit addu and 64-bit daddu both disassemble as "move".
                     # Keep the existing score; make the strict judge's byte disagreement visible.
@@ -338,14 +376,14 @@ def _diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
             a = ta[k] if k < len(ta) else None
             b = cb[k] if k < len(cb) else None
             if a and b:
-                rows.append(("|", a.text, b.text))
+                if details:rows.append(("|", a.text, b.text))
                 missing[a.text] += 1
                 extra[b.text] += 1
             elif a:
-                rows.append(("<", a.text, ""))
+                if details:rows.append(("<", a.text, ""))
                 missing[a.text] += 1
             else:
-                rows.append((">", "", b.text))
+                if details:rows.append((">", "", b.text))
                 extra[b.text] += 1
     # instructions that are merely in the wrong place are cheaper than real insert/delete
     reordered = sum((missing & extra).values())

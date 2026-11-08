@@ -900,11 +900,16 @@ class Permuter:
         from .experiment_evidence import output
         self._trial_output = output(cand)
         self._trial_output_granularity = 'function'
+        from ..repair_feedback import current_trial
         from ..source_lines import mismatches
         from .repair_localisation import bind
+        lean = ((current_trial() or {}).get('kind') == 'random rewrite' and source != fn['best_source'])
+        target = self.net._target_obj(fn, proj)
         # Use this actual compiled object; never recompile with different debug flags.
         with compile_timing.phase('score'):
-            d = scoring.diff(self.net._target_obj(fn, proj), cand)
+            d = scoring.score(target, cand) if lean else scoring.diff(target, cand)
+            if lean and (d.score < best or d.bytes_match or verdict is True):
+                d = scoring.diff(target, cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
         if d.score < best or d.bytes_match or source == fn['best_source']:
@@ -918,7 +923,8 @@ class Permuter:
         if not self._compact_trial:
             with compile_timing.phase('search_diagnostics'):
                 self._trial_locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
-                    filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c',arch=proj['arch']))
+                    filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c',arch=proj['arch'],
+                    offsets=[ins.offset for ins in scoring.disassemble(cand, target.cpu)]))
         rows = (self.net._search_rows(fn,proj,result.obj,d.rows)
                 if not self._compact_trial and hasattr(self.net,'_search_rows') else d.rows)
         self.net.keep_diff(agent.id, fn['id'], rows)
