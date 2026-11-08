@@ -7,7 +7,7 @@ preprocessor lines are opaque.
 
 import re
 
-from .. import m2cfix, seeds
+from .. import compile_timing, m2cfix, seeds
 from ..forks.csource import _blank, find
 from . import (
     address_association_repairs,
@@ -154,6 +154,7 @@ _IDENT = r'[A-Za-z_]\w*'
 _MEMBER = rf'{_IDENT}(?:\s*(?:->|\.)\s*{_IDENT})*'
 
 
+@compile_timing.timed('proposal_generation')
 def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
     span = find(source, name)
     if span is None:

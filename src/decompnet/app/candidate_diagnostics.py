@@ -28,10 +28,12 @@ def export_layout(obj, name, exact, placements):
         if elf['e_machine'] != 'EM_MIPS' or elf['e_type'] != 'ET_REL':
             return {'state': 'unsupported', 'ready': None,
                     'message': 'Standalone layout checks are not available for this object format yet.'}
+        common_storage = []
         # Old assemblers can emit a tentative object with raw SHN_XINDEX but no index
         # table. The function judge need not read that unused symbol; GNU ld rejects it.
         for index,section in enumerate(elf.iter_sections()):
             if section['sh_type'] not in ('SHT_SYMTAB','SHT_DYNSYM'):continue
+            common_storage.extend(s.name for s in section.iter_symbols() if s['st_shndx'] == 'SHN_COMMON' and s['st_size'])
             extended=any(s['sh_type']=='SHT_SYMTAB_SHNDX' and s['sh_link']==index for s in elf.iter_sections())
             if not extended and any(s['st_shndx'] in (0xffff,'SHN_XINDEX') for s in section.iter_symbols()):
                 return {'state':'blocked','ready':False,
@@ -45,6 +47,11 @@ def export_layout(obj, name, exact, placements):
             if problem:
                 problem = ('The candidate has non-contiguous constant pools. Reference existing ROM data '
                            'separately or split the pools before standalone export.')
+            if not problem and common_storage:
+                return {'state':'requires_data_verification','ready':None,
+                        'message':'The object also emits tentative COMMON storage ('+', '.join(common_storage[:4])+'). '
+                                  'Verify its original addresses or use correct extern declarations before standalone export; '
+                                  'the focal function verdict is unchanged.'}
             if not problem and next(iter(_function_symbols(elf).values()))[1]:
                 return {'state': 'requires_normalization', 'ready': None,
                         'message': 'The compiler emitted code before the function entry; verify prefix normalization with the standalone builder.'}
@@ -61,6 +68,10 @@ def text(checks):
         parts.append(f"Raw MIPS address at diff row {row['row']+1}: target 0x{row['target']:08X}, yours 0x{row['candidate']:08X}. Verify this expression before scheduling permutations; symbolic labels may obscure the address.")
     if checks.get('instructions', {}).get('exact') and checks.get('data'):
         parts.append('Instructions match; constant data differs. Check initializer values, object sizes and anonymous-array padding before changing control flow.\n'+'\n'.join(checks['data']))
+    emission = checks.get('object_emission') or {}
+    if emission.get('available') and (emission.get('extra_function_count') or emission.get('allocated_data_bytes')):
+        from ..object_emission import text as emission_text
+        parts.append(emission_text(emission))
     if checks.get('linked_bytes', {}).get('exact'):
         parts.append('Linked bytes verified identical. Symbolic relocation labels or displayed diff annotations do not override this verdict; do not repair those annotations.')
     if checks.get('export', {}).get('state') not in (None, 'unmatched'):

@@ -69,7 +69,8 @@ def evaluator(root, name, header):
         if not built.ok:
             result = dict(score=None,matched=False,outcome='compile_error')
         else:
-            linked = match.link(built.obj,name,target,table,read)
+            with compile_timing.phase('link'):
+                linked = match.link(built.obj,name,target,table,read)
             if linked.candidate is None or linked.linked_code is None:
                 result = dict(score=None,matched=False,outcome='link_error')
             else:
@@ -79,7 +80,8 @@ def evaluator(root, name, header):
                 from .compiler_diagnostics import output_fingerprint
                 from .repair_localisation import bind
                 rows=scoring.diff(linked_target,raw).rows
-                result = dict(score=score,rows=rows,matched=linked.exact,
+                from ..object_emission import inspect as emission_inventory
+                result = dict(score=score,rows=rows,matched=linked.exact,object_emission=emission_inventory(built.obj,name),
                               output_fingerprint=output_fingerprint(built.obj),
                               repair_locations=bind(source,mismatches(built.obj,name,rows,source,arch=console.arch)),
                               outcome='exact_linked' if linked.exact else 'scored',

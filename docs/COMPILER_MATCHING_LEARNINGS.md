@@ -6334,3 +6334,19 @@ ordinary host-C behavior, frame evidence and cache/process-count tests still run
 Replay reports distinguish fresh candidate checks from observed compiler processes;
 unknown process counts remain unknown and cached evaluations report zero new
 invocations. No live project was edited during these automation benchmarks.
+
+## Earlier-checkpoint recovery disproves a necessary argument bundle (8 November 2026)
+
+The equal-budget [checkpoint replay](benchmarks/aggregate-call-checkpoints.md)
+uses the same KMC GCC 2.7.2 profile and frozen ordinary linker. Removing the earlier
+one-pass assignment scope from the score-125 helper checkpoint alone also yields
+exactness. The score-60 argument bundle was therefore not independently necessary;
+it was one successful route, not the shortest proven route.
+
+Five chronological checkpoints received 32 candidate trials / 30 seconds each,
+with fresh evaluators and caches. Scores 325, 230 and 185 did not improve within
+that budget. Scores 125 and 60 recovered exact linked bytes in one repair trial
+each, plus the baseline check, without broad proposal generation. These are two
+recoveries of the same existing match, not two new functions. The source guards
+declined macro/raw-pointer aggregate dispatch at the earlier checkpoints; report
+that coverage gap instead of inferring that more permutations would solve it.
