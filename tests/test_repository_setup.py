@@ -326,3 +326,36 @@ def test_backup_refresh_detects_edits_during_capture(project,tmp_path,monkeypatc
         repository_setup.run(net,'game','checkpoint','',lambda line:None)
     assert (target/'include/common.h').read_text()=='concurrent edit'
     assert saves.default_folder(net,'game')==folder
+
+
+@pytest.mark.parametrize('external', [False, True, 'uncompiled'])
+def test_unreceipted_old_attempt_refreshes_but_unknown_edits_survive(project, tmp_path, external):
+    net, folder, _ = project
+    agent, _ = net.local_agent('helper')
+    with net.store.tx() as db:
+        fid = db.execute("SELECT id FROM functions WHERE name='f'").fetchone()['id']
+        db.execute("UPDATE functions SET best_source='old draft',best_score=30 WHERE id=?", (fid,))
+        db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
+                   "VALUES(?,?,30,1,1,'old draft',1)", (fid, agent.id))
+        if external == 'uncompiled':db.execute('UPDATE attempts SET compiled=0 WHERE function_id=?', (fid,))
+    net.progress.sync('game', force=True)
+    target = tmp_path/'backup'
+    # Reproduce a Git/manual copy, which has no app Save now receipt.
+    shutil.copytree(folder, target)
+    net._update_cfg('game', lambda cfg: cfg.update(save_folder=str(target)))
+    git(target, 'init', '--initial-branch=main')
+    git(target, 'config', 'user.name', 'Test')
+    git(target, 'config', 'user.email', 'test@example.invalid')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new draft',best_score=10 WHERE id=?", (fid,))
+    if external:
+        if external is True:(target/'best/f.c').write_text('unknown contributor draft\n')
+        with pytest.raises(NetworkError, match='Files that differ'):
+            repository_setup.run(net, 'game', 'checkpoint', '', lambda line:None)
+        assert (target/'best/f.c').read_text() == ('unknown contributor draft\n' if external is True else 'old draft\n')
+        assert saves.default_folder(net, 'game') == folder
+    else:
+        state = repository_setup.run(net, 'game', 'checkpoint', '', lambda line:None)
+        assert state['checkpoint'] and state['linked']
+        assert git(target, 'show', 'HEAD:best/f.c') == 'new draft'
+        assert match_commits.configure(net, 'game', True, str(target))['enabled']
