@@ -868,6 +868,9 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Lower-cost fork CI.** Ubuntu checks must pass before Windows or Apple Silicon macOS
+  checks start. Intel macOS builds are paused, along with automatic labels and site deployment.
+
 - **Portable Windows app.** A ZIP bundles a relocatable `decompdecomp.exe`, Python and app
   dependencies. No app installation is needed; Microsoft window prerequisites must already be
   available. CI extracts the archive to a different path and checks the EXE and server imports.
