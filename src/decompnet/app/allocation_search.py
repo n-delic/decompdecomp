@@ -13,6 +13,7 @@ CHAIN_LIMIT = 8
 
 def allowance(diagnosis):
     """Local acyclic chains get a short lane; cycles retain their existing allowance."""
+    if diagnosis.get("return_copy_rotation"):return CHAIN_LIMIT
     if (not diagnosis["register_only"] or diagnosis["target_instructions"]!=diagnosis["candidate_instructions"]
             or diagnosis["target_frame"]!=diagnosis["candidate_frame"]):return 0
     return LIMIT if diagnosis["register_cycles"] else CHAIN_LIMIT if diagnosis["register_chains"] else 0
@@ -69,6 +70,11 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     budget=allowance(diagnosis)
     if not budget:
         return []
+    if diagnosis['return_copy_rotation']:
+        from . import prepared_call_repairs
+        selected=prepared_call_repairs.variants(source,name,header,arch)
+        for family,candidate in selected:labels[candidate]=family
+        return selected[:budget]
     from . import identity_lifetime_repairs, later_local_repairs, value_trace_repairs
     extra = later_local_repairs.variants(source,name,header,arch,evidence)
     extra += identity_lifetime_repairs.variants(source,name,header,arch) if arch in {'mips','ppc','x86','arm','thumb'} else []
@@ -110,11 +116,11 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
 
 def brief(net, proj, fn, source, rows):
     if (not getattr(net,'is_rom',lambda _:False)(proj) or net.fork_slug(proj['slug'])
-            or not allocation_evidence.diagnose(rows,proj['arch'])['register_cycles']):
+            or not (allocation_evidence.diagnose(rows,proj['arch'])['register_cycles'] or allocation_evidence.diagnose(rows,proj['arch'])['return_copy_rotation'])):
         return ''
     # Reading an agent brief never starts compiler tools.
     evidence = saved(net,proj,fn,source) or {}
     from . import allocation_targeting
     header = (net._context(proj['id'],fn['unit']) or {'header':''})['header']
-    return '\n'.join(filter(None, (gcc_allocation.brief(evidence.get('allocation'),allocation_evidence.diagnose(rows,proj['arch'])['register_cycles']),
+    return '\n'.join(filter(None, (gcc_allocation.brief(evidence.get('allocation'),allocation_evidence.diagnose(rows,proj['arch'])['register_cycles'] or [allocation_evidence.diagnose(rows,proj['arch'])['return_copy_rotation']]),
                                   allocation_targeting.brief(source,header,rows,evidence,proj['arch']))))

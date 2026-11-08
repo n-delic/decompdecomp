@@ -6494,3 +6494,32 @@ alternative. Preserve argument evaluation count and read/call order, including
 volatile and qualified effects. Private inputs and byte-verification receipts
 remain outside the repository. Verification was function-level; no complete
 image rebuild is claimed.
+
+### Prepared assigned calls: automated replay of the KMC scheduling plateau
+
+The prepared-argument/single-pass-call result documented on 2026-11-08 now has a
+bounded generator and shared search lane. It handles assigned scalar returns and,
+for the combined recipe, a local temporary result followed by an independent
+pointer initialization and result copy. It keeps the explicit one-argument
+prototype and argument conversion, removes the intermediate result copy, and
+prepares the actual argument before a narrow single-pass call scope. Unknown
+prototypes, used macros, volatile accesses, escaped results and ambiguous shapes
+decline. No compiler/profile, target, or judge changes are needed.
+
+A private frozen replay used the unchanged `gcc-2.7.2-kmc` profile
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The baseline scored 80; the actual displayed
+diff aligned the two address instructions between a deleted and inserted result
+copy. The new detector recognizes that local three-operation rotation without
+dismissing unrelated symbolic operand differences. The bounded lane generated
+one candidate: its ordinary compile/link reproduced all 1,112 target bytes, with
+zero unequal bytes. This is a controlled replay of a known match, not a new
+function or a measured success rate across games. Diagnostic capture was not
+needed for that replay. Raw exactness remains authoritative even when displayed
+relocation annotations retain a nonzero similarity score.
+
+Large matched donors now contribute bounded structural counts in ROM and imported
+project briefs. Cached allocation packets include the return-copy/address clue
+and current refs/live lengths; reading them starts no tools. Optional parity-checked
+captures remain budgeted and follow the cheap rotation lane. Keep the measured
+negative experiments in the earlier prepared-call entry: this repair does not
+justify dummy uses, ABI changes, or broad compiler-flag retries.

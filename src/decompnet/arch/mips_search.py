@@ -10,7 +10,7 @@ SLOTS = BRANCHES | {'jr','jal','jalr'}
 
 
 def read(rows):
-    empty=dict(register_chains=[],branch_target=False,delay_slot=False)
+    empty=dict(register_chains=[],branch_target=False,delay_slot=False,return_copy_rotation=[])
     if not rows or len(rows)>16384 or any(not isinstance(r,(list,tuple)) or len(r)!=3
             or any(not isinstance(c,str) for c in r) for r in rows):return empty
     def opcode(text):return text.split()[0] if text.split() else ''
@@ -48,4 +48,28 @@ def read(rows):
         if row[0]=='r':run.append(row)
         else:flush();run=[]
     flush()
-    return dict(register_chains=chains[:4],branch_target=bool(target),delay_slot=bool(slots))
+    return dict(register_chains=chains[:4],branch_target=bool(target),delay_slot=bool(slots),return_copy_rotation=return_copy_rotation(rows))
+
+
+def return_copy_rotation(rows):
+    """A displayed three-operation rotation is a lead, never raw-byte equivalence proof."""
+    from collections import Counter
+    changed=[r for r in rows if len(r)==3 and r[0]!=' ']
+    if not 2<=len(changed)<=6:return []
+    # The diff aligns the unchanged address pair between a deleted and inserted copy.
+    # Include that intervening context; unrelated symbolic operands remain unresolved.
+    moved=[i for i,r in enumerate(rows) if len(r)==3 and r[0]=='o' and (not r[1] or not r[2])]
+    window=changed
+    if len(moved)==2 and moved[1]-moved[0]<=3:
+        window=rows[moved[0]:moved[1]+1]
+    left=[r[1].strip() for r in window if r[1]]
+    right=[r[2].strip() for r in window if r[2]]
+    if len(left)!=3 or left==right or Counter(left)!=Counter(right):return []
+    copies=[re.fullmatch(r'move\s+(\$\w+),\s*\$v0',s) for s in left]
+    copies=[m for m in copies if m]
+    loads=[re.fullmatch(r'lui\s+(\$\w+),\s*.+',s) for s in left]
+    loads=[m for m in loads if m]
+    if len(copies)!=1 or len(loads)!=1 or copies[0][1]==loads[0][1]:return []
+    pointer=loads[0][1]
+    if not any(re.fullmatch(r'addiu\s+'+re.escape(pointer)+r',\s*'+re.escape(pointer)+r',\s*.+',s) for s in left):return []
+    return [copies[0][1],pointer]

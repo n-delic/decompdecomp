@@ -17,6 +17,7 @@ def targets(source, header, rows, evidence, arch="mips"):
     if not mapped:return []
     diagnosis = allocation_evidence.diagnose(rows,arch)
     names = {n.lstrip('$%') for cycle in diagnosis['register_cycles'] for n in cycle}
+    names.update(n.lstrip('$%') for n in diagnosis['return_copy_rotation'])
     values = [v for v in allocation.get('values', []) if names.intersection(v.get('aliases', []))]
     result = []
     for value in values:
@@ -70,5 +71,10 @@ def brief(source, header, rows, evidence, arch="mips"):
             text += f"; next competing priority {point['next_priority']}, needs at least +{point['additional_weighted_refs']} weighted refs if lifetime stays fixed"
         snippets = [f"L{n}: {lines[n-1].strip()[:140]}" for n in point['source_lines'][:2]]
         parts.append(text+'; '+' / '.join(snippets))
+    if allocation_evidence.diagnose(rows,arch)['return_copy_rotation']:
+        return ('Targeted allocation brief (candidate evidence, not original C identities): '+'; '.join(parts)+
+                '. Next local experiment: prepare the real argument, assign the return directly inside a narrow single-pass call scope. '
+                'If copy movement fixes order but swaps registers, compare these refs/live lengths between ordinary-output-equivalent captures. '
+                'Allocation and scheduling are coupled; counts do not prove original variable identities. Never add dummy uses.')
     return ('Targeted allocation brief (candidate evidence, not original C identities): '+'; '.join(parts)+
             '. Next local experiment: try a quotient scope at these mapped lines (including middle assignments); rank depths 1–3 by the approximate +2 weighted refs per nesting level, then verify actual output. This depth estimate is a heuristic, not a measured compiler rule. Counts alone do not override local reservations/conflicts; never add dummy uses.')

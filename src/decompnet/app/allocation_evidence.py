@@ -46,7 +46,7 @@ def diagnose(rows, arch=None):
     copy_near=bool(changed) and sum(r[0]=='>' for r in changed)==1 and all(
         (m=='r' and REGISTER.sub('$reg',a)==REGISTER.sub('$reg',b)) or
         (m=='>' and not a and re.fullmatch(r'move\s+\$\w+,\s*\$\w+',b)) for m,a,b in changed)
-    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': valid and bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'register_cycles':cycles(swaps), 'register_chains':hints.get('register_chains',[]), 'branch_target':hints.get('branch_target',False), 'delay_slot':hints.get('delay_slot',False), 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
+    return {'return_copy_rotation':hints.get('return_copy_rotation',[]),'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': valid and bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'register_cycles':cycles(swaps), 'register_chains':hints.get('register_chains',[]), 'branch_target':hints.get('branch_target',False), 'delay_slot':hints.get('delay_slot',False), 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
             'target_frame':(frame or {}).get('target_frame'), 'candidate_frame':(frame or {}).get('candidate_frame'),
             'spill_offsets':slots, 'differences':len(changed)}
 
@@ -88,6 +88,8 @@ def text(rows, arch=None):
         hints.append(f"frame {d['target_frame']} target / {d['candidate_frame']} candidate")
     if d['allocation_schedule']:
         hints.append('same displayed operations after register normalization; try paired operand reuse and affine-counter scheduling together')
+    if d['return_copy_rotation']:
+        hints.append('a local three-operation displayed rotation moves a return-value copy and address setup; try prepared_return_scope, prepared_call_scope, then assigned_call_scope. If fixing order swaps registers, treat allocation and scheduling together; use current captured refs/live lengths, not register bindings. Other operand differences remain unresolved; raw linked bytes decide exactness')
     if d['scheduling']:
         hints.append('same displayed instruction multiset, different order; try dependency-safe initialization order')
     return 'Allocation clues (advisory): '+'; '.join(hints)+'.' if hints else ''
@@ -96,7 +98,9 @@ def text(rows, arch=None):
 def plan(rows, arch=None):
     """Small evidence record for agents/replays; categories do not establish a compiler cause."""
     d=diagnose(rows,arch)
-    if d['register_only']:
+    if d['return_copy_rotation']:
+        category='scheduling';families=['prepared_return_scope','prepared_call_scope','assigned_call_scope']
+    elif d['register_only']:
         category='allocation';families=['scratch_role_reuse','parameter_carriers','dead_copy_source','divisor_normalization_copy','divisor_value_scope','divisor_flag_split','regional_load_reuse','later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse','allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
     elif d['branch_target'] or (d['delay_slot'] and not d['scheduling']):
         category='control';families=['structured_backedge','guard_forward_jump','branch_orientation','loop_update_order','goto_leaf','shared_return_tail']

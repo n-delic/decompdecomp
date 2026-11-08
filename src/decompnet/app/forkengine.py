@@ -2573,6 +2573,8 @@ class ForkEngine:
             r, sim = alike[0]
             src = self._current_source(fp, r)
             lines += ["", f"### Looks like {r['name']} ({sim * 100:.0f}% similar, already matched)"]
+            from .donor_structure import brief as donor_brief
+            if hint := donor_brief(src_text[span[0]:span[1]] if span else '', src, sim):lines.append(hint)
             if src and len(src) < 3000:
                 lines += ["```c", src.strip(), "```"]
             if len(alike) > 1:
