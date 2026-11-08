@@ -55,18 +55,18 @@ def manifest(folder, **changes):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def test_metadata_pull_rejudges_locally_completed_sources_merged_into_it(project):
+def test_metadata_pull_keeps_already_verified_local_matches(project):
     net, folder, judged = project
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='matched',matched_source='good local',best_source='good local',"
                    "best_score=0,matched_at=? WHERE name='f'", (time.time(),))
     # This collaborator changed only instructions, while a local match has not yet
-    # been published. Its newly merged C must participate in the judge decision.
+    # been published. Exporting that verified C must not reopen/rejudge it.
     manifest(folder, instructions='new collaborator instructions')
     assert net.progress.sync('game', force=True)
     assert net._function('f', 'game')['status'] == 'matched'
-    assert net._function('f', 'game')['matched_source'] == 'good local\n'
-    assert ('f', 'good local\n') in judged
+    assert net._function('f', 'game')['matched_source'] == 'good local'
+    assert judged == []
     assert net.instructions('game') == 'new collaborator instructions'
     assert (folder/'src/f.c').read_text() == 'good local\n'
     assert not net.progress.sync('game', force=True)
@@ -2605,3 +2605,28 @@ def test_slow_verification_wait_reports_actual_owner_phase_and_clears_owner(proj
     assert worker.verification_owner is None
     assert 'owner=other' in caplog.text and 'phase=Preparing saved verification' in caplog.text
     assert 'wait=6.000s' in caplog.text
+
+
+def test_local_verified_profile_publication_does_not_restart_rechecking(project, monkeypatch):
+    net, folder, judged = project
+    pid = net.project_row('game')['id']
+    # A local deep-search result and its private header arrive after the last
+    # disk snapshot, while an external metadata edit triggers a merge.
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good local',best_source='good local',"
+                   "best_score=0,unit='verified' WHERE name='f'")
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                   "VALUES(?,2,'verified private header',0,'verified')", (pid,))
+    manifest(folder, instructions='updated notes')
+    old_judge = net.progress._judge_saved
+
+    def observe(*args, **kwargs):
+        assert net._function('f', 'game')['status'] == 'matched'
+        assert not kwargs['judge_code']
+        return old_judge(*args, **kwargs)
+
+    monkeypatch.setattr(net.progress, '_judge_saved', observe)
+    assert net.progress.sync('game', force=True)
+    assert judged == []
+    assert net._function('f', 'game')['status'] == 'matched'
+    assert not net.progress.sync('game', force=True)
