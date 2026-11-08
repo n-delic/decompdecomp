@@ -18,6 +18,10 @@ def test_compiler_family_groups_registered_builds():
     assert toolchains.compiler_family('mwcps2-2.3.3') == 'metrowerks'
     assert toolchains.compiler_family('mwccpsp-3.0.1-b121') == 'metrowerks'
     assert toolchains.compiler_family('gcc-2.7.2-kmc') == 'gcc'
+    for compiler in ('MSVC/14.16', 'MSVC/own-9.0.30729', 'MSVC/xdk-3911'):
+        assert toolchains.compiler_family(compiler) == 'msvc'
+    for compiler in ('DS/9.0.0', 'GC/1.3.2', 'WII/1.5'):
+        assert toolchains.compiler_family(compiler) == 'metrowerks'
 
 # Archives _extract opens with a third-party module rather than the standard library.
 _EXTERNAL_EXTRACTORS = {".zst": "zstandard"}

@@ -155,6 +155,11 @@ def compiler_family(tid: str) -> str:
         return declared
     if tid.startswith("sn-n64-"):
         return "sn64"
+    prefix = tid.split("/", 1)[0].lower()
+    if prefix in ("msvc", "xdk"):
+        return "msvc"
+    if prefix in ("gc", "wii", "ds"):
+        return "metrowerks"
     for family in ("gcc", "ido", "sn64", "metrowerks", "msvc"):
         if family in tid.split("-"):
             return family

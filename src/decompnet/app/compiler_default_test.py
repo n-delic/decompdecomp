@@ -93,6 +93,8 @@ def replace_default(net, slug, selected, log=print):
         result = run(net, slug, selected, log)
         if result['stale']:
             raise NetworkError('Code or settings changed during testing. Run the replacement again.')
+        if not result['checked']:
+            raise NetworkError('No matched functions used the current default compiler. Nothing was checked or replaced.')
         proposed = copy.deepcopy(cfg)
         old, target = profile(cfg['compiler']), profile(selected)
         proposed['compiler'] = dict(cfg['compiler'], toolchain=target[0], flags=list(target[1]))

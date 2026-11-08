@@ -46,6 +46,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | names (types and prototypes: —) | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols (64-bit games': untested) | — (an XBE has none) | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (between PC projects) | ✓ (as PC's; not run on two Xbox games yet) | — | — |
+| Named Claude accounts, assigned per helper; recorded usage per account | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -61,6 +62,10 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
+- **Long C++ names in exports and Windows paths.** Progress saves shorten source filenames to fit a filesystem
+  component, but ROM exports still write the full symbol name (`rom/export_build.py`), and the save change does not
+  account for Windows' 260-character path limit. Extend the same safe naming and path handling to exports and check
+  complete paths on Windows.
 - **Public project build prerequisite hints** run in `ForkProject.run` for public checkouts. The other columns
   describe starting a game from scratch and do not use public-project setup.
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
@@ -135,6 +140,11 @@ Where to start on a gap:
   server applies it to claims without a function, so a helper's own `strategy` can't override it; a function asked
   for by name still comes, and the release, waiting and model-routing rules stay ahead of it. ROM and project mode
   alike, rooms through their host, and saves and progress folders keep the choice.
+
+- **Named Claude accounts (#45).** Add accounts under Claude Code → Additional accounts in Agents & models, sign in with a separate configuration
+  directory, and choose the account when starting helpers. Restarts retain the assignment. Finished sessions keep
+  their account identity and recorded usage across projects, including after a helper or account is removed.
+  Remaining subscription allowance and automatic account switching are separate work.
 
 - **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
@@ -730,7 +740,8 @@ go back to the queue with their old attempts as notes. Each improvement to the s
 
 ### How much usage each agent has left
 
-A window that shows, for each agent you use, what's left of its limits: the 5-hour and weekly limits of Claude Code
+Named Claude accounts can be assigned to helpers, with separate recorded usage (#45). Remaining allowance is
+still planned. A window that shows, for each agent you use, what's left of its limits: the 5-hour and weekly limits of Claude Code
 and Codex, and a monthly limit or the credit left on an API key where the provider says it. Helpers already wait for a
 usage limit to reset; this shows it before they hit it, so you can pick which agents to start.
 

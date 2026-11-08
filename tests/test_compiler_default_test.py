@@ -170,6 +170,14 @@ def test_replace_default_preserves_failed_matches_and_other_profiles(net, monkey
     assert net.store.one("SELECT status FROM functions WHERE name='f1'")['status'] == 'matched'
 
 
+def test_replace_default_refuses_empty_comparison(net, monkeypatch):
+    before = net._project('game')['config']
+    monkeypatch.setattr(trial, 'run', lambda *args: {'stale': False, 'checked': 0})
+    with pytest.raises(NetworkError, match='Nothing was checked'):
+        trial.replace_default(net, 'game', PROFILE)
+    assert net._project('game')['config'] == before
+
+
 def test_cleanup_moves_only_exact_matches_and_keeps_neighbour_settings(net, monkeypatch):
     from decompnet.app.compiler_cleanup import cleanup
     from decompnet.project import compiler_for

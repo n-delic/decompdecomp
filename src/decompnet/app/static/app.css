@@ -1087,3 +1087,11 @@ details.more[open] > summary::before { content: "− "; }
 .settings-disclosure > summary::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); flex: none; }
 .settings-disclosure[open] > summary::before { transform: rotate(45deg); }
 .settings-disclosure > summary:focus-visible { outline: 2px solid var(--hl); outline-offset: -3px; }
+/* Additional sign-ins stay compact in the agent card; setup and login instructions live in the drawer. */
+.account-list { margin: 10px 0; }
+.account-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 10px 0; border-bottom: 1px solid var(--line-soft); text-align: left; }
+.account-item div { min-width: 0; }
+.account-item b { display: block; overflow-wrap: anywhere; }
+.account-item span { display: block; color: var(--muted); font-size: 12px; }
+.account-link { background: none; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; cursor: pointer; color: inherit; }
+.account-link:hover b { text-decoration: underline; }

@@ -20,6 +20,7 @@ import struct
 import subprocess
 import threading
 import time
+from bisect import bisect_left
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -3918,9 +3919,13 @@ class ForkEngine:
         elsewhere = [r for r in files.build(slug).runs if r.differs()]
         survey, state = cfg.get("file_survey") or {}, files.surveys.get(slug) or {}
         checks = cfg.get("file_checks") or []
-        functions = self.net.store.all("SELECT name,vram,status FROM functions WHERE project_id=? AND vram IS NOT NULL", proj["id"])
+        fields = "name,vram,status" if include_functions else "vram"
+        functions = self.net.store.all(
+            f"SELECT {fields} FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram", proj["id"])
+        addresses = [fn["vram"] for fn in functions]
         def part_functions(part):
-            return [dict(fn) for fn in functions if part["start"] <= fn["vram"] < part["end"]]
+            first, last = bisect_left(addresses, part["start"]), bisect_left(addresses, part["end"])
+            return [dict(fn) for fn in functions[first:last]] if include_functions else last - first
         return {"compiler": consoles.compiler_name(own), "flags": "", "mips": True, "unit": "source file",
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": consoles.compiler_name(r.label[0]),
                                "functions": r.functions, "confirmed": r.confirmed} for r in elsewhere[:12]],
@@ -3934,7 +3939,8 @@ class ForkEngine:
                 "parts": [{"start": p["start"], "end": p["end"], "compiler": p["name"], "flags": "", "file": p["file"],
                            "toolchain": p["toolchain"], "family": toolchains.compiler_family(p["toolchain"]) or p["toolchain"],
                            **({"function_list": part_functions(p)} if include_functions else {}),
-                           "functions": len(part_functions(p)) if p["end"] > p["start"] else None,
+                           "functions": (len(part_functions(p)) if include_functions else part_functions(p))
+                           if p["end"] > p["start"] else None,
                            "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
                           for p in parts]}
 
