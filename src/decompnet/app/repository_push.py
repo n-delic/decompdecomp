@@ -46,7 +46,9 @@ def describe(root, branch, ref):
     parts = raw.split('\0')
     commits = [{'sha':parts[index].strip(), 'subject':parts[index+1].strip(), 'body':parts[index+2].strip()[:5000]}
                for index in range(0, len(parts)-2, 3)]
-    return {'folder':str(root), 'branch':branch, 'destination':'origin/'+ref.removeprefix('refs/heads/'),
+    from .repository_fork import github_name
+    github_origin = github_name(git(root, 'remote', 'get-url', 'origin'))
+    return {'github_origin':github_origin, 'folder':str(root), 'branch':branch, 'destination':'origin/'+ref.removeprefix('refs/heads/'),
             'head':head, 'unpushed':ahead, 'behind':behind, 'new_branch':not bool(known), 'commits':commits,
             'can_push':behind == 0 and (ahead > 0 or not known),
             'basis':'Based on the last fetch from origin; Push checks origin again.'}

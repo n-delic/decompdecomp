@@ -734,6 +734,8 @@
                 <p class="small muted" id="repositoryPushBasis"></p>
                 <div class="row"><button class="primary small-btn" type="button" id="repositoryPushGo" disabled>Push commits to origin</button><button class="ghost small-btn" type="button" id="repositoryPushStop" hidden>Stop</button></div>
                 <pre class="joblog" id="repositoryPushLog" hidden></pre>
+                <p><button class="ghost small-btn" type="button" id="repositoryForkGo" hidden>Set up a GitHub fork…</button> <button class="ghost small-btn" type="button" id="repositoryForkStop" hidden>Stop fork setup</button></p>
+                <pre class="joblog" id="repositoryForkLog" hidden></pre>
               </div>
               <section id="repositoryDestination" hidden><h3>Update build files</h3><p class="small muted">Automatic commits save progress. To update the standalone C sources and build-based trackers such as ByteMatch, run a verified build sync here.</p><p class="small mono" id="repositoryBuildPath"></p>
               <input id="repositoryFolder" type="hidden">
