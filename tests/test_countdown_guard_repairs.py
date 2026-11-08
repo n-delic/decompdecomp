@@ -69,7 +69,7 @@ def test_unsigned_wrap_and_body_updates_match_original(tmp_path):
         chunks.append(f'if(original{i}(n)!=candidate{i}(n)) return {i+1};')
     chunks.append('} return 0; }')
     path = tmp_path/'control.c'
-    path.write_text('\n'.join(chunks))
+    path.write_text('\n'.join(chunks) + '\n')
     subprocess.run([cc, '-std=c90', '-pedantic-errors', '-O2', str(path), '-o', str(tmp_path/'control')], check=True)
     subprocess.run([str(tmp_path/'control')], check=True, timeout=10)
 
