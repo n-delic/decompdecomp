@@ -15,6 +15,10 @@ def prepare(net, project):
         for statement in SCHEMA[1:]:db.execute(statement)
         if 'usage_coverage' not in {r[1] for r in db.execute('PRAGMA table_info(helper_sessions)')}:
             db.execute("ALTER TABLE helper_sessions ADD COLUMN usage_coverage TEXT NOT NULL DEFAULT 'unknown'")
+        columns = {r[1] for r in db.execute('PRAGMA table_info(helper_sessions)')}
+        for column in ('account_id', 'account_name'):
+            if column not in columns:
+                db.execute(f"ALTER TABLE helper_sessions ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         revisions(db)
         store.after_commit(lambda: ready.add(store))
     return store

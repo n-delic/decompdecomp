@@ -11,6 +11,11 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'loop_test_snapshot': ('scalar_storage_reuse','staged_scalar_arithmetic','explicit_loop_backedge','loop_constant_snapshot'),
+    'staged_scalar_arithmetic': ('targeted_debug_layout','unscaled_address_snapshot','loop_test_snapshot'),
+    'unscaled_address_snapshot': ('byte_pointer_operand_order','targeted_debug_layout','loop_constant_snapshot'),
+    'byte_pointer_operand_order': ('unscaled_address_snapshot','targeted_debug_layout'),
+    'loop_constant_snapshot': ('explicit_loop_backedge','staged_scalar_arithmetic','byte_pointer_operand_order'),
     'effectful_dispatch_specialization': ('saved_layout_followup','targeted_debug_layout','revisit_one_shot_scope'),
     'inferred_frame_reservation': ('branch_packing_tail',),
     'branch_packing_tail': ('inferred_frame_reservation',),
@@ -28,7 +33,7 @@ COMPLEMENTS = {
     'parameter_carriers': ('narrow_load_subtraction','one_shot_scope'),
     'scalar_storage_reuse': ('row_number_staging','explicit_loop_backedge','debug_constant_initialization'),
     'row_number_staging': ('branch_integer_constant','scalar_storage_reuse','explicit_loop_backedge'),
-    'explicit_loop_backedge': ('row_number_staging','branch_integer_constant','scalar_storage_reuse'),
+    'explicit_loop_backedge': ('loop_constant_snapshot','row_number_staging','branch_integer_constant','scalar_storage_reuse'),
     'branch_integer_constant': ('row_number_staging','pure_preheader_order'),
     'debug_constant_initialization': ('scalar_storage_reuse','row_number_staging'),
     'divisor_normalization_copy': ('dead_copy_source','divisor_flag_split'),

@@ -502,6 +502,9 @@ class BriefMixin:
                       ", ".join(f"{r['name']} ({sim * 100:.0f}% similar)" for r, sim in alike)]
             r, sim = alike[0]
             src = self.project_store(proj['id']).one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], r["name"])
+            from ..donor_structure import brief as donor_brief
+            if hint := donor_brief(fn['best_source'] or fn['seed'] or '', src['matched_source'] if src else '', sim):
+                lines.append(hint)
             if sim >= 0.8 and src and src["matched_source"] and len(src["matched_source"]) <= 3000:
                 # nearly the same code: its matching C is the best starting point there is (saves a tool call)
                 lines += [f"Matching C of {r['name']} ({sim * 100:.0f}% similar): start from this",

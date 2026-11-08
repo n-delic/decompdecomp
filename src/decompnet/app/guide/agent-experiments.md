@@ -88,3 +88,16 @@ progress and inspect regressions before requesting another full assembly dump.
 Use get_search_brief(function) before long searches. Explicitly review promising current-profile diagnostics with review_search_seed; changed/unknown interfaces remain diagnostic-only even when exact. Review callers and submit normally. Never add dummy uses.
 
 For a result-preserving target exit, get_search_brief can suggest a diagnostic return/lifetime pair and list current failed trials. Deep search can generate supported pairs without a supplied seed, even if the first edit regresses; interfaces still need review. Allocation-mapped middle quotient sites are eligible. Scope-depth estimates are heuristics; judge actual output and do not add dummy uses.
+
+For a near match whose return-value copy rotates around address setup, start with
+`try_local_repairs` families `prepared_return_scope`, `prepared_call_scope`, and
+`assigned_call_scope`. Deep search prioritizes the same bounded lane automatically.
+These retain the real call and ABI; do not replace them with dummy reads or fixed
+registers. If moving the copy fixes order but swaps registers, read
+`get_search_brief` for cached refs/live-length evidence before more flag searches.
+Reading the packet does not compile. Deep search may capture diagnostics only after
+trying the cheap call lane, inside its existing compile/time budget, and requires
+ordinary/diagnostic object parity. Missing capture evidence is not exhaustion.
+Read `get_function(section="brief")` for a compact structural comparison with a
+matched neighbour, including donors too large to inline. Differences are leads,
+not permission to copy its prototype, dead uses, or side-effect ordering.

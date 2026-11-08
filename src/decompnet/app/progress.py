@@ -55,10 +55,10 @@ def _config_key(proj, cfg: dict) -> str:
     """A digest of only the settings a progress folder's manifest is rendered from.
 
     Spending, check marks and the stored revision change constantly and must not look like a manifest edit; a title,
-    compiler, instructions, priority, layout source or fingerprint does."""
+    compiler, instructions, claim order, priority, layout source or fingerprint does."""
     rom = cfg.get("rom") or {}
     settings = [proj["name"], cfg.get("platform"), rom.get("sha1"), rom.get("file"), cfg.get("compiler"),
-                cfg.get("compiler_ranges") or [], cfg.get('function_compilers') or {}, cfg.get("instructions") or "", cfg.get("priority") or [],
+                cfg.get("compiler_ranges") or [], cfg.get('function_compilers') or {}, cfg.get("instructions") or "", cfg.get("claim_order") or "", cfg.get("priority") or [],
                 cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
     return hashlib.sha1(json.dumps(settings, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
@@ -159,11 +159,11 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
       no longer has) moves to unlisted/, kept as it is and not judged, so it stops the project no more. One the
       project still has (a layout edit renamed it) is left: `_manifest` refuses that edit.
     A manifest it can't read, or one with no layout, is left to `_manifest` to say what's wrong."""
-    store = net.project_store(pid)
+    store = net.project_store(pid) if hasattr(net, "project_store") else net.store
     try:
         manifest = json.loads(disk[saves.MANIFEST])
         headers = dict(manifest.get("headers") or {})
-        layout = {entry["name"] for entry in manifest.get("layout") or []}
+        layout = {saves._source_file(entry["name"]) for entry in manifest.get("layout") or []}
     except (ValueError, TypeError, KeyError, AttributeError):
         return disk
     if not layout:
@@ -177,10 +177,10 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
             (folder / "include").mkdir(exist_ok=True)
             (folder / name).write_text(disk[name], encoding="utf-8")
             report(f"{name} was missing: written again from the project")
-    left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).stem not in layout)
+    left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).name not in layout)
     if left:
         known = {row["name"] for row in store.all("SELECT name FROM functions WHERE project_id=?", pid)}
-        left = [name for name in left if Path(name).stem not in known]
+        left = [name for name in left if Path(name).name not in {saves._source_file(function) for function in known}]
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
         os.replace(folder / name, folder / "unlisted" / name)
@@ -191,8 +191,12 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     return disk
 
 
+# #158: preserve assembly-local names in progress manifests.
+NAME = re.compile(r"[A-Za-z_]\w*|\.L[0-9A-F]+")
+
+
 @phase('progress_manifest')
-def _manifest(files: dict[str, str], cfg: dict) -> dict:
+def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
         if manifest["format"] != saves.FORMAT or manifest["game"]["sha1"] != cfg["rom"]["sha1"]:
@@ -239,18 +243,21 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
                 raise ValueError(f"set_aside entry {item.get('name')!r} is malformed")
         if "" not in (manifest.get("headers") or {}):
             raise ValueError("headers must name the project-wide header (the empty name)")
+        source_files = {saves._source_file(name) for name in layout}
+        known_by_file = {saves._source_file(name): name for name in known_names}
         for name in files:
-            if name.startswith(("src/", "best/")) and Path(name).stem not in layout:
-                raise NetworkError(f"Add {Path(name).stem} to the function layout in progress/decompdecomp.json before continuing.")
+            if name.startswith(("src/", "best/")) and Path(name).name not in source_files:
+                symbol = known_by_file.get(Path(name).name, Path(name).stem)
+                raise NetworkError(f"Add {symbol} to the function layout in progress/decompdecomp.json before continuing.")
         functions = {}
         for name, info in layout.items():
             if Path(name).name != name or "\\" in name or "/" in name:
                 raise ValueError(f"layout name {name!r} is not a function name")
             previous = manifest.get("functions", {}).get(name, {})
-            if f"src/{name}.c" in files:
+            if f"src/{saves._source_file(name)}" in files:
                 functions[name] = {"vram": info["vram"], "matched_by": previous.get("matched_by", ""),
                                    "readable": previous.get("readable", False)}
-            elif f"best/{name}.c" in files:
+            elif f"best/{saves._source_file(name)}" in files:
                 functions[name] = {"vram": info["vram"], "best_by": previous.get("best_by", "")}
         manifest["functions"] = functions
         return manifest
@@ -308,7 +315,7 @@ def _merge_manifest(old, new, current, key: str = ""):
 def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str]) -> tuple[dict, dict[str, str]]:
     """A first sync has no deletion history, so keep database work while adding saved contributions."""
     local = json.loads(projected[saves.MANIFEST])
-    for key in ("title", "compiler", "compiler_ranges", "instructions", "priority", "auto_compiler",
+    for key in ("title", "compiler", "compiler_ranges", "instructions", "claim_order", "priority", "auto_compiler",
                 "knowledge_auto"):
         manifest[key] = local.get(key)
 
@@ -361,6 +368,11 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
     return {row["name"] for row in rows}
 
 
+def source_name(path: str, known_names) -> str:
+    file = Path(path).name
+    return next((name for name in known_names if saves._source_file(name) == file), file.removesuffix('.c'))
+
+
 def affected_functions(old, new, changed, rows):
     """Scope known per-function build inputs; unknown shared linking/layout changes require a full check."""
     from ..project import compiler_for
@@ -395,7 +407,7 @@ def affected_functions(old, new, changed, rows):
         compiler_changed = bool(old.get('compiler')) and compiler_for(old, row['vram'], row) != compiler_for(new, row['vram'], row)
         if (compiler_changed or
             previous != current or (current and 'include/'+current in changed) or
-            f'src/{name}.c' in changed or f'best/{name}.c' in changed):
+            f'src/{saves._source_file(name)}' in changed or f'best/{saves._source_file(name)}' in changed):
             affected.add(name)
     return affected
 
@@ -678,7 +690,7 @@ class Progress:
                 return 0
             names = [row['name'] for row in store.all("SELECT name FROM functions WHERE project_id=? "
                      "AND status='matched'", proj['id'])
-                     if f"best/{row['name']}.c" in baseline.disk.files]
+                     if f"best/{saves._source_file(row['name'])}" in baseline.disk.files]
             if not names:
                 return 0  # Normal autosaves must not inflate every matched source or scan the tree.
             folder = saves.default_folder(self.net, slug)
@@ -689,7 +701,7 @@ class Progress:
                                          proj['id'], name)
                 if row['status'] != 'matched' or not row['matched_source']:
                     continue
-                source, draft = f"src/{name}.c", f"best/{name}.c"
+                source, draft = f"src/{saves._source_file(name)}", f"best/{saves._source_file(name)}"
                 src, best = folder/source, folder/draft
                 if not src.is_file() or not best.is_file():
                     continue
@@ -1227,7 +1239,7 @@ class Progress:
             redundant = {"best/"+name[4:] for name in files if name.startswith("src/")}
             removed.update({name: None for name in redundant if name in baseline.disk.files and name not in files})
         else:
-            possible = {f"src/{name}.c" for name in names} | {f"best/{name}.c" for name in names}
+            possible = {f"src/{saves._source_file(name)}" for name in names} | {f"best/{saves._source_file(name)}" for name in names}
             if flags.headers:
                 possible |= {name for name in baseline.projected.files if name.startswith("include/")}
             removed = {name: None for name in possible
@@ -1304,7 +1316,9 @@ class Progress:
                 self._activity(slug, message=line)
                 destination(line)
             disk = _repair(net, pid, folder, disk, report)
-            manifest = _manifest(disk, cfg)
+            known_names = {row["name"] for row in store.all(
+                "SELECT name FROM functions WHERE project_id=?", pid)}
+            manifest = _manifest(disk, cfg, known_names)
             def check_cancel():
                 self._check_paused(slug)
                 getattr(destination, "check_cancel", lambda: None)()
@@ -1335,7 +1349,7 @@ class Progress:
                 # A database match newer than the folder's snapshot wins even when the folder has an older file of
                 # the same name; its source is published below and that older file is not judged (#101 review).
                 legacy_newer = _database_newer(net, proj, manifest, stored_revision)
-                changed.difference_update(f"src/{name}.c" for name in legacy_newer)
+                changed.difference_update(f"src/{saves._source_file(name)}" for name in legacy_newer)
             projected = baseline.projected if baseline is not None else _Snapshot.of(comparison)
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
@@ -1359,7 +1373,7 @@ class Progress:
                     manifest["revision"] = saves._next_revision(net, proj, folder)
                     pending[saves.MANIFEST] = json.dumps(manifest, indent=1) + "\n"
                 for name in legacy_newer:
-                    source = f"src/{name}.c"
+                    source = f"src/{saves._source_file(name)}"
                     if source in rendered:
                         pending[source] = rendered[source]
                 if (before is not None and saves.MANIFEST in rendered and previous.manifest is not None
@@ -1370,7 +1384,7 @@ class Progress:
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
-                merged_manifest = _manifest(candidate, cfg)
+                merged_manifest = _manifest(candidate, cfg, known_names)
                 function_rows = store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
                 # Judge the merged files against today's database inputs, not the
                 # previous disk snapshot. Local searches may already have verified
@@ -1393,12 +1407,12 @@ class Progress:
                         "SELECT name FROM functions WHERE project_id=? AND status='matched'", pid)}
                     # Unpublished drafts still need judging. An already verified
                     # match being exported is not an external source change.
-                    affected.update(path.split('/', 1)[1][:-2] for path in applied_changed
+                    affected.update(source_name(path, matched_names | known_names) for path in applied_changed
                                     if path.startswith(('src/', 'best/')) and path.endswith('.c')
-                                    and path.split('/', 1)[1][:-2] not in matched_names)
+                                    and source_name(path, matched_names | known_names) not in matched_names)
                     applied_changed = {path for path in applied_changed
                                        if path in input_changes or not path.startswith(('src/', 'best/'))
-                                       or path.split('/', 1)[1][:-2] not in matched_names}
+                                       or source_name(path, matched_names | known_names) not in matched_names}
                 all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
                 if toolchain and not toolchains.known(toolchain):
@@ -1464,8 +1478,8 @@ class Progress:
                                       (pid,)).fetchall()
                     for row in rows:
                         impacted = all_code or row["name"] in (affected or set())
-                        changed_source = f"src/{row['name']}.c" in applied_changed
-                        changed_best = f"best/{row['name']}.c" in applied_changed
+                        changed_source = f"src/{saves._source_file(row['name'])}" in applied_changed
+                        changed_best = f"best/{saves._source_file(row['name'])}" in applied_changed
                         keep_backup = False
                         keep_best = False
                         if changed_source or impacted:
@@ -1523,7 +1537,9 @@ class Progress:
                 self.revisions[slug] = self.revisions.get(slug, 0) + 1
             self.published[slug] = set(pending) | set(removed)
             disk = _read(folder)
-            manifest = _manifest(disk, cfg)
+            known_names = {row["name"] for row in store.all(
+                "SELECT name FROM functions WHERE project_id=?", pid)}
+            manifest = _manifest(disk, cfg, known_names)
             saves._remember_revision(net, slug, manifest)
             saved = manifest.get("functions") or {}
             if affected is not None and needs_judging:

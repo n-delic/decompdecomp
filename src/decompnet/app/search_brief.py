@@ -1,7 +1,14 @@
 """Compact current-input investigation packet; reading it never starts a compiler."""
 import hashlib
 
-from . import allocation_search, allocation_targeting, reviewed_search_seeds, search_evidence
+from . import (
+    allocation_evidence,
+    allocation_search,
+    allocation_targeting,
+    gcc_allocation,
+    reviewed_search_seeds,
+    search_evidence,
+)
 
 
 def read(net, agent, slug, function):
@@ -11,6 +18,11 @@ def read(net, agent, slug, function):
     lines = [f"{fn['name']}: saved score {fn['best_score']}; source SHA256 {hashlib.sha256(source.encode()).hexdigest()}."]
     if reviewed_search_seeds.supported(net, proj):
         evidence = allocation_search.saved(net,proj,fn,source) or {}
+        rows=evidence.get('rows',[])
+        if hint := allocation_evidence.text(rows,proj['arch']):lines.append(hint)
+        diagnosis=allocation_evidence.diagnose(rows,proj['arch'])
+        registers=diagnosis['register_cycles'] or [diagnosis['return_copy_rotation']]
+        if hint := gcc_allocation.brief(evidence.get('allocation'),registers):lines.append(hint)
         from .scratch_role_repairs import brief as scratch_brief
         if clue := scratch_brief(source,fn['name'],header,proj['arch'],evidence.get('rows',[])):lines.append(clue)
         targeted = allocation_targeting.brief(source,header,evidence.get('rows',[]),evidence,proj['arch'])

@@ -41,6 +41,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
             (pid, "func_80000004", 4, 1, bytes.fromhex("24020001"), "[]", "matched",
              "void func_80000004(void) {}", 0x80000004),
         ).lastrowid
+        db.execute("UPDATE functions SET last_checked=123,last_improved=120 WHERE id=?", (changed_id,))
         removed_id = db.execute("INSERT INTO functions(project_id,name,size,n_insns,vram,status,matched_source) "
                                 "VALUES(?,?,?,?,?,?,?)", (pid, "func_80000008", 4, 1, 0x80000008, "matched",
                                                           "void func_80000008(void) { gone(); }")).lastrowid
@@ -129,9 +130,11 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert not net.store.one("SELECT 1 FROM symbols WHERE project_id=? AND name='func_80000000'", pid)
     kept = net.store.one("SELECT text FROM notes WHERE text LIKE '%it matched with this C%'")["text"]
     assert "gone();" in kept and any("their C is kept in the project's notes" in m for m in messages)
-    changed = net.store.one("SELECT status, matched_source, target FROM functions WHERE id=?", changed_id)
+    changed = net.store.one("SELECT status, matched_source, target, last_checked, last_improved "
+                            "FROM functions WHERE id=?", changed_id)
     assert changed["status"] == "open" and changed["matched_source"] is None
     assert changed["target"] == bytes.fromhex("24020002")
+    assert changed["last_checked"] is None and changed["last_improved"] is None
     assert net.store.one("SELECT text FROM notes WHERE function_id=?", changed_id)["text"] == "keep this note"
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?",
                          pid, "func_80000008") is None

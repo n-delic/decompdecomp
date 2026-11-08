@@ -1679,8 +1679,9 @@ class ForkEngine:
         going = set(order[order.index(sym):])
         rows = [r for r in self.net.project_store(slug).all("SELECT id, name, meta FROM functions WHERE project_id=? AND unit=? AND "
                                               "status != 'nosource'", proj["id"], unit.name)]
-        stem = re.sub(r"_[0-9A-Fa-f]{8}$", "", Path(rel).stem)
-        tail = re.search(r"([0-9A-Fa-f]{8})(?:@\d+)?$", sym)  # (a PC function: @func_0041B470@8)
+        stem = re.sub(r"_[0-9A-Fa-f]{8,16}$", "", Path(rel).stem)
+        # (a PC function: @func_0041B470@8; a 64-bit one's address has 9 digits or more, func_140001000)
+        tail = re.search(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{8,16})(?:@\d+)?$", sym)
         new = new_name.strip().lstrip("./") or (Path(rel).parent / f"{stem}_{(tail.group(1) if tail else sym).upper()}"
                                                 f"{Path(rel).suffix}").as_posix()
         old_path, new_path = fp.root / rel, fp.root / new
@@ -2418,7 +2419,12 @@ class ForkEngine:
                 elif pct is not None and r["best_score"] == 0:  # reopened before this was fixed: still says identical
                     db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
                 elif pct is not None and not r["best_source"] and r["best_score"] != scaled(pct, r["n_insns"]):
-                    db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
+                    score = scaled(pct, r["n_insns"])
+                    improved = (score < r["n_insns"] * 100
+                                and (r["best_score"] is None or score < r["best_score"]))
+                    db.execute("UPDATE functions SET best_score=?, "
+                               "last_improved=CASE WHEN ? THEN ? ELSE last_improved END WHERE id=?",
+                               (score, improved, time.time(), r["id"]))
 
     def _matched(self, db, proj, r, agent: Agent | None, text: str | None) -> None:
         """Record a function that matches now (outside compile_and_diff, which records its own)."""
@@ -2855,7 +2861,7 @@ class ForkEngine:
         elif n is not None:
             key, what = (structs.ARGUMENT, addr, n), structs.argument_name(n)
         else:
-            m = re.fullmatch(r"_?(?:D_|0x)?([0-9A-Fa-f]{8})", base)
+            m = re.fullmatch(r"_?(?:D_|0x)?([0-9A-Fa-f]{8,16})", base)
             at = int(m.group(1), 16) if m else next((a for a, name in found.labels.items() if name == base), None)
             if at is None:
                 raise NetworkError(f"`{argument}`: say this, arg0 to arg3, return, or a global's name or D_<address> "
@@ -3270,7 +3276,7 @@ class ForkEngine:
             raise NetworkError("this project's flags are its build's own: try_compiler changes only the file's compiler")
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} already matches with {own}")
-        known = [c.id for c in console.compilers]
+        known = [c.id for c in console.project_compilers(fp)]  # (a 32-bit game's 32-bit ones, a 64-bit game's 64-bit)
         current = compiler.strip().lower() == "current"
         if current:
             compiler = own

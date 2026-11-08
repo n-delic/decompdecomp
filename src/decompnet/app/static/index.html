@@ -423,6 +423,16 @@
         <div class="pad">
           <p class="muted small">Every agent on this game gets these with its task: what to focus on, what you know about the game, conventions, things to leave alone.</p>
           <textarea id="instrEdit" rows="6" aria-label="Instructions for agents" placeholder="Focus on the game's own code first; leave zlib for later.&#10;The struct at 0x8004AE34 is the player (hp at +0x20).&#10;Name functions in snake_case."></textarea>
+          <label class="field"><span>Which functions helpers take first</span>
+            <select id="claimOrder">
+              <option value="">Default: each helper's own choice</option>
+              <option value="easiest">Smallest first</option>
+              <option value="hardest">Largest first</option>
+              <option value="closest">Closest to matching first (near misses)</option>
+              <option value="untried">Not yet tried first</option>
+            </select>
+          </label>
+          <p class="muted small" id="claimOrderHint">Helpers that claim without naming a function follow this, whatever order they ask for; a function they name still comes.</p>
           <div class="row"><button class="primary small-btn" id="instrSave" type="button">Save instructions</button></div>
         </div>
       </section>

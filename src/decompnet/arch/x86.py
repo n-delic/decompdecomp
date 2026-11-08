@@ -141,22 +141,41 @@ def resumes(code: bytes, at: int, start: int, end: int) -> bool:
         ins[1].mnemonic == "ret" and not ins[1].operands
 
 
-# A memory operand naming data by its address (D_00412340, _D_00412340, D_00412340+0x4), as delinked targets name it
-_DATA_OPERAND = re.compile(r"\[\s*_?D_([0-9A-Fa-f]{8})(?:\s*\+\s*(0x[0-9A-Fa-f]+|\d+))?\s*\]")
+# A memory operand naming data by its address (D_00412340, _D_00412340, D_00412340+0x4; x64's rip-relative
+# [rip + D_140002020]), as delinked targets name it
+_DATA_OPERAND = re.compile(r"\[\s*(?:rip\s*\+\s*)?_?D_([0-9A-Fa-f]{8,16})(?:\s*\+\s*(0x[0-9A-Fa-f]+|\d+))?\s*\]")
 
 
 FRAME_REGISTERS = {cs_x86.X86_REG_ESP, cs_x86.X86_REG_EBP}  # a store through these is to a local, not an object
 
 
-def immediate_stores(code: bytes, addr: int) -> dict[int, int]:
+FRAME_REGISTERS_64 = {cs_x86.X86_REG_RSP, cs_x86.X86_REG_RBP}
+
+
+def immediate_stores(code: bytes, addr: int, wide: bool = False) -> dict[int, int]:
     """Where a function stores a 32-bit constant into an object through a register (`mov dword ptr [esi + 8],
     offset X`): the constant's offset in the code -> the displacement. A constructor stores its class's vtable so,
-    at +0 (a second base's at its place). Stores to locals (esp, ebp) and to absolute addresses are left out."""
-    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    at +0 (a second base's at its place). Stores to locals (esp, ebp) and to absolute addresses are left out.
+    `wide`: x64 code, which takes an address into a register first (`lea rax, [rip + vtable]; mov qword ptr [rcx],
+    rax`): the lea's displacement's offset -> where the register is stored."""
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64 if wide else capstone.CS_MODE_32)
     md.detail = True
     out = {}
+    taken: dict[int, int] = {}  # (x64) a register -> where in the code the address it holds is
     for ins in md.disasm(code, addr):
         ops = ins.operands
+        if wide and ins.id == cs_x86.X86_INS_LEA and ops[1].mem.base == cs_x86.X86_REG_RIP:
+            taken[ops[0].reg] = ins.address - addr + ins.disp_offset
+            continue
+        if wide and ins.id == cs_x86.X86_INS_MOV and len(ops) == 2 and ops[0].type == cs_x86.X86_OP_MEM and \
+                ops[0].size == 8 and ops[1].type == cs_x86.X86_OP_REG and ops[1].reg in taken and \
+                ops[0].mem.index == 0 and ops[0].mem.base not in (0, cs_x86.X86_REG_RIP, *FRAME_REGISTERS_64):
+            out[taken[ops[1].reg]] = ops[0].mem.disp
+            continue
+        if wide:
+            for reg in ins.regs_access()[1]:
+                taken.pop(reg, None)
+            continue
         if ins.id == cs_x86.X86_INS_MOV and len(ops) == 2 and ops[0].type == cs_x86.X86_OP_MEM and ops[0].size == 4 \
                 and ops[1].type == cs_x86.X86_OP_IMM and ins.imm_size == 4 and ops[0].mem.index == 0 \
                 and ops[0].mem.base not in (0, *FRAME_REGISTERS):

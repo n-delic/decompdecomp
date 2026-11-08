@@ -69,3 +69,32 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     if start in destinations or pops & destinations:
         return None  # no loop can allocate the entry frame again or enter a return delay slot
     return size if returns else None
+
+
+def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None):
+    """A closed frameless leaf: no calls, stack writes or callee-saved clobbers.
+
+    Callers must establish its entry from an existing return boundary, never scan
+    arbitrary raw data for an instruction pattern. Indirect flow remains review-only.
+    """
+    import rabbitizer
+
+    from .mips import _mips_uses, rabbitizer_category
+
+    end=min(end,start+0x1000)
+    if start<0 or start%4 or start+16>end or end>len(image):return None
+    order='big' if big_endian else 'little'
+    info=extent(image,start,end,vram,order,cpu)
+    size=info['extent_bytes']
+    if not info['direct_flow_closed'] or info['step_limit'] or size<16:return None
+    body=image[start:start+size]
+    if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):return None
+    preserved={*range(16,24),29,30,31}
+    for at in range(start,start+size,4):
+        word=int.from_bytes(image[at:at+4],order)
+        ins=rabbitizer.Instruction(word,0,rabbitizer_category(cpu))
+        uses=_mips_uses(word,cpu)
+        if not ins.isValid() or ins.doesLink() or uses is None or uses[1]&preserved:return None
+        if any(getattr(ins,'modifies'+field)() and getattr(ins,field.lower()).value>=20
+               for field in ('Fd','Fs','Ft')):return None
+    return size

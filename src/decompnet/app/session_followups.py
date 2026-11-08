@@ -10,7 +10,7 @@ def account_key(session):
     # Persist no credential or account identifier in settings keys or messages.
     from .. import agents
     kind = agents.get(session.kind)
-    scope = [session.kind]
+    scope = [session.kind, session.options.get('account_id') or 'default']
     if kind.uses_endpoints:
         scope += [session.options.get('base_url') or session.options.get('url') or session.options.get('endpoint') or '',
                   session.options.get('api_key') or '']

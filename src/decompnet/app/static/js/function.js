@@ -911,6 +911,17 @@ function renderList() {
 $("fnFilter").addEventListener("click", (e) => { const b = e.target.closest("[data-filter]"); if (b) { L.filter = b.dataset.filter; L.limit = FUNCTION_ROWS; renderList(); } });
 $("fnSearch").addEventListener("input", () => { L.q = $("fnSearch").value; L.limit = FUNCTION_ROWS; renderList(); });
 $("fnMore").onclick = () => { L.limit += MORE_ROWS; renderList(); };
+setInterval(() => {
+  if (document.hidden || S.tab !== "functions") return;
+  // Refresh the relative dates without replacing rows while someone is using the list.
+  for (const row of $("fnRows").querySelectorAll("tr[data-fn]")) {
+    const index = S.byName?.get(row.dataset.fn);
+    if (index == null) continue;
+    const fn = S.map[index];
+    row.querySelector(".fn-age-improved").innerHTML = functionAge(fn.last_improved);
+    row.querySelector(".fn-age-checked").innerHTML = functionAge(fn.last_checked);
+  }
+}, 15000);
 $("fnRows").addEventListener("click", (e) => {
   const star = e.target.closest("[data-star]");
   if (star) { togglePrio(star.dataset.star, star.getAttribute("aria-pressed") !== "true"); return; }
@@ -922,7 +933,7 @@ document.querySelectorAll(".fn-table th[data-sort]").forEach((th) => {
   th.onclick = () => {
     const k = th.dataset.sort === "vram" ? "i" : th.dataset.sort;
     if (L.sort === k) L.dir = -L.dir;
-    else { L.sort = k; L.dir = ["best", "attempts", "insns"].includes(k) ? -1 : 1; }
+    else { L.sort = k; L.dir = ["best", "attempts", "insns", "last_improved", "last_checked"].includes(k) ? -1 : 1; }
     renderList();
   };
 });
