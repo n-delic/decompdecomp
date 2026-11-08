@@ -51,5 +51,25 @@ vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js'
  assert.equal(bars,0);assert.equal($('backgroundWorkStatus')._workStatus.dataset.state,'error');
  const retry=ctx.beginBackgroundWork('Retry');assert.equal(bars,1);assert.equal($('backgroundWorkStatus')._workStatus.dataset.state,'running');retry();
  assert.equal(bars,0);assert.equal(maxBars,1);
+ $('backgroundGroupBy').value='project';$('backgroundThreadSort').value='cpu';
+ const groupedData={cpu_percent:0,threads:[],cpu_note:'',items:[
+  {title:'Z task',kind:'purpose',key:'z-high',project:'z-game',thread_ids:[1],stoppable:true},
+  {title:'A low',kind:'purpose',key:'a-low',project:'a-game',thread_ids:[2],stoppable:true},
+  {title:'A high',kind:'purpose',key:'a-high',project:'a-game',thread_ids:[3],stoppable:true},
+  {title:'App task',kind:'purpose',key:'app',thread_ids:[4],stoppable:true}],
+  thread_details:[{name:'z',native_id:1,cpu_percent:90},{name:'low',native_id:2,cpu_percent:1},{name:'high',native_id:3,cpu_percent:30},{name:'app',native_id:4,cpu_percent:99}]};
+ ctx.api=async(url,options)=>{stopped=options.body.key;};
+ ctx.renderBackgroundWork(groupedData);
+ let html=$('backgroundRows').innerHTML;
+ assert.equal((html.match(/scope="rowgroup"/g)||[]).length,3);
+ assert.ok(html.indexOf('a-game')<html.indexOf('z-game'));
+ assert.ok(html.indexOf('A high')<html.indexOf('A low'));
+ assert.ok(html.indexOf('Z task')<html.indexOf('App task'));
+ assert.match(html,/2 items/);
+ await stopButton.onclick();assert.equal(stopped,'a-high','Stop keeps the grouped row identity');
+ ctx.renderBackgroundWork(groupedData);assert.equal($('backgroundGroupBy').value,'project','Refresh preserves grouping');
+ $('backgroundGroupBy').value='none';$('backgroundGroupBy').onchange();
+ assert.doesNotMatch($('backgroundRows').innerHTML,/scope="rowgroup"/);
+ await stopButton.onclick();assert.equal(stopped,'app','Ungrouped view restores global CPU sorting');
  console.log('background visibility, request deduplication and escaping passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
