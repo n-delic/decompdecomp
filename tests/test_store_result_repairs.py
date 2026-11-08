@@ -116,3 +116,8 @@ def test_shared_draft_pipeline_reaches_supported_architectures(arch):
 def test_function_local_alias_cannot_override_header_width():
     text=source('typedef short s32; s32 height=127; s32 y=1; p->value=y+height;')
     assert not variants(text, 'demo', 'typedef int s32;')
+
+
+@pytest.mark.parametrize('body',['','/* no statements */',';'])
+def test_empty_control_flow_has_no_store_reuse_proposal(body):
+    assert variants('void demo(void) {'+body+'}', 'demo')==[]

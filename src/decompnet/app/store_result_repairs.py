@@ -29,6 +29,8 @@ def signed_word(typ, context):
 
 def initialized_before(flow):
     """Must-initialization on reachable edges, including declaration initializers."""
+    if flow.entry is None:
+        return {}  # An empty body has no reachable stores or initialization evidence.
     reachable, pending = set(), [flow.entry]
     while pending:
         index = pending.pop()

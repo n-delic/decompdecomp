@@ -396,3 +396,11 @@ reuse/archive follow-ups run separately in bounded batches and index the changed
 functions rather than rescanning the project. Advisory draft reports share bounded
 trial bookkeeping; completed resume receipts flush immediately. Stopping a lane
 flushes advisory reports and queues follow-ups for its already committed results.
+
+### Releases queued behind a compile
+
+A plain agent release takes the per-agent/function candidate lock before retaining the project
+publication lock. Compiles use that same order. This lets an in-flight compile publish while its
+release waits, preventing a cycle where the release owns the project lock and waits for the
+compile's candidate lock. Release receipt checks and note-publication markers remain inside their
+existing guards. Candidate-lock waits at tool entry are included in `candidate_lock_wait_ms`.

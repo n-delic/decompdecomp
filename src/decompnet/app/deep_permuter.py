@@ -91,7 +91,7 @@ class Search(Permuter):
     def __init__(self, net, minutes, max_variants, log, fn=None):
         super().__init__(net)
         self.room_holds = {}
-        self.parallel_claims = True
+        self.parallel_claims = getattr(log, 'parallel_claims', True)
         self.started_at = time.monotonic()
         self.seconds = min(minutes*60,getattr(log,'maximum_seconds',minutes*60))
         self.deadline = self.started_at+self.seconds

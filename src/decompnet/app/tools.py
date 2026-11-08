@@ -4,6 +4,7 @@ built-in API agent. Every tool works on the project the agent was started on."""
 from __future__ import annotations
 
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -618,7 +619,7 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
 
 
 @contextmanager
-def _tool_foreground(net, slug, name, args):
+def _tool_foreground(net, agent, slug, name, args):
     # Ordinary judgements, current candidate/target reads and notes can use context
     # already installed by a saved recheck. Settings/layout/prerequisite changes
     # still serialize behind the complete import.
@@ -626,12 +627,24 @@ def _tool_foreground(net, slug, name, args):
         name == 'get_candidate' and args.get('base','current') == 'current') or (
         name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
     notes = allowed and name in {'add_note','release_function'}
-    # Keep note writes and their publication marker together: the saved worker
-    # must not finish and acknowledge dirty state between those two steps.
-    with (net.progress.foreground() if allowed else nullcontext(),
-          net.progress._project_lock(slug) if notes else nullcontext()):
-        yield
-        if notes:net.progress.foreground_changed(slug)
+    with net.progress.foreground() if allowed else nullcontext():
+        attempt = nullcontext()
+        if notes and name == 'release_function':
+            # Compiles own the candidate lock before publishing under the project
+            # lock. A release must use that same order, including its receipt guard.
+            fn = net._function(args['function'],slug)
+            store = net.project_store(fn['project_id'])
+            with store.lock:
+                lock = net._attempt_locks.setdefault((agent.id,fn['id']),threading.RLock())
+            from ..request_timing import timed_lock
+            attempt = timed_lock(lock,'candidate_lock_wait')
+        # Keep note writes and their publication marker together so a finishing
+        # saved worker cannot acknowledge them before they are published.
+        with attempt, net.progress._project_lock(slug) if notes else nullcontext():
+            if notes and name == 'release_function' and net._function(args['function'],slug)['id'] != fn['id']:
+                raise NetworkError('The function changed while this release waited. Read its current claim before releasing.')
+            yield
+            if notes:net.progress.foreground_changed(slug)
 
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
@@ -642,7 +655,7 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
             and (agent.id, slug) in getattr(net, '_pending_tool_handshakes', set())):
         return _dispatch(net, agent, slug, name, args)
     # Enter before this wrapper's sync, not only inside the engine's attempt.
-    with _tool_foreground(net, slug, name, args):
+    with _tool_foreground(net, agent, slug, name, args):
         net.progress.sync(slug, force=True)
         result = _dispatch(net,agent,slug,name,args)
         if name not in READ_ONLY:
@@ -752,7 +765,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                     else:
                         # Name resolution also reads the project before the engine
                         # judge enters its own foreground scope.
-                        with _tool_foreground(net, slug, name, args):
+                        with _tool_foreground(net, agent, slug, name, args):
                             result=_dispatch(net,agent,slug,name,args,count_usage=True)
                 except Exception as exc:
                     error=exc

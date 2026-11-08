@@ -119,7 +119,9 @@ def view(net,fn):
             out += ['Reported issue: '+report['issue']+'; source revision '+report['source_hash'][:20]+'.']
         for ident in report['alternatives']:
             row=store.one('SELECT source,score FROM attempts WHERE id=? AND function_id=?',ident,fn['id'])
-            if row:
+            if row and row['source'] is None:
+                out += [f'Alternative attempt {ident}: recorded source unavailable; no review or fresh verification inferred.']
+            elif row:
                 out += [f'Compiled alternative attempt {ident}, historical score {row["score"]} (quality unverified):',
                         '```c\n'+row['source'][:6000]+'\n```']
             if sum(map(len,out))>18000:

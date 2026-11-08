@@ -88,3 +88,15 @@ def test_candidate_read_does_not_attach_saved_best_report_to_agent_trial(tmp_pat
     monkeypatch.setattr(agent_evidence, 'baseline', lambda *a: None)
     text = agent_tokens.get_candidate(net, agent, 'game', 'f')
     assert 'return 2' in text and 'Candidate quality (agent report' not in text
+
+
+def test_quality_view_reports_missing_alternative_source_without_changing_best(tmp_path):
+    net,_=_game(tmp_path,[('f',10,'open')])
+    fn=net._function('f','game');source='int f(){return 1;}'
+    report(net,fn,source)
+    with net.store.tx() as db:
+        db.execute('INSERT INTO attempts(id,function_id,agent_id,source,score,compiled,created_at) VALUES(999,?,1,NULL,4,1,0)',(fn['id'],))
+    text=candidate_quality.view(net,fn)
+    assert 'recorded source unavailable' in text and 'no review or fresh verification inferred' in text
+    assert '```c' not in text
+    assert dict(net._function('f','game'))==dict(fn)
