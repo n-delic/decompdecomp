@@ -14,6 +14,7 @@ what only the database has is each open function's closest attempt, and a save w
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import logging
@@ -165,6 +166,10 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             else:
                 net.progress.sync(slug, force=True)  # a contributor wrote meanwhile: apply it, don't overwrite it
         _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)
+        if chosen:
+            # Local-only receipt: distinguish an untouched app backup from contributor edits.
+            receipt = {"folder":str(target.resolve()), "digest":owned_digest(files)}
+            net._update_cfg(slug, lambda cfg:cfg.update(progress_save_receipt=receipt))
         return result | {"folder": str(target.resolve())}
     except OSError as e:
         detail = e.strerror or str(e)
@@ -320,6 +325,11 @@ def _read_owned(folder: Path) -> dict[str, str]:
                  for name, info in functions.items() if isinstance(info, dict))
     owned.update("include/" + file for file in headers.values() if isinstance(file, str))
     return {name: text for name, text in previous.items() if name in owned}
+
+
+def owned_digest(files: dict[str, str]) -> str:
+    """Content receipt for an app-written backup; never shared in the manifest."""
+    return hashlib.sha256(json.dumps(files, sort_keys=True).encode('utf-8')).hexdigest()
 
 
 def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | None = None) -> list:
