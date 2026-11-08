@@ -40,6 +40,7 @@ def test_cached_c_view_returns_independent_mutable_spans():
 def test_lookahead_shrinks_on_unused_work_and_grows_on_consumed_work(monkeypatch):
     from contextlib import contextmanager
     from types import SimpleNamespace
+
     from decompnet.app import deep_lookahead
     widths=[]
     @contextmanager
