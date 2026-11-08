@@ -203,7 +203,7 @@ def entry_function(net, proj, fn, item):
         return fn
     names = {token.group() for token in _C_TOKEN.finditer(item['source'])
              if re.fullmatch(r'func_[0-9A-Fa-f]{8}_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3})', token.group())}
-    rows = [row for row in store.all('SELECT id,unit FROM functions WHERE project_id=? AND vram=?',
+    rows = [row for row in store.all('SELECT * FROM functions WHERE project_id=? AND vram=?',
                                        proj['id'], submitted['vram'])
             if row['name'] in names and csource.find(item['source'], row['name']) is not None]
     if len(rows) == 1:
