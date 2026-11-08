@@ -7,11 +7,14 @@ on:
       - '.github/workflows/windows-portable.yml'
       - 'pyproject.toml'
       - 'uv.lock'
+      - 'tests/test_windows_portable.py'
+      - 'src/decompnet/app/launcher.py'
 permissions:
   contents: read
 jobs:
   portable:
-    runs-on: windows-latest
+    runs-on: windows-2022
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0

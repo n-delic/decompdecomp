@@ -46,6 +46,9 @@ internal static class PortableLauncher
             using (Process child = Process.Start(start))
             {
                 child.WaitForExit();
+                if (child.ExitCode != 0 && args.Length == 0)
+                    MessageBox.Show("The app could not start. Check README.txt for the Microsoft window prerequisites and .decomp/logs/decomp.log in your project data folder for details.",
+                        "decompdecomp", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return child.ExitCode;
             }
         }

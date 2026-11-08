@@ -91,7 +91,11 @@ raise SystemExit(main())
     $relocated = Join-Path $work 'relocated portable app'
     Expand-Archive -LiteralPath $portable -DestinationPath $relocated
     $portableRun = Start-Process -FilePath (Join-Path $relocated 'decompdecomp.exe') `
-        -ArgumentList '--help' -Wait -PassThru
+        -ArgumentList '--help' -PassThru
+    if (-not $portableRun.WaitForExit(30000)) {
+        $portableRun.Kill()
+        throw 'The extracted portable EXE did not finish its launch check within 30 seconds.'
+    }
     if ($portableRun.ExitCode -ne 0) { throw 'The extracted portable EXE failed its relocated launch check.' }
     & (Join-Path $relocated 'python/python.exe') -c "import site,sys; site.addsitedir(sys.argv[1]); import decompnet.app.server" (Join-Path $relocated 'packages')
     if ($LASTEXITCODE -ne 0) { throw 'The extracted portable app failed its server import check.' }
