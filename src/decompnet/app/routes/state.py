@@ -52,10 +52,10 @@ def register(app: App) -> None:
                 if data.get('action') in ('name','apply-name'):
                     fid=int(data['id']);name=await call(net.match_library.set_name,fid,data.get('name',''))
                     if data['action']=='apply-name':
-                        return JSONResponse({'job':jobs.start('Apply library function name',
-                            lambda log:net.match_library.apply_name(fid,name,log))})
+                        return JSONResponse({'job':await app.control(lambda: jobs.start('Apply library function name',
+                            lambda log:net.match_library.apply_name(fid,name,log)))})
                     return JSONResponse({'name':name})
-                return JSONResponse({'job':jobs.start('Index verified match library', net.match_library.backfill)})
+                return JSONResponse({'job':await app.control(lambda: jobs.start('Index verified match library', net.match_library.backfill))})
             if request.query_params.get('id'):
                 return JSONResponse(await call(net.match_library.detail,int(request.query_params['id'])))
             return JSONResponse(await call(net.match_library.summary, str(request.query_params.get('search',''))[:200]))
@@ -69,9 +69,9 @@ def register(app: App) -> None:
         # Discover work before loading statistics: a busy/compacting database must
         # not hide a job which the user can still inspect or stop.
         return JSONResponse({
-            'storage':jobs.active(('Compress candidate history','Clean old unsuccessful source')),
-            'headers':jobs.active(('C header cleanup','Database compaction')),
-            'cleanup':jobs.active(('Database transcript cleanup',)),
+            'storage':await app.control(lambda: jobs.active(('Compress candidate history','Clean old unsuccessful source'))),
+            'headers':await app.control(lambda: jobs.active(('C header cleanup','Database compaction'))),
+            'cleanup':await app.control(lambda: jobs.active(('Database transcript cleanup',))),
         })
 
     @mcp.custom_route('/api/database-cleanup', methods=['GET','POST'])
@@ -90,7 +90,7 @@ def register(app: App) -> None:
                 return JSONResponse({'options':await call(database_cleanup.save,net,value)})
             if data.get('action')!='start':raise ValueError('Choose preview, save or start for database cleanup.')
             await call(database_cleanup.save,net,value)
-            return JSONResponse({'job':database_cleanup.start(net,jobs,value)})
+            return JSONResponse({'job':await app.control(lambda: database_cleanup.start(net,jobs,value))})
         except (ValueError,NetworkError) as error:return fail(error)
 
     @mcp.custom_route('/api/database-storage', methods=['GET','POST'])
@@ -106,14 +106,14 @@ def register(app: App) -> None:
             if data.get('action')=='save':return JSONResponse({'retention':await call(database_storage.save,net,data)})
             if data.get('action') not in ('pack','prune'):raise ValueError('Choose pack, prune or save.')
             if data['action']=='prune':database_storage.options(data)
-            return JSONResponse({'job':database_storage.start(net,jobs,data['action'],data)})
+            return JSONResponse({'job':await app.control(lambda: database_storage.start(net,jobs,data['action'],data))})
         except (NetworkError,ValueError) as error:return fail(error)
 
     @mcp.custom_route('/api/performance', methods=['GET'])
     async def api_performance(request):
         if bad := guard(request):return bad
         from ...ui_diagnostics import snapshot
-        return JSONResponse({'slow_operations':snapshot()})
+        return JSONResponse({'slow_operations':await app.control(snapshot)})
 
     @mcp.custom_route('/api/header-storage', methods=['GET','POST'])
     async def api_header_storage(request):
@@ -128,7 +128,7 @@ def register(app: App) -> None:
             if data.get('action')=='preview':
                 result,_=await call(header_cleanup.summary,net)
                 return JSONResponse(result)
-            return JSONResponse({'job':header_cleanup.start(net,jobs,data.get('action'))})
+            return JSONResponse({'job':await app.control(lambda: header_cleanup.start(net,jobs,data.get('action')))})
         except (ValueError,NetworkError) as error:return fail(error)
 
     def state() -> dict:
@@ -214,7 +214,7 @@ def register(app: App) -> None:
                     if helper:
                         draft = replace(helper, options={**helper.options,'prompts':overrides}, prompt_config=None)
                         return JSONResponse({'initial':await call(manager.prompt, draft),
-                                             'instructions':manager.app_instructions(draft)})
+                                             'instructions':await app.control(lambda: manager.app_instructions(draft))})
                     templates = prompt_settings.defaults() | overrides
                     return JSONResponse({'initial':'\n\n'.join(prompt_settings.LABELS[k]+'\n'+templates[k]
                                          for k in prompt_settings.FIELDS if k != 'instructions'),
@@ -318,7 +318,7 @@ def register(app: App) -> None:
         game = hostenv.local_path(path) if path else None
         if not source or (game is not None and not await app.call(lambda: game.is_file())):
             return fail(ValueError("Choose the saved project and a valid game file, or leave the game field blank to find a matching local copy."))
-        return JSONResponse({"job": jobs.start("restore", lambda log: saves.restore(net, source, game, log=log))})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("restore", lambda log: saves.restore(net, source, game, log=log)))})
 
     @mcp.custom_route("/api/pick", methods=["POST"])
     async def api_pick(request: Request) -> Response:
@@ -370,7 +370,7 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         try:
-            jobs.check_start()
+            await app.control(lambda: jobs.check_start())
         except ValueError as e:
             return fail(e, 503)
         q = request.query_params
@@ -437,7 +437,7 @@ def register(app: App) -> None:
             autopilot(slug)
             return {"slug": slug}
         try:
-            return JSONResponse({"job": jobs.start("import", work)})
+            return JSONResponse({"job": await app.control(lambda: jobs.start("import", work))})
         except ValueError as e:
             # A source update can queue while a disc is uploading, before it becomes a job.
             if uploaded:
@@ -470,7 +470,7 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         # In-memory activity only: never start a sync or queue behind expensive UI reads.
-        return JSONResponse({'verification':net.progress.status(request.query_params.get('slug',''))})
+        return JSONResponse({'verification':await app.control(lambda: net.progress.status(request.query_params.get('slug','')))})
 
     @mcp.custom_route("/api/map", methods=["GET"])
     async def api_map(request: Request) -> Response:
@@ -558,13 +558,13 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         job = jobs.jobs.get(request.query_params.get("id", ""))
-        return JSONResponse(job) if job else fail(ValueError("no such job"), 404)
+        return await app.control(lambda: JSONResponse(job)) if job else fail(ValueError("no such job"), 404)
 
     @mcp.custom_route("/api/job/cancel", methods=["POST"])
     async def api_cancel_job(request: Request) -> Response:
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
-        return JSONResponse({"cancelled": jobs.cancel(str(data.get("id") or ""))})
+        return JSONResponse({"cancelled": await app.control(lambda: jobs.cancel(str(data.get("id") or "")))})
 
     app.autopilot = autopilot

@@ -83,12 +83,14 @@ def register(app):
             ids = await app.read(select_examples)
 
             if not ids:raise NetworkError('No examples match these filters.')
-            with app.jobs._lock:
-                if any(j['kind']=='repair-replay' and j['state']=='running' for j in app.jobs.jobs.values()):
-                    raise NetworkError('A repair replay is already running. Stop it or wait before starting another.')
-                job=app.jobs.start('repair-replay',lambda log:repair_replay_jobs.run(feedback,slug,ids,trials,seconds,log,minimize=minimize,diagnostics=diagnostics,combinations=combinations),
-                                   cancel_message='Repair replay stopped. No game progress or review states changed.')
-            return JSONResponse({'job':job})
+            def start_replay():
+                with app.jobs._lock:
+                    if any(j['kind']=='repair-replay' and j['state']=='running' for j in app.jobs.jobs.values()):
+                        raise NetworkError('A repair replay is already running. Stop it or wait before starting another.')
+                    job=app.jobs.start('repair-replay',lambda log:repair_replay_jobs.run(feedback,slug,ids,trials,seconds,log,minimize=minimize,diagnostics=diagnostics,combinations=combinations),
+                                       cancel_message='Repair replay stopped. No game progress or review states changed.')
+                return JSONResponse({'job':job})
+            return await app.control(start_replay)
         except (NetworkError,ValueError,KeyError,TypeError) as error:
             return app.fail(error)
 
@@ -140,12 +142,14 @@ def register(app):
             retry_failed = data.get('retry_failed', False)
             if not isinstance(retry_failed, bool):
                 raise NetworkError('Retry failed measurements must be true or false.')
-            with app.jobs._lock:
-                if any(j['kind'] == 'candidate-recovery' and j['state'] == 'running' for j in app.jobs.jobs.values()):
-                    raise NetworkError('A recovery batch is running. Stop it or wait before starting another.')
-                job = app.jobs.start('candidate-recovery', lambda log: candidate_rechecks.run(app.net, slug, limit, log, retry_failed),
-                                     cancel_message='Recovery stopped. Finished measurements are saved; selected C is unchanged.')
-            return JSONResponse({'job':job})
+            def start_recovery():
+                with app.jobs._lock:
+                    if any(j['kind'] == 'candidate-recovery' and j['state'] == 'running' for j in app.jobs.jobs.values()):
+                        raise NetworkError('A recovery batch is running. Stop it or wait before starting another.')
+                    job = app.jobs.start('candidate-recovery', lambda log: candidate_rechecks.run(app.net, slug, limit, log, retry_failed),
+                                         cancel_message='Recovery stopped. Finished measurements are saved; selected C is unchanged.')
+                return JSONResponse({'job':job})
+            return await app.control(start_recovery)
         except (NetworkError, ValueError, KeyError, TypeError) as error:
             return app.fail(error)
 
@@ -198,7 +202,7 @@ def register(app):
             kind = str(data.get('agent') or '')
             if not any(a['id'] == kind and a['installed'] for a in await app.call(repair_investigations.choices)):
                 raise NetworkError('Choose an installed coding CLI for this investigation.')
-            job = app.jobs.start('repair investigation', lambda log: repair_investigations.launch(app.home, example, kind, log))
+            job = await app.control(lambda: app.jobs.start('repair investigation', lambda log: repair_investigations.launch(app.home, example, kind, log)))
             return JSONResponse({'job': job})
         except (NetworkError, ValueError, KeyError, TypeError) as error:
             return app.fail(error)

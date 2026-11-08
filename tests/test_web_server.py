@@ -122,8 +122,6 @@ def test_desktop_mode_does_not_accept_browser_cookie_or_offer_login(tmp_path):
 
 
 def test_serve_startup_never_calls_native_window_or_tray(tmp_path,monkeypatch,capsys):
-    import uvicorn
-
     from decompnet.app import engine, server, tray
     for key,value in [('DECOMP_SERVE',''),('DECOMP_WINDOW','1'),('DECOMP_TRAY','1')]:monkeypatch.setenv(key,value)
     calls=[]
@@ -147,7 +145,8 @@ def test_serve_startup_never_calls_native_window_or_tray(tmp_path,monkeypatch,ca
         assert kwargs=={'headless':True}
         return mcp,object(),object(),lambda:calls.append('quit')
     monkeypatch.setattr(server,'build',build_server)
-    monkeypatch.setattr(uvicorn,'Server',lambda cfg:SimpleNamespace(run=lambda sockets:calls.append(('run',sockets))))
+    from decompnet.app import runtime_server
+    monkeypatch.setattr(runtime_server,'Server',lambda cfg,quit_app:SimpleNamespace(run=lambda sockets:calls.append(('run',sockets))))
     assert cli.run(SimpleNamespace(cmd='serve',port=PORT))==0
     assert calls==[('listen',PORT,True),('run',[socket]),'quit']
     import json

@@ -88,7 +88,7 @@ def register(app: App) -> None:
                 path = request.url.path
                 if request.method == 'GET' and elapsed >= 0.5 and started - slow_requests.get(path, float('-inf')) >= 60:
                     slow_requests[path] = started
-                    jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed)
+                    await app.control(lambda: jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed))
         return handler
 
     def g_boundary_evidence(slug, request, data):
