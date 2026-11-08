@@ -164,3 +164,20 @@ def test_platform_detection_tolerates_invalid_splat_and_prefers_manifest(tmp_pat
     config.write_text("options:\n  platform: n64\nsegments: []\n")
     (root / ".decomp.wtf.json").write_text(json.dumps({"platform": "ps2"}))
     assert ForkProject(root, create_state=False).detect_platform() == "ps2"
+
+
+@pytest.mark.parametrize('version,platform', [('GFEE01','gc'),('RMCE01','wii'),('SMNE01','wii')])
+def test_objdiff_scratch_platform_uses_console_version_facts(tmp_path, version, platform):
+    from decompnet.forks.project import ForkProject
+    root=repo(tmp_path/'game')
+    (root/'objdiff.json').write_text(json.dumps({'units':[{'target_path':f'build/{version}/test.o','scratch':{'platform':'gc_wii'}}]}))
+    assert ForkProject(root,create_state=False).detect_platform() == platform
+
+
+def test_objdiff_unknown_or_conflicting_platform_is_not_guessed(tmp_path):
+    from decompnet.forks.project import ForkProject
+    root=repo(tmp_path/'game')
+    for units in ([{'scratch':{'platform':'unknown'}}], [{'scratch':{'platform':'gc'}},{'scratch':{'platform':'wii'}}],
+                  [{'target_path':'build/GFEE01/test.o','scratch':{'platform':'gc_wii'}},{'scratch':{'platform':'ps2'}}]):
+        (root/'objdiff.json').write_text(json.dumps({'units':units}))
+        assert ForkProject(root,create_state=False).detect_platform() == ''

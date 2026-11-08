@@ -221,6 +221,20 @@ class ForkProject:
         """Read the console declared by a public project's manifest or Splat config without running its code."""
         if value := (self.manifest or {}).get("platform"):
             return value
+        # Public objdiff projects declare their console on per-unit scratch
+        # configurations. Accept a single consistent connector identity only.
+        try:
+            objdiff = json.loads((self.root / 'objdiff.json').read_text(encoding='utf-8'))
+            units = objdiff.get('units', [])
+            declared = {consoles.get(unit['scratch']['platform']).id for unit in units
+                        if isinstance(unit, dict) and isinstance(unit.get('scratch'), dict)
+                        and isinstance(unit['scratch'].get('platform'), str)}
+            known = {c.id for c in consoles.CONSOLES}
+            if len(declared) == 1 and declared <= known:return next(iter(declared))
+            inferred = {console.id for console in consoles.CONSOLES if console.recognizes_objdiff(objdiff)}
+            if len(inferred) == 1:return next(iter(inferred))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
         path = self._splat_yaml()
         if path is None:
             return ""

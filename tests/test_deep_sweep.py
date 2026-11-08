@@ -850,3 +850,28 @@ def test_maximum_throughput_controls_persist_for_returning_project(sweep, monkey
     assert seen
     saved=deep_sweep.Sweeps(net,obj.jobs).config('game')
     assert saved['maximum_throughput'] is True and saved['compile_slots']==10
+
+
+def test_imported_deep_pass_retains_existing_source_before_search(sweep, monkeypatch):
+    obj, net, calls, path = sweep
+    monkeypatch.setattr(net, 'fork_slug', lambda _:'game')
+    net.forks = SimpleNamespace(get=lambda _:(None,SimpleNamespace(root=path,unit=lambda _:SimpleNamespace(source=None,target=None)),{}),
+                                _current_source=lambda fp,fn:f'int {fn["name"]}(void) {{return 3;}}')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=NULL WHERE status='open'")
+    assert obj.status('game')['ready'] == 2
+    obj.run('game', 1, 3, Log(), threads=1)
+    assert calls == ['f0','f1']
+    assert net.store.one("SELECT best_source FROM functions WHERE name='f0'")['best_source']
+
+
+def test_imported_source_seed_does_not_replace_saved_or_unscored_candidates(sweep, monkeypatch):
+    _, net, _, _ = sweep
+    monkeypatch.setattr(net, 'fork_slug', lambda _:'game')
+    net.forks = SimpleNamespace(get=lambda _:pytest.fail('existing or unscored source must not be read'))
+    proj=net.project_row('game')
+    fn=net._function('f0','game')
+    assert deep_permuter.prepare_source(net,proj,fn)['best_source']==fn['best_source']
+    with net.store.tx() as db:db.execute("UPDATE functions SET best_source=NULL,best_score=NULL WHERE name='f0'")
+    fn=net._function('f0','game')
+    assert deep_permuter.prepare_source(net,proj,fn)['best_source'] is None

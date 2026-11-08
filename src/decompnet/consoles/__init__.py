@@ -576,6 +576,10 @@ class Console:
         reg = toolchains.registry()
         return [c.id for c in self.compilers if c.id in reg and reg[c.id].supported]
 
+    def recognizes_objdiff(self, config: dict) -> bool:
+        """Resolve ambiguous external platform identifiers using console-owned facts."""
+        return False
+
     def project_facts(self) -> dict:
         """What a project's page and its line in the project list say about its console."""
         return {"platform": self.id, "platform_name": self.name, "platform_short": self.short or self.name,
