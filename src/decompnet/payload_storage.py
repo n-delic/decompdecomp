@@ -4,6 +4,7 @@ Physical tables retain metadata, foreign keys and INSERT/lastrowid semantics. St
 route reads through detail views; maintenance uses explicit main.table names to inspect raw storage.
 Old rows remain readable until an explicit, bounded backfill packs them.
 """
+import functools
 import hashlib
 import json
 import re
@@ -79,11 +80,53 @@ KEYWORDS={'where','on','using','join','left','right','inner','outer','cross','fu
           'having','union','except','intersect','set','returning','indexed','not','window'}
 
 
+def serialized(method):
+    @functools.wraps(method)
+    def call(self, *args, **kwargs):
+        connection = self.connection if isinstance(self, sqlite3.Cursor) else self
+        # sqlite3_column_text retains the GIL while waiting for SQLite's mutex.
+        # Another thread's SQL callback needs that GIL: serialize before entering
+        # SQLite, using a Python lock whose wait releases it.
+        with connection.call_lock:
+            return method(self, *args, **kwargs)
+    return call
+
+
+class Cursor(sqlite3.Cursor):
+    execute = serialized(sqlite3.Cursor.execute)
+    executemany = serialized(sqlite3.Cursor.executemany)
+    executescript = serialized(sqlite3.Cursor.executescript)
+    fetchone = serialized(sqlite3.Cursor.fetchone)
+    fetchmany = serialized(sqlite3.Cursor.fetchmany)
+    fetchall = serialized(sqlite3.Cursor.fetchall)
+    __next__ = serialized(sqlite3.Cursor.__next__)
+    close = serialized(sqlite3.Cursor.close)
+
+
 class Connection(sqlite3.Connection):
+    def __init__(self, *args, **kwargs):
+        self.call_lock = threading.RLock()
+        super().__init__(*args, **kwargs)
+
+    @serialized
+    def cursor(self, factory=Cursor):
+        return super().cursor(factory)
+
+    @serialized
+    def executemany(self, sql, parameters, /):
+        return self.cursor().executemany(sql, parameters)
+
+    close = serialized(sqlite3.Connection.close)
+    commit = serialized(sqlite3.Connection.commit)
+    rollback = serialized(sqlite3.Connection.rollback)
+    __enter__ = serialized(sqlite3.Connection.__enter__)
+    __exit__ = serialized(sqlite3.Connection.__exit__)
+
     detail_tables=frozenset()
     stable_ids=False
     project_namespace=None
 
+    @serialized
     def executescript(self,sql_script,/):
         if self.project_namespace is not None:
             from .shard_ids import script
@@ -91,8 +134,9 @@ class Connection(sqlite3.Connection):
         if self.stable_ids:
             from .shard_ids import ddl
             sql_script = ddl(sql_script)
-        return super().executescript(sql_script)
+        return self.cursor().executescript(sql_script)
 
+    @serialized
     def execute(self,sql,parameters=(),/):
         creating = False
         if self.stable_ids:
@@ -119,7 +163,7 @@ class Connection(sqlite3.Connection):
                 return TABLE.sub(table,text)
             bits=QUOTED.split(sql)
             sql=''.join(part(bit) if i%2==0 else bit for i,bit in enumerate(bits))
-        result = super().execute(sql,parameters)
+        result = self.cursor().execute(sql,parameters)
         if creating and self.project_namespace is not None:
             after = sqlite3.Connection.execute(self,'PRAGMA schema_version').fetchone()[0]
             if after != before:
