@@ -94,7 +94,13 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         if not selected and getattr(pools,'incomplete',False):
             return 'Repair discovery paused at its generation budget; cached stages are retained for the next pass. No variants submitted; this is not exhaustion.'
         if not selected:
-            return f'No untried applicable local repairs. Revision {actual}; no compile run.'
+            explanation=''
+            if families and 'scratch_role_reuse' in families:
+                from .scratch_role_repairs import explanation as explain_scratch
+                proj=net._project(slug)
+                header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
+                explanation=' '+explain_scratch(source,fn['name'],header,proj['arch'])
+            return f'No untried applicable local repairs. Revision {actual}; no variants submitted.'+explanation
         scope=agent_tokens.target_scope(net,fn,revision)
         baseline=checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if baseline and baseline.get('source')!=source:
@@ -113,6 +119,10 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
             if measured and not measured.get('cached'):
                 adaptive_repairs.record(net,policy_profile,focus,family,(baseline or {}).get('score'),
                                         measured.get('score'),measured.get('elapsed_ms',0))
+                from .iterative_repairs import output_key
+                repair_sequences.observe(net,recipe_profile,repair_sequences.focus((baseline or {}).get('rows'),net._project(slug)['arch']),[],family,
+                    (baseline or {}).get('score'),measured.get('score'),output_key(baseline or {}),output_key(measured),
+                    exact=bool(measured.get('matched') or measured.get('exact')),elapsed_ms=measured.get('elapsed_ms'))
         for (family,candidate),measured in zip(selected,observations):
             if not measured or measured.get('score') is None:
                 continue

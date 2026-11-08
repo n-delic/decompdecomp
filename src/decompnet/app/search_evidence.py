@@ -44,6 +44,10 @@ def brief(net, proj, fn):
             from .scratch_role_repairs import brief as scratch_brief
             scratch_hint = scratch_brief(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],proj['arch'],current['rows'])
             if scratch_hint:lines.append(scratch_hint)
+            else:
+                from . import scratch_role_repairs
+                if scratch_role_repairs.POINTER.search(source):
+                    lines.append(scratch_role_repairs.explanation(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],proj['arch']))
             if clue := hint(source,fn['name']):lines.append(clue)
         from . import allocation_search
         if clue := allocation_search.brief(net,proj,fn,source,current['rows']):lines.append(clue)
@@ -62,6 +66,8 @@ def brief(net, proj, fn):
         lines.extend(f"  {r[0]} {str(r[1])[:80]} => {str(r[2])[:80]}" for r in rows[:4])
         from .repair_sequences import starting
         learned = starting(net,proj,fn,current['rows'])
+        from . import repair_sequence_metrics, repair_sequences
+        if measured := repair_sequence_metrics.brief(net,repair_sequences.profile(net,proj,fn),repair_sequences.focus(current['rows'],proj['arch'])):lines.append(measured)
         if learned:
             lines.append('Previously exact repair sequences start with: '+', '.join(learned[:2])+'. Use local variants when applicable; this is advisory.')
         alternatives = [v for v in pool.values() if v is not current and v['score']>0 and v['score']<=max(1,current['score'])*1.25]

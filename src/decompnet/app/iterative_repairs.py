@@ -133,6 +133,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
         report = evaluate(node['source'])
         if report is None:  # busy work stays retryable
             return False
+        report={**report,'instruction_resolution':region_repairs.resolution(node.get('baseline_rows'),report.get('rows'))}
         state['pending'].pop(0)
         if isinstance(report.get('score'), (int, float)) and not report.get('cached'):
             repair_effects.observe(state, node, output_key(report),score=report.get('score'),parent_score=node.get('parent_score'),rows=report.get('rows'))
@@ -351,7 +352,7 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
         for text in normalization_repairs.frame_variants(source, fn['name'], report.get('rows') or []):
             proposals.append(text)
             labels[text] = 'spill_normalization'
-    families = region_repairs.order(list(dict.fromkeys(labels[p] for p in proposals)), report.get('rows') or [])
+    families = region_repairs.order(list(dict.fromkeys(labels[p] for p in proposals)), report.get('rows') or [],report.get('instruction_resolution'))
     families = repair_selection.order(families, report.get('repair_path', []))
     pools = [[p for p in proposals if labels[p]==family] for family in families]
     result = list(dict.fromkeys(p for row in zip_longest(*pools) for p in row if p is not None))
@@ -381,7 +382,7 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
                       selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None, omit_families=()):
-    key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'), report.get('repair_locations'), fn['name'], fn['asm'],
+    key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'),report.get('instruction_resolution'), report.get('repair_locations'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused, entry_scope)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None
     if result is None:
@@ -542,7 +543,7 @@ def _run(twins, slug, job):
             path=node.get('path') or []
             if path:
                 repair_sequences.observe(net,recipe_profile,state.get('sequence_focus',''),path[:-1],path[-1],
-                    node.get('ceiling'),report.get('score'),node.get('parent_output'),output_key(report),exact=bool(report.get('matched')))
+                    node.get('parent_score',node.get('ceiling')),report.get('score'),node.get('parent_output'),output_key(report),exact=bool(report.get('matched')),elapsed_ms=(time.monotonic()-started)*1000)
                 if report.get('matched'):
                     repair_sequences.learn(net,recipe_profile,state.get('sequence_focus',''),path,
                         max_steps=DEPTH+repair_sequence_lane.EXTRA_DEPTH if node.get('sequence_loan') else DEPTH)
