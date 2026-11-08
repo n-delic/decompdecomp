@@ -125,3 +125,19 @@ def test_dependency_manifest_changes_invalidate_resolved_commands(tmp_path,monke
         (dependency/'install.json').write_text('two')
         compile_configuration.resolve(tmp_path,cfg,build)
         assert len(calls)==2
+
+
+def test_project_include_symlink_retarget_invalidates_resolved_paths(tmp_path,configurations):
+    build,calls,_,_,_=configurations
+    first=tmp_path/'first';first.mkdir()
+    second=tmp_path/'second';second.mkdir()
+    link=tmp_path/'include'
+    try:link.symlink_to(first,target_is_directory=True)
+    except (OSError,NotImplementedError):pytest.skip('directory symlinks unavailable')
+    cfg={'compiler':{'toolchain':'test','include_dirs':['include']}}
+    with compile_sessions.session():
+        for _ in range(2):compile_configuration.resolve(tmp_path,cfg,build)
+        assert len(calls)==1
+        link.unlink();link.symlink_to(second,target_is_directory=True)
+        compile_configuration.resolve(tmp_path,cfg,build)
+        assert len(calls)==2

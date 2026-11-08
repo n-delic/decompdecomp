@@ -29,7 +29,9 @@ def resolve(root,cfg,build):
         inputs.append((dep,repr(metadata),str(manifest),contents))
         pending.extend((*metadata.requires,*metadata.headers))
         if why:=toolchains.runtime_error(dep):raise toolchains.ToolchainError(why)
-    key=(str(root),json.dumps(compiler,sort_keys=True),tuple(sorted(os.environ.items())),tuple(sorted(inputs)))
+    layout=(str(root.resolve()),tuple((kind,name,str((root/name).resolve()))
+        for kind in ('include_dirs','ro_paths') for name in compiler.get(kind,[])))
+    key=(layout,json.dumps(compiler,sort_keys=True),tuple(sorted(os.environ.items())),tuple(sorted(inputs)))
     cached=session.configurations.get(key)
     if cached is not None:
         invocation,paths,stamps=cached
