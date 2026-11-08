@@ -597,6 +597,12 @@ function renderAutopilot(ov) {
   const canRun = (ov.kind !== "fork" || ov.ready) && cFunctions(ov) - ov.matched > 0;
   box.hidden = !ap && !canRun && !tw && !pm;
   if (box.hidden) return;
+  const timings = ap?.timings;
+  $('apTiming').hidden = !timings;
+  if (timings) {
+    const seconds = key => `${Number.isFinite(timings[key]) ? Math.max(0,timings[key]).toFixed(1) : '0.0'}s`;
+    $('apTimingText').textContent = `Generation ${seconds('generation')} · Compiler prep ${seconds('preparation')} · Compile ${seconds('compile')} · Compiler wait ${seconds('compiler_wait')} · Link ${seconds('link')} · Scoring ${seconds('scoring')} · Database reads ${seconds('database_reads')} · Database writes ${seconds('database_writes')}. Cumulative worker time; parallel totals can exceed elapsed time.`;
+  }
   const running = ap && ap.state === "running";
   const twinsRunning = tw && tw.state === "running";
   box.classList.toggle("on", !!(running || twinsRunning));
