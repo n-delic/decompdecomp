@@ -120,11 +120,12 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
         end = min((lo + returns[-1] + 8 + 0xF) & ~0xF, len(rom))
         accept(start, end, start + mapping)
     from .code_tails import complete
+    from .loader_mapping import refine
 
     found=complete(rom,sorted(found),taken)
     from .code_references import complete as referenced_gaps
 
-    return sorted(found+referenced_gaps(rom,sorted(taken+found)))
+    return sorted(refine(rom,found+referenced_gaps(rom,sorted(taken+found)),taken))
 
 
 # ---------------------------------------------------------------------------------------------- compressed code
