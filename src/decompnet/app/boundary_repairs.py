@@ -29,7 +29,8 @@ def blocked(net, proj):
     from .code_coverage import _view, boundaries
     def build():
         names={r['function'] for r in boundaries(net,proj) if not r.get('override')}
-        return frozenset(r['id'] for r in net.project_store(proj['id']).all('SELECT id,name,gone_mark FROM functions WHERE project_id=?',proj['id'])
+        from .metadata_rows import rows
+        return frozenset(r['id'] for r in rows(net.project_store(proj['id']),('id','name','gone_mark'),'SELECT id,name,gone_mark FROM functions WHERE project_id=?',proj['id'])
                          if r['gone_mark'] is not None or r['name'] in names)
     return _view(net,proj,'boundary-blocked',build)
 
