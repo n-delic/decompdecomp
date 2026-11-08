@@ -305,6 +305,7 @@ let deepPermuterBusy = false, deepPermuterJob = null, deepPermuterTarget = null;
 async function refreshFn(first) {
   if ((nameChangeBusy && !first) || !S.fn) return;
   const slug = S.slug, requested = S.fn, gen = S.gen, nav = S.fnNav;
+  if (first) discoverFunctionAttempt(slug, requested, gen, nav);
   const key = `${gen}|${S.fnNav}|${slug}|${requested}`;
   if (fnBusy?.key === key) return;
   cancelFunctionRead();
@@ -534,20 +535,28 @@ $("fnEdit").addEventListener("keydown", (e) => {
 });
 $("tryBtn").onclick = () => tryIt();
 
-async function tryIt() {
-  if (!S.fnDetail || S.fnLoading || $("tryBtn").disabled) return;
-  const slug = S.slug, gen = S.gen, nav = S.fnNav;
-  const active = () => slug === S.slug && gen === S.gen && nav === S.fnNav;
-  const name = S.fn, source = $("fnEdit").value, msg = $("tryMsg");
-  if (!name || !source.trim() || $("tryBtn").disabled) return;
-  $("tryBtn").disabled = true;
-  msg.hidden = false; msg.className = "try-msg"; msg.textContent = "Compiling…";
-  try {
-    const r = await api("/api/try", { method: "POST", body: { slug, name, source } });
+const functionAttemptFollowers = new Map();
+const functionAttemptCompletions = new Set();
+function followFunctionAttempt(job, slug, name) {
+  if (!functionAttemptFollowers.has(job)) {
+    const promise = followJob(job, null, (_lines, state) => {
+      if (S.slug === slug && S.fn === name && state.progress?.message) {
+        $("tryMsg").hidden = false; $("tryMsg").textContent = state.progress.message;
+      }
+    }).finally(() => functionAttemptFollowers.delete(job));
+    functionAttemptFollowers.set(job, promise);
+  }
+  return functionAttemptFollowers.get(job);
+}
+async function finishFunctionAttempt(r, slug, name, active, msg, job, submittedSource = null) {
     if (!active()) {
       if (!r.matched && (slug !== S.slug || name !== S.fn)) api("/api/release", {method:"POST",body:{slug,name}}).catch(() => {});
       return;
     }
+    const view = `${job}|${S.gen}|${S.fnNav}`;
+    if (functionAttemptCompletions.has(view)) return;
+    functionAttemptCompletions.add(view);
+    if (functionAttemptCompletions.size > 64) functionAttemptCompletions.delete(functionAttemptCompletions.values().next().value);
     if (r.matched) {
       S.myClaim = null;
       msg.className = "try-msg ok"; msg.textContent = "Byte-identical. Saved as a match, credited to you.";
@@ -559,10 +568,39 @@ async function tryIt() {
       msg.textContent = r.score == null ? "It didn't compile:" : (r.text.split("\n")[0] || `score ${r.score}`);
       if (r.score == null) msg.textContent += "\n" + r.text.split("\n").slice(1, 12).join("\n");
     }
-    S.editDirty = false;
+    if (submittedSource !== null && $("fnEdit").value === submittedSource) S.editDirty = false;
     S.diffKey = null;
     await refreshFn(false);
     if (r.score != null) { S.ftab = "diff"; showFnTab("diff"); }
+}
+async function discoverFunctionAttempt(slug, name, gen, nav) {
+  const active = () => S.slug === slug && S.fn === name && S.gen === gen && S.fnNav === nav;
+  try {
+    const state = await api(`/api/try/status?slug=${encodeURIComponent(slug)}&name=${encodeURIComponent(name)}`);
+    if (!active() || !state.job) return;
+    const msg = $("tryMsg");
+    $("tryBtn").disabled = true; msg.hidden = false; msg.className = "try-msg";
+    msg.textContent = state.progress?.message || "Waiting for saved-file verification…";
+    try {
+      const r = await followFunctionAttempt(state.job, slug, name);
+      await finishFunctionAttempt(r, slug, name, active, msg, state.job);
+    } finally { if (active()) $("tryBtn").disabled = false; }
+  } catch (e) {
+    if (active()) { $("tryMsg").hidden = false; $("tryMsg").className = "try-msg bad"; $("tryMsg").textContent = e.message; }
+  }
+}
+async function tryIt() {
+  if (!S.fnDetail || S.fnLoading || $("tryBtn").disabled) return;
+  const slug = S.slug, gen = S.gen, nav = S.fnNav;
+  const active = () => slug === S.slug && gen === S.gen && nav === S.fnNav;
+  const name = S.fn, source = $("fnEdit").value, msg = $("tryMsg");
+  if (!name || !source.trim() || $("tryBtn").disabled) return;
+  $("tryBtn").disabled = true;
+  msg.hidden = false; msg.className = "try-msg"; msg.textContent = "Waiting for saved-file verification…";
+  try {
+    const started = await api("/api/try", { method: "POST", body: { slug, name, source, background: true } });
+    const r = started.job ? await followFunctionAttempt(started.job, slug, name) : started;
+    await finishFunctionAttempt(r, slug, name, active, msg, started.job, source);
   } catch (e) {
     if (!active()) return;
     msg.className = "try-msg bad"; msg.textContent = e.message;

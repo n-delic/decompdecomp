@@ -108,8 +108,11 @@ def plan(rows, arch=None):
         category=permuter_focus.classify(rows);families=[]
     if d['register_cycles']:
         families=['pointer_integer_phase_union','paired_integer_lifetimes','split_integer_lifetime','merge_integer_lifetimes']+families
+    from .snapshot_branch_repairs import diagnosis
+    normalization=diagnosis(rows)
+    if normalization:families=normalization['preferred_families']+families
     first=next((i+1 for i,r in enumerate(permuter_focus.normalized(rows)) if r[0]!=' '),None)
-    return dict(category=category,first_difference_row=first,changed_rows=d['differences'],
+    return dict(normalization=normalization,category=category,first_difference_row=first,changed_rows=d['differences'],
                 target_instructions=d['target_instructions'],candidate_instructions=d['candidate_instructions'],
                 target_frame=d['target_frame'],candidate_frame=d['candidate_frame'],families=families,
                 register_cycles=d['register_cycles'],register_chains=d['register_chains'],

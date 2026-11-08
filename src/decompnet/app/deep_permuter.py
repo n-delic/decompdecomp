@@ -528,7 +528,7 @@ class Search(Permuter):
                 complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
                 frame_sources={c for _,c in branch_frames}
                 frame_prefix=[c for _,c in progressed if c in frame_sources]
-                dispatch_prefix=[c for family,c in progressed if family=='effectful_dispatch_specialization'][:2]
+                dispatch_prefix=[c for family,c in progressed if family in {'effectful_dispatch_specialization','narrow_snapshot_branches'}][:4]
                 queue = list(dict.fromkeys(frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
                 if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
                 lane = getattr(self, "parallel_lane", None)
@@ -892,7 +892,8 @@ class Search(Permuter):
                 # trials keep their compact score cache; do not grow it by a full diff per compile.
                 feedback = ({'score': score, 'rows': own[0]} if own and provenance.get('kind') == 'deep local repair'
                             and (best <= score <= best*1.25 or permuter_focus.classify(own[0]) != policy_focus or
-                                 best <= score <= best*2 and search_frontier.structure_recovery(rows,own[0],proj['arch'])) else score)
+                                 best <= score <= best*2 and search_frontier.structure_recovery(rows,own[0],proj['arch']) or
+                                 best <= score <= best*4 and search_frontier.mask_recovery(rows,own[0],proj['arch'])) else score)
                 if isinstance(feedback,dict):feedback['output']=getattr(self,'_trial_output',None)
                 from .search_history import feedback as compact_feedback
                 packed_feedback = json.dumps(compact_feedback(feedback),separators=(',',':'))

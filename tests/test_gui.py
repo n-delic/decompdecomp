@@ -648,3 +648,9 @@ def test_function_chart_cursor_shows_compile_scores():
 def test_score_commit_preferences_defaults_errors_and_project_switches():
     subprocess.run([NODE, str(Path(__file__).with_name('gui_score_commits.js'))], check=True,
                    capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not NODE, reason='node is not installed')
+def test_function_attempt_stages_reattach_and_preserve_edits():
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_attempt.js'))], check=True,
+                   cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)

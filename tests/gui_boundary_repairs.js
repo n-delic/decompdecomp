@@ -17,7 +17,7 @@ function setup(){
   const radios=['delay_slot','join_previous','keep','padding','data','adjust'].map(v=>Object.assign(element(),{value:v}));
   const body={querySelector(q){if(q==='[data-boundary-action]:checked')return radios.find(r=>r.checked);if(q.includes('[data-boundary-action][value='))return radios.find(r=>q.includes('"'+r.value+'"'));return get(q);},
     querySelectorAll(q){if(q==='.boundary-cited')return [];return q==='[data-boundary-action]'?radios:[...fields.values(),...radios];},addEventListener(_,fn){this.click=fn;}};
-  const calls=[],ctx={esc,hex8,document:{createElement:element},S:{slug:'game',dialogKind:'boundary-review',st:{agents:[{id:'codex',name:'Codex',installed:true}],settings:{endpoints:[]}}},$:id=>get('#'+id),
+  const calls=[],ctx={esc,hex8,setTimeout,clearTimeout,AbortController,document:{createElement:element},S:{slug:'game',dialogKind:'boundary-review',st:{agents:[{id:'codex',name:'Codex',installed:true}],settings:{endpoints:[]}}},$:id=>get('#'+id),
     dialog(){return body;},renderStats(){},renderProjectSettings(){},sleep:async()=>{},api:async(url,opts)=>{calls.push({url,opts});
       if(url.startsWith('/api/boundary-evidence'))return packet;
       if(url.startsWith('/api/boundary-investigations'))return {sessions:[{id:'worker',state:'done',label:'Reviewer'}]};
