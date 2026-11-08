@@ -1,0 +1,41 @@
+# SDK assembly identities
+
+Index a local SDK `.a` archive or `.o` object through the existing library settings.
+Active projects can identify their assembly functions without an AI agent. No SDK is
+downloaded and no library code is copied into the repository.
+
+## What the statuses mean
+
+- **SDK library**: an unambiguous signature identity; not proof of matching C.
+- **SDK assembly · verified**: the indexed object linked to exactly the target's code
+  and referenced data. It remains assembly and contributes to the separate SDK assembly
+  count. Agents, drafting and the C permuter do not receive set-aside assembly automatically.
+- **Set aside · assessment**: assembly classification without current exact SDK/source proof.
+
+The function drawer shows the library, symbol, original-object hash, target hash and
+verification evidence. The actual source symbol remains visible beside its display name.
+Use **Use SDK name in source…** only to request a separate source/header rename. The normal
+regression check must preserve existing matches. The first rename scan indexes source identifiers; later scans inflate only changed sources
+and fetch full rows only for affected matches. A rejected rename leaves the display identity
+and existing code intact; the error and verification progress are shown in that drawer.
+
+## How verification works
+
+Relocation-normalized signatures locate candidates. A ROM may label a fixed hardware address
+as a relocation even when the SDK object encodes it literally. A bounded same-size fallback
+therefore uses the full linker rather than treating missing signature equality as failure.
+External relocation bindings must be consistent; internal SDK data must match the ROM.
+Multiple successful names, unsupported relocations and truncated candidate sets receive no
+new verified identity. Index references retain the selected file path and checksum and refuse
+changed files. Proofs are bound to current target/address/profile inputs, not a familiar name.
+Background discovery uses finite pages, a persistent rotation cursor and cooperative checkpoints.
+
+Current fresh linking support is MIPS local-ROM mode. Imported builds and other processors can
+show signature identities but require additional judge adapters for this verified status.
+
+## Verification performed
+
+Homemade objects exercise privileged instructions, external relocations, owned data, changed
+library files, disabled corpora, stale targets and C-work exclusion. On an isolated V-Rally
+copy, the existing local `osSetIntMask` object reproduced all 160 bytes and its referenced table.
+No game source, ROM or SDK object is committed. The live app was not updated or restarted.

@@ -321,23 +321,17 @@ class EditMixin:
         units = self._unit_contexts(proj["id"])
         current_ctx = self._contexts(proj["id"], {""} | units)
         changed = {u: swap(c["header"]) for u, c in current_ctx.items() if word.search(c["header"])}
-        store = self.project_store(proj['id'])
-        # Scan only rename inputs. Full targets and other packed payloads are needed
-        # for affected matches, not every already verified body in the project.
-        matched = store.all("SELECT id,name,unit,vram,matched_source FROM functions "
-                            "WHERE project_id=? AND status='matched'", proj["id"])
-        rewritten = {r["id"]: swap(r["matched_source"]) for r in matched if word.search(r["matched_source"] or "")}
-        # A header change can affect every body in its effective unit. Also include the
-        # destination identifier: renaming can capture an existing use of the new spelling.
-        affected_word = re.compile(r"\b(?:" + "|".join(re.escape(n) for pair in pairs for n in pair) + r")\b")
-        affected = [r for r in matched if r["vram"] in addresses.values()
-                    or affected_word.search(current_ctx[self._effective_unit(r, units)]["header"])
-                    or affected_word.search(r["matched_source"] or "")]
-        affected_ids = json.dumps([r['id'] for r in affected])
-        full_rows = store.all("SELECT * FROM functions WHERE project_id=? AND id IN "
-                              "(SELECT value FROM json_each(?))", proj['id'], affected_ids)
-        by_id = {r['id']: r for r in full_rows}
-        renamed_rows = [dict(by_id[r['id']]) | {"name": new_of.get(r["name"], r["name"])} for r in affected]
+        from ..rename_scope import inventory
+        indexed=inventory(self,proj,progress)
+        all_words=set(n for pair in pairs for n in pair)
+        # Read full rows only for actual definition/call/header/capture dependencies.
+        ids=[r['id'] for r,words in indexed if r['vram'] in addresses.values() or words & all_words
+             or any(re.search(r'\b'+re.escape(n)+r'\b',current_ctx[self._effective_unit(r,units)]['header']) for n in all_words)]
+        matched=[r for r,_ in indexed]
+        affected=([dict(r) for r in self.project_store(proj['id']).all(
+            'SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',proj['id'],json.dumps(ids))] if ids else [])
+        rewritten={r['id']:swap(r['matched_source']) for r in affected if word.search(r['matched_source'] or '')}
+        renamed_rows = [dict(r) | {"name": new_of.get(r["name"], r["name"])} for r in affected]
         if progress:
             progress({"done": 0, "total": len(affected), "phase": "Checking affected matches",
                       "message": f"Checking {len(affected)} affected matches; {len(matched)-len(affected)} unchanged matches need no rebuild."})

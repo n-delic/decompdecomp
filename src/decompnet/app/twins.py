@@ -1064,6 +1064,8 @@ class Twins:
             db.executemany("INSERT OR IGNORE INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) "
                            "VALUES(?,?,?,?,?,?)", signatures)
             db.executemany("INSERT OR REPLACE INTO sdk_shapes VALUES(?,?,?,?,?,?,?)", shapes)
+        from .sdk_assembly import index as index_reference
+        with self.net.store.tx() as db:index_reference(db,path,corpus)
         return len(signatures)
 
     def reuse_names(self, slug: str, job: Job | None = None, *, donor_slug: str | None = None) -> int:

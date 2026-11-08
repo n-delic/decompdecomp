@@ -617,7 +617,7 @@ function renderOverview() {
   $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
   if (S.ov.status_breakdown) {
     const b=S.ov.status_breakdown;
-    $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${b.other_assembly.toLocaleString()} other set-aside entries · ${b.open.toLocaleString()} open${c.boundary ? ` · ${c.boundary} require boundary review (included in saved counts)` : ""}${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable` : ""}`;
+    $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${(b.verified_sdk_assembly || 0).toLocaleString()} verified SDK assembly · ${b.other_assembly.toLocaleString()} other set-aside entries · ${b.open.toLocaleString()} open${c.boundary ? ` · ${c.boundary} require boundary review (included in saved counts)` : ""}${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable` : ""}`;
     $("fnSub").title="Verified source assembly is checked against supplied local source. Other assembly includes unverified fallbacks. Zero open functions does not mean 100% C.";
   }
 

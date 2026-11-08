@@ -677,7 +677,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned |
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — own build adapter planned | — own build adapter planned | — own build adapter planned | — own build adapter planned |
-| Exact C / verified source assembly / other assembly / open counts | ✓ | ✓ | ✓ | ✓ | ✓ counts | ✓ counts | ✓ counts | ✓ counts |
+| Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned |
+| Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | ✓ | ✓ counts | ✓ counts | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | ✓ | body only¹ | body only¹ | body only¹ | body only¹ |
 | Verified neighbour context hypotheses and separate body/header bundles | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — own build adapter planned | — own build adapter planned | — own build adapter planned | — own build adapter planned |
 | Bounded flag preflight before long search | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — own build | — own build | — own build | — own build |
@@ -899,6 +900,16 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+- **Verified SDK assembly and independent display names.** Indexed local SDK objects
+  can identify handwritten ROM routines through the ordinary MIPS code/data linker.
+  Ambiguous, changed-library and stale-target evidence is rejected. Display names keep
+  source symbols/prototypes intact; an explicit source rename remains regression checked.
+  Verified SDK assembly has its own count and never receives C credit or automatic C work.
+  Rename scans cache identifiers by immutable source digest and load full rows only for
+  affected definitions, callers, header changes or new-name captures. Source changes invalidate
+  the cache. Evidence and source-rename progress remain visible in the function drawer.
+
 
 - **Narrow-load and parameter-carrier sequences.** Near-match search now tries bounded
   compositions of scope removal, narrow subtraction and compatible storage rotation
@@ -3293,3 +3304,10 @@ replace that exact judge.
   Typed C generation is shared across supported 32-bit architectures; the frame
   detector is MIPS-specific because that is the measured compiler behaviour.
   A private known-match replay used one compiler trial; no general success rate claimed.
+
+### SDK assembly verification adapters
+
+Display identities work wherever indexed signatures can identify targets. Fresh SDK-object
+code/data linking currently uses the local-ROM MIPS linker. Imported objdiff builds and other
+processors need explicit adapters before receiving the verified SDK-assembly badge; signature
+similarity alone is insufficient. Their ordinary assembly classifications still exclude C work.

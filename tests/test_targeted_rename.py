@@ -87,3 +87,23 @@ def test_rename_address_lookup_and_writes_use_owning_project_store(tmp_path, mon
         assert leaf.one("SELECT name FROM functions WHERE vram=4096")[0] == 'new'
         assert net.store.one("SELECT name FROM functions WHERE vram=4096")[0] == 'old'
     finally:leaf.conn.close()
+
+
+def test_inventory_reuses_source_tokens_but_invalidates_changed_and_deleted_sources(tmp_path,monkeypatch):
+    from decompnet.app.rename_scope import inventory
+    net,_=prepare(tmp_path,monkeypatch)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=matched_source || ?",(' /*'+' large '*200+'*/',))
+    proj=net.project_row('game');store=net.project_store(proj['id']);reads=[];original=store.one
+    def read(sql,*args):
+        if sql.startswith('SELECT matched_source FROM functions'):reads.append(args[0])
+        return original(sql,*args)
+    monkeypatch.setattr(store,'one',read)
+    first=inventory(net,proj);assert len(reads)==3
+    assert inventory(net,proj)==first and len(reads)==3
+    caller=original("SELECT matched_source FROM functions WHERE name='caller'")[0]
+    with store.tx() as db:db.execute("UPDATE functions SET matched_source=? WHERE name='caller'",(caller+" newToken",))
+    changed=inventory(net,proj);assert len(reads)==4
+    assert any('newToken' in words for _,words in changed)
+    with store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE name='caller'")
+    assert len(inventory(net,proj))==2

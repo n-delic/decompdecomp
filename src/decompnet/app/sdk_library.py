@@ -97,7 +97,7 @@ def scan(net, folders, log=lambda *_: None):
             raise NetworkError(f'SDK file exceeds 100 MB: {path.name}')
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         prior = old['files'].get(str(path))
-        if prior and prior['sha256'] == digest and prior.get('shape_index') == 1:
+        if prior and prior['sha256'] == digest and prior.get('shape_index') == 2:
             records[str(path)] = prior
             continue
         version = re.search(r'2\.0[A-L]', str(path), re.I)
@@ -107,7 +107,7 @@ def scan(net, folders, log=lambda *_: None):
         existed = net.store.one('SELECT 1 FROM sdk_signatures WHERE corpus=?', corpus) is not None
         count = net.twins.import_sdk_objects(path, corpus)
         owned = prior.get('owned', True) if prior and prior['corpus'] == corpus else not existed
-        records[str(path)] = {'corpus': corpus, 'sha256': digest, 'signatures': count, 'owned': owned, 'shape_index': 1}
+        records[str(path)] = {'corpus': corpus, 'sha256': digest, 'signatures': count, 'owned': owned, 'shape_index': 2}
         imported += count
     retained = {r['corpus'] for r in records.values()}
     removed = {r['corpus'] for r in old['files'].values() if r.get('owned', True)} - retained
@@ -116,6 +116,8 @@ def scan(net, folders, log=lambda *_: None):
             db.execute('DELETE FROM sdk_signatures WHERE corpus=?', (corpus,))
             db.execute('DELETE FROM sdk_sources WHERE corpus=?', (corpus,))
             db.execute('DELETE FROM sdk_shapes WHERE corpus=?', (corpus,))
+            from .sdk_assembly import PREFIX
+            db.execute('DELETE FROM settings WHERE key=?',(PREFIX+corpus,))
         db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',
                    (KEY, json.dumps({'folders': [str(p) for p in roots], 'files': records})))
     from .sdk_names import name_projects

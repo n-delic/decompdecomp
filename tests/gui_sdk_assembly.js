@@ -1,0 +1,15 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const text=fs.readFileSync('src/decompnet/app/static/js/function.js','utf8');
+const nodes={};const $=id=>nodes[id]??={className:'',hidden:false,textContent:''};
+const ctx={$,S:{claims:[]},pctText:x=>x,pctOf:()=>0};vm.createContext(ctx);
+vm.runInContext(text.slice(text.indexOf('function fnBadge('),text.indexOf('function renderFunctionSource(')),ctx);
+ctx.d={name:'entry',status:'asm',assembly_verification:{verified:true,kind:'sdk'}};
+vm.runInContext('fnBadge(d)',ctx);assert.equal($('fnStatus').textContent,'SDK assembly · verified');
+ctx.d.assembly_verification.verified=false;vm.runInContext('fnBadge(d)',ctx);assert.equal($('fnStatus').textContent,'set aside · assessment');
+ctx.d.assembly_verification={verified:true};vm.runInContext('fnBadge(d)',ctx);assert.equal($('fnStatus').textContent,'verified source assembly');
+ctx.d.status='matched';vm.runInContext('fnBadge(d)',ctx);assert.equal($('fnStatus').textContent,'matched');
+const helpers=text.slice(text.indexOf('function searchFunctions('),text.indexOf('function sdkBadge('));vm.runInContext(helpers,ctx);
+ctx.rows=[{name:'func_80001000',display_name:'sdkToy',vram:0x80001000,unit:''}];ctx.hex8=n=>n.toString(16);
+assert.equal(vm.runInContext("searchFunctions(rows,'sdktoy',false).length",ctx),1);
+assert.equal(vm.runInContext("searchFunctions(rows,'func_',false).length",ctx),1);

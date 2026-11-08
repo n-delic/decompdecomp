@@ -802,9 +802,14 @@ def register(app: App) -> None:
             peers = listing(net, slug, old)['rows']
             if not any(str(p['id']) == str(data['peer_id']) and p['name'] == new for p in peers):
                 raise ValueError('That project function has changed or is no longer a naming lead. Refresh the table.')
-        elif not any(h["name"] == new and h["score"] == 1 and "unverified" not in h["kind"]
-                   for h in net.twins.suggestions(slug, old, limit=100)):
-            raise ValueError("that exact SDK or cross-game name is no longer suggested for this function")
+        else:
+            from ..sdk_identity import identify
+            proj=net.project_row(slug);fn=net._function(old,slug)
+            sdk=identify(net,proj,{},include_asm=True).get(fn['id'],{})
+            sdk_name=sdk.get('names')==[new]
+            if not sdk_name and not any(h["name"] == new and h["score"] == 1 and "unverified" not in h["kind"]
+                       for h in net.twins.suggestions(slug, old, limit=100)):
+                raise ValueError("that exact SDK or cross-game name is no longer suggested for this function")
         agent, _ = net.local_agent("you")
         def rename(log=None):
             publish = getattr(log, "progress", None)

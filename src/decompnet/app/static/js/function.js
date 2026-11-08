@@ -285,7 +285,7 @@ function fnBadge(d = S.fnDetail) {
   const working = S.claims.find((c) => c.name === d.name);
   const st = $("fnStatus");
   st.className = "badge " + (d.status === "matched" ? "matched" : d.not_c ? "not-c" : working ? "working" : "");
-  st.textContent = d.boundary_override ? "reviewed · intentional entry" : d.boundary_review ? "incomplete · boundary review" : d.status === "matched" ? "matched" : d.status === "asm" ? (d.assembly_verification?.verified ? "verified source assembly" : "set aside · assessment") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
+  st.textContent = d.boundary_override ? "reviewed · intentional entry" : d.boundary_review ? "incomplete · boundary review" : d.status === "matched" ? "matched" : d.status === "asm" ? (d.assembly_verification?.verified ? (d.assembly_verification.kind === "sdk" ? "SDK assembly · verified" : "verified source assembly") : "set aside · assessment") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
 }
 
 function renderFunctionSource(d, replaceEditor = true) {
@@ -365,27 +365,34 @@ async function refreshFn(first) {
     $("fnAddr").textContent = S.ov.kind === "fork"
       ? `${d.unit} · ${d.insns} instructions${d.match_percent != null ? ` · ${d.match_percent >= 100 ? "100" : (Math.floor(d.match_percent * 10) / 10).toFixed(1)}% now` : ""}`
       : `${hex8(d.vram)} · ROM 0x${d.rom_offset.toString(16).toUpperCase()} · ${d.insns} instructions`;
-    if ($("fnName").textContent !== d.name) {
+    if ($("fnName").textContent !== (d.display_name || d.name)) {
       if (!deepPermuterBusy) {
         $("fnDeepMetrics").hidden = true;
         $("fnDeepStatus").textContent = "";
       }
+      $("fnSdkNameLog").textContent = "";
+      $("fnSdkNameLog").hidden = true;
       $("fnCompilerMatches").replaceChildren();
       $("fnApplyCompiler").hidden = true;
       $("fnCompilerSummary").hidden = true;
       $("fnCompilerLog").textContent = "";
       $("fnCompilerLog").hidden = true;
     }
-    $("fnName").textContent = d.name;
+    $("fnName").textContent = d.display_name || d.name;
     $("fnNaming").hidden = d.named == null;
     $("fnNaming").textContent = d.naming?.method === "sdk_signature"
       ? `Name inferred from SDK binary signatures · ${d.naming.source_corpora?.length || 0} signature collection(s)`
       : d.naming?.method === "exact_cross_game"
       ? `Name inferred from ${d.naming.source_project} · exact code match`
       : d.renamed ? `Renamed from ${d.naming.original_name}` : d.named ? "Named function" : "Generated name";
+    if (d.display_name && d.display_name !== d.name) $("fnNaming").textContent = `Source symbol: ${d.name} · SDK display name only`;
     const sdk = $("fnSdkEvidence");
     sdk.hidden = !d.sdk;
-    $("fnSdkEvidenceText").textContent = sdkEvidenceText(d.sdk);
+    $("fnSdkEvidenceText").textContent = sdkEvidenceText(d.sdk) + (d.assembly_verification ? "\n" + JSON.stringify(d.assembly_verification, null, 2) : "");
+    const sdkRename = $("fnSdkRename");
+    sdkRename.hidden = !d.sdk || !d.display_name || d.display_name === d.name;
+    sdkRename.dataset.name = d.display_name || d.name;
+    sdkRename.onclick = () => useSuggestedName(sdkRename, d, "fnSdkNameLog", "fnSdkEvidence");
     fnBadge(d);
     const handover = $('fnClaimHandover');
     handover.hidden = !d.can_handover;
@@ -468,6 +475,7 @@ async function refreshFn(first) {
       $("fnAsideWhy").title=`${a.verified ? "Verified supplied source assembly" : "Previous proof; fresh verification required"}: ${a.source_file || ""} · source SHA-256 ${a.original_file_sha256 || a.source_sha256 || "unavailable"}`;
     } else $("fnAsideWhy").title="";
     $("fnAsideWhy").textContent = d.set_aside ? `Set aside, agents aren't handed it: ${d.set_aside}.` : "";
+    if (d.assembly_verification?.verified && d.assembly_verification.kind === "sdk") $("fnAsideWhy").textContent = "SDK assembly verified against linked code and referenced data. Excluded from C agents and the permuter; no C coverage added.";
     if (d.assembly_verification && !d.assembly_verification.verified) $("fnAsideWhy").textContent="Previous source-assembly proof; fresh verification required. Kept as assembly, not matching C.";
 
     $("fnReopen").onclick = async () => {
@@ -879,7 +887,7 @@ const STATE_RANK = { boundary: -1, working: 0, tried: 1, open: 2, matched: 3, as
 function searchFunctions(fns, q, fork) {
   if (!q) return fns;
   const inUnit = (f) => (f.unit || "").toLowerCase().includes(q);
-  const found = fns.filter((f) => f.name.toLowerCase().includes(q) || hex8(f.vram).toLowerCase().includes(q) || (fork && inUnit(f)));
+  const found = fns.filter((f) => (f.name.toLowerCase().includes(q) || (f.display_name || "").toLowerCase().includes(q)) || hex8(f.vram).toLowerCase().includes(q) || (fork && inUnit(f)));
   return found.length || fork ? found : fns.filter(inUnit);
 }
 
@@ -908,7 +916,7 @@ function renderList() {
   let rows = searchFunctions(S.map.filter((f) => L.filter === "all" || (L.filter === "first" ? starred(f) : L.filter === "polished" ? polished(f) : L.filter === "cross_project" ? !!f.cross_project : fnState(f) === L.filter)),
     q, S.ov && S.ov.kind === "fork");
   const key = {
-    i: (f) => f.i, name: (f) => f.name.toLowerCase(), insns: (f) => f.insns, attempts: (f) => f.attempts || 0,
+    i: (f) => f.i, name: (f) => (f.display_name || f.name).toLowerCase(), insns: (f) => f.insns, attempts: (f) => f.attempts || 0,
     last_checked: (f) => f.last_checked || 0, last_improved: (f) => f.last_improved || 0,
     best: (f) => (f.status === "matched" ? 2 : f.best == null ? -1 : pctOf(f.best, f.insns)), status: (f) => STATE_RANK[fnState(f)],
   }[L.sort === "vram" ? "i" : L.sort];
@@ -918,12 +926,12 @@ function renderList() {
   $("fnRows").innerHTML = rows.slice(0, L.limit).map((f) => {
     const st = fnState(f), p = pctOf(f.best, f.insns);
     const best = st === "matched" ? `<span class="ok">100%</span>` : p == null ? `<span class="dim">–</span>` : pctText(p);
-    const status = st === "boundary" ? `<span class="st boundary" title="Incomplete extent; saved classification requires review">incomplete</span>` : st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "asm" ? (f.not_c ? `<span class="st not-c" title="Agent assessment only, not verified assembly provenance">agent set-aside</span>` : `<span class="st" title="Set aside by classification; this does not establish original assembly provenance">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
+    const status = st === "boundary" ? `<span class="st boundary" title="Incomplete extent; saved classification requires review">incomplete</span>` : st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "asm" ? (f.assembly_verification?.verified ? `<span class="st" title="Exact linked assembly; not matching C">${f.assembly_verification.kind === "sdk" ? "SDK assembly · verified" : "verified assembly"}</span>` : f.not_c ? `<span class="st not-c" title="Agent assessment only, not verified assembly provenance">agent set-aside</span>` : `<span class="st" title="Set aside by classification; this does not establish original assembly provenance">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
       : st === "tried" ? `<span class="st tried">tried</span>` : `<span class="st">to do</span>`;
     const on = starred(f), open = f.status !== "matched" && f.status !== "asm";
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;
     return `<tr data-fn="${esc(f.name)}" class="${S.fn === f.name ? "sel" : ""}" tabindex="0">${starCell}<td class="mono dim">${fork ? esc(f.unit || "") : hex8(f.vram)}</td>
-      <td class="mono name">${esc(f.name)}${sdkBadge(f)}${f.boundary_review ? `<span class="badge" title="${esc(f.boundary_review)}">boundary review</span>` : ""}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
+      <td class="mono name">${esc(f.display_name || f.name)}${f.display_name && f.display_name !== f.name ? ` <small class="dim">${esc(f.name)}</small>` : ""}${sdkBadge(f)}${f.boundary_review ? `<span class="badge" title="${esc(f.boundary_review)}">boundary review</span>` : ""}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
       <td class="r mono">${f.attempts || `<span class="dim">0</span>`}</td><td>${functionAge(f.last_improved)}</td><td>${functionAge(f.last_checked)}</td><td>${status}</td></tr>`;
   }).join("") || `<tr class="none"><td colspan="9">${L.filter === "first" && !q ? "No function is starred. ☆ one and agents take it before the others." : `No function matches${q ? ` “${esc(L.q)}”` : ""}.`}</td></tr>`;
   $("fnShown").textContent = rows.length > L.limit ? `${L.limit.toLocaleString()} of ${rows.length.toLocaleString()} shown` : plural(rows.length, "function");

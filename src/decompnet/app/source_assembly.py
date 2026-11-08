@@ -25,16 +25,22 @@ def fingerprint(proj, fn):
 def verified(proj, fn):
     proof=json.loads(fn['meta'] or '{}').get('verified_assembly',{})
     if not isinstance(proof,dict):return False
+    if proof.get('kind')=='sdk':
+        try:
+            stat=Path(proof['source_file']).stat()
+            if proof.get('source_stamp')!=[stat.st_mtime_ns,stat.st_size]:return False
+        except (OSError,KeyError,TypeError):return False
     return (fn['status']=='asm' and proof.get('verified') is True and proof.get('fingerprint')==fingerprint(proj,fn))
 
 
 def breakdown(net, proj):
     with getattr(net.project_store(proj['id']),'lock',nullcontext()):
         counts=net.project_store(proj['id']).one(f"SELECT SUM(status='matched') c,SUM(status='asm') a,SUM(status='open') o,SUM(size) bytes,SUM(CASE WHEN status='matched' THEN size ELSE 0 END) cbytes FROM functions WHERE project_id=? AND {IN_BUILD}",proj['id'])
-        checked=0
+        checked=0;sdk=0
         for row in net.project_store(proj['id']).all(f"SELECT vram,size,target,relocs,meta,status FROM functions WHERE project_id=? AND {IN_BUILD} AND status='asm' AND json_type(meta,'$.verified_assembly')='object'",proj['id']):
-            checked+=int(verified(proj,row))
-    return {'exact_c':counts['c'] or 0,'verified_source_assembly':checked,
+            current=verified(proj,row);checked+=int(current)
+            sdk+=int(current and json.loads(row['meta'] or '{}').get('verified_assembly',{}).get('kind')=='sdk')
+    return {'exact_c':counts['c'] or 0,'verified_source_assembly':checked-sdk,'verified_sdk_assembly':sdk,
             'other_assembly':(counts['a'] or 0)-checked,'open':counts['o'] or 0,
             'exact_c_bytes':counts['cbytes'] or 0,'total_bytes':counts['bytes'] or 0}
 

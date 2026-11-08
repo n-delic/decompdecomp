@@ -18,6 +18,6 @@ async function run(fail) {
 const project=fs.readFileSync(path.join(__dirname,"../src/decompnet/app/static/js/project.js"),"utf8");
 const counters=project.split('  if (S.ov.status_breakdown) {')[1].split('\n  }')[0];
 const element={};vm.runInNewContext(counters,{$:()=>element,S:{ov:{status_breakdown:{exact_c:12,verified_source_assembly:2,other_assembly:3,open:0},readable:4}},c:{working:1}});
-assert.match(element.textContent,/12 exact C · 2 verified source assembly · 3 other set-aside entries · 0 open/);
+assert.match(element.textContent,/12 exact C · 2 verified source assembly · 0 verified SDK assembly · 3 other set-aside entries · 0 open/);
 assert.match(element.title,/does not mean 100% C/);
 (async()=>{await run(false);await run(true);})().catch(error=>{console.error(error);process.exitCode=1;});

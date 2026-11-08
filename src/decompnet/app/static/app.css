@@ -2125,3 +2125,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 /* Use the map's polished colour beside the independent matched badge. */
 .badge.polished { background: var(--polished); color: var(--bg); border-color: transparent; }
 .polish-source-choice { margin-bottom: 12px; flex-wrap: wrap; }
+
+/* SDK hashes and local paths stay readable inside a narrow function drawer. */
+#fnSdkEvidence { min-width: 0; max-width: 100%; }
+#fnSdkEvidence .joblog { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -127,12 +127,14 @@ def test_exact_sdk_assembly_can_be_named_without_becoming_c_work(sdk_case, monke
         return '✅ Renamed'
     monkeypatch.setattr(net, 'rename_symbol', rename)
     monkeypatch.setattr(net, 'rename_symbols', lambda agent,slug,pairs,message: rename(agent,slug,*pairs[0],message))
-    assert name_functions(net,'demo') == 1
+    assert name_functions(net,'demo') == 0
     row = net.store.one('SELECT *FROM functions WHERE id=?',fid)
     assert row['status'] == 'asm'
     assert json.loads(row['meta'])['asm_code'] == 'privileged instructions'
-    assert json.loads(row['meta'])['naming']['method'] == 'sdk_signature'
-    assert calls == [('func_80001000','sdkHelper')]
+    assert json.loads(row['meta'])['sdk_display']['name'] == 'sdkHelper'
+    assert not json.loads(row['meta']).get('naming')
+    assert calls == []
+    assert row['name'] == 'func_80001000'
     if not fork:
         assert not net.twins.prints(project)
     # Named metadata and the optional naming cache never make it a C candidate.

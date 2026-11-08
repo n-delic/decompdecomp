@@ -55,7 +55,7 @@ def test_only_exact_linked_assembly_is_classified_without_c_credit(tmp_path,monk
     result=assembly.run(net,proj,cfg,lambda s:None)
     assert result=={'tested':1,'verified':1,'cached':0,'errors':[]}
     fn=net._function('entry','game');assert fn['status']=='asm' and assembly.verified(proj,fn)
-    assert assembly.breakdown(net,proj)=={'exact_c':0,'verified_source_assembly':1,'other_assembly':0,'open':0,'exact_c_bytes':0,'total_bytes':8}
+    assert assembly.breakdown(net,proj)=={'exact_c':0,'verified_source_assembly':1,'verified_sdk_assembly':0,'other_assembly':0,'open':0,'exact_c_bytes':0,'total_bytes':8}
     fn['target']=b'changed!';assert not assembly.verified(proj,fn)
     restored=restored_aside(json.loads(net._function('entry','game')['meta']))
     assert restored['verified_assembly']['verified'] is False

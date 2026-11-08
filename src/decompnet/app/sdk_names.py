@@ -1,4 +1,5 @@
 """Name SDK functions through normal, regression-checked renames, independently of C matching."""
+import json
 import logging
 import re
 import time
@@ -24,7 +25,7 @@ def name_functions(net, slug, job=None):
     result = _name_functions(net, slug, job)
     busy = net.project_store(proj['id']).one('SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=? LIMIT 1', proj['id'])
     if not busy and (job is None or not job.stop.is_set()):
-        cache[proj['id']] = (version, time.monotonic())
+        cache[proj['id']] = ((net.project_store(proj['id']).read_version('inputs',proj['id']),net.store.read_version('sdk_names')), time.monotonic())
     return result
 
 
@@ -44,12 +45,14 @@ def _name_functions(net, slug, job=None):
     fork = net.fork_slug(slug)
     if not fork and not net.is_rom(proj):
         return 0
+    from . import sdk_assembly
+    sdk_assembly.discover(net,proj)
     hints = identify(net, proj, {}, include_asm=True)
     if not hints:
         return 0
     prints = naming_prints(net, proj)
     multiplicity = Counter(p.key for p in prints.values())
-    rows = net.project_store(proj['id']).all('SELECT id,name,meta,size FROM functions WHERE project_id=?', proj['id'])
+    rows = net.project_store(proj['id']).all('SELECT id,name,meta,size,status FROM functions WHERE project_id=?', proj['id'])
     taken = {r['name'] for r in rows}
     if not fork:
         taken |= set(net.symbols(proj['id']).by_name)
@@ -79,6 +82,25 @@ def _name_functions(net, slug, job=None):
     candidates = [(r, n, h, k) for r, n, h, k in candidates if counts[n] == 1][:4 if fork else 128]
     if not candidates:
         return 0
+    # Display identities never rewrite C, prototypes or symbols. Keep them even
+    # when a later guarded source rename is rejected.
+    for row,name,hint,key in candidates:
+        with net.project_store(proj['id']).tx() as db:
+            fresh=db.execute('SELECT meta FROM functions WHERE id=?',(row['id'],)).fetchone()
+            meta=json.loads(fresh['meta'] or '{}')
+            display={'name':name,'fingerprint':key,'corpora':hint['corpora']}
+            if meta.get('sdk_display')==display:continue
+            meta['sdk_display']=display
+            db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),row['id']))
+    from . import sdk_assembly
+    for row,name,hint,key in candidates:
+        if row['status']=='asm' and not fork:
+            fn=net._function(row['name'],slug)
+            sdk_assembly.verify(net,proj,fn,hint)
+    # Assembly keeps its source symbol. Display identity and verification suffice;
+    # rewriting caller prototypes is a separate explicit user action.
+    candidates=[item for item in candidates if item[0]['status']!='asm']
+    if not candidates:return 0
     agent, _ = net.local_agent('autopilot')
     message = 'Names inferred from SDK binary signatures'
     if not fork:

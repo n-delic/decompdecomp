@@ -10,6 +10,11 @@ from pathlib import Path
 
 
 def current(proj, hint):
+    if hint.get('sdk_file'):
+        try:
+            stat=Path(hint['sdk_file']).stat()
+            if hint.get('sdk_stamp')!=[stat.st_mtime_ns,stat.st_size]:return False
+        except (OSError,KeyError,TypeError):return False
     if not hint.get('binary_evidence'):
         return True
     try:
