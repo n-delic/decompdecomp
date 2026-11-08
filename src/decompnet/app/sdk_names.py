@@ -54,6 +54,8 @@ def _name_functions(net, slug, job=None):
         taken |= set(net.symbols(proj['id']).by_name)
     candidates = []
     for row in rows:
+        from .purpose_work import checkpoint
+        checkpoint()
         from .maintenance import checkpoint
         checkpoint()
         if job is not None and job.stop.is_set():

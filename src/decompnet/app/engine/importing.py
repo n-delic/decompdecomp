@@ -441,10 +441,9 @@ class ImportMixin:
         m2c's drafts of bigger functions are GCC-style and CodeWarrior never matches them, but `return p->x;` is the
         same C for every compiler, and each fills the return's delay slot its own way. Functions in a range another
         compiler builds aren't asked. Returns compiler -> matches."""
-        from concurrent.futures import ThreadPoolExecutor
-
         from ...compiler import compile_source
         from ...project import compiler_config
+        from ..purpose_work import Executor
 
         proj = self._project(slug)
         cfg = json.loads(proj["config"])  # a copy of its own: the compiler may change below
@@ -477,7 +476,7 @@ class ImportMixin:
                                          else scoring.diff(self._target_obj(fn, proj), cand).bytes_match)
 
         jobs = [(tc, d) for tc in tcs for d in drafts]
-        with ThreadPoolExecutor(4) as pool:
+        with Executor(4, purpose='Import compiler detection', project=slug) as pool:
             found = list(pool.map(matches, jobs))
         counts = {tc: sum(ok for (t, _), ok in zip(jobs, found) if t == tc) for tc in tcs}
         best = max(tcs, key=lambda t: (counts[t], t == current))

@@ -119,7 +119,7 @@ def test_operand_score_ten_is_eligible_and_feedback_survives_cache(pair, monkeyp
 
 def test_cascade_coalesces_notifications_and_stops_at_one_shared_budget(pair, monkeypatch):
     queued = []
-    monkeypatch.setattr('decompnet.app.reuse_cascade.workers.pool', lambda: SimpleNamespace(submit=lambda f: queued.append(f)))
+    monkeypatch.setattr('decompnet.app.reuse_cascade.purpose_work.start', lambda purpose,project,fn,*args,**kw:queued.append(lambda:fn(*args)))
     pair.cascades.configure(True, attempts=1)
     donor = pair._project('source')
     pair.cascades.notify(donor,1); pair.cascades.notify(donor,1)

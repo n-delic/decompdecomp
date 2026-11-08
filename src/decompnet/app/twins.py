@@ -31,6 +31,7 @@ from .. import arch, similarity
 from ..elfobj import MASKS_BY_ARCH, Reloc, mask_relocs
 from ..network import NetworkError
 from ..project import compiler_for
+from .purpose_work import Executor
 
 log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
@@ -1304,7 +1305,6 @@ class Twins:
     def run(self, slug: str, job: Job | None = None, only: set[int] | None = None, workers: int = 3) -> Job:
         """Try matched code on every unmatched twin (or the twins of `only`), until a pass matches nothing new
         (a twin that matches can be the matched member of another group's pair next time)."""
-        from concurrent.futures import ThreadPoolExecutor
 
         from . import workers as background_workers
         workers = max(1, min(workers, background_workers.WORKERS))
@@ -1371,7 +1371,7 @@ class Twins:
                     db.executemany("UPDATE functions SET boost=-1 WHERE id=? AND status='open'", [(b,) for b in by_target])
                 tally['total'] = len(by_target)
                 publish()
-                with ThreadPoolExecutor(max_workers=workers) as pool:
+                with Executor(purpose='Identical-function reuse', project=slug, stop=job.stop.set, max_workers=workers) as pool:
                     list(pool.map(one, by_target.values()))
                 if job.matched == before:
                     break

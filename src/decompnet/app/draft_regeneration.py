@@ -2,11 +2,12 @@
 import os
 import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, wait
 
 from .. import scoring, seeds
 from ..network import NetworkError
 from . import draft_reports
+from .purpose_work import Executor
 
 
 def validate(net, slug):
@@ -226,7 +227,7 @@ def run(net, slug, log, *, include_all=False, threads=0):
             log.progress(dict(result, done=result['completed'], phase='Regenerating machine drafts',
                               function=detail, confirmed=result['matched']))
     # Explicit user work has its own pool, independent of the low-priority background limit.
-    with ThreadPoolExecutor(max_workers=count, thread_name_prefix='draft-refresh') as pool:
+    with Executor(purpose='Machine draft refresh', project=slug, max_workers=count, thread_name_prefix='draft-refresh') as pool:
         fill()
         progress()
         while pending:

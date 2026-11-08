@@ -97,9 +97,11 @@ class Drafter:
                     st.total, st.made = len(todo), 0
                     if todo:
                         agent, _ = self.net.local_agent("autopilot")
-                        for start in range(0,len(todo),DRAFT_BATCH):
-                            if st.stop.is_set() or not active(self.net, slug):break
-                            wait([workers.pool().submit(self._one, agent, proj, fid, st) for fid in todo[start:start+DRAFT_BATCH]])
+                        from .purpose_work import Executor
+                        with Executor(workers.WORKERS, purpose='Machine drafts', project=slug, stop=st.stop.set, initializer=workers.lower_priority) as pool:
+                            for start in range(0,len(todo),DRAFT_BATCH):
+                                if st.stop.is_set() or not active(self.net, slug):break
+                                wait([pool.submit(self._one, agent, proj, fid, st) for fid in todo[start:start+DRAFT_BATCH]])
                     mark = now if active(self.net, slug) else None  # (what changed while the pass ran is seen at the next look)
                 idle_wait(self.net, st, POLL_SECONDS)
         except Exception:  # background work: it never stands in the way, and says why it stopped

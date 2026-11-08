@@ -1,11 +1,12 @@
 """Bounded independent profile checks within one function's compiler comparison."""
 import threading
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import TimeoutError
 from contextlib import nullcontext
 
 from .. import compile_sessions, compiler
 from ..network import NetworkError
+from .purpose_work import Executor
 
 
 def check_profiles(net, proj, fn, candidates, source, cancel):
@@ -27,7 +28,7 @@ def check_profiles(net, proj, fn, candidates, source, cancel):
             return net._judge_with(proj, fn, tc, list(flags), source)
     iterator = iter(candidates)
     pending = deque()
-    pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix='compiler-profile')
+    pool = Executor(purpose='Compiler profile comparisons', project=proj['slug'] if 'slug' in proj else '', max_workers=4, thread_name_prefix='compiler-profile')
     try:
         for profile in iterator:
             check_cancel()

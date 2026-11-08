@@ -159,7 +159,7 @@ def test_partial_transfer_uses_real_compiler_and_target_byte_judge(built, tmp_pa
 def test_configured_cascade_schedules_open_partial_donors(pair, monkeypatch):
     prepare(pair)
     queued = []
-    monkeypatch.setattr('decompnet.app.reuse_cascade.workers.pool', lambda: SimpleNamespace(submit=queued.append))
+    monkeypatch.setattr('decompnet.app.reuse_cascade.purpose_work.start', lambda purpose,project,fn,*args,**kw:queued.append(lambda:fn(*args)))
     pair.cascades.configure(True)
     pair.cascades.notify(pair._project('source'), 1)
     assert pair.cascades.pending == {'destination'} and len(queued) == 1

@@ -6,12 +6,13 @@ import secrets
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, wait
 
 from .. import match_bundle, scoring, toolchains
 from ..network import NetworkError
 from ..project import compiler_for, function_compiler_key
 from .compiler_cleanup import replace_range
+from .purpose_work import Executor
 
 _LOCK=threading.RLock()
 MAX_RECEIPTS=8
@@ -59,7 +60,7 @@ def remembered(net,slug,selected,token):
 def parallel(items,check,cancel,*,thread_name='profile-apply'):
     """Only eight candidates in flight; cancellation never queues the whole project."""
     iterator=iter(items)
-    with ThreadPoolExecutor(max_workers=8,thread_name_prefix=thread_name) as pool:
+    with Executor(purpose='Compiler match verification', max_workers=8,thread_name_prefix=thread_name) as pool:
         pending=set()
         try:
             while True:

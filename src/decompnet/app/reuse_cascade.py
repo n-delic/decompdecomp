@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-from . import free_candidates, named_donors, similar_matches, workers
+from . import free_candidates, named_donors, purpose_work, similar_matches
 from .twins import Job
 
 log = logging.getLogger('decompdecomp')
@@ -86,7 +86,8 @@ class Cascade:
             if self.running or not self.pending:
                 return
             self.running = True
-        workers.pool().submit(self.drain)
+        job = Job()
+        purpose_work.start('Cross-project match reuse', '', self.drain, job, stop=job.stop.set)
 
     def drain(self, job=None):
         """One global budget, including any matches unlocked by this wave. No recursive worker launches."""
@@ -143,4 +144,4 @@ class Cascade:
             if again:
                 # A notification can arrive between the empty-queue check and cleanup. Keep the same budget.
                 job.state = 'running'
-                workers.pool().submit(lambda: self.drain(job))
+                purpose_work.start('Cross-project match reuse', '', self.drain, job, stop=job.stop.set)

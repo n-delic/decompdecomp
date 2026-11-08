@@ -87,7 +87,11 @@ def throughput_slots(enabled, gate=None):
 @contextmanager
 def cancellable(check):
     """Make compiler subprocesses stop promptly when their owning background job is cancelled."""
-    token = _CANCEL_CHECK.set(check)
+    previous = _CANCEL_CHECK.get()
+    def combined():
+        if previous:previous()
+        check()
+    token = _CANCEL_CHECK.set(combined)
     try:
         yield
     finally:

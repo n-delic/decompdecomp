@@ -303,8 +303,8 @@ def test_the_default_is_what_the_computer_can_spare(pair, monkeypatch):
 
     two_open_functions(pair, monkeypatch)
     sizes = []
-    real = search.ThreadPoolExecutor
-    monkeypatch.setattr(search, 'ThreadPoolExecutor', lambda n, **kw: sizes.append(n) or real(n, **kw))
+    real = search.Executor
+    monkeypatch.setattr(search, 'Executor', lambda max_workers=None, **kw: sizes.append(max_workers) or real(max_workers, **kw))
     monkeypatch.setattr(pair, 'try_quietly', lambda *a: dict(matched=False, score=20))
     search.run(pair.twins, 'destination', Job())
     pair.cascades.iterative_threads = 3

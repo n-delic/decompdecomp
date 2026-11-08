@@ -78,12 +78,22 @@ class Monitor:
             for slug, state in list(surveys.items()):
                 if state.get('state') == 'running':
                     add('service',f'survey:{label}:{slug}',label,'running',slug,'No safe stop available for this automatic check',False)
+        from . import purpose_work
+        rows.extend(purpose_work.snapshot())
         thread_details = self.thread_sampler.snapshot()
+        for row in rows:
+            if row['kind'] == 'purpose':
+                for thread in thread_details:
+                    if thread['native_id'] in row['thread_ids']:
+                        thread['role'] = row['title']
+                        thread['purpose'] = 'Dedicated to '+row['title']+('. Project: '+row['project'] if row['project'] else '')+'.'
         claimed = set()
         for row in rows:
             kind, key = row['kind'], row['key']
             ids, names = [], []
-            if kind == 'startup':
+            if kind == 'purpose':
+                ids = row['thread_ids']
+            elif kind == 'startup':
                 ids = [next((t['thread_id'] for t in startup_tasks if t['key'] == key), None)]
             elif kind == 'autosave':
                 ids = [next((t['thread_id'] for t in autosaves if t['key'] == key), None)]
@@ -110,10 +120,13 @@ class Monitor:
         from ..ui_diagnostics import snapshot
         return dict(slow_operations=snapshot(),items=rows, cpu_percent=percent, cores=os.cpu_count() or 1, threads=threads, thread_details=thread_details,
                     workers=workers.WORKERS, default_workers=workers.default_workers(),
-                    cpu_note='App Python process only; 100% means one CPU core. Compiler subprocesses and the window are excluded. Jobs share threads and cannot be assigned accurate individual CPU percentages.')
+                    cpu_note='App Python process only; 100% means one CPU core. Compiler subprocesses and the window are excluded. Purpose-owned worker groups report their active threads; idle server and library threads remain read only.')
 
     def stop(self, kind, key):
-        if kind == 'startup':
+        if kind == 'purpose':
+            from . import purpose_work
+            purpose_work.stop(key)
+        elif kind == 'startup':
             startup = getattr(self.net, 'startup', None)
             if startup is None or not startup.cancel(key):
                 raise NetworkError('This startup task has already finished. Refresh the list.')

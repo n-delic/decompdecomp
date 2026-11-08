@@ -54,24 +54,25 @@ def run(net, slug, selected, log=print, nonmatches=False):
             return fn, ok, reason
         except (NetworkError, toolchains.ToolchainError, OSError) as error:
             return fn, False, str(error)[:300]
-    pending = [net._pool.submit(check, fn) for fn in candidates]
-    try:
-        for future in as_completed(pending):
-            cancel()
-            fn, ok, reason = future.result()
-            state['function'] = fn['name']
-            state['checked'] += 1
-            state['passed' if ok else 'failed'] += 1
-            if ok:
-                state['matches'].append(fn['name'])
-            if not ok:
-                state['failures'].append({'function':fn['name'], 'reason':reason})
-            publish()
-            if state['checked'] % 25 == 0 or state['checked'] == state['total']:
-                log(f"{state['checked']}/{state['total']} checked: {state['passed']} passed, {state['failed']} did not pass.")
-    finally:
-        for future in pending:
-            future.cancel()
+    with net._pool.group('Default compiler verification', slug) as pool:
+        pending = [pool.submit(check, fn) for fn in candidates]
+        try:
+            for future in as_completed(pending):
+                cancel()
+                fn, ok, reason = future.result()
+                state['function'] = fn['name']
+                state['checked'] += 1
+                state['passed' if ok else 'failed'] += 1
+                if ok:
+                    state['matches'].append(fn['name'])
+                if not ok:
+                    state['failures'].append({'function':fn['name'], 'reason':reason})
+                publish()
+                if state['checked'] % 25 == 0 or state['checked'] == state['total']:
+                    log(f"{state['checked']}/{state['total']} checked: {state['passed']} passed, {state['failed']} did not pass.")
+        finally:
+            for future in pending:
+                future.cancel()
     cancel()
     current = net.project_store(proj['id']).one('SELECT config FROM projects WHERE id=?', proj['id'])
     current_cfg = json.loads(current['config']) if current else None

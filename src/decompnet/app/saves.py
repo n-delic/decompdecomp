@@ -1275,8 +1275,17 @@ class Autosave:
             for row in rows:
                 if self.stop.is_set():return
                 try:
-                    if not json.loads(row["config"]).get("auto_push", {}).get("enabled"):continue
-                    auto_push.process(self.net, row["slug"], log.info, check_cancel)
+                    push_settings = json.loads(row["config"]).get("auto_push", {})
+                    if not push_settings.get("enabled"):continue
+                    from .purpose_work import Executor
+                    slug, threshold = row['slug'], push_settings.get('threshold',10)
+                    with Executor(1, purpose='Automatic Git push', project=slug,
+                                  stop=lambda slug=slug, threshold=threshold:auto_push.configure(self.net, slug, False, threshold),
+                                  stop_note='Stop turns off automatic pushing for this project; commits stay local.') as pool:
+                        def check():
+                            check_cancel()
+                            pool.check_cancel()
+                        pool.submit(auto_push.process, self.net, slug, log.info, check).result()
                 except _AutosavePaused:
                     return
                 except Exception:

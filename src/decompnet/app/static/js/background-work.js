@@ -62,7 +62,7 @@ $('backgroundRefresh').onclick=readBackgroundWork;
 $('backgroundLimitSave').onclick=async()=>{
   const value=Number($('backgroundLimit').value);
   if(!Number.isInteger(value) || value<0){showJobError($('backgroundWorkStatus'),'Enter a whole number of threads, or 0 for automatic.');return;}
-  const finish=beginWork($('backgroundWorkStatus'),'Updating background limit',[$('backgroundLimitSave')],'Limit saved; already queued work finishes first.');
+  const finish=beginWork($('backgroundWorkStatus'),'Updating background limit',[$('backgroundLimitSave')],'Thread default saved; new task groups use this limit.');
   try{await api('/api/settings',{method:'POST',body:{worker_threads:value}});await readBackgroundWork();}
   catch(error){showJobError($('backgroundWorkStatus'),error.message);}
   finally{finish();}

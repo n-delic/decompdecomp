@@ -349,7 +349,9 @@ class Permuter:
                     idle_wait(self.net, st, IDLE_SECONDS)
                     continue
                 idle = 0
-                wait([workers.pool().submit(self._turn, agent, proj, fn, st) for fn in todo])
+                from .purpose_work import Executor
+                with Executor(workers.WORKERS, purpose='Background permutation', project=slug, stop=st.stop.set, initializer=workers.lower_priority) as pool:
+                    wait([pool.submit(self._turn, agent, proj, fn, st) for fn in todo])
         finally:
             st.state = "stopped" if st.stop.is_set() else "done"
 
