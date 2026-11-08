@@ -413,10 +413,11 @@ class AutopilotMixin:
                         return
                     yield family, f"{note}{seeds.M2C_MACROS}\n{source}\n"
 
+            from ..carrier_sequence_repairs import machine_drafts as carrier_drafts
             from ..compiler_shape_repairs import machine_draft_copies
             from ..narrow_store_repairs import machine_drafts as narrow_drafts
             outcomes, seen = [], set()
-            for family, source in chain(narrow_drafts(machine_draft_copies(chain(draft_candidates(), local_candidates()), fn['name'], ctx['header']),fn['name'],ctx['header'],proj['arch']), recovery_candidates()):
+            for family, source in chain(carrier_drafts(narrow_drafts(machine_draft_copies(chain(draft_candidates(), local_candidates()), fn['name'], ctx['header']),fn['name'],ctx['header'],proj['arch']),fn['name'],ctx['header'],proj['arch']), recovery_candidates()):
                 if source in seen:
                     continue
                 seen.add(source)

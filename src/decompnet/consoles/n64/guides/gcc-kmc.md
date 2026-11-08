@@ -1583,3 +1583,18 @@ call expression did nothing and a byte-store variant regressed. Existing automat
 assume a local-repair run already tested it. Keep the true destination width, accesses,
 ABI and compiler fixed. Never add dummy uses or an unread padding object to force the frame.
 See the 2026-11-08 halfword-store entry in `docs/COMPILER_MATCHING_LEARNINGS.md`.
+
+
+### Try a narrow-load/carrier sequence before another broad pass
+
+For nearly identical interpolation-like code, a load-order repair can temporarily
+worsen register allocation. Preserve a measured scheduled sibling rather than
+requiring every step to lower the total score. The app's `narrow_carrier_sequence`
+combines existing guarded scope removal, narrow subtraction and storage-carrier
+alternatives. It rotates logical values across compatible locals and a parameter
+whose incoming value is dead; it does not change the signature or force registers.
+
+The final V-Rally case matched under the original profile. Diagnostic flags that
+improve a residual should prompt a source-lifetime investigation before becoming a
+compiler override. All generated alternatives still need exact linked-byte judgment.
+See the compiler learning log for the earlier-checkpoint replay and coverage limits.

@@ -11,6 +11,7 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'narrow_carrier_sequence': ('parameter_carriers','narrow_load_subtraction','one_shot_scope'),
     'loop_test_snapshot': ('scalar_storage_reuse','staged_scalar_arithmetic','explicit_loop_backedge','loop_constant_snapshot'),
     'staged_scalar_arithmetic': ('targeted_debug_layout','unscaled_address_snapshot','loop_test_snapshot'),
     'unscaled_address_snapshot': ('byte_pointer_operand_order','targeted_debug_layout','loop_constant_snapshot'),

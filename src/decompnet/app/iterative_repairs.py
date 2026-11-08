@@ -430,6 +430,17 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
             if page:
                 return (repair_selection.Page(page, more=True) if tagged else
                         repair_selection.Page([c for _,c in page], more=True))
+    # A composed recipe avoids requiring a numerically worse intermediate to win
+    # a frontier slot. Separate resumable pages preserve the ordinary total budget.
+    from . import carrier_sequence_repairs
+    if (selection is not None and carrier_sequence_repairs.FAMILY not in omit_families
+            and carrier_sequence_repairs.applicable(report.get('rows'),arch)):
+        recipes=carrier_sequence_repairs.variants(source,fn['name'],header,arch)
+        if recipes:
+            page=repair_selection.page(recipes,source,selection.setdefault('carrier_sequence_pages',{}),limit)
+            if page:
+                return (repair_selection.Page(page,more=True) if tagged else
+                        repair_selection.Page([c for _,c in page],more=True))
     key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'),report.get('instruction_resolution'), report.get('repair_locations'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused, entry_scope)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None

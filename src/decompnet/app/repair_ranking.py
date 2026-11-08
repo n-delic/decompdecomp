@@ -22,7 +22,7 @@ def order(families, rows):
     register_priority = (
             'branch_packing_tail', 'frame_branch_tail_sequence', 'inferred_frame_reservation', 'record_lifetime_sequence', 'pointer_result_reuse', 'coordinated_field_store_order', 'narrow_store_sequence', 'dead_assignment_narrow_capture', 'narrow_field_update_fold',
             'scratch_role_reuse',
-            'parameter_carriers',
+            'narrow_carrier_sequence', 'parameter_carriers',
             'inline_byte_address_bundle', 'inline_byte_address', 'debug_branch_scope', 'loaded_byte_compound', 'unsigned_byte_increment', 'return_contract', 'narrow_expression_inline', 'plain_float_slots',
             'narrow_call_destination', 'branch_scalar_lifetime', 'embedded_call_assignment', 'inline_call_count', 'typed_pointer_snapshot',
             'shared_scaled_offset', 'pointer_conditional_load_inline', 'branch_store_tail', 'address_association',
@@ -44,7 +44,7 @@ def order(families, rows):
         preferred = ('switch_constant_dispatch', 'unsigned_countdown_guard','structured_backedge','guard_forward_jump','branch_orientation','loop_update_order',
                      'goto_leaf','shared_return_tail','redundant_loop_guard','combined_scheduling')
     elif paired_loads(rows):
-        preferred = ('narrow_load_subtraction','one_shot_scope','paired_load_order','scalar_schedule_order','local_declaration_order','small_helper_expansion','combined_scheduling')
+        preferred = ('narrow_carrier_sequence','narrow_load_subtraction','one_shot_scope','paired_load_order','scalar_schedule_order','local_declaration_order','small_helper_expansion','combined_scheduling')
     elif markers and markers <= {'s'}:
         preferred = ('argument_home_slot', 'callee_array_extent', 'modular_guard_width', 'local_width', 'spill_normalization', 'unused_scalar_local',
                      'local_storage', 'parameter_storage', 'local_declaration_order', 'stack_padding')

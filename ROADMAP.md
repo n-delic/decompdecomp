@@ -899,6 +899,13 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Narrow-load and parameter-carrier sequences.** Near-match search now tries bounded
+  compositions of scope removal, narrow subtraction and compatible storage rotation
+  before broad exploration. Original m2c drafts remain first, with at most three new
+  lifetime/load alternatives across ROM and imported-project drafting. An earlier
+  private V-Rally checkpoint recovered exact linked bytes on candidate seven; cross-game
+  rates and token savings remain unmeasured. Existing search budgets and judge are unchanged.
+
 - **Coordinated compiler-phase repairs.** Shared draft and deep/iterative searches
   can combine dead-local latch snapshots, staged word arithmetic, byte-table index
   captures, MIPS32 address operand order and immutable loop captures. Residual MIPS

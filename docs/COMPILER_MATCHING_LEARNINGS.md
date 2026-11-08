@@ -1,6 +1,41 @@
 # Compiler matching learning log
 
 
+### KMC GCC 2.7.2: narrow subtraction followed by a parameter-carrier cycle
+
+The exact V-Rally interpolation case used the original `-G0 -mips3 -mgp32 -mfp32
+-O2 -g3` profile. Diagnostic no-CSE flags helped isolate a scheduling issue but were
+not required by the final source. Removing a synthetic one-shot loop, combining two
+unsigned-halfword reads into a final signed-halfword subtraction, and rotating three
+logical index roles across an exhausted parameter and compatible locals recovered
+all 476 linked bytes. This is a value/storage rewrite, not an identifier rename.
+Reads, addresses, final narrowing and the ABI must be preserved.
+
+The individual families and allocation-bridge retention already existed. The new
+`narrow_carrier_sequence` composes their guarded transformations by reparsing each
+intermediate: up to two scope alternatives, two narrow-subtraction sites per root
+and 32 final proposals total. It never shuffles raw statements or invents types.
+Same-frame, same-length scheduling/allocation near misses get resumable recipe pages
+before broad generation, with the existing total compile/time budget. Shared draft
+repair dispatch also exposes the recipe to the deep permuter and agents.
+
+ROM and imported-project m2c routes keep original drafts first and can try at most
+three additional guarded narrow-subtraction or parameter-lifetime alternatives over
+the whole input stream. No m2c binary patch, extra decompiler invocation or shared
+header change is involved. The draft-repair revision advances so completed misses
+can retry the new alternatives. The normal judge alone accepts a match.
+
+A private frozen **earlier 240-score checkpoint** (already containing branch-local
+interpolation code) now reaches exact on candidate **7**, on the first integrated
+8-candidate page. A baseline compile is additional. The narrower existing replay
+started after the subtraction repair; this replay covers scope removal, subtraction
+and storage rotation together. It is still not recovery from the original saved
+107-score draft. Distinct-game match rates and end-to-end AI-token savings remain
+unmeasured. Public handmade fixtures check result preservation across all generated
+alternatives, rejection of memory effects/volatile inputs, draft caps and resumable
+search. No game code or ROM is included in tests.
+
+
 ### KMC GCC 2.7.2: coordinate storage, arithmetic, line layout and address setup
 
 The final V-Rally loop case needed several compiler phases to agree. Dead local
