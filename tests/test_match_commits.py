@@ -385,3 +385,28 @@ def test_automatic_match_in_build_progress_child_never_changes_build_sources(aut
     assert changed and all(path.startswith('progress/') for path in changed)
     assert 'progress/src/f.c' in changed
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+
+
+def test_background_commit_does_not_wait_for_shared_autosave_lane(automatic):
+    import time
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic, note='Independent automatic commit')
+    before = git(root, 'rev-parse', 'HEAD')
+    auto = saves.Autosave(net)
+    auto.lane.acquire()  # A different project's expensive save owns this slot.
+    try:
+        auto._reconcile()
+        until = time.monotonic() + 8
+        while match_commits.status(net, net.project_row('game'))['pending']:
+            assert time.monotonic() < until, 'Commit waited for the occupied autosave lane'
+            time.sleep(.02)
+        assert git(root, 'rev-parse', 'HEAD') != before
+        assert git(root, 'log', '-1', '--format=%s') == 'Independent automatic commit'
+        assert auto.lane.acquire(blocking=False) is False
+    finally:
+        auto.close()
+        auto.lane.release()
+        for worker in auto.workers.values():
+            worker['thread'].join(3)
+            if worker.get('commit_thread'):worker['commit_thread'].join(3)
