@@ -88,6 +88,15 @@ version. No proprietary compiler is exported.
 
 ## What was verified
 
+`projects/demo-watcom/build.py` builds the shared CC0 Demo Quest C source with the user's verified Watcom 10.0a
+compiler. Set `DECOMP_TEST_WATCOM_C` to your installation root and have LLVM's `lld-link` on PATH. On macOS/Linux,
+the script uses decompdecomp's pinned wibo. It converts the compiler's OMF objects to COFF, then links a homemade
+PE test fixture with lld-link; no proprietary linker or compiler files enter the repository. The build writes
+`build/demo.json` with symbol addresses for `tests/test_consoles.py`. That suite skips the Watcom cases when the
+user's compiler, Ghidra, objdiff, Java, wibo or lld-link is absent. The four console conformance checks import the
+demo, inspect a machine draft, reject wrong C, accept exact C and verify the rebuilt game byte for byte. This
+fixture checks the compiler and judge; it does not claim to reproduce Watcom's original linker output.
+
 `tests/test_watcom_integration.py` imports the homemade PE with real Ghidra, selects the configured Watcom copy,
 builds without an MSVC pack, and runs claims, briefs, wrong/correct attempts, compiler trials, flag search,
 polishing, real names, Check again and byte-identical rebuilding through the app's engine. C and C++ are tested

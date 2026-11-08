@@ -6,6 +6,7 @@ its compilers and packs are pinned toolchains, its guides exist, and the ids old
 
 import hashlib
 import json
+import os
 import struct
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from decompnet import arch, consoles, toolchains
 from decompnet.app import tools
 from decompnet.app.engine import RomNetwork
 from decompnet.app.twins import object_prints
+from decompnet.kits import watcom as watcom_kit
 from decompnet.rom import RomError
 
 from .test_ps2_debug import (
@@ -152,10 +154,11 @@ ZLIB = ROOT / "projects" / "zlib-n64" / "original"  # zlib 1.1.4's sources, in g
 # needs nothing but s32, which every project's first header has (clamp_s32 before it runs into the N64's exit())
 FUNCTION = "abs_s32"
 WRONG = ("-v : v", "-v : v + 1")  # still compiles, other code
-DEMOS = [c for c in STARTABLE if c.demo]
+WATCOM_DEMO = "pc-watcom"
+DEMOS = [c for c in STARTABLE if c.demo] + [WATCOM_DEMO]
 
 
-def _missing(console) -> list[str]:
+def _missing_tools(tools) -> list[str]:
     import shutil
 
     def there(tool: str) -> bool:
@@ -164,18 +167,31 @@ def _missing(console) -> list[str]:
             return toolchains.installed(tool) is not None
         except toolchains.ToolchainError:  # a program on PATH, not a toolchain
             return shutil.which(tool) is not None
-    return [t for t in console.demo_tools if not there(t)] + ([] if ZLIB.exists() else ["zlib (projects/zlib-n64/prepare.py)"])
+    return [t for t in tools if not there(t)]
 
 
-@pytest.fixture(scope="module", params=DEMOS, ids=[c.id for c in DEMOS])
+def _missing(console) -> list[str]:
+    return _missing_tools(console.demo_tools) + ([] if ZLIB.exists() else ["zlib (projects/zlib-n64/prepare.py)"])
+
+
+@pytest.fixture(scope="module", params=DEMOS, ids=[c if isinstance(c, str) else c.id for c in DEMOS])
 def demo(request, tmp_path_factory):
     import subprocess
     import sys
 
-    console = request.param
-    if (missing := _missing(console)):
+    watcom = request.param == WATCOM_DEMO
+    console = consoles.get("pc") if watcom else request.param
+    if watcom:
+        own = os.environ.get("DECOMP_TEST_WATCOM_C")
+        copies = watcom_kit.WATCOM.compilers(Path(own)) if own else []
+        if not any(c.build == "10.0a" and "-c-" in c.version for c in copies):
+            pytest.skip("Watcom demo needs DECOMP_TEST_WATCOM_C with your verified 10.0a C copy")
+        missing = _missing_tools(("objdiff-cli", "wibo", "ghidra", "java", "lld-link"))
+    else:
+        missing = _missing(console)
+    if missing:
         pytest.skip(f"{console.name}'s demo needs {', '.join(missing)}")
-    folder = ROOT / "projects" / console.demo
+    folder = ROOT / "projects" / ("demo-watcom" if watcom else console.demo)
     key = folder / "build" / "demo.json"
     if not key.exists():
         subprocess.run([sys.executable, str(folder / "build.py")], check=True)
@@ -183,7 +199,7 @@ def demo(request, tmp_path_factory):
     game = folder / "build" / built["game"]
     work = tmp_path_factory.mktemp(console.id)
     net = RomNetwork(work / "app.db", work)
-    slug = net.import_rom(game, confirmed=True, log=lambda *_: None)
+    slug = net.import_rom(game, confirmed=True, toolchain=built.get("toolchain"), log=lambda *_: None)
     return console, net, slug, game, built["symbols"]
 
 
@@ -193,7 +209,7 @@ def _function(net, slug: str, symbols: dict, name: str) -> tuple[str, str]:
 
     from decompnet.forks import csource
 
-    address = next(a for s, a in symbols.items() if re.sub(r"^[_@]|@\d+$", "", s) == name) & ~1  # (a Thumb function)
+    address = next(a for s, a in symbols.items() if re.sub(r"^[_@]|@\d+$|_$", "", s) == name) & ~1  # (a Thumb function)
     pid = net.project_row(slug)["id"]
     row = net.store.one("SELECT name FROM functions WHERE project_id=? AND vram=?", pid, address) or next(
         r for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid) if f"{address:08x}" in r["name"].lower())
@@ -205,7 +221,8 @@ def test_the_demo_is_its_consoles_and_imports(demo):
     console, net, slug, game, _ = demo
     assert consoles.identify(game) is console
     ov = net.overview(slug)
-    assert ov["platform"] == console.id and ov["functions"] >= 15
+    minimum = 6 if game.parents[1].name == "demo-watcom" else 15  # Ghidra currently finds 8 Watcom functions.
+    assert ov["platform"] == console.id and ov["functions"] >= minimum
     assert ov.get("ready", True), ov.get("needs")
 
 
