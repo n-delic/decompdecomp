@@ -111,7 +111,10 @@ class AutopilotMixin:
         except Exception as e:
             logging.getLogger("decompdecomp").info("autopilot twins: %s", e)
         state["phase"] = "drafts"
-        ids = [fid for fid in ids if (r := self.project_store(proj['id']).one("SELECT status FROM functions WHERE id=?", fid)) and r["status"] == "open"]
+        # One metadata read replaces a database round trip for every function.
+        open_ids = {r['id'] for r in self.project_store(proj['id']).all(
+            "SELECT id FROM functions WHERE project_id=? AND status='open'", proj['id'])}
+        ids = [fid for fid in ids if fid in open_ids]
         state["total"] = len(ids)
 
         def one(fid: int) -> None:
@@ -139,9 +142,23 @@ class AutopilotMixin:
             if outcome in ("match", "near"):
                 state[{"match": "matched", "near": "near"}[outcome]] += 1
 
+        remaining = iter(ids)
+        queue_lock = threading.Lock()
+        def lane():
+            from ...compile_sessions import session
+            # Keep bounded preparation/output caches private to this worker across
+            # functions. Session.prepare rechecks exact include bytes on every use.
+            with session():
+                while not state['stop'].is_set():
+                    with queue_lock:
+                        fid = next(remaining, None)
+                    if fid is None:return
+                    one(fid)
         try:
-            with ThreadPoolExecutor(max_workers=max(automatic_workers, width)) as pool:
-                list(pool.map(one, ids))
+            count = min(len(ids), max(automatic_workers, width))
+            if count:
+                with ThreadPoolExecutor(max_workers=count) as pool:
+                    list(pool.map(lambda _: lane(), range(count)))
         finally:
             state["state"] = "stopped" if state["stop"].is_set() else "done"
             state["finished_at"] = time.time()

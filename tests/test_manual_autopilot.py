@@ -178,3 +178,27 @@ def test_default_manual_autopilot_uses_cores_and_restores_compile_limit(tmp_path
         release.set()
         assert finished.wait(5)
     assert state['tried'] == 4 and compiler._SLOTS.limit == 2
+
+
+def test_autopilot_reuses_preparation_between_functions_and_closes_session(tmp_path, monkeypatch):
+    from decompnet import compile_sessions
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    tiny_game(net)
+    monkeypatch.setattr('decompnet.app.engine.autopilot.seeds.available', lambda: True)
+    monkeypatch.setattr(net.twins,'full_pass',lambda *a,**kw:SimpleNamespace(matched=0))
+    sessions=[]
+    def one(*args):
+        sessions.append(compile_sessions.current())
+        return 'far'
+    monkeypatch.setattr(net,'_autopilot_one',one)
+    done=threading.Event()
+    original=net._autopilot_work
+    def work(*args):
+        try:return original(*args)
+        finally:done.set()
+    monkeypatch.setattr(net,'_autopilot_work',work)
+    state=net.start_autopilot('game',workers=1,foreground=True)
+    assert done.wait(5)
+    assert state['tried']==4 and len(sessions)==4
+    assert sessions[0] is not None and all(s is sessions[0] for s in sessions)
+    assert compile_sessions.current() is None
