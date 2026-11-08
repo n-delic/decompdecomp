@@ -18,6 +18,12 @@ After a call the stack is where the callee leaves it: a __stdcall or __thiscall 
 which `pops` says by its address (from its decorated name); one it doesn't know (a virtual call, an import) pops
 what was pushed for it, unless `add esp` follows (a __cdecl function pointer's).
 
+A 64-bit program's code (`wide`, X64) is read the same way with x64's one calling convention: the first four
+arguments in rcx, rdx, r8 and r9 (rcx is the term THIS, as ecx is on 32-bit x86: a method's `this`, or a function's
+first argument; rdx is (ARGUMENT, 1)...), the rest on the stack above the 32 bytes of home space, which the caller
+reserves and no callee pops; globals by rip-relative addresses (`lea rax, [rip + 0x1234]`); pointers 8 bytes; a call
+clobbers rax, rcx, rdx and r8 to r11.
+
 It reads capstone's text (disasm_lite), not its operand details: those cost 28 µs an instruction, a minute and more
 for a game of 25,000 functions; the text, a few seconds.
 """
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 
 import capstone
 
@@ -51,6 +58,33 @@ FLOAT_CONTROL = ("fldcw", "fnstcw", "fstcw", "fnstsw", "fstsw", "fldenv", "fnste
 TO_INTEGER = ("cvtss2si", "cvttss2si", "cvtsd2si", "cvttsd2si")
 
 _READER = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+_READER_64 = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+
+
+@dataclass(frozen=True)
+class Abi:
+    """What read_facts needs to know of a processor's registers and calling conventions."""
+    word: int  # a pointer's bytes
+    regs: dict  # every general register's name -> its full register
+    sp: str
+    fp: str
+    this: str  # the register `this` (THIS) is in at entry
+    result: str  # what a function returns is in
+    caller_saved: tuple
+    callee_saved: tuple
+    arguments: dict = field(default_factory=dict)  # the registers more arguments are in at entry: name -> number
+    home: int = 0  # the stack the caller reserves for the register arguments, above the return address
+    reader: object = _READER
+
+
+X86 = Abi(WORD, _REG, "esp", "ebp", "ecx", "eax", CALLER_SAVED, CALLEE_SAVED)
+_REG_64 = {name: full for full, parts in (
+    ("rax", ("eax", "ax", "al", "ah")), ("rbx", ("ebx", "bx", "bl", "bh")), ("rcx", ("ecx", "cx", "cl", "ch")),
+    ("rdx", ("edx", "dx", "dl", "dh")), ("rsi", ("esi", "si", "sil")), ("rdi", ("edi", "di", "dil")),
+    ("rbp", ("ebp", "bp", "bpl")), ("rsp", ("esp", "sp", "spl")),
+    *((f"r{n}", (f"r{n}d", f"r{n}w", f"r{n}b")) for n in range(8, 16))) for name in (full, *parts)}
+X64 = Abi(8, _REG_64, "rsp", "rbp", "rcx", "rax", ("rax", "rcx", "rdx", "r8", "r9", "r10", "r11"),
+          ("rbx", "rsi", "rdi", "rbp", "r12", "r13", "r14", "r15"), {"rdx": 1, "r8": 2, "r9": 3}, 0x20, _READER_64)
 
 
 def _kind(mnemonic: str, size: int) -> str:
@@ -99,37 +133,50 @@ def _memory(text: str) -> tuple[int, str | None, str | None, int, bool] | None:
 
 
 def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool = False,
-               datum: Callable[[int], int | None] = lambda a: None, pops: Mapping[int, int] | None = None) -> Facts:
+               datum: Callable[[int], int | None] = lambda a: None, pops: Mapping[int, int] | None = None,
+               wide: bool = False) -> Facts:
     """What the function at `vram` does with pointers. `datum(address)`: where the global containing an address
     starts, None when it's no data (code, or a number); `pops`: function address -> the bytes it pops on return
-    (__stdcall's arguments). `relocs` aren't needed: the code is read at its own address, so its addresses are in it."""
+    (__stdcall's arguments). `relocs` aren't needed: the code is read at its own address, so its addresses are in it.
+    `wide`: a 64-bit program's code (X64)."""
+    abi = X64 if wide else X86
+    WORD, _REG, CALLER_SAVED, CALLEE_SAVED = abi.word, abi.regs, abi.caller_saved, abi.callee_saved  # noqa: N806
+    esp, ebp, ecx, eax = abi.sp, abi.fp, abi.this, abi.result
     instructions = [(at, mnemonic.split()[-1] if mnemonic else "", ops.split(", ") if ops else [])
-                    for at, _, mnemonic, ops in _READER.disasm_lite(code, vram)]
+                    for at, _, mnemonic, ops in abi.reader.disasm_lite(code, vram)]
+    nexts = [at for at, _, _ in instructions[1:]] + [vram + len(code)]
+    ends = {at: nxt for (at, _, _), nxt in zip(instructions, nexts)}  # where each instruction ends (rip counts from it)
     end = vram + len(code)
     loops = [(target, at) for at, mnemonic, ops in instructions if mnemonic.startswith("j") and len(ops) == 1
              and (target := _number(ops[0])) is not None and vram <= target <= at]
     pops = pops or {}
 
+    mask = (1 << 8 * WORD) - 1
+
     def global_at(addr: int) -> tuple[tuple, int] | None:
-        start = datum(addr & 0xFFFFFFFF)
-        return None if start is None else ((GLOBAL, start), (addr & 0xFFFFFFFF) - start)
+        start = datum(addr & mask)
+        return None if start is None else ((GLOBAL, start), (addr & mask) - start)
 
     def in_loop(at: int) -> bool:
         return any(first <= at <= last for first, last in loops)
 
-    regs: dict[str, tuple[tuple, int]] = {"ecx": ((ARGUMENT, THIS), 0)}
-    frames: dict[str, int | None] = {"esp": 0}  # registers pointing into the frame -> their offset from esp at entry
+    regs: dict[str, tuple[tuple, int]] = {ecx: ((ARGUMENT, THIS), 0),
+                                          **{r: ((ARGUMENT, n), 0) for r, n in abi.arguments.items()}}
+    frames: dict[str, int | None] = {esp: 0}  # registers pointing into the frame -> their offset from esp at entry
     stack: dict[int, tuple[tuple, int] | None] = {}  # offset from esp at entry -> what was put there
     pushed: set[int] = set()  # the slots written since the last call: its arguments
     unsaved = set(CALLEE_SAVED)  # the caller's registers not yet set here
     called = False
     out = Facts()
 
-    def place(mem) -> tuple | None:
-        """("stack", offset) or (term, offset) a memory operand names; None for what's neither."""
+    def place(mem, nxt: int = 0) -> tuple | None:
+        """("stack", offset) or (term, offset) a memory operand names; None for what's neither. `nxt`: where the
+        instruction ends, which a rip-relative address counts from."""
         _, base, index, disp, segment = mem
         if segment:  # fs:[0], the exception handler chain
             return None
+        if base == "rip":
+            return global_at(nxt + disp)
         base, index = _REG.get(base, base), _REG.get(index, index)
         if base in frames:
             return None if index or frames[base] is None else ("stack", frames[base] + disp)
@@ -143,18 +190,18 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool = False,
     def stack_value(offset: int) -> tuple[tuple, int] | None:
         if offset in stack:
             return stack[offset]
-        if offset >= WORD and offset % WORD == 0:  # above the return address: the caller's arguments
-            return (ARGUMENT, (offset - WORD) // WORD), 0
+        if offset >= WORD + abi.home and offset % WORD == 0:  # above the return address: the caller's arguments
+            return (ARGUMENT, (offset - WORD - abi.home) // WORD + (4 if abi.home else 0)), 0
         return None
 
-    def value_of(text: str) -> tuple[tuple, int] | None:
+    def value_of(text: str, nxt: int = 0) -> tuple[tuple, int] | None:
         """The pointer an operand holds or loads (a register, a global's address, a word loaded through a pointer)."""
         if text in _REG:
             return regs.get(_REG[text]) if _REG[text] == text else None
         if (number := _number(text)) is not None:
             return global_at(number)
         mem = _memory(text) if "[" in text else None
-        if mem is None or mem[0] != WORD or (where := place(mem)) is None:
+        if mem is None or mem[0] != WORD or (where := place(mem, nxt)) is None:
             return None
         if where[0] == "stack":
             return stack_value(where[1])
@@ -168,19 +215,23 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool = False,
             regs[dest] = value
 
     for k, (at, mnemonic, ops) in enumerate(instructions):
-        sp = frames.get("esp")
+        sp = frames.get(esp)
+        nxt = ends[at]
         first = ops[0] if ops else ""
         dest = _REG.get(first)
         mem = next(((n, m) for n, op in enumerate(ops) if "[" in op and (m := _memory(op)) is not None), None)
-        where = place(mem[1]) if mem is not None and mnemonic != "lea" else None
+        where = place(mem[1], nxt) if mem is not None and mnemonic != "lea" else None
         if where is not None and where[0] != "stack" and mnemonic != "nop":
             out.accesses.append((where[0], where[1], mem[1][0], _kind(mnemonic, mem[1][0])))
         if mnemonic == "lea":
             _, base, index, disp, _ = mem[1]
+            rip = base == "rip"
             base, index = _REG.get(base), _REG.get(index, index)
-            if base in frames and not index:  # the address of a local (or ebp's frame, when it's esp's)
+            if rip and not index:  # (x64: a global's address, rip-relative)
+                set_reg(dest, global_at(nxt + disp))
+            elif base in frames and not index:  # the address of a local (or ebp's frame, when it's esp's)
                 frame = None if frames[base] is None else frames[base] + disp
-                if dest != "esp":
+                if dest != esp:
                     set_reg(dest, None)
                 frames[dest] = frame
             elif base in regs and not index:
@@ -192,19 +243,19 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool = False,
                 set_reg(dest, global_at(disp))
             else:
                 set_reg(dest, None)
-        elif mnemonic == "mov" and dest is not None:
+        elif mnemonic in ("mov", "movabs") and dest is not None:
             source = _REG.get(ops[1])
             if source in frames and dest == first:  # mov ebp, esp: a frame; mov esp, ebp: back to it
                 frame = frames[source]
-                if dest != "esp":
+                if dest != esp:
                     set_reg(dest, None)
                 frames[dest] = frame
-            elif dest == "esp":
-                frames["esp"] = None
+            elif dest == esp:
+                frames[esp] = None
             else:
-                set_reg(dest, value_of(ops[1]) if dest == first else None)
+                set_reg(dest, value_of(ops[1], nxt) if dest == first else None)
         elif mnemonic == "mov" and mem is not None:
-            value = value_of(ops[1]) if mem[1][0] == WORD else None
+            value = value_of(ops[1], nxt) if mem[1][0] == WORD else None
             if where is not None and where[0] == "stack":
                 stack[where[1]] = value
                 pushed.add(where[1])
@@ -219,14 +270,14 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool = False,
                 out.stores.append((regs[base][0], mem[1][3], value[0]))
         elif mnemonic == "push":
             if sp is not None:
-                frames["esp"] = sp = sp - WORD
-                stack[sp] = value_of(first)
+                frames[esp] = sp = sp - WORD
+                stack[sp] = value_of(first, nxt)
                 if dest not in unsaved:
                     pushed.add(sp)
         elif mnemonic == "pop":
             if sp is not None:
-                frames["esp"] = sp + WORD
-            if dest is not None and dest != "esp":
+                frames[esp] = sp + WORD
+            if dest is not None and dest != esp:
                 set_reg(dest, stack.get(sp) if sp is not None else None)
                 unsaved.discard(dest)  # (restored: a push after this one is an argument)
         elif mnemonic in ("add", "sub") and dest is not None:
@@ -254,74 +305,77 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool = False,
                 out.walked.add(term)
             set_reg(dest, (term, delta + (1 if mnemonic == "inc" else -1)))
         elif mnemonic == "leave":  # mov esp, ebp; pop ebp
-            frames["esp"] = None if frames.get("ebp") is None else frames["ebp"] + WORD
-            set_reg("ebp", None)
+            frames[esp] = None if frames.get(ebp) is None else frames[ebp] + WORD
+            set_reg(ebp, None)
         elif mnemonic == "call" or mnemonic == "jmp" and (target := _number(first)) is not None \
                 and not vram <= target < end:
             tail = mnemonic == "jmp"
             callee = _number(first)
             if callee is not None:
-                if "ecx" in regs and regs["ecx"][1] == 0:
-                    out.calls.append((callee, THIS, regs["ecx"][0]))
+                if ecx in regs and regs[ecx][1] == 0:
+                    out.calls.append((callee, THIS, regs[ecx][0]))
+                out.calls += [(callee, n, regs[r][0]) for r, n in abi.arguments.items() if r in regs and not regs[r][1]]
                 if tail:  # its arguments are this function's own, above the return address
-                    arguments = [(n, v[0]) for n in range(MAX_ARGUMENTS) if sp is not None and
-                                 (v := stack_value(sp + WORD + WORD * n)) is not None and v[1] == 0]
+                    arguments = [(n + (4 if abi.home else 0), v[0]) for n in range(MAX_ARGUMENTS) if sp is not None and
+                                 (v := stack_value(sp + WORD + abi.home + WORD * n)) is not None and v[1] == 0]
                 else:
-                    arguments = [] if sp is None else _arguments(stack, pushed, sp)
+                    arguments = [] if sp is None else [(n + (4 if abi.home else 0), term) for n, term in
+                                                       _arguments(stack, pushed, sp + abi.home, WORD)]
                 out.calls += [(callee, n, term) for n, term in arguments]
                 result = (CALL, at - vram, callee)
                 out.calls.append((callee, RETURNED, result))
                 if tail:
                     out.returns.append(result)
-            if sp is not None and not tail:
+            if sp is not None and not tail and not abi.home:  # (x64's callers pop their callees' arguments)
                 if not called and (probe := _stack_probe(instructions, k)):
-                    frames["esp"] = sp = sp - probe  # __chkstk takes a big frame's size in eax, moves esp itself
+                    frames[esp] = sp = sp - probe  # __chkstk takes a big frame's size in eax, moves esp itself
                 if callee in pops:
-                    frames["esp"] = sp + pops[callee]
+                    frames[esp] = sp + pops[callee]
                 elif not _cleans_up(instructions, k):
                     count = 0
                     while sp + WORD * count in pushed:
                         count += 1
-                    frames["esp"] = sp + WORD * count
+                    frames[esp] = sp + WORD * count
             pushed.clear()
             called = True
             for r in CALLER_SAVED:
                 set_reg(r, None)
             if callee is not None and not tail:
-                regs["eax"] = ((CALL, at - vram, callee), 0)
+                regs[eax] = ((CALL, at - vram, callee), 0)
         elif mnemonic in ("ret", "retn"):
-            if "eax" in regs and regs["eax"][1] == 0:
-                out.returns.append(regs["eax"][0])
+            if eax in regs and regs[eax][1] == 0:
+                out.returns.append(regs[eax][0])
         elif mnemonic in ("pushal", "pushad", "popal", "popad"):
-            frames["esp"] = None if sp is None else sp + (8 * WORD if mnemonic.startswith("popa") else -8 * WORD)
+            frames[esp] = None if sp is None else sp + (8 * WORD if mnemonic.startswith("popa") else -8 * WORD)
             if mnemonic.startswith("popa"):
                 for r in (*CALLER_SAVED, *CALLEE_SAVED):
                     set_reg(r, None)
         else:
             # whatever else it writes holds no pointer we know (xor, imul, setcc, cdq's edx, rep movsd's esi...)
             if dest is not None and mnemonic not in NO_WRITE:
-                if dest == "esp":
-                    frames["esp"] = None
+                if dest == esp:
+                    frames[esp] = None
                 else:
                     set_reg(dest, None)
             if mnemonic == "xchg" and len(ops) == 2 and _REG.get(ops[1]) is not None:
                 set_reg(_REG[ops[1]], None)
             if len(ops) == 1 and mnemonic in ("imul", "mul", "div", "idiv") or mnemonic in IMPLICIT:
                 for r in IMPLICIT.get(mnemonic, ("eax", "edx")):
-                    set_reg(r, None)
+                    set_reg(_REG[r], None)
             if STRINGS.match(mnemonic) and not any("xmm" in op for op in ops):
                 for r in ("esi", "edi", "ecx", "eax"):
-                    set_reg(r, None)
+                    set_reg(_REG[r], None)
     return out
 
 
-def _arguments(stack: dict, pushed: set[int], sp: int) -> list[tuple[int, tuple]]:
-    """(n, pointer) for the arguments pushed for a call: the slots from esp up written since the call before."""
+def _arguments(stack: dict, pushed: set[int], sp: int, word: int = WORD) -> list[tuple[int, tuple]]:
+    """(n, pointer) for the arguments pushed for a call: the slots from esp up written since the call before (x64's
+    stored above its home space: `sp` is there)."""
     found = []
     for n in range(MAX_ARGUMENTS):
-        if sp + WORD * n not in pushed:
+        if sp + word * n not in pushed:
             break
-        value = stack.get(sp + WORD * n)
+        value = stack.get(sp + word * n)
         if value is not None and value[1] == 0:
             found.append((n, value[0]))
     return found

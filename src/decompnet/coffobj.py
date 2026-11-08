@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import struct
 
-MACHINE_I386 = 0x14C
+MACHINE_I386, MACHINE_AMD64 = 0x14C, 0x8664
 HEADER = "<HHIIIHH"  # machine, sections, time, symbol table at, symbols, optional header bytes, flags
 HEADER_BYTES, SECTION_BYTES, SYMBOL_BYTES, RELOC_BYTES = 20, 40, 18, 10
 # how Visual C++ decorates a C name: _f (__cdecl), _f@8 (__stdcall), @f@8 (__fastcall)
@@ -17,8 +17,13 @@ _DECORATED = re.compile(r"^[_@]([A-Za-z_$?][\w$?]*?)(?:@\d+)?$")
 
 
 def is_coff(obj: bytes) -> bool:
-    """A 32-bit x86 COFF object (what Visual C++ writes)."""
-    return len(obj) >= HEADER_BYTES and struct.unpack_from("<H", obj, 0)[0] == MACHINE_I386
+    """A 32-bit x86 or 64-bit x64 COFF object (what Visual C++ writes)."""
+    return len(obj) >= HEADER_BYTES and struct.unpack_from("<H", obj, 0)[0] in (MACHINE_I386, MACHINE_AMD64)
+
+
+def is_x64(obj: bytes) -> bool:
+    """A 64-bit (AMD64) COFF object, whose relocations are x64's (an ADDR64 fills 8 bytes)."""
+    return len(obj) >= HEADER_BYTES and struct.unpack_from("<H", obj, 0)[0] == MACHINE_AMD64
 
 
 def sections(obj: bytes) -> list[tuple[str, bytes, list[tuple[int, int, str, int, int]]]]:

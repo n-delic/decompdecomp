@@ -81,9 +81,10 @@ class Class:
     others: dict[int, int] = field(default_factory=dict)  # this+offset -> a second vtable stored there (multiple bases)
     fields: dict[int, Field] = field(default_factory=dict)
     bases: list[str] = field(default_factory=list)  # every base class by name, the direct one first, where RTTI says
+    width: int = 4  # a pointer's bytes, the vtable pointer's and the vtable's words: 8 in a 64-bit PC program
 
     def size_seen(self) -> int:
-        return max([f.offset + f.size for f in self.fields.values()] + [self.vptr + 4])
+        return max([f.offset + f.size for f in self.fields.values()] + [self.vptr + self.width])
 
 
 @dataclass
@@ -172,14 +173,15 @@ def scan(code: bytes, relocs: list, big_endian: bool, vtables: set[int] | None =
 
 
 def _slots(data: bytes, header: int, stride: int, code: Callable[[int], bool] | set[int], e: str,
-           vt: int = 0, stored: set[int] | None = None) -> list[int]:
-    """The functions in a row from `header` on, `stride` apart: the vtable read one compiler's way."""
+           vt: int = 0, stored: set[int] | None = None, width: int = 4) -> list[int]:
+    """The functions in a row from `header` on, `stride` apart: the vtable read one compiler's way (`width`: its
+    words' bytes, 8 in a 64-bit program)."""
     is_code = code if callable(code) else code.__contains__
     slots = []
-    for at in range(header, min(len(data) - 3, header + stride * _MAX_SLOTS), stride):
+    for at in range(header, min(len(data) - width + 1, header + stride * _MAX_SLOTS), stride):
         if stored and slots and (vt + at) in stored:
             break
-        (w,) = struct.unpack_from(e + "I", data, at)
+        (w,) = struct.unpack_from(e + ("I" if width == 4 else "Q"), data, at)
         if not is_code(w):
             break
         slots.append(w)
@@ -198,15 +200,16 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, i
 
 def from_facts(facts: dict[int, structs.Facts], read: Callable[[int, int], bytes | None], this: tuple,
                header: int = 0, big_endian: bool = False, known: Classes | None = None,
-               code: Callable[[int], bool] | None = None) -> Classes:
+               code: Callable[[int], bool] | None = None, width: int = 4) -> Classes:
     """Classes from what a processor's reader for structs.py (Arch.field_accesses) says each function does with
     pointers, where `this` is the term of the object a method gets (x86: ecx at entry): the globals stored into
     objects (a constructor's vtable), the accesses through `this`, the calls handed `this`. `known`: the classes
     another source names already (a PC program's RTTI), which get the constructors found here and every class's
     fields; the vtables it doesn't know are added to it (a program's code built without RTTI). `code`: whether an
-    address is code, for the vtables' slots (by default: a function's start)."""
-    scans = {addr: _scan_of(f, this) for addr, f in facts.items()}
-    found = from_scans(scans, read, big_endian, header, code)
+    address is code, for the vtables' slots (by default: a function's start). `width`: a pointer's bytes (8 in a
+    64-bit program: its vtables' words too)."""
+    scans = {addr: _scan_of(f, this, width) for addr, f in facts.items()}
+    found = from_scans(scans, read, big_endian, header, code, width)
     if known is not None:
         _merge(known, found)
         found = known
@@ -232,13 +235,13 @@ def _merge(known: Classes, found: Classes) -> None:
             cls.parent = None
 
 
-def _scan_of(facts: structs.Facts, this: tuple) -> _Scan:
+def _scan_of(facts: structs.Facts, this: tuple, width: int = 4) -> _Scan:
     out = _Scan()
     for term, offset, size, kind in facts.accesses:
         if term == this:
             out.accesses.append((offset, size, kind, False))
         elif term[0] == structs.FIELD and term[1] == this:  # a word of `this` used as an address: a pointer
-            out.accesses.append((term[2], 4, "", True))
+            out.accesses.append((term[2], width, "", True))
     out.stores = [(value[1], offset, term == this) for term, offset, value in facts.stores if value[0] == structs.GLOBAL]
     out.this_calls = [callee for callee, n, term in facts.calls if term == this and n == this[1]]
     return out
@@ -246,7 +249,7 @@ def _scan_of(facts: structs.Facts, this: tuple) -> _Scan:
 
 def from_scans(scans: dict[int, _Scan], read: Callable[[int, int], bytes | None], big_endian: bool,
                layouts: Iterable[tuple[int, int]] | int = _LAYOUTS,
-               code: Callable[[int], bool] | None = None) -> Classes:
+               code: Callable[[int], bool] | None = None, width: int = 4) -> Classes:
     """Classes from each function's _Scan, without their fields yet (add_fields): a stored address whose words (from
     `header` bytes in) are functions is a vtable; the functions that store it into `this` are its constructors and
     destructors. A vtable's slots run while its words are code (`code`; by default a function's start), up to the
@@ -258,18 +261,18 @@ def from_scans(scans: dict[int, _Scan], read: Callable[[int, int], bytes | None]
     stored_anywhere = {vt for s in scans.values() for vt, _, _ in s.stores}
     e = ">" if big_endian else "<"
     if isinstance(layouts, int):
-        layouts = ((layouts, 4),)
+        layouts = ((layouts, width),)
     out = Classes()
     for addr, s in scans.items():
         for vt, _, _ in s.stores:
             if vt in out.by_vtable:
                 continue
             data = read(vt, 12 + 8 * _MAX_SLOTS) or b""
-            found = [(_slots(data, header, stride, code, e, vt, stored_anywhere), header, stride)
+            found = [(_slots(data, header, stride, code, e, vt, stored_anywhere, width), header, stride)
                      for header, stride in layouts]
             slots, header, stride = max(found, key=lambda f: len(f[0]))  # (of equals, the first in _LAYOUTS)
             if slots:
-                out.by_vtable[vt] = Class(vt, header, slots, stride=stride)
+                out.by_vtable[vt] = Class(vt, header, slots, stride=stride, width=width)
     if not out.by_vtable:
         return out
     # A function that stores several vtables at one place in `this` constructs (or destroys) the most derived class:
