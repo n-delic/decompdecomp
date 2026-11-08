@@ -6,7 +6,6 @@ Only fresh trials are recorded; the existing search cache owns repeated inputs.
 import difflib
 import hashlib
 import json
-import threading
 import time
 from itertools import accumulate
 
@@ -23,12 +22,12 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_input_effects(
 
 def prepare(net, project=None):
     store = net.project_store(project) if project is not None else net.store
-    lock = net.__dict__.setdefault('_repair_input_effects_lock',threading.RLock())
-    with lock:
-        ready = net.__dict__.setdefault('_repair_input_effects_stores',set())
-        if store not in ready:
-            with store.tx() as db:db.execute(SCHEMA)
-            ready.add(store)
+    ready = net.__dict__.setdefault('_repair_input_effects_stores',set())
+    if store in ready:return store
+    with store.tx() as db:
+        if store in ready:return store
+        db.execute(SCHEMA)
+        store.after_commit(lambda: ready.add(store))
     return store
 
 

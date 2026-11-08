@@ -3,6 +3,8 @@ import threading
 import time
 from collections import OrderedDict
 
+READ_WAIT_SECONDS = 10
+
 
 class ReadCache:
     def __init__(self, bypass=lambda: False):
@@ -29,12 +31,22 @@ class ReadCache:
             self.entries.move_to_end(key)
             self._trim()
         try:
-            with entry['lock']:
+            if not entry['lock'].acquire(timeout=READ_WAIT_SECONDS):
+                raise TimeoutError('Shared metadata is still being prepared. Try again shortly.')
+            try:
+                if entry.get('builder') == threading.get_ident():
+                    raise RuntimeError('A read cache cannot recursively build its own entry.')
                 if ('value' not in entry or entry['version'] != version or
                         (ttl is not None and time.monotonic() >= entry['expires'])):
-                    value = build()  # failures never replace the last successful result
-                    entry.update(version=version, value=value, expires=time.monotonic() + (ttl or 0))
+                    entry['builder'] = threading.get_ident()
+                    try:
+                        value = build()  # failures never replace the last successful result
+                        entry.update(version=version, value=value, expires=time.monotonic() + (ttl or 0))
+                    finally:
+                        entry.pop('builder', None)
                 return entry['value']
+            finally:
+                entry['lock'].release()
         finally:
             with self.lock:
                 entry['users'] -= 1

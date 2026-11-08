@@ -5,12 +5,28 @@ normal cancellation/artifact semantics and followers receive independent result 
 """
 import copy
 import threading
+import time
 from concurrent.futures import CancelledError, Future
 from contextlib import contextmanager
 from contextvars import ContextVar
 
 _lock = threading.Lock()
 _pending = {}
+SHARED_WAIT_SECONDS = 300
+
+
+def wait(future, check=None):
+    """A sharing follower never waits forever or waits for its own compilation."""
+    if future.builder_thread == threading.get_ident():
+        raise RuntimeError('A shared compilation cannot wait for its own builder.')
+    deadline=time.monotonic()+SHARED_WAIT_SECONDS
+    while True:
+        if check:check()
+        try:return copy.deepcopy(future.result(timeout=min(.05,max(0,deadline-time.monotonic()))))
+        except TimeoutError:
+            if future.done():raise
+            if time.monotonic()>=deadline:
+                raise TimeoutError('A shared compilation is still running. Retry the compilation.') from None
 
 
 def run(key, build):
@@ -19,8 +35,9 @@ def run(key, build):
         owner = future is None
         if owner:
             future = _pending[key] = Future()
+            future.builder_thread = threading.get_ident()
     if not owner:
-        return copy.deepcopy(future.result())
+        return wait(future)
     try:
         result = build()
         future.set_result(result)
@@ -43,7 +60,6 @@ class Group:
         self.bytes = 0
 
     def run(self, key, build, check):
-        from concurrent.futures import TimeoutError
         with self.lock:
             cached = self.completed.get(key)
             if cached is not None:
@@ -53,18 +69,16 @@ class Group:
                 return copy.deepcopy(cached)
             future = self.pending.get(key)
             owner = future is None
-            if owner:future = self.pending[key] = Future()
+            if owner:
+                future = self.pending[key] = Future()
+                future.builder_thread = threading.get_ident()
         if not owner:
             from .compile_timing import add
             add('shared_waits', 1)
-            while True:
+            try:return wait(future,check)
+            except CancelledError:
                 if check:check()
-                try:return copy.deepcopy(future.result(timeout=.05))
-                except TimeoutError:
-                    if future.done():raise
-                except CancelledError:
-                    if check:check()
-                    return self.run(key, build, check)
+                return self.run(key, build, check)
         try:
             result = build()
             size = len(result.obj or b'') + len(result.log.encode())

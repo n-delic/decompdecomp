@@ -177,7 +177,9 @@ def incremental_map(net, slug):
     store = net.project_store(pid)
     with snapshots.lock:
         lock = snapshots.map_locks.setdefault(pid, threading.Lock())
-    with lock:
+    if not lock.acquire(timeout=SNAPSHOT_WAIT_SECONDS):
+        raise TimeoutError('The function map is still being prepared. Try again shortly.')
+    try:
         revision = store.one('SELECT revision FROM map_clock WHERE id=1')['revision']
         shared = (peer_revision(net), store.read_version('fingerprints', pid),
                   store.read_version('naming', pid), store.read_version('sdk_names'), proj['config'],
@@ -204,3 +206,5 @@ def incremental_map(net, slug):
             while len(snapshots.maps) > 16:
                 snapshots.maps.pop(next(iter(snapshots.maps)))
         return rows
+    finally:
+        lock.release()

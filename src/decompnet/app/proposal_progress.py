@@ -3,7 +3,6 @@
 The compiler still judges every source. A cursor is scheduling advice, never a cached verdict.
 """
 import hashlib
-import threading
 import time
 
 from . import debug_boundary_repairs, experiment_evidence
@@ -17,12 +16,12 @@ KEEP_SCOPES = 16
 
 def prepare(net, project=None):
     store = net.project_store(project) if project is not None else net.store
-    lock = net.__dict__.setdefault('_proposal_progress_lock',threading.RLock())
-    with lock:
-        ready = net.__dict__.setdefault('_proposal_progress_stores',set())
-        if store not in ready:
-            with store.tx() as db:db.execute(SCHEMA)
-            ready.add(store)
+    ready = net.__dict__.setdefault('_proposal_progress_stores',set())
+    if store in ready:return store
+    with store.tx() as db:
+        if store in ready:return store
+        db.execute(SCHEMA)
+        store.after_commit(lambda: ready.add(store))
     return store
 
 

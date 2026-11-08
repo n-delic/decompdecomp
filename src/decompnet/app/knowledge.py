@@ -18,7 +18,6 @@ from __future__ import annotations
 import difflib
 import json
 import re
-import threading
 import time
 
 from ..network import Agent, NetworkError
@@ -88,7 +87,7 @@ def service(net):
     existing = getattr(net, 'knowledge', None)
     if existing is not None:
         return existing
-    with net.store.lock:
+    with net.store.tx():
         existing = getattr(net, 'knowledge', None)
         if existing is None:
             existing = net.knowledge = Knowledge(net)
@@ -98,16 +97,15 @@ def service(net):
 class Knowledge:
     def __init__(self, net):
         self.net = net
-        self.lock = threading.RLock()
         self.ready = set()
         self._prepare(net.store)
 
     def _prepare(self, store):
-        with self.lock:
+        if store in self.ready:return store
+        with store.tx() as db:
             if store in self.ready:return store
-            with store.tx() as db:
-                for sql in SCHEMA:db.execute(sql)
-            self.ready.add(store)
+            for sql in SCHEMA:db.execute(sql)
+            store.after_commit(lambda: self.ready.add(store))
         return store
 
     def _store(self, project):

@@ -60,10 +60,11 @@ class Sweeps:
         self._prepare(net.store)
 
     def _prepare(self, store):
-        with self.lock:
+        if store in self.ready:return store
+        with store.tx():
             if store in self.ready:return store
             self._install(store)
-            self.ready.add(store)
+            store.after_commit(lambda: self.ready.add(store))
         return store
 
     def _store(self, project):
