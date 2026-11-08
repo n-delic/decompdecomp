@@ -139,31 +139,38 @@ class BriefMixin:
         key = hashlib.sha1(json.dumps(inputs).encode()).hexdigest()[:16]
         return key, own["toolchain"], context
 
-    def _seed_for(self, fn, proj) -> str | None:
+    def _seed_for(self, fn, proj, prepared=None) -> str | None:
         """m2c draft, made the first time someone opens the function or the background drafter gets to it, and again
         when what it's made from changed (_draft_plan). Drafts of different functions are made side by side: one lock
         for the whole app made agents claiming at once wait for each other's drafts, about 0.3 s each."""
         if not seeds.available():
             return fn["seed"]
-        key, toolchain, context = self._draft_plan(fn, proj)
+        if prepared is None:
+            key, toolchain, context = self._draft_plan(fn, proj)
+        else:
+            key, toolchain, context, _, _ = prepared
         if fn["seed"] is not None and fn["seed_key"] == key:
             return fn["seed"]
         with self._draft_locks.setdefault(fn["id"], threading.Lock()):
             row = self.project_store(proj['id']).one("SELECT seed, seed_key FROM functions WHERE id=?", fn["id"])
             if row is None or (row["seed"] is not None and row["seed_key"] == key):  # made meanwhile
                 return row["seed"] if row else None
-            data_asm = "\n".join(self._jtbl_asm(proj, fn))
+            if prepared is None:
+                data_asm = "\n".join(self._jtbl_asm(proj, fn))
+                target_asm = self._asm_text(fn, proj)
+            else:
+                _, _, _, data_asm, target_asm = prepared
             from .. import draft_reports
             report = {'seed_key':key, 'compiled':False, 'failures':[]}
             try:
-                draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn['name'], toolchain, context, data_asm,
+                draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm,
                                                 valid=True, strict=True, timeout=20)
             except seeds.DraftError as error:
                 draft_reports.failure(report, 'generation', 'raw_m2c', error)
                 draft = None
                 if context.strip():
                     try:
-                        draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn['name'], toolchain, '', data_asm,
+                        draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, '', data_asm,
                                                         valid=True, strict=True, timeout=20)
                     except seeds.DraftError as fallback_error:
                         draft_reports.failure(report, 'generation', 'without_context', fallback_error)

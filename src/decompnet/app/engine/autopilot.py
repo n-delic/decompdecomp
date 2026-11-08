@@ -275,18 +275,24 @@ class AutopilotMixin:
             from ..return_repair_autopilot import run as return_repair
             if return_repair(self, agent, proj, fn):
                 return 'match'
-            seed = self._seed_for(fn, proj)  # keep one valid-syntax draft for the brief and the compiler
             ctx = self._context(proj["id"], fn["unit"])
             plan, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
             own = compiler_for(self.cfg(proj), fn["vram"], fn)
             data_asm = "\n".join(self._jtbl_asm(proj, fn))
-            target_asm = self._asm_text(fn, proj)
             from .. import draft_reports, initial_draft_repairs
             input_key = draft_reports.key(plan, ctx['header'], data_asm, fn)
             previous = draft_reports.read(self, fid, project_id=proj['id'])
             external_inputs = own.get('cmd') or own.get('ro_paths') or any(flag.startswith(('-I','-include','-imacros')) for flag in own.get('flags',[]))
             if not external_inputs and previous.get('key') == input_key and previous.get('complete'):
                 return 'skip'
+            target_asm = self._asm_text(fn, proj)
+            # Eligibility is known before any generation. Reuse this exact captured
+            # plan and assembly rather than calculating them again inside _seed_for.
+            seed = self._seed_for(fn, proj, (plan, toolchain, context, data_asm, target_asm))
+            if not seed:
+                # Seed preparation may have just recorded a generation failure.
+                # Reuse that receipt instead of immediately repeating failed m2c.
+                previous = draft_reports.read(self, fid, project_id=proj['id'])
             data_key = hashlib.sha256((data_asm or '').encode()).hexdigest()
             report = {'key': input_key, 'seed_key':plan, 'data_key':data_key, 'compiled': False, 'scored': False, 'matched': False, 'trials': 0, 'failures': []}
             from .briefs import DRAFT_NOTE

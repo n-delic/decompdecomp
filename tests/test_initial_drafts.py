@@ -345,3 +345,34 @@ def test_regeneration_reports_function_before_work_finishes_and_final_counts(net
     assert snapshots[-1]['done'] == snapshots[-1]['total'] == 1
     assert snapshots[-1]['function'] == ''
     assert snapshots[-1]['compiled'] == result['compiled'] == 1
+
+
+def test_seed_uses_prepared_inputs_without_replanning(network,monkeypatch):  # noqa: F811
+    net,proj,fn=network
+    monkeypatch.setattr(seeds,'available',lambda:True)
+    monkeypatch.setattr(net,'_draft_plan',lambda *a,**kw:pytest.fail('must use captured plan'))
+    monkeypatch.setattr(net,'_jtbl_asm',lambda *a:pytest.fail('must use captured data'))
+    monkeypatch.setattr(net,'_asm_text',lambda *a:pytest.fail('must use captured assembly'))
+    calls=[]
+    def generate(*args,**kw):
+        calls.append(args)
+        return 'int '+fn['name']+'(void){return 1;}'
+    monkeypatch.setattr(seeds,'generate_from_asm',generate)
+    prepared=('captured-key','gcc-2.7.2-kmc','captured header','captured data','captured assembly')
+    seed=net._seed_for(fn,proj,prepared)
+    assert seed and len(calls)==1
+    assert calls[0]==('captured assembly',fn['name'],'gcc-2.7.2-kmc','captured header','captured data')
+
+
+def test_completed_autopilot_receipt_skips_seed_preparation(network,monkeypatch):  # noqa: F811
+    net,proj,fn=network
+    from decompnet.app import return_repair_autopilot
+    monkeypatch.setattr(return_repair_autopilot,'run',lambda *a:False)
+    monkeypatch.setattr(net,'_draft_plan',lambda *a,**kw:('same-plan','gcc-2.7.2-kmc',''))
+    monkeypatch.setattr(net,'_jtbl_asm',lambda *a:[])
+    monkeypatch.setattr(net,'_seed_for',lambda *a:pytest.fail('unchanged completion must skip seed preparation'))
+    ctx=net._context(proj['id'],fn['unit'])
+    key=draft_reports.key('same-plan',ctx['header'],'',fn)
+    draft_reports.save(net,fn['id'],{'key':key,'complete':True},project_id=proj['id'])
+    agent,_=net.local_agent('autopilot')
+    assert net._autopilot_one_work(agent,proj,fn['id'])=='skip'
