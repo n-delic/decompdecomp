@@ -1066,3 +1066,11 @@ details.more[open] > summary::before { content: "− "; }
 .tool-controls-catalog > .transcript-tool > summary input { grid-column: 4; grid-row: 1; margin: 0; }
 .tool-controls-catalog > .transcript-tool > summary > span { grid-column: 3; grid-row: 1; font-size: 11px; text-align: right; max-width: 130px; }
 .tool-controls-catalog > .transcript-tool > p, .tool-controls-catalog > .transcript-tool > dl { margin: 0 0 14px 20px; }
+/* Additional sign-ins stay compact in the agent card; setup and login instructions live in the drawer. */
+.account-list { margin: 10px 0; }
+.account-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 10px 0; border-bottom: 1px solid var(--line-soft); text-align: left; }
+.account-item div { min-width: 0; }
+.account-item b { display: block; overflow-wrap: anywhere; }
+.account-item span { display: block; color: var(--muted); font-size: 12px; }
+.account-link { background: none; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; cursor: pointer; color: inherit; }
+.account-link:hover b { text-decoration: underline; }
