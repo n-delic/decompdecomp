@@ -139,3 +139,25 @@ def test_second_cse_keeps_truncation_and_profile_comparison_guards(tmp_path):
     assert not diagnostics.compare(before | profile, after | profile)['changed']
     assert not diagnostics.compare(before | profile, after | (profile | {'original_flags':['-O1']}))['comparable']
     assert not diagnostics.compare(before | profile, after | (profile | {'output_unchanged':False}))['comparable']
+
+
+def test_allocated_fingerprint_includes_common_name_size_alignment_and_binding(monkeypatch):
+    from types import SimpleNamespace
+
+    class Symbols(dict):
+        def iter_symbols(self):return iter(self['symbols'])
+    class Symbol(dict):
+        name='tentative'
+    symbol=Symbol(st_shndx='SHN_COMMON',st_size=16,st_value=4,st_info={'bind':'STB_GLOBAL'})
+    table=Symbols(sh_flags=0,symbols=[symbol])
+    monkeypatch.setattr(diagnostics,'SymbolTableSection',Symbols)
+    monkeypatch.setattr(diagnostics,'ELFFile',lambda _:SimpleNamespace(iter_sections=lambda:iter([table])))
+    before=diagnostics.allocated_output(b'object')
+    for key,value in [('st_size',32),('st_value',8),('st_info',{'bind':'STB_WEAK'})]:
+        old=symbol[key];symbol[key]=value
+        assert diagnostics.allocated_output(b'object')!=before
+        symbol[key]=old
+    symbol.name='other'
+    assert diagnostics.allocated_output(b'object')!=before
+    symbol.name='tentative';table['symbols']=[]
+    assert diagnostics.allocated_output(b'object')!=before
