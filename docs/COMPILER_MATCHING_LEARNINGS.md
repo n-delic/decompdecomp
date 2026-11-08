@@ -6350,3 +6350,20 @@ each, plus the baseline check, without broad proposal generation. These are two
 recoveries of the same existing match, not two new functions. The source guards
 declined macro/raw-pointer aggregate dispatch at the earlier checkpoints; report
 that coverage gap instead of inferring that more permutations would solve it.
+
+### Separate guard failures from exhausted compiler experiments
+
+Pinned KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`), five frozen
+checkpoints of one 117-instruction function: compiler preprocessing succeeded,
+but call-preparation generation still declined because the conservative guard
+sees an unrelated `volatile` declaration in the header. Macro expansion alone
+neither proves alias safety nor resolves this broad guard. Report token scope
+and generated/tested counts before spending more trials. No guard was removed.
+
+An exact-verdict/allocated-output-verified ablation of the historical successful
+recipe removed one of seven token edits with 24 edit trials (26 checks including
+control/recheck, 25 compiler invocations). Automatic late-checkpoint recovery
+already used only wrapper removal and could not be shortened further in its
+12-trial budget. This is controlled replay, not new matching progress. Keep the
+verified recipe and distinguish retained chronology from demonstrated necessity.
+See `benchmarks/aggregate-call-checkpoints.md` for reproduction and limits.

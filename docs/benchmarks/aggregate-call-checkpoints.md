@@ -57,3 +57,51 @@ time. Unknown instrumentation is reported as unknown, not as zero cost.
 
 Keep manifests, game source and image files private. Shared reports must describe
 the fixed budgets and distinguish repeated checkpoints from distinct functions.
+
+## Guard explanations and optional follow-up analysis
+
+Add `--macro-analysis --minimize-recipe 12` to the command above. Both are
+opt-in, private analysis; neither edits a live project or adopts code.
+
+The report now separates call-family eligibility from search coverage. A guard
+reason means the generator refused a shape, not that its trial budget ran out.
+Generated/tested counts remain separate. Agents receive compact guard explanations
+when asking for an ineligible call family, and for scheduling-only near misses.
+
+Macro analysis runs the already-installed pinned GCC with the same flags/header
+in its ordinary compiler sandbox, replacing only compilation with preprocessing.
+Source/header and expanded-output hashes identify the evidence. The original
+source is preserved. Expanded C stays in the private analysis buffer; the summary
+contains eligibility evidence rather than game code. Custom commands, unsupported
+drivers, missing compilers and uncaptured includes give an explicit skip. No tools
+are downloaded. Expanded pointer expressions do not establish non-aliasing and
+are not automatically rewritten back into the source.
+
+A repeated five-checkpoint run recovered the same two late checkpoints, in one
+repair trial each. Macro preprocessing succeeded for all five. The original and
+expanded forms still hit the broad qualifier guard: an unrelated `volatile`
+declaration in the header was enough to disable dispatch generation. The report
+identifies header versus function tokens. This is an eligibility limitation, not
+evidence that more random trials would help; the guard has not been relaxed.
+
+Recipe reduction uses a separate budget after recovery: up to the requested edit
+trials plus a control check and final recheck. The report counts actual candidate
+checks, compiler invocations where known, and elapsed time separately from search.
+Every retained reduction must still receive the ordinary exact linked/objdiff
+verdict **and** preserve the complete allocated-object fingerprint, including
+other emitted code/data. Token edits preserve whitespace and comments. A failed
+or interrupted reduction retains the original verified recipe. Edit indices and
+source hashes describe the recipe without publishing source; this is the smallest
+verified recipe found within the bounded probes, not a global minimum.
+
+The two automatically recovered wrapper-removal recipes had nothing further to
+remove (four checks each including control/recheck). A separate replay of the
+historical, longer successful recipe removed one of seven token edits within
+24 edit trials: 26 candidate checks / 25 compiler invocations including control
+and final verification. The reduced output remained exact. This is analysis of
+an existing match, not an additional game match or complete-ROM rebuild.
+
+The shared reduction callback accepts any copied exact judge, including PROJECT
+mode. This CLI's frozen exported-ROM adapter remains MIPS-only; other modes must
+supply their normal copied build/objdiff evaluator. Native GCC preprocessing is an
+explicit adapter limitation, not evidence from a substituted host compiler.
