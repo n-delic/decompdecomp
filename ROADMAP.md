@@ -64,6 +64,12 @@
   use existing background source-restoration locks. Hosts accept legacy permutation
   claim/release requests without leases, and startup clears only legacy permutation claims.
 
+- Done: N64 imports split discovered code at explicit ROM-to-RAM bank ranges when
+  two independent helper calls agree on at least three adjacent transfers. Shared
+  MIPS import repair also separates closed frameless leaves after established
+  returns, excluding unreferenced alignment padding. Fresh private-cartridge import
+  has no boundary findings and exports an identical ROM without saved decisions.
+
 - Done: N64 imports separate a returning TLB boot stub from compiled code when
   distinct direct calls strongly agree with an established later load mapping.
   Explicit data/BSS, competing mappings and uncertain boundaries are left unchanged.
@@ -692,7 +698,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
 | Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
-| Automatic proven framed boundary repair on import/reimport | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
+| Automatic proven framed/leaf boundary repair on import/reimport | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Guided boundary repair and advisory agent investigation (local mapped ROM) | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |

@@ -2,6 +2,7 @@
 
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
+- loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - guides/: what agents read about the N64 (n64.md) and its compilers (gcc-kmc.md, ido.md, sn64.md).
 

@@ -4,6 +4,7 @@ Only frozen disassembly is changed, before it becomes project work. A balanced,
 closed single-frame body may cross generated fragment boundaries, but not explicit
 symbols, data, independent references, image gaps or competing mappings.
 """
+import heapq
 import re
 import struct
 from bisect import bisect_right
@@ -11,7 +12,7 @@ from collections import defaultdict
 from dataclasses import replace
 
 from ..arch.mips import JR_RA, is_frame
-from ..arch.mips_code_recovery import called_extent
+from ..arch.mips_code_recovery import called_extent, leaf_extent
 
 
 def repair(functions, data, image, console, segments, *, symbols=(), log=print):
@@ -39,6 +40,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             for token in re.findall(r'[\w.]+',line.operands):
                 if token in names:references[names[token]].add((line.rom,fn.segment))
     destinations=sorted(references)
+    returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
     groups=[];group_end=0
     for fn in sorted(functions,key=lambda f:(f.segment,f.rom)):
         if (groups and groups[-1][-1].segment==fn.segment
@@ -68,10 +70,29 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         # A new interior entry needs the preceding balanced return, never a frame pattern alone.
         candidates=[at for at,line in lines.items() if is_frame(line.word) and (at in cuts or
                     at-8 in lines and lines[at-8].word==JR_RA and lines[at-4].word&0xffff0000==0x27bd0000)]
-        for at in sorted(candidates):
+        padding=set();proposed_padding={};leaves=set()
+        def seed(cut,hi=hi,lines=lines,mapping=mapping,leaves=leaves,proposed_padding=proposed_padding):
+            at=cut
+            while at<min(cut+12,hi) and at in lines and lines[at].word==0:at+=4
+            if at>=hi or at not in lines:return None
+            # Alignment is excluded only after a known return and without any
+            # explicit entry, pointer, branch or data reference into those NOPs.
+            if any(cut+mapping<=a<at+mapping for a in explicit|pointers|set(destinations)):return None
+            if any(d.rom is not None and d.rom<at and cut<d.rom+d.size for d in data):return None
+            if not is_frame(lines[at].word):leaves.add(at)
+            if at>cut:proposed_padding[at]=(cut,at)
+            return at
+        for cut in sorted(cuts & returns):
+            if (at:=seed(cut)) is not None:candidates.append(at)
+        pending=list(set(candidates)|leaves);heapq.heapify(pending);seen=set()
+        while pending:
+            at=heapq.heappop(pending)
+            if at in seen:continue
+            seen.add(at)
             check()
             if accepted and at<accepted[-1][1]:continue
-            size=called_extent(image,at,hi,at+mapping,big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason)
+            validate=leaf_extent if at in leaves else called_extent
+            size=validate(image,at,hi,at+mapping,big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason)
             if not size:continue
             end=at+size;address=at+mapping;finish=end+mapping
             if any(address<a<finish for a in explicit|pointers):continue
@@ -81,13 +102,20 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                             for offset,segment in references[dest])
             if independent:continue
             if not any(at<c<end for c in cuts) and at in cuts and end in cuts:continue
+            # Retain alignment in the original image, outside the C function.
+            if at in proposed_padding:
+                padding.add(proposed_padding[at])
+                cuts.update(proposed_padding[at])
             accepted.append((at,end));cuts={c for c in cuts if not at<c<end}|{at,end}
+            if end-8 in lines and lines[end-8].word==JR_RA:
+                if (following:=seed(end)) is not None:heapq.heappush(pending,following)
         if not accepted:result.extend(group);continue
         changed+=len(accepted)
         names={f.rom:f.name for f in group};by_start={f.rom:f for f in group}
         labels=set().union(*(f.labels for f in group))
         ordered=sorted(cuts)
         for start,end in zip(ordered,ordered[1:]):
+            if (start,end) in padding:continue
             source=by_start.get(start) or next(f for f in group if f.rom<=start<f.rom+f.size)
             name=names.get(start,f'func_{start+mapping:08X}')
             body=[replace(lines[at]) for at in range(start,end,4)]
@@ -110,5 +138,5 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                 body.append(replace(line,operands=_LOCAL_REF.sub(entry,line.operands)))
             rewritten.append(replace(fn,lines=body))
         result=rewritten
-    if changed:log(f'Automatically repaired {changed} proven framed boundaries; original instruction bytes retained. Uncertain entries still need review.')
+    if changed:log(f'Automatically repaired {changed} proven function boundaries; original instruction bytes retained. Uncertain entries still need review.')
     return result
