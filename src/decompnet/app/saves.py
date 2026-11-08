@@ -15,6 +15,7 @@ what only the database has is each open function's closest attempt, and a save w
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -35,8 +36,22 @@ FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
 SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")  # why an agent or user set a function aside
+SOURCE_COMPONENT_BYTES = 249  # leaves room for the publisher's .c.tmp suffix under common 255-byte limits
+SOURCE_PREFIX_BYTES = 80  # readable hint; the SHA-256 suffix distinguishes symbols with the same prefix
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
+
+
+def _source_file(name: str) -> str:
+    """Keep C++ template symbols intact, but fit their source files on Windows and Unix filesystems.
+
+    The layout retains the full symbol; its digest makes the shortened filename stable across computers and
+    different from another template with the same prefix. Leave room for the publisher's .c.tmp suffix.
+    """
+    if len(name.encode("utf-8")) <= SOURCE_COMPONENT_BYTES:
+        return name + ".c"
+    prefix = name.encode("utf-8")[:SOURCE_PREFIX_BYTES].decode("utf-8", errors="ignore")
+    return prefix + "_" + hashlib.sha256(name.encode("utf-8")).hexdigest() + ".c"
 
 
 def _header_file(unit: str) -> str:
@@ -272,7 +287,7 @@ def _read_owned(folder: Path) -> dict[str, str]:
     except (KeyError, TypeError, ValueError):
         raise NetworkError("Fix the saved project's manifest before replacing its files.") from None
     owned = {MANIFEST}
-    owned.update(f"src/{name}.c" if "matched_by" in info else f"best/{name}.c"
+    owned.update(f"src/{_source_file(name)}" if "matched_by" in info else f"best/{_source_file(name)}"
                  for name, info in functions.items() if isinstance(info, dict))
     owned.update("include/" + file for file in headers.values() if isinstance(file, str))
     return {name: text for name, text in previous.items() if name in owned}
@@ -412,9 +427,9 @@ def _source_files(rows) -> dict[str, str]:
     files = {}
     for r in rows:
         if r["status"] == "matched" and r["has_matched"]:
-            files[f"src/{r['name']}.c"] = _source_text(r["matched_source"])
+            files[f"src/{_source_file(r['name'])}"] = _source_text(r["matched_source"])
         elif r["has_best"] and r["best_score"] is not None:
-            files[f"best/{r['name']}.c"] = _source_text(r["best_source"])
+            files[f"best/{_source_file(r['name'])}"] = _source_text(r["best_source"])
     return files
 
 
@@ -482,7 +497,7 @@ def _save_best(net, proj, folder: Path) -> dict:
     for r in rows:
         pct = 100 * (1 - r["best_score"] / max(1, (r["n_insns"] or 1) * 100))
         source = json.loads(r["meta"] or "{}").get("source") or r["unit"]
-        files[f"best/{r['name']}.c"] = (
+        files[f"best/{_source_file(r['name'])}"] = (
             f"/* {r['name']}: the closest attempt so far, {percent_text(pct)} match, by "
             f"{names.get(r['best_agent_id'], '?')}; it belongs in {source} */\n\n" + r["best_source"].strip() + "\n")
     readme = f"""# {proj['name']}: the closest attempts so far
@@ -777,7 +792,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
         check_cancel()
         log(f"checking {old_name}")
         kind = "src" if "matched_by" in info else "best"
-        text = _saved_source(folder, files, f"{kind}/{old_name}.c")
+        text = _saved_source(folder, files, f"{kind}/{_source_file(old_name)}")
         row = by_name.get(old_name)
         name = old_name if row is not None and row["vram"] == info["vram"] else None
         if name is None:
