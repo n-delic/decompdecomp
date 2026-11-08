@@ -5,7 +5,7 @@ import hashlib
 import secrets
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -120,7 +120,7 @@ def register(app):
                 return app.fail(ValueError('Choose whether to enable the web interface.'))
             enabled = data['enabled']
             if 'remote_url' in data:
-                from . import window
+                window, = await app.imports("decompnet.app", ("window",))
                 if not secrets.compare_digest(window.request_token(request), app.secret):
                     return app.fail(ValueError('Set the remote address in the desktop app.'), 403)
                 try:
@@ -165,7 +165,6 @@ def register(app):
             raw.extend(chunk)
             if len(raw) > 1024:
                 return HTMLResponse(login_page('The sign-in request is too large.'), status_code=413, headers=LOGIN_HEADERS)
-        from urllib.parse import parse_qs
         code = parse_qs(raw.decode('utf-8', errors='replace')).get('code', [''])[0]
         token, status = await app.control(lambda: login.sign_in(code))
         if token is None:

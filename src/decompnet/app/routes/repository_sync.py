@@ -27,7 +27,7 @@ def register(app):
         if bad := app.guard(request, write=request.method == 'POST'):
             return bad
         try:
-            from .. import repository_setup
+            repository_setup, = await app.imports('decompnet.app', ('repository_setup',))
             if request.method == 'GET':
                 slug = str(request.query_params.get('slug', ''))
                 def pending_setup():
@@ -56,7 +56,7 @@ def register(app):
     async def github_owners(request):
         if bad := app.guard(request):return bad
         try:
-            from .. import repository_github, repository_setup
+            repository_github, repository_setup = await app.imports('decompnet.app', ('repository_github', 'repository_setup'))
             slug = str(request.query_params.get('slug', ''))
             path, _ = await app.call(repository_setup.folder, app.net, slug)
             return JSONResponse(await app.call(repository_github.owners, path))
@@ -71,7 +71,7 @@ def register(app):
     async def fork(request):
         if bad := app.guard(request, write=request.method == 'POST'):return bad
         try:
-            from .. import repository_fork
+            repository_fork, = await app.imports('decompnet.app', ('repository_fork',))
             data = await app.body(request) if request.method == 'POST' else request.query_params
             slug, folder = str(data.get('slug', '')), str(data.get('folder', '')).strip()
             def reserve_fork():
@@ -96,7 +96,7 @@ def register(app):
     async def score_commits(request):
         if bad := app.guard(request, write=True):return bad
         try:
-            from .. import score_commits
+            score_commits, = await app.imports('decompnet.app', ('score_commits',))
             data = await app.body(request)
             return JSONResponse(await app.call(score_commits.configure, app.net, str(data.get('slug', '')),
                 data.get('enabled'), data.get('threshold', 10), str(data.get('folder', '')).strip()))
@@ -107,7 +107,7 @@ def register(app):
     async def auto_push(request):
         if bad := app.guard(request, write=True):return bad
         try:
-            from .. import auto_push
+            auto_push, = await app.imports('decompnet.app', ('auto_push',))
             data = await app.body(request)
             return JSONResponse(await app.call(auto_push.configure, app.net, str(data.get('slug', '')),
                 data.get('enabled'), data.get('threshold', 10), str(data.get('folder', '')).strip()))
@@ -119,7 +119,7 @@ def register(app):
         if bad := app.guard(request, write=True):
             return bad
         try:
-            from .. import match_commits
+            match_commits, = await app.imports('decompnet.app', ('match_commits',))
             data = await app.body(request)
             result = await app.call(match_commits.configure, app.net, str(data.get('slug', '')),
                                     data.get('enabled'), str(data.get('folder', '')).strip())
@@ -132,7 +132,7 @@ def register(app):
         if bad := app.guard(request, write=request.method == 'POST'):
             return bad
         try:
-            from .. import repository_push
+            repository_push, = await app.imports('decompnet.app', ('repository_push',))
             if request.method == 'GET':
                 def pending_fork():
                     with app.jobs._lock:

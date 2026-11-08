@@ -8,7 +8,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, Response
 from starlette.routing import Route
 
 from ..network import NetworkError
@@ -95,7 +95,6 @@ def routes(net, endpoint):
         # Fixed allowlist, not a path supplied by a guest.
         name = request.path_params['name']
         if name not in ('workspace.js', 'workspace.css'):
-            from starlette.responses import Response
             return Response(status_code=404)
         return FileResponse(STATIC / name, headers={'X-Content-Type-Options': 'nosniff'})
 

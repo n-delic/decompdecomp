@@ -137,12 +137,12 @@ def register(app: App) -> None:
     async def api_room_matches(request: Request) -> Response:
         if (bad := guard(request,write=request.method=='POST')):
             return bad
-        from .. import room_matches
+        room_matches, = await app.imports('decompnet.app', ('room_matches',))
         data=await body(request) if request.method=='POST' else dict(request.query_params)
         slug=str(data.get('slug') or '')
         try:
             await app.read(net.project_row, slug)
-            from .. import room_reconcile
+            room_reconcile, = await app.imports('decompnet.app', ('room_reconcile',))
             room=net.rooms.get(slug)
             def reconciliation_job():
                 with jobs._lock:current=list(jobs.jobs.values())
@@ -298,7 +298,7 @@ def register(app: App) -> None:
         uploaded = False
         project = q.get("project", "")
         if not project and q.get("path"):  # a file on this computer (a disc is gigabytes: not through the browser)
-            game = hostenv.local_path(q["path"])
+            game = await app.call(hostenv.local_path, q["path"])
             if not await app.call(lambda: game.is_file()):
                 return fail(ValueError(f"no file at {game}"))
         elif not project:  # the browser's upload, streamed to disk

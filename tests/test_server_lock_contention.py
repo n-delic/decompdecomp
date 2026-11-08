@@ -236,3 +236,46 @@ def test_diagnostic_logging_contention_does_not_block_event_loop(monkeypatch):
         finally:release.set()
         await blocked
     asyncio.run(run())
+
+
+def test_lazy_import_lock_does_not_block_event_loop(tmp_path,monkeypatch):
+    import asyncio
+    import importlib._bootstrap
+    import sys
+
+    name='decomp_test_contended_import'
+    (tmp_path/(name+'.py')).write_text('value = 42\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    lock=importlib._bootstrap._get_module_lock(name)
+    held=threading.Event();release=threading.Event()
+    def hold():
+        lock.acquire()
+        try:held.set();release.wait(5)
+        finally:lock.release()
+    holder=threading.Thread(target=hold,daemon=True);holder.start()
+    assert held.wait(2)
+    app=object.__new__(routes.App)
+    async def call(fn,*args):return await anyio.to_thread.run_sync(fn,*args)
+    app.call=call;app.control_call=None
+    async def run():
+        loading=asyncio.create_task(app.imports(name,('value',)))
+        try:
+            await asyncio.wait_for(asyncio.sleep(.05),1)
+            assert not loading.done()
+        finally:release.set()
+        assert await asyncio.wait_for(loading,2)==(42,)
+    try:asyncio.run(run())
+    finally:
+        release.set();holder.join(2);sys.modules.pop(name,None)
+
+
+def test_async_routes_do_not_take_project_import_locks():
+    failures=[]
+    def walk(node,path,active=False):
+        if isinstance(node,ast.AsyncFunctionDef):active=True
+        elif isinstance(node,(ast.FunctionDef,ast.Lambda)):active=False
+        if active and isinstance(node,ast.ImportFrom) and (node.level or (node.module or '').startswith('decompnet')):
+            failures.append(f'{path.name}:{node.lineno}')
+        for child in ast.iter_child_nodes(node):walk(child,path,active)
+    for path in Path(routes.__file__).parent.glob('*.py'):walk(ast.parse(path.read_text()),path)
+    assert not failures,failures

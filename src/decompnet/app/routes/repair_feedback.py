@@ -33,7 +33,7 @@ def register(app):
     @app.mcp.custom_route('/api/repair-examples/analysis', methods=['GET','POST'])
     async def automatic_analysis(request):
         if bad := app.guard(request,write=request.method=='POST'):return bad
-        from .. import repair_outcomes
+        repair_outcomes, = await app.imports('decompnet.app', ('repair_outcomes',))
         try:
             if request.method=='POST':
                 data=await app.body(request)
@@ -48,7 +48,7 @@ def register(app):
     async def replay_examples(request):
         if bad := app.guard(request, write=True):
             return bad
-        from .. import repair_replay_jobs
+        repair_replay_jobs, = await app.imports('decompnet.app', ('repair_replay_jobs',))
         try:
             data=await app.body(request)
             slug='' if data.get('all') else str(data.get('slug') or '')
@@ -98,13 +98,13 @@ def register(app):
     async def quality(request):
         if bad := app.guard(request, write=request.method == 'POST'):
             return bad
-        from ... import candidate_quality
+        candidate_quality, = await app.imports('decompnet', ('candidate_quality',))
         try:
             q = request.query_params
             if request.method == 'POST':
                 data = await app.body(request)
                 if data.get('action') == 'adopt':
-                    from ... import candidate_recovery
+                    candidate_recovery, = await app.imports('decompnet', ('candidate_recovery',))
                     return JSONResponse(await app.call(candidate_recovery.adopt, app.net, str(data['slug']),
                                                        str(data['function']), str(data['source_hash']), data['attempt_id']))
                 return JSONResponse(await app.call(candidate_quality.review, app.net, str(data['slug']),
@@ -115,7 +115,7 @@ def register(app):
             if q.get('function'):
                 fn = await app.read(app.net._function, q['function'], slug)
                 return JSONResponse({'evidence': await app.read(candidate_quality.view, app.net, fn)})
-            from .. import candidate_rechecks
+            candidate_rechecks, = await app.imports('decompnet.app', ('candidate_rechecks',))
             return JSONResponse({'reports': await app.read(candidate_rechecks.listing, app.net, slug)})
         except (NetworkError, ValueError, KeyError) as error:
             return app.fail(error)
@@ -124,7 +124,7 @@ def register(app):
     async def recovery(request):
         if bad := app.guard(request, write=request.method == 'POST'):
             return bad
-        from .. import candidate_rechecks
+        candidate_rechecks, = await app.imports('decompnet.app', ('candidate_rechecks',))
         try:
             if request.method == 'GET':
                 q = request.query_params

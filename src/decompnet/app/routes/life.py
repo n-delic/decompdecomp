@@ -134,7 +134,7 @@ def register(app: App) -> None:
             return await call(closing_snapshot)
 
         if (await body(request)).get("keep"):
-            from ..shutdown_progress import terminal_note
+            terminal_note, = await app.imports('decompnet.app.shutdown_progress', ('terminal_note',))
             def keep_working():
                 terminal_note("Closing the window; decompdecomp will keep working in the background.",app.jobs.logger,prefix="decompdecomp")
                 window.close_app()
