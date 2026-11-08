@@ -39,6 +39,10 @@ def main(folder):
             if process.wait(timeout=20) != 0:
                 raise RuntimeError('The portable app did not exit cleanly after Stop.')
             print('Extracted portable EXE: isolated server startup, health and graceful Stop passed.')
+        except Exception:
+            for log in sorted((home / 'data/.decomp/logs').glob('*.log')):
+                print(f"--- {log.name} ---\n{log.read_text(encoding='utf-8', errors='replace')}", flush=True)
+            raise
         finally:
             if process.poll() is None:
                 subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
