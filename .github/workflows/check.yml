@@ -8,6 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   windows:
@@ -50,9 +51,36 @@ jobs:
           DECOMP_TEST_COCOA: "1"
           DECOMP_TRAY: "0"
   check:
+    outputs:
+      portable_changed: ${{ steps.portable_changes.outputs.changed }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Detect portable packaging changes
+        id: portable_changes
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base=HEAD^
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            base="$BEFORE"
+            if [[ "$base" =~ ^0+$ ]]; then
+              echo 'changed=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              git fetch --no-tags --depth=1 origin "$base"
+            fi
+          fi
+          if [ -n "$(git diff --name-only "$base" HEAD -- packaging/windows .github/workflows/check.yml .github/workflows/windows-portable.yml tests/test_windows_portable.py src/decompnet/app/launcher.py pyproject.toml uv.lock)" ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
       - uses: astral-sh/setup-uv@v10.3.0  # setup-uv has published no major tags since v7
       - run: uv sync
       - run: uv run ruff check src tests projects
@@ -78,3 +106,8 @@ jobs:
       - run: uv run pytest -q -rs
         env:
           DECOMP_TRAY: "0"
+
+  portable:
+    needs: check
+    if: needs.check.outputs.portable_changed == 'true'
+    uses: ./.github/workflows/windows-portable.yml
