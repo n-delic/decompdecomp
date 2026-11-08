@@ -512,6 +512,8 @@ Where to start on a gap:
 - **A real permuter**: decomp-permuter rewrites near misses on the parse tree, weighted per compiler, on spare
   cores at a low priority. On nine near misses made from the demo ROM's functions it matched all nine, the old
   regex rewrites five. They stay as the fallback, for C decomp-permuter can't parse.
+  A user can also start a bounded deep search for one unmatched function. It shares the background worker pool,
+  honours the time and variant limits, and records only improvements that pass the normal judge.
 - **Better drafts**: m2c drafts every function in the background, from the header declarations its code uses, and
   again when they change; `redraft` runs m2c with an agent's own declarations; methods of known C++ classes are
   drafted as `Class::method`. On GTA San Andreas, 37 of 40 sampled drafts read the header (none did before).

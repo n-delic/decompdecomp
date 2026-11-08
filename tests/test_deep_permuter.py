@@ -1,6 +1,7 @@
 """A manual search has explicit limits and uses the ordinary permuter judge."""
 
 import json
+import time
 
 import pytest
 
@@ -259,3 +260,35 @@ def test_real_compile_input_changes_still_stop_the_search(tmp_path, monkeypatch,
     with pytest.raises(deep_permuter.SearchLimit,match="Compiler, header or target changed"):
         search._score(agent,proj,fn,"next",40,None)
     assert search.tested == 1
+
+
+def test_long_search_keeps_its_claim_until_its_deadline(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent('permuter')
+    fn = net._function('f', 'game')
+    search = deep_permuter.Search(net, 10, 10, Log())
+    monkeypatch.setattr(Permuter, '_score', lambda *args: 40)
+    assert search._hold(agent, fn)
+    try:
+        claim = net.store.one('SELECT expires_at FROM claims WHERE function_id=?', fn['id'])
+        assert claim['expires_at'] > time.time() + 600
+        assert search._score(agent, net.project_row('game'), fn, 'candidate', 40, None) == 40
+    finally:
+        search._let_go(agent, fn)
+
+
+def test_unrelated_project_bookkeeping_does_not_end_search(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent('permuter')
+    proj, fn = net.project_row('game'), net._function('f', 'game')
+    search = deep_permuter.Search(net, 1, 10, Log())
+    monkeypatch.setattr(Permuter, '_score', lambda *args: 40)
+    search.baseline(agent, proj, fn, None)
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',
+                   (json.dumps({'kind': 'rom', 'autopilot_tried': 42}), proj['id']))
+    assert search._score(agent, proj, fn, 'next', 40, None) == 40

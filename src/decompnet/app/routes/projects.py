@@ -229,17 +229,19 @@ def register(app: App) -> None:
         name = str(data.get("name", ""))
         minutes = data.get("minutes", 10)
         variants = data.get("variants", 500)
-        active = next((job for job in jobs.jobs.values() if job["kind"] == "deep-permuter"
-                       and job.get("slug") == slug and job.get("function") == name
-                       and job["state"] == "running"), None)
-        if active:
-            return {"job": active["id"]}
-        if any(job["kind"] == "deep-permuter" and job.get("slug") == slug and job["state"] == "running"
-               for job in jobs.jobs.values()):
-            raise NetworkError("Another function is being deep permuted in this project; stop it or wait for it to finish.")
-        deep_permuter.validate(net, slug, name, minutes, variants)
-        jid = jobs.start("deep-permuter", lambda log: deep_permuter.run(net, slug, name, minutes, variants, log))
-        jobs.jobs[jid].update({"slug": slug, "function": name})
+        with jobs._lock:
+            running = [job for job in jobs.jobs.values() if job["kind"] == "deep-permuter"
+                       and job["state"] == "running"]
+            active = next((job for job in running if job.get("slug") == slug and job.get("function") == name), None)
+            if active:
+                return {"job": active["id"]}
+            if any(job.get("slug") == slug for job in running):
+                raise NetworkError("Another function is being deep permuted in this project; stop it or wait for it to finish.")
+            if len(running) >= 2:
+                raise NetworkError("Two deep searches are already running. Wait for one to finish.")
+            deep_permuter.validate(net, slug, name, minutes, variants)
+            jid = jobs.start("deep-permuter", lambda log: deep_permuter.run(net, slug, name, minutes, variants, log))
+            jobs.jobs[jid].update({"slug": slug, "function": name})
         return {"job": jid}
 
     def p_save(slug, request, data):

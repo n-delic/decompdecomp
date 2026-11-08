@@ -81,23 +81,18 @@ async function followDeepSearch(id, slug, name) {
   deepFollowers.add(id);
   const key = deepKey(slug, name);
   try {
-    for (;;) {
-      const job = await api(`/api/job?id=${encodeURIComponent(id)}`);
+    await followJob(id, null, (_lines, job) => {
       if (deepRuns.get(key)?.stopping && job.state === "running") job.stopping = true;
       deepRuns.set(key, job);
       if (S.slug === slug && S.fn === name) renderDeepSearch();
-      if (job.state !== "running") {
-        if (S.slug === slug && S.fn === name) {
-          S.diffKey = null;
-          await refreshFn(false);
-          await refreshMap(true);
-        }
-        return;
-      }
-      await sleep(JOB_POLL_MS);
+    });
+    if (S.slug === slug && S.fn === name) {
+      S.diffKey = null;
+      await refreshFn(false);
+      await refreshMap(true);
     }
   } catch (error) {
-    deepRuns.set(key, { ...deepRuns.get(key), state: "error", error: error.message });
+    deepRuns.set(key, error.job || { ...deepRuns.get(key), state: "error", error: error.message });
     if (S.slug === slug && S.fn === name) renderDeepSearch();
   } finally { deepFollowers.delete(id); }
 }

@@ -13,7 +13,8 @@ import time
 from collections import OrderedDict
 
 from ..network import NetworkError
-from . import permuter_local
+from ..project import compiler_for
+from . import permuter_local, workers
 from .permute import Permuter, State
 
 
@@ -53,6 +54,7 @@ class Search(Permuter):
         self.recent = OrderedDict()
         self.baseline_scope = None
         self.measuring_baseline = False
+        self.held = False
 
     def report(self):
         getattr(self.log, "progress", lambda values: None)({
@@ -65,7 +67,23 @@ class Search(Permuter):
 
     def _hold(self, agent, fn):
         # A manual search must not exhaust the automatic permuter's turn allowance.
-        return super()._hold(agent, fn, count_turn=False)
+        if not super()._hold(agent, fn, count_turn=False):
+            return False
+        self._renew(agent, fn)
+        self.held = True
+        return True
+
+    def _let_go(self, agent, fn):
+        self.held = False
+        return super()._let_go(agent, fn)
+
+    def _renew(self, agent, fn):
+        expires = time.time() + max(0, self.deadline - time.monotonic()) + 120
+        with self.net.store.tx() as db:
+            changed = db.execute("UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=?",
+                                 (expires, fn["id"], agent.id)).rowcount
+        if not changed:
+            raise SearchLimit("Function is not held by this search")
 
     def _random_seed(self, fn):
         self.turns += 1
@@ -87,8 +105,10 @@ class Search(Permuter):
         # Publishing this search's own improvement advances the save counter. It is
         # bookkeeping, not a compiler input: including it stopped the search after a win.
         config = json.loads(fresh_proj["config"])
-        config.pop("progress_revision", None)
-        inputs = (json.dumps(config, sort_keys=True), ctx["header"], ctx["version"],
+        compiler = compiler_for(config, fresh_fn["vram"]) if config.get("compiler") else {}
+        inputs = (json.dumps({"compiler": compiler, "gp": config.get("gp"),
+                              "big_endian": config.get("big_endian"), "platform": config.get("platform")},
+                             sort_keys=True), ctx["header"], ctx["version"],
                   tuple(fresh_fn[k] for k in ("id", "target", "relocs", "vram", "unit", "n_insns")))
         return hashlib.sha256(repr(inputs).encode()).digest()
 
@@ -136,6 +156,8 @@ class Search(Permuter):
         if self.tested >= self.limit:
             raise SearchLimit("Variant limit reached")
         self.tested += 1
+        if self.held:
+            self._renew(agent, fn)
         score = super()._score(agent, proj, fn, source, best, fork)
         if self.input_scope(proj, fn, fork) != scope:
             raise SearchLimit("Compiler, header or target changed; run the search again")
@@ -161,6 +183,11 @@ class Search(Permuter):
 
 
 def run(net, slug: str, name: str, minutes: int, max_variants: int, log):
+    """Use the same limited, lower-priority worker pool as automatic permutation."""
+    return workers.pool().submit(_run, net, slug, name, minutes, max_variants, log).result()
+
+
+def _run(net, slug: str, name: str, minutes: int, max_variants: int, log):
     proj, fn = validate(net, slug, name, minutes, max_variants)
     search = Search(net, minutes, max_variants, log)
     search.report()
@@ -195,6 +222,11 @@ def run(net, slug: str, name: str, minutes: int, max_variants: int, log):
             before = state.variants
             search._permute(agent, proj, current, state)
             if state.variants == before:
+                if net.store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id!=?",
+                                 current["id"], agent.id):
+                    log("Another worker holds this function; waiting for its claim to end.")
+                    time.sleep(min(0.25, max(0, search.deadline - time.monotonic())))
+                    continue
                 reason = "No further variants available"
                 break
         else:
