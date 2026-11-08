@@ -7,7 +7,7 @@ MESSAGES = {
     'waiting': 'Waiting for saved-file verification…',
     'compiling': 'Compiling candidate…',
     'checking': 'Checking linked bytes…',
-    'saving': 'Saving verified result…',
+    'saving': 'Saving result and progress…',
 }
 
 

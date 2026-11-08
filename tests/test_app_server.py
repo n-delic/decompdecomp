@@ -3188,3 +3188,30 @@ def test_background_attempt_returns_before_verification_and_is_rediscoverable(ap
     assert result['result']['matched'] and result['result']['adopted']
     assert result['progress']['stage']=='saving'
     assert client.get('/api/try/status?slug=attempt-stages&name=f').json()['job'] is None
+
+
+def test_synchronous_attempt_keeps_final_response_and_exposes_running_job(app, monkeypatch):
+    from .test_loading import tiny_game
+    client,net,_=app
+    tiny_game(net,'sync-attempt-stages')
+    entered,finish=threading.Event(),threading.Event()
+    responses=[]
+    def attempt(*args):
+        entered.set()
+        assert finish.wait(5)
+        return {'score':7,'matched':False,'text':'score 7'}
+    monkeypatch.setattr(net,'attempt',attempt)
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**k:False)
+    body={'slug':'sync-attempt-stages','name':'f','source':'candidate'}
+    worker=threading.Thread(target=lambda:responses.append(client.post('/api/try',json=body,headers={'X-Decomp':'1'})))
+    worker.start()
+    try:
+        assert entered.wait(5) and not responses
+        state=client.get('/api/try/status?slug=sync-attempt-stages&name=f').json()
+        assert state['job'] and state['progress']['stage']=='waiting'
+        different=client.post('/api/try',json={**body,'background':True,'source':'different'},headers={'X-Decomp':'1'})
+        assert different.status_code==400 and 'already compiling' in different.text
+    finally:
+        finish.set();worker.join(5)
+    assert not worker.is_alive() and responses[0].status_code==200
+    assert responses[0].json()['score']==7 and 'job' not in responses[0].json()
