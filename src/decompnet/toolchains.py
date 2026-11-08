@@ -28,7 +28,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, find_uv
 
-from . import limits, wsl
+from . import limits, linuxvm, wsl
 
 MANIFEST = ".decompnet-toolchain.json"
 # in each version's folder of a pack with `headers`: the other Include folders its compiler searches, one per line,
@@ -78,6 +78,8 @@ class Toolchain:
     local_files: list[str] = field(default_factory=list)
     local_places: list[str] = field(default_factory=list)
 
+    linux_vm: bool = False  # optional local macOS Linux runner for this pack
+
     def __post_init__(self):
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
 
@@ -98,13 +100,18 @@ class Toolchain:
         """A Linux-only toolchain on Windows: installed from its Linux build and run inside WSL 2 (see wsl.py)."""
         return wsl.wanted() and not self.git and not self.parts_for() and bool(self.parts_for(LINUX))
 
+    @property
+    def via_vm(self) -> bool:
+        return (self.linux_vm and not self.via_wsl and current_platform().startswith("macos-")
+                and linuxvm.wanted() and not self.parts_for() and bool(self.parts_for(LINUX)))
+
     def linux_parts(self) -> list[dict]:
         return [p for p in self.parts if WSL_PLATFORM in p.get("platforms", [])] or self.parts_for(LINUX)
 
     @property
     def supported(self) -> bool:
         """Whether this toolchain can be installed on this computer (on Windows, Linux ones through WSL 2)."""
-        return self.local or bool(self.git) or bool(self.parts_for()) or self.via_wsl
+        return self.local or bool(self.git) or bool(self.parts_for()) or self.via_wsl or self.via_vm
 
 
 def current_platform() -> str:
@@ -178,31 +185,61 @@ def root() -> Path:
     return Path(env).expanduser() if env else data_dir() / "toolchains"
 
 
-def path(tid: str, linux: bool | None = None) -> Path:
-    """Where a toolchain is installed. `linux`: its Linux build for WSL (default: when that's how it runs here)."""
+def path(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> Path:
+    """Where a toolchain is installed; VM and WSL copies are separate from native installations."""
+    if vm is None:
+        vm = linux is None and tid in _registry_data() and get(tid).via_vm
+    if vm:
+        return root() / 'linux-vm' / tid
     if linux is None:
         linux = tid in _registry_data() and get(tid).via_wsl
     return root() / "wsl" / tid if linux else root() / tid
 
 
-def installed(tid: str, linux: bool | None = None) -> dict | None:
+def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> dict | None:
     """The install's manifest, or None when it isn't installed, or was installed from an entry toolchains.toml has
-    changed since (changed()): every caller then offers to install it again, as for one never installed, and a free
-    tool reinstalls by itself (ensure). Archives already downloaded aren't downloaded again (root()/.downloads)."""
-    manifest = _manifest(tid, linux)
+    changed since (changed()), or lacks a program its install builds (_unbuilt): every caller then offers to install
+    it again, as for one never installed, and a free tool reinstalls by itself (ensure). Archives already downloaded
+    aren't downloaded again (root()/.downloads)."""
+    manifest = _manifest(tid, linux, vm=vm)
     if manifest is None and _own(tid) is not None:
         return {"own": True}  # (a compiler in a kit copy is there as long as the copy is: nothing was installed)
-    if manifest is None or changed(tid, manifest, path(tid, linux)):
+    if manifest is None or changed(tid, manifest, path(tid, linux, vm=vm)) or _unbuilt(tid, linux):
         return None
     tc = registry().get(tid)
-    if tc is not None and any(installed(h, manifest.get("wsl")) is None for h in tc.headers):
+    if tc is not None and any(installed(h, linux, vm=vm) is None for h in tc.headers):
         return None  # (its compilers can't build without the headers: installing it brings them, install())
     return manifest
 
 
-def _manifest(tid: str, linux: bool | None = None) -> dict | None:
-    m = path(tid, linux) / MANIFEST
+def _manifest(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> dict | None:
+    m = path(tid, linux, vm=vm) / MANIFEST
     return json.loads(m.read_text(encoding="utf-8")) if m.exists() else None
+
+
+# Ghidra's folder of native programs for each computer (ghidra.framework.Platform)
+# (Windows on Arm runs the release's Intel one, emulated: Ghidra's GettingStarted.md)
+GHIDRA_OS = {"linux-x86_64": "linux_x86_64", "linux-aarch64": "linux_arm_64", "macos-x86_64": "mac_x86_64",
+             "macos-arm64": "mac_arm_64", "windows-x86_64": "win_x86_64", "windows-aarch64": "win_x86_64"}
+
+
+def ghidra_decompiler(ghidra: Path, plat: str | None = None) -> Path:
+    """Where the Ghidra in `ghidra` looks for its decompiler on this computer."""
+    plat = plat or current_platform()
+    name = "decompile.exe" if plat.startswith("windows") else "decompile"
+    return ghidra / "Ghidra" / "Features" / "Decompiler" / "os" / GHIDRA_OS.get(plat, plat) / name
+
+
+def _unbuilt(tid: str, linux: bool | None) -> bool:
+    """Whether an install lacks the native program it can't work without: Ghidra's decompiler, which its release
+    brings for Intel Linux and Windows and its install builds elsewhere (build = "ghidra-decompiler"). Without it
+    Ghidra's analysis gives no function a calling convention. A Ghidra installed on a Mac before decompdecomp built
+    its decompiler has none, and one whose decompiler went missing on any computer neither: either is installed
+    again (ensure), not used without it."""
+    if tid != "ghidra" or tid not in _registry_data():
+        return False
+    linux = get(tid).via_wsl if linux is None else linux
+    return not ghidra_decompiler(path(tid, linux), LINUX if linux else None).is_file()
 
 
 def fingerprint(tc: Toolchain, linux: bool = False) -> str:
@@ -223,7 +260,7 @@ def changed(tid: str, manifest: dict, where: Path | None = None) -> bool:
     tc = registry().get(tid)
     if tc is None:  # (a project names a toolchain decompdecomp doesn't have: known())
         return False
-    linux = bool(manifest.get("wsl"))
+    linux = bool(manifest.get("wsl") or manifest.get("linux_vm"))
     now = fingerprint(tc, linux)
     if "fingerprint" in manifest:
         return manifest["fingerprint"] != now
@@ -266,11 +303,16 @@ def _intel_mac_runtime_ready() -> bool:
 def runtime_error(tid: str) -> str | None:
     """What this computer lacks to run a toolchain, said before it's downloaded: Intel-only Mac compiler archives
     need Apple's translation runtime on Apple Silicon, and a pack wibo can't run needs wine (off Windows)."""
+    if get(tid).via_vm:
+        ok, why = linuxvm.status()
+        return None if ok else why
     if get(tid).wine:
         from . import wine
 
         return wine.problem(get(tid).name)
-    if current_platform() != "macos-arm64" or not any(p.get("rosetta") for p in get(tid).parts_for()):
+    if current_platform() != "macos-arm64" or not any(
+            p.get("rosetta") for pack in (get(tid), *(get(d) for d in get(tid).requires))
+            for p in pack.parts_for()):
         return None
     if _intel_mac_runtime_ready():
         return None
@@ -279,18 +321,20 @@ def runtime_error(tid: str) -> str | None:
             "Run `softwareupdate --install-rosetta` in Terminal, accept Apple's license if you agree, then try again.")
 
 
-def require(tid: str, linux: bool | None = None) -> Path:
+def require(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> Path:
     """Directory of an installed toolchain, or a clear error telling the operator how to install it."""
-    if installed(tid, linux) is None:
+    if installed(tid, linux, vm=vm) is None:
         raise ToolchainError(f"toolchain {tid!r} is not installed: install it in decompdecomp, under Compilers & tools")
     if why := runtime_error(tid):
         raise ToolchainError(why)
-    return path(tid, linux)
+    return path(tid, linux, vm=vm)
 
 
 def runtime_dirs(tid: str) -> tuple[Path, ...]:
     """The toolchain plus everything it requires, for mounting into the sandbox (all Linux builds for WSL)."""
     tc = get(tid)
+    if tc.via_vm:
+        return (require(tid, vm=True), *(require(dep, vm=True) for dep in tc.requires))
     linux = tc.via_wsl
     return (require(tid, linux), *(require(dep, linux) for dep in tc.requires))
 
@@ -485,7 +529,7 @@ def remove_local(tid: str, folder: str | Path) -> None:
         (path(tid, False) / MANIFEST).unlink(missing_ok=True)
 
 
-def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None,
+def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None, vm: bool | None = None,
             folder: str | Path | None = None) -> Path:
     """Install a toolchain (and what it requires). A local toolchain (the Xbox XDK) is the user's own copy in
     `folder`: checked and recorded, never copied. `linux`: its Linux build, to run inside WSL (default: when
@@ -498,29 +542,35 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
     with _INSTALLING:
         lock = _installs.setdefault(tid, threading.RLock())
     with lock:
-        return _install(tid, accept_license=accept_license, force=force, log=log, linux=linux)
+        return _install(tid, accept_license=accept_license, force=force, log=log, linux=linux, vm=vm)
 
 
-def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | None) -> Path:
+def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | None, vm: bool | None) -> Path:
     tc = get(tid)
-    linux = tc.via_wsl if linux is None else linux
+    vm = tc.via_vm if vm is None else vm
+    linux = (tc.via_wsl or vm) if linux is None else linux
+    location = {'vm': True} if vm else {}
     _intel_mac_runtime_ready.cache_clear()  # Rosetta may have been installed since the last setup attempt
-    if why := runtime_error(tid):
+    if not vm and (why := runtime_error(tid)):
         raise ToolchainError(why)
-    if tc.proprietary and not accept_license and (force or installed(tid, linux) is None):
+    if tc.proprietary and not accept_license and (force or installed(tid, linux, **location) is None):
         raise ToolchainError(
             f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
             f"decision; re-run with --accept-license if you accept that.")
-    if linux:
+    if vm:
+        ok, why = linuxvm.status(refresh=True)
+        if not ok:
+            raise ToolchainError(why)
+    elif linux:
         ok, why = wsl.status()
         if not ok:
             raise ToolchainError(f"{tc.name} is a Linux program: on Windows it runs in WSL 2. {why}")
     for dep in tc.requires:
-        if installed(dep, linux) is None or force:
-            install(dep, accept_license=accept_license, force=force, log=log, linux=linux)
-    if installed(tid, linux) and not force:
-        log(f"{tid}: already installed at {path(tid, linux)}")
-        return path(tid, linux)
+        if installed(dep, linux, **location) is None or force:
+            install(dep, accept_license=accept_license, force=force, log=log, linux=linux, **location)
+    if installed(tid, linux, **location) and not force:
+        log(f"{tid}: already installed at {path(tid, linux, **location)}")
+        return path(tid, linux, **location)
     parts = tc.linux_parts() if linux else tc.parts_for()
     if not parts and not tc.git:
         why = unsupported_cpu()
@@ -533,12 +583,12 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
             f"decision; re-run with --accept-license if you accept that.")
 
-    dest = path(tid, linux)
+    dest = path(tid, linux, **location)
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
-    log(f"{tid}: installing {tc.name} [{tc.license}]" + (" (Linux build, runs in WSL 2)" if linux else ""))
-    pinned = []
+    log(f"{tid}: installing {tc.name} [{tc.license}]" + (" (Linux build, runs in local VM)" if vm else " (Linux build, runs in WSL 2)" if linux else ""))
+    pinned, archive_parts = [], []
     try:
         if tc.git or tc.pip_extra:
             _install_python_env(tc, dest, log)
@@ -554,10 +604,20 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 raise ToolchainError(f"checksum mismatch for {part['url']}: expected {part['sha256']}, got {digest}")
             if not part.get("sha256"):
                 log(f"  no pinned checksum in the registry; pinning on first use: sha256 {digest}")
-            if part.get("build") == "ghidra-natives":
-                _extract(archive, dest, part.get("subdir"))
-                _build_ghidra_decompiler(dest, log)
-            elif part.get("build") == "mips-binutils":
+            if vm:
+                if part.get('build') or tc.git or tc.pip_extra:
+                    raise ToolchainError(f'{tid} needs a guest build recipe before it can use archive staging.')
+                # macOS and Windows can collapse libc.so.1/libC.so.1 into one file.
+                # Keep the verified bytes intact until the guest's case-sensitive filesystem.
+                folder = dest / '.archives'
+                folder.mkdir(exist_ok=True)
+                suffix = ''.join(archive.suffixes)
+                saved = folder / (str(len(archive_parts)) + suffix)
+                shutil.copyfile(archive, saved)
+                archive_parts.append({**part, 'archive': str(saved.relative_to(dest)).replace('\\', '/'), 'sha256': digest})
+                pinned.append({'url': part['url'], 'sha256': digest})
+                continue
+            if part.get("build") == "mips-binutils":
                 _build_mips_binutils(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "psx-gcc-2.6.3":
                 _build_psx_gcc_263(archive, dest, part, log)
@@ -580,12 +640,14 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                     for f in dest.rglob("*"):
                         if f.is_file():
                             os.chmod(f, 0o755)
+                if part.get("build") == "ghidra-decompiler":
+                    _build_ghidra_decompiler(into, log)
             pinned.append({"url": part["url"], "sha256": digest})
         for into in dict.fromkeys(part.get("into", "") for part in parts) if tc.headers else ():
             folder = dest / into  # (relative: the toolchains' folder can be moved, DECOMPNET_TOOLCHAINS)
-            lines = [Path(os.path.relpath(path(h, linux) / "Include", folder)).as_posix() for h in tc.headers]
+            lines = [Path(os.path.relpath(path(h, linux, **location) / "Include", folder)).as_posix() for h in tc.headers]
             (folder / INCLUDES).write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-        if linux and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
+        if linux and not vm and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
             n = wsl.wrap_i386(dest, wsl.path(path("runtime-i386", linux=True)))
             log(f"  {n} 32-bit programs start through the pinned 32-bit runtime")
         if tc.wine and not linux:
@@ -602,44 +664,45 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
     _write_manifest(dest, {
         "id": tid, "name": tc.name, "license": tc.license, "source": tc.source,
         "parts": pinned, "commit": tc.commit or None, "installed_at": time.time(),
-        "license_accepted": bool(tc.proprietary and accept_license), "wsl": linux,
+        "license_accepted": bool(tc.proprietary and accept_license), "wsl": linux and not vm, "linux_vm": vm,
+        "archive_parts": archive_parts,
         "fingerprint": fingerprint(tc, linux),
     })
     log(f"{tid}: installed at {dest}")
     return dest
 
 
-def _build_ghidra_decompiler(dest: Path, log) -> None:
-    """The pinned Ghidra release omits Mac/ARM decompilers. Build its bundled source, never a different version.
-    Like the PS1 GCC source build, the host's C++ build tools build the tool; they never judge game candidates."""
-    from .limits import capped
-
-    platform = current_platform()
-    native = {"macos-arm64": "mac_arm_64", "macos-x86_64": "mac_x86_64", "linux-aarch64": "linux_arm_64"}.get(platform)
-    if native is None:
-        return  # the release carries Linux x86-64 and Windows binaries
-    source = dest / "Ghidra/Features/Decompiler/src/decompile/cpp"
-    output = dest / "Ghidra/Features/Decompiler/os" / native / "decompile"
-    if output.is_file():
+def _build_ghidra_decompiler(ghidra: Path, log) -> None:
+    """Build Ghidra's decompiler from the C++ source its release ships, where the release has none for this computer
+    (macOS, ARM Linux). Only the host build tools (a C++ compiler and make) come from the system. Its Makefile builds
+    for Intel on every Mac (ARCH_TYPE) and for macOS 10.6 (ADDITIONAL_FLAGS): both are left out, so it builds for
+    this computer."""
+    target = ghidra_decompiler(ghidra)
+    if target.is_file():
         return
-    compiler = Path("/usr/bin/clang++" if platform.startswith("macos") else "/usr/bin/c++")
-    if not compiler.is_file() or not Path("/usr/bin/make").is_file():
-        raise ToolchainError("Ghidra needs the host's C++ build tools to build its pinned decompiler. "
-                             "On macOS install Xcode Command Line Tools with xcode-select --install, then retry.")
-    flags = "-arch arm64" if platform == "macos-arm64" else "-arch x86_64" if platform == "macos-x86_64" else ""
-    log("  building Ghidra's native decompiler from its bundled, pinned source")
-    try:
-        result = subprocess.run(capped(["/usr/bin/make", "-j4", "ghidra_opt", f"CXX={compiler} -std=c++14",
-                                        f"ARCH_TYPE={flags}", f"OSDIR={native}"]), cwd=source,
-                                capture_output=True, text=True, timeout=900)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ToolchainError(f"Ghidra's native decompiler couldn't build: {error}. Check the host C++ build tools.") from error
-    if result.returncode:
-        raise ToolchainError("Ghidra's native decompiler couldn't build. Check the host C++ build tools.\n"
-                             + (result.stdout + result.stderr)[-3000:])
-    output.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source / "ghidra_opt", output)
-    output.chmod(0o755)
+    mac = current_platform().startswith("macos")
+    tools = ("Ghidra's decompiler is built from its source on this computer, which needs "
+             + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
+                "a C++ compiler and make (on Debian or Ubuntu: `sudo apt install g++ make`), then try again."))
+    if not shutil.which("make") or not shutil.which("c++"):
+        raise ToolchainError(tools)
+    with tempfile.TemporaryDirectory(prefix="decomp-ghidra-") as tmp:
+        build = Path(tmp) / "decompile"
+        shutil.copytree(ghidra / "Ghidra" / "Features" / "Decompiler" / "src" / "decompile", build)
+        argv = ["make", "-j" + str(min(4, os.cpu_count() or 1)), "ghidra_opt", "ARCH_TYPE=", "ADDITIONAL_FLAGS=-w",
+                "CXX=c++ -std=c++11"]
+        log("  building Ghidra's decompiler for this computer (first install only, a few minutes)")
+        try:
+            res = subprocess.run(limits.capped(argv), cwd=build / "cpp", capture_output=True, text=True,
+                                 errors="replace", timeout=1800)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"Couldn't build Ghidra's decompiler: {error}. {tools}") from error
+        built = build / "cpp" / "ghidra_opt"
+        if res.returncode or not built.is_file():
+            raise ToolchainError(f"Couldn't build Ghidra's decompiler. {tools}\n" + (res.stdout + res.stderr)[-4000:])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, target)
+        target.chmod(0o755)
 
 
 def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> None:
@@ -952,6 +1015,6 @@ def status() -> list[dict]:
                      "installed": m is not None, "supported": tc.supported, "description": tc.description,
                      # installed from an entry that has changed since: Compilers & tools offers to install it again
                      "changed": m is None and _manifest(tc.id) is not None,
-                     "wsl": tc.via_wsl, "local": tc.local, **(_local_status(tc, m) if tc.local and m else {}),
+                     "wsl": tc.via_wsl, "linux_vm": tc.via_vm, "local": tc.local, **(_local_status(tc, m) if tc.local and m else {}),
                      "pinned": all(p.get("sha256") for p in tc.parts) or bool(tc.commit)})
     return rows

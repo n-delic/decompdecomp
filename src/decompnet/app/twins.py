@@ -85,11 +85,13 @@ def coff_prints(data: bytes) -> dict[str, Print]:
     from .. import coffobj
 
     out: dict[str, Print] = {}
+    # (an AMD64 object's ADDR64 is type 1, as ELF's R_X86_64_64: x86_64's masks fill its 8 bytes)
+    processor = "x86_64" if coffobj.is_x64(data) else "x86"
     for owner, raw, relocs in coffobj.sections(data):
         if not owner:
             continue
         code = bytearray(raw)
-        _mask(code, [(off, kind) for off, kind, *_ in relocs], "x86", "little")
+        _mask(code, [(off, kind) for off, kind, *_ in relocs], processor, "little")
         refs = [f"$L+{value:X}" if section else coffobj.c_name(name) for _, _, name, section, value in relocs]
         out[owner] = Print(_key(bytes(code), [(off, kind) for off, kind, *_ in relocs]), refs, len(raw),
                            name=coffobj.c_name(owner))

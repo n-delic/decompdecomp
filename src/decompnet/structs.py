@@ -175,10 +175,15 @@ class Structs:
         self._pointed: dict[int, list[tuple[int, int]]] | None = None
         self.labels: dict[int, str] = {}  # (project mode) address -> the name agents know it by
         self.symbols: dict[str, int] = {}  # (project mode) a function's names -> its address
+        # the first argument and `this` are one register (x64's rcx: arguments come in registers, `this` first), so
+        # arg0 is THIS: a 64-bit PC game's helper asking guess_struct about arg0 found nothing
+        self.first_is_this = False
 
     def type_of(self, key: tuple, path: Iterable[int] = ()) -> int | None:
         """The type of a named thing: (ARGUMENT, function, n), (RETURN, function) or (GLOBAL, address); `path`
         follows pointer fields (arg0+0x14: the struct the pointer at 0x14 points to)."""
+        if self.first_is_this and len(key) == 3 and key[0] == ARGUMENT and key[2] == 0:
+            key = (ARGUMENT, key[1], THIS)
         type_id = self._named.get(key)
         for offset in path:
             if type_id is None:

@@ -207,6 +207,33 @@ $("instrSave").onclick = async () => {
     toast("Saved. Agents get them from their next task on.");
   } catch (e) { toast(esc(e.message), "err"); }
 };
+/* Which functions helpers take first: the project's owner's order, enforced by the server, so an agent's own
+   strategy can't override it. A function an agent names still comes. */
+const CLAIM_ORDER_TEXT = {
+  "": "Default: each helper takes functions in the order it asks for (smallest first in ROM projects, the files closest to done in project mode).",
+  easiest: "Helpers take the smallest functions first.",
+  hardest: "Helpers take the largest functions first.",
+  closest: "Helpers take the functions closest to matching first (near misses).",
+  untried: "Helpers take functions nobody has tried yet first, then the smallest.",
+};
+function renderClaimOrder(ov) {
+  const value = (ov && ov.claim_order) || "";
+  $("claimOrder").value = value;
+  $("claimOrderHint").textContent = CLAIM_ORDER_TEXT[value] || CLAIM_ORDER_TEXT[""];
+}
+async function setClaimOrder(order) {
+  const before = (S.ov && S.ov.claim_order) || "";
+  try {
+    S.ov = await api("/api/claim-order", { method: "POST", body: { slug: S.slug, order } });
+    renderClaimOrder(S.ov);
+    toast(order ? `${CLAIM_ORDER_TEXT[order]} Agents' own order no longer applies.`
+      : "Each helper takes functions in its own order again.");
+  } catch (e) {
+    renderClaimOrder({ claim_order: before });
+    toast(esc(e.message), "err");
+  }
+}
+$("claimOrder").onchange = () => setClaimOrder($("claimOrder").value);
 /* ★: agents take a starred function before the others. */
 async function togglePrio(name, on) {
   try {
@@ -355,6 +382,7 @@ async function exportNow() {
 async function renderProjectSettings() {
   const ov = S.ov;
   if (!ov) return;
+  renderSaveLocation(ov);
   const fork = ov.kind === "fork";
   $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
@@ -522,15 +550,30 @@ $("recheckBtn").onclick = async () => {
   } catch (e) { toast(esc(e.message), "err"); } finally { b.disabled = false; b.textContent = "Check again"; }
 };
 
+function renderSaveLocation(ov) {
+  const input = $("saveFolder");
+  if (input.dataset.slug === ov.slug) return;
+  input.dataset.slug = ov.slug;
+  input.value = ov.save_folder || "";
+  $("saveState").textContent = "";
+  $("saveLog").textContent = "";
+  $("saveLog").hidden = true;
+}
+
 $("saveGo").onclick = async () => {
-  $("saveGo").disabled = true;
+  const slug = S.slug, kind = S.ov.kind, input = $("saveFolder"), log = $("saveLog");
+  const finish = beginWork(log, "Saving project", [$("saveGo")], "Project save finished.");
+  showJobError(log, "");
   try {
-    const r = await api("/api/save", { method: "POST", body: { slug: S.slug, folder: $("saveFolder").value.trim() || undefined } });
+    const r = await api("/api/save", { method: "POST", body: { slug, folder: input.value.trim() || undefined } });
+    if (slug !== S.slug) return;
+    S.ov.save_folder = r.folder;
+    input.value = r.folder;
     $("saveState").textContent = `saved ${clock(Date.now() / 1000).slice(0, 5)}`;
-    $("saveLog").hidden = false;
-    $("saveLog").textContent = S.ov.kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
+    log.hidden = false;
+    log.textContent = kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
       : `Saved to ${r.folder}: ${plural(r.matched || 0, "matched function")}, ${plural(r.best || 0, "best attempt")}.`;
-  } catch (e) { toast(esc(e.message), "err"); } finally { $("saveGo").disabled = false; }
+  } catch (e) { if (slug === S.slug) showJobError(log, e.message); } finally { finish(); }
 };
 
 /* ------------------------------------------------------------------ the compiler, as one answer

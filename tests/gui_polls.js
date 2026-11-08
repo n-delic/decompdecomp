@@ -188,14 +188,23 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       return [identifyHead(head(0, "PS-X EXE"), file).platform, identifyHead(head(0x9319, "CD001"), file).platform,
               platformName("playstation"), notSupported(head(0, "PS-X EXE"), file)];
     })(),
-    // Windows programs the PC console can't start: a 64-bit one, one for another processor, a DOS one
-    windows: [0x8664, 0xaa64, 0x14c, null].map((machine) => {
+    // Windows programs: a 64-bit one (which the PC console starts now), one for another processor, a 32-bit one, a
+    // DOS one, and a 64-bit one whose optional header is a 32-bit program's (a damaged header)
+    windows: [0x8664, 0xaa64, 0x14c, null, -0x8664].map((machine) => {
       const h = new Uint8Array(0x200), dv = new DataView(h.buffer);
       h.set([0x4d, 0x5a]);
-      if (machine !== null) { dv.setUint32(0x3c, 0x80, true); h.set([0x50, 0x45, 0, 0], 0x80); dv.setUint16(0x84, machine, true); }
-      if (machine === 0x14c) dv.setUint16(0x98, 0x10b, true);
+      if (machine !== null) {
+        dv.setUint32(0x3c, 0x80, true); h.set([0x50, 0x45, 0, 0], 0x80); dv.setUint16(0x84, Math.abs(machine), true);
+      }
+      if (machine === 0x14c || machine === -0x8664) dv.setUint16(0x98, 0x10b, true);
+      if (machine === 0x8664) {  // PE32+: its entry at 0x1000, its image base the usual 0x140000000
+        dv.setUint16(0x98, 0x20b, true); dv.setUint32(0xa8, 0x1000, true);
+        dv.setUint32(0xb0, 0x40000000, true); dv.setUint32(0xb4, 1, true);
+      }
       const file = { name: "game.exe", size: 0x200 };
-      return [identifyHead(h, file)?.platform ?? null, notSupported(h, file)];
+      const info = identifyHead(h, file);
+      return [info?.platform ?? null, notSupported(h, file),
+              info && [info.order, hex8(info.entry), info.pack, packOf(info), info.target]];
     }),
     // the Visual C++ pack a dropped program asks for, from its Rich header or linker version: [head as hex, pack, what
     // the drop says]. tests/test_gui.py asks scratch.describe about the same bytes
@@ -398,6 +407,32 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     }
   })()`, ctx);
   checks.advice = advice;
+  // #205: the owner's order for helpers is a project setting; the select saves it and puts the server's answer back
+  // when the save is refused
+  checks.claimOrder = await vm.runInContext(`(async () => {
+    const was = { slug: S.slug, ov: S.ov, api, toast };
+    const elements = {};
+    const original = document.getElementById;
+    const notes = [];
+    document.getElementById = (id) => {
+      if (id !== "claimOrder" && id !== "claimOrderHint") return original(id);
+      return elements[id] || (elements[id] = { value: "", textContent: "" });
+    };
+    const calls = [];
+    try {
+      toast = (html) => notes.push(String(html));
+      S.slug = "a"; S.ov = { slug: "a", kind: "rom", claim_order: "" };
+      api = async (url, opts) => { calls.push([url, opts]); return { ...S.ov, claim_order: opts.body.order }; };
+      await setClaimOrder("untried");
+      const saved = { url: calls[0][0], body: calls[0][1].body, value: elements.claimOrder.value };
+      api = async () => { throw new Error("The project is read-only."); };
+      await setClaimOrder("hardest");
+      return { saved, reverted: elements.claimOrder.value, text: elements.claimOrderHint.textContent, notes };
+    } finally {
+      api = was.api; toast = was.toast; S.slug = was.slug; S.ov = was.ov;
+      document.getElementById = original;
+    }
+  })()`, ctx);
   // a 2017 game's program dropped before the page's state arrived (review of #138): pickFile waits for the state,
   // whose PC table names the pack (it was offered 6.0-7.1's), and the import's dialog lists that 32-bit program's
   // own compilers, never the 64-bit one (setupCompilers, compilerFits)

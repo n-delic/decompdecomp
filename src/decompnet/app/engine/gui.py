@@ -12,8 +12,9 @@ import time
 from pathlib import Path
 
 from ... import compilermap, consoles, scoring, toolchains
-from ...network import IN_BUILD, PROGRESS_COLUMNS, set_aside
+from ...network import CLAIM_ORDERS, IN_BUILD, PROGRESS_COLUMNS, set_aside
 from ...project import compiler_for
+from .. import saves
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
 NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "knowledge", "collab", "import", "reimport", "files",
@@ -61,7 +62,8 @@ class GuiMixin:
                        "helper_matches": helpers,
                        "readable": self.readability.counts(proj)["readable"],
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
-                       "priority": cfg.get("priority", []),
+                       "claim_order": cfg.get("claim_order") if cfg.get("claim_order") in CLAIM_ORDERS else "",
+                       "priority": cfg.get("priority", []), "save_folder": str(saves.save_folder(self, slug)),
                        # (a suggestion its own check disproved isn't one: older ones were filed)
                        "suggestions": [s for s in cfg.get("suggestions", []) if s["status"] == "open"
                                        and not re.search(r"does not match|doesn't compile", s["check"] or "")],
@@ -145,6 +147,7 @@ class GuiMixin:
         proj = self._project(slug)
         rows = self.store.all(
             "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
+            "f.last_checked, f.last_improved, "
             "f.readable, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
@@ -154,6 +157,7 @@ class GuiMixin:
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
         return [{"name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
+                 "last_checked": r["last_checked"], "last_improved": r["last_improved"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],

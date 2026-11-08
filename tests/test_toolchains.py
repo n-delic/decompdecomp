@@ -16,27 +16,6 @@ from decompnet import limits, toolchains
 _EXTERNAL_EXTRACTORS = {".zst": "zstandard"}
 
 
-def test_ghidra_builds_its_bundled_decompiler_only_when_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
-    source = tmp_path / 'Ghidra/Features/Decompiler/src/decompile/cpp'
-    source.mkdir(parents=True)
-    calls = []
-
-    def build(argv, **kwargs):
-        calls.append((argv, kwargs))
-        (source / 'ghidra_opt').write_bytes(b'native decompiler')
-        return subprocess.CompletedProcess(argv, 0, '', '')
-
-    monkeypatch.setattr(toolchains.subprocess, 'run', build)
-    toolchains._build_ghidra_decompiler(tmp_path, lambda *_: None)
-    output = tmp_path / 'Ghidra/Features/Decompiler/os/mac_arm_64/decompile'
-    assert output.read_bytes() == b'native decompiler' and output.stat().st_mode & 0o111
-    assert calls[0][1]['cwd'] == source and calls[0][1]['timeout'] == 900
-    assert 'ARCH_TYPE=-arch arm64' in calls[0][0]
-    toolchains._build_ghidra_decompiler(tmp_path, lambda *_: None)
-    assert len(calls) == 1
-
-
 def _marker_environment(platform_name: str) -> dict[str, str]:
     system = platform_name.split("-", 1)[0]
     return {
@@ -279,6 +258,32 @@ def test_ghidra_without_a_jdk_runs_with_the_pinned_one(tc_root, monkeypatch):
     assert ghidra.java_home() is None and ghidra._env().get("JAVA_HOME") == os.environ.get("JAVA_HOME")  # its own
 
 
+@pytest.mark.skipif(os.name == "nt", reason="shell-script stand-ins for java")
+@pytest.mark.parametrize("version, javac, own", [
+    ("27", True, True),        # a JDK newer than Ghidra's 21 (a Mac's Temurin 27): its own, and Ghidra ran on it
+    ("21.0.12", True, True),   # Ghidra's own minimum
+    ("27", False, False),      # a Java 27 runtime alone: no javac, no JDK, so the pinned one
+    ("17.0.9", True, False),   # a JDK too old for Ghidra 12: the pinned one
+])
+def test_ghidra_runs_on_the_computers_jdk_of_21_or_newer_and_never_a_runtime_alone(tc_root, monkeypatch, version,
+                                                                                    javac, own):
+    """Which Java Ghidra gets, from what is on PATH: the computer's own JDK, any version from 21 on, or else the
+    pinned JDK (toolchains.toml `jdk`, Temurin 21), which is then needed (available()) and put first on Ghidra's
+    PATH. A runtime alone, without javac, is no JDK: Ghidra's launcher quit on one."""
+    from decompnet.forks import ghidra
+
+    monkeypatch.setenv("PATH", str(_java(tc_root / "java", version, javac=javac)))
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    monkeypatch.setattr(toolchains, "installed", lambda tid, *args, **kw: {"id": tid} if tid == "ghidra" else None)
+    env = ghidra._env()
+    if own:
+        assert ghidra.java_home() is None and ghidra.available()  # (the pinned JDK isn't installed, nor needed)
+        assert "JAVA_HOME" not in env and env["PATH"] == str(tc_root / "java")
+    else:
+        assert ghidra.java_home() == toolchains.path("jdk") and not ghidra.available()  # (until the pinned one is)
+        assert env["JAVA_HOME"] == str(toolchains.path("jdk")) and env["PATH"].startswith(str(toolchains.path("jdk") / "bin"))
+
+
 @pytest.mark.skipif(os.name == "nt", reason="a shell-script stand-in for Ghidra")
 def test_a_ghidra_that_didnt_run_says_why(tmp_path, monkeypatch):
     from decompnet.forks import ghidra
@@ -289,11 +294,11 @@ def test_a_ghidra_that_didnt_run_says_why(tmp_path, monkeypatch):
     fake.chmod(0o755)
     monkeypatch.setattr(ghidra, "_headless", lambda: fake)
     monkeypatch.setattr(ghidra, "_env", lambda: None)
+    monkeypatch.setattr(ghidra, "available", lambda: True)
     program = tmp_path / "game.exe"
     program.write_bytes(b"MZ" + bytes(64))
     with pytest.raises(ForkError, match="Unable to prompt user for JDK path.*Java development kit"):
         ghidra.functions(program)
-    monkeypatch.setattr(ghidra, "available", lambda: True)
     assert ghidra.decompile_object(program, tmp_path / "cache") == {}  # a draft is optional: none, nothing cached
     assert not (tmp_path / "cache").exists()
 
@@ -336,6 +341,122 @@ def test_intel_mac_linker_is_built_from_pinned_source(monkeypatch, tmp_path):
     assert part["build"] == "mips-binutils" and len(part["sha256"]) == 64
 
 
+def _fake_make(monkeypatch, returncode=0, said=""):
+    """make standing in for the real one: it "builds" ghidra_opt where it's run, and says what it was asked."""
+    from types import SimpleNamespace
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if not returncode:
+            (kwargs["cwd"] / "ghidra_opt").write_bytes(b"native host executable")
+        return SimpleNamespace(returncode=returncode, stdout="", stderr=said)
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(toolchains.limits, "capped", lambda argv: argv)
+    monkeypatch.setattr(toolchains.subprocess, "run", run)
+    return calls
+
+
+def _ghidra_source(tmp_path):
+    ghidra = tmp_path / "ghidra"
+    (ghidra / "Ghidra" / "Features" / "Decompiler" / "src" / "decompile" / "cpp").mkdir(parents=True)
+    return ghidra
+
+
+def test_ghidras_decompiler_is_built_where_its_release_has_none(monkeypatch, tmp_path):
+    """Ghidra's release has its decompiler for Intel Linux and Windows only: on a Mac, Ghidra found the functions but
+    not their calling conventions, so a __fastcall function was imported as __cdecl (_func_00401040 for
+    @mix_score@8). There it's built from the release's own source, for this computer: the Makefile's Intel Mac
+    (ARCH_TYPE=-arch x86_64) and macOS 10.6 (ADDITIONAL_FLAGS) are left out."""
+    ghidra = _ghidra_source(tmp_path)
+    calls = _fake_make(monkeypatch)
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-arm64")
+    toolchains._build_ghidra_decompiler(ghidra, lambda _: None)
+    built = ghidra / "Ghidra" / "Features" / "Decompiler" / "os" / "mac_arm_64" / "decompile"
+    assert built.read_bytes() == b"native host executable"
+    assert os.name == "nt" or built.stat().st_mode & 0o111  # (Windows has no executable bit: the CI runs this there too)
+    (argv, kwargs), = calls
+    assert argv[0] == "make" and argv[1].startswith("-j")
+    assert argv[2:] == ["ghidra_opt", "ARCH_TYPE=", "ADDITIONAL_FLAGS=-w", "CXX=c++ -std=c++11"]
+    assert kwargs["cwd"].name == "cpp" and ghidra not in kwargs["cwd"].parents  # built in a folder of its own
+    assert not list((ghidra / "Ghidra" / "Features" / "Decompiler" / "src").rglob("ghidra_opt"))
+    toolchains._build_ghidra_decompiler(ghidra, lambda _: None)  # one there already (the release's): kept
+    assert len(calls) == 1
+    ghidra_tc = toolchains.get("ghidra")
+    for plat in ("macos-arm64", "macos-x86_64", "linux-aarch64"):
+        assert [p.get("build") for p in ghidra_tc.parts_for(plat)] == ["ghidra-decompiler"], plat
+    for plat in ("linux-x86_64", "windows-x86_64", "windows-aarch64"):  # the release's own (on Arm, emulated)
+        assert [p.get("build") for p in ghidra_tc.parts_for(plat)] == [None], plat
+
+
+@pytest.mark.parametrize("plat, builds", [("macos-arm64", True), ("macos-x86_64", True), ("linux-aarch64", True),
+                                          ("linux-x86_64", False)])
+def test_installing_ghidra_builds_its_decompiler_only_where_its_release_has_none(tc_root, monkeypatch, plat, builds):
+    """install() itself: Ghidra's archive unpacked, then its decompiler built (or, with the release's own, not), and
+    the install is installed() only with it. A test of the build alone passed with install() never calling it."""
+    import zipfile
+
+    monkeypatch.setattr(toolchains, "current_platform", lambda: plat)
+    monkeypatch.setattr(toolchains, "jdk_version", lambda: 21)
+    part = toolchains.get("ghidra").parts_for()[0]
+    downloads = toolchains.root() / ".downloads"
+    downloads.mkdir(parents=True)
+    top = part["subdir"] + "/Ghidra/Features/Decompiler"
+    with zipfile.ZipFile(downloads / toolchains.Path(part["url"]).name, "w") as z:
+        z.writestr(top + "/src/decompile/cpp/Makefile", "")
+        z.writestr(top + "/os/linux_x86_64/decompile", "the release's")
+    monkeypatch.setattr(toolchains, "_sha256", lambda _: part["sha256"])
+    monkeypatch.setattr(toolchains, "_download", lambda *a: pytest.fail("nothing to download"))
+    calls = _fake_make(monkeypatch)
+    toolchains.install("ghidra", log=lambda _: None)
+    assert len(calls) == builds and toolchains.installed("ghidra") is not None
+    decompiler = toolchains.ghidra_decompiler(toolchains.path("ghidra"))
+    assert decompiler.read_bytes() == (b"native host executable" if builds else b"the release's")
+
+
+def test_a_ghidra_decompiler_build_without_build_tools_says_what_to_install(monkeypatch, tmp_path):
+    ghidra = _ghidra_source(tmp_path)
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name: None)
+    monkeypatch.setattr(toolchains.subprocess, "run", lambda *a, **kw: pytest.fail("nothing to run"))
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-arm64")
+    with pytest.raises(toolchains.ToolchainError, match="needs Xcode Command Line Tools: run `xcode-select --install`"):
+        toolchains._build_ghidra_decompiler(ghidra, lambda _: None)
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "linux-aarch64")
+    with pytest.raises(toolchains.ToolchainError, match="needs a C\\+\\+ compiler and make"):
+        toolchains._build_ghidra_decompiler(ghidra, lambda _: None)
+
+
+def test_a_failed_ghidra_decompiler_build_says_why_and_leaves_none(monkeypatch, tmp_path):
+    """The build's own words, and no decompiler: the install is taken back (install()), and tried again next time."""
+    ghidra = _ghidra_source(tmp_path)
+    _fake_make(monkeypatch, returncode=2, said="fatal error: 'zlib.h' file not found")
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-arm64")
+    with pytest.raises(toolchains.ToolchainError, match="(?s)Couldn't build Ghidra's decompiler.*'zlib.h' file not found"):
+        toolchains._build_ghidra_decompiler(ghidra, lambda _: None)
+    assert not toolchains.ghidra_decompiler(ghidra).exists()
+
+
+def test_a_ghidra_installed_without_its_decompiler_is_installed_again(tc_root, monkeypatch):
+    """A Mac's Ghidra installed before its decompiler was built would go on analysing without it: it isn't installed,
+    so it's installed again (ensure), and the build that comes with it gives the decompiler. Its manifest, from before
+    installs recorded a fingerprint, is judged by its archive, which is the same (changed()): that alone keeps it. On
+    every computer, not only where it's built: a Ghidra whose decompiler went missing is installed again too."""
+    where = toolchains.path("ghidra")
+    where.mkdir(parents=True)
+    part = toolchains.get("ghidra").parts_for("macos-arm64")[0]
+    old = {"id": "ghidra", "parts": [{"url": part["url"], "sha256": part["sha256"]}], "commit": None}
+    for plat in ("macos-arm64", "macos-x86_64", "linux-aarch64", "linux-x86_64", "windows-x86_64", "windows-aarch64"):
+        monkeypatch.setattr(toolchains, "current_platform", lambda plat=plat: plat)
+        (where / toolchains.MANIFEST).write_text(json.dumps(old))  # (the same install, made on this computer)
+        assert not toolchains.changed("ghidra", old) and toolchains.installed("ghidra") is None, plat
+        decompiler = toolchains.ghidra_decompiler(where)
+        decompiler.parent.mkdir(parents=True, exist_ok=True)
+        decompiler.write_bytes(b"")
+        assert toolchains.installed("ghidra")["parts"] == old["parts"], plat
+        decompiler.unlink()
+
+
 def test_source_build_failure_reports_the_build_output(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
@@ -356,6 +477,27 @@ def test_source_build_reports_a_missing_binary(monkeypatch, tmp_path):
     monkeypatch.setattr(toolchains.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
     with pytest.raises(toolchains.ToolchainError, match="did not produce as"):
         toolchains._build_mips_binutils(tmp_path / "source.tar.gz", tmp_path, None, lambda _: None)
+
+
+def test_a_ghidra_without_its_decompiler_isnt_run(tc_root, monkeypatch):
+    """The review's repro: a Ghidra installed without its decompiler (a manifest, no os/<platform>/decompile) isn't
+    installed and isn't available(), but ghidra.functions ran it anyway, and every function's convention came back
+    "unknown". It isn't run: the import stops and says to install it again."""
+    from decompnet.forks import ghidra
+    from decompnet.forks.project import ForkError
+
+    monkeypatch.setattr(toolchains, "jdk_version", lambda: 21)
+    where = toolchains.path("ghidra")
+    (where / "support").mkdir(parents=True)
+    part = toolchains.get("ghidra").parts_for()[0]
+    (where / toolchains.MANIFEST).write_text(json.dumps({"id": "ghidra", "parts": [
+        {"url": part["url"], "sha256": part["sha256"]}], "commit": None}))
+    assert toolchains.installed("ghidra") is None and not ghidra.available()
+    monkeypatch.setattr(ghidra.subprocess, "run", lambda *a, **kw: pytest.fail("Ghidra was run"))
+    program = tc_root / "game.exe"
+    program.write_bytes(b"MZ" + bytes(64))
+    with pytest.raises(ForkError, match="Ghidra isn't installed, or not all of it .*decompdecomp installs it"):
+        ghidra.functions(program)
 
 
 def test_ghidras_java_heap_is_half_its_memory_cap(monkeypatch):
@@ -387,6 +529,7 @@ def test_a_ghidra_out_of_memory_says_so(tmp_path, monkeypatch, dies):
     fake.chmod(0o755)
     monkeypatch.setattr(ghidra, "_headless", lambda: fake)
     monkeypatch.setattr(ghidra, "capped", lambda argv, **_: argv)
+    monkeypatch.setattr(ghidra, "available", lambda: True)
     program = tmp_path / "game.exe"
     program.write_bytes(b"MZ" + bytes(64))
     with pytest.raises(ForkError, match="Ghidra ran out of memory analysing game.exe: .* GB decompdecomp lets one tool"):

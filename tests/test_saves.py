@@ -77,6 +77,7 @@ def worked(built, tmp_path):  # noqa: F811
     net.release(agent, other, "tried an empty body", slug)
     net.add_note(agent, slug, "clamps to [lo, hi]", "clamp_s32")
     net.set_instructions(slug, "Name functions in snake_case.")
+    net.set_claim_order(slug, "untried")
     return net, slug, other
 
 
@@ -102,6 +103,7 @@ def test_a_saved_project_comes_back_on_another_computer(worked, tmp_path):
     fn = fresh._function("clamp_s32", out["slug"])
     assert fn["status"] == "matched" and fn["vram"] == 0x800007D0  # the split and the name came back
     assert fresh.instructions(out["slug"]) == "Name functions in snake_case."
+    assert fresh.claim_order(out["slug"]) == "untried"
     assert fresh._function(other, out["slug"])["best_source"]
     assert any("clamps" in r["text"] for r in fresh.store.all("SELECT text FROM notes"))
     assert fresh.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0  # nothing left claimed
@@ -259,9 +261,11 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     old_home, new_home = tmp_path / "old" / "Decomp", tmp_path / "new" / "Decomp"
     (old_home / "game").mkdir(parents=True)
     net = RomNetwork(old_home / "decomp.db", old_home)
+    old_root = old_home / "game"
     with net.store.tx() as db:
         db.execute("INSERT INTO projects(slug, name, root, config) VALUES('game', 'Game', ?, ?)",
-                   (str(old_home / "game"), json.dumps({"progress_folder": str(old_home / "game" / "progress")})))
+                   (str(old_root), json.dumps({"progress_folder": str(old_root / "progress"),
+                                               "save_folder": str(old_root / "exports")})))
     # Moving the folder is an offline operation; Windows won't remove open database files.
     reader = getattr(net.store._local, "conn", None)
     if reader is not None:
@@ -274,10 +278,12 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     with moved.store.tx() as db:
         old_root = str(old_home / "game")
         db.execute("UPDATE projects SET root=?,config=? WHERE slug='game'",
-                   (old_root, json.dumps({"progress_folder": str(old_home / "game" / "progress")})))
+                   (old_root, json.dumps({"progress_folder": str(old_home / "game" / "progress"),
+                                          "save_folder": str(old_home / "game" / "exports")})))
     assert moved.find_moved_projects() == ["game"]
     cfg = moved.cfg(moved.project_row("game"))
     assert cfg["progress_folder"] == str(new_home / "game" / "progress")
+    assert cfg["save_folder"] == str(new_home / "game" / "exports")
     assert saves.default_folder(moved, "game") == new_home / "game" / "progress"
 
 
