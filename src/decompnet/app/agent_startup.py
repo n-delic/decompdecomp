@@ -21,3 +21,13 @@ def stage(session, label):
         session.push('info', f'Startup · {previous}: {max(0, now-began):.1f}s')
     session.startup_stage = label
     session.startup_stage_at = now if label else None
+
+
+def project_facts(net, slug):
+    """Prompt metadata only; never build a dashboard, scan donors or contact rooms."""
+    project = net._project(slug)
+    config = net.cfg(project)
+    console = net.console(project)
+    return {"title": console.display_title(project["name"], config.get("rom", {})), "kind": config.get("kind", "rom"),
+            "origin": config.get("origin"), **console.project_facts(),
+            "compiler": {"toolchain": "project"} if config.get("kind") == "fork" else config.get("compiler", {})}

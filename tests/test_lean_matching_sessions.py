@@ -129,7 +129,7 @@ def test_cli_rotation_does_not_stop_active_tools(tmp_path,monkeypatch):
     proc=SimpleNamespace(pid=987654,stdin=io.StringIO(),stdout=output(),stderr=[],wait=lambda:0)
     monkeypatch.setattr(agents.subprocess,'Popen',lambda *args,**kwargs:proc)
     monkeypatch.setattr(manager,'_command',lambda *args:(['fake-helper'],{},'prompt'))
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *args:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *args, **kwargs:None)
     monkeypatch.setattr(manager, "prepare_session", lambda *a, **kw: None)
     monkeypatch.setattr(manager,'_save',lambda *args:None)
     monkeypatch.setattr(agents,'_proc_start',lambda *args:None)

@@ -90,7 +90,7 @@ def test_model_validation_precedes_project_preparation_and_worker_creation(tmp_p
 def test_unknown_model_from_stderr_is_fatal_before_handshake_retry(tmp_path,monkeypatch):
     net,manager,s,agent=setup(tmp_path,monkeypatch)
     s.kind='opencode';s.options['model']='opencode/removed-model'
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *a:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *a, **kw:None)
     monkeypatch.setattr(manager,'prepare_session',lambda *a,**kw:None)
     monkeypatch.setattr(manager,'_command',lambda *a:(['stub'],{},''))
     monkeypatch.setattr(manager,'_save',lambda *a:None)

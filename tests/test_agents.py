@@ -500,7 +500,7 @@ def test_the_prompt_gives_the_compile_budget_the_guide_gives(tmp_path, monkeypat
     """The prompt said "no better after 4 compiles in a row" while the guide said "~20"."""
     net = _game(tmp_path)
     m = agents.Manager(net, tmp_path, URL)
-    monkeypatch.setattr(net, "overview", lambda slug: {"kind": "rom", "title": "Game", "platform": "n64",
+    monkeypatch.setattr(agents.agent_startup, "project_facts", lambda net, slug: {"kind": "rom", "title": "Game", "platform": "n64",
                                                       "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
     s = agents.Session("1", "claude", "claude-1", "game", "claude-1", {})
     assert network.stall_budget_text() in m._prompt(s) and "8 compiled claims" in m._prompt(s)
@@ -514,10 +514,10 @@ def test_a_project_started_from_scratch_isnt_called_a_public_decomp(tmp_path, mo
     m = agents.Manager(net, tmp_path, URL)
     s = agents.Session("1", "claude", "claude-1", "game", "claude-1", {})
     for origin, says in (("scratch", "no upstream project"), (None, "a public matching-decompilation project")):
-        monkeypatch.setattr(net, "overview", lambda slug, o=origin: {"kind": "fork", "origin": o, "title": "Game",
+        monkeypatch.setattr(agents.agent_startup, "project_facts", lambda net, slug, o=origin: {"kind": "fork", "origin": o, "title": "Game",
                                                                      "platform": "nds", "platform_name": "Nintendo DS"})
         assert says in m._prompt(s) and "Never fetch or copy code from outside this project" in m._prompt(s)
-    monkeypatch.setattr(net, "overview", lambda slug: {"kind": "rom", "title": "Game", "platform": "n64",
+    monkeypatch.setattr(agents.agent_startup, "project_facts", lambda net, slug: {"kind": "rom", "title": "Game", "platform": "n64",
                                                       "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
     assert "Never fetch or copy code from outside this project" in m._prompt(s)
 
@@ -608,7 +608,7 @@ def test_an_expired_sign_in_is_recognised_retried_then_asks_for_a_new_sign_in(tm
     not be refreshed", and the app took it for an ordinary failure (retries after 10, 19, 39, 76 s, outcome
     "failed", nothing saying why) until the user happened to sign in again. Now it's recognised, tried again a few
     times, and the helper then pauses asking for a new sign-in, without counting as fast failures."""
-    monkeypatch.setattr(agents.Manager, "_preflight_tools", lambda *a: None)
+    monkeypatch.setattr(agents.Manager, "_preflight_tools", lambda *a, **kw: None)
     monkeypatch.setattr(agents.Manager, "prepare_session", lambda *a, **kw: None)
     _no_agent_settings(monkeypatch)
     net = _game(tmp_path)
@@ -1265,7 +1265,7 @@ def test_paused_unchanged_queue_waits_without_starting_paid_session(tmp_path,mon
 
 
 def test_invalid_kimi_authorization_grant_uses_bounded_signin_retries(tmp_path,monkeypatch):
-    monkeypatch.setattr(agents.Manager, "_preflight_tools", lambda *a: None)
+    monkeypatch.setattr(agents.Manager, "_preflight_tools", lambda *a, **kw: None)
     monkeypatch.setattr(agents.Manager, "prepare_session", lambda *a, **kw: None)
     _no_agent_settings(monkeypatch)
     net=_game(tmp_path);manager=agents.Manager(net,tmp_path,URL)

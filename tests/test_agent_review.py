@@ -117,7 +117,7 @@ def test_cli_limit_publishes_account_cooldown_before_session_exit(tmp_path,monke
     from decompnet.app import agents, session_followups
     from tests.test_agent_audit_followups import setup
     net,manager,s,agent=setup(tmp_path,monkeypatch)
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *args:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *args, **kwargs:None)
     monkeypatch.setattr(manager,'prepare_session',lambda *args,**kwargs:None)
     monkeypatch.setattr(manager,'_command',lambda *args:(['stub'],{},''))
     monkeypatch.setattr(manager,'_save',lambda *args:None)

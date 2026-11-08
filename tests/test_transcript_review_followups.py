@@ -136,7 +136,7 @@ def test_cli_handshake_gates_edits_and_preflight_cannot_satisfy_it(tmp_path,monk
 
 def test_cli_missing_handshake_retries_once_then_pauses_without_claiming(tmp_path,monkeypatch):
     net,manager,s,agent=setup(tmp_path,monkeypatch)
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *a:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *a, **kw:None)
     monkeypatch.setattr(manager,'_command',lambda *a:(['stub'],{},'Check tools'))
     monkeypatch.setattr(agents,'_proc_start',lambda *a:None)
     monkeypatch.setattr(manager,'_save',lambda *a:None)
@@ -224,7 +224,7 @@ def test_startup_waits_without_paid_request_when_other_agents_hold_every_functio
     assert net.selection_remaining('game',agent,available_only=True)==0
     session_budget.start(net,agent.id,'game',{})
     s.context_budget=session_budget.current(net,agent,'game')
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *a:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *a, **kw:None)
     monkeypatch.setattr(tools,'_project_info',lambda *a,**kw:'Project facts')
     monkeypatch.setattr(manager,'_command',lambda *a:pytest.fail('No model request while all functions are held'))
     assert manager._run_cli(s,net.local_agent(s.agent_name)[1],tmp_path)

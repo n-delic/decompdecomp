@@ -47,7 +47,7 @@ def test_required_mcp_startup_error_is_visible_redacted_and_not_a_paid_handshake
     net=_game(tmp_path);manager=agents.Manager(net,tmp_path,URL)
     s=manager._record('game','codex','codex-test','Codex',{})
     agent,token=net.local_agent(s.agent_name)
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *args:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *args, **kwargs:None)
     monkeypatch.setattr(manager,'prepare_session',lambda *args,**kwargs:None)
     error='Error: required MCP servers failed to initialize: decomp_agent: connection refused '+token
     script='import sys;sys.stdin.read();print('+repr(error)+',file=sys.stderr,flush=True);sys.exit(1)'
@@ -66,7 +66,7 @@ def test_unknown_cli_failure_retains_redacted_diagnostics_in_handshake_error(tmp
     net=_game(tmp_path);manager=agents.Manager(net,tmp_path,URL)
     s=manager._record('game','codex','codex-test','Codex',{})
     _,token=net.local_agent(s.agent_name)
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *args:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *args, **kwargs:None)
     monkeypatch.setattr(manager,'prepare_session',lambda *args,**kwargs:None)
     script='import sys;sys.stdin.read();print('+repr('unrecognized startup problem '+token)+',file=sys.stderr);sys.exit(1)'
     monkeypatch.setattr(manager,'_command',lambda *args:([sys.executable,'-c',script],dict(os.environ),''))
