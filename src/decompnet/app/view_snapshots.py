@@ -6,6 +6,8 @@ import time
 from collections import OrderedDict
 from concurrent.futures import Future
 
+SNAPSHOT_WAIT_SECONDS = 10
+
 
 class MapPayload(dict):
     """A cached immutable-by-convention map has a unique wire-cache identity."""
@@ -33,8 +35,14 @@ class Snapshots:
             owner = future is None
             if owner:
                 future = self.pending[key] = Future()
+                future.builder_thread = threading.get_ident()
         if not owner:
-            return future.result()
+            if future.builder_thread == threading.get_ident():
+                raise RuntimeError('A project snapshot cannot wait for its own builder.')
+            try:
+                return future.result(timeout=SNAPSHOT_WAIT_SECONDS)
+            except TimeoutError:
+                raise TimeoutError('The project view is still being prepared. Try again shortly.') from None
         try:
             value = build()
             cost = max(1, weight(value))

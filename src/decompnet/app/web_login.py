@@ -51,10 +51,10 @@ class WebLogin:
 
     def authorized(self, request):
         token = request.cookies.get(self.cookie, '')
-        with self.lock:
-            now = time.monotonic()
-            self.sessions = {key:end for key,end in self.sessions.items() if end > now}
-            return bool(token and self.sessions.get(hashlib.sha256(token.encode()).hexdigest()))
+        # Authorization is a read-only snapshot on the ASGI thread. Expired entries
+        # are pruned when issuing a session; it must never wait for a login writer.
+        until = self.sessions.get(hashlib.sha256(token.encode()).hexdigest()) if token else None
+        return bool(until and until > time.monotonic())
 
     def sign_in(self, code):
         with self.lock:
@@ -137,7 +137,7 @@ def register(app):
                 if app.web_login:
                     app.web_login = app.net.web_login = WebLogin(app.port, remote)
             app.settings.data['web_interface_enabled'] = enabled
-            app.settings.save()
+            await app.control(app.settings.save)
             if enabled and app.web_login is None:
                 app.web_login = app.net.web_login = WebLogin(app.port, app.settings.data.get('web_remote_url', ''))
             elif not enabled:
@@ -167,7 +167,7 @@ def register(app):
                 return HTMLResponse(login_page('The sign-in request is too large.'), status_code=413, headers=LOGIN_HEADERS)
         from urllib.parse import parse_qs
         code = parse_qs(raw.decode('utf-8', errors='replace')).get('code', [''])[0]
-        token, status = login.sign_in(code)
+        token, status = await app.control(lambda: login.sign_in(code))
         if token is None:
             message = 'Too many attempts. Wait one minute and try again.' if status == 429 else 'That code was not accepted. Check the terminal and try again.'
             return HTMLResponse(login_page(message), status_code=status, headers=LOGIN_HEADERS)
@@ -182,7 +182,7 @@ def register(app):
             return RedirectResponse('/login', status_code=303, headers=LOGIN_HEADERS)
         if request.headers.get('host') not in app.allowed_hosts or not login.same_origin(request):
             return HTMLResponse('Sign out from this server’s own page.', status_code=403, headers=LOGIN_HEADERS)
-        login.sign_out(request)
+        await app.control(lambda: login.sign_out(request))
         response = RedirectResponse('/login', status_code=303, headers=LOGIN_HEADERS)
         response.delete_cookie(login.cookie, path='/', httponly=True, samesite='strict')
         return response

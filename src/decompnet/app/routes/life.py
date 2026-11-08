@@ -148,8 +148,8 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
-        page_log.warning("page: %s (%s)\n%s", str(data.get("message", ""))[:PAGE_ERROR_CHARS],
-                         str(data.get("where", ""))[:PAGE_ERROR_CHARS], str(data.get("stack", ""))[:PAGE_STACK_CHARS])
+        await app.control(lambda: page_log.warning("page: %s (%s)\n%s", str(data.get("message", ""))[:PAGE_ERROR_CHARS],
+                         str(data.get("where", ""))[:PAGE_ERROR_CHARS], str(data.get("stack", ""))[:PAGE_STACK_CHARS]))
         return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/quit", methods=["POST"])

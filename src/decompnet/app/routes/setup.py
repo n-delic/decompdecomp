@@ -40,10 +40,10 @@ def register(app: App) -> None:
             if data.get('slug'):
                 await call(lambda: sdk_library.choose(net, str(data['slug']), data.get('selection')))
                 from .. import purpose_work, sdk_names
-                purpose_work.start('SDK function naming', str(data['slug']), sdk_names.name_functions, net, str(data['slug']))
+                await app.control(lambda: purpose_work.start('SDK function naming', str(data['slug']), sdk_names.name_functions, net, str(data['slug'])))
                 return JSONResponse(await call(lambda: sdk_library.state(net, str(data['slug']))))
             folders = data.get('folders', [])
-            return JSONResponse({'job': jobs.start('sdk-library', lambda log: sdk_library.scan(net, folders, log))})
+            return JSONResponse({'job': await app.control(lambda: jobs.start('sdk-library', lambda log: sdk_library.scan(net, folders, log)))})
         except (NetworkError, ValueError, OSError) as e:
             return fail(e)
 
@@ -51,7 +51,7 @@ def register(app: App) -> None:
     async def api_linux_vm(request: Request) -> Response:
         if (bad := guard(request, write=True)):
             return bad
-        return JSONResponse({'job': jobs.start('linux-vm', lambda log: linuxvm.setup(log=log))})
+        return JSONResponse({'job': await app.control(lambda: jobs.start('linux-vm', lambda log: linuxvm.setup(log=log)))})
 
     @mcp.custom_route("/api/toolchain", methods=["POST"])
     async def api_toolchain(request: Request) -> Response:
@@ -62,8 +62,8 @@ def register(app: App) -> None:
         folder = str(data.get("folder") or "").strip() or None
         if folder:
             folder = hostenv.local_path(folder)
-        return JSONResponse({"job": jobs.start("toolchain", lambda log: (toolchains.install(tid, accept_license=accept, force=bool(data.get("force")), folder=folder, log=log)
-                                                                         and {"id": tid}))})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("toolchain", lambda log: (toolchains.install(tid, accept_license=accept, force=bool(data.get("force")), folder=folder, log=log)
+                                                                         and {"id": tid})))})
 
     @mcp.custom_route("/api/toolchain/remove", methods=["POST"])
     async def api_toolchain_remove(request: Request) -> Response:
@@ -72,7 +72,7 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         try:
-            toolchains.remove_local(str(data.get("id", "")), str(data.get("folder", "")))
+            await app.control(lambda: toolchains.remove_local(str(data.get("id", "")), str(data.get("folder", ""))))
         except (toolchains.ToolchainError, KeyError) as e:
             return fail(e)
         return JSONResponse({"ok": True})
@@ -84,7 +84,7 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         slug, accept = str(data.get("slug", "")), bool(data.get("accept_license"))
-        return JSONResponse({"job": jobs.start("toolchain", lambda log: net.install_compilers(slug, accept, log=log))})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("toolchain", lambda log: net.install_compilers(slug, accept, log=log)))})
 
     @mcp.custom_route("/api/agents/install", methods=["POST"])
     async def api_agent_install(request: Request) -> Response:
@@ -112,7 +112,7 @@ def register(app: App) -> None:
             kinds.known_versions.pop(kind.id, None)
             manager.refresh_detected(wait=True)  # the launcher shows it, with its models, when the job is done
             return {"kind": kind.id}
-        return JSONResponse({"job": jobs.start("agent-install", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("agent-install", work))})
 
     @mcp.custom_route("/api/agents/detect", methods=["POST"])
     async def api_agents_detect(request: Request) -> Response:
@@ -121,8 +121,8 @@ def register(app: App) -> None:
             return bad
         from decompnet.agents import AGENTS
         for agent in AGENTS:
-            agent.forget_models()
-        manager.refresh_detected()
+            await app.control(agent.forget_models)
+        await app.control(manager.refresh_detected)
         return JSONResponse({"detecting": True})
 
     @mcp.custom_route("/api/endpoints/models", methods=["GET"])
@@ -170,7 +170,7 @@ def register(app: App) -> None:
                 finally:
                     agents.start_progress.reset(token)
             try:
-                return JSONResponse({'job':jobs.start('Create agents',create)})
+                return JSONResponse({'job':await app.control(lambda: jobs.start('Create agents',create))})
             except ValueError as error:
                 return fail(error)
         # Legacy callers keep the immediate response, but preparation must never block the event loop.
@@ -323,8 +323,8 @@ def register(app: App) -> None:
         data=await body(request)
         try:
             if data.get('background'):
-                return JSONResponse({'job':jobs.start('Retry paused functions',
-                    lambda log: manager.retry_paused(str(data.get('id','')),data.get('limit',5),log=log))})
+                return JSONResponse({'job':await app.control(lambda: jobs.start('Retry paused functions',
+                    lambda log: manager.retry_paused(str(data.get('id','')),data.get('limit',5),log=log)))})
             result=await call(manager.retry_paused,str(data.get('id','')),data.get('limit',5))
         except (NetworkError,ValueError) as error:return fail(error)
         return JSONResponse(result)

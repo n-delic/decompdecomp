@@ -105,7 +105,7 @@ def register(app):
                 config.update(client_id=client_id,client_secret=secret,login=user['login'],user_id=user['id'])
             config['enabled'] = data['enabled']
             app.settings.data['web_github'] = config
-            app.settings.save()
+            await app.control(app.settings.save)
             # Revoke previous sessions and pending authorizations after an identity policy change.
             if app.web_login:
                 app.web_login = app.net.web_login = WebLogin(app.port,app.settings.data.get('web_remote_url',''))
@@ -125,12 +125,15 @@ def register(app):
         login,config = app.web_login,dict(configuration(app))
         state,binding,verifier = secrets.token_urlsafe(32),secrets.token_urlsafe(32),secrets.token_urlsafe(48)
         now = time.monotonic()
-        with login.lock:
-            login.oauth_states = {key:value for key,value in login.oauth_states.items() if value['expires']>now}
-            if len(login.oauth_states)>=MAX_PENDING:
-                return failure('Too many pending sign-ins. Wait a few minutes and try again.',429)
-            login.oauth_states[state] = {'binding':hashlib.sha256(binding.encode()).hexdigest(),
-                'verifier':verifier,'callback':callback,'expires':now+OAUTH_SECONDS,'config':config}
+        def reserve_state():
+            with login.lock:
+                login.oauth_states = {key:value for key,value in login.oauth_states.items() if value['expires']>now}
+                if len(login.oauth_states)>=MAX_PENDING:
+                    return failure('Too many pending sign-ins. Wait a few minutes and try again.',429)
+                login.oauth_states[state] = {'binding':hashlib.sha256(binding.encode()).hexdigest(),
+                    'verifier':verifier,'callback':callback,'expires':now+OAUTH_SECONDS,'config':config}
+        if (failure_response := await app.control(reserve_state)) is not None:
+            return failure_response
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
         query = urlencode({'client_id':config['client_id'],'redirect_uri':callback,'scope':'',
                            'state':state,'code_challenge':challenge,'code_challenge_method':'S256',
@@ -147,8 +150,10 @@ def register(app):
         login = app.web_login
         state = request.query_params.get('state','')
         binding = request.cookies.get(f'decomp_oauth_{app.port}','')
-        with login.lock:
-            pending = login.oauth_states.pop(state,None)
+        def consume_state():
+            with login.lock:
+                return login.oauth_states.pop(state,None)
+        pending = await app.control(consume_state)
         if (not pending or pending['expires']<=time.monotonic() or not binding
                 or not secrets.compare_digest(pending['binding'],hashlib.sha256(binding.encode()).hexdigest())
                 or pending['config']!=configuration(app) or pending['callback']!=callback_url(app)):
@@ -164,7 +169,7 @@ def register(app):
             return failure('The login settings changed. Start again.',403)
         if not isinstance(user,dict) or type(user.get('id')) is not int or user['id']!=pending['config']['user_id']:
             return failure('This GitHub account is not permitted to access this app.',403)
-        token = login.issue_session()
+        token = await app.control(login.issue_session)
         response = RedirectResponse('/',status_code=303,headers=OAUTH_HEADERS)
         response.set_cookie(login.cookie,token,max_age=SESSION_SECONDS,httponly=True,secure=True,samesite='lax',path='/')
         response.delete_cookie(f'decomp_oauth_{app.port}',path='/login/github',secure=True,httponly=True,samesite='lax')
