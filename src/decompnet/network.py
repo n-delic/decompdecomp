@@ -346,7 +346,7 @@ def hash_token(token: str) -> str:
 def model_family(agent_name: str) -> str:
     """Who made an agent's model ("claude-opus-1": claude, "opencode-deepseek-v4.1-flash-2": deepseek); an agent
     whose name says no model is a family of its own."""
-    kind, _, rest = agent_name.lower().partition("-")
+    kind, rest = agents.helper_parts(agent_name)
     if kind in agents.FAMILIES:
         return agents.FAMILIES[kind]
     word = re.match(r"[a-z]+\d*", rest)

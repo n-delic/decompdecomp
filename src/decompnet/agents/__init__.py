@@ -386,3 +386,13 @@ def get(kind: str) -> Agent:
         raise ValueError(f"decompdecomp has no agent called {kind!r}: start one of "
                          f"{', '.join(a.name for a in AGENTS)}")
     return found
+
+
+def helper_parts(name: str) -> tuple[str, str]:
+    """Separate a recorded helper kind from its model, including multiword IDs."""
+    name = name.lower()
+    for kind in sorted((*_BY_ID, *_OLD_IDS), key=len, reverse=True):
+        if name.startswith(kind + '-'):
+            return kind, name[len(kind) + 1:]
+    kind, _, rest = name.partition('-')
+    return kind, rest

@@ -446,3 +446,18 @@ writes for the current machine-draft and saved-source repair phases. Values are
 cumulative worker seconds, may overlap, and may exceed wall time with parallel work.
 Only numeric totals are retained; a new run resets them, Stop retains them, and
 refresh/reopening reads them from server state or the saved last-run summary.
+
+### Hourly follow-up: full-brief and helper startup regressions
+
+A full function brief also serves base `Network` callers (for example room/library
+clients), which do not run the GUI engine constructor. Function-specific knowledge
+now obtains the same lazy, project-scoped service used by progress saves; concurrent
+first use creates one service. It preserves historical attribution and leaves source,
+claims and match status unchanged. Synthetic tests cover both legacy and migrated
+project databases; this corrects a reproduced crash, not a measured latency gain.
+
+Saved Cursor helpers with the earlier `cursor` ID resolve to `cursor-cli`. Family
+selection separates the longest registered ID or alias from a helper name, so
+`cursor-cli-claude-…` is attributed to the model family rather than `cli`. CLI messages
+that explicitly require authentication or say `use /login` enter the existing
+signed-out handling before the fatal-error/reconnection fallback.

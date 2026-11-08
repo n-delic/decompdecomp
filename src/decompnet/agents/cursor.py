@@ -26,6 +26,7 @@ def config_home() -> Path:
 
 class Cursor(Agent):
     id = 'cursor-cli'
+    aliases = ('cursor',)  # Stored by earlier app versions; keep saved agents usable.
     name = 'Cursor Agent'
 
     @property

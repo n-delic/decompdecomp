@@ -363,11 +363,8 @@ def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | No
 def _knowledge_store(net, project):
     # Base Network users (including room recovery) do not own the GUI engine's
     # Knowledge service, but portable progress still needs its project schema.
-    service = getattr(net, 'knowledge', None)
-    if service is None:
-        from .knowledge import Knowledge
-        service = net.knowledge = Knowledge(net)
-    return service._store(project)
+    from .knowledge import service
+    return service(net)._store(project)
 
 
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
