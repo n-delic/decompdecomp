@@ -376,7 +376,10 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     preferred=('scratch_role_reuse','parameter_carriers') if diagnosis['register_only'] else (
         ('narrow_load_subtraction','one_shot_scope') if diagnosis['scheduling'] else ())
     storage_lane=[item for item in tagged if item[0] in preferred][:12]
-    return list(dict.fromkeys(guarded+near_loops[:3]+storage_lane+tagged))
+    # Complete guarded recipes are few; retain their alternatives together instead
+    # of losing the second orientation behind unrelated family round-robin work.
+    recipes=[item for item in tagged if item[0]=='record_lifetime_sequence'][:4]
+    return list(dict.fromkeys(guarded+recipes+near_loops[:3]+storage_lane+tagged))
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,

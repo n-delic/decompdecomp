@@ -6133,3 +6133,51 @@ agree. The opt-in regression uses `DECOMPNET_SCRATCH_ROLE_REPLAY` with a private
 case manifest pinned to source/header/target/compiler hashes; no game data is in
 the test or repository. Whole-image rebuilding and transfer to other games were
 not measured by this replay.
+
+## KMC GCC 2.7.2: rediscover the complete record-lifetime repair (November 2026)
+
+The earlier typed-store replay started at 410. Replaying the **original 485-point
+source** exposed two missing steps: reuse an inner constructor-result pointer with
+compatible enclosing storage, then coordinate field order across repeated record
+stores. Value records (`r.w`) and pointers (`p->w`) need the same ordering hypothesis
+when their declared record type is the same. Reordering one site alone misses this.
+
+`pointer_result_reuse` requires compatible ordinary pointer declarations, disjoint
+CFG lifetimes, definite initialization, and an enclosing declaration visible at
+all renamed uses. It rejects address escapes, opaque macros, qualifiers, unknown
+flows and sibling-only scopes. `coordinated_field_store_order` offers at most four
+canonical orientations of repeated field pairs; it requires declared integer
+fields, pure scalar/literal RHS values, no intervening statement, and no escaped
+scalar RHS storage. It does not reorder calls or invent structure layouts.
+
+`record_lifetime_sequence` composes those guarded steps with the existing typed
+narrow-coordinate capture and conversion-preserving field-update fold. Four
+complete alternatives receive a small shared search prefix rather than being
+separated by unrelated families. All still use the ordinary compiler and judge.
+
+### Frozen development-case result
+
+Profile: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, unchanged context,
+symbols and original target. The normal `iterative_repairs.targeted_variants` plus
+`repair_benchmark.run` search, with a 16-trial ceiling, reached **485 → 120 → 0**
+in **two candidate checks and two measured compiler invocations**. The replay also
+compiled its baseline; the separately checked exact control is outside those two
+trials. Elapsed time was about 3.2 seconds on this Mac with installed tools/caches.
+All **1544 linked function bytes** matched. No runtime project was changed.
+
+This is one known development function rediscovered, not a held-out success rate,
+a new live match, a whole-ROM proof, or a guarantee of similar timing elsewhere.
+Private source/context/ROM stay outside Git. Independent hold-outs remain needed
+before broader priority/budget changes.
+
+### Search measurements
+
+Per-family counters distinguish generated proposals, judged candidate checks,
+actual observed compiler invocations, cached skips, improvements and output
+unchanged from the measured parent. Unknown invocation counts remain unknown;
+checks are never silently treated as compiler processes. Parent comparisons require
+matching fingerprint granularity. Duplicate output elsewhere in the bounded window
+is a separate counter. Generated counts deduplicate within a bounded 4096-proposal
+window and retain hashes, not source. Deep compile-ahead tickets retain their own
+invocation counts while preserving outer throughput collection; unconsumed
+speculative work remains in the existing pool totals, not a guessed family total.

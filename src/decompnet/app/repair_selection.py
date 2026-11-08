@@ -11,6 +11,8 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'pointer_result_reuse': ('coordinated_field_store_order','narrow_store_sequence'),
+    'coordinated_field_store_order': ('narrow_store_sequence','pointer_result_reuse'),
     'dead_assignment_narrow_capture': ('narrow_field_update_fold','independent_field_store_order'),
     'narrow_field_update_fold': ('dead_assignment_narrow_capture','independent_field_store_order'),
     'independent_field_store_order': ('dead_assignment_narrow_capture','narrow_field_update_fold'),

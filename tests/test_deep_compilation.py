@@ -259,3 +259,40 @@ def test_unrelated_input_revision_does_not_discard_valid_compilation(monkeypatch
                 db.execute("INSERT INTO functions(project_id,name,best_source,best_score) VALUES(1,'other','int other(){return 2;}',10)")
             assert search._score_work(AGENT,net.project_row('game'),net.function(),source,40,None)==b'queued object'
     finally:search.compile_pool.close()
+
+
+def test_ticket_invocations_preserve_pool_totals_and_are_not_candidate_counts(monkeypatch):
+    from decompnet import compile_timing
+    monkeypatch.setattr(compiler,'concurrency_limit',lambda:2)
+    pool=deep_compilation.Pool()
+    def run():
+        compile_timing.add('invocations',2)
+        return 'compiled'
+    ticket=deep_compilation.Ticket('key',None,run,lambda:None)
+    try:
+        pool.submit(ticket)
+        assert ticket.future.result(timeout=5)=='compiled'
+        assert ticket.compile_counts.values['invocations']==2
+        assert pool.metrics.snapshot()['pool_compiler_invocations']==2
+    finally:pool.close()
+
+
+def test_consumed_ticket_plus_lane_retry_invocations_are_both_measured(monkeypatch):
+    from decompnet import compile_timing
+    net,search=setup(monkeypatch,limit=2)
+    def compile_(proj,header,source,fn):
+        compile_timing.add('invocations',3)
+        return compiler.CompileResult(True,source.encode(),'')
+    net._compile=compile_
+    def score(self,agent,proj,fn,source,best,fork):
+        net._attempt_compilation(proj,net._context(1,'')['header'],source,fn)
+        compile_timing.add('invocations',2)  # A synchronous retry after consuming compile-ahead.
+        return 0
+    monkeypatch.setattr(permute.Permuter,'_score_work',score)
+    try:
+        for source in search._stream_variants((chunk for chunk in [['int f(){return 7;}']]),AGENT,net.project_row('game'),net.function(),None):
+            search._score(AGENT,net.project_row('game'),net.function(),source,40,None)
+        counts=search.efficiency.snapshot()['families']
+        assert sum(c.get('compiler_invocations',0) for c in counts.values())==5
+        assert search.compile_pool.metrics.snapshot()['pool_compiler_invocations']==3
+    finally:search.compile_pool.close()

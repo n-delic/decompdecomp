@@ -6,7 +6,7 @@ import time
 PREFIX = 'machine-draft:'
 GENERATION_PREFIX = 'machine-draft-generation:'
 # Bump when optional initial-draft trials change, so completed misses can retry.
-REPAIR_REVISION = 1
+REPAIR_REVISION = 2
 
 
 def generation(net, fid, *, project_id=None):

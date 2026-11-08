@@ -1478,3 +1478,18 @@ a partial improvement can continue into the sentinel step. A private replay
 recovered the known score-20 checkpoint on its first generated combined trial.
 This is one regression case, not a promise for every register-only miss. The
 ordinary byte judge decides; keep real reads, pointer casts and compiler settings.
+
+### Constructor-result lifetimes and repeated record stores
+
+Before changing flags or forcing registers, compare an inner constructor-result
+pointer with an enclosing pointer of the same type. Reusing that storage can help
+when their CFG lifetimes are disjoint and every read has an initialized value.
+Do not merge pointers that remain live together or whose addresses escape.
+
+Check repeated pairs of independent field stores across **all** instances of the
+same record, including local values and pointers. The shared repair search can
+coordinate one canonical ordering and combine it with the typed narrow-coordinate
+capture/update repairs above. It preserves intermediate narrowing and still uses
+the ordinary exact judge. A frozen 386-instruction case recovered from its original
+485 score in two candidate compiles; this is a solved-case replay, not a general
+success-rate claim. See COMPILER_MATCHING_LEARNINGS.md for the limits.
