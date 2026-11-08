@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -348,7 +349,9 @@ def test_omp_settings_folder_is_the_one_omp_resolves(tmp_path, monkeypatch):
     monkeypatch.setenv("PI_CONFIG_DIR", ".omp2")
     assert ohmy.agent_dir() == tmp_path / ".omp2" / "agent"
     monkeypatch.setenv("PI_CONFIG_DIR", str(tmp_path / "abs"))
-    assert ohmy.agent_dir() == tmp_path / str(tmp_path / "abs") / "agent"  # joined, as omp does
+    # omp glues PI_CONFIG_DIR onto the home folder as text, so an absolute one nests instead of replacing it
+    nested = Path(str(tmp_path) + os.sep + str(tmp_path / "abs")) / "agent"
+    assert ohmy.agent_dir() == nested and ohmy.agent_dir() != (tmp_path / "abs" / "agent")
     monkeypatch.delenv("PI_CONFIG_DIR")
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "own"))
     for profile in ("", "default"):
@@ -358,11 +361,20 @@ def test_omp_settings_folder_is_the_one_omp_resolves(tmp_path, monkeypatch):
     assert ohmy.agent_dir() == tmp_path / ".omp" / "profiles" / "work" / "agent"  # a profile ignores it
 
 
-def test_an_omp_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
-    """omp with no sign-in exits at once and says "No API key found for openai." (or a 401 / "Use /login, ..."):
-    that is a signed-out helper, paused on the first failure, not a plain exit retried five times."""
+@pytest.mark.parametrize("channel", ["stderr", "stdout"])
+def test_an_omp_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch, channel):
+    """omp says a lack of sign-in on both channels, and both must stop the helper at its first failure instead of
+    retrying it five times: `No default model selected. Use /login, ...` on stderr when nobody signed in, and a
+    failed request's `401 Incorrect API key provided: ...` as the `errorMessage` of a stdout `message_end`."""
     manager = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, "http://127.0.0.1:9/mcp")
-    code = "import sys; print('No API key found for openai.', file=sys.stderr); raise SystemExit(1)"
+    if channel == "stderr":
+        code = "import sys; print('No default model selected. Use /login, set an API key environment variable'," \
+               " file=sys.stderr); raise SystemExit(1)"
+    else:
+        event = json.dumps({"type": "message_end", "message": {
+            "role": "assistant", "content": [], "stopReason": "error", "errorStatus": 401,
+            "errorMessage": "401 Incorrect API key provided: sk-x"}})
+        code = f"import sys; print({event!r}); raise SystemExit(1)"
     monkeypatch.setattr(manager, "_command", lambda s, token, workdir: ([sys.executable, "-c", code], dict(os.environ), ""))
     s = agents.Session("omp-1", "omp", "Oh My Pi #1", "game", "omp-1", {})
     assert manager._run_cli(s, "token", tmp_path) is False

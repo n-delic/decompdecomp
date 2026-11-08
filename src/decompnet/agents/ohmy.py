@@ -79,9 +79,11 @@ NODE_INTERNALS = "B:/~BUN/root/"  # where an error in omp's own bundle came from
 def agent_dir() -> Path:
     """The folder omp keeps its settings, sign-in and mcp.json in, resolved as omp resolves it: a named profile
     (`OMP_PROFILE`; empty or `default` means the default one) is `<root>/profiles/<name>/agent` and ignores
-    `PI_CODING_AGENT_DIR`; otherwise `PI_CODING_AGENT_DIR`, or `<root>/agent`. `PI_CONFIG_DIR` names the root under
-    the home folder (omp joins it to the home folder even when it's absolute); with neither, `~/.omp`."""
-    root = Path.home() / (os.environ.get("PI_CONFIG_DIR") or ".omp")
+    `PI_CODING_AGENT_DIR`; otherwise `PI_CODING_AGENT_DIR`, or `<root>/agent`. `PI_CONFIG_DIR` names the root, and
+    omp builds it by gluing it onto the home folder as text (an absolute `PI_CONFIG_DIR=/x` becomes `<home>/x`, an
+    absolute POSIX path that stops existing on Windows); with neither, `~/.omp`."""
+    home = os.fspath(Path.home())
+    root = Path(home + os.sep + (os.environ.get("PI_CONFIG_DIR") or ".omp"))
     profile = os.environ.get("OMP_PROFILE") or ""
     if profile and profile != "default":
         return root / "profiles" / profile / "agent"
