@@ -10,7 +10,9 @@ renames every symbol whose name holds func_<address> or D_<address> to the name 
 "names", kept by decompdecomp's rename_symbol or read from the game's debug information: func_0041B470 ->
 UpdateTown, or a method's Town::Update) counts as its address too, written in C or C++. So is a constructor's or
 destructor's (`CFoo::CFoo`, `CFoo::~CFoo`, which decompdecomp gives a function an agent writes as one):
-`??0CFoo@@QAE@XZ` and `??1CFoo@@QAE@XZ` pair with it, and so do calls to them. Other names are left as they are. Standard library only. Made by decompdecomp.
+`??0CFoo@@QAE@XZ` and `??1CFoo@@QAE@XZ` pair with it, and so do calls to them. Other names are left as they are.
+A 64-bit game's addresses have 9 digits or more (func_140001000), and its C names no underscore in front (x64
+decorates none: `D_140003000`). Standard library only. Made by decompdecomp.
 """
 
 import json
@@ -19,7 +21,12 @@ import struct
 import sys
 from pathlib import Path
 
-REF = re.compile(rb"(func|D)_([0-9A-Fa-f]{8})")
+REF = re.compile(rb"(func|D)_([0-9A-Fa-f]{8,16})")
+
+
+def x64(info: dict) -> bool:
+    """Whether the project's programs are 64-bit (functions.json's "machine")."""
+    return info.get("machine") == "x64"
 
 
 def wanted(info: dict) -> dict[bytes, bytes]:
@@ -29,8 +36,8 @@ def wanted(info: dict) -> dict[bytes, bytes]:
         for fn in functions:
             out[f"func_{fn['addr']:08X}".encode()] = fn["name"].encode()
             for _, _, name, _ in fn["relocs"]:
-                if name and name.startswith("_D_"):
-                    out[name[1:].encode()] = name.encode()
+                if name and name.lstrip("_").startswith("D_") and REF.fullmatch(name.lstrip("_").encode()):
+                    out[name.lstrip("_").encode()] = name.encode()
     return out
 
 
@@ -39,13 +46,13 @@ def real_names(info: dict) -> dict[bytes, bytes]:
     return {real.encode(): key.encode() for key, real in (info.get("names") or {}).items()}
 
 
-def address_of(name: bytes, real: dict[bytes, bytes]) -> bytes | None:
+def address_of(name: bytes, real: dict[bytes, bytes], wide: bool = False) -> bytes | None:
     """func_XXXXXXXX / D_XXXXXXXX (upper case address) a symbol stands for: by the address in its name, or by a real
     name, as C (`_UpdateTown`, `_UpdateTown@8`, `@UpdateTown@8`) or C++ (`?UpdateTown@@YAXH@Z`, a method's
     `?UpdateTown@Town@@QAEXH@Z`, named Town::UpdateTown or UpdateTown) spells it; a constructor or destructor by its C++ name (`??1CFoo@@QAE@XZ`:
-    CFoo::~CFoo)."""
-    if name.startswith(b"."):
-        return None
+    CFoo::~CFoo). `wide`: a 64-bit program's, whose C names are as they are (`UpdateTown`)."""
+    if name.startswith((b".", b"$")):  # (a section's, and the compiler's own for a function: a 64-bit one's
+        return None  # $pdata$func_140001000 and $unwind$func_140001000, its exception data)
     if m := REF.search(name):
         return m.group(1) + b"_" + m.group(2).upper()
     if not real:
@@ -59,12 +66,13 @@ def address_of(name: bytes, real: dict[bytes, bytes]) -> bytes | None:
         if scopes and (key := real.get(b"::".join([*scopes, word]))) is not None:
             return key
     else:
-        word = (name[1:] if name[:1] in (b"_", b"@") else name).split(b"@", 1)[0]
+        word = (name[1:] if name[:1] in (b"_", b"@") and not wide else name).split(b"@", 1)[0]
     return real.get(word)
 
 
-def rename(data: bytes, names: dict[bytes, bytes], real: dict[bytes, bytes] | None = None) -> bytes:
-    """The COFF object with its symbols renamed (new names go at the end of the string table)."""
+def rename(data: bytes, names: dict[bytes, bytes], real: dict[bytes, bytes] | None = None, wide: bool = False) -> bytes:
+    """The COFF object with its symbols renamed (new names go at the end of the string table). `wide`: a 64-bit
+    program's (address_of)."""
     sym_at, count = struct.unpack_from("<II", data, 8)
     strings_at = sym_at + 18 * count
     strings = bytearray(data[strings_at:])
@@ -78,11 +86,11 @@ def rename(data: bytes, names: dict[bytes, bytes], real: dict[bytes, bytes] | No
             name = bytes(strings[off:strings.index(b"\0", off)])
         else:
             name = bytes(raw).rstrip(b"\0")
-        key = address_of(name, real or {})
+        key = address_of(name, real or {}, wide)
         if key is not None and name != names.get(key):
             new = names.get(key)
             if new is None and key.startswith(b"D_"):
-                new = b"_" + key  # data the original's code doesn't name
+                new = key if wide else b"_" + key  # data the original's code doesn't name
             if new is not None:
                 if len(new) <= 8:
                     table[at:at + 8] = new.ljust(8, b"\0")
@@ -98,7 +106,7 @@ def main() -> None:
     config, obj = Path(sys.argv[1]), Path(sys.argv[2])
     info = json.loads(config.read_text(encoding="utf-8"))
     data = obj.read_bytes()
-    obj.write_bytes(rename(data, wanted(info), real_names(info)))
+    obj.write_bytes(rename(data, wanted(info), real_names(info), x64(info)))
 
 
 if __name__ == "__main__":

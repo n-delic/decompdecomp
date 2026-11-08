@@ -26,7 +26,7 @@ from ...arch import x86
 WORD = 4
 ARG0 = 4  # [esp+4]: a function's first stack argument, above its return address
 FRAME_ARG0 = 8  # [ebp+8]: the same, in a function that keeps an ebp frame (the caller's ebp is pushed below it)
-_SYMBOL = re.compile(r"_*(func|D)_([0-9A-Fa-f]{8})")
+_SYMBOL = re.compile(r"_*(func|D)_([0-9A-Fa-f]{8,16})")
 _READER = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
 _READER.detail = True
 REG, IMM, MEM = cs_x86.X86_OP_REG, cs_x86.X86_OP_IMM, cs_x86.X86_OP_MEM
@@ -425,9 +425,9 @@ typedef int code(...);
 _UNWRITABLE = re.compile(r"\b(unaff_\w+|in_stack_\w+|extraout_\w+|in_FS_OFFSET|in_GS_OFFSET|in_E[ABD]X|in_E[SD]I|"
                          r"in_EBP|in_ESP|stack0x\w+|_+imp_\w+|halt_baddata|swi|LOCK|UNLOCK|CARRY\d|SCARRY\d|SBORROW\d|"
                          r"POPCOUNT|_alloca_probe)\b|\.\_\d+_\d+_")
-_GHIDRA_SYMBOL = re.compile(r"\b_*(func|D)_([0-9A-Fa-f]{8})(?:_\d+)?\b")
+_GHIDRA_SYMBOL = re.compile(r"\b_*(func|D)_([0-9A-Fa-f]{8,16})(?:_\d+)?\b")
 _HEAD = re.compile(r"^(?P<ret>[^\n;{}]*?)\s*\b(?P<conv>__cdecl|__stdcall|__fastcall|__thiscall)?\s*"
-                   r"(?P<name>\w*func_(?P<addr>[0-9A-Fa-f]{8})\w*)\s*\((?P<params>[^()]*)\)\s*\{", re.M)
+                   r"(?P<name>\w*func_(?P<addr>[0-9A-Fa-f]{8,16})\w*)\s*\((?P<params>[^()]*)\)\s*\{", re.M)
 _LOCAL = re.compile(r"^[ \t]+(?P<type>[\w ]+?)\s*(?P<ptr>\*+)?\s*(?P<name>\w+)(?:\s*\[\w+\])?;[ \t]*$", re.M)
 
 
@@ -535,7 +535,7 @@ def compilable(draft: str, symbol: str, symbols: dict[str, str], known: str = ""
         else:
             declared[other] = f"int {other}(...);"
     # each symbol as the build names it: a global Ghidra saw as a byte at its address keeps that view
-    body = re.sub(r"&_D_([0-9A-Fa-f]{8})(?:_\d+)?\b", lambda m: f"((undefined *)&D_{m.group(1).upper()})", body)
+    body = re.sub(r"&_D_([0-9A-Fa-f]{8,16})(?:_\d+)?\b", lambda m: f"((undefined *)&D_{m.group(1).upper()})", body)
     body = _GHIDRA_SYMBOL.sub(lambda m: f"{m.group(1)}_{m.group(2).upper()}", body)
     for other, decl in declared.items():
         if decl is None or "(" not in decl or decl.endswith("(...);"):
@@ -548,9 +548,9 @@ def compilable(draft: str, symbol: str, symbols: dict[str, str], known: str = ""
     # a call's result kept in a pointer, or returned as one, is cast to it (the callees return int)
     for var, (vtype, ptr) in types.items():
         if ptr:
-            body = re.sub(rf"\b{var} = (?=(?:D|func)_[0-9A-F]{{8}}\()", f"{var} = ({vtype} {ptr})", body)
+            body = re.sub(rf"\b{var} = (?=(?:D|func)_[0-9A-F]{{8,16}}\()", f"{var} = ({vtype} {ptr})", body)
     if "*" in ret:
-        body = re.sub(r"\breturn (?=func_[0-9A-F]{8}\()", f"return ({ret})", body)
+        body = re.sub(r"\breturn (?=func_[0-9A-F]{8,16}\()", f"return ({ret})", body)
     decls = [d for d in declared.values() if d] + lines
     code = (f"#include \"{GHIDRA_HEADER}\"\n{signature}\n{{\n" + "".join(f"  {d}\n" for d in decls)
             + body.lstrip("\n").rstrip() + "\n}\n")
