@@ -36,7 +36,6 @@ from decompnet.hostenv import NO_WINDOW
 
 from .. import toolchains
 from ..network import Agent, NetworkError, hash_token
-from ..rom.symbols import AUTO_NAME
 from . import forkroom
 
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
@@ -300,8 +299,7 @@ class Room:
         last = net.store.one("SELECT MAX(t.id) AS m FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?", pid)
         out["a"] = max(a, last["m"] or 0)
         if first or kinds & {"rename", "split"}:
-            out["symbols"] = [dict(r) for r in net.store.all(
-                "SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid) if not AUTO_NAME.match(r["name"])]
+            out["symbols"] = net.layout_symbols(pid)
         if first or fresh or kinds & {"rename", "split"}:
             # fresh: a guest sharing saved work asks for the layout without the room's whole history
             out["functions"] = [dict(r) for r in net.store.all(

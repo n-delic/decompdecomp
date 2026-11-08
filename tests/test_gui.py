@@ -160,6 +160,21 @@ def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui
     assert fork_main == ["func_80000400", "lerp", "main_loop"] and nothing == []
 
 
+def test_the_project_can_choose_which_functions_helpers_take_first(gui):
+    """#205: the owner's order is a select beside the instructions, saved to the project; a refused save puts the
+    server's value back instead of leaving the page showing an order that isn't in force."""
+    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    for value, label in [("", "Default"), ("easiest", "Smallest first"), ("hardest", "Largest first"),
+                         ("closest", "Closest to matching first"), ("untried", "Not yet tried first")]:
+        assert f'<option value="{value}">{label}' in html, value
+    order = gui["checks"]["claimOrder"]
+    assert order["saved"] == {"url": "/api/claim-order", "body": {"slug": "a", "order": "untried"},
+                              "value": "untried"}
+    assert order["reverted"] == "untried" and "nobody has tried yet" in order["text"]
+    assert any("read-only" in note for note in order["notes"])
+
+
 def test_the_theme_button_goes_round_system_light_and_dark(gui):
     """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
     assert gui["checks"]["themes"] == ["light", "dark", ""]
@@ -279,3 +294,10 @@ def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
     assert js == {v: {*compilers, *glued} for v, compilers, glued in scratch.RICH_COMPILERS}
     linkers = re.search(r"const RICH_LINKERS = \[(.*?)\];", text, re.S).group(1)
     assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS
+
+
+def test_linux_vm_setup_shows_readiness_and_uses_progress():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)

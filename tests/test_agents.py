@@ -645,6 +645,138 @@ def test_helpers_are_records_that_outlive_the_app(tmp_path, quiet):
     assert other not in later.sessions and net.store.one("SELECT COUNT(*) AS n FROM helpers")["n"] == 1
 
 
+CLI_MODEL_FLAGS = {"antigravity": "--model", "claude": "--model", "codex": "-m", "cursor": "--model", "kimi": "-m",
+                   "opencode": "-m", "zcode": "--model"}
+CLI_EXECUTABLES = {"antigravity": "agy", "claude": "claude", "codex": "codex", "cursor": "cursor-agent",
+                   "kimi": "kimi.js", "opencode": "opencode", "zcode": "zcode"}
+
+
+def _stand_in_cli(tmp_path, monkeypatch, kind) -> None:
+    """A program standing in for an agent's CLI, found where the app looks: a session's command can then be read
+    without starting a real CLI (which starts the MCP servers in its own settings)."""
+    exe = tmp_path / "bin" / CLI_EXECUTABLES[kind]
+    exe.parent.mkdir(exist_ok=True)
+    if kind == "kimi":  # its launcher wants the npm build (a .js entry) with Node beside it; neither runs here
+        exe.write_text("#!/usr/bin/env node\n")
+        for node in ("node", "node.exe"):
+            (exe.parent / node).write_text("#!/bin/sh\n")
+            (exe.parent / node).chmod(0o755)
+    else:
+        exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
+
+
+def _command_model(m, sid: str, kind: str, tmp_path) -> str:
+    """The model the helper's next session command line names, "" when it names none."""
+    m.prompt = lambda s: "line one"
+    work = tmp_path / f"{kind}-{sid}-command"
+    work.mkdir(exist_ok=True)
+    cmd, _, _ = m._command(m.sessions[sid], "tok", work)
+    flag = CLI_MODEL_FLAGS[kind]
+    return cmd[cmd.index(flag) + 1] if flag in cmd else ""
+
+
+def _own_configs(tmp_path, monkeypatch) -> None:
+    """The agents' own settings read from this test's home, never the user's (and no Cursor keychain lookup)."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home" / ".config"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "home" / ".codex"))
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+
+
+@pytest.mark.parametrize("kind", sorted(CLI_MODEL_FLAGS))
+def test_a_helper_started_on_the_clis_default_keeps_that_model_when_the_default_changes(kind, tmp_path, monkeypatch,
+                                                                                         quiet):
+    """#204: helpers started on the launcher's "Default · <model>" entry were named after that model but recorded no
+    model, so changing the CLI's default later switched a resumed helper to another model. The default it started on
+    is resolved and recorded now, and its command line still names it after the default has changed."""
+    _stand_in_cli(tmp_path, monkeypatch, kind)
+    _own_configs(tmp_path, monkeypatch)
+    agent = kinds.get(kind)
+    monkeypatch.setattr(agent, "config_model", lambda: "gemini-3.8-flash")
+    # The list its CLI last printed (`agy models` for Antigravity caches display names beside their ids); a start
+    # reads it cached and never runs the CLI: `agy models` starts the MCP servers in the user's settings.
+    monkeypatch.setitem(kinds._models, kind, (time.time(), [
+        {"id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash (High)", "note": "test"},
+        {"id": "argon-4-medium", "name": "Argon 4 (Medium)", "note": "test"}]))
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    (sid,) = m.start(kind, "game", 1, {})
+    assert m.sessions[sid].model == "gemini-3.8-flash"
+    row = net.store.one("SELECT model, options FROM helpers WHERE id=?", int(sid))
+    assert row["model"] == "gemini-3.8-flash"
+    assert json.loads(row["options"])["model"] == "gemini-3.8-flash"
+    m.stop()  # the app quits: the helper carries on when it starts again
+    monkeypatch.setattr(agent, "config_model", lambda: "argon-4-medium")  # chosen in the CLI meanwhile
+    later = agents.Manager(net, tmp_path, URL)
+    assert later.resume() == [sid]
+    assert _command_model(later, sid, kind, tmp_path) == "gemini-3.8-flash"
+    (new,) = later.start(kind, "game", 1, {})  # "Default" for a new helper is the default now
+    assert _command_model(later, new, kind, tmp_path) == "argon-4-medium"
+
+
+@pytest.mark.parametrize("kind", sorted(CLI_MODEL_FLAGS))
+def test_a_chosen_model_survives_resume_and_start_again(kind, tmp_path, monkeypatch, quiet):
+    """A helper started on a model the user chose keeps it when the app quits and it carries on, and when it is
+    started again by hand: every later session's command names the chosen model, whatever the CLI's default is."""
+    _stand_in_cli(tmp_path, monkeypatch, kind)
+    _own_configs(tmp_path, monkeypatch)
+    agent = kinds.get(kind)
+    monkeypatch.setattr(agent, "config_model", lambda: "cli-default")
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    (sid,) = m.start(kind, "game", 1, {"model": "chosen-model"})
+    m.stop()
+    monkeypatch.setattr(agent, "config_model", lambda: "argon-4-medium")
+    later = agents.Manager(net, tmp_path, URL)
+    assert later.resume() == [sid]
+    assert _command_model(later, sid, kind, tmp_path) == "chosen-model"
+    later.stop(sid)  # stopped by you
+    monkeypatch.setattr(agent, "config_model", lambda: "another-default")
+    later.restart(sid)  # Start again
+    assert _command_model(later, sid, kind, tmp_path) == "chosen-model"
+
+
+@pytest.mark.parametrize("rows, pinned", [
+    ([{"id": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash (High)", "note": "gemini"}],
+     "gemini-3.8-flash-high"),
+    ([{"id": "another-model", "name": "Another Model", "note": "gemini"}], ""),
+    ([], ""),  # the list wasn't cached yet: nothing to map, so no --model (as before)
+])
+def test_antigravity_maps_the_display_name_its_settings_hold_to_the_slug_its_model_flag_takes(rows, pinned, tmp_path,
+                                                                                              monkeypatch, quiet):
+    """#204: Antigravity's settings keep a display name ("Gemini 3.8 Flash (High)"), while `agy --model` takes the
+    slug `agy models` lists. Starting on Default records and passes the slug; when the cached list hasn't the name,
+    it can't be mapped, so no --model is passed (as before). The helper's name is sensible in both cases."""
+    _stand_in_cli(tmp_path, monkeypatch, "antigravity")
+    _own_configs(tmp_path, monkeypatch)
+    ran = tmp_path / "bin" / "agy-ran"  # `agy models` starts the user's MCP servers: a start must never run it
+    exe = tmp_path / "bin" / CLI_EXECUTABLES["antigravity"]
+    exe.write_text('#!/bin/sh\ntouch "$(dirname "$0")/agy-ran"\n')
+    exe.chmod(0o755)
+    agent = kinds.get("antigravity")
+    monkeypatch.setattr(agent, "config_model", lambda: "Gemini 3.8 Flash (High)")
+    monkeypatch.setitem(kinds._models, "antigravity", (time.time(), rows))
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    (sid,) = m.start("antigravity", "game", 1, {})
+    assert not ran.exists()
+    assert m.sessions[sid].model == pinned
+    assert m.sessions[sid].agent_name == "antigravity-gemini-3.8-flash-high-1"
+    row = net.store.one("SELECT model, options FROM helpers WHERE id=?", int(sid))
+    assert row["model"] == pinned
+    assert (json.loads(row["options"]).get("model") or "") == pinned
+    assert _command_model(m, sid, "antigravity", tmp_path) == pinned
+    # changing the CLI's default meanwhile never switches this helper: it keeps what it started on (or, unmapped,
+    # keeps starting on the CLI's default, as it did before)
+    m.stop()
+    monkeypatch.setattr(agent, "config_model", lambda: "Argon 4 (Medium)")
+    later = agents.Manager(net, tmp_path, URL)
+    assert later.resume() == [sid]
+    assert _command_model(later, sid, "antigravity", tmp_path) == pinned
+
+
 def test_remove_paused_stops_and_deletes_only_paused_helpers_on_the_project(tmp_path, quiet):
     net = _game(tmp_path)
     m = agents.Manager(net, tmp_path, URL)
