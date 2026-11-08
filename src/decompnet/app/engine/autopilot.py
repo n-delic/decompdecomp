@@ -14,7 +14,7 @@ from contextlib import nullcontext
 from contextvars import ContextVar
 from itertools import chain
 
-from ... import compiler, m2cfix, scoring, seeds, toolchains
+from ... import compile_timing, compiler, m2cfix, scoring, seeds, toolchains
 from ...candidate_work import trial
 from ...network import Agent, NetworkError
 from ...project import compiler_for, unknown_compiler_message
@@ -88,7 +88,9 @@ class AutopilotMixin:
     def autopilot_status(self, slug: str) -> dict | None:
         state = self.autopilots.get(slug)
         if state:
-            return {k: v for k, v in state.items() if k not in {"stop","_foreground"}}
+            result={k:v for k,v in state.items() if k!='stop' and not k.startswith('_')}
+            if timing:=state.get('_timings'):result['timings']=timing.snapshot()
+            return result
         last = self.cfg(self._project(slug)).get("autopilot")  # the last run, from before the app restarted
         return {"state": "done", **last} if last else None
 
@@ -99,7 +101,8 @@ class AutopilotMixin:
 
     def _autopilot_work(self, slug, ids, state, workers, try_one):
         from .. import maintenance
-
+        from ..autopilot_timing import Timings, database_reads
+        timing=state['_timings']=Timings()
         automatic_workers, width = workers if isinstance(workers, tuple) else (workers, workers)
         background = threading.BoundedSemaphore(automatic_workers)
         agent, _ = self.local_agent("autopilot")
@@ -134,7 +137,7 @@ class AutopilotMixin:
                 from ...compile_sessions import session
                 def check_stop():
                     if state['stop'].is_set():raise NetworkError('Autopilot stopped.')
-                with maintenance.foreground(state['_foreground']), session(), compiler.cancellable(check_stop), \
+                with database_reads(), maintenance.foreground(state['_foreground']), session(), compiler.cancellable(check_stop), \
                         compiler._SLOTS.capacity(width) if manual else nullcontext(), \
                         compiler.throughput_slots(manual):
                     outcome = try_one(agent, proj, fid)
@@ -162,7 +165,7 @@ class AutopilotMixin:
             from ..trial_bookkeeping import scope as bookkeeping
             # Keep bounded preparation/output caches private to this worker across
             # functions. Session.prepare rechecks exact include bytes on every use.
-            with session(), m2c_sessions.scope(state['_foreground']), streaming(self), bookkeeping(), claim_scope(claim_batch):
+            with compile_timing.collect(timing,append=True), session(), m2c_sessions.scope(state['_foreground']), streaming(self), bookkeeping(), claim_scope(claim_batch):
                 while not state['stop'].is_set():
                     with queue_lock:
                         fid = next(remaining, None)
@@ -194,10 +197,11 @@ class AutopilotMixin:
         finally:
             state["state"] = "stopped" if state["stop"].is_set() else "done"
             state["finished_at"] = time.time()
+            state['timings']=timing.snapshot()
             with self.project_store(proj['id']).tx() as db:
                 cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
                 cfg["autopilot"] = {k: state.get(k) for k in ("total", "tried", "matched", "near", "twins", "started_at",
-                                                              "finished_at", "no_drafts", "repair_total", "repair_done", "repair_matched")}
+                                                              "finished_at", "no_drafts", "repair_total", "repair_done", "repair_matched", "timings")}
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
             drafts = state["matched"] - state.get("twins", 0)
             if drafts:  # (twins announce their own)
@@ -303,7 +307,7 @@ class AutopilotMixin:
         store = self.project_store(proj['id'])
         from .. import autopilot_claims
         identities = autopilot_claims.identities(self,store)
-        with store.tx() as db:
+        with compile_timing.phase('claim_write'), store.tx() as db:
             autopilot_claims.expire(self,db,fid,identities)
             fn = db.execute("SELECT * FROM functions WHERE id=?", (fid,)).fetchone()
             if fn is None or fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fid,)).fetchone():
@@ -432,12 +436,19 @@ class AutopilotMixin:
                         draft_reports.failure(report, 'link', family, 'Compiled C could not be evaluated against this target; review its symbols and data mapping.')
                     outcomes.append("fail")
                     continue
-                d = scoring.diff(self._target_obj(fn, proj), cand)
-                if verdict is not None:
-                    d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+                with compile_timing.phase('scoring'):
+                    if verdict is True:
+                        # The full linker already proved exactness. Autopilot consumes
+                        # no instruction rows; interactive evaluation still builds them.
+                        d=scoring.DiffResult(0,max(1,fn['n_insns'] or 0)*scoring.PENALTY_INSERTION,[],True)
+                        compile_timing.add('exact_score_skips',1)
+                    else:
+                        d = scoring.diff(self._target_obj(fn, proj), cand)
+                        if verdict is not None:
+                            d = scoring.DiffResult(max(1, d.score), d.max_score, d.rows, verdict)
                 # Keep the generating path visible: an already automatic match need not be mistaken
                 # for an unimplemented agent repair when this record is reviewed later.
-                with repair_trial({'kind': 'machine draft', 'family': family}):
+                with compile_timing.phase('publication'), repair_trial({'kind': 'machine draft', 'family': family}):
                     self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
                                  effective_settings=getattr(result, 'effective_settings', None))
                 report['scored'] = True
@@ -454,5 +465,5 @@ class AutopilotMixin:
                     return 'match'
             return min(outcomes or ['fail'], key=("match", "near", "far", "skip", "fail").index)
         finally:
-            with self.project_store(proj['id']).tx() as db:
+            with compile_timing.phase('claim_write'), self.project_store(proj['id']).tx() as db:
                 db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fid, agent.id))

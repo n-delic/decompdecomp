@@ -16,7 +16,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import limits, scoring, toolchains
+from . import compile_timing, limits, scoring, toolchains
 from .elfobj import FunctionObj
 
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
@@ -376,6 +376,7 @@ def _execute_m2c(argv, timeout):
         timeout=timeout,encoding="utf-8",errors="replace",creationflags=NO_WINDOW)
 
 
+@compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++)."""

@@ -83,7 +83,8 @@ def brief(net,fn):
     source = fn['best_source'] or fn['seed'] or ''
     abi = aggregate_hints(source, fn['name'], source)
     prefix = ['### Aggregate ABI checks (advisory)', *abi] if abi else []
-    prefix += net.knowledge.for_function(fn)
+    from .app.knowledge import service
+    prefix += service(net).for_function(fn)
     from .app.matched_context import brief as matched_context
     prefix += matched_context(net, fn, source)
     corrected = corrected_alternative(net, fn)

@@ -141,18 +141,22 @@ def test_an_agent_that_runs_one_makers_models_names_their_family():
     assert network.model_family("gemini-2") == network.model_family("antigravity-1") == "gemini"
     assert network.model_family("opencode-deepseek-v4.1-flash-1") == "deepseek"  # the model in its name says
     assert network.model_family("zcode-glm-5.3-1") == "glm"
-    assert agents.get('cursor').id == 'cursor'
-    assert not agents.get('kimi').family
+    assert agents.get('cursor') is agents.get('cursor-cli')
+    assert agents.kind_id('cursor') == 'cursor-cli'
+    assert agents.get('kimi').family == 'kimi'
     assert network.model_family(helpers.helper_name(agents.get('cursor').id, 'claude-sonnet-5', set())) == "claude"
     assert network.model_family("cursor-gpt-5-1") == "gpt"
-    assert network.model_family("kimi-claude-sonnet-5-1") == "claude"
-    assert network.model_family("kimi-gemini-3-1") == "gemini"
+    assert network.model_family("cursor-cli-gpt-5-1") == "gpt"
+    assert network.model_family("cursor-cli-1") == "cursor-cli"
+    assert network.model_family("kimi-claude-sonnet-5-1") == "kimi"
+    assert network.model_family("kimi-gemini-3-1") == "kimi"
 
 
 def test_real_cli_signin_errors_are_recognized_from_stderr():
     assert helpers._SIGNED_OUT.search("Error: Authentication required. Please run 'agent login' first")
     assert helpers._SIGNED_OUT.search("No model configured. Run kimi and use /login to sign in")
-    assert not agents.get('cursor').fatal("Error: Authentication required. Please run 'agent login' first")
+    # The shared manager recognizes sign-in before applying the CLI fatal fallback.
+    assert agents.get('cursor').fatal("Error: Authentication required. Please run 'agent login' first")
     assert not agents.get('kimi').fatal("No model configured. Run kimi and use /login to sign in")
 
 

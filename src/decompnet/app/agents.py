@@ -182,8 +182,8 @@ SPIN_MATCHES = 3
 
 
 # what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login")
-_SIGNED_OUT = re.compile(r"not logged in|run /login|invalid api key|not authenticated|please (?:log|sign) ?in|"
-                         r"auth(?:entication)? method", re.I)
+_SIGNED_OUT = re.compile(r"not logged in|(?:run|use) /login|invalid api key|not authenticated|please (?:log|sign) ?in|"
+                         r"auth(?:entication)? (?:method|required)", re.I)
 # and when its sign-in stopped working (Claude Code, exit code 1 at once, nothing done: "Failed to authenticate: OAuth
 # session expired and could not be refreshed", its message marked "error": "authentication_failed"). Read as a plain
 # failure, it went by unnoticed in a long session: two helpers retried after 10, 19, 39 and 76 s with no state saying

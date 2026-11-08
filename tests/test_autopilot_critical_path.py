@@ -29,6 +29,9 @@ def test_raw_draft_precedes_optional_repairs_and_uses_exact_verdict(network,monk
         events.append('compile');return SimpleNamespace(ok=True,obj=b'object')
     monkeypatch.setattr(net,'_compile',compile)
     candidate=net._target_obj(fn,proj)
+    if exact:
+        with net.store.tx() as db:db.execute('UPDATE functions SET n_insns=NULL WHERE id=?',(fn['id'],))
+        monkeypatch.setattr('decompnet.scoring.diff',lambda *a:pytest.fail('Full linker exactness must not build unused diff rows'))
     def evaluate(*a):
         assert _search_evaluation.get()
         return candidate,exact,[]

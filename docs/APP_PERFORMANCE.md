@@ -418,3 +418,46 @@ publication lock. Compiles use that same order. This lets an in-flight compile p
 release waits, preventing a cycle where the release owns the project lock and waits for the
 compile's candidate lock. Release receipt checks and note-publication markers remain inside their
 existing guards. Candidate-lock waits at tool entry are included in `candidate_lock_wait_ms`.
+
+### Autopilot setup and timing totals
+
+After the full linker confirms an exact result, the machine-draft lane saves it
+without constructing unused instruction-diff rows. Uncertain and failed verdicts
+still use ordinary scoring; interactive views still obtain detailed diffs.
+
+Worker sessions cache up to 16 resolved native pinned compiler configurations.
+Profiles, environment, exact install-manifest bytes (including dependencies), and
+runtime/executable stamps invalidate this cache. Custom commands, user kits, Wine,
+WSL and VM configurations retain ordinary resolution. This cache contains command
+preparation only, never a verdict. The existing compiled-object cache still checks
+its complete inputs separately.
+
+Header preparation reads exact source and staged bytes on each use, including edits
+with unchanged size and restored timestamps. It updates changed files individually,
+restores compiler-written headers and removes unexpected outputs and symlinks. A
+context.h edit no longer rewrites every other header. A local synthetic check with
+200 small headers and 30 context changes took 1.201s before and 0.505s after. Resolving
+a native pinned compiler configuration 100 times took 0.603s before and 0.171s with
+worker-local reuse. These measurements cover setup only, not end-to-end throughput.
+
+The autopilot panel's collapsed Timing totals disclosure reports generation,
+compiler preparation/execution/wait, linking, scoring, database reads and database
+writes for the current machine-draft and saved-source repair phases. Values are
+cumulative worker seconds, may overlap, and may exceed wall time with parallel work.
+Only numeric totals are retained; a new run resets them, Stop retains them, and
+refresh/reopening reads them from server state or the saved last-run summary.
+
+### Hourly follow-up: full-brief and helper startup regressions
+
+A full function brief also serves base `Network` callers (for example room/library
+clients), which do not run the GUI engine constructor. Function-specific knowledge
+now obtains the same lazy, project-scoped service used by progress saves; concurrent
+first use creates one service. It preserves historical attribution and leaves source,
+claims and match status unchanged. Synthetic tests cover both legacy and migrated
+project databases; this corrects a reproduced crash, not a measured latency gain.
+
+Saved Cursor helpers with the earlier `cursor` ID resolve to `cursor-cli`. Family
+selection separates the longest registered ID or alias from a helper name, so
+`cursor-cli-claude-…` is attributed to the model family rather than `cli`. CLI messages
+that explicitly require authentication or say `use /login` enter the existing
+signed-out handling before the fatal-error/reconnection fallback.

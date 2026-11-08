@@ -346,7 +346,7 @@ def hash_token(token: str) -> str:
 def model_family(agent_name: str) -> str:
     """Who made an agent's model ("claude-opus-1": claude, "opencode-deepseek-v4.1-flash-2": deepseek); an agent
     whose name says no model is a family of its own."""
-    kind, _, rest = agent_name.lower().partition("-")
+    kind, rest = agents.helper_parts(agent_name)
     if kind in agents.FAMILIES:
         return agents.FAMILIES[kind]
     word = re.match(r"[a-z]+\d*", rest)
@@ -784,7 +784,9 @@ class Network:
         cfg = json.loads(proj["config"])
         if fn is not None and (cfg.get("compiler_ranges") or cfg.get('function_compilers')):
             cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"], fn)}
-        invocation = compiler_config(Path(proj["root"]), cfg)
+        from . import compile_configuration, compile_timing
+        with compile_timing.phase('configuration'):
+            invocation = compile_configuration.resolve(Path(proj['root']),cfg,compiler_config)
         identity = dict(fn) if fn is not None else {}
         c = cfg['compiler']
         if 'toolchain' in c and not c.get('ro_paths') and not any(

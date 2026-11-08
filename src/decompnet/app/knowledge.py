@@ -79,6 +79,22 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9_]+", text.lower())
 
 
+def service(net):
+    """Base Network callers need the same scoped knowledge as the GUI engine.
+
+    Initialize once on demand, including when two first briefs arrive together.
+    Never substitute the catalog for a function's operational project store.
+    """
+    existing = getattr(net, 'knowledge', None)
+    if existing is not None:
+        return existing
+    with net.store.lock:
+        existing = getattr(net, 'knowledge', None)
+        if existing is None:
+            existing = net.knowledge = Knowledge(net)
+        return existing
+
+
 class Knowledge:
     def __init__(self, net):
         self.net = net
