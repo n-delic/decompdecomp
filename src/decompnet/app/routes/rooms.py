@@ -89,8 +89,13 @@ def register(app: App) -> None:
         share["links"][slug] = link
         return link
 
+    stopped_rooms=set()
+
     def open_room(*args, **kwargs):
         with room_lock:
+            if kwargs.get('keep') and args[0] in stopped_rooms:
+                raise NetworkError('Room sharing was stopped during startup.')
+            if not kwargs.get('keep'):stopped_rooms.discard(args[0])
             link = _open_room(*args, **kwargs)
             share['restore_errors'].pop(args[0], None)
             return link
@@ -100,8 +105,9 @@ def register(app: App) -> None:
         from ..hosted_rooms import restore
         def reopen(log):
             # Serialize startup with explicit stop/rotate so a closed room cannot reopen behind the user.
+            errors=restore(net, open_room, log)
             with room_lock:
-                share['restore_errors'] = restore(net, open_room, log)
+                share['restore_errors'] = {slug:error for slug,error in errors.items() if slug not in stopped_rooms}
             return {'errors':share['restore_errors']}
         share['restore_job'] = jobs.start('Restore hosted rooms', reopen)
 
@@ -279,10 +285,14 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         slug = str((await body(request)).get("slug", ""))
+        stopped_rooms.add(slug)  # Supersede a pending startup restore before waiting for its lock.
         def stop():
             with room_lock:
-                room = net.rooms.pop(slug, None) or collab.Room(net, slug)
+                room = net.rooms.get(slug) or collab.Room(net, slug)
                 room.close()  # also closes a saved room whose startup restoration failed
+                from ..room_reconcile import close
+                close(room)
+                net.rooms.pop(slug,None)
                 share['restore_errors'].pop(slug, None)
                 share["links"].pop(slug, None)
                 if not net.rooms and share["tunnel"] is not None:
@@ -290,7 +300,10 @@ def register(app: App) -> None:
                     share["tunnel"] = None
             return JSONResponse({"ok": True})
 
-        return await app.call(stop)
+        try:
+            return await (app.control_call or app.call)(stop)
+        except (NetworkError,OSError) as error:
+            return fail(error)
 
     @mcp.custom_route("/api/collab/join", methods=["POST"])
     async def api_collab_join(request: Request) -> Response:

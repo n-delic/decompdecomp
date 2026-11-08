@@ -235,6 +235,7 @@ linting). In short:
 - Use the shared dropdown styling for native single-choice `select` controls, shared field,
   button, status and progress styles, and theme variables. Do not introduce native-looking one-off menus,
   hard-coded theme colors or a separate card system. Check both themes and narrow layouts.
+- Every user action that can wait (including Stop, disconnect, remove, save and settings changes) must acknowledge intent immediately, before its first network request: show the action in progress, prevent duplicate/conflicting clicks, retain feedback across polling redraws, and show success or an actionable error. Never leave a click silently pending or discard an error; restore controls on failure. Test delayed responses, duplicate clicks, errors and stale refreshes.
 - A click that starts work must show feedback immediately, disable duplicate starts, and offer Stop when
   cancellation is supported. Reuse `beginWork`, `followJob`, `showJobError` and `.workbar`; clean up in
   `finally`. Show real progress when totals exist, otherwise indeterminate progress. Keep errors actionable
