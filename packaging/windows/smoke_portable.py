@@ -19,7 +19,7 @@ def main(folder):
         with socket.socket() as listener:
             listener.bind(('127.0.0.1', 0))
             port = listener.getsockname()[1]
-        process = subprocess.Popen([str(executable), 'serve', '--port', str(port)], cwd=home, env=env)
+        process = subprocess.Popen([str(executable), '--port', str(port)], cwd=home, env=env)
         try:
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
