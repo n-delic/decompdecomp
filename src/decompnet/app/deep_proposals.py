@@ -124,6 +124,10 @@ class Pool:
                                 if value.cancelled() or value.exception() is not None:
                                     self.cache.pop(key,None);return
                                 result=value.result()
+                                if 'candidates' in result:
+                                    records=result.pop('candidates')
+                                    result['choices']=[c for c,_ in records]
+                                    result['labels']={c:f for c,f in records if f}
                                 size=sum(len(c.encode()) for c in result['choices'])+sum(len(c.encode())+len(f.encode()) for c,f in result['labels'].items())
                                 self.sizes[key]=size
                                 while len(self.sizes)>16 or sum(self.sizes.values())>MAX_CACHE:

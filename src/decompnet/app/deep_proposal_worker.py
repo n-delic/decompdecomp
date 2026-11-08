@@ -18,7 +18,7 @@ def main():
                 with compile_timing.collect(counts):
                     choices = draft_repairs.variants(*args, labels=labels, **kwargs)
             finally:PARTITION.reset(token)
-            result = {'choices':choices,'labels':labels,'timings':counts.values}
+            result = {'candidates':[(source,labels.get(source,'')) for source in choices],'timings':counts.values}
         except Exception as error:
             result = {'error':type(error).__name__+': '+str(error)}
         sys.stdout.buffer.write(json.dumps(result,ensure_ascii=False).encode()+b'\n')
