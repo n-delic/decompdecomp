@@ -82,6 +82,8 @@ decomp
 
 The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp` folder.
 
+For a portable download, extract `decompdecomp-<version>-windows-x64-portable.zip` from the same releases page and open `decompdecomp.exe`. Keep the bundled `python` and `packages` folders beside it. No app installation or administrator access is needed. The native window requires .NET Framework 4.8 and Microsoft Edge WebView2 Runtime to be installed already; the setup download can install missing prerequisites. Projects and settings still use `%USERPROFILE%\Decomp` (or your explicit `DECOMP_HOME`), so copy that folder too when moving your work.
+
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
 > CodeWarrior for PS2, KMC GCC for N64) use their Linux builds through WSL 2 on Windows. Without it, every compile
