@@ -671,9 +671,8 @@
             <dl class="facts one" id="projFacts"></dl>
             <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
             <div id="reimportGame">
-              <p class="muted small">Choose your copy of the game again and replace its analysis. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
-              <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Choose game and reimport</button></div>
-              <div class="workbar" id="reimportWork" role="progressbar" aria-label="Reimporting game" hidden><i></i></div>
+              <p class="muted small">Reanalyse the game already saved in this project folder. You only need to choose a file if that copy is missing or cannot be verified. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
+              <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Reimport game</button><button class="ghost small-btn" id="reimportStop" type="button" hidden>Stop</button><span class="muted small" id="reimportStatus" role="status"></span></div>
               <pre class="joblog" id="reimportLog" hidden></pre>
             </div>
           </div>

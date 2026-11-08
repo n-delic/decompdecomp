@@ -46,8 +46,8 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
-                    if request.url.path == '/api/try':
-                        return fn(slug, request, data)  # Return the job before any synchronization.
+                    if request.url.path == '/api/try' or (request.method=='POST' and request.url.path=='/api/reimport'):
+                        return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
                         # Deep-pass controls schedule local workers; the workers synchronize before judging.
                         # Starting/stopping or reading their status must not wait for a project sync.
@@ -233,12 +233,36 @@ def register(app: App) -> None:
         from ..code_audit_reviews import review
         return review(net,slug,data.get('review_id'),data.get('state'),data.get('notes',''))
 
+    reimport_lock = threading.RLock()
+
+    def active_reimport(slug):
+        with jobs._lock:
+            return next((j['id'] for j in jobs.jobs.values() if j['kind']=='reimport'
+                         and j.get('activity_project')==slug and j['state']=='running'),None)
+
     def p_reimport(slug, request, data):
+        from ..reimport_source import stored
+        if request.method=='GET':
+            with jobs._lock:
+                latest=next((j for j in reversed(list(jobs.jobs.values())) if j['kind']=='reimport'
+                             and j.get('activity_project')==slug),None)
+                snapshot={'job':latest['id'],'state':latest['state']} if latest else {'job':None}
+            if snapshot.get('state')=='running':return snapshot
+            try:
+                path=stored(net,slug)
+                return {**snapshot,'available':True,'name':path.name}
+            except (NetworkError,OSError,ValueError) as error:
+                return {**snapshot,'available':False,'reason':str(error)}
+        with reimport_lock:
+            if identity:=active_reimport(slug):return {'job':identity}
+            return start_reimport(slug,request,data)
+
+    def start_reimport(slug, request, data):
         if not data.get("confirmed"):
             raise ValueError("confirm that this is your own legally obtained copy of the game")
-        path = hostenv.local_path(str(data.get("path") or ""))
-        if not path.is_file():
-            raise ValueError("choose a game file to reimport")
+        from ..reimport_source import stored
+        path = hostenv.local_path(str(data['path'])) if data.get('path') else stored(net,slug)
+        if not path.is_file():raise NetworkError('Choose a game file to reimport.')
         proj = net.project_row(slug)
         cfg = json.loads(proj["config"])
         fork = bool(net.fork_slug(slug))
@@ -255,9 +279,9 @@ def register(app: App) -> None:
         net.twins.stop(slug)
         net.permuter.stop(slug)
         if fork:  # (its own analysis again: Console.reimport)
-            return {"job": jobs.start("reimport", lambda log: net.forks.reimport(slug, path, log=log))}
+            return {"job": jobs.start("reimport", lambda log: net.forks.reimport(slug, path, log=log), project=slug, cancel_message="Reimport stopped. Completed saved work is retained.")}
         return {"job": jobs.start(
-            "reimport", lambda log: net.reimport_rom(slug, path, confirmed=True, name=path.name, log=log))}
+            "reimport", lambda log: net.reimport_rom(slug, path, confirmed=True, name=path.name, log=log), project=slug, cancel_message="Reimport stopped. Completed saved work is retained.")}
 
     compiler_maintenance = {}
     compiler_maintenance_lock = threading.Lock()
@@ -847,7 +871,7 @@ def register(app: App) -> None:
         "/api/compiler": (p_compiler, ["POST"]),
         "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
-        "/api/reimport": (p_reimport, ["POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
+        "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/recover-code": (p_recover_code, ["POST"]),
         "/api/data-regions": (p_data_regions, ["GET", "POST"]),
         "/api/agent-reviews": (g_agent_reviews, ["GET"]), "/api/agent-review": (p_agent_review, ["POST"]),
