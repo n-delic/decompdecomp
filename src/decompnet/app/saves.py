@@ -1403,6 +1403,7 @@ class Autosave:
             for slug, row in projects.items():
                 if slug in self.workers:
                     self.workers[slug]['row'] = row
+                    self._start_commits(slug, self.workers[slug])
                     continue
                 worker = dict(row=row, cancel=threading.Event(), running=False,
                               detail='Background file checks; explicit saves remain enabled.')
@@ -1410,6 +1411,62 @@ class Autosave:
                                                      daemon=True, name=f'autosave-{slug}')
                 self.workers[slug] = worker
                 worker['thread'].start()
+                self._start_commits(slug, worker)
+
+    def _start_commits(self, slug, worker):
+        cfg = json.loads(worker['row']['config'])
+        if worker.get('commit_thread') or not (cfg.get('auto_commit_matches') or cfg.get('score_commits', {}).get('enabled')):
+            return
+        worker['commit_thread'] = threading.Thread(target=self._commit_loop, args=(slug, worker),
+                                                   daemon=True, name='automatic-commits-'+slug)
+        worker['commit_thread'].start()
+
+    def _commit_loop(self, slug, worker):
+        from .purpose_work import Executor
+        from .workers import lower_priority
+        def check():
+            from .project_activity import active
+            if self.stop.is_set() or self.workers.get(slug) is not worker:
+                raise _AutosavePaused('Automatic commits stopped')
+            if slug in self.paused or not active(self.net, slug):
+                raise _AutosavePaused('Automatic commits paused')
+        def report(message):
+            check()
+            log.info('%s: %s', slug, message)
+        report.check_cancel = check
+        while not self.stop.is_set() and self.workers.get(slug) is worker:
+            try:
+                check()
+                cfg = json.loads(worker['row']['config'])
+                if not (cfg.get('auto_commit_matches') or cfg.get('score_commits', {}).get('enabled')):
+                    self.stop.wait(1)
+                    continue
+                with Executor(1, purpose='Automatic progress commits', project=slug,
+                              stop=lambda: self.pause(slug), initializer=lower_priority,
+                              stop_note='Stop pauses automatic saving and commits for this project.') as pool:
+                    def work():
+                        check()
+                        pool.check_cancel()
+                        self._commit_once(slug, report)
+                    pool.submit(work).result()
+            except _AutosavePaused:
+                pass
+            except Exception:
+                if not self.stop.is_set() and slug not in self.paused:
+                    log.exception('Could not process automatic commits for %s', slug)
+            self.stop.wait(1)
+
+    def _commit_once(self, slug, output):
+        # Read preferences now, not the coordinator's older discovery snapshot.
+        proj = self.net.project_row(slug)
+        if proj is None:return
+        cfg = json.loads(proj['config'])
+        if cfg.get('auto_commit_matches'):
+            from . import match_commits
+            match_commits.process(self.net, slug, output)
+        if cfg.get('score_commits', {}).get('enabled'):
+            from . import score_commits
+            score_commits.process(self.net, slug, output)
 
     def _loop(self) -> None:
         from .workers import lower_priority
@@ -1449,7 +1506,7 @@ class Autosave:
                     with self.lock:
                         check_cancel()
                         worker['running'] = True
-                    self.run_once(force=False, rows=[worker['row']], logger=report)
+                    self.run_once(force=False, rows=[worker['row']], logger=report, commits=False)
                 except _AutosavePaused:
                     pass
                 finally:
@@ -1458,7 +1515,7 @@ class Autosave:
                     self.lane.release()
             self.stop.wait(1)
 
-    def run_once(self, *, force=True, rows=None, logger=None) -> list[str]:
+    def run_once(self, *, force=True, rows=None, logger=None, commits=True) -> list[str]:
         """Save dirty work each cycle; background cycles deeply inspect unchanged files every 15 seconds.
 
         Explicit callers retain forced checks, including external edits with unchanged directory timestamps.
@@ -1475,12 +1532,9 @@ class Autosave:
                 if deep:
                     self.deep_check_after[row["slug"]] = time.monotonic() + 15
                 self.retry_after.pop(row['slug'], None)
-                if json.loads(row['config']).get('auto_commit_matches'):
-                    from . import match_commits
-                    match_commits.process(self.net, row['slug'], logger or log.info)
-                if json.loads(row['config']).get('score_commits', {}).get('enabled'):
-                    from . import score_commits
-                    score_commits.process(self.net, row['slug'], logger or log.info)
+                commit_cfg = json.loads(row['config'])
+                if commits and (commit_cfg.get('auto_commit_matches') or commit_cfg.get('score_commits', {}).get('enabled')):
+                    self._commit_once(row['slug'], logger or log.info)
             except _AutosavePaused:
                 raise
             except Exception as error:  # keep other projects saving; do not flood logs every second

@@ -63,6 +63,7 @@ def purpose(name):
     prefixes = [
         ('startup-task-','Startup task','Runs one optional startup scan; stop it using its named task row.'),
         ('background-worker','Background pool','Shared machine-draft and permutation worker; may be idle.'),
+        ('automatic-commits-', 'Automatic commit scheduler', 'Starts dedicated commit work for this project without using the shared autosave lane.'),
         ('autosave-', 'Saved progress', 'Checks and saves this project’s progress files; pause or resume in Background work.'),
         ('progress-compile','Saved progress','Compiles saved C to verify imported or synchronized matches.'),
         ('deep-proposals','Local repair generation','Coordinates private proposal processes; stopping the deep search stops them.'),

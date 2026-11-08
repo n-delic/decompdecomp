@@ -90,3 +90,41 @@ def test_project_removal_retires_worker_and_start_is_idempotent(tmp_path):
     finally:
         auto.close()
         auto.thread.join(2)
+
+
+def test_commit_workers_are_independent_per_project_and_pause_cooperatively(tmp_path, monkeypatch):
+    import json
+    rows = [{'slug':slug,'root':str(tmp_path),'config':json.dumps(
+        {'kind':'rom','rom':{'sha1':'abc'},'auto_commit_matches':True})} for slug in ('a','b')]
+    net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows),
+                          progress=SimpleNamespace(sync=lambda *args, **kwargs: False))
+    net.project_store = lambda _: net.store
+    auto = saves.Autosave(net)
+    entered = {slug:threading.Event() for slug in ('a','b')}
+    release = threading.Event()
+
+    def commit(slug, output):
+        entered[slug].set()
+        if slug == 'a':
+            while not release.wait(.01):output.check_cancel()
+
+    monkeypatch.setattr(auto, '_commit_once', commit)
+    auto.lane.acquire()
+    try:
+        auto._reconcile()
+        assert entered['a'].wait(2)
+        assert entered['b'].wait(2), 'One project commit must not block another project'
+        auto.pause('a')
+        entered['a'].clear()
+        time.sleep(.1)
+        assert not entered['a'].is_set()
+        auto.pause('a', False)
+        assert entered['a'].wait(3)
+    finally:
+        auto.close()
+        release.set()
+        auto.lane.release()
+        for worker in auto.workers.values():
+            worker['thread'].join(3)
+            worker['commit_thread'].join(3)
+            assert not worker['commit_thread'].is_alive()
