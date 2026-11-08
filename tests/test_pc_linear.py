@@ -50,6 +50,14 @@ def test_le_pages_and_cross_page_fixups_roundtrip_without_touching_the_overlay()
     assert restored[0x2FFE:0x3000] == original[0x2FFE:0x3000]
 
 
+def test_le_internal_fixups_do_not_require_an_import_module_table():
+    original = bytearray(le_image())
+    struct.pack_into('<I', original, 0x80 + 112, 0)
+    linear = scratch._template_tool('linear')
+    image = linear.Linear(bytes(original))
+    assert image.restore(image.view()) == bytes(original)
+
+
 @pytest.mark.parametrize("change", ["truncated", "cpu", "page", "iterated", "target", "import", "overlap"])
 def test_unsupported_or_broken_le_is_rejected_before_analysis(change):
     data = bytearray(le_image())
