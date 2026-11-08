@@ -129,7 +129,9 @@ class AutopilotMixin:
             manual = state['_foreground'].is_set()
             try:
                 from ...compile_sessions import session
-                with maintenance.foreground(state['_foreground']), session(), \
+                def check_stop():
+                    if state['stop'].is_set():raise NetworkError('Autopilot stopped.')
+                with maintenance.foreground(state['_foreground']), session(), compiler.cancellable(check_stop), \
                         compiler._SLOTS.capacity(width) if manual else nullcontext(), \
                         compiler.throughput_slots(manual):
                     outcome = try_one(agent, proj, fid)
@@ -144,15 +146,20 @@ class AutopilotMixin:
         remaining = iter(ids)
         queue_lock = threading.Lock()
         def lane():
+            from ... import m2c_sessions
             from ...compile_sessions import session
+            from ..restore_effects import streaming
+            from ..trial_bookkeeping import scope as bookkeeping
             # Keep bounded preparation/output caches private to this worker across
             # functions. Session.prepare rechecks exact include bytes on every use.
-            with session():
+            with session(), m2c_sessions.scope(state['_foreground']), streaming(self), bookkeeping():
                 while not state['stop'].is_set():
                     with queue_lock:
                         fid = next(remaining, None)
                     if fid is None:return
                     one(fid)
+                    from ..restore_effects import checkpoint
+                    checkpoint()
         try:
             count = min(len(ids), max(automatic_workers, width))
             if count:
@@ -257,7 +264,7 @@ class AutopilotMixin:
         """match | near | far | fail | skip, for one function's draft. A draft autopilot already judged with the same
         header is skipped: autopilot tries a function again when its draft changed (the background drafter asks it
         to after the header or the compiler changed, app/drafts.py), not to judge the same C twice."""
-        with self.progress.judging(proj["slug"]) if hasattr(self, "progress") else nullcontext():
+        with self.progress.judging(proj["slug"], synchronize=False) if hasattr(self, "progress") else nullcontext():
             return AutopilotMixin._autopilot_one_work(self, agent, proj, fid)
 
     def _autopilot_one_work(self, agent, proj, fid: int) -> str:

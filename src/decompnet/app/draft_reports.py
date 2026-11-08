@@ -1,4 +1,5 @@
 """Persist bounded generation/compiler/link diagnostics independently of matching history."""
+import copy
 import hashlib
 import json
 import time
@@ -21,6 +22,9 @@ def key(plan, header, data, fn):
 
 def read(net, fid, *, project_id=None):
     store = net.project_store(project_id) if project_id is not None else net.store
+    from .trial_bookkeeping import lookup
+    cached=lookup(store,('draft-report',fid))
+    if cached is not None:return copy.deepcopy(cached)
     row = store.one('SELECT value FROM settings WHERE key=?', PREFIX+str(fid))
     if not row:
         return {}
@@ -29,11 +33,12 @@ def read(net, fid, *, project_id=None):
 
 
 def save(net, fid, report, *, project_id=None):
-    report = dict(report, updated_at=time.time())
+    report = dict(copy.deepcopy(report), updated_at=time.time())
     store = net.project_store(project_id) if project_id is not None else net.store
-    with store.tx() as db:
-        db.execute('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-                   (PREFIX+str(fid),json.dumps(report)))
+    from .trial_bookkeeping import submit
+    submit(store,[('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                   (PREFIX+str(fid),json.dumps(report)))],immediate=bool(report.get('complete')),
+           memo=(('draft-report',fid),report))
 
 
 def failure(report, phase, family, reason):

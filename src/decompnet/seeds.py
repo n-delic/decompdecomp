@@ -366,6 +366,16 @@ def _failure(res: subprocess.CompletedProcess) -> str:
     return note.strip().strip("*/").strip()[-MAX_REASON_CHARS:] or f"m2c stopped with code {res.returncode}"
 
 
+def _execute_m2c(argv, timeout):
+    from . import m2c_sessions
+    try:
+        result=m2c_sessions.run(argv,timeout)
+    except (OSError,ValueError):
+        result=None  # A missing/incompatible worker can use the ordinary pinned CLI.
+    return result if result is not None else subprocess.run(limits.capped(argv),capture_output=True,text=True,
+        timeout=timeout,encoding="utf-8",errors="replace",creationflags=NO_WINDOW)
+
+
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++)."""
@@ -397,8 +407,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             ctx.write_text(_context_for_m2c(context_header), encoding="utf-8")
             argv[1:1] = ["--context", str(ctx)]
         try:
-            res = subprocess.run(limits.capped(argv), capture_output=True, text=True, timeout=timeout,
-                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+            res = _execute_m2c(argv,timeout)
         except subprocess.TimeoutExpired:
             if strict:
                 raise DraftError(f"m2c took longer than {timeout:g} s") from None
@@ -407,8 +416,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             raise DraftError(_failure(res))
         if res.returncode != 0 and "--context" in argv:  # an unparsable context must not cost us the seed
             i = argv.index("--context")
-            res = subprocess.run(limits.capped(argv[:i] + argv[i + 2:]), capture_output=True, text=True, timeout=timeout,
-                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+            res = _execute_m2c(argv[:i] + argv[i + 2:],timeout)
         out = res.stdout.strip()
         # m2c can exit successfully after emitting a partial function and bare diagnostics.
         # Its error placeholders discard instructions; they are explanations, never baseline C.
