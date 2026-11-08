@@ -34,7 +34,7 @@ class App:
     """What every route module gets from server.build()."""
     net: RomNetwork  # the engine: projects, functions, the judge
     mcp: MCPServer  # routes are added to its web app (mcp.custom_route)
-    home: Path  # decompdecomp's own folder (~/Decomp/.decomp)
+    home: Path  # decompdecomp's own folder (~/Decomp-RetroReversing/.decomp)
     port: int
     secret: str  # the GUI's per-launch secret
     mcp_url: str

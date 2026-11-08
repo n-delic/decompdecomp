@@ -13,9 +13,9 @@ def test_a_development_copy_lives_apart_from_the_installed_app(monkeypatch, tmp_
     monkeypatch.delenv("DECOMP_HOME", raising=False)
     monkeypatch.setattr(edition.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(edition, "DEV", True)
-    assert edition.home_dir() == tmp_path / "Decomp-dev"
+    assert edition.home_dir() == tmp_path / "Decomp-RetroReversing-dev"
     monkeypatch.setattr(edition, "DEV", False)
-    assert edition.home_dir() == tmp_path / "Decomp"
+    assert edition.home_dir() == tmp_path / "Decomp-RetroReversing"
     monkeypatch.setenv("DECOMP_HOME", str(tmp_path / "elsewhere"))
     assert edition.home_dir() == tmp_path / "elsewhere"
     assert edition.DEV_PORT != edition.RELEASE_PORT and edition.DEV_HIGHLIGHT != edition.RELEASE_HIGHLIGHT
@@ -124,3 +124,25 @@ def test_the_packages_menu_entry_runs_the_packages_own_decomp():
     entry = subprocess.run(["sed", command.group(1), str(packaging / "decompdecomp.desktop")],
                            capture_output=True, text=True, check=True).stdout
     assert "Exec=/usr/bin/decomp\n" in entry
+
+
+@pytest.mark.parametrize('dev', [False, True])
+def test_default_home_never_selects_or_migrates_upstream_data(monkeypatch, tmp_path, dev):
+    monkeypatch.delenv('DECOMP_HOME', raising=False)
+    monkeypatch.setattr(edition.Path, 'home', lambda: tmp_path)
+    monkeypatch.setattr(edition, 'DEV', dev)
+    for name in ('Decomp', 'Decomp-dev'):
+        internal = tmp_path / name / '.decomp'
+        internal.mkdir(parents=True)
+        (internal / 'decomp.db').write_bytes(b'upstream database must remain untouched')
+        (internal / 'server.json').write_text('upstream instance')
+    selected = edition.home_dir()
+    assert selected.name == ('Decomp-RetroReversing-dev' if dev else 'Decomp-RetroReversing')
+    assert not selected.exists()
+    for name in ('Decomp', 'Decomp-dev'):
+        assert (tmp_path / name / '.decomp/decomp.db').read_bytes() == b'upstream database must remain untouched'
+        assert (tmp_path / name / '.decomp/server.json').read_text() == 'upstream instance'
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path))
+    monkeypatch.setenv('DECOMP_HOME', '~/my-existing-fork')
+    assert edition.home_dir() == tmp_path / 'my-existing-fork'

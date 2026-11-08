@@ -378,3 +378,24 @@ def test_preparation_cancellation_skips_sync_and_launch(tmp_path, monkeypatch):
     assert len(commands) == 1 and commands[0][1] == 'clone'
     assert r.job['state'] == 'cancelled'
     assert not app.manager.source_update_pending
+
+
+@pytest.mark.parametrize('mode', ['development', 'current'])
+def test_source_handoff_uses_the_fork_default_or_explicit_current_home(tmp_path, monkeypatch, mode):
+    from decompnet.app import cli, updates
+
+    app = make_app(tmp_path)
+    app.updater.job = {'state': 'idle'}
+    app.settings.save = lambda: None
+    manager = runtime.Runtime(app)
+    monkeypatch.setattr(runtime.Path, 'home', lambda: tmp_path / 'user')
+    monkeypatch.setattr(runtime, 'validate', lambda *args: (tmp_path / 'checkout', 'git'))
+    monkeypatch.setattr(runtime, 'find_uv', lambda: 'uv')
+    monkeypatch.setattr(runtime.edition, 'DEV', False)
+    monkeypatch.setattr(updates, 'installed', lambda: {'repo': 'RetroReversing/decompdecomp'})
+    monkeypatch.setattr(cli, '_state', lambda path: None)
+    queued = []
+    monkeypatch.setattr(runtime.threading, 'Thread', lambda **kwargs: NS(start=lambda: queued.append(kwargs)))
+    manager.start(str(tmp_path / 'checkout'), mode)
+    expected = tmp_path if mode == 'current' else tmp_path / 'user/Decomp-RetroReversing-dev'
+    assert queued[0]['args'][3] == expected

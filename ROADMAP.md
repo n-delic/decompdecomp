@@ -868,6 +868,10 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Separate fork data.** Installed copies default to `Decomp-RetroReversing` in the user home;
+  checkouts and separate source handoffs use `Decomp-RetroReversing-dev`. Explicit `DECOMP_HOME`
+  overrides still work. Upstream data is never selected or migrated automatically.
+
 - **RetroReversing fork releases.** Tags and app versions use `X.Y.Z-rr.N`; Python packages
   use `X.Y.Z+rr.N`. Updater ordering preserves fork revision numbers across Windows, macOS and Linux.
 

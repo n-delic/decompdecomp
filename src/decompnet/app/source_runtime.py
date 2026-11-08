@@ -203,7 +203,7 @@ class Runtime:
         uv=find_uv()
         if not uv:
             raise ValueError('Install uv, then reopen this dialog to run the checkout.')
-        target=self.app.home.parent if data_mode=='current' else Path.home()/'Decomp-dev'
+        target=self.app.home.parent if data_mode=='current' else edition.default_home(dev=True)
         if target.resolve()!=self.app.home.parent.resolve():
             if edition.DEV and folder == edition.CHECKOUT_ROOT.resolve():
                 raise ValueError('This app already runs from that checkout. Keep current data, or choose a different checkout for a separate development app.')

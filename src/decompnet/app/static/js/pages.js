@@ -486,7 +486,7 @@ async function sourceCheckoutPanel(body) {
     <p class="update-status small" role="status" aria-live="polite" data-source-status></p>
     <div class="update-next" data-source-next hidden><h4>Run your checkout</h4><p class="small muted">Open Terminal (PowerShell on Windows) and run:</p><pre class="joblog" data-source-commands></pre>
       <button type="button" class="ghost small-btn" data-source-copy>Copy commands</button>
-      <p class="small muted">Opens a separate development app using ~/Decomp-dev. To refresh it later, run <code>git pull --ff-only</code> in this folder, then run these commands again.</p></div>
+      <p class="small muted">Opens a separate development app using ~/Decomp-RetroReversing-dev. To refresh it later, run <code>git pull --ff-only</code> in this folder, then run these commands again.</p></div>
     <details class="update-help"><summary>Requirements & manual setup</summary><div class="update-help-body">
       <p class="small">Install <a class="link" href="https://git-scm.com/downloads" target="_blank" rel="noopener">Git</a> to download source and <a class="link" href="https://docs.astral.sh/uv/getting-started/installation/" target="_blank" rel="noopener">uv</a> to run it.</p>
       <ol class="small"><li>To download manually, run the command below in Terminal or PowerShell. Replace <code>NEW_FOLDER</code> with your destination path in quotes.</li></ol>
@@ -700,7 +700,7 @@ async function sourceRuntimeDialog() {
   const body = dialog("Run decompdecomp from Git", `<p>Run directly from a checkout so future updates do not need a rebuilt app.</p>
     <p class="small muted">Use a clean main checkout from your configured update repository. Git and uv must be installed. Download a new checkout below if needed, then select its folder above.</p>
     <label class="field"><span>Existing checkout folder</span><div class="row"><input class="mono grow" data-runtime-path><button type="button" class="ghost" data-runtime-browse>Browse…</button></div></label>
-    <label class="field"><span>Projects and settings</span><select data-runtime-data><option value="development">Separate development data (~/Decomp-dev)</option><option value="current">Keep this app’s current projects and settings</option></select></label>
+    <label class="field"><span>Projects and settings</span><select data-runtime-data><option value="development">Separate development data (~/Decomp-RetroReversing-dev)</option><option value="current">Keep this app’s current projects and settings</option></select></label>
     <button type="button" class="ghost small-btn" data-runtime-download>Download a new checkout…</button>
     <p class="small muted" data-runtime-home></p>
     <label class="check"><input type="checkbox" data-runtime-auto><span><b>Automatically update from main</b><br><span class="small muted">Download and prepare updates while work continues. Try a brief restart checkpoint; if work needs longer, release the hold and retry later. Agents resume with saved usage limits.</span></span></label>
