@@ -13,6 +13,7 @@ Its demo game is projects/demo-gc (the Demo Quest game built with CodeWarrior GC
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
@@ -55,6 +56,16 @@ class GameCube(Console):
     usual = "GC/1.3.2"  # what most of its games were built with: the default until the game says otherwise
     compiler_config = (".decomp.wtf.json", "configure.py", "config/**/*")  # Object(...) versions, splits.txt
     disc_kinds = ("gc", "packed")  # what scratch.disc_kind says its discs are (a compressed one can be either's)
+
+    def recognizes_objdiff(self, config: dict) -> bool:
+        units = config.get('units', [])
+        if not any(isinstance(unit, dict) and (unit.get('scratch') or {}).get('platform') == 'gc_wii' for unit in units):
+            return False
+        versions = {part for unit in units if isinstance(unit, dict)
+                    for key in ('target_path', 'base_path') for part in str(unit.get(key, '')).replace('\\', '/').split('/')
+                    if re.fullmatch(r'[GRS][A-Z0-9]{5}', part)}
+        kinds = {'gc' if version.startswith('G') else 'wii' for version in versions}
+        return kinds == {self.id}
 
     def sniff(self, head: bytes, file) -> bool:
         from . import scratch

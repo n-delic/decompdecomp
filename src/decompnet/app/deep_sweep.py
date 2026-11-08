@@ -275,7 +275,9 @@ class Sweeps:
         # A status poll must never queue behind a writer to repair old pass records.
         # The search worker performs recovery; until then transport errors and rotations are retryable.
         proj = self.net.project_row(slug)
-        counts = self._store(slug).one("SELECT COUNT(*) total, SUM(best_source IS NOT NULL AND best_score IS NOT NULL) ready "
+        # Imported projects keep their C in source files until a search retains a baseline.
+        source_condition = '1' if self.net.fork_slug(slug) else 'best_source IS NOT NULL'
+        counts = self._store(slug).one(f"SELECT COUNT(*) total, SUM(({source_condition}) AND best_score IS NOT NULL) ready "
                                     f"FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])
         completed = self._store(slug).one("SELECT COUNT(*) n FROM deep_permutation_passes d JOIN functions f ON f.id=d.function_id "
                                       "WHERE f.project_id=? AND d.state='completed'", proj['id'])['n']
@@ -494,6 +496,7 @@ class Sweeps:
                         fn = rows.get(fid)
                         if fn is None or fid in visited_turns or fid in futures.values():
                             continue
+                        fn = deep_permuter.prepare_source(self.net, proj, fn)
                         if not fn['best_source'] or fn['best_score'] is None:
                             waiting += 1
                             continue
