@@ -30,7 +30,7 @@ class Box extends Element {
   set innerHTML(html) {
     this.html = html;
     this.elements = [];
-    const tagPattern = /<(button|input|select|option|output|a|span)\b([^>]*)>/g;
+    const tagPattern = /<(button|input|select|option|output|a|span|p)\b([^>]*)>/g;
     for (const match of html.matchAll(tagPattern)) {
       const attrs = {};
       for (const item of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[item[1]] = item[2] ?? "";
@@ -99,7 +99,7 @@ vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "js", "agents.js"), "utf8"), ctx);
 
 const apiAgent = { id: "api", name: "API", uses_endpoints: true, installed: true, recommended: true, takes_effort: false };
-const cliAgent = { id: "claude", name: "Claude Code", installed: true, recommended: false, takes_effort: false,
+const cliAgent = { id: "claude", name: "Claude Code", uses_accounts: true, installed: true, recommended: false, takes_effort: false,
   models: [{ id: "opus", name: "Opus" }, { id: "sonnet", name: "Sonnet" }, { id: "haiku", name: "Haiku" }] };
 const manualAgent = { id: "manual", name: "Manual provider", installed: true, recommended: false, takes_effort: false, models: [] };
 ctx.S.st.agents = [apiAgent, cliAgent, manualAgent];
@@ -234,5 +234,99 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   box.querySelectorAll("[data-step]").find((button) => button.dataset.step === "1").onclick();
   requireOk(box.querySelector("[data-model-limit]").textContent.includes("2 sessions"),
     "API per-model count guidance must update with the How many control");
-  console.log("launcher model selections passed");
+  ctx.S.st.settings.agent_accounts = [{ id: "a1", kind: "claude", name: "Personal" },
+    { id: "a2", kind: "claude", name: "Work" }];
+  box.querySelectorAll(".lz-kind").find((tile) => tile.dataset.k === "claude").onclick();
+  let account = box.querySelector('[data-f="account"]');
+  requireOk(account.options.includes("a1") && account.options.includes("a2"), "named accounts must appear in the launcher");
+  account.value = "a2"; account.onchange();
+  await box.querySelector('[data-act="start"]').onclick();
+  requireOk(calls.at(-1).body.options.account_id === "a2", "selected account must accompany the model choices");
+  requireOk(ctx.S.st.settings.launcher.account_id === "a2", "launcher must remember the selected account");
+  box.querySelectorAll(".lz-kind").find((tile) => tile.dataset.k === "manual").onclick();
+  requireOk(!box.querySelector('[data-f="account"]'), "agents without account support must not show a picker");
+  await box.querySelector('[data-act="start"]').onclick();
+  requireOk(!calls.at(-1).body.options.account_id, "another agent must not inherit a Claude account");
+  box.querySelectorAll(".lz-kind").find((tile) => tile.dataset.k === "claude").onclick();
+  account = box.querySelector('[data-f="account"]');
+  requireOk(account.value === "a2", "switching agents must retain the account choice");
+  account.value = ""; account.onchange();
+  await box.querySelector('[data-act="start"]').onclick();
+  requireOk(!calls.at(-1).body.options.account_id, "default sign-in must not force a named profile");
+  ctx.S.st.settings.launcher.account_id = "removed-account";
+  vm.runInContext("LZ.kind=null;", ctx);
+  ctx.renderLauncher(box);
+  requireOk(box.html.includes("Account removed"), "a removed saved account must require an explicit new choice");
+
+  const accountBox = new Box(); nodes.set("agentAccounts-claude", accountBox);
+  ctx.money = (value) => `$${value}`;
+  ctx.plural = (count, noun) => `${count} ${noun}s`;
+  ctx.cmdBox = (command) => `<pre>${command}</pre>`;
+  ctx.loadState = async () => {};
+  ctx.S.st.settings.agent_accounts.push({ id: "other", kind: "manual", name: "Other agent account" });
+  ctx.S.st.account_usage = [{ kind: "claude", account_id: "a1", name: "Personal", tokens: 100, usd: 0.25, sessions: 2 },
+    { kind: "claude", account_id: "old", name: "Previous", tokens: 200, usd: 0.5, sessions: 1 }];
+  const pages = fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "js", "pages.js"), "utf8");
+  vm.runInContext(pages.slice(pages.indexOf("function accountUsageText(row)"), pages.indexOf('$("agRefresh").onclick')), ctx);
+  ctx.renderAgentAccounts("claude");
+  requireOk(accountBox.html.includes("100 tokens") && accountBox.html.includes("Default sign-in"),
+    "account list must show named accounts and the existing default login");
+  requireOk(!accountBox.html.includes("Other agent account") && !accountBox.querySelector("[data-account-name]"),
+    "agent cards must list only their accounts without an inline form");
+  requireOk(pages.includes("<summary>Additional accounts</summary>") && pages.includes('a.uses_accounts ? `<details'),
+    "only agents supporting accounts should have the inline setting");
+  ctx.dialog = (title, html) => {
+    const body = new Box(); body.innerHTML = html;
+    nodes.set("dialogBody", body); get("dialog").hidden = false;
+    get("dialogTitle").textContent = title;
+    return body;
+  };
+  ctx.closeDialog = () => { get("dialog").hidden = true; };
+  ctx.api = async (url, options) => {
+    calls.push({ url, body: options.body });
+    const settings = ctx.S.st.settings;
+    if (options.body.id) return { ...settings, agent_accounts: settings.agent_accounts.map((a) => a.id === options.body.id ? { ...a, name: options.body.name } : a) };
+    if (options.body.remove) return { ...settings, agent_accounts: settings.agent_accounts.filter((a) => a.id !== options.body.remove) };
+    return { ...settings, agent_accounts: [...settings.agent_accounts, { id: "new", kind: options.body.kind,
+      name: options.body.name, config_dir: options.body.config_dir, signin: "CLAUDE_CONFIG_DIR=/tmp/new claude" }] };
+  };
+  accountBox.querySelector("[data-account-add]").onclick();
+  let form = get("dialogBody");
+  requireOk(get("dialogTitle").textContent === "Add Claude Code account" && form.querySelector("[data-account-name]"),
+    "Add account must open the form in the shared side drawer");
+  requireOk(form.html.includes("Previous"), "removed accounts' recorded usage must remain accessible");
+  form.querySelector("[data-account-name]").value = "New account";
+  form.querySelector("[data-account-dir]").value = "/tmp/new account";
+  await form.querySelector("[data-account-save]").onclick();
+  requireOk(calls.at(-1).url === "/api/agent-accounts" && calls.at(-1).body.kind === "claude" && calls.at(-1).body.name === "New account" &&
+    calls.at(-1).body.config_dir === "/tmp/new account", "adding an account must submit its name and directory");
+  requireOk(accountBox.html.includes("New account") && get("dialogBody").html.includes("CLAUDE_CONFIG_DIR=/tmp/new claude"),
+    "saving must update the list and show the new account's login command in the drawer");
+  requireOk(get("dialogBody").html.includes("label used only in decompdecomp"), "the name must be explained as a local label");
+  get("dialogBody").querySelector("[data-account-name]").value = "My second subscription";
+  await get("dialogBody").querySelector("[data-account-rename]").onclick();
+  requireOk(calls.at(-1).body.id === "new" && calls.at(-1).body.name === "My second subscription" &&
+    !calls.at(-1).body.config_dir && accountBox.html.includes("My second subscription") &&
+    get("dialogTitle").textContent === "My second subscription", "renaming must update the label without changing the login directory");
+  accountBox.querySelector('[data-account-open="a2"]').onclick();
+  await get("dialogBody").querySelector("[data-account-remove]").onclick();
+  requireOk(calls.at(-1).body.remove === "a2" && get("dialog").hidden,
+    "removing an account must target its saved id and close the drawer");
+  accountBox.querySelector("[data-account-add]").onclick();
+  form = get("dialogBody");
+  form.querySelector("[data-account-name]").value = "Keep this name";
+  ctx.api = async () => { throw new Error("Could not save account"); };
+  await form.querySelector("[data-account-save]").onclick();
+  requireOk(!form.querySelector("[data-account-error]").hidden && form.querySelector("[data-account-name]").value === "Keep this name" &&
+    !form.querySelector("[data-account-save]").disabled, "a failed save must retain the form and allow retry");
+  let finishSave;
+  ctx.api = () => new Promise((resolve) => { finishSave = resolve; });
+  const pendingSave = form.querySelector("[data-account-save]").onclick();
+  ctx.closeDialog();
+  finishSave({ ...ctx.S.st.settings, agent_accounts: [...ctx.S.st.settings.agent_accounts,
+    { id: "later", kind: "claude", name: "Saved after closing", signin: "claude" }] });
+  await pendingSave;
+  requireOk(get("dialog").hidden && accountBox.html.includes("Saved after closing"),
+    "a save finishing after the drawer closes must update the list without reopening it");
+  console.log("launcher model selections and accounts passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
