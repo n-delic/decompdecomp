@@ -11,6 +11,7 @@ def register(app):
     lock=threading.Lock()
     pushes = {}
     setups = {}
+    forks = {}
 
     def active_setup(slug):
         job = app.jobs.jobs.get(setups.get(slug), {})
@@ -57,6 +58,32 @@ def register(app):
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
 
+    def active_fork(slug):
+        job = app.jobs.jobs.get(forks.get(slug), {})
+        return job if job.get('state') == 'running' else None
+
+    @app.mcp.custom_route('/api/repository-fork', methods=['GET', 'POST'])
+    async def fork(request):
+        if bad := app.guard(request, write=request.method == 'POST'):return bad
+        try:
+            from .. import repository_fork
+            data = await app.body(request) if request.method == 'POST' else request.query_params
+            slug, folder = str(data.get('slug', '')), str(data.get('folder', '')).strip()
+            with app.jobs._lock:
+                active = active_fork(slug)
+                if active:
+                    if active['scope']['folder'] != folder:raise NetworkError('Fork setup is already running for another checkout of this project.')
+                    return JSONResponse({'job':active['id']})
+                if request.method == 'POST':
+                    job = app.jobs.start('repository-fork', lambda log:repository_fork.run(app.net,slug,folder,
+                        str(data.get('owner','')).strip(),str(data.get('origin_revision','')),log), project=slug,
+                        cancel_message='Fork setup stopped. A GitHub fork or completed remote change may remain. Reopen setup to check; no commits were pushed.')
+                    app.jobs.jobs[job]['scope'] = {'slug':slug,'folder':folder}
+                    forks[slug] = job
+                    return JSONResponse({'job':job})
+            return JSONResponse(await app.call(repository_fork.info,app.net,slug,folder))
+        except (NetworkError,ValueError,KeyError,OSError) as error:return app.fail(error)
+
     @app.mcp.custom_route('/api/repository-score-commits', methods=['POST'])
     async def score_commits(request):
         if bad := app.guard(request, write=True):return bad
@@ -99,6 +126,10 @@ def register(app):
         try:
             from .. import repository_push
             if request.method == 'GET':
+                with app.jobs._lock:
+                    setup = active_fork(str(request.query_params.get('slug', '')))
+                    if setup and setup['scope']['folder'] == str(request.query_params.get('folder', '')).strip():
+                        return JSONResponse({'fork_job':setup['id']})
                 active = active_push(str(request.query_params.get('slug', '')))
                 if active:
                     return JSONResponse({'job':active['id'], 'progress':active.get('progress', {}), **active['scope']})

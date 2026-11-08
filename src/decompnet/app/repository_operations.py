@@ -73,7 +73,7 @@ def _duration(seconds):
 
 
 @contextmanager
-def push(root, project, log, check):
+def push(root, project, log, check, *, label='Pushing commits'):
     identity = key(root)
     ticket = object()
     started = time.monotonic()
@@ -89,7 +89,7 @@ def push(root, project, log, check):
             with _CONDITION:
                 position = state['waiters'].index(ticket)+1
                 if position == 1 and state['holder'] is None:
-                    acquired = state['holder'] = Operation(project, 'Pushing commits', log)
+                    acquired = state['holder'] = Operation(project, label, log)
                     state['waiters'].popleft()
                     break
                 now = time.monotonic()
@@ -111,7 +111,7 @@ def push(root, project, log, check):
                 else:
                     update = None
             if update:
-                if changed:log(phase+'. This push has priority when the current operation finishes; Stop removes it from the queue.')
+                if changed:log(phase+('. This push' if label == 'Pushing commits' else '. This request')+' has priority when the current operation finishes; Stop removes it from the queue.')
                 getattr(log, 'progress', lambda value: None)(update)
             with _CONDITION:
                 _CONDITION.wait(.2)

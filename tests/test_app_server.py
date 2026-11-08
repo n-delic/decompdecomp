@@ -3089,3 +3089,30 @@ def test_deep_maximum_options_reach_jobs_and_reject_invalid_limits(app, monkeypa
     monkeypatch.setattr(net.deep_sweeps,'start',lambda *args:starts.append(args) or {'job':'maximum-pass'})
     assert client.post('/api/permuter/pass',json=payload,headers={'X-Decomp':'1'}).status_code==200
     assert starts[0][-2:]==(True,10)
+
+
+def test_repository_fork_owner_job_guard_and_rediscovery(app,monkeypatch):
+    from decompnet.app import repository_fork, repository_push
+    client,net,_=app
+    started,release=threading.Event(),threading.Event()
+    calls=[]
+    monkeypatch.setattr(repository_fork,'info',lambda *a:{'owners':['mine','team'],'source':'original/repo','origin_revision':'revision'})
+    def run(net,slug,folder,owner,revision,log):
+        calls.append((slug,folder,owner,revision));started.set()
+        assert release.wait(10)
+        return {'fork':'team/repo'}
+    monkeypatch.setattr(repository_fork,'run',run)
+    monkeypatch.setattr(repository_push,'status',lambda *a:(_ for _ in ()).throw(AssertionError('Discover work first')))
+    data={'slug':'game','folder':'/repo','owner':'team','origin_revision':'revision'}
+    assert client.get('/api/repository-fork?slug=game').json()['owners']==['mine','team']
+    assert client.post('/api/repository-fork',json=data).status_code==403
+    try:
+        result=client.post('/api/repository-fork',json=data,headers={'X-Decomp':'1'})
+        assert result.status_code==200 and started.wait(5)
+        job=result.json()['job']
+        assert client.post('/api/repository-fork',json=data,headers={'X-Decomp':'1'}).json()['job']==job
+        assert client.get('/api/repository-fork?slug=game&folder=/repo').json()['job']==job
+        assert client.get('/api/repository-push?slug=game&folder=/repo').json()['fork_job']==job
+        assert client.get('/api/job?id='+job).json()['scope']=={'slug':'game','folder':'/repo'}
+        assert calls==[('game','/repo','team','revision')]
+    finally:release.set()
