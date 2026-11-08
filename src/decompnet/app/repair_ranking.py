@@ -88,6 +88,10 @@ def order(families, rows):
         preferred=GUARDED+('scratch_role_reuse','parameter_carriers')+preferred
     elif diagnosis['scheduling']:
         preferred=GUARDED+('narrow_load_subtraction','one_shot_scope')+preferred
+    if focus == 'scheduling':
+        preferred = GUARDED + ('revisit_one_shot_scope', 'aggregate_call_preparation',
+            'call_preparation_bundle', 'aggregate_pointer_dispatch', 'debug_statement_boundary',
+            'scalar_schedule_order') + preferred
     ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
     from .trial_evidence import order as evidence_order
     return evidence_order(ranked,rows,evidence=diagnosis)

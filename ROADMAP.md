@@ -3165,3 +3165,14 @@ Done: bounded MIPS return-register reaching definitions (including branch-likely
 
 - Done: incremental saved-file content reuse and per-function match archive receipts;
   bounded UI request/event-loop delay history; explicit post-migration catalog-only compaction.
+
+### Generated aggregate dispatch in imported builds
+
+Safe scope cleanup, scalar argument bundles and scheduling guidance use both ROM and
+imported-project search paths. The new generated aggregate-pointer helper is currently
+ROM-only: imported `compile_source` deliberately accepts one definition, and its real
+unit may declare the aggregate after includes. The local permuter skips this helper
+shape before building. Add transactional helper placement/removal in the owning unit,
+persist its prelude with retained candidates, and verify complete inlining with the
+unit's object reader before enabling this family for imported builds. Existing
+`edit_file` remains the manual way to add such a helper there.

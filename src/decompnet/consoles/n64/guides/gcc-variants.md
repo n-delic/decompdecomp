@@ -42,3 +42,17 @@ Before recreating library macros or layouts, inspect the attributed matched-call
 and cross-game source context in the function brief. Preserve actual macro bodies
 and supporting typedefs, resolve conflicts with the current header, and judge the
 result. Similarity and exact matches elsewhere do not identify a unique SDK ABI.
+
+### Recheck scaffolding after a breakthrough
+
+After a structural improvement, retry removing earlier one-pass assignment scopes.
+A KMC GCC 2.7.2 aggregate-call match went from score 60 to exact only after an earlier
+helpful `do { value = expression; } while (0);` wrapper was removed. Local search
+revisits safe scalar wrappers from each new winner within the same budget.
+
+When only instruction order differs, focus on scope and argument preparation before
+changing types or compiler flags. Aggregate-pointer dispatch helpers preserve the
+callee's existing by-value interface; they must fully inline. A helper taking the
+aggregate by value may fail to inline even when a scalar/pointer helper succeeds.
+Use current-input compiler-output history to avoid repeating identical outputs.
+Equal numeric scores alone do not prove identical assembly.

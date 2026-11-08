@@ -833,6 +833,12 @@ class Permuter:
         self._trial_locations = None
         self._trial_output_granularity = None
         if fork:
+            from ..inline_helpers import PREFIX as aggregate_helper_prefix
+            if aggregate_helper_prefix in source:
+                # Imported compile_source accepts one definition. Its helpers belong in the
+                # real unit via edit_file; do not spend a build on an unsupported insertion.
+                self._trial_outcome = 'unsupported helper placement'
+                return None
             res = self.net.forks.attempt(agent, fork, fn["name"], source, keep=False, quiet=best,
                                          **({"background": True} if getattr(self, "parallel_claims", False) else {}))
             if res.get('score') is not None:

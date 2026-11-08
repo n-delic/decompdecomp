@@ -677,3 +677,53 @@ def test_deep_search_skips_empty_padding_before_judge_but_keeps_nonempty_blocks(
     assert result['matched'] and seen == [useful]
     assert net.function()['best_source'] == useful
     assert net.store.one('SELECT COUNT(*) n FROM claims')['n'] == 0
+
+
+def test_a_new_winner_revisits_one_pass_scaffolding_before_broad_search(monkeypatch):
+    net = setup(monkeypatch)
+    original = net.function()['best_source']
+    improved = 'int f(int a){ int delta; do { delta=a & 1; } while(0); return delta; }'
+    generated = []
+    def generate(source,*args,**kwargs):
+        generated.append(source)
+        return ['improved'] if source==original else []
+    monkeypatch.setattr(draft_repairs, 'variants', generate)
+    visited = []
+    def judge(self, agent, proj, fn, source, best, fork):
+        visited.append(source)
+        actual = improved if source=='improved' else source
+        score = 20 if source=='improved' else 0
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_source=?,best_score=?,status=? WHERE id=?',
+                       (actual,score,'matched' if score==0 else 'open',fn['id']))
+        net._last_diffs = {(agent.id,fn['id']):([('o','subu $s2, $s2, $s0',''),('o','','subu $s2, $s2, $s0')],'')}
+        return score
+    monkeypatch.setattr(Permuter, '_score', judge)
+    monkeypatch.setattr(Permuter, '_permute', lambda *args:pytest.fail('cleanup should run first'))
+    result = deep_permuter.run(net,'game','f',1,10,Log())
+    assert result['matched']
+    assert len(visited)==2 and 'do {' not in visited[1]
+    assert generated == [original]  # cleanup precedes broad proposal generation
+
+
+def test_failed_cleanup_resumes_broad_search_without_repeating_inverse(monkeypatch):
+    net = setup(monkeypatch)
+    source = 'int f(int a){ int delta; do { delta=a & 1; } while(0); return delta; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?', (source,))
+    visited, generated = [], []
+    def generate(source,*args,**kwargs):
+        generated.append(source)
+        return ['exact']
+    monkeypatch.setattr(draft_repairs, 'variants', generate)
+    def judge(self, agent, proj, fn, source, best, fork):
+        visited.append(source)
+        if source == 'exact':
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_score=0,best_source='exact',status='matched'")
+            return 0
+        return 40
+    monkeypatch.setattr(Permuter, '_score', judge)
+    result = deep_permuter.run(net, 'game', 'f', 1, 10, Log())
+    assert result['matched'] and len(visited)==2 and visited[-1]=='exact'
+    assert len(generated)==1

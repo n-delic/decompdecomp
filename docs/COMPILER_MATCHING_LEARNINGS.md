@@ -6210,3 +6210,35 @@ is a separate counter. Generated counts deduplicate within a bounded 4096-propos
 window and retain hashes, not source. Deep compile-ahead tickets retain their own
 invocation counts while preserving outer throughput collection; unconsumed
 speculative work remains in the existing pool totals, not a guessed family total.
+
+## Revisit lifetime scaffolding after aggregate call repairs (8 November 2026)
+
+Pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`: a private
+117-instruction routine reached exact linked equality (468 bytes) after changes to
+argument preparation and one final reversal of an earlier lifetime workaround.
+
+- Passing the existing six-word record through a private inline helper with scalar
+  and pointer formals, then dereferencing it for the original by-value callee,
+  improved the ordinary score from 185 to 125. The callee's prototype was unchanged.
+- Combining existing field stores/data extraction and a counter postincrement in
+  the helper's arguments reached score 60, with only a subtraction reordered.
+- Removing `do { delta = address & 1; } while (0);` around the real assignment
+  recovered score zero. That wrapper had helped an earlier source. Do not assume a
+  previously useful scope remains useful after changing call preparation.
+- Twenty-one line-layout controls at score 60 were unchanged. Parameter orders
+  yielded 60 or regressions. An aggregate-by-value helper did not inline; a helper
+  with scalar/pointer formals did. Inspect emitted symbols, not the `inline` keyword.
+
+Evidence: ordinary live API exact verdict, fresh saved status/source check and an
+independent frozen linked-byte replay. The object defined only the focal 468-byte
+function, with no helper body or allocated data. This is a function match, not a
+claim of a complete image rebuild. Game source and inputs remain private.
+
+The automated cleanup proposal independently recovered this frozen score-60
+candidate in one ordinary compiler/link trial. This is a controlled recovery of an
+existing match, not a new match. Generic argument bundles deliberately reject
+unknown macros, pointer aliases, volatile access and dependent writes; they do not
+yet reconstruct the entire raw-address private example from its earlier source.
+Generated aggregate helpers keep the original prototype and require object-level
+proof of full inlining. Supported 32-bit repair targets share the source proposals;
+unknown widths/object formats fail closed. The normal judge remains authoritative.

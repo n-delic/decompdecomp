@@ -308,13 +308,28 @@ class JudgeMixin:
                 match_commits.enqueue(self, proj, fn['id'])
             return result
 
+    def _remember_search_output(self, agent, function, source, project, result):
+        """Give manual/agent trials the same compact output history as local search."""
+        if result.get('score') is None:
+            return
+        fn = self._function(function, project)
+        proj = self.project_row(project) if project else self.project_store(fn['project_id']).one(
+            'SELECT * FROM projects WHERE id=?', fn['project_id'])
+        measured = result.get('compiled_output') or {}
+        output = measured.get('fingerprint') if measured.get('granularity') == 'function' else None
+        from ..search_evidence import remember
+        remember(self, agent, proj, fn, source, result['score'], output=output)
+
     def _attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         self._yield_autopilot(function, project)
         if (fork := self.fork_slug(project)):
-            return self.forks.attempt(agent, fork, function, source)
+            res = self.forks.attempt(agent, fork, function, source)
+            self._remember_search_output(agent, function, source, project, res)
+            return res
         link = self._link(project)
         before = self._function(function, project)["best_score"] if link else None
         res = super().attempt(agent, function, source, project)
+        self._remember_search_output(agent, function, source, project, res)
         if link is None or res["score"] is None:
             return res
         name = self._function(function, project)["name"]

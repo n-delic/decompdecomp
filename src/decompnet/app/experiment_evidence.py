@@ -138,7 +138,7 @@ def measured(permuter, agent, proj, fn, source, best, fork):
         score = permuter._score_work(agent,proj,fn,source,best,fork)
     if not no_edit and score is not None and not getattr(permuter, '_compact_trial', False):
         from .search_evidence import remember
-        remember(net,agent,proj,fn,source,score)
+        remember(net,agent,proj,fn,source,score,output=getattr(permuter,'_trial_output',None))
     measured_output = getattr(permuter,'_trial_output',None)
     if measured_output:
         cache[fn['id'],context,hashlib.sha256(source.encode()).hexdigest()] = (source,measured_output)

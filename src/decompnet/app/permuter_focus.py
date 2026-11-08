@@ -4,6 +4,7 @@ import re
 from ..rom.symbols import SymbolTable
 
 BOOSTS = {
+    'scheduling': ('perm_reorder_stmts', 'perm_ins_block', 'perm_expand_expr'),
     'stack': ('perm_reorder_decls', 'perm_temp_for_expr', 'perm_split_assignment', 'perm_randomize_internal_type'),
     'register': ('perm_reorder_decls', 'perm_reorder_stmts', 'perm_expand_expr', 'perm_temp_for_expr', 'perm_commutative'),
     'call': ('perm_randomize_function_type', 'perm_randomize_external_type', 'perm_refer_to_var'),
@@ -64,7 +65,21 @@ def normalized(rows, resolve=None):
     return result
 
 
+def scheduling_only(rows):
+    """Same complete instruction multiset, with order differences only; advisory, not exactness."""
+    from collections import Counter
+    rows = normalized(rows)
+    if not rows or any(not isinstance(r, (list, tuple)) or len(r) != 3
+                       or not all(isinstance(v, str) for v in r) for r in rows):
+        return False
+    changed = [r for r in rows if r[0] != ' ']
+    return bool(changed and all(r[0] == 'o' for r in changed)
+                and Counter(r[1] for r in rows if r[1]) == Counter(r[2] for r in rows if r[2]))
+
+
 def classify(rows, arch=None):
+    if scheduling_only(rows):
+        return 'scheduling'
     changed = [row for row in normalized(rows) if row and row[0] != ' ']
     markers = {row[0] for row in changed}
     text = ' '.join(str(cell) for row in changed for cell in row[1:])

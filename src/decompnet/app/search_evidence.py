@@ -6,7 +6,7 @@ from . import agent_tokens, allocation_evidence, experiment_evidence, permuter_f
 LIMIT = 64
 
 
-def remember(net, agent, proj, fn, source, score):
+def remember(net, agent, proj, fn, source, score, *, output=None):
     if score is None:
         return
     cache = net.__dict__.setdefault('_search_evidence',{})
@@ -18,7 +18,7 @@ def remember(net, agent, proj, fn, source, score):
     parent_hash = (current_trial() or {}).get('base_source_sha256')
     parent = pool.get(parent_hash)
     regional = region_repairs.progress(parent['rows'],rows,proj['arch']) if parent else ''
-    pool[hashlib.sha256(source.encode()).hexdigest()] = {'score':score,'rows':rows,'kind':permuter_focus.classify(rows),'allocation':allocation_evidence.diagnose(rows,proj['arch']),'regional_progress':regional}
+    pool[hashlib.sha256(source.encode()).hexdigest()] = {'score':score,'rows':rows,'kind':permuter_focus.classify(rows),'allocation':allocation_evidence.diagnose(rows,proj['arch']),'regional_progress':regional,'output':output,'family':(current_trial() or {}).get('family','manual')}
     while len(pool)>8:
         del pool[next(iter(pool))]
     while len(cache)>LIMIT:
@@ -33,6 +33,21 @@ def brief(net, proj, fn):
     current = pool.get(hashlib.sha256(source.encode()).hexdigest())
     lines = []
     scratch_hint = ''
+    # Scores alone cannot identify repeated machine code. Use only measured output fingerprints.
+    groups = {}
+    for source_hash, trial in list(pool.items()):
+        if trial.get('output'):
+            groups.setdefault(trial['output'], []).append((source_hash, trial))
+    repeated = [trials for trials in groups.values() if len(trials) > 1]
+    if repeated:
+        trials = max(repeated, key=len)
+        families = list(dict.fromkeys(t['family'] for _, t in trials))[:3]
+        lines.append(f"Repeated compiler output: {len(trials)} source variants ({', '.join(families)}) "
+                     "produced the same measured function fingerprint. Try a different repair shape; "
+                     "this does not prove those families exhausted or validate linked data.")
+    if current and permuter_focus.scheduling_only(current['rows']):
+        lines.append('Only instruction order differs. Revisit earlier one-pass scopes and try bounded '
+                     'argument-preparation/scheduling repairs before broad type or ABI changes.')
     if current:
         rows = [r for r in current['rows'] if len(r)==3 and r[0]!=' ']
         from ..diff_summary import advice
