@@ -38,7 +38,12 @@ def shape(fn, big):
 def index(net,proj):
     if proj['arch']!='mips':return {}
     groups={}
-    for row in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL AND size<=? ORDER BY id",proj['id'],MAX_BYTES):
+    # Eligibility and shape need no assembly, seed or best-attempt payload. Read
+    # only the exact donor C through its checksum-validating detail view.
+    for row in net.project_store(proj['id']).all(
+            "SELECT f.id,f.name,f.target,f.relocs,d.matched_source FROM main.functions f "
+            "JOIN functions d ON d.id=f.id WHERE f.project_id=? AND f.status='matched' "
+            "AND f.matched_source IS NOT NULL AND f.size<=? ORDER BY f.id",proj['id'],MAX_BYTES):
         key=shape(row,bool(proj['big_endian']))
         if key:
             group=groups.setdefault(key[0],[])

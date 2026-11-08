@@ -10,7 +10,7 @@ import secrets
 import time
 
 from ...network import Network, NetworkError
-from ...rom.symbols import AUTO_NAME, Symbol
+from ...rom.symbols import Symbol
 
 
 class RoomMixin:
@@ -317,7 +317,7 @@ class RoomMixin:
             return
         word = re.compile(r"\b[A-Za-z_]\w*\b")
         swap = lambda text: word.sub(lambda m: moves.get(m.group(0), m.group(0)), text) if text else text
-        with self.store.tx() as db:
+        with self.project_store(pid).tx() as db:
             for r in db.execute("SELECT id, matched_source, best_source FROM functions WHERE project_id=? AND "
                                 "(matched_source IS NOT NULL OR best_source IS NOT NULL)", (pid,)).fetchall():
                 matched, best = swap(r["matched_source"]), swap(r["best_source"])
@@ -331,17 +331,3 @@ class RoomMixin:
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                            "VALUES(?,?,?,?,?,?,?)", (pid, self._next_version(db, pid), swap(last["header"]), None,
                                                      "names follow the shared layout", time.time(), unit))
-
-    def layout_symbols(self, pid: int) -> list[dict]:
-        """The names given in a project, for a room's state and a save. A name one of several functions at an
-        address holds (overlays share addresses) also says that function's unit, so the other side names the same
-        one (#107 review); elsewhere the list is as it always was."""
-        twins = {r["name"]: r["unit"] for r in self.store.all(
-            "SELECT name, unit FROM functions WHERE project_id=? AND vram IN "
-            "(SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*) > 1)", pid, pid)}
-        out = []
-        for r in self.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid):
-            if AUTO_NAME.match(r["name"]):
-                continue
-            out.append(dict(r) | ({"unit": twins[r["name"]]} if r["name"] in twins else {}))
-        return out

@@ -35,3 +35,38 @@ def test_verified_wrapper_c_is_instantiated_with_low_address_local_substitution_
     assert 'helper(c,b,&D_125690)' in rows[0][2]
     donor['matched_source']=donor['matched_source'].replace('&D_123400','D_123400')
     assert not wrappers.candidates(net,{'id':1,'big_endian':1},dest,group)
+
+
+def test_index_reads_only_exact_donor_source_and_preserves_its_checksum(tmp_path):
+    import sqlite3
+
+    from decompnet import payload_storage
+    from decompnet.store import Store
+    store=Store(tmp_path/'wrappers.db')
+    donor=fn(0x123400)
+    source='int f(void){return 7;} /*'+'matched '*100+'*/'
+    unused='unused '*200
+    with store.tx() as db:
+        db.execute("INSERT INTO projects(id,slug,root,config) VALUES(1,'synthetic','','{}')")
+        for i in range(5):
+            db.execute("INSERT INTO functions(id,project_id,name,status,size,target,relocs,asm,seed,best_source,matched_source) "
+                       "VALUES(?,1,?,'matched',?,?,?,?,?,?,?)",
+                       (i+1,f'f{i}',44,donor['target'],donor['relocs'],unused,unused,unused,source))
+        db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?",(payload_storage.digest(unused),))
+    reads=[]
+    def decode(digest,blob):
+        reads.append(digest)
+        return payload_storage.unpack(digest,blob)
+    for conn in (store.conn,store._reader()):conn.create_function('payload_read',2,decode,deterministic=True)
+    net=SimpleNamespace(project_store=lambda pid:store)
+    try:
+        groups=wrappers.index(net,{'id':1,'arch':'mips','big_endian':True})
+        donors=next(iter(groups.values()))
+        assert [row['id'] for row in donors]==[1,2,3]
+        assert all(row['matched_source']==source for row in donors)
+        assert reads==[payload_storage.digest(source)]*5
+        with store.tx() as db:
+            db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?",(payload_storage.digest(source),))
+        with pytest.raises(sqlite3.OperationalError,match='user-defined function'):
+            wrappers.index(net,{'id':1,'arch':'mips','big_endian':True})
+    finally:store.conn.close()

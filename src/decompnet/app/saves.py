@@ -554,8 +554,9 @@ def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None =
     rows = _function_rows(net, pid, sources=True)
     manifest, functions, units = _manifest_from_rows(net, proj, cfg, rows, readme_folder)
     files = _source_files(rows)
+    contexts = net._contexts(pid, units)
     for unit in sorted(units):
-        files["include/" + _header_file(unit)] = (net._context(pid, unit) or {"header": ""})["header"]
+        files["include/" + _header_file(unit)] = (contexts[unit] or {"header": ""})["header"]
     files[MANIFEST] = json.dumps(manifest, indent=1) + "\n"
     if readme_key is None or _readme_key(manifest) != readme_key:
         _write_readme(net, proj, readme_folder, manifest, functions)
@@ -577,8 +578,9 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
     manifest, functions, units = _manifest_from_rows(net, proj, cfg, rows, folder)
     files = {MANIFEST: json.dumps(manifest, indent=1) + "\n"}
     if headers:
+        contexts = net._contexts(pid, units)
         for unit in sorted(units):
-            files["include/" + _header_file(unit)] = (net._context(pid, unit) or {"header": ""})["header"]
+            files["include/" + _header_file(unit)] = (contexts[unit] or {"header": ""})["header"]
     if names:
         for start in range(0, len(names), 400):
             chunk = names[start:start + 400]

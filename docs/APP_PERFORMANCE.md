@@ -607,3 +607,28 @@ Full-source database fetches and verification-lane occupancy remain separate
 investigations. A proposed JSON-page extension to full-source database reads was
 rejected after its synthetic contended median regressed from 0.145 to 0.657 s;
 no such change shipped.
+
+### Bulk saved-header snapshots
+
+Full progress exports and partial exports that include headers now resolve their
+requested unit headers in one SQLite statement. Latest-version metadata is selected
+before decoding content; missing units share the ordinary project-header fallback.
+Only effective versions pass through the existing checksum-validating, version-pinning
+header view. A concurrent header edit cannot mix versions within this snapshot.
+Metadata-only partial saves do not load headers.
+
+A synthetic project with 601 current headers exceeded the 128-entry per-unit read
+cache: each repeated export previously issued 1,202 reads. The bulk path issues one.
+Three paired warm trials measured medians of 15.1 ms before and 5.1 ms after for
+header resolution alone. This does not measure full save latency or establish that
+multi-minute project-lock and verification-admission waits are resolved. No cache
+capacity, timeout, judge or validation rule was relaxed.
+
+Wrapper-family discovery now projects only donor identity, target bytes, relocations
+and matched C. Eligibility uses physical function rows; matched C still passes
+through its checksum-validating view. An unrelated packed assembly, seed or best
+attempt is never decoded for this shortlist. A 200-wrapper synthetic fixture
+reduced payload-read callbacks from 1,000 to 200 with identical retained donor
+identities, targets, relocations and C. This measures callback counts, not a claim
+that every observed slow wrapper query is resolved; candidates retain the normal
+destination judge.

@@ -1018,3 +1018,21 @@ def test_repair_visit_state_and_predecessor_lookup_use_owner(scoped, monkeypatch
     assert not stores[2].one("SELECT 1 FROM sqlite_master WHERE name='near_pass_visits'")
     assert predecessor_context.named_row(net, net._project('first'), 'same_name')['id'] == 10
     assert predecessor_context.named_row(net, net._project('second'), 'same_name')['id'] == second['id']
+
+
+def test_layout_symbols_in_base_network_preserve_overlay_units_without_catalog_reads(scoped,monkeypatch):
+    net,stores=scoped
+    with stores[1].tx() as db:
+        db.execute("UPDATE functions SET unit='first-unit',vram=4096 WHERE id=10")
+        db.execute("INSERT INTO functions(id,project_id,name,unit,vram) VALUES(11,1,'other_copy','second-unit',4096)")
+        db.executemany('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,?,?,4,?)',
+                       [('same_name',4096,'func'),('other_copy',4096,'func'),('shared_data',8192,'data'),
+                        ('func_80001234',12288,'func')])
+    with stores[2].tx() as db:
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(2,'private_data',8192,4,'data')")
+    monkeypatch.setattr(net.store,'all',lambda *a:pytest.fail('layout read reached catalog'))
+    symbols={row['name']:row for row in net.layout_symbols(1)}
+    assert set(symbols)=={'same_name','other_copy','shared_data'}
+    assert symbols['same_name']['unit']=='first-unit'
+    assert symbols['other_copy']['unit']=='second-unit'
+    assert 'unit' not in symbols['shared_data']

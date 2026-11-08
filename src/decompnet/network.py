@@ -672,6 +672,46 @@ class Network:
         return store.read_cache.get(('latest-context',project_id,unit),
                                          store.read_version('scope_context',project_id),latest)
 
+    def layout_symbols(self, pid: int) -> list[dict]:
+        """The names given in a project, for a room's state and a save. A name one of several functions at an
+        address holds (overlays share addresses) also says that function's unit, so the other side names the same
+        one (#107 review); elsewhere the list is as it always was."""
+        from .rom.symbols import AUTO_NAME
+        store = self.project_store(pid)
+        twins = {r["name"]: r["unit"] for r in store.all(
+            "SELECT name, unit FROM functions WHERE project_id=? AND vram IN "
+            "(SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*) > 1)", pid, pid)}
+        out = []
+        for r in store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid):
+            if AUTO_NAME.match(r["name"]):
+                continue
+            out.append(dict(r) | ({"unit": twins[r["name"]]} if r["name"] in twins else {}))
+        return out
+
+    def _contexts(self, project_id: int, units):
+        """Latest requested headers in one snapshot, including common-header fallback.
+
+        Bulk exports must not cycle hundreds of units through the bounded per-unit
+        read cache. Select version metadata first; only those versions are decoded
+        and pinned through the ordinary header view. No historical content scan.
+        """
+        units = {unit or "" for unit in units}
+        if not units:return {}
+        store = self.project_store(project_id)
+        rows = store.all("""WITH requested AS MATERIALIZED (
+            SELECT value AS unit FROM json_each(?)),
+            latest AS MATERIALIZED (
+                SELECT unit,MAX(version) AS version FROM context_history
+                WHERE project_id=? AND (unit='' OR unit IN (SELECT unit FROM requested)) GROUP BY unit),
+            selected AS (
+                SELECT DISTINCT COALESCE(l.version,(SELECT version FROM latest WHERE unit='')) AS version
+                FROM requested r LEFT JOIN latest l ON l.unit=r.unit)
+            SELECT c.* FROM selected s JOIN context_versions c
+            ON c.project_id=? AND c.version=s.version""",
+            json.dumps(sorted(units)), project_id, project_id)
+        current = {row['unit']:row for row in rows}
+        return {unit:current.get(unit,current.get("")) for unit in units}
+
     def _unit_contexts(self, project_id: int) -> set[str]:
         store = self.project_store(project_id)
         return {r["unit"] for r in store.all(
