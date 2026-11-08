@@ -110,6 +110,8 @@ MIGRATIONS = [
     ("progress_state", "dirty_token", "TEXT"),  # the progress_dirty token the last publish acknowledged
     ("functions", "aside_mark", "TEXT"),                       # meta's set_aside (MARK_TRIGGERS: network.GAME_CODE)
     ("functions", "gone_mark", "TEXT"),                        # meta's gone (network.IN_BUILD)
+    ("functions", "last_checked", "REAL"),                    # latest attempt, including failed compiles
+    ("functions", "last_improved", "REAL"),                   # latest compiled attempt that improved the score
 ]
 
 # What the counts ask of each function's meta, copied into columns of their own: an index can hold a column, and
@@ -242,6 +244,22 @@ class Store:
             if column not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
                 added.add(column)
+        if "last_checked" in added or "last_improved" in added:
+            # Older projects have no cached dates. Derive them once, then maintain them on each new attempt.
+            self.conn.execute("""WITH measured AS (
+                SELECT t.function_id,t.created_at,t.compiled,t.score,f.n_insns,
+                       MIN(CASE WHEN t.compiled != 0 THEN t.score END)
+                       OVER (PARTITION BY t.function_id ORDER BY t.id
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous_best
+                FROM attempts t JOIN functions f ON f.id=t.function_id
+            ), recency AS (
+                SELECT function_id,MAX(created_at) AS checked,
+                       MAX(CASE WHEN compiled != 0 AND score IS NOT NULL
+                                     AND score < COALESCE(previous_best,COALESCE(n_insns,0)*100)
+                                THEN created_at END) AS improved
+                FROM measured GROUP BY function_id
+            ) UPDATE functions SET last_checked=recency.checked,last_improved=recency.improved
+              FROM recency WHERE functions.id=recency.function_id""")
         self.conn.executescript(DIRTY_TRIGGERS)
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is

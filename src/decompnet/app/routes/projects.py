@@ -118,15 +118,16 @@ def register(app: App) -> None:
                 raise NetworkError("Choose a tested function and compiler profile.")
             return net.apply_compiler_test_result(slug, fn, tc, flags)
         if request.method == "POST" and data.get("find_better_settings"):
-            existing = comparison_jobs.get(slug)
-            if existing and jobs.jobs.get(existing, {}).get("state") == "running":
-                return {"job": existing}
             options = {key: data.get(key, default) for key, default in (
                 ("flags_only", False), ("used_profiles_only", False),
                 ("untested_only", True), ("auto_apply", False))}
-            jid = jobs.start("compiler settings comparison", lambda log:
-                             net.find_better_compiler_settings(slug, log=log, **options))
-            comparison_jobs[slug] = jid
+            with jobs._lock:
+                existing = comparison_jobs.get(slug)
+                if existing and jobs.jobs.get(existing, {}).get("state") == "running":
+                    return {"job": existing}
+                jid = jobs.start("compiler settings comparison", lambda log:
+                                 net.find_better_compiler_settings(slug, log=log, **options))
+                comparison_jobs[slug] = jid
             return {"job": jid}
         if request.query_params.get("compiler_results") == "1":
             active = comparison_jobs.get(slug)

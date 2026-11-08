@@ -601,7 +601,7 @@ async function loadCompilerAnswer() {
   if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
 }
 function renderCompilerAnswer(a) {
-  $("installedCompilerTest").hidden = S.ov.kind === "fork" || !a.mips;
+  $("installedCompilerTest").hidden = S.ov.kind === "fork";
   const parts = a.parts || [];
   setHtml($("compilerAnswer"), `This game was built with <b>${esc(a.compiler)}</b>${a.flags ? ` <span class="flags mono" title="the flags it was given">${esc(a.flags)}</span>` : ""}.${parts.length ? ` ${parts.length === 1 ? "One part" : `${parts.length} parts`} of it with another compiler: below.` : ""}`
     + (a.elsewhere_count ? ` <span class="muted">${a.elsewhere_count === 1 ? "One more stretch of code looks" : `${a.elsewhere_count.toLocaleString()} more stretches of code look`} like another compiler's work; the app suggests a change once agents' C proves it.</span>` : ""));
@@ -793,13 +793,15 @@ $("testInstalledCompilers").onclick = async () => {
     return;
   }
   const slug = S.slug, error = $("compilerTestError");
+  const startButton = $("testInstalledCompilers");
+  startButton.disabled = true;
   error.hidden = true; error.textContent = "";
   try {
     const {job} = await api("/api/compilermap", {method: "POST", body: {slug, find_better_settings: true,
       flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked,
       untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked}});
     followCompilerComparison(job, slug);
-  } catch (e) { error.textContent = e.message; error.hidden = false; }
+  } catch (e) { error.textContent = e.message; error.hidden = false; startButton.disabled = false; }
 };
 $("dialogBody").addEventListener("click", (e) => {
   const button = e.target.closest("[data-open-compiler-function]");

@@ -293,7 +293,10 @@
         <thead><tr>
           <th class="star-col" id="thStar" title="Agents take starred functions first"><span class="sr">Do first</span>★</th>
           <th data-sort="vram" id="thAddr">Address</th><th data-sort="name">Function</th><th data-sort="insns" class="r">Instructions</th>
-          <th data-sort="best" class="r">Best</th><th data-sort="attempts" class="r">Tries</th><th data-sort="status">Status</th>
+          <th data-sort="best" class="r">Best</th><th data-sort="attempts" class="r">Tries</th>
+          <th data-sort="last_improved" title="Time since the last candidate improved the best score">Last improved</th>
+          <th data-sort="last_checked" title="Time since the last candidate check, including compile errors">Last checked</th>
+          <th data-sort="status">Status</th>
         </tr></thead>
         <tbody id="fnRows"></tbody>
       </table>
@@ -380,7 +383,7 @@
                 <label class="check"><input type="checkbox" id="compilerFlagsOnly"><span><b>Flag variations only</b><small>Faster: keep each function’s compiler and test different flags.</small></span></label>
                 <label class="check"><input type="checkbox" id="compilerUsedProfilesOnly"><span><b>Only profiles used in this project</b><small>Faster: test exact compiler and flag combinations already assigned to functions.</small></span></label>
                 <label class="check"><input type="checkbox" id="compilerRetest"><span><b>Retest completed functions</b><small>Leave off to continue with new or changed attempts.</small></span></label>
-                <label class="check"><input type="checkbox" id="compilerAutoApply" checked><span><b>Automatically apply better settings</b><small>Apply each function’s best settings when its comparison finishes. Each change is rechecked; busy or changed functions stay available for review.</small></span></label>
+                <label class="check"><input type="checkbox" id="compilerAutoApply" checked><span><b>Automatically apply exact matches</b><small>Apply only byte-exact matches when comparison finishes. Review partial improvements in the results drawer.</small></span></label>
               </div>
               <p id="compilerTestScope" class="muted small">All installed compilers and supported flag variations · new or changed attempts only.</p>
               <div class="row"><button class="primary" type="button" id="testInstalledCompilers">Find better settings</button></div>

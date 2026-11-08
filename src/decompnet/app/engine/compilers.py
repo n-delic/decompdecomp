@@ -172,13 +172,16 @@ class CompilerMixin:
     def _compiler_comparison_profiles(self, proj, *, flags_only=False, used_profiles_only=False):
         cfg = self.cfg(proj)
         installed = {c.id for c in consoles.of(cfg).compilers if toolchains.installed(c.id)
-                     and toolchains.get(c.id).supported and not toolchains.runtime_error(c.id)}
+                     and (toolchains.get(c.id).supported or toolchains.installed(c.id).get("own"))
+                     and not toolchains.runtime_error(c.id)}
         if not installed:
             raise NetworkError("Install a usable compiler in Compilers & tools before comparing settings.")
         if used_profiles_only:
             assignments = {((own := compiler_for(cfg, r["vram"]))["toolchain"], tuple(own["flags"]))
                            for r in self.store.all("SELECT vram FROM functions WHERE project_id=?", proj["id"])}
             return sorted(p for p in assignments if p[0] in installed)
+        if flags_only:
+            return sorted((tc, ()) for tc in installed)  # each function supplies its own flags
         return sorted({(tc, tuple(flags)) for tc in installed
                        for flags in self.flag_variants(tc, consoles.default_flags(cfg, tc))})
 
@@ -218,7 +221,10 @@ class CompilerMixin:
             if not source:
                 continue
             own = compiler_for(cfg, fn["vram"])
-            candidates = ([p for p in profiles if p[0] == own["toolchain"]] if flags_only else profiles)
+            candidates = ([(own["toolchain"], tuple(flags)) for flags in self.flag_variants(
+                own["toolchain"], list(own["flags"]), consoles.of(cfg).flag_extras)]
+                if flags_only and own["toolchain"] in {tc for tc, _ in profiles}
+                else profiles)
             if not candidates:
                 continue
             candidates = sorted(set(candidates) | {(own["toolchain"], tuple(own["flags"]))})
@@ -236,7 +242,7 @@ class CompilerMixin:
             check_cancel()
             proj = self._project(slug)
             digest = self._compiler_comparison_digest(proj, fn, source, candidates)
-            baseline = (100 * (1 - fn["best_score"] / max(1, (fn["n_insns"] or 0) * 100))
+            baseline = (max(0.0, 100 * (1 - fn["best_score"] / max(1, (fn["n_insns"] or 0) * 100)))
                         if fn["best_score"] is not None else None)
             best = baseline
             best_profile = None
@@ -274,7 +280,7 @@ class CompilerMixin:
                     if baseline is not None else f"{fn['name']}: best {best:.2f}% with {best_profile[0]} {' '.join(best_profile[1])}")
             if result["exact"]:
                 exact += 1
-            if auto_apply and best_profile:
+            if auto_apply and best_profile and result["exact"]:
                 progress({"phase": "applying", "function": fn["name"], "completed": index - 1,
                           "total": len(pending), "before": baseline, "best": best,
                           "improved": improved, "exact": exact, "skipped": skipped,
@@ -348,13 +354,16 @@ class CompilerMixin:
         agent, _ = self.local_agent("autopilot")
         self.try_quietly(agent, self._project(slug), self._function(function, slug), source)
         fresh = self._function(function, slug)
+        current_source = self._source_of(fresh)
+        current_digest = (self._compiler_comparison_digest(self._project(slug), fresh,
+                          current_source, candidates) if current_source else saved["input_digest"])
         with self.store.tx() as db:
             row = db.execute("SELECT result FROM compiler_tests WHERE function_id=?", (fn["id"],)).fetchone()
             if row:
                 updated = json.loads(row["result"])
                 updated["applied"] = True
-                db.execute("UPDATE compiler_tests SET result=? WHERE function_id=?",
-                           (json.dumps(updated), fn["id"]))
+                db.execute("UPDATE compiler_tests SET result=?,input_digest=? WHERE function_id=?",
+                           (json.dumps(updated), current_digest, fn["id"]))
         return {"function": function, "matched": fresh["status"] == "matched"}
 
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None) -> dict:

@@ -3,9 +3,11 @@
  * (CC0). */
 #include "game.h"
 
-/* What the C runtime would bring: the floating-point marker and the float-to-int helper (hand-written assembly) */
+/* What the C runtime would bring: the floating-point marker and, on 32-bit x86, the float-to-int helper (hand-written
+ * assembly; x64 converts with an instruction of its own, cvttss2si, and its compiler has no inline assembly) */
 int _fltused = 0x9875;
 
+#ifdef _M_IX86
 __declspec(naked) void _ftol(void) {
     __asm {
         push ebp
@@ -18,6 +20,7 @@ __declspec(naked) void _ftol(void) {
         ret
     }
 }
+#endif
 
 const char *g_level_names[4] = {"meadow", "cave", "castle", "keep"};
 s32 g_settings[6];
