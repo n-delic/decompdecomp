@@ -210,12 +210,13 @@ def path(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> Path
 
 def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> dict | None:
     """The install's manifest, or None when it isn't installed, or was installed from an entry toolchains.toml has
-    changed since (changed()): every caller then offers to install it again, as for one never installed, and a free
-    tool reinstalls by itself (ensure). Archives already downloaded aren't downloaded again (root()/.downloads)."""
+    changed since (changed()), or lacks a program its install builds (_unbuilt): every caller then offers to install
+    it again, as for one never installed, and a free tool reinstalls by itself (ensure). Archives already downloaded
+    aren't downloaded again (root()/.downloads)."""
     manifest = _manifest(tid, linux, vm=vm)
     if manifest is None and _own(tid) is not None:
         return {"own": True}  # (a compiler in a kit copy is there as long as the copy is: nothing was installed)
-    if manifest is None or changed(tid, manifest, path(tid, linux, vm=vm)):
+    if manifest is None or changed(tid, manifest, path(tid, linux, vm=vm)) or _unbuilt(tid, linux):
         return None
     tc = registry().get(tid)
     if tc is not None and any(installed(h, linux, vm=vm) is None for h in tc.headers):
@@ -226,6 +227,31 @@ def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) ->
 def _manifest(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> dict | None:
     m = path(tid, linux, vm=vm) / MANIFEST
     return json.loads(m.read_text(encoding="utf-8")) if m.exists() else None
+
+
+# Ghidra's folder of native programs for each computer (ghidra.framework.Platform)
+# (Windows on Arm runs the release's Intel one, emulated: Ghidra's GettingStarted.md)
+GHIDRA_OS = {"linux-x86_64": "linux_x86_64", "linux-aarch64": "linux_arm_64", "macos-x86_64": "mac_x86_64",
+             "macos-arm64": "mac_arm_64", "windows-x86_64": "win_x86_64", "windows-aarch64": "win_x86_64"}
+
+
+def ghidra_decompiler(ghidra: Path, plat: str | None = None) -> Path:
+    """Where the Ghidra in `ghidra` looks for its decompiler on this computer."""
+    plat = plat or current_platform()
+    name = "decompile.exe" if plat.startswith("windows") else "decompile"
+    return ghidra / "Ghidra" / "Features" / "Decompiler" / "os" / GHIDRA_OS.get(plat, plat) / name
+
+
+def _unbuilt(tid: str, linux: bool | None) -> bool:
+    """Whether an install lacks the native program it can't work without: Ghidra's decompiler, which its release
+    brings for Intel Linux and Windows and its install builds elsewhere (build = "ghidra-decompiler"). Without it
+    Ghidra's analysis gives no function a calling convention. A Ghidra installed on a Mac before decompdecomp built
+    its decompiler has none, and one whose decompiler went missing on any computer neither: either is installed
+    again (ensure), not used without it."""
+    if tid != "ghidra" or tid not in _registry_data():
+        return False
+    linux = get(tid).via_wsl if linux is None else linux
+    return not ghidra_decompiler(path(tid, linux), LINUX if linux else None).is_file()
 
 
 def fingerprint(tc: Toolchain, linux: bool = False) -> str:
@@ -628,6 +654,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                     for f in dest.rglob("*"):
                         if f.is_file():
                             os.chmod(f, 0o755)
+                if part.get("build") == "ghidra-decompiler":
+                    _build_ghidra_decompiler(into, log)
             pinned.append({"url": part["url"], "sha256": digest})
         if tc.build == "psyq-obj-parser":
             _build_psyq_parser(dest, linux, log)
@@ -712,6 +740,37 @@ def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
                 raise ToolchainError(f"The reconstructed SN64 GCC build did not produce {name}.")
             shutil.copyfile(source / name, dest / name)
             (dest / name).chmod(0o755)
+def _build_ghidra_decompiler(ghidra: Path, log) -> None:
+    """Build Ghidra's decompiler from the C++ source its release ships, where the release has none for this computer
+    (macOS, ARM Linux). Only the host build tools (a C++ compiler and make) come from the system. Its Makefile builds
+    for Intel on every Mac (ARCH_TYPE) and for macOS 10.6 (ADDITIONAL_FLAGS): both are left out, so it builds for
+    this computer."""
+    target = ghidra_decompiler(ghidra)
+    if target.is_file():
+        return
+    mac = current_platform().startswith("macos")
+    tools = ("Ghidra's decompiler is built from its source on this computer, which needs "
+             + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
+                "a C++ compiler and make (on Debian or Ubuntu: `sudo apt install g++ make`), then try again."))
+    if not shutil.which("make") or not shutil.which("c++"):
+        raise ToolchainError(tools)
+    with tempfile.TemporaryDirectory(prefix="decomp-ghidra-") as tmp:
+        build = Path(tmp) / "decompile"
+        shutil.copytree(ghidra / "Ghidra" / "Features" / "Decompiler" / "src" / "decompile", build)
+        argv = ["make", "-j" + str(min(4, os.cpu_count() or 1)), "ghidra_opt", "ARCH_TYPE=", "ADDITIONAL_FLAGS=-w",
+                "CXX=c++ -std=c++11"]
+        log("  building Ghidra's decompiler for this computer (first install only, a few minutes)")
+        try:
+            res = subprocess.run(limits.capped(argv), cwd=build / "cpp", capture_output=True, text=True,
+                                 errors="replace", timeout=1800)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"Couldn't build Ghidra's decompiler: {error}. {tools}") from error
+        built = build / "cpp" / "ghidra_opt"
+        if res.returncode or not built.is_file():
+            raise ToolchainError(f"Couldn't build Ghidra's decompiler. {tools}\n" + (res.stdout + res.stderr)[-4000:])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, target)
+        target.chmod(0o755)
 
 
 def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> None:

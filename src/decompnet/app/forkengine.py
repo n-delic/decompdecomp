@@ -2292,7 +2292,12 @@ class ForkEngine:
                 elif pct is not None and r["best_score"] == 0:  # reopened before this was fixed: still says identical
                     db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
                 elif pct is not None and not r["best_source"] and r["best_score"] != scaled(pct, r["n_insns"]):
-                    db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
+                    score = scaled(pct, r["n_insns"])
+                    improved = (score < r["n_insns"] * 100
+                                and (r["best_score"] is None or score < r["best_score"]))
+                    db.execute("UPDATE functions SET best_score=?, "
+                               "last_improved=CASE WHEN ? THEN ? ELSE last_improved END WHERE id=?",
+                               (score, improved, time.time(), r["id"]))
 
     def _matched(self, db, proj, r, agent: Agent | None, text: str | None) -> None:
         """Record a function that matches now (outside compile_and_diff, which records its own)."""

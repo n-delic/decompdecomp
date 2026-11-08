@@ -51,7 +51,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
+| Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | ✓ | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
@@ -107,6 +107,13 @@ Where to start on a gap:
   weren't tried); what's missing is opening a save's best attempts in a new copy of the project.
 
 ## Recently done
+
+- **The project's owner chooses which functions helpers take first (#205).** Beside the instructions, a project's
+  Agents tab picks Default (the helper's own choice), Smallest first, Largest first, Closest to matching first (the
+  near misses), or Not yet tried first (a first pass over every function nobody compiled, then the smallest). The
+  server applies it to claims without a function, so a helper's own `strategy` can't override it; a function asked
+  for by name still comes, and the release, waiting and model-routing rules stay ahead of it. ROM and project mode
+  alike, rooms through their host, and saves and progress folders keep the choice.
 
 - **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
@@ -359,6 +366,9 @@ Where to start on a gap:
   step at a time (the manifest's `analysis`): the repairs, the stubs set aside, then the pieces joined, never a
   stub; each step that changes code is kept only when the code still rebuilds byte for byte (on that game: 23
   tables, 390 functions, 179 pieces). Agents' `join_functions` works on PC too.
+- **Save destinations belong to each project.** Settings restores the project's last successful manual save
+  destination when it opens again, in ROM and project mode. A restored ROM project starts with its linked save
+  folder selected. Paths stay local, failed saves keep the old choice, and a backup does not move autosave.
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.

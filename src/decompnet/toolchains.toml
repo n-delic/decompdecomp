@@ -811,12 +811,23 @@ name = "Ghidra"
 kind = "tool"
 license = "Apache-2.0"
 source = "NationalSecurityAgency/ghidra 12.1.4"
-description = "The NSA's reverse-engineering suite: analyses and decompiles code for almost any CPU. Large (540 MB) and needs a Java 21+ JDK (the computer's, or the jdk toolchain); optional."
+description = "The NSA's reverse-engineering suite: analyses and decompiles code for almost any CPU. Large (540 MB) and needs a Java 21+ JDK (the computer's, or the jdk toolchain); optional. On a Mac its decompiler is built at install (Xcode Command Line Tools)."
 requires_java = 21
+# Ghidra's release brings its decompiler (a native program) for Intel Linux and Windows only. Without it Ghidra
+# still finds functions, but its analysis can't tell their calling conventions: on a Mac every __fastcall and
+# __thiscall function was imported as __cdecl. Elsewhere the decompiler is built from the C++ source the release
+# ships (build: _build_ghidra_decompiler), with the computer's own C++ compiler and make.
 [[ghidra.parts]]
 url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip"
 sha256 = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
 subdir = "ghidra_12.1.4_PUBLIC"
+platforms = ["linux-x86_64", "windows-x86_64", "windows-aarch64"]
+[[ghidra.parts]]
+url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip"
+sha256 = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
+subdir = "ghidra_12.1.4_PUBLIC"
+build = "ghidra-decompiler"
+platforms = ["macos-x86_64", "macos-arm64", "linux-aarch64"]
 
 [jdk]
 name = "Java development kit (Eclipse Temurin 21)"
@@ -1021,6 +1032,15 @@ into = "7.0"
 url = "https://github.com/OmniBlade/decomp.me/releases/download/msvcwin9x/msvc7.0.tar.gz"  # holds 7.1 (13.10.3077)
 sha256 = "49eba7f9f72644f6f872a4176baeac544e8b5dfb2be1f47bb4d439b1136ffeac"
 into = "7.1"
+# 7.1's archive has no C runtime: wibo brings its own on Linux and macOS, but on Windows cl.exe needs msvcr71.dll and
+# its compiler passes (c1, c1xx) msvcp71.dll beside them, or Windows stops it with "MSVCR71.dll was not found" (7.0's
+# archive carries its MSVCR70.DLL). Both are 7.1's redistributable DLLs, from the archive mwcc already pins.
+[[msvc.parts]]
+url = "https://files.decomp.dev/compilers_20251118.zip"
+sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
+keep = { "X360/14.00.2110/msvcr71.dll" = "Bin/msvcr71.dll", "X360/14.00.2110/msvcp71.dll" = "Bin/msvcp71.dll" }
+into = "7.1"
+platforms = ["windows-x86_64"]
 
 # Each archive is a whole install: `keep` takes its compiler (Bin) and headers (Include: Visual C++'s and the Windows
 # SDK's in one folder, as the 6.0-7.1 pack has them), so the project's build finds every version the same way.

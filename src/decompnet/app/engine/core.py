@@ -98,8 +98,10 @@ class Core(Network):
             if row["root"] and not Path(row["root"]).exists() and here.is_dir():
                 with self.store.tx() as db:
                     cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (row["id"],)).fetchone()["config"])
-                    if cfg.get("progress_folder") and Path(cfg["progress_folder"]).is_relative_to(Path(row["root"])):
-                        cfg["progress_folder"] = str(here / Path(cfg["progress_folder"]).relative_to(Path(row["root"])))
+                    old_root = Path(row["root"])
+                    for key in ("progress_folder", "save_folder"):
+                        if cfg.get(key) and Path(cfg[key]).is_relative_to(old_root):
+                            cfg[key] = str(here / Path(cfg[key]).relative_to(old_root))
                         db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), row["id"]))
                     db.execute("UPDATE projects SET root=? WHERE id=?", (str(here), row["id"]))
                 moved.append(row["slug"])
@@ -160,8 +162,16 @@ class Core(Network):
         if project_id in self._sym_override:
             return self._sym_override[project_id]
         if project_id not in self._syms:
-            rows = self.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", project_id)
-            self._syms[project_id] = SymbolTable([Symbol(r["name"], r["address"], r["size"], r["kind"]) for r in rows])
+            rows = self.store.all("SELECT s.name, s.address, s.size, s.kind, f.id IS NOT NULL AS fn FROM symbols s "
+                                  "LEFT JOIN functions f ON f.project_id=s.project_id AND f.name=s.name "
+                                  "WHERE s.project_id=?", project_id)
+            table = SymbolTable([Symbol(r["name"], r["address"], r["size"], r["kind"]) for r in rows])
+            # One name per address, as before; a function's own name that the address's other name hid still
+            # resolves. Function names are unique, so two at one address are overlay twins (#117 review).
+            for r in rows:
+                if r["fn"] and r["name"] not in table.by_name:
+                    table.alias(Symbol(r["name"], r["address"], r["size"], r["kind"]))
+            self._syms[project_id] = table
         return self._syms[project_id]
 
     def _rom(self, proj) -> tuple[bytes, list[split.Segment]]:
