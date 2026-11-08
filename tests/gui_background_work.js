@@ -1,7 +1,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const elements=new Map();const $=id=>{if(!elements.has(id))elements.set(id,{hidden:id==='backgroundPage',querySelectorAll:()=>[]});return elements.get(id);};
-let reads=0,resolve;
-const ctx=vm.createContext({$,document:{hidden:false},esc:s=>String(s).replaceAll('<','&lt;'),setInterval:()=>{},beginWork:()=>()=>{},showJobError:()=>{},api:()=>{reads++;return new Promise(r=>resolve=r);}});
+let reads=0,resolve,bars=0,maxBars=0;
+const ctx=vm.createContext({$,document:{hidden:false},esc:s=>String(s).replaceAll('<','&lt;'),setInterval:()=>{},beginWork:(host,label)=>{bars++;maxBars=Math.max(maxBars,bars);host._workStatus={textContent:label,dataset:{state:'running'}};return ()=>{bars--;if(host._workStatus.dataset.state==='running')host._workStatus.dataset.state='done';};},showJobError:(host,message)=>{if(message&&host._workStatus)host._workStatus.dataset.state='error';},api:()=>{reads++;return new Promise(r=>resolve=r);}});
 vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js','utf8'),ctx);
 (async()=>{
  await ctx.readBackgroundWork();assert.equal(reads,0);
@@ -33,5 +33,23 @@ vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js'
  ctx.api=async(url,options)=>{savedCpu=options.body.maintenance_cpu_percent;};
  $('maintenanceCpuLimit').value='50';await $('maintenanceCpuSave').onclick();assert.equal(savedCpu,50);
  $('maintenanceCpuLimit').value='101';await $('maintenanceCpuSave').onclick();assert.equal(savedCpu,50);
+ // Five simultaneous operations must create only one bar and keep it until the last settles.
+ const controls=Array.from({length:5},()=>({disabled:false}));
+ const finishes=controls.map((control,i)=>ctx.beginBackgroundWork(`Request ${i}`,[control],`Request ${i} saved.`));
+ assert.equal(bars,1);assert.equal(maxBars,1);
+ assert.match($('backgroundWorkStatus')._workStatus.textContent,/5 requests in progress/);
+ controls.forEach(control=>assert.equal(control.disabled,true));
+ finishes[2]();finishes[2]();assert.equal(bars,1,'finishing twice is harmless');
+ assert.equal(controls[2].disabled,false);
+ assert.match($('backgroundWorkStatus')._workStatus.textContent,/4 requests in progress/);
+ finishes[0]();finishes[4]();finishes[1]();assert.equal(bars,1);
+ assert.match($('backgroundWorkStatus')._workStatus.textContent,/Request 3/);
+ finishes[3]();assert.equal(bars,0);assert.equal($('backgroundWorkStatus')._workStatus.textContent,'Request 3 saved.');
+ // An error stays visible when another request succeeds; a fresh batch resets its status.
+ const first=ctx.beginBackgroundWork('Stop first'),second=ctx.beginBackgroundWork('Stop second');
+ ctx.showJobError($('backgroundWorkStatus'),'Stop failed');first();second();
+ assert.equal(bars,0);assert.equal($('backgroundWorkStatus')._workStatus.dataset.state,'error');
+ const retry=ctx.beginBackgroundWork('Retry');assert.equal(bars,1);assert.equal($('backgroundWorkStatus')._workStatus.dataset.state,'running');retry();
+ assert.equal(bars,0);assert.equal(maxBars,1);
  console.log('background visibility, request deduplication and escaping passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,5 +1,35 @@
 /* One read at a time, only while visible. Inventory requests never load project overviews. */
 let backgroundReading=false, backgroundReady=false, backgroundThreadDetails=[];
+// Several row actions can overlap. Share one indicator until the entire batch settles.
+const backgroundRequests=new Map();
+let backgroundFinish=null;
+function beginBackgroundWork(label,controls=[],completed='Activity updated.'){
+  const host=$('backgroundWorkStatus'), token=Symbol(label);
+  if(!backgroundRequests.size){
+    host.textContent='';host.hidden=true;
+    showJobError(host,'');
+    backgroundFinish=beginWork(host,label,[],completed);
+  }
+  const disabled=controls.map(control=>control.disabled);
+  controls.forEach(control=>{control.disabled=true;});
+  backgroundRequests.set(token,label);
+  const update=()=>{
+    if(host._workStatus?.dataset.state==='error')return;
+    const labels=[...backgroundRequests.values()];
+    if(host._workStatus)host._workStatus.textContent=labels.length>1 ? `Updating activity · ${labels.length} requests in progress…` : `${labels[0]}…`;
+  };
+  update();
+  let finished=false;
+  return ()=>{
+    if(finished)return;
+    finished=true;backgroundRequests.delete(token);
+    controls.forEach((control,index)=>{control.disabled=disabled[index];});
+    if(backgroundRequests.size){update();return;}
+    const finish=backgroundFinish;backgroundFinish=null;
+    finish();
+    if(host._workStatus?.dataset.state==='done')host._workStatus.textContent=completed;
+  };
+}
 async function showBackgroundWork(){
   show('backgroundPage');
   backgroundReady=false;
@@ -39,8 +69,8 @@ function renderBackgroundActivity(){
     button.onclick=async()=>{
       const item=rows[Number(button.dataset.stopBackground)], label=button.textContent;button.disabled=true;
       const resume=item.kind==='autosave' && item.state==='paused';
-      if(item.kind==='autosave')button.textContent=resume ? 'Resuming…' : 'Pausing…';
-      const finish=beginWork($('backgroundWorkStatus'),resume ? 'Resuming autosave' : item.kind==='autosave' ? 'Pausing autosave' : 'Requesting stop',[],resume ? 'Autosave resumed.' : item.kind==='autosave' ? 'Pause requested; the current operation stops at a safe checkpoint.' : 'Stop requested. Saved work is kept.');
+      button.textContent=item.kind==='autosave' ? (resume ? 'Resuming…' : 'Pausing…') : 'Stopping…';
+      const finish=beginBackgroundWork(resume ? 'Resuming autosave' : item.kind==='autosave' ? 'Pausing autosave' : 'Requesting stop',[],resume ? 'Autosave resumed.' : item.kind==='autosave' ? 'Pause requested; the current operation stops at a safe checkpoint.' : 'Stop requested. Saved work is kept.');
       try{await api('/api/background-work',{method:'POST',body:{kind:item.kind,key:item.key,action:resume ? 'resume' : 'stop'}});await readBackgroundWork();}
       catch(error){showJobError($('backgroundWorkStatus'),error.message);button.disabled=false;button.textContent=label;}
       finally{finish();}
@@ -51,7 +81,7 @@ function renderBackgroundActivity(){
 async function readBackgroundWork(){
   if(backgroundReading || $('backgroundPage').hidden || document.hidden)return;
   backgroundReading=true;
-  const finish=backgroundReady ? ()=>{} : beginWork($('backgroundWorkStatus'),'Reading background work',[],'Activity refreshed.');
+  const finish=backgroundReady ? ()=>{} : beginBackgroundWork('Reading background work',[],'Activity refreshed.');
   try{
     const data=await api('/api/background-work');
     if(!$('backgroundPage').hidden){renderBackgroundWork(data);backgroundReady=true;}
@@ -62,7 +92,7 @@ $('backgroundRefresh').onclick=readBackgroundWork;
 $('backgroundLimitSave').onclick=async()=>{
   const value=Number($('backgroundLimit').value);
   if(!Number.isInteger(value) || value<0){showJobError($('backgroundWorkStatus'),'Enter a whole number of threads, or 0 for automatic.');return;}
-  const finish=beginWork($('backgroundWorkStatus'),'Updating background limit',[$('backgroundLimitSave')],'Thread default saved; new task groups use this limit.');
+  const finish=beginBackgroundWork('Updating background limit',[$('backgroundLimitSave')],'Thread default saved; new task groups use this limit.');
   try{await api('/api/settings',{method:'POST',body:{worker_threads:value}});await readBackgroundWork();}
   catch(error){showJobError($('backgroundWorkStatus'),error.message);}
   finally{finish();}
@@ -74,7 +104,7 @@ $('backgroundThreadSort').onchange=renderBackgroundActivity;
 $('maintenanceCpuSave').onclick=async()=>{
   const value=Number($('maintenanceCpuLimit').value);
   if(!Number.isInteger(value) || value<0 || value>100){showJobError($('backgroundWorkStatus'),'Enter a whole CPU percentage from 1 to 100, or 0 for unlimited.');return;}
-  const finish=beginWork($('backgroundWorkStatus'),'Updating maintenance CPU limit',[$('maintenanceCpuSave')],'CPU limit saved; running maintenance uses it at its next safe checkpoint.');
+  const finish=beginBackgroundWork('Updating maintenance CPU limit',[$('maintenanceCpuSave')],'CPU limit saved; running maintenance uses it at its next safe checkpoint.');
   try{await api('/api/settings',{method:'POST',body:{maintenance_cpu_percent:value}});await readBackgroundWork();}
   catch(error){showJobError($('backgroundWorkStatus'),error.message);}
   finally{finish();}
