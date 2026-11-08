@@ -121,9 +121,12 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True, omit_families=())
     if isinstance(seconds,bool) or not isinstance(seconds,int) or not 1<=seconds<=1800:
         raise ValueError('Use 1–1800 seconds per function.')
     prepared=[]
+    applicability=[]
     for item in cases:
         evaluate,scope,arch,asm,compiled=evaluator(root,item['name'],item['header'])
         baseline=evaluate(item['source'])
+        from .scratch_role_repairs import explain
+        applicability.append(explain(item['source'],item['name'],item['header'],arch))
         if baseline.get('score') is None or baseline.get('matched'):
             raise ValueError('Every frozen case must compile and be unresolved under the copied judge.')
         prepared.append(dict(source=item['source'],baseline_score=baseline['score'],arch=arch,
@@ -139,7 +142,13 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True, omit_families=())
         trials=trials,seconds=seconds,generate_report=True)
     # Case scope includes precursor ids; count actual functions independently of those ids.
     distinct=len({c['name'] for c in prepared})
-    return result | {'coverage':dict(cases=len(prepared),distinct_functions=distinct,repeated_precursors=len(prepared)-distinct),
+    from collections import Counter
+    declines=Counter();reason_cases=Counter()
+    for item in applicability:
+        declines.update(item['declined']);reason_cases.update(item['declined'].keys())
+    return result | {'scratch_role_coverage':dict(eligible_cases=sum(i['candidates']>0 for i in applicability),
+                      declined_cases=sum(i['candidates']==0 for i in applicability),decline_reasons=dict(declines),decline_reason_cases=dict(reason_cases)),
+                     'coverage':dict(cases=len(prepared),distinct_functions=distinct,repeated_precursors=len(prepared)-distinct),
                      'compiler_invocations':sum(len(c['compiled']) for c in prepared),
                      'focused':focused,'omitted_families':list(omit_families),
                      'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
@@ -171,6 +180,8 @@ def main():
     parser.add_argument('--audit-path',type=Path,help='Private manifest of intermediate path/source_sha256 stages; no adoption.')
     parser.add_argument('--cases',type=Path,help='Private JSON list of name/before/header paths, frozen before replay.')
     parser.add_argument('--freeze',action='store_true')
+    parser.add_argument('--holdouts',type=int,help='Select 2–16 distinct functions by stable hash while freezing, before outcomes are measured.')
+    parser.add_argument('--development-functions',default='',help='Comma-separated development examples to exclude from holdout selection.')
     parser.add_argument('--reference',type=Path)
     parser.add_argument('--before',type=Path)
     parser.add_argument('--header',type=Path)
@@ -181,6 +192,9 @@ def main():
     parser.add_argument('--omit-families',default='',help='Case-suite ablation: omit named families before paging, with unchanged budgets.')
     args = parser.parse_args()
     try:
+        if (args.holdouts is not None or args.development_functions) and not (args.cases and args.freeze):
+            raise ValueError('Holdout selection requires --cases and --freeze.')
+        if args.development_functions and args.holdouts is None:raise ValueError('Use --development-functions with --holdouts.')
         if args.omit_families and (not args.cases or args.freeze):
             raise ValueError('Use --omit-families only when replaying a frozen case suite.')
         if args.audit_path:
@@ -196,7 +210,8 @@ def main():
         elif args.cases:
             if args.function or args.before or args.header or args.families:
                 raise ValueError('Choose either frozen cases or single-function arguments.')
-            cases,frozen=frozen_repair_cases.load(args.cases,args.project,evaluator,freeze=args.freeze)
+            cases,frozen=frozen_repair_cases.load(args.cases,args.project,evaluator,freeze=args.freeze,holdouts=args.holdouts,
+                development_functions=tuple(filter(None,args.development_functions.split(','))))
             report=frozen if args.freeze else suite(args.project,cases,trials=args.trials,seconds=args.seconds,
                                                    omit_families=tuple(filter(None,args.omit_families.split(','))))
             if args.reference:

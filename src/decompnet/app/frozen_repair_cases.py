@@ -23,14 +23,19 @@ def select_holdouts(items, development_functions, *, count=6):
     return sorted(eligible,key=lambda i:digest(i['name']))[:count]
 
 
-def load(path, root, evaluator, *, freeze=False):
+def load(path, root, evaluator, *, freeze=False, holdouts=None, development_functions=()):
     manifest=json.loads(path.read_text())
     if not freeze and manifest.get('format')!=1:
         raise ValueError('Freeze the case manifest before replaying it.')
     items=manifest.get('cases',[])
+    selection=None
     if (not isinstance(items,list) or any(not isinstance(i,dict) or not isinstance(i.get('name'),str) or not i['name']
             or not isinstance(i.get('id',i['name']),str) or not i.get('id',i['name']) for i in items)):
         raise ValueError('Use named frozen cases with nonempty string ids.')
+    if holdouts is not None:
+        if not freeze:raise ValueError('Select holdouts only while freezing a new manifest.')
+        items=select_holdouts(items,development_functions,count=holdouts)
+        selection=dict(method='distinct-function-name-hash',development_functions=list(development_functions),count=holdouts)
     if not 2<=len(items)<=16 or len({i.get('id',i['name']) for i in items})!=len(items):
         raise ValueError('Use 2–16 unique frozen cases; repeated functions need distinct ids.')
     cases=[]
@@ -63,4 +68,4 @@ def load(path, root, evaluator, *, freeze=False):
                        'header':str((path.parent/item['header']).resolve())})
     for item in frozen:
         if item.get('control'):item['control']=str((path.parent/item['control']).resolve())
-    return cases,dict(format=1,cases=frozen)
+    return cases,dict(format=1,cases=frozen,**({'selection':selection} if selection else {}))

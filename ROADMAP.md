@@ -1,5 +1,11 @@
 # Roadmap
 
+- Done: distinct-function frozen holdout selection is available from the replay CLI,
+  with repair applicability/decline coverage. Fresh connected-prefix costs inform
+  advisory ordering; scratch guards explain declined proposals. Target-site recovery
+  feedback directs surviving-window ranking without removing whole-function exploration.
+  A six-source scratch holdout found no incremental recovery; model-token savings remain unmeasured.
+
 - Done: native scalar dependency guards discard rejected ASTs instead of retrying mutated
   parents. Deep-search efficiency counters distinguish process starts, candidate checks,
   cached skips and bounded compatible-output duplicates; saved results keep family/path data.

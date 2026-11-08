@@ -536,3 +536,34 @@ can also recognize this case and reports a comparison note. Historical stored
 review flags and categories are not bulk rewritten: older examples may still be
 excluded by their saved “source changes only” filter flag. Replay still validates
 source/header hashes and recompiles controls; it never adopts a new game match.
+
+### Freeze a broader sample before candidate trials
+
+`--holdouts` selects distinct function names by a stable hash, excluding the listed
+development cases. Selection happens while freezing, before candidate outcomes:
+
+```sh
+python -m decompnet.app.linked_repair_benchmark --project /path/to/copied-export \
+  --cases /private/candidates.json --freeze --holdouts 6 \
+  --development-functions development_function --output /private/frozen.json
+```
+
+Replay that frozen manifest with equal budgets, then repeat with
+`--omit-families scratch_role_reuse` for an ablation. Compare fresh baseline
+scores, not historical saved percentages. Suite output includes
+`scratch_role_coverage`: eligible/declined case counts, guard-check counts and
+counts of cases encountering each rejection reason. An eligible proposal is not a
+match. A declined case is not proof that no equivalent source exists.
+
+Fresh trials also collect source-free repair-prefix costs under the same compiler
+identity and mismatch shape. After four timed/measured attempts, continuation
+ordering considers improvements, ordinary exact verdicts, identical outputs and
+elapsed trial time. Older untimed aggregates do not acquire invented durations;
+unknown output stays unknown. Existing exploration and global search budgets stay
+in place. Reading agent summaries does not run a compiler.
+
+Replay trials expose `instruction_resolution`: target mismatch sites recovered,
+introduced and remaining, with a target-stream hash. Candidate insertions are
+anchored to the preceding target instruction; these are not C source locations.
+Lists are bounded at 32 entries. After recovery, region ranking can focus the
+densest surviving window; whole-function exploration remains interleaved.

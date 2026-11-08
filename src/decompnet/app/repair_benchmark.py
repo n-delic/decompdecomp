@@ -46,6 +46,8 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
                    'outcome': report['outcome'], 'score': report.get('score'), 'exact': bool(report.get('matched')),
                    'diagnostics':measured_diagnostics,
                    'elapsed_seconds': time.monotonic()-trial_started}
+            from .region_repairs import resolution
+            row['instruction_resolution']=resolution(node.get('baseline_rows'),report.get('rows'))
             results.append(row)
             efficiency.observe(row['family'],score=report.get('score'),best=best_measured[0],
                 output=report.get('output_fingerprint'),granularity=report.get('output_granularity','allocated_object'),
