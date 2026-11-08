@@ -237,6 +237,8 @@ async function openFn(name) {
     $("fnName").textContent = name;
     $("fnAddr").textContent = "";
     $("fnNaming").hidden = true;
+    $("fnSdkEvidence").hidden = true; $("fnSdkEvidence").open = false;
+    $("fnSdkEvidenceText").textContent = "";
     $("fnStatus").textContent = "";
     $("fnCompilerMatches").replaceChildren();
     $("fnApplyCompiler").hidden = true;
@@ -302,6 +304,16 @@ let fnBusy = null, fnRequest = 0;
 function cancelFunctionRead() { fnBusy?.controller?.abort(); fnBusy = null; }
 let compilerComparisonBusy = false, compilerComparisonTarget = null;
 let deepPermuterBusy = false, deepPermuterJob = null, deepPermuterTarget = null;
+function sdkEvidenceText(sdk) {
+  if (!sdk) return "";
+  const lines = [`Library identity: ${(sdk.names || []).join(", ")}`, sdk.evidence || "SDK signature", "Identification is not a verified C match."];
+  for (const item of sdk.binary_evidence || []) {
+    lines.push(`${item.source} · pattern ${item.hash}`, `Unit: ${item.unit} · symbol: ${item.symbol}`, `Target SHA-256: ${item.target_sha256}`);
+    for (const ref of item.references || []) lines.push(`Reference lead: ${ref.target} may be ${ref.name} (not independently identified).`);
+  }
+  return lines.join("\n");
+}
+
 async function refreshFn(first) {
   if ((nameChangeBusy && !first) || !S.fn) return;
   const slug = S.slug, requested = S.fn, gen = S.gen, nav = S.fnNav;
@@ -340,10 +352,13 @@ async function refreshFn(first) {
     $("fnName").textContent = d.name;
     $("fnNaming").hidden = d.named == null;
     $("fnNaming").textContent = d.naming?.method === "sdk_signature"
-      ? `Name inferred from local libultra signatures · ${d.naming.source_corpora?.length || 0} archive(s)`
+      ? `Name inferred from SDK binary signatures · ${d.naming.source_corpora?.length || 0} signature collection(s)`
       : d.naming?.method === "exact_cross_game"
       ? `Name inferred from ${d.naming.source_project} · exact code match`
       : d.renamed ? `Renamed from ${d.naming.original_name}` : d.named ? "Named function" : "Generated name";
+    const sdk = $("fnSdkEvidence");
+    sdk.hidden = !d.sdk;
+    $("fnSdkEvidenceText").textContent = sdkEvidenceText(d.sdk);
     fnBadge(d);
     const handover = $('fnClaimHandover');
     handover.hidden = !d.can_handover;

@@ -13,10 +13,12 @@ def identify(net, proj, recorded, *, include_asm=False):
     include exact assembly identities; the default C-work queue still excludes them.
     """
     version = (net.project_store(proj['id']).read_version('fingerprints', proj['id']), net.store.read_version('sdk_names'),
+               net.project_store(proj['id']).read_version('naming', proj['id']),
                repr(net.cfg(proj).get('sdk_libraries')), include_asm)
     discovered = net.project_store(proj['id']).read_cache.get(('sdk-identities', proj['id'], include_asm), version,
                                          lambda: _identify(net, proj, include_asm=include_asm), ttl=10 if net.cfg(proj).get('kind') == 'fork' else None)
-    return dict(recorded) | discovered
+    from .sdk_evidence import current
+    return dict(recorded) | {fid: hint for fid, hint in discovered.items() if current(proj, hint)}
 
 
 def naming_prints(net, proj):
@@ -51,17 +53,30 @@ def _identify(net, proj, *, include_asm=False):
         return dict(grouped)
     by_key = net.store.read_cache.get(('sdk-corpus-index', processor, big),
                                      net.store.read_version('sdk_names'), corpus_index)
+    from .sdk_evidence import identities
+    binary = identities(net, proj, include_asm=include_asm)
     if not by_key:
-        return recorded
+        return binary  # No local corpus: avoid reading target objects merely to discover there is no evidence.
     selection = net.cfg(proj).get('sdk_libraries')
     selected = set(selection) if selection is not None else None
-    out = dict(recorded)
+    out, ambiguous = dict(recorded), set()
     for fid, target in (naming_prints(net, proj) if include_asm else net.twins.prints(proj)).items():
         checkpoint()
         hints = [r for r in by_key.get(target.key, []) if r["size"] == target.size
                  and (selected is None or r["corpus"] in selected)]
         names = {r["name"] for r in hints}
+        if len(names) > 1:
+            ambiguous.add(fid)
         if (include_asm or not target.asm) and target.size >= 32 and len(names) == 1:
             out[fid] = {"names": sorted(names), "corpora": sorted({r["corpus"] for r in hints}),
                         "evidence": "exact relocation-normalized SDK signature"}
+    for fid, hint in binary.items():
+        if fid in ambiguous:
+            continue
+        if fid in out and out[fid]['names'] != hint['names']:
+            out.pop(fid)  # Conflicting full-size identities need review, not automatic naming.
+        elif fid in out:
+            out[fid] = hint | {'corpora': sorted(set(out[fid]['corpora']) | set(hint['corpora']))}
+        else:
+            out[fid] = hint
     return out

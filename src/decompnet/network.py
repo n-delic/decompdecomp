@@ -1167,6 +1167,8 @@ class Network:
         for row in store.all("SELECT id,meta FROM functions WHERE project_id=? AND "
                                   "json_extract(meta, '$.naming.method')='sdk_signature'", proj["id"]):
             naming = json.loads(row["meta"])["naming"]
+            if naming.get('binary_evidence'):
+                continue  # Binary detections must still agree with the current target and corpus selection.
             out[row["id"]] = {"names": [naming.get("source_name") or naming["name"]],
                               "corpora": naming.get("source_corpora", []), "evidence": "recorded SDK signature"}
         return out

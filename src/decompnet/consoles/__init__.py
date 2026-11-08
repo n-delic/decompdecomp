@@ -102,6 +102,7 @@ class Console:
     # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False
+    sdk_corpus = ""  # optional public binary fingerprint corpus; local SDK archives work on every console
     # PROJECT mode: choices the import asks about besides the compiler and scope, as (id, question, ((value, text), ...))
     # with the first value the default; create_project takes each as a keyword (Xbox: ltcg)
     import_options: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = ()
@@ -324,6 +325,13 @@ class Console:
 
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """Work a new project gets once (`chosen`: the user picked its compiler)."""
+
+    def scan_sdk(self, net, proj, job=None) -> None:
+        """Optional binary SDK evidence, refreshed by the shared background naming task.
+
+        Store target-bound identities, not matches or names guessed from their spelling.
+        Consoles without a public fingerprint pack use the shared local archive index.
+        """
 
     def on_start(self, net, slug: str, log=print) -> None:
         """Work each of its projects gets when the app starts (what projects imported by older versions lack)."""

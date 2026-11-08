@@ -291,6 +291,8 @@ class BriefMixin:
             elif fn["seed"]:
                 fn = dict(fn) | {"seed": self._draft_shown(fn, proj)}
         text = review + super()._brief(fn, agent, header)
+        from ..sdk_evidence import brief as sdk_brief
+        text += '\n'.join(sdk_brief(self, proj, fn))
         from ..return_contract_evidence import brief as return_hint
         advice=return_hint(self,proj,fn,fn['best_source'] or fn['seed'] or '')
         if advice:text+='\n\n'+advice

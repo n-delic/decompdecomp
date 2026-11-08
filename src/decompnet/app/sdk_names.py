@@ -14,7 +14,7 @@ log = logging.getLogger('decompdecomp')
 def name_functions(net, slug, job=None):
     """Reuse rejected ROM naming checks only while all their inputs are unchanged."""
     proj = net.project_row(slug)
-    if net.fork_slug(slug):
+    if net.cfg(proj).get('kind') == 'fork':
         return _name_functions(net, slug, job)  # Imported source files can change outside the database.
     version = (net.project_store(proj['id']).read_version('inputs', proj['id']), net.store.read_version('sdk_names'))
     cache = net.__dict__.setdefault('_sdk_name_checks', {})
@@ -37,9 +37,10 @@ def _name_functions(net, slug, job=None):
     proj = net.project_row(slug)
     if slug in net.links:
         return 0
-    # Do not read target objects or project files when there is no SDK evidence to use.
-    if not net.store.one('SELECT 1 FROM sdk_signatures LIMIT 1'):
-        return 0
+    net.console(proj).scan_sdk(net, proj, job)
+    if (not net.store.one('SELECT 1 FROM sdk_signatures LIMIT 1') and not net.project_store(proj['id']).one(
+            "SELECT 1 FROM functions WHERE project_id=? AND json_extract(meta,'$.sdk_identity') IS NOT NULL LIMIT 1", proj['id'])):
+        return 0  # No evidence: do not synchronize imported projects or open their target objects.
     fork = net.fork_slug(slug)
     if not fork and not net.is_rom(proj):
         return 0
@@ -79,7 +80,7 @@ def _name_functions(net, slug, job=None):
     if not candidates:
         return 0
     agent, _ = net.local_agent('autopilot')
-    message = 'Names inferred from exact selected local SDK signatures'
+    message = 'Names inferred from SDK binary signatures'
     if not fork:
         try:
             result = net.rename_symbols(agent, slug, [(r['name'], name) for r, name, _, _ in candidates], message)
@@ -101,12 +102,12 @@ def _name_functions(net, slug, job=None):
                 continue
             if not result.startswith('✅'):
                 continue
-        evidence = (f"Exact relocation-normalized {row['size']}-byte function fingerprint {key}; "
+        evidence = (hint.get('evidence', '') + '. ' + f"Exact relocation-normalized {row['size']}-byte function fingerprint {key}; "
                     'one name across selected SDK signatures, unique target fingerprint. Libraries: '
                     + '; '.join(hint['corpora']) + '. Name inferred from library code; not a verified C match.')
         with net.project_store(proj['id']).tx() as db:
             record(db, row['id'], row['name'], name, method='sdk_signature', source_corpora=hint['corpora'],
-                   source_name=name, fingerprint=key, evidence=evidence)
+                   source_name=name, fingerprint=key, evidence=evidence, binary_evidence=hint.get('binary_evidence', []))
         current = net.project_store(proj['id']).one('SELECT name FROM functions WHERE id=?', row['id'])
         net.add_note(agent, slug, evidence, current['name'])
         renamed += 1
@@ -117,7 +118,10 @@ def name_projects(net):
     """Backfill existing projects at app start or after indexing a local SDK; never launch model agents."""
     if not net.store.one('SELECT 1 FROM sdk_signatures LIMIT 1'):
         return
+    activity = getattr(net, 'project_activity', None)
     for row in net.store.all('SELECT slug FROM projects'):
+        if activity is not None and not activity.active(row['slug']):
+            continue  # Indexing a folder must not scan or synchronize idle saved projects.
         try:
             name_functions(net, row['slug'])
         except Exception:  # one unavailable checkout must not prevent other projects being named

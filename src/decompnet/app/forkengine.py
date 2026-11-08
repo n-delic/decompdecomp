@@ -270,7 +270,7 @@ _INCLUDE_LINE = re.compile(r'^#\s*include\s*"[^"]+"\s*$')
 _ASM_KEYS = ("asm_twin", "asm_code")  # meta saying a function is hand-written assembly (kept by sync)
 # kept by sync too: the agents' verdicts that no C makes it (red in the map), and the user giving it back to them
 # (or the next check would set it aside again)
-_KEPT_KEYS = (*_ASM_KEYS, "not_c", "reopened")
+_KEPT_KEYS = (*_ASM_KEYS, "not_c", "reopened", "sdk_identity")
 _ASM_DEF = re.compile(r"\s*(?:(?:static|inline|extern)\s+)*asm\b")
 _MSVC_C = re.compile(r"[_@]([A-Za-z_]\w*?)(?:@\d+)?")  # how MSVC decorates a C function's name (PC, Xbox)
 # a source file that includes another source file: Mario Party 6's REL runtime.c files are one line,
@@ -2496,6 +2496,8 @@ class ForkEngine:
         meta = self._meta(fn)
         unit = fp.unit(fn["unit"])
         lines = [f"## {header}: {fn['name']}  ({proj['name']})", f"unit {unit.name}, {fn['size']} bytes"]
+        from .sdk_evidence import brief as sdk_brief
+        lines += sdk_brief(self.net, proj, fn)
         if agent:
             from ..release_receipts import current
             if lease := current(self.net,fn,agent):
