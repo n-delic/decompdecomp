@@ -2666,11 +2666,22 @@ def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tm
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
     rows = [_row(0x401000, 0x401009), _row(0x401009, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401033)]
-    monkeypatch.setattr(scratch_pe, "ensure_ghidra", lambda log: None)  # analysis is synthetic, no tool download
     monkeypatch.setattr(ghidra, "functions", lambda program, timeout=3600: rows)
     with pytest.raises(NetworkError, match="isn't this project's program"):
         net.forks.reimport("p", ROOT / "README.md")
+    # a Ghidra that isn't installed, or not usable (a Mac's without its decompiler: toolchains._unbuilt), is installed
+    # first, as for an import: a reimport analysed with it, and named every function with no calling convention
+    installed, ensure, ensured = toolchains.installed, toolchains.ensure, []
+    monkeypatch.setattr(ghidra, "available", lambda: False)
+    monkeypatch.setattr(ghidra, "java_home", lambda: None)
+    # (each passes on whatever else it's given: installed() also takes vm= (#197), and the project's indexing thread
+    # calls it so; a stand-in that didn't take it raised there, and pytest only warned)
+    monkeypatch.setattr(toolchains, "installed",
+                        lambda tid, *args, **kw: None if tid == "ghidra" else installed(tid, *args, **kw))
+    monkeypatch.setattr(toolchains, "ensure",
+                        lambda tid, *args, **kw: ensured.append(tid) if tid == "ghidra" else ensure(tid, *args, **kw))
     said = net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)
+    assert ensured == ["ghidra"]
     assert said["said"] == "4 functions (it had 3), 2 of them new or with another extent; its 1 matched functions kept"
     units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
     assert {u: [(f["name"], f["size"]) for f in fns] for u, fns in units.items()} == {

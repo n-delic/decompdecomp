@@ -28,7 +28,6 @@ from pathlib import Path
 from .. import compiler, consoles, toolchains
 from ..hostenv import NO_WINDOW, stop_process_tree
 from ..network import CLAIM_ORDERS, NetworkError
-from ..rom.symbols import AUTO_NAME
 from ..scoring import percent_text
 from . import save_readme
 
@@ -324,8 +323,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "functions": functions,
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
-        "symbols": [dict(r) for r in net.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
-                                                    pid) if not AUTO_NAME.match(r["name"])],
+        "symbols": net.layout_symbols(pid),
         "notes": notes,
         # what's set aside and why: agents' verdicts that no C makes it, the user's, a boundary report's leftover
         # (the import sets aside again what it finds by itself)

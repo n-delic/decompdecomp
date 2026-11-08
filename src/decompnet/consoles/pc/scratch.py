@@ -2238,16 +2238,11 @@ def own_symbols(functions: list[Function], taken: set[str]) -> None:
         f.relocs = [(off, kind, renamed.get(name, name), addend) for off, kind, name, addend in f.relocs]
 
 
-def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
-    """Ghidra's functions of one of the game's DLLs, at the address the project gives it (`moved` from the one its
-    header prefers, where Ghidra reads it). Its own names (its exports, its debug information) go to "names"
-    instead, as several DLLs export the same names (an engine's and a game's DLL both export their interface)."""
-    return [{**r, "entry": r["entry"] + moved, **({"end": r["end"] + moved} if "end" in r else {}),
-             "source": "DEFAULT"} for r in ghidra.functions(module)]
-
-
 def ensure_ghidra(log) -> None:
-    """#139: imports and reimports repair Ghidra installs missing the host's native decompiler."""
+    """Ghidra, and a JDK for it when this computer has none, installed where they aren't, for an import and a reimport
+    alike. A Ghidra without its decompiler isn't installed (toolchains._unbuilt): a Mac's from before decompdecomp
+    built the decompiler is installed again here, and a reimport with it would have named every function as Ghidra
+    gave it, every one with no calling convention."""
     from ...forks import ghidra
 
     if ghidra.available():
@@ -2256,8 +2251,16 @@ def ensure_ghidra(log) -> None:
         log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
         toolchains.ensure("jdk", log=log)
     if toolchains.installed("ghidra") is None:
-        log("installing Ghidra (540 MB, once): it finds a PC game's functions and drafts")
+        log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
         toolchains.ensure("ghidra", log=log)
+
+
+def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
+    """Ghidra's functions of one of the game's DLLs, at the address the project gives it (`moved` from the one its
+    header prefers, where Ghidra reads it). Its own names (its exports, its debug information) go to "names"
+    instead, as several DLLs export the same names (an engine's and a game's DLL both export their interface)."""
+    return [{**r, "entry": r["entry"] + moved, **({"end": r["end"] + moved} if "end" in r else {}),
+             "source": "DEFAULT"} for r in ghidra.functions(module)]
 
 
 def program_rows(game: Path) -> list[dict]:

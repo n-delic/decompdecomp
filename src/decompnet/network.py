@@ -1196,11 +1196,12 @@ class Network:
         with self.store.tx() as db:
             db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
                        "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via))
-            db.execute("UPDATE functions SET attempts=attempts+1 WHERE id=?", (fn["id"],))
+            db.execute("UPDATE functions SET attempts=attempts+1,last_checked=? WHERE id=?", (now, fn["id"]))
             if score is not None:
-                db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=? "
+                db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=?, "
+                           "last_improved=CASE WHEN ? < COALESCE(n_insns,0)*100 THEN ? ELSE last_improved END "
                            "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
-                           (score, source, agent.id, fn["id"], score))
+                           (score, source, agent.id, score, now, fn["id"], score))
             if matched:
                 db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, "
                            "matched_at=?, best_score=0, best_source=? WHERE id=?",

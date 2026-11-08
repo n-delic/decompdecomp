@@ -295,7 +295,7 @@ class WindowsPC(Console):
         if scratch.missing(fp.root, manifest["version"]):
             raise NetworkError("the project is missing the game's DLLs it was made with (in orig/): put your copies "
                                "there, then reimport")
-        scratch.ensure_ghidra(log)
+        scratch.ensure_ghidra(log)  # (as the import does: a Mac's Ghidra without its decompiler is installed again)
         log(f"analysing {game.name} with Ghidra again (a big game takes a few minutes)")
         found = {"": scratch.program_rows(game)}
         for m in _functions_json(fp, manifest["version"]).get("modules", []):
