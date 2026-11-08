@@ -23,10 +23,11 @@ def owner(project, stop):
 
 class Executor(ThreadPoolExecutor):
     """A separate pool for one purpose; Stop cancels queued work and compiler children."""
-    def __init__(self, max_workers=None, *, purpose, project='', stop=None, always_run=False, **kwargs):
+    def __init__(self, max_workers=None, *, purpose, project='', stop=None, always_run=False, stop_note='', **kwargs):
         inherited = _OWNER.get()
         self.project = project or (inherited[0] if inherited else '')
         self.stop_owner = stop or (inherited[1] if inherited else None)
+        self.stop_note = stop_note
         self.purpose = purpose
         self.key = uuid.uuid4().hex
         self.cancelled = threading.Event()
@@ -82,7 +83,7 @@ def snapshot():
     with _LOCK:
         return [dict(kind='purpose', key=work.key, title=work.purpose, project=work.project,
                      state='stopping' if work.cancelled.is_set() else 'running',
-                     detail=f'{len(work.thread_ids)} working · {work.pending-len(work.thread_ids)} queued',
+                     detail=f'{len(work.thread_ids)} working · {work.pending-len(work.thread_ids)} queued'+(' · '+work.stop_note if work.stop_note else ''),
                      stoppable=True, cpu_percent=None, thread_ids=list(work.thread_ids))
                 for work in _ACTIVE.values()]
 
