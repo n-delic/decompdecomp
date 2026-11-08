@@ -75,7 +75,7 @@ async function checkScroll() {
     const top = log.scrollTop;
     const snapshot = { state: "done", log: ["old", "new"], result: {}, progress: { tested: 2 } };
     let delivered;
-    const context = { api: async () => snapshot, sleep: async () => {} };
+    const context = { api: async () => snapshot, sleep: async () => {}, setTimeout, clearTimeout };
     vm.createContext(context);
     vm.runInContext(base.slice(base.indexOf("const JOB_POLL_MS"), base.indexOf("/* The map's still")), context);
     await context.followJob("test", log, (_lines, job) => { delivered = job.progress.tested; });
@@ -331,7 +331,9 @@ async function checkCompilerReconnection() {
   assert.equal(get('compilerFlagsOnly').checked,true);assert.equal(get('compilerAutoApply').checked,true);
   assert.match(get('installedCompilerTestsummary').textContent,/Running/);
   assert.equal(rendered.at(-1).stage,'Checking saved functions');
+  discovery={...discovery,progress:{function:'advanced-function',tested:33,completed:71}};
   await context.refreshCompilerComparison();assert.equal(followers.length,1);
+  assert.equal(rendered.at(-1).function,'advanced-function','watchdog updates progress while log follower is blocked');
   const old=followers[0];
   context.S.slug='other';context.S.gen=2;discovery={job:null};
   await context.refreshCompilerComparison();

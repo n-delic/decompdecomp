@@ -53,7 +53,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   let polls = 0;
   const ctx = {
     $: get, document: { createElement: element },
-    followDeepSweep: () => {}, renderDeepQueueState: () => {}, deepSweepSnapshot: null, deepSweepProjectVersion:0, deepSweepRetryTimer:null, clearTimeout(){}, deepPermuterBusy: false, deepPermuterJob: null, refreshFn: async () => {},
+    followDeepSweep: () => {}, renderDeepQueueState: () => {}, deepSweepSnapshot: null, deepSweepProjectVersion:0, deepSweepRetryTimer:null, clearTimeout, setTimeout, deepPermuterBusy: false, deepPermuterJob: null, refreshFn: async () => {},
     S: { slug: "test", fn: "f", ov: { kind: "fork" } }, info: {}, box, body: box, n: get("compilerNotice"), log, inst: button,
     b: Object.assign(button, { dataset: { inst: "test" } }), a: { id: "test", name: "Test" }, ROOM_PORT: 6481,
     results: get("localResults"), scan: { folder: "/synthetic/collection", projects: [] }, picked: new Set(), renderList() {},

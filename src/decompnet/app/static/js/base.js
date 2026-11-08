@@ -193,7 +193,19 @@ function updateWorkProgress(log, progress) {
 async function followJob(id, logEl, onUpdate, active = () => true) {
   for (;;) {
     if (!active()) return null;
-    const job = await api(`/api/job?id=${id}`);
+    // A stalled fetch must not leave the panel following a job forever without
+    // another poll. Callers already handle transport failures/reconnection.
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let timeout;
+    const expired = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        controller?.abort();
+        reject(new Error("Progress request timed out. Reconnecting…"));
+      }, 10000);
+    });
+    let job;
+    try { job = await Promise.race([api(`/api/job?id=${id}`, {signal:controller?.signal}), expired]); }
+    finally { clearTimeout(timeout); }
     if (!active()) return null;
     if (logEl) {
       const text = job.log.join("\n");

@@ -1442,8 +1442,8 @@ async function refreshCompilerComparison() {
   if (!S.slug || S.tab !== "settings") return;
   const slug = S.slug, gen = S.gen;
   if (compilerComparisonFollowing) {
-    if (compilerComparisonFollowing.slug === slug && compilerComparisonFollowing.gen === gen) return;
-    compilerComparisonFollowing.detach();
+    if (compilerComparisonFollowing.slug !== slug || compilerComparisonFollowing.gen !== gen)
+      compilerComparisonFollowing.detach();
   }
   if (compilerComparisonDiscovery?.slug === slug && compilerComparisonDiscovery.gen === gen) return;
   const request = ++compilerComparisonRequest, discovery = {slug, gen};
@@ -1453,6 +1453,11 @@ async function refreshCompilerComparison() {
     if (request !== compilerComparisonRequest || slug !== S.slug || gen !== S.gen) return;
     if ($("compilerStopError").dataset.discoveryError) {
       delete $("compilerStopError").dataset.discoveryError; $("compilerStopError").hidden = true;
+    }
+    if (compilerComparisonFollowing?.slug === slug && compilerComparisonFollowing.gen === gen) {
+      // The lightweight snapshot stays live even if the log follower's request stalls.
+      if (state.job === compilerComparisonFollowing.jobId && state.progress) renderCompilerProgress(state.progress);
+      return;
     }
     if (state.job && (state.state === "running" || compilerComparisonSeen.get(`${slug}:${gen}`) !== state.job)) {
       followCompilerComparison(state);
@@ -1541,7 +1546,7 @@ async function followCompilerComparison(existing = null) {
     const {job} = started;
     restoreOptions(started.scope);
     if (started.progress) renderCompilerProgress(started.progress);
-    jobId = job; stop.disabled = false; stop.textContent = "Stop comparison";
+    jobId = job; run.jobId = job; stop.disabled = false; stop.textContent = "Stop comparison";
     let result;
     while (active()) {
       try {
