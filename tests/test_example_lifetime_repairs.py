@@ -72,7 +72,7 @@ def test_generated_integer_variants_have_same_observable_results(tmp_path):
         for n,text in enumerate([source]+[s for _,s in variants]):
             path=tmp_path/f'{index}-{n}.c';exe=tmp_path/f'{index}-{n}'
             path.write_text('#include <stdio.h>\n'+text+'\nint main(void){int i;for(i=-128;i<=128;i++)printf("%d\\n",f(i));return 0;}')
-            subprocess.run([compiler,'-std=c89','-pedantic-errors','-O2',str(path),'-o',str(exe)],check=True,capture_output=True)
+            subprocess.run([compiler,'-std=c89','-pedantic-errors','-O2',str(path),'-o',str(exe)],check=True)
             outputs.append(subprocess.check_output([str(exe)]))
         assert all(x==outputs[0] for x in outputs)
 
@@ -116,7 +116,7 @@ def test_host_compiler_float_and_pointer_observations(tmp_path):
             for number,text in enumerate([source]+[s for _,s in generated]):
                 path=tmp_path/f'check-{index}-{optimize}-{number}.c';exe=path.with_suffix('')
                 path.write_text('#include <stdio.h>\n'+text+'\n'+main)
-                subprocess.run([compiler,'-std=c89','-pedantic-errors',optimize,'-ffp-contract=off',str(path),'-o',str(exe)],check=True,capture_output=True)
+                subprocess.run([compiler,'-std=c89','-pedantic-errors',optimize,'-ffp-contract=off',str(path),'-o',str(exe)],check=True)
                 outputs.append(subprocess.check_output([str(exe)]))
             assert all(value==outputs[0] for value in outputs)
 

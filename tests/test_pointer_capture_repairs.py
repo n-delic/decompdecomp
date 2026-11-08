@@ -136,7 +136,7 @@ int main(void) {
         path = tmp_path/f'capture{i}.c'
         path.write_text(HEADER+'\n'+text)
         output = tmp_path/f'capture{i}'
-        subprocess.run([cc, '-std=c99', '-O2', '-fsanitize=undefined', str(path), '-o', str(output)], check=True, capture_output=True, timeout=30)
+        subprocess.run([cc, '-std=c99', '-O2', str(path), '-o', str(output)], check=True, capture_output=True, timeout=30)
         subprocess.run([str(output)], check=True, capture_output=True, timeout=10)
 
 

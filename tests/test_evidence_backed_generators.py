@@ -15,7 +15,7 @@ def test_narrow_temporary_is_a_c89_statement_and_preserves_else(tmp_path):
     for i,candidate in enumerate(choices):
         path=tmp_path/f'case{i}.c';binary=tmp_path/f'case{i}'
         path.write_text(candidate+'\nint main(void){u8 p;f(&p,0);if(p!=9)return 1;f(&p,1);return p!=1;}')
-        subprocess.run([cc,'-std=c89','-pedantic-errors',str(path),'-o',str(binary)],check=True,capture_output=True,timeout=20)
+        subprocess.run([cc,'-std=c89','-pedantic-errors',str(path),'-o',str(binary)],check=True,timeout=20)
         subprocess.run([str(binary)],check=True,capture_output=True,timeout=10)
 
 
@@ -35,5 +35,5 @@ def test_zero_subtraction_scope_preserves_finite_integer_results(tmp_path):
     candidate=scalar_normalization_scope.variants(source,'f')[0][1].replace('int f(','int g(')
     path=tmp_path/'scope.c';binary=tmp_path/'scope'
     path.write_text(source+'\n'+candidate+'\nint main(void){int a,b;for(a=-100;a<=100;a++)for(b=-50;b<=50;b++)if(f(a,b)!=g(a,b))return 1;return 0;}')
-    subprocess.run([cc,'-std=c89','-pedantic-errors','-O2',str(path),'-o',str(binary)],check=True,capture_output=True,timeout=20)
+    subprocess.run([cc,'-std=c89','-pedantic-errors','-O2',str(path),'-o',str(binary)],check=True,timeout=20)
     subprocess.run([str(binary)],check=True,capture_output=True,timeout=10)
