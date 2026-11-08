@@ -98,3 +98,46 @@ def test_sync_reads_source_cursors_in_one_catalog_query(scoped,monkeypatch):
     monkeypatch.setattr(net.store,'all',all_rows)
     activity_index.sync(net)
     assert len(cursor_reads)==1
+
+
+def test_idle_source_cursor_seeks_without_scanning_event_history(scoped):
+    """An unchanged feed must not revisit every old claim in every project file."""
+    net, stores = scoped
+    bind(net)
+    store = stores[1]
+    with store.tx() as db:
+        db.executemany('INSERT INTO events(project_id,kind,detail,created_at) VALUES(1,?,?,?)',
+                       [('claim','old routine event',i) for i in range(20000)])
+    activity_index.bootstrap(net)
+    start = net.events_after(None)['last']
+    reader = store._reader()
+    steps = 0
+    def count_steps():
+        nonlocal steps
+        steps += 100
+        return 0
+    reader.set_progress_handler(count_steps,100)
+    try:
+        assert net.events_after(start) == {'last':start,'events':[]}
+    finally:
+        reader.set_progress_handler(None,0)
+    # The old project/time index visits 20,000 historical entries (>100,000 VM
+    # operations). This budget includes catalog/identity checks routed to this file.
+    assert steps < 1000
+    event(store,1,20001,'new match')
+    assert [r['detail'] for r in net.events_after(start)['events']] == ['new match']
+
+
+def test_existing_event_database_gets_cursor_index_on_reopen(tmp_path):
+    from decompnet.store import Store
+    path = tmp_path/'existing.sqlite3'
+    store = Store(path)
+    with store.tx() as db:
+        db.execute('DROP INDEX idx_events_project_id')
+    store.conn.close()
+    reopened = Store(path)
+    try:
+        columns = reopened.all('PRAGMA index_info(idx_events_project_id)')
+        assert [row['name'] for row in columns] == ['project_id','id']
+    finally:
+        reopened.conn.close()

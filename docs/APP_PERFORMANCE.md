@@ -533,3 +533,17 @@ and shared integer-repair views reuse only the latest input; callers receive the
 own mutable view. Local speculative depth starts at two, grows to four when all
 tickets were consumed, and shrinks toward one when feedback invalidates pending
 work. Cancelled/running work retains the original budget accounting.
+
+### Incremental notification source cursors
+
+Each project's notification cursor now uses a covering `(project_id,id)` event
+index, including existing databases when reopened. The project/time index remains
+for recency queries. Without the ID index, every idle `MAX(id)` poll scanned that
+project's historical events; pagination could revisit that history too.
+
+A bounded scratch fixture with 60,000 routine events reduced a warmed maximum-ID
+lookup from about 300,000 SQLite VM operations to fewer than 100 (approximately
+2.8 ms to 0.02 ms on the development Mac). This measures one query, not total feed
+latency. New-event ordering, delivery cursors and transaction boundaries are unchanged.
+It does not establish that the separately observed multi-minute saved-source reads
+or project-lock waits are resolved.
