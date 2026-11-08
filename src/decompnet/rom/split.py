@@ -12,6 +12,7 @@ import struct
 import subprocess
 import time
 from dataclasses import dataclass, field
+from importlib import metadata
 from pathlib import Path
 
 import rabbitizer
@@ -179,7 +180,24 @@ def _add_symbols(path: Path, lines: list[str]) -> None:
     path.write_text(text.rstrip("\n") + "\n" + "".join(f"{line}\n" for line in keep), encoding="utf-8")
 
 
+MIN_SPLAT_VERSION = (0, 50, 1)
+
+
+def _check_splat_runtime():
+    """A pulled checkout can still be running an older, incompatible environment."""
+    try:
+        installed = metadata.version('splat64')
+    except metadata.PackageNotFoundError:
+        installed = 'not installed'
+    parsed = re.match(r'^(\d+)\.(\d+)\.(\d+)', installed)
+    if parsed is None or tuple(map(int, parsed.groups())) < MIN_SPLAT_VERSION:
+        raise RomError(f'Installed Splat is {installed}; decompdecomp requires 0.50.1 or newer. '
+                       'Close the app, update its dependencies (run uv sync in a development checkout), '
+                       'then reopen it and retry. For a packaged app, use an updated app build.')
+
+
 def _splat(args: list[str], cwd: Path, log=print, *, timeout: float | None = None) -> str:
+    _check_splat_runtime()
     check_cancel = getattr(log, "check_cancel", lambda: None)
     from ..limits import capped
     deadline=time.monotonic()+timeout if timeout is not None else None
