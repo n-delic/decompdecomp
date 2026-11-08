@@ -12,8 +12,7 @@ Naming: the project is **decompdecomp** in everything users read. Internal names
 existing installs and projects keep working: the `decomp` command, the `decompnet` package and data folder,
 `.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch. Installs and updates
 come from GitHub (`REPO` in app/updates.py and install.sh); the decomp.wtf domain isn't ours, so nothing may point
-at it. `site/` is the website (decomp.ndelic.com, published to GitHub Pages by `.github/workflows/site.yml` on every
-push to main that changes `site/public/`); `site/public/` also holds the installer, `install.sh`, which updates read
+at it. `site/` is the website (decomp.ndelic.com, with automatic GitHub Pages publishing currently paused in this fork); `site/public/` also holds the installer, `install.sh`, which updates read
 from GitHub. `main` is what users update from.
 
 This fork defaults to `~/Decomp-RetroReversing` (checkouts: `~/Decomp-RetroReversing-dev`),
@@ -179,8 +178,7 @@ linting). In short:
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.
 - `uv run ruff check src tests projects` passes (CI runs it). No formatter: don't run `ruff format`.
-- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); a pull request from any other branch fails `.github/workflows/labels.yml`,
-  and the prefix labels it. An issue you open (`gh issue create`) gets `--label` for its kind (`bug`, `enhancement`,
+- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); keep this naming convention even while the automatic label workflow is paused. An issue you open (`gh issue create`) gets `--label` for its kind (`bug`, `enhancement`,
   `documentation`, `question`) and for each console (`n64`, `psx`, `ps2`, `gc`, `wii`, `pc`, `ds`, `new-console`) and
   system (`linux`, `windows`) it's about: `gh label list` has them all.
 - Releases bump the version in four places together: `pyproject.toml`, `src/decompnet/__init__.py`,

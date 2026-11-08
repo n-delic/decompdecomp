@@ -868,6 +868,9 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Lower-cost fork CI.** Ubuntu checks must pass before Windows or Apple Silicon macOS
+  checks start. Intel macOS builds are paused, along with automatic labels and site deployment.
+
 - **Separate fork data.** Installed copies default to `Decomp-RetroReversing` in the user home;
   checkouts and separate source handoffs use `Decomp-RetroReversing-dev`. Explicit `DECOMP_HOME`
   overrides still work. Upstream data is never selected or migrated automatically.

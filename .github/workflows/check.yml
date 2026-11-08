@@ -11,6 +11,7 @@ on:
 
 jobs:
   windows:
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -22,11 +23,8 @@ jobs:
         env:
           DECOMP_TRAY: "0"
   macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    needs: check
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0

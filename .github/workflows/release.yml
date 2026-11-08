@@ -76,10 +76,7 @@ jobs:
 
   macos:
     needs: linux
-    strategy:
-      matrix:
-        runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
