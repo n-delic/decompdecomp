@@ -903,6 +903,15 @@ $('dataRegionItems').onclick=async event=>{
 
 function renderProjectFacts(ov) {
   const fork = ov.kind === "fork";
+  const totalSize = ov.rom?.size;
+  const codeSize = ov.bytes || 0;
+  const hasSize = Number.isSafeInteger(totalSize) && totalSize > 0;
+  const sizeFacts = hasSize ? [
+    [ov.rom?.byte_order === "elf" ? "Total program size" : "Total ROM size", bytes(totalSize)],
+    ["Estimated non-code data", totalSize >= codeSize
+      ? `${bytes(totalSize - codeSize)} (total minus detected code; includes padding and unidentified code)`
+      : "Unavailable: detected code exceeds the stored image size"]
+  ] : [];
   const facts = [["Platform", ov.platform_name], ["Game", ov.rom?.title || ov.title], [fork ? "Version" : "Game code", ov.rom?.game_code || ov.version],
     !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
     ...projectCompilerFacts(ov),
@@ -910,7 +919,8 @@ function renderProjectFacts(ov) {
     ov.libultra ? ["Libultra detection", ov.libultra.note] : null,
     ov.libultra ? ["Libultra signatures", ov.libultra.signature_candidates.slice(0, 3).map(r => `${r.corpus.split(" / ").slice(0, 2).join(" / ")}: ${r.fingerprints} exact fingerprints (${r.version_specific_fingerprints} specific to this version among local archives)`).join("; ") || "No matching local archive signatures indexed"] : null,
     fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
-    ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`], ["Folder", ov.folder]].filter(Boolean);
+    ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`],
+    ...sizeFacts, ["Folder", ov.folder]].filter(Boolean);
   $("projFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd></div>`).join("");
   renderScope(ov);
 }

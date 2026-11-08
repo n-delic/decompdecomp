@@ -6,7 +6,7 @@ const sdk=source.slice(source.indexOf('async function renderSdkSelection()'), so
 const elements={},$=id=>elements[id]??={value:'',innerHTML:'',dataset:{},options:[],hidden:false,replaceChildren(){this.innerHTML='';}};
 const pending=[];
 const ctx={$,S:{slug:'first',gen:1,st:{}},esc:String,bytes:String,encodeURIComponent,
- projectCompilerFacts:()=>[],renderScope(){},loadDataRegions(){},loadBlockerReviews(){},loadCodeAudit(){},renderDeepSweep(){},refreshCompilerComparison(){},fillCompilers(){},renderCompilerWaiting(){},loadCompilerAnswer(){},
+ projectCompilerFacts:()=>[],refreshReimport(){},renderScope(){},loadDataRegions(){},loadBlockerReviews(){},loadCodeAudit(){},renderDeepSweep(){},refreshCompilerComparison(){},fillCompilers(){},renderCompilerWaiting(){},loadCompilerAnswer(){},
  api(url){return new Promise((resolve,reject)=>pending.push({url,resolve,reject}));}};
 vm.createContext(ctx);vm.runInContext(sdk+'\n'+facts,ctx);
 const overview=(title,folder)=>({title,folder,platform_name:'Platform',rom:{game_code:title},functions:10,compiler:{name:'Compiler',flags:[]},compilers:[]});
@@ -22,5 +22,16 @@ const overview=(title,folder)=>({title,folder,platform_name:'Platform',rom:{game
  assert.match($('projFacts').innerHTML,/Third/);
  pending[2].reject(new Error('SDK unavailable'));await assert.rejects(third,/SDK unavailable/);
  assert.match($('projFacts').innerHTML,/Third/);
+
+ctx.renderProjectFacts({...overview('ROM', '/rom'), bytes:200,rom:{size:1000,byte_order:'z64'}});
+assert.match($('projFacts').innerHTML, /Functions[\s\S]*Total ROM size[\s\S]*1000[\s\S]*Estimated non-code data[\s\S]*800/);
+ctx.renderProjectFacts({...overview('ELF', '/elf'),bytes:200,rom:{size:1000,byte_order:'elf'}});
+assert.match($('projFacts').innerHTML,/Total program size/);
+ctx.renderProjectFacts({...overview('Expanded', '/expanded'),bytes:2000,rom:{size:1000}});
+assert.match($('projFacts').innerHTML,/Unavailable: detected code exceeds/);
+assert.doesNotMatch($('projFacts').innerHTML,/-1000/);
+ctx.renderProjectFacts(overview('Unknown','/unknown'));
+assert.doesNotMatch($('projFacts').innerHTML,/Total ROM size|Estimated non-code data/);
+
  console.log('project facts navigation passed');
 })().catch(error=>{console.error(error);process.exit(1);});
