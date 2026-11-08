@@ -4,11 +4,11 @@ Equal budget: 32 candidate checks / 30 seconds per checkpoint. No AI tokens.
 
 | Checkpoint | Start → best score | Exact recovered | Compiler calls | Wall seconds | Proposal seconds | Compiler seconds |
 | --- | --- | --- | --- | --- | --- | --- |
-| 97.2% | 325 → 325 | no | 33 | 16.16 | 1.91 | 10.96 |
-| 98.0% | 230 → 230 | no | 33 | 14.79 | 1.67 | 10.79 |
-| 98.4% | 185 → 185 | no | 33 | 14.93 | 1.67 | 10.64 |
-| 98.9% | 125 → 0 | yes | 2 | 0.71 | 0.00 | 0.60 |
-| 99.4% | 60 → 0 | yes | 2 | 0.70 | 0.00 | 0.61 |
+| 97.2% | 325 → 325 | no | 33 | 14.33 | 1.55 | 9.88 |
+| 98.0% | 230 → 230 | no | 33 | 13.42 | 1.52 | 9.91 |
+| 98.4% | 185 → 185 | no | 33 | 13.44 | 1.51 | 9.65 |
+| 98.9% | 125 → 0 | yes | 2 | 0.67 | 0.00 | 0.58 |
+| 99.4% | 60 → 0 | yes | 2 | 0.66 | 0.00 | 0.59 |
 
 Independent frozen checkpoint recovery; no live adoption. Repeated checkpoints are not distinct functions.
 

@@ -161,3 +161,16 @@ def test_generation_timer_is_restored_after_an_exception():
     with compile_timing.collect(counts), pytest.raises(ValueError):fail()
     assert counts.values['proposal_generation']>=0
     assert 'proposal_generation' not in compile_timing._active.get()
+
+
+def test_cleanup_inside_broad_generation_is_not_double_counted(monkeypatch):
+    from decompnet import compile_timing
+    clock=[0.]
+    monkeypatch.setattr(compile_timing.time,'monotonic',lambda:clock[0])
+    @compile_timing.timed('cleanup_generation',unless=('proposal_generation',))
+    def cleanup():clock[0]+=1
+    @compile_timing.timed('proposal_generation')
+    def broad():cleanup();clock[0]+=2
+    counts=compile_timing.Counts()
+    with compile_timing.collect(counts):broad();cleanup()
+    assert counts.values==dict(proposal_generation=3,cleanup_generation=1)

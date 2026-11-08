@@ -54,12 +54,12 @@ class Counts:
     def add(self, name, value):self.values[name] = self.values.get(name, 0) + value
 
 
-def timed(name):
+def timed(name, *, unless=()):
     """Measure inclusive work once when a generator recursively invokes the same stage."""
     def decorate(function):
         @functools.wraps(function)
         def run(*args, **kwargs):
-            if name in _active.get():
+            if name in _active.get() or _active.get().intersection(unless):
                 return function(*args, **kwargs)
             token = _active.set(_active.get() | {name})
             try:

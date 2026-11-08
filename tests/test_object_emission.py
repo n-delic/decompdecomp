@@ -51,6 +51,9 @@ def test_tentative_common_storage_is_not_reported_as_no_data(tmp_path):
     assert result.ok,result.log
     report=object_emission.inspect(result.obj,'f')
     assert report['allocated_data_bytes']>=28
+    if any(d['name'].startswith('COMMON:') for d in report['allocated_data']):
+        layout=candidate_diagnostics.export_layout(result.obj,'f',True,{})
+        assert layout['ready'] is None and layout['state']=='requires_data_verification'
 
 
 def test_coff_definitions_common_storage_and_generated_helper_symbols():
