@@ -92,7 +92,7 @@ def variants(source, name, header='', arch=None):
         destination, callee = call[1], call[2]
         stop = end+call.end()
         formals={'idx','last','other','map0','map1','map2','map3'}
-        if formals.intersection(macros) or {destination,callee}.intersection(formals):continue
+        if (formals | {'if','else','static','__inline__','void'}).intersection(macros) or {destination,callee}.intersection(formals):continue
         if (re.search(r'\b'+IDENT+r'\s+\**\s*'+re.escape(callee)+r'\s*(?=[;=,\[])|\*\s*'+re.escape(callee)+r'\b',part.body)
                 or re.search(r'\b'+re.escape(callee)+r'\b',part.clean[find(source,name)[0]:part.opening])):continue
         signature = branch_call_support.prototype(header+'\n'+source[:part.opening], callee, arch)
