@@ -47,7 +47,7 @@ def brief(net,profile,focus,prefix=()):
     rows=listing(net,profile,focus,prefix)
     if not rows:return ''
     return 'Measured sequence trials (same profile/shape): '+'; '.join(
-        f"{r['family']}: {r['attempted']} compiles, {r['improved']} improvements, {r['exact']} exact, {r['identical']} identical, {r['unknown_output']} unknown output, "
+        f"{r['family']}: {r['attempted']} fresh trials, {r['improved']} improvements, {r['exact']} exact, {r['identical']} identical, {r['unknown_output']} unknown output, "
         +(f"{r['elapsed_ms']/1000:.2f}s over {r['timed']} timed trials" if r['timed'] else 'duration unknown')
         for r in sorted(rows,key=lambda r:-r['attempted'])[:3])+'. Advisory ordering; exploration remains available.'
 

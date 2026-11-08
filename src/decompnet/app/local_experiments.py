@@ -100,7 +100,7 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
                 proj=net._project(slug)
                 header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
                 explanation=' '+explain_scratch(source,fn['name'],header,proj['arch'])
-            return f'No untried applicable local repairs. Revision {actual}; no compile run.'+explanation
+            return f'No untried applicable local repairs. Revision {actual}; no variants submitted.'+explanation
         scope=agent_tokens.target_scope(net,fn,revision)
         baseline=checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if baseline and baseline.get('source')!=source:

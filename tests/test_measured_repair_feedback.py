@@ -34,7 +34,7 @@ def test_sequence_costs_include_unknown_outputs_and_failures_without_fabricating
     assert repair_sequence_metrics.listing(net,'other','focus',[])==[]
     assert repair_sequence_metrics.listing(net,'profile','other',[])==[]
     assert repair_sequence_metrics.listing(net,'profile','focus',['prior'])==[]
-    assert '3 compiles' in repair_sequence_metrics.brief(net,'profile','focus')
+    assert '3 fresh trials' in repair_sequence_metrics.brief(net,'profile','focus')
 
 
 def test_cost_ordering_requires_samples_and_keeps_same_profile_exploration():
