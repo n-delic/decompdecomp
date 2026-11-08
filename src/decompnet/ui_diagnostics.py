@@ -32,18 +32,29 @@ async def watch_loop():
     while True:
         began=time.monotonic()
         await asyncio.sleep(1)
-        record('Event loop stall',max(0,time.monotonic()-began-1))
+        await asyncio.to_thread(record,'Event loop stall',max(0,time.monotonic()-began-1))
 
 
 class Diagnostics:
     """ASGI wrapper: monitor lifetime follows the server, without another polling thread."""
-    def __init__(self, app):self.app=app
+    def __init__(self, app, *, stack_path=None):self.app,self.stack_path=app,stack_path
 
     async def __call__(self, scope, receive, send):
         if scope['type']=='lifespan':
+            watchdog=pulse=None
+            if self.stack_path is not None:
+                from .hang_diagnostics import Watchdog
+                watchdog=Watchdog(self.stack_path)
+                pulse=asyncio.create_task(watchdog.pulse())
+                watchdog.start()
             task=asyncio.create_task(watch_loop())
             try:await self.app(scope,receive,send)
             finally:
+                if watchdog:watchdog.close()
+                if pulse:
+                    pulse.cancel()
+                    try:await pulse
+                    except asyncio.CancelledError:pass
                 task.cancel()
                 try:await task
                 except asyncio.CancelledError:pass
@@ -65,4 +76,4 @@ class Diagnostics:
                             route=getattr(candidate,'path','')
                             break
                 label=route or getattr(scope.get('endpoint'),'__name__','API request')
-                record('Slow UI request',elapsed,label)
+                await asyncio.to_thread(record,'Slow UI request',elapsed,label)

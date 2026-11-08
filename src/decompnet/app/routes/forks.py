@@ -46,7 +46,7 @@ def register(app: App) -> None:
             settings.data["last_project"] = slug
             settings.save()
             return {"slug": slug}
-        return JSONResponse({"job": jobs.start("fork", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("fork", work))})
 
     @mcp.custom_route("/api/fork/local/scan", methods=["POST"])
     async def api_local_scan(request: Request) -> Response:
@@ -61,7 +61,7 @@ def register(app: App) -> None:
             result = net.forks.scan_local(hostenv.local_path(folder))
             log(f"Found {len(result['projects'])} repositories.")
             return result
-        return JSONResponse({"job": jobs.start("local-scan", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("local-scan", work))})
 
     @mcp.custom_route("/api/fork/local/import", methods=["POST"])
     async def api_local_import(request: Request) -> Response:
@@ -75,7 +75,7 @@ def register(app: App) -> None:
             return fail(ValueError("Choose the folder and at least one repository from its scan."))
         def work(log):
             return net.forks.import_local(hostenv.local_path(folder), paths, copies=data.get("copies") is not False, log=log)
-        return JSONResponse({"job": jobs.start("local-import", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("local-import", work))})
 
     def fork_of(slug: str):
         if not net.fork_slug(slug):
@@ -118,7 +118,7 @@ def register(app: App) -> None:
             settings.save()
             autopilot(active)
             return res
-        return JSONResponse({"job": jobs.start("fork-setup", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("fork-setup", work))})
 
     @mcp.custom_route("/api/fork/find-rom", methods=["POST"])
     async def api_fork_find_rom(request: Request) -> Response:
@@ -135,7 +135,7 @@ def register(app: App) -> None:
 
             _, project, _ = net.forks.get(slug)
             return find(project, net.forks.needs(slug), str(settings.data.get("rom_library") or ""), log)
-        return JSONResponse({"job": jobs.start("find-rom", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("find-rom", work))})
 
     @mcp.custom_route("/api/fork/setup", methods=["POST"])
     async def api_fork_setup(request: Request) -> Response:
@@ -163,7 +163,7 @@ def register(app: App) -> None:
             settings.save()
             autopilot(active)
             return res
-        return JSONResponse({"job": jobs.start("fork-setup", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("fork-setup", work))})
 
     @mcp.custom_route("/api/fork/check", methods=["POST"])
     async def api_fork_check(request: Request) -> Response:
@@ -176,7 +176,7 @@ def register(app: App) -> None:
             await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
-        return JSONResponse({"job": jobs.start("fork-check", lambda log: net.forks.check(slug, log=log, build=True))})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("fork-check", lambda log: net.forks.check(slug, log=log, build=True)))})
 
     @mcp.custom_route("/api/fork/fix-setup", methods=["GET", "POST"])
     async def api_fork_fix_setup(request: Request) -> Response:
@@ -194,8 +194,8 @@ def register(app: App) -> None:
             folder = Path(proj["root"])
         except (NetworkError, ValueError) as e:
             return fail(e)
-        return JSONResponse({"job": jobs.start("fix-setup", lambda log: setup_fix.launch(
-            app.home, folder, str(data.get("error") or ""), kind, log))})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("fix-setup", lambda log: setup_fix.launch(
+            app.home, folder, str(data.get("error") or ""), kind, log)))})
 
     @mcp.custom_route("/api/fork/rom-check", methods=["POST"])
     async def api_fork_rom_check(request: Request) -> Response:
@@ -207,7 +207,7 @@ def register(app: App) -> None:
             await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
-        return JSONResponse({"job": jobs.start("rom-check", lambda log: net.forks.check_rom(slug, log=log))})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("rom-check", lambda log: net.forks.check_rom(slug, log=log)))})
 
     @mcp.custom_route("/api/fork/start-files", methods=["POST"])
     async def api_fork_start_files(request: Request) -> Response:
@@ -219,6 +219,6 @@ def register(app: App) -> None:
             await app.read(fork_of, slug)
         except NetworkError as e:
             return fail(e)
-        return JSONResponse({"job": jobs.start("fork-start-files", lambda log: net.forks.start_files(slug, log=log))})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("fork-start-files", lambda log: net.forks.start_files(slug, log=log)))})
 
     mcp.custom_route("/api/fork/needs", methods=["GET"])(with_project(lambda s, r, d: net.forks.needs(fork_of(s)["slug"])))

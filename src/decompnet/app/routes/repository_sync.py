@@ -30,20 +30,25 @@ def register(app):
             from .. import repository_setup
             if request.method == 'GET':
                 slug = str(request.query_params.get('slug', ''))
-                with app.jobs._lock:
-                    if job := active_setup(slug):return JSONResponse({'job':job})
+                def pending_setup():
+                    with app.jobs._lock:
+                        if job := active_setup(slug):return JSONResponse({'job':job})
+                if (reserved := await app.control(pending_setup)) is not None:
+                    return reserved
                 return JSONResponse(await (app.fast_call or app.ui_call or app.call)(repository_setup.status, app.net, slug))
             data = await app.body(request)
             slug = str(data.get('slug', ''))
-            with app.jobs._lock:
-                if job := active_setup(slug):return JSONResponse({'job':job})
-                job = app.jobs.start('repository-setup', lambda log: repository_setup.run(
-                    app.net, slug, str(data.get('action', '')), str(data.get('origin', '')).strip(), log,
-                    github_name=str(data.get('github_name', '')).strip(), visibility=str(data.get('visibility', 'private'))),
-                    cancel_message='Repository setup stopped. A created GitHub repository, Git metadata or completed commit may remain; check the log before retrying.')
-                app.jobs.jobs[job]['scope'] = {'slug':slug}
-                setups[slug] = job
-            return JSONResponse({'job': job})
+            def start_setup():
+                with app.jobs._lock:
+                    if job := active_setup(slug):return JSONResponse({'job':job})
+                    job = app.jobs.start('repository-setup', lambda log: repository_setup.run(
+                        app.net, slug, str(data.get('action', '')), str(data.get('origin', '')).strip(), log,
+                        github_name=str(data.get('github_name', '')).strip(), visibility=str(data.get('visibility', 'private'))),
+                        cancel_message='Repository setup stopped. A created GitHub repository, Git metadata or completed commit may remain; check the log before retrying.')
+                    app.jobs.jobs[job]['scope'] = {'slug':slug}
+                    setups[slug] = job
+                return JSONResponse({'job': job})
+            return await app.control(start_setup)
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
 
@@ -69,18 +74,21 @@ def register(app):
             from .. import repository_fork
             data = await app.body(request) if request.method == 'POST' else request.query_params
             slug, folder = str(data.get('slug', '')), str(data.get('folder', '')).strip()
-            with app.jobs._lock:
-                active = active_fork(slug)
-                if active:
-                    if active['scope']['folder'] != folder:raise NetworkError('Fork setup is already running for another checkout of this project.')
-                    return JSONResponse({'job':active['id']})
-                if request.method == 'POST':
-                    job = app.jobs.start('repository-fork', lambda log:repository_fork.run(app.net,slug,folder,
-                        str(data.get('owner','')).strip(),str(data.get('origin_revision','')),log), project=slug,
-                        cancel_message='Fork setup stopped. A GitHub fork or completed remote change may remain. Reopen setup to check; no commits were pushed.')
-                    app.jobs.jobs[job]['scope'] = {'slug':slug,'folder':folder}
-                    forks[slug] = job
-                    return JSONResponse({'job':job})
+            def reserve_fork():
+                with app.jobs._lock:
+                    active = active_fork(slug)
+                    if active:
+                        if active['scope']['folder'] != folder:raise NetworkError('Fork setup is already running for another checkout of this project.')
+                        return JSONResponse({'job':active['id']})
+                    if request.method == 'POST':
+                        job = app.jobs.start('repository-fork', lambda log:repository_fork.run(app.net,slug,folder,
+                            str(data.get('owner','')).strip(),str(data.get('origin_revision','')),log), project=slug,
+                            cancel_message='Fork setup stopped. A GitHub fork or completed remote change may remain. Reopen setup to check; no commits were pushed.')
+                        app.jobs.jobs[job]['scope'] = {'slug':slug,'folder':folder}
+                        forks[slug] = job
+                        return JSONResponse({'job':job})
+            if (reserved := await app.control(reserve_fork)) is not None:
+                return reserved
             return JSONResponse(await app.call(repository_fork.info,app.net,slug,folder))
         except (NetworkError,ValueError,KeyError,OSError) as error:return app.fail(error)
 
@@ -126,11 +134,14 @@ def register(app):
         try:
             from .. import repository_push
             if request.method == 'GET':
-                with app.jobs._lock:
-                    setup = active_fork(str(request.query_params.get('slug', '')))
-                    if setup and setup['scope']['folder'] == str(request.query_params.get('folder', '')).strip():
-                        return JSONResponse({'fork_job':setup['id']})
-                active = active_push(str(request.query_params.get('slug', '')))
+                def pending_fork():
+                    with app.jobs._lock:
+                        setup = active_fork(str(request.query_params.get('slug', '')))
+                        if setup and setup['scope']['folder'] == str(request.query_params.get('folder', '')).strip():
+                            return JSONResponse({'fork_job':setup['id']})
+                if (reserved := await app.control(pending_fork)) is not None:
+                    return reserved
+                active = await app.control(lambda: active_push(str(request.query_params.get('slug', ''))))
                 if active:
                     return JSONResponse({'job':active['id'], 'progress':active.get('progress', {}), **active['scope']})
                 return JSONResponse(await app.call(repository_push.status, app.net,
@@ -140,14 +151,16 @@ def register(app):
             folder = str(data.get('folder', '')).strip()
             # Reserve by project under the job lock; repeated clicks/windows attach
             # to the same queued push without blocking a sync's API reservation.
-            with app.jobs._lock:
-                active = active_push(slug)
-                if active:return JSONResponse({'job':active['id']})
-                job = app.jobs.start('repository-push', lambda log: repository_push.run(app.net, slug, folder, log),
-                    cancel_message='Push stopped. Waiting requests are removed from the queue; check origin if pushing had already started.')
-                app.jobs.jobs[job]['scope'] = {'slug':slug, 'folder':folder}
-                pushes[slug] = job
-            return JSONResponse({'job':job})
+            def start_push():
+                with app.jobs._lock:
+                    active = active_push(slug)
+                    if active:return JSONResponse({'job':active['id']})
+                    job = app.jobs.start('repository-push', lambda log: repository_push.run(app.net, slug, folder, log),
+                        cancel_message='Push stopped. Waiting requests are removed from the queue; check origin if pushing had already started.')
+                    app.jobs.jobs[job]['scope'] = {'slug':slug, 'folder':folder}
+                    pushes[slug] = job
+                return JSONResponse({'job':job})
+            return await app.control(start_push)
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)
 
@@ -162,7 +175,7 @@ def register(app):
             slug=str(data.get('slug',''));folder=str(data.get('folder','')).strip()
             commit_push = data.get('commit_push', False)
             if not isinstance(commit_push, bool):raise NetworkError('Choose whether to commit and push with a boolean value.')
-            app.net.project_row(slug)
+            await app.read(app.net.project_row, slug)
             if not folder:raise NetworkError('Choose the root folder of your Git checkout.')
             # Reserve before starting a job; a second click must not launch another build.
             if not lock.acquire(blocking=False):raise NetworkError('A repository sync is already running.')
@@ -172,7 +185,7 @@ def register(app):
                     return repository_sync.run(app.net,slug,folder,log)
                 finally:lock.release()
             try:
-                job=app.jobs.start('repository-sync',work,cancel_message='Repository sync stopped. Any published files or local commit remain in the checkout; check Git status before retrying.')
+                job=await app.control(lambda: app.jobs.start('repository-sync',work,cancel_message='Repository sync stopped. Any published files or local commit remain in the checkout; check Git status before retrying.'))
             except BaseException:
                 lock.release();raise
             return JSONResponse({'job':job})

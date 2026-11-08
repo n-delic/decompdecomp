@@ -34,7 +34,7 @@ def register(app):
             body = await data(request)
             slug = str(body.get('slug') or '')
             if body.get('action') == 'revoke':
-                return JSONResponse(bridge.revoke(slug))
+                return JSONResponse(await app.control(lambda: bridge.revoke(slug)))
             return JSONResponse(await app.call(bridge.create_code, slug, str(body.get('origin') or '')))
         except (ValueError, NetworkError, OSError) as error:
             return app.fail(error)
@@ -42,7 +42,7 @@ def register(app):
     @app.mcp.custom_route('/api/browser-bridge/{action}', methods=['POST', 'OPTIONS'])
     async def browser(request):
         origin = request.headers.get('origin', '')
-        if request.headers.get('host') not in app.allowed_hosts or not bridge.allowed(origin):
+        if request.headers.get('host') not in app.allowed_hosts or not await app.control(lambda: bridge.allowed(origin)):
             return JSONResponse({'error':'This browser origin has not been paired in the desktop app.'}, status_code=403)
         headers = {'Access-Control-Allow-Origin':origin, 'Vary':'Origin', 'Cache-Control':'no-store',
                    'Access-Control-Allow-Methods':'POST, OPTIONS', 'Access-Control-Allow-Headers':'Authorization, Content-Type',
@@ -53,11 +53,11 @@ def register(app):
             body = await data(request)
             action = request.path_params['action']
             if action == 'pair':
-                return JSONResponse(bridge.pair(origin, body.get('code', '')), headers=headers)
+                return JSONResponse(await app.control(lambda: bridge.pair(origin, body.get('code', ''))), headers=headers)
             auth = request.headers.get('authorization', '')
             if not auth.startswith('Bearer '):
                 raise PermissionError('Pair this browser first.')
-            key, session = bridge.auth(origin, auth[7:])
+            key, session = await app.control(lambda: bridge.auth(origin, auth[7:]))
             if action == 'functions':
                 result = await app.call(bridge.listing, session, body.get('search', ''))
             elif action == 'task':
@@ -73,9 +73,9 @@ def register(app):
                 variant_id=body.get('variantId')
                 if variant_id is not None and (not isinstance(variant_id, str) or len(variant_id)>64):
                     raise ValueError('Choose a host compiler variation.')
-                task = bridge.consume(key, session, str(body.get('taskId') or ''))
+                task = await app.control(lambda: bridge.consume(key, session, str(body.get('taskId') or '')))
                 try:
-                    jid = app.jobs.start('browser-check', lambda log: bridge.submit(key, session, task, source, variant_id))
+                    jid = await app.control(lambda: app.jobs.start('browser-check', lambda log: bridge.submit(key, session, task, source, variant_id)))
                 except Exception:
                     session['busy'] = False
                     raise

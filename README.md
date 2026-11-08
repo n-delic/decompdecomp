@@ -654,7 +654,15 @@ decomp
 ```
 
 The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
-brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp-RetroReversing` folder.
+brings back a window closed while helpers work.
+
+For a portable Windows download, extract `decompdecomp-<version>-windows-x64-portable.zip`
+and open `decompdecomp.exe`. Keep its bundled `python` and `packages` folders beside it;
+no app installation or administrator access is needed. The native window requires .NET
+Framework 4.8 and Microsoft Edge WebView2 Runtime. Projects use
+`%USERPROFILE%\Decomp-RetroReversing` (or your explicit `DECOMP_HOME`), so move that
+folder too when moving your work. The setup download can install missing Microsoft prerequisites.
+Free tools use Windows builds where available. Projects stay in your Windows `Decomp-RetroReversing` folder.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
@@ -1038,7 +1046,7 @@ prove what a function does, not what its author called it.
 and the export rebuilds the game byte for byte from matched C plus assembly for what isn't matched yet. A game at
 100%, polished, is the goal, and the first one will be announced here.
 
-**How do I save and commit progress?** In **Settings → Save your progress**, choose your project folder and click **Save now**. Select the repository root if you have a decompdecomp build checkout: the app detects it and saves into its `progress/` subfolder, preserving build files. Then enable **Automatically commit new matches**. If needed, the app creates the progress repository and prepares its initial checkpoint before enabling the setting. Only saved-progress files are committed; unrelated source edits stay local. Commits remain local unless automatic pushing is enabled. For a detected build repository, **Update build files → Verify, commit and push** separately integrates matching C into the standalone tree and requires a byte-identical full rebuild. This is useful for build-based progress trackers such as ByteMatch. Saving progress alone does not update standalone source selections.
+**How do I save and commit progress?** In **Settings → Save your progress**, choose your project folder and click **Save now**. Select the repository root if you have a decompdecomp build checkout: the app detects it and saves into its `progress/` subfolder, preserving build files. Then enable **Automatically commit new matches**. If needed, the app creates the progress repository and prepares its initial checkpoint before enabling the setting. Older copied saves refresh automatically when their only changes are appended notes and improved drafts proven by the project’s compiled attempt history; unknown source edits or changed headers/settings remain protected for review. Only saved-progress files are committed; unrelated source edits stay local. Commits remain local unless automatic pushing is enabled. For a detected build repository, **Update build files → Verify, commit and push** separately integrates matching C into the standalone tree and requires a byte-identical full rebuild. This is useful for build-based progress trackers such as ByteMatch. Saving progress alone does not update standalone source selections.
 
 **What do I end up with?** The source code of a game you own, that builds it again. A DS game started from scratch
 reached 2,400 matched functions (58% of its code) in under two days, about half of them matched by free models, and

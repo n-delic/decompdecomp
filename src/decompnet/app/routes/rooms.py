@@ -212,7 +212,7 @@ def register(app: App) -> None:
                     log.progress({'finished':len(result['results']),'total':result['total'],
                                   'phase':'Saving verified room matches', 'results':result['results']})
                 return result
-            return JSONResponse({'job':jobs.start('room match verification',work)})
+            return JSONResponse({'job':await app.control(lambda: jobs.start('room match verification',work))})
         except (NetworkError,ValueError) as error:return fail(error)
 
     @mcp.custom_route("/api/collab/start", methods=["POST"])
@@ -232,7 +232,7 @@ def register(app: App) -> None:
             room.configure(data.get("visibility"), data.get("approve"))
             return {"link": open_room(slug, mode, str(data.get("address", "")), int(data.get("port") or 6481), log=log,
                                       keep=bool(data.get("keep")))}
-        return JSONResponse({"job": jobs.start("share", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("share", work))})
 
     @mcp.custom_route("/api/collab/manage", methods=["POST"])
     async def api_collab_manage(request: Request) -> Response:
@@ -331,7 +331,7 @@ def register(app: App) -> None:
             settings.data["last_project"] = slug
             settings.save()
             return {"slug": slug}
-        return JSONResponse({"job": jobs.start("join", work)})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("join", work))})
 
     @mcp.custom_route("/api/collab/reconnect", methods=["POST"])
     async def api_collab_reconnect(request: Request) -> Response:
@@ -339,7 +339,7 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         slug, link = str(data.get("slug", "")), str(data.get("link", ""))
-        return JSONResponse({"job": jobs.start("reconnect", lambda log: {"slug": collab.reconnect(net, slug, link, log=log)})})
+        return JSONResponse({"job": await app.control(lambda: jobs.start("reconnect", lambda log: {"slug": collab.reconnect(net, slug, link, log=log)}))})
 
     @mcp.custom_route("/api/collab/leave", methods=["POST"])
     async def api_collab_leave(request: Request) -> Response:

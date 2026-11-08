@@ -49,6 +49,7 @@ class App:
     fail: Callable[..., Any]  # fail(error, code=400): the error as JSON
     ui_call: Callable[..., Any] | None = None  # reserved capacity for snapshot-only UI reads
     fast_call: Callable[..., Any] | None = None  # lightweight counters, isolated from diff/map work
+    control_call: Callable[..., Any] | None = None  # job admission/cancellation cannot queue behind builds
     updater: updates.Updater | None = None
     busy: Callable[[], bool] | None = None  # whether helpers or a job are working
     quit_app: Callable[[], None] | None = None  # quit: the window, every helper, the server
@@ -57,6 +58,10 @@ class App:
     headless: bool = False
     autopilot: Callable[[str], None] | None = None  # state: start autopilot on a project
     with_project: Callable[..., Any] | None = None  # projects: a project route from fn(slug, request, data)
+
+    async def control(self, fn, *args):
+        """Short locking operations use reserved workers, never the ASGI thread."""
+        return await (self.control_call or self.call)(fn, *args)
 
     async def read(self, fn, *args):
         """Read current state in a worker without waiting for saved-progress verification."""
