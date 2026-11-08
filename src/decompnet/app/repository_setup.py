@@ -48,6 +48,54 @@ def status(net, slug):
             'build_folder': str(build or '')}
 
 
+
+def known_older_save(net, proj, saved, latest):
+    """Prove an unreceipted backup contains older app attempts, not contributor edits.
+
+    Settings, headers and matched C must agree. Only appended notes and improved
+    drafts already present in compiled attempt history may supersede this save.
+    """
+    from .function_names import canonical_source
+
+    old = json.loads(saved[saves.MANIFEST])
+    new = json.loads(latest[saves.MANIFEST])
+    old_functions = old.pop('functions', {})
+    new_functions = new.pop('functions', {})
+    old_notes = old.pop('notes', [])
+    new_notes = new.pop('notes', [])
+    if not isinstance(old_notes, list) or new_notes[:len(old_notes)] != old_notes:
+        return False
+    if old != new or old_functions.keys() != new_functions.keys():
+        return False
+    changed = {name for name in saved.keys() | latest.keys()
+               if name != saves.MANIFEST and saved.get(name) != latest.get(name)}
+    store = net.project_store(proj['id'])
+    for name, info in old_functions.items():
+        current = new_functions[name]
+        relative = 'best/' + name + '.c'
+        if info == current and relative not in changed:
+            continue
+        if ({k:v for k,v in info.items() if k not in ('best_score', 'best_by')}
+                != {k:v for k,v in current.items() if k not in ('best_score', 'best_by')}
+                or 'matched_by' in info or 'matched_by' in current
+                or not isinstance(info.get('best_score'), (int, float))
+                or not isinstance(current.get('best_score'), (int, float))
+                or current['best_score'] >= info['best_score']
+                or relative not in saved or relative not in latest):
+            return False
+        row = store.one('SELECT id,name,vram,meta FROM functions WHERE project_id=? AND name=?', proj['id'], name)
+        if row is None:
+            return False
+        attempts = store.all('SELECT source FROM attempts WHERE function_id=? AND compiled=1 AND score=?',
+                             row['id'], info['best_score'])
+        if not any(attempt['source'] is not None and
+                   saves._source_text(canonical_source(row, attempt['source'])) == saved[relative]
+                   for attempt in attempts):
+            return False
+        changed.discard(relative)
+    return not changed
+
+
 def bind(net, slug, path, proj, log=lambda line:None):
     """Refresh an untouched app backup, preserving external edits before adoption."""
     if path == saves.default_folder(net, slug).resolve():
@@ -74,7 +122,7 @@ def bind(net, slug, path, proj, log=lambda line:None):
     saved, latest = comparable(previous), comparable(current)
     if saved != latest:
         differences = sorted(name for name in saved.keys() | latest.keys() if saved.get(name) != latest.get(name))
-        if not untouched:
+        if not untouched and not known_older_save(net, proj, saved, latest):
             detail = ', '.join(differences[:20])
             if len(differences) > 20:detail += f' (and {len(differences)-20} more)'
             raise NetworkError('This save differs from current progress and has external edits or no app save receipt. '
