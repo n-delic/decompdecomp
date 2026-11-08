@@ -40,7 +40,7 @@ def register(app: App) -> None:
     fail = app.fail
 
     def state() -> dict:
-        own = {c.id: c.built for console in consoles.CONSOLES if hasattr(console, 'fixed_compilers')
+        own = {c.id: c for console in consoles.CONSOLES if hasattr(console, 'fixed_compilers')
                for c in console.kit_compilers()}
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:
@@ -51,9 +51,10 @@ def register(app: App) -> None:
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "linux_vm": ({"ready": linuxvm.status()[0], "why": linuxvm.status()[1]} if linuxvm.wanted() else None),
                 "toolchains": tcs,
-                "compiler_choices": [{"id": cid, "name": toolchains.get(cid).name, "kind": "compiler",
-                                      "license": "proprietary", "installed": True, "supported": True, "use": use}
-                                     for cid, use in own.items()],
+                "compiler_choices": [{"id": cid, "name": compiler.name, "kind": "compiler",
+                                      "license": "proprietary", "installed": True, "supported": True,
+                                      "use": compiler.built}
+                                     for cid, compiler in own.items()],
                 "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "bridges_removed": [] if settings.data.get("bridges_removed_seen") else cleanup.report(home),
                 "api_presets": API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,

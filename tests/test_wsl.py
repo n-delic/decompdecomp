@@ -50,6 +50,18 @@ def test_reinstalling_a_compiler_gets_a_fresh_linux_copy(tool_cache):
     assert wsl.prepare_tools(directories) != first and len(calls) == 2
 
 
+def test_staging_driver_folder_without_manifest_tracks_its_files(tool_cache):
+    directories, calls = tool_cache
+    driver = directories[0] / 'n64-driver'
+    driver.mkdir()
+    source = driver / 'driver.py'
+    source.write_text('first')
+    staged = wsl.prepare_tools((*directories, driver))
+    source.write_text('second')
+    assert wsl.prepare_tools((*directories, driver)) != staged
+    assert len(calls) == 2
+
+
 def test_a_failed_linux_copy_is_not_cached(tool_cache, monkeypatch):
     directories, _ = tool_cache
     calls = []

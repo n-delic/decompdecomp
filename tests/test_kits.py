@@ -366,6 +366,33 @@ def test_user_supplied_n64_compiler_is_in_picker_state(tmp_path, monkeypatch):
     assert row['use'] and own.id in {c['id'] for c in n64['compilers']}
 
 
+@pytest.mark.parametrize('kit_id,folder', [
+    ('visualcpp', lambda root: make_vc(root, '9.0.30729.0')),
+    ('xdk', lambda root: make_xdk(root, 3911)),
+])
+def test_pc_and_xbox_kit_compilers_are_in_picker_state(tmp_path, monkeypatch, kit_id, folder):
+    from starlette.testclient import TestClient
+
+    from decompnet.app import window
+    from decompnet.app.engine import RomNetwork
+    from decompnet.app.server import build
+
+    _setup(monkeypatch, tmp_path)
+    toolchains.install(kit_id, folder=folder(tmp_path / kit_id), accept_license=True, log=lambda *_: None)
+    console = consoles.get('pc' if kit_id == 'visualcpp' else 'xbox')
+    own = next(c for c in console.kit_compilers())
+    home = tmp_path / '.decomp'
+    home.mkdir()
+    net = RomNetwork(home / 'test.db', tmp_path)
+    mcp, _, security, _ = build(net, home, 6503, 'picker-secret')
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host='127.0.0.1'),
+                        base_url='http://127.0.0.1:6503',
+                        headers={'User-Agent': window.TOKEN_AGENT + 'picker-secret'})
+    state = client.get('/api/state').json()
+    row = next(t for t in state['compiler_choices'] if t['id'] == own.id)
+    assert row['name'] == own.name and row['use'] == own.built
+
+
 def test_own_n64_gnu_compiler_gets_its_matching_guide(monkeypatch):
     from types import SimpleNamespace
 

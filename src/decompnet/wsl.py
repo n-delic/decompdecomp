@@ -146,7 +146,13 @@ def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
     digest = hashlib.sha256(b"tool-cache-v1")
     for directory in directories:
         digest.update(str(directory.resolve()).encode("utf-8"))
-        digest.update((directory / ".decompnet-toolchain.json").read_bytes())
+        manifest = directory / ".decompnet-toolchain.json"
+        if manifest.is_file():
+            digest.update(manifest.read_bytes())
+        else:
+            for file in sorted(directory.rglob("*")):
+                if file.is_file() and "__pycache__" not in file.parts:
+                    digest.update(str(file.relative_to(directory)).encode() + file.read_bytes())
     cache = f"{_cache_directory()}/{digest.hexdigest()[:24]}"
     result = tuple(f"{cache}/{directory.name}" for directory in directories)
     q = shlex.quote
