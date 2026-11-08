@@ -197,3 +197,65 @@ def test_local_rewrites_precede_random_search_and_use_the_same_budget(tmp_path, 
     result = deep_permuter.run(net, "game", "f", 1, 2, Log())
     assert judged == [source, "int f(int a) { return (a << 5) + a; }"]
     assert result["tested"] == 2
+
+
+@pytest.mark.parametrize("finish", ["matched", "limit"])
+def test_published_improvements_continue_within_the_original_budget(tmp_path, monkeypatch, finish):
+    from decompnet.app import saves
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    log = Log()
+    calls, searches = [], []
+
+    def judge(search, agent, proj, fn, source, best, fork):
+        calls.append(source)
+        score = {"int f(void) { return 1; }": 40, "closer": 20, "next": 0 if finish == "matched" else 10}[source]
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=?,best_source=?,status=? WHERE id=?",
+                       (score,source,"matched" if score == 0 else "open",fn["id"]))
+        # The actual progress writer records a new revision after publishing saved C.
+        saves._remember_revision(net,"game",{"revision":len(calls)})
+        return score
+
+    def turn(search, agent, proj, fn, state):
+        searches.append((id(search),search.deadline,search.limit))
+        source = "closer" if len(searches) == 1 else "next"
+        state.add(variants=1)
+        search._score(agent,proj,fn,source,fn["best_score"],None)
+
+    monkeypatch.setattr(Permuter,"_score",judge)
+    monkeypatch.setattr(deep_permuter.Search,"_permute",turn)
+    monkeypatch.setattr(deep_permuter.permuter_local,"variants",lambda *args:[])
+    result = deep_permuter.run(net,"game","f",1,3,log)
+    assert calls == ["int f(void) { return 1; }","closer","next"]
+    assert len(searches) == 2 and searches[0] == searches[1]
+    assert result["reason"] == ("Matched" if finish == "matched" else "Variant limit reached")
+    assert result["tested"] == log.snapshot["tested"] == 3
+    assert log.snapshot["history"] == [{"tested":0,"score":40},{"tested":2,"score":20},
+                                        {"tested":3,"score":0 if finish == "matched" else 10}]
+    assert not net.store.one("SELECT 1 FROM claims")
+
+
+@pytest.mark.parametrize("field", ["compiler", "header", "target"])
+def test_real_compile_input_changes_still_stop_the_search(tmp_path, monkeypatch, field):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent("permuter")
+    proj, fn = net.project_row("game"), net._function("f","game")
+    search = deep_permuter.Search(net,1,10,Log())
+    monkeypatch.setattr(Permuter,"_score",lambda *args:40)
+    search.baseline(agent,proj,fn,None)
+    with net.store.tx() as db:
+        if field == "compiler":
+            config = json.loads(proj["config"])
+            config["compiler"] = {"toolchain":"different","flags":["-O2"]}
+            db.execute("UPDATE projects SET config=?",(json.dumps(config),))
+        elif field == "header":
+            db.execute("UPDATE context_versions SET header='typedef int Changed;'")
+        else:
+            db.execute("UPDATE functions SET target=?",(b"different target",))
+    with pytest.raises(deep_permuter.SearchLimit,match="Compiler, header or target changed"):
+        search._score(agent,proj,fn,"next",40,None)
+    assert search.tested == 1

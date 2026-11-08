@@ -8,6 +8,7 @@ same compiler, byte comparison, and best-candidate recording path.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from collections import OrderedDict
 
@@ -83,7 +84,11 @@ class Search(Permuter):
         ctx = self.net._context(proj["id"], fresh_fn["unit"])
         if ctx is None:
             raise NetworkError("This project has no compiler header yet. Finish its setup before searching.")
-        inputs = (fresh_proj["config"], ctx["header"], ctx["version"],
+        # Publishing this search's own improvement advances the save counter. It is
+        # bookkeeping, not a compiler input: including it stopped the search after a win.
+        config = json.loads(fresh_proj["config"])
+        config.pop("progress_revision", None)
+        inputs = (json.dumps(config, sort_keys=True), ctx["header"], ctx["version"],
                   tuple(fresh_fn[k] for k in ("id", "target", "relocs", "vram", "unit", "n_insns")))
         return hashlib.sha256(repr(inputs).encode()).digest()
 
