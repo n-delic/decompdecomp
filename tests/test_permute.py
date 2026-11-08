@@ -488,3 +488,21 @@ def test_status_is_json_safe_with_internal_source_preparation_state():
     assert state.preparation_agent.name=='autopilot' and state.source_measurement['pair'][1]=='private header'
     state.state='stopped'
     assert json.loads(json.dumps(permuter.status('game')))['state']=='stopped'
+
+
+def test_source_disappears_during_preflight(monkeypatch):
+    from decompnet.network import NetworkError
+    net = FakeNet()
+    net._function = lambda *_: net.function()
+    p = ScriptedPermuter(net, {})
+
+    def preflight(*args):
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_source=NULL WHERE id=1')
+        return {'tested': 0}
+
+    monkeypatch.setattr(p, '_compiler_preflight', preflight)
+    with pytest.raises(NetworkError, match='Saved C is no longer available'):
+        p._permute(AGENT, net.project_row('game'), net.function(), State())
+    assert p.judged == []
+    assert net.store.one('SELECT 1 FROM claims') is None
