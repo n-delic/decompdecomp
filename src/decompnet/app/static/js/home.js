@@ -251,6 +251,10 @@ function identifyHead(head, file) {
   const stem = file.name.replace(/\.[^.]*$/, "");
   const base = { title: stem, size: file.size };
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
+  if (text(0, 4) === "PK\x03\x04" && /\.(apk|xapk)$/i.test(file.name))
+    return { ...base, platform: "android", order: "Android package · largest ARMv7 native library" };
+  if (head.length >= 52 && text(0, 6) === "\x7fELF\x01\x01" && dv.getUint16(16, true) === 3 && dv.getUint16(18, true) === 40)
+    return { ...base, platform: "android", order: "Android ARMv7 native library" };
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (isGbaHead(head)) return { ...base, platform: "gba", order: "GBA ROM", code: ascii(0xac, 0xb0), title: ascii(0xa0, 0xac) || stem, entry: dv.getUint32(0, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
@@ -312,7 +316,7 @@ function notSupported(head, file) {
   if (["nes", "gb", "gbc", "md", "gen", "sms", "gg", "pce"].includes(ext)) return "Games for that console were written in assembly, not compiled from C, so there's no C source to match.";
   if (ext === "cue") return "That's the .cue sheet: pick the .bin file next to it (the track with the game's data, usually Track 1).";
   if (["zip", "7z", "rar"].includes(ext)) return "That's an archive: unpack it first, then drop the game file inside.";
-  if (ext === "apk") return "Android apps aren't supported yet.";
+
   if (isPspCiso(head, "ZISO") || ext === "zso") return "That's a ZSO image (LZ4-compressed), which decompdecomp can't read yet: decompress it to .iso first (maxcso --decompress does that), then drop the .iso.";
   if (text(0, 4) === "\0PBP" || ext === "pbp") return "That's a PSP EBOOT.PBP, a container: its program (DATA.PSP inside) is encrypted. Drop the game's UMD image (.iso) instead, or extract and decrypt the program first and drop that (.elf or .prx).";
   if (text(0, 4) === "SCE\0") return "That's a PlayStation 3 SELF (an encrypted EBOOT.BIN). decompdecomp never decrypts games: decrypt your own copy first with your own tools and keys (RPCS3 can do it for a game you installed), then drop the resulting EBOOT.ELF.";

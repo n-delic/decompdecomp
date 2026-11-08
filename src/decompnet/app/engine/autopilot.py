@@ -37,11 +37,15 @@ class AutopilotMixin:
                 ids = self.forks.autopilot_prepare(fork)
                 try_one, workers = self.forks.autopilot_one, min(workers, 2)  # each try builds a file: fewer at once
             else:
-                if not seeds.available():
-                    raise NetworkError("autopilot's drafts need m2c, the draft decompiler: install it in Setup")
                 proj = self._project(slug)
+                console = self.console(proj)
+                if console.draft_provider:
+                    if not console.drafts_ready():
+                        raise NetworkError(console.draft_help())
+                elif not seeds.available():
+                    raise NetworkError("autopilot's drafts need m2c, the draft decompiler: install it in Setup")
                 tc = self.cfg(proj)["compiler"]["toolchain"]
-                if not seeds.m2c_target(tc):
+                if not console.draft_provider and not seeds.m2c_target(tc):
                     raise NetworkError("m2c can't read this project's code (no draft decompiler for it yet)")
                 ids = [r["id"] for r in self.store.all("SELECT id FROM functions WHERE project_id=? AND status='open' "
                                                        "ORDER BY n_insns, vram", proj["id"])]
@@ -50,7 +54,7 @@ class AutopilotMixin:
         except NetworkError as e:
             ids, try_one, no_drafts = [], None, str(e)
         state = {"state": "running", "total": len(ids), "tried": 0, "matched": 0, "near": 0, "twins": 0,
-                 "phase": "twins", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event()}
+                 "phase": "twins", "no_drafts": no_drafts, "drafted": 0, "compiled": 0, "failed": 0, "error": "", "started_at": time.time(), "stop": threading.Event()}
         self.autopilots[slug] = state
         threading.Thread(target=self._autopilot_run, args=(slug, ids, state, workers, try_one),
                          daemon=True, name=f"autopilot-{slug}").start()
@@ -89,9 +93,12 @@ class AutopilotMixin:
                 return
             try:
                 outcome = try_one(agent, proj, fid)
-            except Exception:  # one odd function must not stop the rest
+            except Exception as error:  # one odd function must not stop the rest; keep the reason visible
+                logging.getLogger("decompdecomp").info("autopilot draft %s failed: %s", fid, error)
+                state["error"] = str(error)[:1000]
                 outcome = "fail"
             state["tried"] += 1
+            state["failed"] += outcome == "fail"
             if outcome in ("match", "near"):
                 state[{"match": "matched", "near": "near"}[outcome]] += 1
 
@@ -104,7 +111,7 @@ class AutopilotMixin:
             with self.store.tx() as db:
                 cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
                 cfg["autopilot"] = {k: state.get(k) for k in ("total", "tried", "matched", "near", "twins", "started_at",
-                                                              "finished_at")}
+                                                              "finished_at", "no_drafts", "drafted", "compiled", "failed", "error")}
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
             drafts = state["matched"] - state.get("twins", 0)
             if drafts:  # (twins announce their own)
@@ -168,35 +175,59 @@ class AutopilotMixin:
             fn = db.execute("SELECT * FROM functions WHERE id=?", (fid,)).fetchone()
             if fn is None or fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fid,)).fetchone():
                 return "skip"
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
+            lease = 600 if self.console(proj).draft_provider else 300
+            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + lease))
         try:
+            console = self.console(proj)
+            ctx = self._context(proj["id"], fn["unit"])
+            state = self.autopilots.get(proj["slug"], {})
+            for candidate in console.exact_rom_drafts(fn, ctx["header"]):
+                state["drafted"] = state.get("drafted", 0) + 1
+                source = "/* instruction-shape draft, tried by autopilot */\n" + candidate
+                with self.progress.judging(proj["slug"]):
+                    outcome = self._autopilot_source(agent, proj, fn, ctx, source)
+                if outcome == "match":
+                    return outcome
             self._seed_for(fn, proj)  # the readable draft, for the agents that come after
             with self.progress.judging(proj["slug"]):
                 ctx = self._context(proj["id"], fn["unit"])
                 _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
                 own = compiler_for(self.cfg(proj), fn["vram"])
                 data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
-                draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context,
-                                                data_asm, valid=True)
+                console = self.console(proj)
+                draft = (console.machine_draft(self, proj, fn, context, valid=True) if console.draft_provider else
+                         seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context, data_asm, valid=True))
                 if not draft:
                     return "fail"
                 # (its compiler named in it: the same draft is worth judging again with another compiler)
-                source = (f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
-                          f"{seeds.M2C_MACROS}\n{draft}\n")
-                if self.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND context_version=? "
-                                  "AND source=?", fid, agent.id, ctx["version"], source):
-                    return "skip"
-                result = self._compile(proj, ctx["header"], source, fn)
-                if not result.ok:
-                    return "fail"
-                cand, verdict, _ = self._evaluate(fn, proj, result.obj)
-                if cand is None:
-                    return "fail"
-                d = scoring.diff(self._target_obj(fn, proj), cand)
-                if verdict is not None:
-                    d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
-                self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match)
-                return "match" if d.bytes_match else "near" if d.percent >= 90 else "far"
+                provider = console.draft_provider or "m2c"
+                macros = "" if console.draft_provider else seeds.M2C_MACROS
+                source = (f"/* machine draft ({provider}) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
+                          f"{macros}\n{draft}\n")
+                state = self.autopilots.get(proj["slug"], {})
+                state["drafted"] = state.get("drafted", 0) + 1
+                return self._autopilot_source(agent, proj, fn, ctx, source)
+
         finally:
             with self.store.tx() as db:
                 db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fid, agent.id))
+
+    def _autopilot_source(self, agent, proj, fn, ctx, source):
+        """Compile, link and record one candidate, retaining the judge's independent relocation verdict."""
+        state = self.autopilots.get(proj["slug"], {})
+        if self.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND context_version=? "
+                          "AND source=?", fn["id"], agent.id, ctx["version"], source):
+            return "skip"
+        result = self._compile(proj, ctx["header"], source, fn)
+        if not result.ok:
+            state["error"] = result.log[-1000:]
+            return "fail"
+        state["compiled"] = state.get("compiled", 0) + 1
+        cand, verdict, _ = self._evaluate(fn, proj, result.obj)
+        if cand is None:
+            return "fail"
+        d = scoring.diff(self._target_obj(fn, proj), cand)
+        if verdict is not None:
+            d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+        self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match)
+        return "match" if d.bytes_match else "near" if d.percent >= 90 else "far"

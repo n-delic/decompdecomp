@@ -237,7 +237,7 @@ function renderAutopilot(ov) {
     $("apBtn").textContent = "Stop";
   } else if (running) {
     $("apTitle").textContent = `Autopilot: trying each function's machine draft · ${ap.matched.toLocaleString()} matched for free`;
-    $("apSub").textContent = `${ap.tried.toLocaleString()} of ${ap.total.toLocaleString()} tried${ap.near ? ` · ${ap.near} more are 90%+ there` : ""}${ap.twins ? ` · ${ap.twins.toLocaleString()} from identical code` : ""}. Agents work alongside it.${perm}`;
+    $("apSub").textContent = `${ap.tried.toLocaleString()} of ${ap.total.toLocaleString()} tried${ap.compiled != null ? ` · ${ap.compiled.toLocaleString()} candidates compiled` : ""}${ap.failed ? ` · ${ap.failed.toLocaleString()} could not be judged` : ""}${ap.near ? ` · ${ap.near} more are 90%+ there` : ""}${ap.twins ? ` · ${ap.twins.toLocaleString()} from identical code` : ""}. Agents work alongside it.${perm}`;
     $("apBar").firstElementChild.style.width = `${(100 * ap.tried) / Math.max(1, ap.total)}%`;
     $("apBtn").textContent = "Stop";
   } else if (ap || tw) {
@@ -247,14 +247,15 @@ function renderAutopilot(ov) {
     const parts = [];
     if (twinsDone) parts.push(`${twinsDone.toLocaleString()} from identical code`);
     if (tw && tw.asm) parts.push(`${tw.asm.toLocaleString()} copies of assembly set aside (not for agents)`);
-    if (ap && ap.tried) parts.push(`${ap.tried.toLocaleString()} machine drafts tried${ap.near ? `, ${ap.near} more 90%+ there` : ""}`);
-    $("apSub").textContent = (parts.length ? parts.join(" · ") + ". " : "") + (ap && ap.no_drafts ? "" : "Run it again after agents add types and names: drafts get better.") + perm;
+    if (ap && ap.tried) parts.push(`${ap.tried.toLocaleString()} functions tried${ap.compiled != null ? `, ${ap.compiled.toLocaleString()} candidates compiled` : ""}${ap.near ? `, ${ap.near} more 90%+ there` : ""}`);
+    if (ap && ap.failed) parts.push(`${ap.failed.toLocaleString()} could not be judged`);
+    $("apSub").textContent = (parts.length ? parts.join(" · ") + ". " : "") + (ap && ap.no_drafts ? `Only twins were checked. ${ap.no_drafts}` : "Run it again after agents add types and names: drafts get better.") + (ap && ap.error ? ` Last draft error: ${ap.error}` : "") + perm;
     $("apBtn").textContent = "Run again";
   } else {
     $("apTitle").textContent = "Free matches first";
     $("apSub").textContent = (ov.kind === "fork" && ov.origin !== "scratch"
       ? "Autopilot matches the code this game has more than once from its matched copies (names swapped, judged like any attempt)"
-      : "Autopilot matches identical copies of matched code and tries every function's machine draft (m2c) through the judge") + `; whatever matches costs no agent time.${perm}`;
+      : "Autopilot matches identical copies of matched code and tries every function's machine draft through the judge") + `; whatever matches costs no agent time.${perm}`;
     $("apBtn").textContent = "Run autopilot";
   }
   $("apBtn").onclick = async () => {

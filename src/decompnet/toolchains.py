@@ -554,7 +554,10 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 raise ToolchainError(f"checksum mismatch for {part['url']}: expected {part['sha256']}, got {digest}")
             if not part.get("sha256"):
                 log(f"  no pinned checksum in the registry; pinning on first use: sha256 {digest}")
-            if part.get("build") == "mips-binutils":
+            if part.get("build") == "ghidra-natives":
+                _extract(archive, dest, part.get("subdir"))
+                _build_ghidra_decompiler(dest, log)
+            elif part.get("build") == "mips-binutils":
                 _build_mips_binutils(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "psx-gcc-2.6.3":
                 _build_psx_gcc_263(archive, dest, part, log)
@@ -604,6 +607,39 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
     })
     log(f"{tid}: installed at {dest}")
     return dest
+
+
+def _build_ghidra_decompiler(dest: Path, log) -> None:
+    """The pinned Ghidra release omits Mac/ARM decompilers. Build its bundled source, never a different version.
+    Like the PS1 GCC source build, the host's C++ build tools build the tool; they never judge game candidates."""
+    from .limits import capped
+
+    platform = current_platform()
+    native = {"macos-arm64": "mac_arm_64", "macos-x86_64": "mac_x86_64", "linux-aarch64": "linux_arm_64"}.get(platform)
+    if native is None:
+        return  # the release carries Linux x86-64 and Windows binaries
+    source = dest / "Ghidra/Features/Decompiler/src/decompile/cpp"
+    output = dest / "Ghidra/Features/Decompiler/os" / native / "decompile"
+    if output.is_file():
+        return
+    compiler = Path("/usr/bin/clang++" if platform.startswith("macos") else "/usr/bin/c++")
+    if not compiler.is_file() or not Path("/usr/bin/make").is_file():
+        raise ToolchainError("Ghidra needs the host's C++ build tools to build its pinned decompiler. "
+                             "On macOS install Xcode Command Line Tools with xcode-select --install, then retry.")
+    flags = "-arch arm64" if platform == "macos-arm64" else "-arch x86_64" if platform == "macos-x86_64" else ""
+    log("  building Ghidra's native decompiler from its bundled, pinned source")
+    try:
+        result = subprocess.run(capped(["/usr/bin/make", "-j4", "ghidra_opt", f"CXX={compiler} -std=c++14",
+                                        f"ARCH_TYPE={flags}", f"OSDIR={native}"]), cwd=source,
+                                capture_output=True, text=True, timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ToolchainError(f"Ghidra's native decompiler couldn't build: {error}. Check the host C++ build tools.") from error
+    if result.returncode:
+        raise ToolchainError("Ghidra's native decompiler couldn't build. Check the host C++ build tools.\n"
+                             + (result.stdout + result.stderr)[-3000:])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source / "ghidra_opt", output)
+    output.chmod(0o755)
 
 
 def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> None:

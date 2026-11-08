@@ -16,6 +16,27 @@ from decompnet import limits, toolchains
 _EXTERNAL_EXTRACTORS = {".zst": "zstandard"}
 
 
+def test_ghidra_builds_its_bundled_decompiler_only_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
+    source = tmp_path / 'Ghidra/Features/Decompiler/src/decompile/cpp'
+    source.mkdir(parents=True)
+    calls = []
+
+    def build(argv, **kwargs):
+        calls.append((argv, kwargs))
+        (source / 'ghidra_opt').write_bytes(b'native decompiler')
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+    monkeypatch.setattr(toolchains.subprocess, 'run', build)
+    toolchains._build_ghidra_decompiler(tmp_path, lambda *_: None)
+    output = tmp_path / 'Ghidra/Features/Decompiler/os/mac_arm_64/decompile'
+    assert output.read_bytes() == b'native decompiler' and output.stat().st_mode & 0o111
+    assert calls[0][1]['cwd'] == source and calls[0][1]['timeout'] == 900
+    assert 'ARCH_TYPE=-arch arm64' in calls[0][0]
+    toolchains._build_ghidra_decompiler(tmp_path, lambda *_: None)
+    assert len(calls) == 1
+
+
 def _marker_environment(platform_name: str) -> dict[str, str]:
     system = platform_name.split("-", 1)[0]
     return {

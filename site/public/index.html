@@ -78,6 +78,7 @@
     <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
     <label><input type="radio" name="platform" value="gba"><span>Game Boy Advance</span></label>
+    <label><input type="radio" name="platform" value="android"><span>Android · native ARMv7</span></label>
   </fieldset>
   <output class="answer js-only" id="answer" for="platform" aria-live="polite" hidden></output>
 
@@ -190,6 +191,16 @@
         <li><small>Built by</small><b>agbcc</b><span>the community's free GCC-based compiler (GPL), or your own build; C</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="android" data-file="game.xapk">
+      <h3><span class="pl-name">Android · native ARMv7</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>APK, XAPK or .so</b><span>the largest armeabi-v7a library; requires sized function symbols</span></li>
+        <li><small>Split by</small><b>ELF symbols</b><span>the library's own function boundaries, ARM and Thumb</span></li>
+        <li><small>Built by</small><b>Android NDK r10e</b><span>Clang 3.5, GCC 4.8 or 4.9; Intel Mac tools need Rosetta on Apple Silicon</span></li>
+        <li><small>Judged by</small><b>Linking</b><span>byte for byte, including common PIC/GOT and PLT references; unknown forms refused</span></li>
+        <li><small>You get</small><b>Native C/C++ progress</b><span>Ghidra drafts and autopilot; no DEX, ARM64, assets, APK rebuild or signing yet</span></li>
       </ol>
     </article>
   </div>

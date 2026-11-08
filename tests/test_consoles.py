@@ -215,7 +215,7 @@ def test_a_machine_draft(demo):
 
     console, net, slug, _, symbols = demo
     compiler = net.overview(slug)["compiler"]["toolchain"]
-    if not (console.m2c_target(compiler) and seeds.available()) and not (console.mode == consoles.PROJECT and ghidra.available()):
+    if not (console.m2c_target(compiler) and seeds.available()) and not (console.draft_provider and console.drafts_ready()) and not (console.mode == consoles.PROJECT and ghidra.available()):
         pytest.skip(f"no draft decompiler for {console.name} here (m2c, or Ghidra for PC)")
     name, _ = _function(net, slug, symbols, FUNCTION)
     agent, _ = net.local_agent("draft-agent")

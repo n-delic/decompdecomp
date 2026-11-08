@@ -279,3 +279,15 @@ def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
     assert js == {v: {*compilers, *glued} for v, compilers, glued in scratch.RICH_COMPILERS}
     linkers = re.search(r"const RICH_LINKERS = \[(.*?)\];", text, re.S).group(1)
     assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS
+
+
+def test_android_packages_and_arm_shared_libraries_reach_the_import_picker(gui):
+    assert gui["checks"]["android"] == {"apk": "android", "xapk": "android", "zip": None, "native": "android"}
+
+
+def test_autopilot_explains_missing_drafts_and_shows_measured_work_and_failures(gui):
+    state = gui['checks']['autopilotStatus']
+    assert 'Only twins were checked' in state['missing'] and 'Install Ghidra' in state['missing']
+    assert '3 candidates compiled' in state['running'] and state['bar'] == '40%'
+    assert '8 candidates compiled' in state['done'] and '2 could not be judged' in state['done']
+    assert 'A draft could not compile' in state['done']
