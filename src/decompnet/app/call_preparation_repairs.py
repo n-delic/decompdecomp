@@ -6,6 +6,7 @@ these modest cases can move assignments into arguments without unsequenced acces
 """
 import itertools
 import re
+from collections import Counter
 
 from ..forks.csource import _blank, find
 from . import branch_call_support as support
@@ -238,3 +239,74 @@ def variants(source, name, header='', arch=None):
         for _, combined in bundles(first, name, header, arch)[:3]:
             result.append((FAMILIES[2], combined))
     return list(dict.fromkeys(result))[:LIMIT]
+
+
+def explain(source, name, header='', arch=None):
+    """Report observed guard blockers, not guesses about semantic equivalence or search exhaustion."""
+    part = view(source,name)
+    reasons = {}
+    def decline(key):
+        reasons[key] = reasons.get(key,0)+1
+    context = header+'\n'+source
+    if not part:
+        decline('function_not_parsed')
+    elif re.search(r'\b(?:volatile|restrict|asm|__asm__|__LINE__|setjmp|longjmp)\b',context):
+        decline('qualified_or_context_sensitive')
+    else:
+        try:
+            flow = local_flow.analyze(source,name)
+        except (ValueError,RecursionError):
+            flow = None
+        if not flow:
+            decline('flow_not_parsed')
+        else:
+            macros = set(re.findall(r'(?m)^\s*#\s*define\s+('+IDENT+r')',context))
+            seen = 0
+            known = records(context,arch)
+            for node in flow.nodes:
+                call = support.call(part,node)
+                if not call:
+                    continue
+                seen += 1
+                if macros.intersection(re.findall(IDENT,part.clean[node.start:node.end])):
+                    decline('opaque_macro')
+                    continue
+                signature = support.prototype(header+'\n'+source[:part.opening],call[1])
+                if not signature:
+                    decline('missing_explicit_prototype')
+                elif signature[0]!='void' or not len(signature[1])==len(call[2])<=6 or call[0]:
+                    decline('unsupported_call_shape')
+                elif any('*' in a or '->' in a or '[' in a for a in call[2]):
+                    decline('bundle_indirect_storage_needs_alias_proof')
+                elif not any(t in known for t in signature[1]):
+                    decline('no_complete_plain_aggregate_parameter')
+            if not seen:
+                decline('no_standalone_call')
+    candidates = variants(source,name,header,arch)
+    if not candidates and not reasons:
+        decline('no_supported_preparation_shape')
+    return dict(families=list(FAMILIES),candidates=len(candidates),per_family_candidates=dict(Counter(f for f,_ in candidates)),declined=reasons,
+                guarded_tokens={scope:sorted(set(re.findall(r'\b(?:volatile|restrict|asm|__asm__|__LINE__|setjmp|longjmp)\b',text)))
+                                for scope,text in [('source',source),('header',header)]},
+                note='Observed dispatch applicability guards and combined-family proposal counts only. Generated does not mean tested; no candidates is not budget exhaustion. Pointer aliasing and dependent writes remain guarded.')
+
+
+REASONS = {
+    'function_not_parsed':'the focal function could not be parsed',
+    'flow_not_parsed':'local control flow could not be parsed',
+    'qualified_or_context_sensitive':'source or header contains qualifiers/context-sensitive operations blocked by the current guard',
+    'opaque_macro':'a call contains an unexpanded macro; capture pinned preprocessing evidence',
+    'missing_explicit_prototype':'the callee needs an explicit prototype',
+    'unsupported_call_shape':'the call is outside the supported standalone void-call shape',
+    'bundle_indirect_storage_needs_alias_proof':'argument-bundle movement needs alias proof for indirect storage',
+    'no_supported_preparation_shape':'no supported independent preparation shape was generated',
+    'no_complete_plain_aggregate_parameter':'no complete supported by-value record parameter was found',
+    'no_standalone_call':'no supported standalone call was parsed',
+}
+
+
+def explanation(source,name,header='',arch=None):
+    report = explain(source,name,header,arch)
+    if report['candidates'] or not report['declined'] or set(report['declined']) <= {'no_standalone_call','function_not_parsed','flow_not_parsed'}:
+        return ''
+    return 'Call-dispatch guards: '+'; '.join(REASONS[k] for k in list(report['declined'])[:3])+'. This is not search-budget exhaustion.'

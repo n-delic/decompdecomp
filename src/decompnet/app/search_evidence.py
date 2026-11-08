@@ -45,6 +45,10 @@ def brief(net, proj, fn):
         lines.append(f"Repeated compiler output: {len(trials)} source variants ({', '.join(families)}) "
                      "produced the same measured function fingerprint. Try a different repair shape; "
                      "this does not prove those families exhausted or validate linked data.")
+    if current and source and permuter_focus.scheduling_only(current['rows']):
+        from .call_preparation_repairs import explanation
+        header = (net._context(proj['id'],fn['unit']) or {'header':''})['header']
+        if clue := explanation(source,fn['name'],header,proj['arch']):lines.append(clue)
     if current and permuter_focus.scheduling_only(current['rows']):
         lines.append('Only instruction order differs. Revisit earlier one-pass scopes and try bounded '
                      'argument-preparation/scheduling repairs before broad type or ABI changes.')

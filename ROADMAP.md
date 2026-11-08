@@ -3176,3 +3176,29 @@ shape before building. Add transactional helper placement/removal in the owning 
 persist its prelude with retained candidates, and verify complete inlining with the
 unit's object reader before enabling this family for imported builds. Existing
 `edit_file` remains the manual way to add such a helper there.
+
+### Branch-local packing and measured frame composition
+
+- Done: bounded unsigned arithmetic/store-tail distribution across exhaustive
+  braced if/else-if/else chains in shared local/deep/agent repair and optional
+  m2c alternatives; cursor/count updates remain shared and raw drafts remain.
+- Done: MIPS coherent memory-base register-swap evidence combined with a strict
+  uniform frame/save delta; labeled inferred storage follows existing declarations.
+  Independent frame/tail controls and bounded compositions use ordinary budgets.
+- Planned: corresponding mixed frame/pointer evidence readers for non-MIPS
+  architectures. Their supported 32-bit source-tail families already work;
+  inferred frame proposals remain unavailable without an architecture witness.
+
+### Repair analysis: remaining adapter and macro mapping gaps
+
+Done: call-preparation guard reasons in agent feedback and frozen checkpoint
+reports; opt-in installed native GCC preprocessing evidence; bounded private
+exact-verdict/allocated-output recipe reduction. The shared recipe callback works
+with ROM or PROJECT judges; no live adoption is performed.
+
+Remaining: preprocessing adapters for non-GCC/custom drivers, source-span mapping
+from expanded macros back to original C, and evidence-backed narrowing of the
+broad header-qualifier guard. Macro-expanded pointer expressions still need alias
+proof. The frozen exported-ROM CLI is MIPS-only; other targets need their copied
+ordinary build/objdiff evaluator. Neither diagnostic expansion nor recipe hashes
+replace that exact judge.

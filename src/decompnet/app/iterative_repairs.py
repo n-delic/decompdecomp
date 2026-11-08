@@ -325,6 +325,9 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     )
     labels = {}
     proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees,entry_scope=entry_scope)
+    from . import branch_frame_recovery
+    branch_frames=branch_frame_recovery.variants(source,fn["name"],header,arch,report.get("rows") or [])
+    for family,text in branch_frames:proposals.append(text);labels[text]=family
     from . import hazard_line_repairs
     hazards=hazard_line_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [])
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
@@ -380,11 +383,22 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     # Complete guarded recipes are few; retain their alternatives together instead
     # of losing the second orientation behind unrelated family round-robin work.
     recipes=[item for item in tagged if item[0]=='record_lifetime_sequence'][:4]
-    return list(dict.fromkeys(guarded+recipes+near_loops[:3]+storage_lane+tagged))
+    return list(dict.fromkeys(guarded+branch_frames+recipes+near_loops[:3]+storage_lane+tagged))
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
                       selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None, omit_families=()):
+    # A small inverse page runs before broad proposal generation, including benchmark replay.
+    # Its cursor is separate and exact-source scoped; a miss resumes ordinary pages fairly.
+    if selection is not None and 'revisit_one_shot_scope' not in omit_families:
+        from . import repair_cleanup
+        cleanup = repair_cleanup.variants(source, fn['name'], header, arch)
+        if cleanup:
+            cleanup_selection = selection.setdefault('cleanup_pages', {})
+            page = repair_selection.page(cleanup, source, cleanup_selection, limit)
+            if page:
+                return (repair_selection.Page(page, more=True) if tagged else
+                        repair_selection.Page([c for _,c in page], more=True))
     key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'),report.get('instruction_resolution'), report.get('repair_locations'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused, entry_scope)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None

@@ -60,6 +60,13 @@ def signature(rows, arch=None):
 def text(rows, arch=None):
     d = diagnose(rows,arch)
     hints = []
+    from ..arch import get
+    reader=get(arch or 'mips').stack_layout
+    layout=reader(rows) if reader else {}
+    if layout.get('pointer_swap'):
+        hints.append('coherent root/derived memory-base swap; try bounded branch-local packing/store tails with cursor increments shared')
+    if layout.get('inferred_growth'):
+        hints.append(f"uniform {layout['inferred_growth']}-byte frame/save delta; an inferred reservation is not proof of original object extent")
     if d['possible_tail_merging']:
         hints.append(f"{d['candidate_instructions']} candidate / {d['target_instructions']} target instructions with fewer repeated calls; inspect tail merging or missing logic, then try selective branch pointer lifetimes")
     if d['register_only']:

@@ -1508,3 +1508,12 @@ That case also needed explicit inferred stack padding to reproduce an unaccessed
 16-byte frame reservation. Its original purpose remains unknown; padding does not
 prove an enlarged object or recovered source. See COMPILER_MATCHING_LEARNINGS.md
 for the measured limits and function-level verification scope.
+
+Shared search now automates this alternative as `branch_packing_tail`. With a
+measured coherent pointer swap, it prioritizes that finite family. A consistent
+frame/save delta can independently offer `inferred_frame_reservation` after the
+existing declarations, plus bounded frame/tail combinations. These use ordinary
+budgets and exact verification, not assumed object extents. The frozen original
+52-point precursor recovered in four candidate compiles; its 40-point precursor
+needed one. Five unrelated regression functions retained the same best results,
+so broader match-rate or time savings are not established.

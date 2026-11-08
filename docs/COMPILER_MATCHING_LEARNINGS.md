@@ -6279,3 +6279,91 @@ A fresh diff confirmed all 350 rows and 1400 linked bytes identical, with standa
 layout checked and no data/address mismatches. A complete cartridge rebuild was
 not run. This is function-level byte proof, not original-source provenance or a
 whole-ROM claim. Private inputs and evidence remain outside Git.
+
+### Automated branch-tail and frame replay
+
+`branch_packing_tail` now offers a bounded unsigned scalar-arithmetic/store tail
+inside every arm of an exhaustive braced if/else-if/else chain. It leaves cursor
+and count increments outside. Known integer types, constant in-range shifts,
+ordinary record fields, no escaped scalar inputs, no shadowing declarations,
+opaque macro invocations or control transfers are required. It reaches shared
+local/deep/agent repair and optional m2c trials; raw m2c output stays first and its
+existing three-extra-trial ceiling remains unchanged.
+
+The MIPS evidence reader separately recognizes a coherent two-register exchange
+in memory bases and a uniform prologue/epilogue/save-slot delta. It never treats
+changed stack registers, addressing offsets or operations as a pointer swap. The
+old strict frame-only reader stays strict. `inferred_frame_reservation` places an
+explicitly labeled unused reservation after existing outer declarations instead
+of moving the known vectors/matrix. Other processors can use source-only tail
+alternatives; mixed frame targeting awaits their architecture readers.
+
+Autopilot and deep local search reserve a small measured lane for the independent
+frame control, at most two frame-plus-tail compositions, and at most two tail
+controls. These spend existing time/compile budgets. They do not change the judge,
+compiler profile, field layouts or saved code without normal exact verification.
+
+A frozen copied replay of the original 52-point precursor reached **52 → 40 → 0
+in four candidate checks / four observed compiler invocations** (about 2.9 seconds
+with installed tools/caches). Search briefly tried two unrelated follow-ups after
+the independent frame control, before the complete recipe won. Starting at the
+40-point precursor recovered exact in **one check / one observed invocation**
+(about 0.9 seconds). Baseline/control compilation is outside these candidate totals.
+These are two precursors of the same solved function, not two new matches.
+
+Five other previously frozen functions, excluding this development function,
+received equal 12-check / 15-second budgets with and without the new families.
+Both policies used 51 candidate checks, matched zero and improved one; per-case
+best scores were unchanged (107, 10, 107, 170, 10). Three inferred-frame candidates
+were evaluated with the new policy, without changing the final best results.
+This small historical regression set establishes neither broad speedups nor
+additional matches. Reports, pinned profiles, ROM, contexts and game C remain
+private under the Data-volume `branch-tail-recovery` folder.
+
+The optional public regression test consumes a private immutable manifest with
+source/header/target/compiler hashes and independently verified exact controls:
+
+```sh
+DECOMPNET_BRANCH_TAIL_SUITE=/private/path/frozen.json \
+DECOMPNET_BRANCH_TAIL_PROJECT=/private/path/copied-project \
+uv run pytest tests/test_branch_frame_recovery.py -q
+```
+
+Without those inputs only the private gate skips. Synthetic safety, shared-path,
+ordinary host-C behavior, frame evidence and cache/process-count tests still run.
+Replay reports distinguish fresh candidate checks from observed compiler processes;
+unknown process counts remain unknown and cached evaluations report zero new
+invocations. No live project was edited during these automation benchmarks.
+
+## Earlier-checkpoint recovery disproves a necessary argument bundle (8 November 2026)
+
+The equal-budget [checkpoint replay](benchmarks/aggregate-call-checkpoints.md)
+uses the same KMC GCC 2.7.2 profile and frozen ordinary linker. Removing the earlier
+one-pass assignment scope from the score-125 helper checkpoint alone also yields
+exactness. The score-60 argument bundle was therefore not independently necessary;
+it was one successful route, not the shortest proven route.
+
+Five chronological checkpoints received 32 candidate trials / 30 seconds each,
+with fresh evaluators and caches. Scores 325, 230 and 185 did not improve within
+that budget. Scores 125 and 60 recovered exact linked bytes in one repair trial
+each, plus the baseline check, without broad proposal generation. These are two
+recoveries of the same existing match, not two new functions. The source guards
+declined macro/raw-pointer aggregate dispatch at the earlier checkpoints; report
+that coverage gap instead of inferring that more permutations would solve it.
+
+### Separate guard failures from exhausted compiler experiments
+
+Pinned KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`), five frozen
+checkpoints of one 117-instruction function: compiler preprocessing succeeded,
+but call-preparation generation still declined because the conservative guard
+sees an unrelated `volatile` declaration in the header. Macro expansion alone
+neither proves alias safety nor resolves this broad guard. Report token scope
+and generated/tested counts before spending more trials. No guard was removed.
+
+An exact-verdict/allocated-output-verified ablation of the historical successful
+recipe removed one of seven token edits with 24 edit trials (26 checks including
+control/recheck, 25 compiler invocations). Automatic late-checkpoint recovery
+already used only wrapper removal and could not be shortened further in its
+12-trial budget. This is controlled replay, not new matching progress. Keep the
+verified recipe and distinguish retained chronology from demonstrated necessity.
+See `benchmarks/aggregate-call-checkpoints.md` for reproduction and limits.

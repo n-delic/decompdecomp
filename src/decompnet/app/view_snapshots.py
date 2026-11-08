@@ -97,7 +97,14 @@ def cross_project_ids(net, proj):
     return net.store.read_cache.get(('map-peers', proj['arch'], proj['big_endian']), revision, persisted)
 
 
-def map_payload(net, slug, since=None, delta=False):
+def map_payload(net, slug, since=None, delta=False, *, quick=False):
+    if quick:
+        # First paint reads this project's function metadata only. Never seed the
+        # complete/delta caches with rows whose optional annotations are pending.
+        rows = net.function_map(slug, quick=True)
+        keys = list(rows[0]) if rows else []
+        return MapPayload(sig=net.map_signature(slug) + '.quick', keys=keys,
+                          rows=[[r[k] for k in keys] for r in rows], annotations_pending=True)
     store = net.project_store(slug)
     sig = net.map_signature(slug)
     if since == sig:

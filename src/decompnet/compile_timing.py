@@ -1,4 +1,5 @@
 """Bounded numeric compiler timings; no source, paths or headers are collected."""
+import functools
 import threading
 import time
 from contextlib import contextmanager
@@ -9,6 +10,7 @@ from .compile_sessions import current
 _lock = threading.Lock()
 _totals = {}
 _collector = ContextVar('compile_timing_collector', default=None)
+_active = ContextVar('compile_timing_active', default=frozenset())
 
 
 def add(name, value):
@@ -50,3 +52,20 @@ class Counts:
     def __init__(self):self.values = {}
 
     def add(self, name, value):self.values[name] = self.values.get(name, 0) + value
+
+
+def timed(name, *, unless=()):
+    """Measure inclusive work once when a generator recursively invokes the same stage."""
+    def decorate(function):
+        @functools.wraps(function)
+        def run(*args, **kwargs):
+            if name in _active.get() or _active.get().intersection(unless):
+                return function(*args, **kwargs)
+            token = _active.set(_active.get() | {name})
+            try:
+                with phase(name):
+                    return function(*args, **kwargs)
+            finally:
+                _active.reset(token)
+        return run
+    return decorate

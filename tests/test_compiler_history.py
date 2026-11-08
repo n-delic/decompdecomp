@@ -251,7 +251,7 @@ def test_auto_apply_changes_only_function_ranges_and_rechecks_current_c(comparis
 
 def test_used_profiles_only_tests_exact_assignments_and_invalidates_history(comparison, monkeypatch):
     net, _, _, _ = comparison
-    cfg = net.cfg(net.project_row('demo'))
+    cfg = json.loads(net.project_row('demo')['config'])
     cfg['compiler_ranges'] = [
         {'start':0x80001020, 'end':0x80001040, 'toolchain':'sn-n64-281', 'flags':['-O1']},
         {'start':0x90000000, 'end':0x90000010, 'toolchain':'unused', 'flags':['-O3']}]
@@ -486,3 +486,57 @@ def test_bulk_comparison_skips_function_without_any_source(comparison):
         db.execute('UPDATE functions SET best_source=NULL WHERE id=?', (fn['id'],))
     result = net.survey_compilers('demo', all_installed=True)
     assert result['tried'] == 1 and set(calls) == {'f0'}
+
+
+def test_original_entry_apply_does_not_scan_unrelated_profiles(comparison, monkeypatch):
+    net, _, _, _ = comparison
+    from decompnet.app.prepared_evidence import scoped_config
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET rom_offset=256 WHERE name='f0'")
+    proj = net._project('demo')
+    fn = net._function('f0', 'demo')
+    cfg = scoped_config(proj, fn, {'toolchain':'sn-n64-281', 'flags':['-O1']})
+    from decompnet.app.engine import compilers
+    original = compilers.compiler_for
+    seen = []
+    def profile(config, address, function=None):
+        seen.append(function['name'])
+        return original(config, address, function)
+    monkeypatch.setattr(compilers, 'compiler_for', profile)
+    with net.progress.view():
+        net._apply_compiler_config(proj, cfg)
+    assert seen and set(seen) == {'f0'}
+    assert original(net.cfg(net._project('demo')), fn['vram'], fn)['toolchain'] == 'sn-n64-281'
+
+
+def test_single_apply_defers_optional_match_effects(comparison, monkeypatch):
+    net, _, _, _ = comparison
+    from decompnet.app import restore_effects
+    queued = []
+    monkeypatch.setattr(restore_effects, '_queue', lambda net, pid, pending: queued.append(pending))
+    monkeypatch.setattr(net, '_judge_with', lambda *a: (True, SimpleNamespace(score=0), ''))
+    def save(agent, proj, fn, source, **kwargs):
+        net.on_match(proj, fn['id'], agent)
+        assert not queued
+    monkeypatch.setattr(net, 'try_quietly', save)
+    net.apply_function_compiler('demo', 'f0', 'gcc-2.7.2-kmc', ['-O2'])
+    assert len(queued) == 1 and queued[0]['matched']
+
+
+def test_apply_reuses_one_private_compile_session(comparison, monkeypatch):
+    net, _, _, _ = comparison
+    from decompnet.compile_sessions import current
+    sessions = []
+    def judge(*args):
+        sessions.append(current())
+        return True, SimpleNamespace(score=0), ''
+    monkeypatch.setattr(net, '_judge_with', judge)
+    def save(*args, **kwargs):
+        sessions.append(current())
+    monkeypatch.setattr(net, 'try_quietly', save)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET rom_offset=256 WHERE name='f0'")
+    net.apply_function_compiler('demo', 'f0', 'sn-n64-281', ['-O1'])
+    assert len(sessions) == 3
+    assert sessions[0] is not None and all(s is sessions[0] for s in sessions)
+    assert current() is None

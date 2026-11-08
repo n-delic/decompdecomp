@@ -7,7 +7,7 @@ preprocessor lines are opaque.
 
 import re
 
-from .. import m2cfix, seeds
+from .. import compile_timing, m2cfix, seeds
 from ..forks.csource import _blank, find
 from . import (
     address_association_repairs,
@@ -19,6 +19,7 @@ from . import (
     branch_locals,
     branch_pointer_repairs,
     branch_scalar_repairs,
+    branch_tail_distribution,
     buffer_address_repairs,
     byte_address_inline_repairs,
     byte_increment_repairs,
@@ -142,7 +143,7 @@ from . import (
 )
 from .repair_generation import call as _generated
 
-AGENT_FAMILIES = call_preparation_repairs.FAMILIES + repair_cleanup.FAMILIES + record_lifetime_recovery.FAMILIES + pointer_result_repairs.FAMILIES + record_store_bundles.FAMILIES + narrow_store_repairs.FAMILIES + scratch_role_repairs.FAMILIES + parameter_carriers.FAMILIES + narrow_load_subtraction.FAMILIES + integer_constant_repairs.FAMILIES + loop_storage_shapes.FAMILIES + scalar_storage_reuse.FAMILIES + (switch_constant_dispatch.FAMILY, guarded_call_repairs.FAMILY, decoded_byte_repairs.FAMILY, zero_chain_repairs.FAMILY, component_index_repairs.FAMILY, unsigned_shift_repairs.FAMILY, preheader_order_repairs.FAMILY, terminal_guard_repairs.FAMILY, promoted_entry_repairs.FAMILY,) + zero_argument_repairs.FAMILIES + (matched_prototype_repairs.FAMILY, countdown_guard_repairs.FAMILY,) + loaded_byte_repairs.FAMILIES + pointer_capture_repairs.FAMILIES + scan_load_repairs.FAMILIES + byte_address_inline_repairs.FAMILIES + byte_increment_repairs.FAMILIES + (known_bit_repairs.FAMILY, post_call_capture_repairs.FAMILY) + loop_guard_storage_repairs.FAMILIES + macro_address_repairs.FAMILIES + live_return_address_repairs.FAMILIES + copy_lifetime_repairs.FAMILIES + (debug_boundary_repairs.FAMILY,) + conversion_scheduling_repairs.FAMILIES + (hardware_operation_repairs.FAMILY,) + (return_contract_repairs.FAMILY, float_storage_repairs.FAMILY, narrow_expression_repairs.FAMILY) + narrow_call_repairs.FAMILIES + (branch_scalar_repairs.FAMILY, call_count_repairs.FAMILY, pointer_snapshot_repairs.FAMILY,) + call_assignment_repairs.FAMILIES + constant_pointer_repairs.FAMILIES + (shared_offset_repairs.FAMILY, 'branch_store_tail', 'common_scalar_tail',) + later_local_repairs.FAMILIES + call_scope_repairs.FAMILIES + debug_initializer_repairs.FAMILIES + phase_union_repairs.FAMILIES + captured_index_repairs.FAMILIES + recent_capture_repairs.FAMILIES + (identity_lifetime_repairs.FAMILY, 'typed_global_identity', 'block_accumulator_lifetime', pointer_index_scope.FAMILY,) + copy_shape_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (store_result_repairs.FAMILY,) + equal_value_flow.FAMILIES + example_lifetime_repairs.FAMILIES + affine_operand_repairs.FAMILIES + loop_weight_repairs.FAMILIES + branch_pointer_repairs.FAMILIES + capture_followup_repairs.FAMILIES + ('paired_load_order',) + allocation_repairs.FAMILIES + value_range_repairs.FAMILIES + count_lifetime_repairs.FAMILIES + helper_expansion.FAMILIES + record_lifetime_repairs.FAMILIES + raw_address_repairs.FAMILIES + zero_test_repairs.FAMILIES + pointer_pair_repairs.FAMILIES + field_order_repairs.FAMILIES + match_shape_repairs.FAMILIES + increment_expression_repairs.FAMILIES + allocator_shape_repairs.FAMILIES + buffer_address_repairs.FAMILIES + normalization_repairs.FAMILIES + call_lifetime_repairs.FAMILIES + sdk_io_repairs.FAMILIES + target_local_repairs.FAMILIES + formatter_repairs.FAMILIES + ('target_switch_order',) + inline_scheduling_repairs.FAMILIES + ('runtime_scalar_signature', 'shared_return_tail', 'direct_compound_store', 'redundant_loop_guard', 'float_argument_bits', 'arithmetic_operand_order', 'call_forwarded_arguments', 'small_copy', 'typed_record_address', 'one_shot_scope', 'one_shot_unwrap',
+AGENT_FAMILIES = branch_tail_distribution.FAMILIES + call_preparation_repairs.FAMILIES + repair_cleanup.FAMILIES + record_lifetime_recovery.FAMILIES + pointer_result_repairs.FAMILIES + record_store_bundles.FAMILIES + narrow_store_repairs.FAMILIES + scratch_role_repairs.FAMILIES + parameter_carriers.FAMILIES + narrow_load_subtraction.FAMILIES + integer_constant_repairs.FAMILIES + loop_storage_shapes.FAMILIES + scalar_storage_reuse.FAMILIES + (switch_constant_dispatch.FAMILY, guarded_call_repairs.FAMILY, decoded_byte_repairs.FAMILY, zero_chain_repairs.FAMILY, component_index_repairs.FAMILY, unsigned_shift_repairs.FAMILY, preheader_order_repairs.FAMILY, terminal_guard_repairs.FAMILY, promoted_entry_repairs.FAMILY,) + zero_argument_repairs.FAMILIES + (matched_prototype_repairs.FAMILY, countdown_guard_repairs.FAMILY,) + loaded_byte_repairs.FAMILIES + pointer_capture_repairs.FAMILIES + scan_load_repairs.FAMILIES + byte_address_inline_repairs.FAMILIES + byte_increment_repairs.FAMILIES + (known_bit_repairs.FAMILY, post_call_capture_repairs.FAMILY) + loop_guard_storage_repairs.FAMILIES + macro_address_repairs.FAMILIES + live_return_address_repairs.FAMILIES + copy_lifetime_repairs.FAMILIES + (debug_boundary_repairs.FAMILY,) + conversion_scheduling_repairs.FAMILIES + (hardware_operation_repairs.FAMILY,) + (return_contract_repairs.FAMILY, float_storage_repairs.FAMILY, narrow_expression_repairs.FAMILY) + narrow_call_repairs.FAMILIES + (branch_scalar_repairs.FAMILY, call_count_repairs.FAMILY, pointer_snapshot_repairs.FAMILY,) + call_assignment_repairs.FAMILIES + constant_pointer_repairs.FAMILIES + (shared_offset_repairs.FAMILY, 'branch_store_tail', 'common_scalar_tail',) + later_local_repairs.FAMILIES + call_scope_repairs.FAMILIES + debug_initializer_repairs.FAMILIES + phase_union_repairs.FAMILIES + captured_index_repairs.FAMILIES + recent_capture_repairs.FAMILIES + (identity_lifetime_repairs.FAMILY, 'typed_global_identity', 'block_accumulator_lifetime', pointer_index_scope.FAMILY,) + copy_shape_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (store_result_repairs.FAMILY,) + equal_value_flow.FAMILIES + example_lifetime_repairs.FAMILIES + affine_operand_repairs.FAMILIES + loop_weight_repairs.FAMILIES + branch_pointer_repairs.FAMILIES + capture_followup_repairs.FAMILIES + ('paired_load_order',) + allocation_repairs.FAMILIES + value_range_repairs.FAMILIES + count_lifetime_repairs.FAMILIES + helper_expansion.FAMILIES + record_lifetime_repairs.FAMILIES + raw_address_repairs.FAMILIES + zero_test_repairs.FAMILIES + pointer_pair_repairs.FAMILIES + field_order_repairs.FAMILIES + match_shape_repairs.FAMILIES + increment_expression_repairs.FAMILIES + allocator_shape_repairs.FAMILIES + buffer_address_repairs.FAMILIES + normalization_repairs.FAMILIES + call_lifetime_repairs.FAMILIES + sdk_io_repairs.FAMILIES + target_local_repairs.FAMILIES + formatter_repairs.FAMILIES + ('target_switch_order',) + inline_scheduling_repairs.FAMILIES + ('runtime_scalar_signature', 'shared_return_tail', 'direct_compound_store', 'redundant_loop_guard', 'float_argument_bits', 'arithmetic_operand_order', 'call_forwarded_arguments', 'small_copy', 'typed_record_address', 'one_shot_scope', 'one_shot_unwrap',
                   'pointer_block_scope', 'array_address_share', 'combined_integer_lifetimes', 'inferred_record_layout',
                   'float_product_intermediate','pointer_chase_reuse','independent_assignment_order',
                   'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores',
@@ -153,6 +154,7 @@ _IDENT = r'[A-Za-z_]\w*'
 _MEMBER = rf'{_IDENT}(?:\s*(?:->|\.)\s*{_IDENT})*'
 
 
+@compile_timing.timed('proposal_generation')
 def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
     span = find(source, name)
     if span is None:
@@ -182,7 +184,8 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     offset = opening + 1
     proposals = []
     labels = labels if labels is not None else {}
-    early = (_generated(call_preparation_repairs.variants,source,name,header,arch)
+    early = (_generated(branch_tail_distribution.variants,source,name,header,arch)
+             + _generated(call_preparation_repairs.variants,source,name,header,arch)
              + _generated(repair_cleanup.variants,source,name,header,arch)
              + _generated(record_lifetime_recovery.variants,source,name,header,arch)
              + _generated(pointer_result_repairs.variants,source,name,header)

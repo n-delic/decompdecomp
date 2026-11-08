@@ -124,3 +124,27 @@ def test_completed_proposal_cache_is_size_bounded(monkeypatch):
         pool.executor.shutdown(wait=True)
         assert not pool.cache and not pool.sizes
     finally:pool.close()
+
+
+def test_cached_worker_result_does_not_count_proposal_work_twice(monkeypatch):
+    from decompnet import compile_timing
+    class Worker:
+        closed=threading.Event()
+        def run(self,payload,check):
+            return {'choices':['c'],'labels':{'c':'family'},'timings':{'proposal_generation':2.5}}
+        def close(self):pass
+    monkeypatch.setattr(deep_proposals,'Worker',Worker)
+    pool=deep_proposals.Pool(1)
+    counts=compile_timing.Counts()
+    try:
+        args,kwargs=request()
+        with compile_timing.collect(counts):
+            pool.generate(args,kwargs,lambda:None)
+            pool.generate(args,kwargs,lambda:None)
+        assert counts.values['proposal_generation']==2.5
+        assert pool.submitted==1
+        # Evict the cached result; newly executed work with the same request counts again.
+        pool.cache.clear();pool.sizes.clear()
+        with compile_timing.collect(counts):pool.generate(args,kwargs,lambda:None)
+        assert counts.values['proposal_generation']==5
+    finally:pool.close()

@@ -431,6 +431,7 @@ class Search(Permuter):
             from . import repair_cleanup
             cleanup = [(family, child) for family, child in repair_cleanup.variants(
                 source, fn['name'], header, proj['arch']) if child not in self.local_seen]
+            branch_frames=[]
             cleanup_pass = bool(cleanup)
             if cleanup_pass:
                 choices = [child for _, child in cleanup]
@@ -467,6 +468,10 @@ class Search(Permuter):
                 stack = stack_padding_repairs.grow(source, fn['name'], proj['arch'], rows)
                 for candidate in stack:
                     labels.setdefault(candidate, 'stack_padding')
+                from . import branch_frame_recovery
+                branch_frames=branch_frame_recovery.variants(source,fn["name"],header,proj["arch"],rows)
+                for family,candidate in branch_frames:labels[candidate]=family
+                choices += [s for _,s in branch_frames]
                 choices += stack
                 from . import normalization_repairs
                 normalization_repairs.extend_frame(choices, labels, source, fn['name'], proj['arch'], rows)
@@ -495,7 +500,9 @@ class Search(Permuter):
             from . import proposal_progress
             progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
             complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
-            queue = list(dict.fromkeys(complete+[c for _,c in progressed]))
+            frame_sources={c for _,c in branch_frames}
+            frame_prefix=[c for _,c in progressed if c in frame_sources]
+            queue = list(dict.fromkeys(frame_prefix+complete+[c for _,c in progressed]))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             lane = getattr(self, "parallel_lane", None)
             if lane is not None:

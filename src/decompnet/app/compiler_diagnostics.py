@@ -9,6 +9,7 @@ from pathlib import Path
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
+from elftools.elf.sections import SymbolTableSection
 
 from .. import toolchains
 from ..compiler import capture_artifacts, compile_source
@@ -31,8 +32,11 @@ def output_fingerprint(raw):
 def allocated_output(raw):
     """Include static helper code, initialized data, BSS sizes and named relocations."""
     elf = ELFFile(BytesIO(raw))
-    sections = []; relocations = []
+    sections = []; relocations = []; common = []
     for section in elf.iter_sections():
+        if isinstance(section,SymbolTableSection):
+            common.extend((symbol.name,symbol['st_size'],symbol['st_value'],symbol['st_info']['bind'])
+                          for symbol in section.iter_symbols() if symbol['st_shndx']=='SHN_COMMON')
         if section['sh_flags'] & 2:
             sections.append((section.name,section['sh_size'],section['sh_flags'],
                              section.data().hex() if section['sh_type']!='SHT_NOBITS' else None))
@@ -44,7 +48,10 @@ def allocated_output(raw):
             for relocation in section.iter_relocations():
                 relocations.append((destination.name,relocation['r_offset'],relocation['r_info_type'],
                                     symbols.get_symbol(relocation['r_info_sym']).name,relocation.entry.get('r_addend')))
-    return hashlib.sha256(repr((sections,relocations)).encode()).hexdigest()
+    # Preserve historical fingerprints when no tentative storage exists. COMMON has
+    # no allocated section yet, but removing/resizing it is still an output change.
+    payload = (sections,relocations,sorted(common)) if common else (sections,relocations)
+    return hashlib.sha256(repr(payload).encode()).hexdigest()
 
 
 def phase_summary(work, name=None, arch=None):

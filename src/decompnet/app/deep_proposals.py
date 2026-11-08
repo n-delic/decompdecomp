@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
@@ -79,6 +80,7 @@ class Pool:
         self.cache = OrderedDict()
         self.sizes = {}
         self.stop = threading.Event()
+        self.measured = weakref.WeakSet()
         self.submitted = 0
         self.running = 0
 
@@ -93,7 +95,8 @@ class Pool:
             def checkpoint():
                 if self.stop.is_set():raise RuntimeError('Proposal generation stopped')
                 check()
-            return worker.run(request,checkpoint)
+            result = worker.run(request,checkpoint)
+            return result
         finally:
             with self.lock:self.running -= 1
 
@@ -131,6 +134,14 @@ class Pool:
             check()
             try:result = future.result(timeout=.05);break
             except TimeoutError:pass
+        with self.lock:
+            fresh = future not in self.measured
+            self.measured.add(future)
+        if fresh:
+            from .. import compile_timing
+            for name, value in result.get('timings', {}).items():
+                if name in {'proposal_generation', 'cleanup_generation'} and isinstance(value,(int,float)) and value >= 0:
+                    compile_timing.add(name,value)
         return list(result['choices']),dict(result['labels']),time.monotonic()-started
 
     def close(self):
