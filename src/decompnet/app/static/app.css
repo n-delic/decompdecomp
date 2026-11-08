@@ -2060,3 +2060,9 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .fn-chart-tooltip { position:absolute; top:12px; z-index:2; display:grid; gap:4px; width:max-content; max-width:min(330px,100%); padding:10px 12px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel); color:var(--ink); box-shadow:0 4px 16px #0002; font-size:11px; pointer-events:none; overflow-wrap:anywhere; }
 .fn-chart-tooltip[hidden] { display:none; }
 .fn-chart-tooltip span { color:var(--muted); }
+
+/* Concurrent Activity actions share one compact status, without shifting the table. */
+.background-feedback { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+.background-feedback > p { margin:0; }
+.background-feedback .workbar { width:140px; flex:0 0 140px; margin:0; height:3px; }
+.background-feedback > .err-msg, .background-feedback > .joblog { flex-basis:100%; }
