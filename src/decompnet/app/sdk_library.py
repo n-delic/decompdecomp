@@ -31,7 +31,8 @@ def choose(net, slug, selection):
         if not isinstance(selection, list) or any(not isinstance(c, str) or c not in known for c in selection):
             raise NetworkError('Choose libraries from the indexed local inventory, or use automatic detection.')
         selection = sorted(set(selection))
-    with net.store.tx() as db:
+    # The inventory is shared; a migrated project's selection belongs to its own database.
+    with net.project_store(slug).tx() as db:
         # Read under the write lock so a simultaneous project setting is not overwritten.
         row = db.execute('SELECT id,config FROM projects WHERE slug=?', (slug,)).fetchone()
         if row is None:
