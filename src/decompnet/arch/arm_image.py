@@ -63,14 +63,14 @@ class Image:
             dest = arm_b_dest(data, 4, address + 4)
             if dest is not None:
                 return dest
-            if data[4:12] == bytes.fromhex('00 c0 9f e5 0f f0 8c e0'):
+            if len(data) >= 16 and data[4:12] == bytes.fromhex('00 c0 9f e5 0f f0 8c e0'):
                 return (address + 16 + int.from_bytes(data[12:16], 'little')) & 0xFFFFFFFE
             return address
         if data[:4] == bytes.fromhex('04 f0 1f e5'):
             return int.from_bytes(data[4:8], 'little') & ~1
         if data[:8] == bytes.fromhex('00 c0 9f e5 1c ff 2f e1'):
             return int.from_bytes(data[8:12], 'little') & ~1
-        if data[:12] == bytes.fromhex('04 c0 9f e5 0c c0 8f e0 1c ff 2f e1'):
+        if len(data) >= 16 and data[:12] == bytes.fromhex('04 c0 9f e5 0c c0 8f e0 1c ff 2f e1'):
             return (address + 12 + int.from_bytes(data[12:16], 'little')) & 0xFFFFFFFE
         return address
 
