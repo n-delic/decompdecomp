@@ -1131,3 +1131,20 @@ def test_background_trial_preserves_another_agents_claim_and_unfinished_file(tmp
     assert dict(net.store.one('SELECT * FROM claims WHERE function_id=?', fn['id'])) == claim
     with pytest.raises(NetworkError, match='restore unfinished source'):
         net.forks.attempt(search_agent, slug, name, candidate, background=True)
+
+
+@needs_tools
+def test_deep_imported_source_baseline_is_rebuilt_by_project_judge(fork):
+    from decompnet.app import deep_permuter
+    from decompnet.app.permute import Permuter, State
+    net, slug, agent = fork
+    proj, fp, _ = net.forks.get(slug)
+    candidates = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' AND best_score IS NOT NULL AND best_source IS NULL",proj['id'])
+    fn = next(fn for fn in candidates if net.forks._current_source(fp, fn))
+    before = {p:p.read_bytes() for p in fp.root.glob('src/*') if p.is_file()}
+    prepared = deep_permuter.prepare_source(net, proj, fn)
+    assert prepared['best_source'] and prepared['status'] == 'open'
+    assert prepared['best_score'] == fn['best_score']
+    assert all(p.read_bytes()==content for p,content in before.items())
+    score, _ = Permuter(net)._baseline(agent, proj, prepared, State(), slug)
+    assert score is not None

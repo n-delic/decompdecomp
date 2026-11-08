@@ -16,6 +16,7 @@ from .. import compiler, scoring
 from ..candidate_work import scope as candidate_work_scope
 from ..candidate_work import trial
 from ..compile_sessions import batched
+from ..forks.project import ForkError
 from ..network import NetworkError
 from ..project import compiler_for
 from ..repair_feedback import current_trial
@@ -50,6 +51,27 @@ class SearchLimit(Exception):
     pass
 
 
+def prepare_source(net, proj, fn):
+    """Imported source is already on disk; retain it as a baseline, never as a new match.
+
+    The normal deep baseline recompiles and judges it before searching. Do not
+    replace any saved attempt or attach source to an unscored/finished function.
+    """
+    if fn['best_source'] or fn['best_score'] is None or fn['status'] != 'open':return fn
+    if not net.fork_slug(proj['slug']):return fn
+    try:
+        _, fp, _ = net.forks.get(proj['slug'])
+        current = net._function(fn['name'], proj['slug'])
+        source = net.forks._current_source(fp, current)
+    except (ForkError, NetworkError, OSError):
+        return fn
+    if not source:return fn
+    with net.project_store(proj['id']).tx() as db:
+        db.execute("UPDATE functions SET best_source=? WHERE id=? AND status='open' AND best_source IS NULL AND best_score IS NOT NULL",
+                   (source, fn['id']))
+    return {**dict(fn), **dict(net._function(fn['name'], proj['slug']))}
+
+
 def validate(net, slug, name, minutes, max_variants):
     if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 120:
         raise NetworkError('Choose a time limit from 1 to 120 minutes.')
@@ -59,6 +81,7 @@ def validate(net, slug, name, minutes, max_variants):
     fn = net._function(name, slug)
     from .boundary_repairs import blocked
     if fn['id'] in blocked(net,proj):raise NetworkError('Review this function boundary before starting a deep pass.')
+    fn = prepare_source(net, proj, fn)
     if fn['status'] != 'open' or not fn['best_source'] or fn['best_score'] is None:
         raise NetworkError('Choose an unmatched function with saved, scored C first.')
     return proj, fn
