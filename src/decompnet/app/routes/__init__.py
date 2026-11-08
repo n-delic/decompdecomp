@@ -63,6 +63,13 @@ class App:
         """Short locking operations use reserved workers, never the ASGI thread."""
         return await (self.control_call or self.call)(fn, *args)
 
+    async def imports(self, module, names):
+        """Lazy imports may wait for another thread initializing the same module."""
+        def load():
+            package = __import__(module, fromlist=names)
+            return tuple(getattr(package, name) for name in names)
+        return await self.control(load)
+
     async def read(self, fn, *args):
         """Read current state in a worker without waiting for saved-progress verification."""
         def snapshot():

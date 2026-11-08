@@ -36,7 +36,7 @@ def register(app: App) -> None:
         if app.web_login and not (app.web_login.authorized(request) or secrets.compare_digest(window.request_token(request), secret)):
             return RedirectResponse('/login', status_code=303, headers={'Cache-Control':'no-store'})
         if not app.web_login and not secrets.compare_digest(window.request_token(request), secret):
-            return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
+            return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if await app.call(hostenv.in_old_windows_install) else OLD_PAGE_LINUX), status_code=401)
         revisions = await app.call(frontend_reload.snapshot) if frontend_reload.enabled() else None
         page=(await app.call(static_file, "index.html")).decode()
         if revisions:
@@ -70,7 +70,7 @@ def register(app: App) -> None:
         data = await app.call(static_file, name)
         if data is None:
             return Response(status_code=404)
-        ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        ctype = (await app.call(mimetypes.guess_type, name))[0] or "application/octet-stream"
         return Response(data, media_type=ctype, headers={"Cache-Control": "no-cache"})
 
     @mcp.custom_route("/health", methods=["GET"])

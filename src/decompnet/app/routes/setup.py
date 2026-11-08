@@ -30,7 +30,7 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/sdk-library", methods=["GET", "POST"])
     async def api_sdk_library(request: Request) -> Response:
-        from .. import sdk_library
+        sdk_library, = await app.imports('decompnet.app', ('sdk_library',))
         if (bad := guard(request, write=request.method == "POST")):
             return bad
         try:
@@ -39,7 +39,7 @@ def register(app: App) -> None:
             data = await body(request)
             if data.get('slug'):
                 await call(lambda: sdk_library.choose(net, str(data['slug']), data.get('selection')))
-                from .. import purpose_work, sdk_names
+                purpose_work, sdk_names = await app.imports('decompnet.app', ('purpose_work', 'sdk_names'))
                 await app.control(lambda: purpose_work.start('SDK function naming', str(data['slug']), sdk_names.name_functions, net, str(data['slug'])))
                 return JSONResponse(await call(lambda: sdk_library.state(net, str(data['slug']))))
             folders = data.get('folders', [])
@@ -61,7 +61,7 @@ def register(app: App) -> None:
         tid, accept = str(data.get("id", "")), bool(data.get("accept_license"))
         folder = str(data.get("folder") or "").strip() or None
         if folder:
-            folder = hostenv.local_path(folder)
+            folder = await app.call(hostenv.local_path, folder)
         return JSONResponse({"job": await app.control(lambda: jobs.start("toolchain", lambda log: (toolchains.install(tid, accept_license=accept, force=bool(data.get("force")), folder=folder, log=log)
                                                                          and {"id": tid})))})
 
@@ -96,7 +96,7 @@ def register(app: App) -> None:
             kind = None
         if kind is None or not kind.install_text():
             return fail(ValueError("nothing to install"))
-        if kind.install_text().startswith("npm ") and not shutil.which("npm"):
+        if kind.install_text().startswith("npm ") and not await app.call(shutil.which, "npm"):
             return fail(ValueError(f"{kind.name} is installed with npm: install Node.js from https://nodejs.org "
                                    "first (the LTS version), then try again"))
 
@@ -119,7 +119,7 @@ def register(app: App) -> None:
         """Look again which agents are installed and their models (a sign-in since): in the background."""
         if (bad := guard(request, write=True)):
             return bad
-        from decompnet.agents import AGENTS
+        AGENTS, = await app.imports('decompnet.agents', ('AGENTS',))
         for agent in AGENTS:
             await app.control(agent.forget_models)
         await app.control(manager.refresh_detected)

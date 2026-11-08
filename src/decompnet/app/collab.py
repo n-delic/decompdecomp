@@ -26,6 +26,7 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 
+import anyio
 import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -466,8 +467,6 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
 
     def endpoint(fn, auth: bool = True):
         async def handler(request: Request):
-            import anyio
-
             try:
                 room = room_for(request)
                 data = await body(request) if request.method == "POST" else dict(request.query_params)
@@ -607,8 +606,6 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
 
     async def get_bundle(request: Request):
         """The host's commits a member doesn't have yet (a git bundle: tracked files only, never the game)."""
-        import anyio
-
         try:
             room = room_for(request)
             await anyio.to_thread.run_sync(room.member, request)

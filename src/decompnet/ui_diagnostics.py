@@ -5,6 +5,10 @@ import threading
 import time
 from collections import deque
 
+from starlette.routing import Match
+
+from .hang_diagnostics import Watchdog
+
 _clock = time.monotonic
 _lock = threading.Lock()
 _samples = deque(maxlen=100)
@@ -43,14 +47,13 @@ class Diagnostics:
         if scope['type']=='lifespan':
             watchdog=pulse=None
             if self.stack_path is not None:
-                from .hang_diagnostics import Watchdog
                 watchdog=Watchdog(self.stack_path)
                 pulse=asyncio.create_task(watchdog.pulse())
-                watchdog.start()
+                await asyncio.to_thread(watchdog.start)
             task=asyncio.create_task(watch_loop())
             try:await self.app(scope,receive,send)
             finally:
-                if watchdog:watchdog.close()
+                if watchdog:await asyncio.to_thread(watchdog.close)
                 if pulse:
                     pulse.cancel()
                     try:await pulse
@@ -70,7 +73,6 @@ class Diagnostics:
                 # Never retain query values, invite tokens or arbitrary raw URLs.
                 route=getattr(scope.get('route'),'path','')
                 if not route:
-                    from starlette.routing import Match
                     for candidate in getattr(self.app,'routes',()):
                         if candidate.matches(scope)[0] == Match.FULL:
                             route=getattr(candidate,'path','')

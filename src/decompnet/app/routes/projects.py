@@ -71,7 +71,7 @@ def register(app: App) -> None:
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
-                from ...request_timing import response
+                response, = await app.imports('decompnet.request_timing', ('response',))
                 def respond():
                     from ..project_activity import current_project
                     token = current_project.set(slug)

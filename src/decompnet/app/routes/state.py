@@ -76,7 +76,7 @@ def register(app: App) -> None:
 
     @mcp.custom_route('/api/database-cleanup', methods=['GET','POST'])
     async def api_database_cleanup(request):
-        from .. import database_cleanup
+        database_cleanup, = await app.imports('decompnet.app', ('database_cleanup',))
         if bad := guard(request,write=request.method=='POST'):
             return bad
         try:
@@ -95,13 +95,13 @@ def register(app: App) -> None:
 
     @mcp.custom_route('/api/database-storage', methods=['GET','POST'])
     async def api_database_storage(request):
-        from .. import database_storage
+        database_storage, = await app.imports('decompnet.app', ('database_storage',))
         if bad := guard(request,write=request.method=='POST'):return bad
         try:
             if request.method=='GET':return JSONResponse(await call(database_storage.stats,net))
             data=await body(request)
             if data.get('action')=='save-repair-evidence':
-                from ...repair_corpus import save
+                save, = await app.imports('decompnet.repair_corpus', ('save',))
                 return JSONResponse({'repair_evidence':await call(save,net.store,data)})
             if data.get('action')=='save':return JSONResponse({'retention':await call(database_storage.save,net,data)})
             if data.get('action') not in ('pack','prune'):raise ValueError('Choose pack, prune or save.')
@@ -112,17 +112,17 @@ def register(app: App) -> None:
     @mcp.custom_route('/api/performance', methods=['GET'])
     async def api_performance(request):
         if bad := guard(request):return bad
-        from ...ui_diagnostics import snapshot
+        snapshot, = await app.imports('decompnet.ui_diagnostics', ('snapshot',))
         return JSONResponse({'slow_operations':await app.control(snapshot)})
 
     @mcp.custom_route('/api/header-storage', methods=['GET','POST'])
     async def api_header_storage(request):
-        from .. import header_cleanup
+        header_cleanup, = await app.imports('decompnet.app', ('header_cleanup',))
         if bad := guard(request,write=request.method=='POST'):
             return bad
         try:
             if request.method=='GET':
-                from ...header_storage import stats
+                stats, = await app.imports('decompnet.header_storage', ('stats',))
                 return JSONResponse(await call(stats,net.store))
             data=await body(request)
             if data.get('action')=='preview':
@@ -185,7 +185,7 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         if request.query_params.get('brief') == '1':
-            from ..project_labels import projects
+            projects, = await app.imports('decompnet.app.project_labels', ('projects',))
             return JSONResponse(await (app.ui_call or call)(projects,net))
         return JSONResponse(await (app.fast_call or app.ui_call or call)(project_list))
 
@@ -197,7 +197,7 @@ def register(app: App) -> None:
     async def agent_prompts(request: Request) -> Response:
         from dataclasses import replace
 
-        from .. import prompt_settings
+        prompt_settings, = await app.imports('decompnet.app', ('prompt_settings',))
         if bad := guard(request, write=request.method == 'POST'):
             return bad
         try:
@@ -215,7 +215,7 @@ def register(app: App) -> None:
                         draft = replace(helper, options={**helper.options,'prompts':overrides}, prompt_config=None)
                         return JSONResponse({'initial':await call(manager.prompt, draft),
                                              'instructions':await app.control(lambda: manager.app_instructions(draft))})
-                    templates = prompt_settings.defaults() | overrides
+                    templates = (await app.control(prompt_settings.defaults)) | overrides
                     return JSONResponse({'initial':'\n\n'.join(prompt_settings.LABELS[k]+'\n'+templates[k]
                                          for k in prompt_settings.FIELDS if k != 'instructions'),
                                          'instructions':templates['instructions']})
@@ -229,7 +229,7 @@ def register(app: App) -> None:
 
     @mcp.custom_route('/api/agent-tools', methods=['GET', 'POST'])
     async def agent_tools(request: Request) -> Response:
-        from .. import tool_policy, tools
+        tool_policy, tools = await app.imports('decompnet.app', ('tool_policy', 'tools'))
         if bad := guard(request, write=request.method == 'POST'):
             return bad
         try:
@@ -279,7 +279,7 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/manual-mcp", methods=["GET", "POST"])
     async def manual_mcp_connection(request: Request) -> Response:
-        from .. import manual_mcp, prompt_settings, tools
+        manual_mcp, prompt_settings, tools = await app.imports('decompnet.app', ('manual_mcp', 'prompt_settings', 'tools'))
         if (bad := guard(request, write=request.method == "POST")):
             return bad
         try:
@@ -315,7 +315,7 @@ def register(app: App) -> None:
         if not data.get("confirmed"):
             return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
         source, path = str(data.get("source") or "").strip(), str(data.get("path") or "").strip()
-        game = hostenv.local_path(path) if path else None
+        game = await app.call(hostenv.local_path, path) if path else None
         if not source or (game is not None and not await app.call(lambda: game.is_file())):
             return fail(ValueError("Choose the saved project and a valid game file, or leave the game field blank to find a matching local copy."))
         return JSONResponse({"job": await app.control(lambda: jobs.start("restore", lambda log: saves.restore(net, source, game, log=log)))})
@@ -489,7 +489,7 @@ def register(app: App) -> None:
             def snapshot():
                 with net.progress.view():
                     return build()
-            from ...request_timing import response
+            response, = await app.imports('decompnet.request_timing', ('response',))
             queued = time.monotonic()
             def respond():
                 return response(snapshot, queued, lambda data: packed(request, data), '/api/map')
@@ -508,7 +508,7 @@ def register(app: App) -> None:
             def snapshot():
                 with net.progress.view():
                     return net.map_columns(request.query_params.get("slug", ""))
-            from ...request_timing import response
+            response, = await app.imports('decompnet.request_timing', ('response',))
             queued = time.monotonic()
             def respond():
                 return response(snapshot, queued, lambda rows: packed(request, {"keys": COLUMN_KEYS, "rows": rows}), '/api/mapcolumns')

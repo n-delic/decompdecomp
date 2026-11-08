@@ -26,3 +26,9 @@ A development or packaged runtime writes `.decomp/logs/event-loop-stacks.log` if
 Tests use one shared ASGI event loop, deliberately hold backend admission, job reservation, progress and database writer paths, and require concurrent `/health` responses. The database test checks that the delayed settings write commits and SQLite integrity remains valid. Separate tests cover reserved capacity, authorization expiry, recursive/bounded cache waits, watchdog capture and an AST gate against direct blocking lock/job/database admissions in asynchronous routes.
 
 Hardware exhaustion, the interpreter or a native extension can still prevent scheduling. This does not promise that every possible future hang is impossible. These boundaries prevent the reproduced backend lock waits from freezing the server and make another stall diagnosable without an elevated debugger.
+
+### Follow-up: indirect waits
+
+Lazy project imports in async route bodies now run through `App.imports` on a worker. Python's import machinery can wait on another thread initializing that module, even when the importing statement looks harmless. The helper preserves from-list submodule loading and alias behavior. A regression holds an actual module import lock and checks concurrent event-loop scheduling; a structural gate covers future project imports in async routes.
+
+PATH discovery, MIME database initialization, old-install detection and local path expansion in async import/join/tool installation handlers also run on workers. Prompt defaults can lazily import tools and are offloaded. Diagnostics import their dependencies at startup and start/join the watchdog on workers. Existing transaction, claim and repository locks remain intact.
