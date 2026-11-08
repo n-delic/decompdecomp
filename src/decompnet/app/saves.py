@@ -169,7 +169,11 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
         if chosen:
             # Local-only receipt: distinguish an untouched app backup from contributor edits.
             receipt = {"folder":str(target.resolve()), "digest":owned_digest(files)}
-            net._update_cfg(slug, lambda cfg:cfg.update(progress_save_receipt=receipt))
+            with net.project_store(slug).tx() as db:
+                row = db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()
+                config = json.loads(row["config"])
+                config["progress_save_receipt"] = receipt
+                db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(config), proj["id"]))
         return result | {"folder": str(target.resolve())}
     except OSError as e:
         detail = e.strerror or str(e)
