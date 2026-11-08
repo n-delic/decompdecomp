@@ -171,7 +171,7 @@ async function simpleSetupRegression() {
   let posts=0;
   const context={$:field,S:{slug:'game'},Date,encodeURIComponent,document:{createElement(){return{};}},
     refreshRepositoryPush(){},showJobError(log,message){log.textContent=message;},
-    beginWork(){return()=>{};},api(url,options){if(options)posts++;return Promise.resolve({owners:['person','Studio'],warning:''});}};
+    beginWork(host,label,controls,completed){assert.equal(completed,'');host._workStatus={hidden:true,dataset:{state:'running'}};return()=>{host._workStatus.dataset.state='done';};},api(url,options){if(options)posts++;return Promise.resolve({owners:['person','Studio'],warning:''});}};
   Object.assign(context,{setTimeout,clearTimeout});vm.createContext(context);vm.runInContext(source,context);
   context.renderRepositorySetup({folder:'/save',root:'/save',repository:true,portable:true,origin:false});
   await field('repositoryGithubGo').onclick();
@@ -182,6 +182,10 @@ async function simpleSetupRegression() {
   await field('repositoryGithubOwnersGo').onclick();
   assert.deepEqual(field('repositoryGithubOwners').items.map(item=>item.value),['person','Studio']);
   assert.equal(field('repositoryGithubOwner').value,''); // Choosing an owner is deliberate.
+  assert.match(field('repositoryGithubOwnersState').textContent,/2 accounts available/);
+  assert.equal(field('repositoryGithubOwnersState')._workStatus.hidden,true,'hide generic completion status after loading accounts');
+  await field('repositoryGithubOwnersGo').onclick();
+  assert.equal(field('repositoryGithubOwnersState')._workStatus.hidden,true,'repeated loads clean up feedback');
 })().catch(e=>{console.error(e);process.exit(1);});
 
 
