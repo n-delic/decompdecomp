@@ -192,6 +192,12 @@ async function autopilotProgressChecks() {
   // Reopening/refreshing uses the same server-owned phase and counters.
   ctx.renderAutopilot(repairing);
   assert.match(get('apSub').textContent,/2 of 8/);
+  ctx.renderAutopilot({...repairing,autopilot:{...repairing.autopilot,timings:{generation:1.25,preparation:2,compile:3,compiler_wait:0,link:.5,scoring:.1,database_writes:.2}}});
+  assert.equal(get('apTiming').hidden,false);
+  assert.match(get('apTimingText').textContent,/Generation 1.3s.*Compiler prep 2.0s.*parallel totals can exceed elapsed/);
+  ctx.renderAutopilot(repairing);
+  assert.equal(get('apTiming').hidden,true);
+
   ctx.api=async (_url,options)=>{action=options.body.action;return {...repairing,autopilot:{...repairing.autopilot,state:'stopped'}};};
   await get('apBtn').onclick();
   assert.equal(action,'stop');

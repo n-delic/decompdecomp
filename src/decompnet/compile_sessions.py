@@ -1,7 +1,6 @@
 """Private, bounded compiler preparation for one worker's search, never a match cache."""
 import copy
 import functools
-import hashlib
 import json
 import logging
 import os
@@ -26,6 +25,7 @@ class Session:
         self.stack = ExitStack()
         self.work = None
         self.headers = None
+        self.configurations = OrderedDict()
         self.results = OrderedDict()
         self.bytes = 0
         self.targets = OrderedDict()
@@ -36,32 +36,13 @@ class Session:
         self.comparison_bytes = 0
 
     def prepare(self, cfg, header):
+        from . import compile_headers
         from .compiler import _workspace
-        # Read exact bytes each time: same-size edits with restored mtimes must invalidate.
-        files = {}
-        for directory in cfg.include_dirs:
-            root = Path(directory)
-            if not root.exists():raise FileNotFoundError(root)
-            if not root.is_dir():raise NotADirectoryError(root)
-            def failed(error):raise error
-            for folder, dirs, names in os.walk(root, onerror=failed):
-                if any((Path(folder) / name).is_symlink() for name in dirs):
-                    return None  # The ordinary copier owns directory-symlink semantics.
-                for name in sorted(names):
-                    path = Path(folder) / name
-                    if not path.is_file():raise shutil.SpecialFileError(str(path))
-                    data = path.read_bytes()
-                    if path.suffix.lower() in ('.h', '.hpp', '.hxx', '.inc', '.inl'):
-                        data = data.replace(b'\r\n', b'\n')
-                    files[str(path.relative_to(root))] = data
-        files['context.h'] = header.encode()
-        if len({name.casefold() for name in files}) != len(files):
-            return None  # Preserve the ordinary copier's behavior on case-colliding trees.
-        fingerprint = hashlib.sha256()
-        for name, data in sorted(files.items()):
-            for part in (name.encode(), data):
-                fingerprint.update(len(part).to_bytes(8, 'little')); fingerprint.update(part)
-        key = fingerprint.digest()
+        # Read exact bytes each time, including same-size edits with restored mtimes.
+        files=compile_headers.read(cfg.include_dirs)
+        if files is None:return None
+        files['context.h']=header.encode()
+        if len({name.casefold() for name in files})!=len(files):return None
         if self.work is None:
             self.work = Path(self.stack.enter_context(_workspace('decompnet-session-')))
         work = self.work
@@ -70,22 +51,10 @@ class Session:
             if path.name != 'include':
                 if path.is_dir() and not path.is_symlink():shutil.rmtree(path)
                 else:path.unlink()
-        inc = work / 'include'
-        if self.headers != key or not inc.is_dir() or inc.is_symlink():
-            if inc.is_symlink():inc.unlink()
-            elif inc.exists():shutil.rmtree(inc)
-            inc.mkdir()
-        else:
-            # Restore any compiler-written header and remove unexpected files.
-            for path in sorted(inc.rglob('*'), reverse=True):
-                if path.is_symlink() or path.is_file() and str(path.relative_to(inc)) not in files:
-                    path.unlink()
-        for name, data in files.items():
-            path = inc / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if not path.is_file() or path.read_bytes() != data:path.write_bytes(data)
-        self.headers = key
-        self.staged = [(name.encode(), data) for name, data in sorted(files.items())]
+        compile_headers.stage(work/'include',files)
+        if files!=self.headers:
+            self.staged=[(name.encode(),data) for name,data in sorted(files.items())]
+            self.headers=files
         return work
 
     def get(self, key):
