@@ -2910,7 +2910,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
                                      ".ninja_*\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
     (root / "README.md").write_text(f"""# {info['title']} decompilation
 
-Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp): the game's functions, {FOUND_BY_X64 if pe.x64 else 'found by Ghidra'}, are cut out of your
+Started from scratch with [decompdecomp](https://github.com/RetroReversing/decompdecomp): the game's functions, {FOUND_BY_X64 if pe.x64 else 'found by Ghidra'}, are cut out of your
 copy of its program and compared with what `src/` compiles to, function by function, with objdiff.
 
 1. {game_step or f"Put your own copy of the game's program here as `orig/{version}.exe`"} (never commit it).
