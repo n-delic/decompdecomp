@@ -93,7 +93,7 @@ def test_final_availability_check_retains_owned_and_targeted_work(tmp_path,monke
         other,_ = net.local_agent('busy-worker')
         net.claim_row(other,'game')
         session.options = {'focus_id':1} if work=='focus' else {'task':work}
-    monkeypatch.setattr(manager,'_preflight_tools',lambda *a:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *a, **kw:None)
     monkeypatch.setattr(manager,'prepare_session',lambda *a,**kw:None)
     def command(*args):raise RuntimeError('Synthetic command reached')
     monkeypatch.setattr(manager,'_command',command)

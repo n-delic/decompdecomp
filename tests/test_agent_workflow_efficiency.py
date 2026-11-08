@@ -172,10 +172,11 @@ def test_startup_no_work_does_not_construct_provider_command(tmp_path,monkeypatc
     from decompnet.app.agents import Manager, Session
     net,a,fn=game(tmp_path)
     manager=object.__new__(Manager)
+    manager.net=net
     budget=session_budget.Budget();budget.waiting=True
     session=Session('1','claude','worker','game','worker',{})
     session.context_budget=budget
-    monkeypatch.setattr(manager,'_preflight_tools',lambda token:None)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda token, **kwargs:None)
     monkeypatch.setattr(manager,'prepare_session',lambda *args,**kwargs:None)
     monkeypatch.setattr(manager,'_command',lambda *args:(_ for _ in ()).throw(AssertionError('Provider must not start')))
     assert manager._run_cli(session,'token',tmp_path)

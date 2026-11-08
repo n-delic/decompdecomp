@@ -594,7 +594,8 @@ class Manager:
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.RLock()
         net.on_external_match = self.matched_elsewhere
-        self._tool_startup_slots = threading.BoundedSemaphore(2)
+        # Bound only short local connection probes, never the number of running agents.
+        self._tool_startup_slots = threading.BoundedSemaphore(8)
         self._metrics_locks = {}
         self._prep: dict[str, threading.Event] = {}  # slug -> giving its code source files before agents claim
         self._found: list[dict] | None = None  # the agents installed, as last found (detected)
@@ -1726,7 +1727,7 @@ class Manager:
             text += '\n\nSession continuation guidance:\n' + s.continuation_note
             s.continuation_note = ""
         # Keep detailed guides on demand; the work prompt already teaches the matching loop.
-        ov = self.net.overview(s.slug)  # (only its platform's parts: tools.for_platform)
+        ov = agent_startup.project_facts(self.net, s.slug)
         text += "\nGuides to load when needed:\n\n" + tools.up_front(
             ov.get("platform") or "", ov.get("kind") or "", ov["compiler"]["toolchain"])
         knowledge_agent = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
@@ -1752,7 +1753,7 @@ class Manager:
     def _prompt(self, s: Session) -> str:
         from .prompt_settings import for_session
         templates = for_session(self.net, s)
-        ov = self.net.overview(s.slug)
+        ov = agent_startup.project_facts(self.net, s.slug)
         count = s.options.get("per_session", PER_SESSION)
         if s.options.get("task") == "readable":  # (in either mode: the step that differs is the mode's)
             return templates['initial_readable'].format(title=ov["title"], count=count, names=tools.READABLE_FORK
@@ -1802,11 +1803,20 @@ class Manager:
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
         return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
-    def _preflight_tools(self, token: str) -> None:
-        if not self._tool_startup_slots.acquire(blocking=False):
-            raise ToolConnectionUnavailable('Local tool startup capacity is busy. Retrying with staggered backoff; no model request was started.')
+    def _preflight_tools(self, token: str, *, session=None) -> bool:
+        # Capacity is a local queue, never a connection failure or a new session.
+        if session is not None:
+            agent_startup.stage(session, "Waiting for local tool connection slot")
+        while not self._tool_startup_slots.acquire(timeout=.1):
+            if (session is not None and session.stop.is_set()) or getattr(self, '_down', False):
+                return False
         try:
-            return self._probe_tools(token)
+            if (session is not None and session.stop.is_set()) or getattr(self, '_down', False):
+                return False
+            if session is not None:
+                agent_startup.stage(session, "Checking local tool connection")
+            self._probe_tools(token)
+            return True
         finally:
             self._tool_startup_slots.release()
 
@@ -1858,8 +1868,8 @@ class Manager:
         k = agents.get(s.kind)
         if why := k.validate_model(s.model):
             raise Fatal(why)
-        agent_startup.stage(s, "Checking local tool connection")
-        self._preflight_tools(token)
+        if self._preflight_tools(token, session=s) is False:
+            return True
         if s.context_budget and s.context_budget.waiting:
             s.rotated = True
             s.push('info','No eligible work; waiting without starting a model request.')

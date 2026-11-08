@@ -8,7 +8,7 @@ import pytest
 from mcp.server.mcpserver import Context
 
 from decompnet.agents.api import api_tool_schemas
-from decompnet.app import agent_tokens, agents, claim_state, compiler_flags, tools
+from decompnet.app import agent_tokens, claim_state, compiler_flags, tools
 from decompnet.app.engine import RomNetwork
 from decompnet.network import NetworkError
 from tests.test_agent_audit_followups import setup
@@ -138,16 +138,35 @@ def test_transport_failure_retains_claim_and_avoids_compilation_nudge(tmp_path,m
     assert not any('without compiling' in r['text'] or 'compilation guidance' in r['text'] for r in s.feed)
 
 
-def test_startup_probes_are_bounded_before_opening_transport(tmp_path,monkeypatch):
+def test_startup_probes_queue_without_connection_retries(tmp_path,monkeypatch):
     net,manager,s,agent=setup(tmp_path,monkeypatch)
-    assert manager._tool_startup_slots.acquire(False) and manager._tool_startup_slots.acquire(False)
-    monkeypatch.setattr(manager,'_probe_tools',lambda *a:pytest.fail('Do not open a third connection'))
-    with pytest.raises(agents.ToolConnectionUnavailable,match='capacity is busy'):
-        manager._preflight_tools('fake')
-    manager._tool_startup_slots.release();manager._tool_startup_slots.release()
+    manager._tool_startup_slots = threading.BoundedSemaphore(1)
+    manager._tool_startup_slots.acquire()
+    entered = threading.Event()
+    monkeypatch.setattr(manager, '_probe_tools', lambda token: entered.set())
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(manager._preflight_tools, 'fake', session=s)
+        assert not entered.wait(.15)
+        assert not future.done()
+        assert s.startup_stage == 'Waiting for local tool connection slot'
+        manager._tool_startup_slots.release()
+        assert future.result(timeout=2) is True
+        assert entered.is_set()
     monkeypatch.setattr(manager,'_probe_tools',lambda *a:(_ for _ in ()).throw(ValueError('probe failed')))
     with pytest.raises(ValueError):manager._preflight_tools('fake')
-    assert manager._tool_startup_slots.acquire(False) and manager._tool_startup_slots.acquire(False)
+    assert manager._tool_startup_slots.acquire(False)
+
+
+def test_queued_startup_stop_does_not_probe(tmp_path,monkeypatch):
+    net,manager,s,agent=setup(tmp_path,monkeypatch)
+    manager._tool_startup_slots = threading.BoundedSemaphore(1)
+    manager._tool_startup_slots.acquire()
+    monkeypatch.setattr(manager,'_probe_tools',lambda *a:pytest.fail('Stopped helper opened transport'))
+    with ThreadPoolExecutor(1) as pool:
+        future=pool.submit(manager._preflight_tools,'fake',session=s)
+        s.stop.set()
+        assert future.result(timeout=2) is False
+    manager._tool_startup_slots.release()
 
 
 @pytest.mark.parametrize('kind', ['rom', 'fork'])
@@ -342,3 +361,41 @@ def test_mcp_probe_does_not_skip_failed_authentication(tmp_path, monkeypatch):
         return await server.call_tool('project_info', {'detail': False})
     with pytest.raises(ToolError, match='Synthetic rejected token'):
         anyio.run(run)
+
+
+@pytest.mark.parametrize('kind', ['rom', 'fork'])
+def test_prompt_facts_do_not_scan_dashboard_or_contact_room(tmp_path,monkeypatch,kind):
+    from decompnet.app import agent_startup
+    net,agent,fn=game(tmp_path)
+    config={'kind':kind,'platform':'n64','origin':'scratch','compiler':{'toolchain':'gcc-2.7.2-kmc'}}
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?',(json.dumps(config),))
+    monkeypatch.setattr(net,'overview',lambda *a,**kw:pytest.fail('No dashboard scan'))
+    monkeypatch.setattr(net.forks,'get',lambda *a:pytest.fail('No build tree scan'))
+    monkeypatch.setattr(net,'_room_info',lambda *a,**kw:pytest.fail('No room requests'))
+    with net.progress.view():
+        facts=agent_startup.project_facts(net,'game')
+    assert facts['kind']==kind and facts['platform']=='n64'
+    assert facts['compiler']['toolchain']==('project' if kind=='fork' else 'gcc-2.7.2-kmc')
+
+
+def test_many_simultaneous_startups_do_not_retry_or_lose_slots(tmp_path,monkeypatch):
+    import time
+    net,manager,s,agent=setup(tmp_path,monkeypatch)
+    lock=threading.Lock()
+    active=peak=completed=0
+    def probe(token):
+        nonlocal active,peak,completed
+        with lock:
+            active+=1
+            peak=max(peak,active)
+        time.sleep(.02)
+        with lock:
+            active-=1
+            completed+=1
+    monkeypatch.setattr(manager,'_probe_tools',probe)
+    with ThreadPoolExecutor(40) as pool:
+        results=list(pool.map(manager._preflight_tools,range(40)))
+    assert all(results) and completed==40 and 1 < peak <= 8
+    for _ in range(8):assert manager._tool_startup_slots.acquire(False)
+    assert not manager._tool_startup_slots.acquire(False)

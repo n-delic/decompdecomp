@@ -154,7 +154,7 @@ def test_lost_tool_connection_pauses_instead_of_paid_retries(tmp_path, monkeypat
     net = _game(tmp_path)  # Work exists; this case exercises a connection lost after launch.
     monkeypatch.setattr(Manager, 'refresh_detected', lambda self: None)
     manager = Manager(net, tmp_path, 'http://127.0.0.1:1/mcp')
-    monkeypatch.setattr(manager, '_preflight_tools', lambda token: None)
+    monkeypatch.setattr(manager, '_preflight_tools', lambda token, **kwargs: None)
     # This case represents a connection lost after the initial handshake succeeded.
     def prepared(*args, **kwargs):
         net._pending_tool_handshakes.clear()
