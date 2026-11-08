@@ -71,8 +71,7 @@ app installer. It may ask for administrator permission and needs an internet con
 Microsoft components. The app installer lets you choose where decompdecomp goes and whether to add a
 desktop shortcut (selected by default); it always adds a shortcut to Start.
 
-To install from source with [uv](https://docs.astral.sh/uv/getting-started/installation/) instead, open a new
-PowerShell window and run:
+To install from source with [uv](https://docs.astral.sh/uv/getting-started/installation/) instead, open a new PowerShell window and run:
 
 ```powershell
 uv tool install --python 3.12 "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/heads/main.tar.gz"
@@ -81,8 +80,7 @@ decomp shortcut
 decomp
 ```
 
-The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp`
-folder.
+The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp` folder.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
@@ -127,8 +125,8 @@ GCC 2.7.2 and binutils 2.6 archives contain Intel programs, so install Apple's R
 softwareupdate --install-rosetta
 ```
 
-Read and accept Apple's license if you agree, then rerun `decomp setup`. No proprietary game compiler is
-installed automatically. IDO still needs your explicit license acceptance in Compilers & tools.
+Read and accept Apple's license if you agree, then rerun `decomp setup`. No proprietary game compiler is installed
+automatically. IDO still needs your explicit license acceptance in Compilers & tools.
 
 | Mac capability | Availability |
 | --- | --- |
@@ -271,11 +269,11 @@ recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
 
-Visual C++ 2017 (which builds PC games of 2015 and newer) runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install
-yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple
-Silicon): the app says so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the
-packs don't have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder
-(it's read where it is, never copied).
+Visual C++ 2017 (which builds PC games of 2015 and newer, and 64-bit ones) runs through [wine](https://www.winehq.org/) on Linux and macOS,
+which you install yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs
+Rosetta 2 on Apple Silicon): the app says so when you install that pack. The older Visual C++ run without it. A game built
+with a Visual C++ the packs don't have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your
+Visual Studio's VC folder (it's read where it is, never copied). A 64-bit game builds with 2017's 64-bit compiler, the pack's.
 
 Watcom Windows and DOS LE games can use your own compiler too: add its installation folder in **Setup → Compilers & tools**,
 then choose Watcom C or C++ when importing a 32-bit Windows PE or flat DOS LE `.exe`. This is experimental: 10.0a C and

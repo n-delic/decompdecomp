@@ -15,8 +15,8 @@ exactly as the original's did). The game's own DLLs (functions.json's "modules")
 its own source files and against its own copy: at the address the project gives it, then moved back to its own by its
 base relocations. Writes build/<version>/<program>.exe (and each DLL where it is in orig/; an Xbox game's default.xbe
 beside it, out of the program decompdecomp made of it) and rebuild.json (which
-functions came from C); exits with 1 when a program isn't your copy byte for byte. Standard library only. Made by
-decompdecomp.
+functions came from C); exits with 1 when a program isn't your copy byte for byte. A 64-bit game (PE32+) is rebuilt
+the same way, its relocations x64's. Standard library only. Made by decompdecomp.
 """
 
 import importlib.util
@@ -26,14 +26,18 @@ import struct
 import sys
 from pathlib import Path
 
-DIR32, REL32 = 0x06, 0x14
+DIR32, REL32 = 0x06, 0x14  # (32-bit x86's)
+# x64's: a 64-bit address, a 32-bit one, one relative to the image base (Visual C++'s tables, read through
+# __ImageBase), and rip-relative ones (REL32, then REL32_1 to REL32_5: 1 to 5 bytes of the instruction after the 4)
+ADDR64, ADDR32, ADDR32NB, REL32_64, REL32_64_LAST = 1, 2, 3, 4, 9
 FUNCTION = 0x20  # a symbol's type when it's a function
 XBE_MARK = 0x28  # where an Xbox game's view says where its XBE is (decompdecomp's consoles/xbox/scratch.py pe_view)
 PADDING = b"\x90\xcc"  # what pads a function (Visual C++ 6's nops) or aligns the next one (the linker's int3)
-DATA_SYMBOL = re.compile(r"_D_([0-9A-F]{8})")
+DATA_SYMBOL = re.compile(r"_?D_([0-9A-F]{8,16})")  # (_D_00402034 on 32-bit x86, D_140003000 on x64)
 # symbols the C runtime defines as numbers, not places: __except_list is the thread's exception handler chain, fs:[0],
 # which every function with C++ exception handling (/GX) reads and writes
 ABSOLUTE = {"__except_list": 0}
+PE32_PLUS = 0x20B  # a 64-bit program's optional header
 SHOWN = 5  # functions a rebuild that differs names
 
 
@@ -70,13 +74,16 @@ class Program:
                                for fns in info["units"].values() for fn in fns}
         at = struct.unpack_from("<I", exe, 0x3C)[0]
         count, opt = struct.unpack_from("<H", exe, at + 6)[0], struct.unpack_from("<H", exe, at + 20)[0]
-        base = struct.unpack_from("<I", exe, at + 24 + 28)[0]
+        self.x64 = struct.unpack_from("<H", exe, at + 24)[0] == PE32_PLUS
+        base = struct.unpack_from("<Q" if self.x64 else "<I", exe, at + 24 + (24 if self.x64 else 28))[0]
+        self.base = base
         self.sections = []  # (address, size in the file, offset in the file)
         for i in range(count):
             _, va, size, offset = struct.unpack_from("<IIII", exe, at + 24 + opt + 40 * i + 8)
             self.sections.append((base + va, size, offset))
         self.where = {fn["name"]: fn["addr"] for fns in info["units"].values() for fn in fns}
         self.where.update(self._imports(exe, at, base))
+        self.where.setdefault("__ImageBase", base)
 
     def offset(self, addr: int) -> int | None:
         return next((offset + addr - va for va, size, offset in self.sections if va <= addr < va + size), None)
@@ -86,20 +93,22 @@ class Program:
         return b"" if off is None else self.exe[off:off + n]
 
     def _imports(self, exe: bytes, at: int, base: int) -> dict[str, int]:
-        """__imp__<name> -> its import address table slot, as the project's analysis names them."""
-        out, rva = {}, struct.unpack_from("<I", exe, at + 24 + 104)[0]
+        """__imp__<name> (x64: __imp_<name>) -> its import address table slot, as the project's analysis names them."""
+        out, rva = {}, struct.unpack_from("<I", exe, at + 24 + (120 if self.x64 else 104))[0]
+        width, form, ordinal, prefix = (8, "<Q", 1 << 63, "__imp_") if self.x64 else (4, "<I", 0x80000000, "__imp__")
         desc = base + rva
         while rva and len(d := self.read(desc, 20)) == 20 and d != bytes(20):
             lookup, _, _, name_rva, iat = struct.unpack("<IIIII", d)
             dll = self.read(base + name_rva, 64).split(b"\0", 1)[0].decode("latin-1")
             k = 0
-            while len(e := self.read(base + (lookup or iat) + 4 * k, 4)) == 4 and (value := struct.unpack("<I", e)[0]):
-                if value & 0x80000000:
+            while len(e := self.read(base + (lookup or iat) + width * k, width)) == width and \
+                    (value := struct.unpack(form, e)[0]):
+                if value & ordinal:
                     name = f"{Path(dll).stem}_{value & 0xFFFF}"
                 else:
-                    name = self.read(base + value + 2, 256).split(b"\0", 1)[0].decode("latin-1")
-                out[f"__imp__{name if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name) else f'{Path(dll).stem}_{k}'}"] = \
-                    base + iat + 4 * k
+                    name = self.read(base + (value & 0x7FFFFFFF) + 2, 256).split(b"\0", 1)[0].decode("latin-1")
+                out[f"{prefix}{name if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name) else f'{Path(dll).stem}_{k}'}"] = \
+                    base + iat + width * k
                 k += 1
             desc += 20
         return out
@@ -113,11 +122,38 @@ class Program:
             return ABSOLUTE[name]
         if m := DATA_SYMBOL.fullmatch(name):
             return int(m.group(1), 16)
-        return self.where.get(re.sub(r"@\d+$", "", name)) if name.startswith("__imp__") else None
+        return self.where.get(re.sub(r"@\d+$", "", name)) if name.startswith("__imp_") else None
+
+    def kinds(self) -> tuple[int, ...]:
+        """The relocations its code has."""
+        return (ADDR64, ADDR32, ADDR32NB, *range(REL32_64, REL32_64_LAST + 1)) if self.x64 else (DIR32, REL32)
+
+    def inline(self, code: bytes, off: int, kind: int) -> int:
+        """What a relocation's place holds before it's filled in: the addend (8 bytes for a 64-bit address)."""
+        return struct.unpack_from("<q" if self.x64 and kind == ADDR64 else "<i", code, off)[0]
+
+    def fill(self, code: bytearray, at: int, off: int, kind: int, address: int) -> None:
+        """A relocation at `off` of the code placed at `at`, filled in with the address it names."""
+        if not self.x64:
+            fill(code, at, off, kind, address)
+        elif kind == ADDR64:
+            struct.pack_into("<Q", code, off, address & 0xFFFFFFFFFFFFFFFF)
+        else:
+            value = address - self.base if kind == ADDR32NB else address if kind == ADDR32 else \
+                address - (at + off + 4 + kind - REL32_64)
+            struct.pack_into("<I", code, off, value & 0xFFFFFFFF)
+
+    def relative(self, at: int, off: int, kind: int) -> int:
+        """Where a relative relocation's value is counted from (its instruction's end), 0 for an absolute one; an
+        address relative to the image base is counted from it."""
+        if not self.x64:
+            return at + off + 4 if kind == REL32 else 0
+        return self.base if kind == ADDR32NB else at + off + 4 + kind - REL32_64 if kind >= REL32_64 else 0
 
 
 def fill(code: bytearray, at: int, off: int, kind: int, address: int) -> None:
-    """A relocation at `off` of the code placed at `at`, filled in with the address it names."""
+    """A relocation at `off` of the code placed at `at`, filled in with the address it names (32-bit x86's; a 64-bit
+    program's: Program.fill)."""
     struct.pack_into("<I", code, off, (address - (at + off + 4) if kind == REL32 else address) & 0xFFFFFFFF)
 
 
@@ -138,7 +174,7 @@ def delinked(program: Program, obj: bytes) -> list[tuple[str, int, bytes]]:
             if target is None:
                 code = None
                 break
-            fill(code, start, off, kind, target + struct.unpack_from("<i", code, off)[0])
+            program.fill(code, start, off, kind, target + program.inline(code, off, kind))
         out.append((name, start, None if code is None else bytes(code)))
     return out
 
@@ -171,29 +207,30 @@ def from_c(program: Program, obj: bytes, extents: dict[str, int]) -> dict[str, b
         sec, at, size = sections[section - 1], program.where[name], extents[name]
         relocs = [r for r in sec["relocs"] if lo <= r[0] < hi]
         body = sec["data"][lo:hi]
-        end = max([len(body.rstrip(PADDING)), *(r[0] - lo + 4 for r in relocs)])
+        widths = [r[0] - lo + (8 if program.x64 and r[2] == ADDR64 else 4) for r in relocs]
+        end = max([len(body.rstrip(PADDING)), *widths])
         if end > size or program.read(at + end, size - end).strip(PADDING):
             continue  # longer than the game's function, or shorter than its code
         code = bytearray(body[:end])
         for off, index, kind in relocs:
             symbol, value, where, _ = symbols[index]
             off -= lo
-            if kind not in (DIR32, REL32):
+            if kind not in program.kinds():
                 break
-            inline = struct.unpack_from("<i", code, off)[0]
+            inline = program.inline(code, off, kind)
             target = program.address(symbol)
             if target is None and where > 0:
                 target = placed(where, value + inline)
                 if target is None:  # its own constant: used where the game's code reads it, if the bytes are there
-                    word = struct.unpack("<i", program.read(at + off, 4))[0]
-                    target = word + (at + off + 4 if kind == REL32 else 0)
+                    word = program.inline(program.read(at + off, 8).ljust(8, b"\0"), 0, kind)
+                    target = word + program.relative(at, off, kind)
                     if not _same_constant(program, sections[where - 1], symbols, where, value + inline, target):
                         break
-                fill(code, at, off, kind, target)
+                program.fill(code, at, off, kind, target)
             elif target is None:
                 break  # a symbol the program has no address for
             else:
-                fill(code, at, off, kind, target + inline)
+                program.fill(code, at, off, kind, target + inline)
         else:
             if bytes(code) == program.read(at, end):
                 out[name] = bytes(code)
@@ -208,8 +245,8 @@ def _same_constant(program: Program, sec: dict, symbols: list, number: int, star
     end = min([s[1] for s in symbols if s and s[2] == number and s[1] > start] + [sec["size"]])
     data = bytearray(sec["data"][start:end])
     game = bytearray(program.read(addr, len(data)).ljust(len(data), b"\0"))
-    for off, _, _ in sec["relocs"]:
-        for b in range(max(off, start), min(off + 4, end)):
+    for off, _, kind in sec["relocs"]:
+        for b in range(max(off, start), min(off + (8 if program.x64 and kind == ADDR64 else 4), end)):
             data[b - start] = game[b - start] = 0
     data = data.rstrip(b"\0")  # (what aligns the next constant)
     return bytes(game[:len(data)]) == bytes(data)
@@ -279,7 +316,8 @@ def _rebuild_program(info: dict, root: Path, build: Path, folder: str, path: str
     output = root / build / (where.relative_to("orig") if where.parts[0] == "orig" else where.name)
     output.parent.mkdir(parents=True, exist_ok=True)
     if base is not None:  # back at its own address, as your copy is
-        out = bytearray(delink.rebase(bytes(out), struct.unpack_from("<I", original, _image_base_at(original))[0]))
+        wide = "<Q" if program.x64 else "<I"
+        out = bytearray(delink.rebase(bytes(out), struct.unpack_from(wide, original, _image_base_at(original))[0]))
     if le is not None:
         out = bytearray(le.restore(bytes(out)))
     output.write_bytes(out)
@@ -293,7 +331,8 @@ def _rebuild_program(info: dict, root: Path, build: Path, folder: str, path: str
 
 def _image_base_at(exe: bytes) -> int:
     """Where a program's header says the address it prefers (its optional header's image base)."""
-    return struct.unpack_from("<I", exe, 0x3C)[0] + 24 + 28
+    opt = struct.unpack_from("<I", exe, 0x3C)[0] + 24
+    return opt + (24 if struct.unpack_from("<H", exe, opt)[0] == PE32_PLUS else 28)
 
 
 def main() -> None:

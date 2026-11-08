@@ -1564,8 +1564,9 @@ class ForkEngine:
         going = set(order[order.index(sym):])
         rows = [r for r in self.net.store.all("SELECT id, name, meta FROM functions WHERE project_id=? AND unit=? AND "
                                               "status != 'nosource'", proj["id"], unit.name)]
-        stem = re.sub(r"_[0-9A-Fa-f]{8}$", "", Path(rel).stem)
-        tail = re.search(r"([0-9A-Fa-f]{8})(?:@\d+)?$", sym)  # (a PC function: @func_0041B470@8)
+        stem = re.sub(r"_[0-9A-Fa-f]{8,16}$", "", Path(rel).stem)
+        # (a PC function: @func_0041B470@8; a 64-bit one's address has 9 digits or more, func_140001000)
+        tail = re.search(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{8,16})(?:@\d+)?$", sym)
         new = new_name.strip().lstrip("./") or (Path(rel).parent / f"{stem}_{(tail.group(1) if tail else sym).upper()}"
                                                 f"{Path(rel).suffix}").as_posix()
         old_path, new_path = fp.root / rel, fp.root / new
@@ -2705,7 +2706,7 @@ class ForkEngine:
         elif n is not None:
             key, what = (structs.ARGUMENT, addr, n), structs.argument_name(n)
         else:
-            m = re.fullmatch(r"_?(?:D_|0x)?([0-9A-Fa-f]{8})", base)
+            m = re.fullmatch(r"_?(?:D_|0x)?([0-9A-Fa-f]{8,16})", base)
             at = int(m.group(1), 16) if m else next((a for a, name in found.labels.items() if name == base), None)
             if at is None:
                 raise NetworkError(f"`{argument}`: say this, arg0 to arg3, return, or a global's name or D_<address> "
@@ -3083,7 +3084,7 @@ class ForkEngine:
             raise NetworkError("this project's flags are its build's own: try_compiler changes only the file's compiler")
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} already matches with {own}")
-        known = [c.id for c in console.project_compilers(fp)]  # (a 32-bit game's: never a 64-bit compiler)
+        known = [c.id for c in console.project_compilers(fp)]  # (a 32-bit game's 32-bit ones, a 64-bit game's 64-bit)
         if compiler.strip().lower() == "all":
             wanted = sorted(known, key=lambda c: abs(known.index(c) - known.index(own))) if own in known else known
         else:
