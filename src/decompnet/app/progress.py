@@ -115,6 +115,7 @@ class _StillFailing(NetworkError):
 
 @phase('progress_files')
 def _read(folder: Path, *, cache=None) -> dict[str, str]:
+    if cache is not None:cache=cache.scan()
     # A git/editor update can remove a file between glob, lstat and read. Retry
     # only this read-only capture; never apply a partial snapshot or replay writes.
     for attempt in range(3):

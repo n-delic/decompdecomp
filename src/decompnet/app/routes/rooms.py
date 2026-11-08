@@ -235,7 +235,10 @@ def register(app: App) -> None:
             room.configure(data.get("visibility"), data.get("approve"))
             return {"link": open_room(slug, mode, str(data.get("address", "")), int(data.get("port") or 6481), log=log,
                                       keep=bool(data.get("keep")))}
-        return JSONResponse({"job": await app.control(lambda: jobs.start("share", work))})
+        try:
+            return JSONResponse({"job": await app.control(lambda: jobs.start("share", work))})
+        except (NetworkError, ValueError) as error:
+            return fail(error)
 
     @mcp.custom_route("/api/collab/manage", methods=["POST"])
     async def api_collab_manage(request: Request) -> Response:

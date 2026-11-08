@@ -589,3 +589,21 @@ settings and fresh linked bytes before publishing any match. The older synchrono
 apply route remains compatible. Inventory pages use one bounded target query;
 progress polling does not rewrite unchanged queue state. Clients and host both
 need this version for queued uploads.
+
+### Repeated saved-file scans larger than the cache
+
+A saved-file read now protects its cache hits and newly admitted files for that
+scan. Once the content budget is full, uncached tail files are read normally
+without evicting that scan's entire warm prefix. The next scan may replace entries
+it has not used, so opening another project can reuse the same bounded cache.
+The existing device/inode/size/time/mode keys, conflict checks and symlink refusal
+still apply to every snapshot. The shared content budget remains 8 MiB.
+
+A bounded synthetic 9 MiB folder (36 files of 256 KiB) was read three times after
+warming an 8 MiB cache. The former sequential LRU policy reopened all 36 files
+and read 9 MiB each time; scan admission reopened four and read 1 MiB each time.
+This measures file operations and bytes, not live synchronization latency.
+Full-source database fetches and verification-lane occupancy remain separate
+investigations. A proposed JSON-page extension to full-source database reads was
+rejected after its synthetic contended median regressed from 0.145 to 0.657 s;
+no such change shipped.
