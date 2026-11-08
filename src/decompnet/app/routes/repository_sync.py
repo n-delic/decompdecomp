@@ -122,7 +122,7 @@ def register(app):
             match_commits, = await app.imports('decompnet.app', ('match_commits',))
             data = await app.body(request)
             result = await app.call(match_commits.configure, app.net, str(data.get('slug', '')),
-                                    data.get('enabled'), str(data.get('folder', '')).strip())
+                                    data.get('enabled'), str(data.get('folder', '')).strip(), str(data.get('kind', 'match')))
             return JSONResponse(result)
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)

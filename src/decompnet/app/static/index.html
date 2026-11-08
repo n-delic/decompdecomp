@@ -719,6 +719,8 @@
               <div class="repository-auto-commit" id="repositoryAutoCommitGroup" hidden>
                 <label class="check"><input type="checkbox" id="repositoryAutoCommit" aria-describedby="repositoryAutoCommitAbout repositoryAutoCommitState"><span>Automatically commit new matches</span></label>
                 <p class="small muted" id="repositoryAutoCommitAbout">Save each new match with its notes and author. Enabling this first creates a checkpoint; commits stay on this computer until pushed.</p>
+                <label class="check"><input type="checkbox" id="repositoryPolishedCommit" aria-describedby="repositoryPolishedCommitAbout"><span>Automatically commit polished functions</span></label>
+                <p class="small muted" id="repositoryPolishedCommitAbout">Commit future readability improvements after they pass byte verification, with the polishing author. Existing polished functions stay unchanged.</p>
                 <p class="small muted" id="repositoryAutoCommitState" role="status"></p>
                 <button class="ghost small-btn" type="button" id="repositoryAutoCommitDetails" hidden>Pending commits</button>
                 <pre class="joblog" id="repositoryAutoCommitLog" hidden></pre>

@@ -36,6 +36,7 @@ function renderRepositorySetup(state) {
   $("repositoryCheckpoint").hidden = !state.repository || !state.portable;
   $("repositoryOriginGroup").hidden = !state.repository || state.origin;
   $("repositoryAutoCommit").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoCommit").checked && !state.portable);
+  $("repositoryPolishedCommit").disabled = repositorySetupBusy || unsaved || (!$("repositoryPolishedCommit").checked && !state.portable);
   $("repositoryScoreCommits").disabled = repositorySetupBusy || unsaved || (!$("repositoryScoreCommits").checked && !state.portable);
   $("repositoryAutoPush").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoPush").checked && (!state.repository || !state.checkpoint || !state.origin));
   $("repositorySetupState").textContent = unsaved ? "Save now to apply the new location before changing its Git settings." : !state.repository
@@ -80,7 +81,7 @@ async function refreshRepositorySetup() {
     $("saveFolder").value = S.ov?.save_folder || "";
     $("repositoryInit").hidden = true; $("repositoryCheckpoint").hidden = true;
     $("repositoryOriginGroup").hidden = true;
-    for (const id of ["repositoryAutoCommit", "repositoryScoreCommits", "repositoryAutoPush"]) $(id).disabled = true;
+    for (const id of ["repositoryAutoCommit", "repositoryPolishedCommit", "repositoryScoreCommits", "repositoryAutoPush"]) $(id).disabled = true;
     $("repositorySetupState").textContent = "Checking this project’s save repository…";
     $("repositoryFolder").value = "";
     $("repositoryBuildPath").textContent = "";
@@ -135,7 +136,7 @@ async function setupRepository(action, existingJob = null) {
     if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/.test($("repositoryGithubName").value.trim())) { showJobError(log, "Enter a repository name without an owner or slash."); return; }
   }
   repositorySetupBusy = true; ++repositorySetupRequest;
-  const finish = beginWork(log, "Updating save repository", [$("repositoryInit"), $("repositoryCheckpoint"), $("repositoryOriginGo"), $("repositoryGithubGo"), $("saveGo"), $("repositoryAutoCommit")], "Save repository updated.");
+  const finish = beginWork(log, "Updating save repository", [$("repositoryInit"), $("repositoryCheckpoint"), $("repositoryOriginGo"), $("repositoryGithubGo"), $("saveGo"), $("repositoryAutoCommit"), $("repositoryPolishedCommit")], "Save repository updated.");
   try {
     const {job} = existingJob ? {job:existingJob} : await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:$("repositoryOrigin").value.trim(), github_name:$("repositoryGithubOwner").value.trim()+"/"+$("repositoryGithubName").value.trim(), visibility:$("repositoryGithubVisibility").value}});
     repositorySetupJob = job;

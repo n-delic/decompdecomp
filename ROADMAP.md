@@ -728,6 +728,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Review and push existing Git commits to origin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Batched local commits for improved best drafts | ✓ | ✓ | ✓ | ✓ | — per-unit source adapter planned | — per-unit source adapter planned | — per-unit source adapter planned | — per-unit source adapter planned |
 | Automatic per-match local commits with agent notes | ✓ | ✓ | ✓ | ✓ | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned | — per-unit build adapter planned |
+| Opt-in local commits for verified polished functions | ✓ | ✓ | ✓ | ✓ | — per-unit source adapter planned | — per-unit source adapter planned | — per-unit source adapter planned | — per-unit source adapter planned |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -3165,6 +3166,11 @@ ABI analysis and automatic source/profile selection remain planned.
   foreground attempts. Notes/releases from the GUI use the same foreground lane.
   Controlled concurrency regressions cover N64, PS1, PS2 and PSP; PROJECT builds keep
   their existing objdiff path and do not use the ROM saved-source recheck.
+
+- Done: a separate Settings checkbox commits future byte-verified polished functions
+  through the dedicated automatic commit worker. Match and polish preferences and
+  cancellations are independent; polished commits preserve exact source/header evidence
+  and credit the polishing author. Imported builds still need a per-unit commit adapter.
 
 - Done: automatic per-function commits leave unrelated modified, deleted and untracked
   checkout files untouched and uncommitted. Whole-progress manual checkpoints keep

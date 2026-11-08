@@ -101,7 +101,7 @@ def bind(net, slug, path, proj, log=lambda line:None):
     if path == saves.default_folder(net, slug).resolve():
         net._update_cfg(slug, lambda cfg: cfg.update(progress_folder=str(path)))
         return
-    if net.cfg(proj).get('auto_commit_matches'):
+    if net.cfg(proj).get('auto_commit_matches') or net.cfg(proj).get('auto_commit_polished'):
         raise NetworkError('Turn off automatic commits before moving the progress folder.')
     previous = saves._read_owned(path)
     receipt = net.cfg(proj).get('progress_save_receipt') or {}

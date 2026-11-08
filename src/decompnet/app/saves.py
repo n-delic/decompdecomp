@@ -1415,7 +1415,7 @@ class Autosave:
 
     def _start_commits(self, slug, worker):
         cfg = json.loads(worker['row']['config'])
-        if worker.get('commit_thread') or not (cfg.get('auto_commit_matches') or cfg.get('score_commits', {}).get('enabled')):
+        if worker.get('commit_thread') or not (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished') or cfg.get('score_commits', {}).get('enabled')):
             return
         worker['commit_thread'] = threading.Thread(target=self._commit_loop, args=(slug, worker),
                                                    daemon=True, name='automatic-commits-'+slug)
@@ -1438,7 +1438,7 @@ class Autosave:
             try:
                 check()
                 cfg = json.loads(worker['row']['config'])
-                if not (cfg.get('auto_commit_matches') or cfg.get('score_commits', {}).get('enabled')):
+                if not (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished') or cfg.get('score_commits', {}).get('enabled')):
                     self.stop.wait(1)
                     continue
                 with Executor(1, purpose='Automatic progress commits', project=slug,
@@ -1461,7 +1461,7 @@ class Autosave:
         proj = self.net.project_row(slug)
         if proj is None:return
         cfg = json.loads(proj['config'])
-        if cfg.get('auto_commit_matches'):
+        if cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished'):
             from . import match_commits
             match_commits.process(self.net, slug, output)
         if cfg.get('score_commits', {}).get('enabled'):
@@ -1533,7 +1533,7 @@ class Autosave:
                     self.deep_check_after[row["slug"]] = time.monotonic() + 15
                 self.retry_after.pop(row['slug'], None)
                 commit_cfg = json.loads(row['config'])
-                if commits and (commit_cfg.get('auto_commit_matches') or commit_cfg.get('score_commits', {}).get('enabled')):
+                if commits and (commit_cfg.get('auto_commit_matches') or commit_cfg.get('auto_commit_polished') or commit_cfg.get('score_commits', {}).get('enabled')):
                     self._commit_once(row['slug'], logger or log.info)
             except _AutosavePaused:
                 raise

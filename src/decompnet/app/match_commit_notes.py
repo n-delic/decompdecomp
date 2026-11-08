@@ -20,7 +20,10 @@ def message(net, job, note):
     captured = json.loads(job['snapshot'])
     info = captured.get('origin') or origin(net, job['attempt_id'], captured['info'].get('matched_by'), restored=job['notes_after'] == 0, project_id=project_id)
     text = note['text'].strip() if note is not None and note['text'].strip() else 'Match ' + captured['name']
+    if captured.get('kind') == 'polished':
+        text = 'Polish ' + captured['name']
     lines = ['Matched by: ' + short(info['agent']), 'Match method: ' + short(info['method'])]
+    if captured.get('kind') == 'polished':lines[0] = 'Polished by: ' + short(info['agent'])
     # Read only the compact evidence index. Full sources, assembly and archived payloads stay local.
     examples = store.all('SELECT id,category,status,explanation,evidence FROM repair_examples WHERE attempt_id=? AND function_id=? ORDER BY id LIMIT 5',
                              job['attempt_id'], job['function_id'])

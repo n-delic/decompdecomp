@@ -337,6 +337,15 @@ class Readability:
                        (source, source, fn["id"]))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             self.net._event(db, proj["id"], agent.id, "readable", fn["name"])
+            if self.net.is_rom(proj):
+                attempt = db.execute('SELECT id,context_version FROM attempts WHERE function_id=? AND agent_id=? AND source=? ORDER BY id DESC LIMIT 1',
+                                     (fn['id'], agent.id, source)).fetchone()
+                if attempt is not None:
+                    from ..match_bundle import capture
+                    capture(db, fn, attempt['id'], source, attempt['context_version'], None)
+                    from . import match_commits
+                    self.net.project_store(proj['id']).after_commit(
+                        lambda: match_commits.enqueue(self.net, self.net.project_row(proj['slug']), fn['id'], polished=True))
         counts = self.counts(proj)
         return (f"✅ {fn['name']} is readable now, and still matches byte for byte ({counts['readable']} of "
                 f"{counts['matched']} readable). claim_readable for the next one.")
