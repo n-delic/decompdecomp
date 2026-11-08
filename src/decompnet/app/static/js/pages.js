@@ -285,9 +285,10 @@ async function showSettingsPage() {
   const theme = savedTheme();
   $("setComputer").innerHTML = `
     <div class="field"><span>Appearance</span><div class="seg" id="themeSeg">${THEMES.map(([k, l]) => `<button type="button" data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
-    <div class="field"><span>Projects live in</span>${cmdBox(st.home)}</div>
+    <div id="dataDirectories"></div>
     <label class="check"><input type="checkbox" id="webInterfaceEnabled"><span><b>Enable web interface</b>: use the full app in a browser while the desktop window stays open.</span></label>
     <div id="webInterfaceDetails" hidden></div>`;
+  renderDataDirectories();
   const renderWebInterface = info => {
     $("webInterfaceEnabled").checked = info.enabled;
     $("webInterfaceDetails").hidden = !info.enabled;

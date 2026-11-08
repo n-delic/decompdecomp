@@ -66,6 +66,7 @@ def register(app: App) -> None:
 
     from ..source_runtime import ACTIVE, Runtime
     runtime = Runtime(app)
+    app.source_runtime = runtime
 
     @mcp.custom_route("/api/update/runtime", methods=["GET", "POST"])
     async def api_runtime(request: Request) -> Response:

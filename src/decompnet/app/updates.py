@@ -273,10 +273,14 @@ def _stream(cmd: list[str], log, failure: str) -> None:
         raise RuntimeError(f"{failure} (exit code {proc.returncode}): {' / '.join(tail[-3:])}")
 
 
-def restart(port: int, secret: str, window: bool) -> None:
+def restart(port: int, secret: str, window: bool, *, home=None) -> None:
     """Become the newly installed version: same process, same port and secret, and the window again when it was
     open (the old one closes as this process is replaced). Never returns."""
     env = dict(os.environ, DECOMP_RESTART=json.dumps({"port": port, "secret": secret, "window": window}))
+    if home is not None:
+        env['DECOMP_HOME'] = str(home)
+        state = json.loads(env['DECOMP_RESTART']);state['switch_home'] = True
+        env['DECOMP_RESTART'] = json.dumps(state)
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
@@ -301,7 +305,7 @@ class Updater:
 
     def set_source(self, repo: str, branch: str) -> dict:
         with self._lock:
-            if self.job['state'] in ('installing', 'restarting'):
+            if self.job['state'] in ('installing', 'restarting', 'switching-directory'):
                 raise ValueError('Wait for the current update to finish before changing its source.')
             source = configure_source(repo, branch)
             self.last = None
@@ -318,7 +322,7 @@ class Updater:
         """Install the update in the background, then restart into it. `channel` (and `branch`): another source
         instead, from then on followed by updates (switch_to)."""
         with self._lock:
-            if self.job["state"] in ("installing", "restarting"):
+            if self.job["state"] in ("installing", "restarting", "switching-directory"):
                 return
             # never the cached check: on a branch that moved since, it names an older commit than the newest
             found = self.last = switch_to(channel, branch) if channel else check()

@@ -213,7 +213,7 @@ class Runtime:
         with self.lock:
             if self.job['state'] in ACTIVE:
                 raise ValueError('A source handoff is already queued.')
-            if self.app.updater.job['state'] in ('installing','restarting'):
+            if self.app.updater.job['state'] in ('installing','restarting','switching-directory'):
                 raise ValueError('Wait for the packaged update to finish first.')
             self.cancel.clear()
             self.app.settings.data['source_runtime_path']=str(folder)
