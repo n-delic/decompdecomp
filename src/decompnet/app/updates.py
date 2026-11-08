@@ -137,7 +137,7 @@ def _branch_version(repo: str, sha: str) -> str:
     try:
         text = _get(f"https://raw.githubusercontent.com/{repo}/{sha}/pyproject.toml").decode("utf-8", "replace")
         m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
-        return m.group(1) if m else ""
+        return m.group(1).replace("+rr.", "-rr.") if m else ""
     except (OSError, ValueError):
         return ""
 
