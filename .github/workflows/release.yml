@@ -27,7 +27,7 @@ jobs:
           ref: ${{ env.TAG }}
       - uses: astral-sh/setup-uv@v10.3.0  # setup-uv has published no major tags since v7
       - name: the version in the tag is the version in the code
-        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)" = "$TAG"
+        run: test "v$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/decompnet/__init__.py)" = "$TAG"
       - name: appimagetool checks the apps-menu entry with desktop-file-validate; rpmbuild makes the .rpm
         run: sudo apt-get install -y --no-install-recommends desktop-file-utils rpm
       - name: build the .deb, the .rpm and the AppImage
@@ -55,7 +55,7 @@ jobs:
       - name: the version in the tag is the version in the code
         shell: pwsh
         run: |
-          $version = (Select-String '^version = "(.*)"' pyproject.toml).Matches.Groups[1].Value
+          $version = (Select-String '^__version__ = "(.*)"' src/decompnet/__init__.py).Matches.Groups[1].Value
           if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match project version $version" }
       - name: Build the Windows setup bundle
         shell: pwsh
@@ -88,7 +88,7 @@ jobs:
           ref: ${{ env.TAG }}
       - uses: astral-sh/setup-uv@v10.3.0
       - name: the version in the tag is the version in the code
-        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)" = "$TAG"
+        run: test "v$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/decompnet/__init__.py)" = "$TAG"
       - name: build and smoke test the macOS app
         run: packaging/macos/build.sh
       - name: attach the app to the release

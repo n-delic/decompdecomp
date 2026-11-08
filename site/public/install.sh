@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RetroReversing fork installer — 1.0.8-alpha.2
+# RetroReversing fork installer — 1.0.9-rr.1
 # decompdecomp installer for Linux and macOS (Intel and Apple Silicon).
 #
 #   curl -fsSL https://raw.githubusercontent.com/RetroReversing/decompdecomp/main/site/public/install.sh | bash -s -- --source branch:main
@@ -22,7 +22,7 @@
 # The same through the environment: DECOMP_SOURCE=..., DECOMP_BRANCH=<name>.
 set -euo pipefail
 
-VERSION="1.0.7-alpha.1"
+VERSION="1.0.9-rr.1"
 REPO="RetroReversing/decompdecomp"
 START=1
 SOURCE="${DECOMP_SOURCE:-}"

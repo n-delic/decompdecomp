@@ -5,7 +5,7 @@ param([switch]$SkipInstallSmoke)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$version = (Select-String '^version = "(.*)"' (Join-Path $repoRoot 'pyproject.toml')).Matches.Groups[1].Value
+$version = (Select-String '^__version__ = "(.*)"' (Join-Path $repoRoot 'src/decompnet/__init__.py')).Matches.Groups[1].Value
 $work = Join-Path ([IO.Path]::GetTempPath()) ("decompdecomp-build-" + [guid]::NewGuid())
 $app = Join-Path $work 'app'
 $wheelDir = Join-Path $work 'wheel'

@@ -93,11 +93,14 @@ def configure_source(repo: str, branch: str = 'main') -> dict:
 def version_key(v: str) -> tuple[int, ...]:
     """(major, minor, patch, stage, n), so a pre-release comes before its release: 1.0.0-alpha (or 1.0.0a0, as
     Python spells it) < 1.0.0-beta.2 < 1.0.0rc1 < 1.0.0. Comparing only the numbers, an alpha never updated to its
-    release."""
+    release. Fork revisions (-rr.N or Python's +rr.N) follow their base release."""
     m = re.match(r"\D*(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)", v.strip())
     if not m:
         return (0,)
     nums = tuple(int(x or 0) for x in m.group(1, 2, 3))
+    fork = re.fullmatch(r"[-+]rr[.](\d+)", m.group(4).strip().lower())
+    if fork:
+        return nums + (3, int(fork.group(1)))
     pre = re.match(r"[-._]?(alpha|beta|rc|a|b|c)[-._]?(\d*)", m.group(4).strip().lower())
     stage = {"alpha": 0, "a": 0, "beta": 1, "b": 1, "rc": 2, "c": 2}[pre.group(1)] if pre else 3
     return nums + (stage, int(pre.group(2) or 0) if pre else 0)
