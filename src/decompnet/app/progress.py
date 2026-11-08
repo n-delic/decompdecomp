@@ -1320,7 +1320,6 @@ class Progress:
             stored_revision = saves._stored_revision(cfg)
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
             comparison = None if before is not None else saves._render(net, slug)[0]
-            comparison_manifest = before.manifest if before is not None else comparison[saves.MANIFEST]
             if before is None:
                 changed = {name for name in set(disk) | set(comparison) if disk.get(name) != comparison.get(name)}
             else:
@@ -1372,7 +1371,16 @@ class Progress:
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg)
                 function_rows = store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
-                affected = affected_functions(json.loads(comparison_manifest), merged_manifest, changed, function_rows)
+                # Judge the merged files against today's database inputs, not the
+                # previous disk snapshot. Local searches may already have verified
+                # new sources/profiles since that snapshot was published.
+                def input_text(files, name):
+                    text = files.get(name)
+                    return saves._source_text(text) if text is not None and name.startswith(('src/', 'best/')) else text
+                input_changes = {name for name in set(candidate) | set(rendered)
+                                 if input_text(candidate, name) != input_text(rendered, name)}
+                affected = affected_functions(json.loads(rendered[saves.MANIFEST]), merged_manifest,
+                                              input_changes, function_rows)
                 if before is None:
                     applied_changed = {name for name in set(candidate) | set(comparison)
                                        if candidate.get(name) != comparison.get(name)}
@@ -1380,11 +1388,16 @@ class Progress:
                     applied_changed = {name for name in set(candidate) | set(before.files)
                                        if _hash(candidate.get(name)) != before.files.get(name)}
                 if affected is not None:
-                    # Include locally completed C before deciding whether to judge. Adding it
-                    # after that decision could reopen a match on a metadata-only pull without
-                    # checking its merged source, leaving the intact saved C marked open.
+                    matched_names = {row['name'] for row in store.all(
+                        "SELECT name FROM functions WHERE project_id=? AND status='matched'", pid)}
+                    # Unpublished drafts still need judging. An already verified
+                    # match being exported is not an external source change.
                     affected.update(path.split('/', 1)[1][:-2] for path in applied_changed
-                                    if path.startswith(('src/', 'best/')) and path.endswith('.c'))
+                                    if path.startswith(('src/', 'best/')) and path.endswith('.c')
+                                    and path.split('/', 1)[1][:-2] not in matched_names)
+                    applied_changed = {path for path in applied_changed
+                                       if path in input_changes or not path.startswith(('src/', 'best/'))
+                                       or path.split('/', 1)[1][:-2] not in matched_names}
                 all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
                 if toolchain and not toolchains.known(toolchain):
