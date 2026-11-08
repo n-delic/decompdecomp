@@ -727,3 +727,27 @@ def test_failed_cleanup_resumes_broad_search_without_repeating_inverse(monkeypat
     result = deep_permuter.run(net, 'game', 'f', 1, 10, Log())
     assert result['matched'] and len(visited)==2 and visited[-1]=='exact'
     assert len(generated)==1
+
+
+@pytest.mark.parametrize('imported', [False, True])
+def test_exact_local_match_skips_followup_feedback(monkeypatch, imported):
+    from decompnet.app import deep_repair_feedback
+    net = setup(monkeypatch, imported)
+    monkeypatch.setattr(draft_repairs, 'variants', lambda *args, **kwargs: ['exact'])
+    monkeypatch.setattr(deep_permuter.stack_padding_repairs, 'grow', lambda *args: [])
+
+    def judge(self, agent, proj, fn, source, best, fork):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=0,best_source=?,status='matched' WHERE id=?", (source, fn['id']))
+        return 0
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('Exact match must stop before generating feedback or follow-ups')
+
+    monkeypatch.setattr(Permuter, '_score', judge)
+    monkeypatch.setattr(deep_repair_feedback.Feedback, 'record', unexpected)
+    monkeypatch.setattr(deep_repair_feedback.Feedback, 'pairs', unexpected)
+    search = deep_permuter.Search(net, 1, 10, Log())
+    assert search.local_repairs(AGENT, net.project_row('game'), net.function(), 40,
+                                'fork' if imported else None) == (0, 'exact')
+    assert search.local_status['reason'] == 'matched'

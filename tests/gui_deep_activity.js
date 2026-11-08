@@ -51,3 +51,9 @@ assert.equal(showRecent.hidden, false);
 showRecent.onclick();
 assert.equal(active.checked, false);
 assert.equal(host.children[0].hidden, false);
+
+ctx.renderDeepActivity({workers:[{...worker('near', []),best_percent:99.999,best_score:1}]});
+assert.match(host.children[0].querySelector('[data-metrics]').textContent, /99\.9%/);
+assert.doesNotMatch(host.children[0].querySelector('[data-metrics]').textContent, /100\.0%/);
+ctx.renderDeepActivity({workers:[{...worker('exact', []),best_percent:100,best_score:0}]});
+assert.match(host.children[0].querySelector('[data-metrics]').textContent, /100\.0%/);
