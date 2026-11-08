@@ -1508,8 +1508,8 @@ def test_cross_game_run_is_dedicated_and_rejects_duplicate_passes(app, monkeypat
     monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
     monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts':{'improved':2}})
     def across(slug, job):
-        assert slug == 'cross-demo' and job.reuse_limit == 128
-        assert job.cross_seconds == 1200
+        assert slug == 'cross-demo' and job.reuse_limit == float('inf')
+        assert job.cross_seconds == 0 and job.cross_exhaustive
         entered.set()
         assert release.wait(5)
         job.cross_tried = 3
@@ -1532,17 +1532,26 @@ def test_cross_game_run_is_dedicated_and_rejects_duplicate_passes(app, monkeypat
     assert net.twins.jobs['cross-demo'].state == 'done'
 
 
-@pytest.mark.parametrize('data', [{'seconds':0}, {'seconds':86401}, {'seconds':'120'}, {'seconds':None},
-                                {'attempts':True}, {'attempts':1.5}, {'attempts':1000001}])
-def test_cross_game_invalid_budgets_do_not_reserve_a_pass(app, monkeypatch, data):
+@pytest.mark.parametrize('data', [{'seconds':1,'attempts':1}, {'seconds':1200,'attempts':128}])
+def test_cross_game_ignores_legacy_budgets(app, monkeypatch, data):
     client, net, _ = app
+    entered = threading.Event()
     monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
-    response = client.post('/api/cross-game/run', headers={'X-Decomp':'1'}, json={'slug':'invalid', **data})
-    assert response.status_code == 400
-    assert 'invalid' not in net.twins.jobs
+    monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
+    monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts':{}})
+    def across(slug, check):
+        from decompnet.app.free_candidates import exhausted
+        check.reuse_attempts = 2_000_000
+        assert not exhausted(check)
+        assert check.partial_limit == float('inf')
+        entered.set()
+        return 0
+    monkeypatch.setattr(net.twins, 'across_games', across)
+    response = client.post('/api/cross-game/run', headers={'X-Decomp':'1'}, json={'slug':'legacy', **data})
+    assert response.status_code == 200 and entered.wait(5)
 
 
-def test_cross_game_custom_budgets_report_current_work_and_cancel(app, monkeypatch):
+def test_cross_game_exhaustive_search_reports_current_work_and_cancels(app, monkeypatch):
     from decompnet.app.cross_game_progress import report
     client, net, _ = app
     entered = threading.Event()
@@ -1550,8 +1559,8 @@ def test_cross_game_custom_budgets_report_current_work_and_cancel(app, monkeypat
     monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
     monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts':{}})
     def across(slug, check):
-        assert check.reuse_limit == check.partial_limit == 1000000
-        assert 86390 < check.reuse_deadline - time.monotonic() <= 86400
+        assert check.reuse_limit == check.partial_limit == float('inf')
+        assert check.reuse_deadline == float('inf')
         check.cross_tried = 7
         report(check, 'Compiling candidate', game='Demo donor', function='target', donor='original')
         entered.set()
@@ -1564,7 +1573,7 @@ def test_cross_game_custom_budgets_report_current_work_and_cancel(app, monkeypat
     jid = response.json()['job']
     snapshot = client.get('/api/job', params={'id':jid}).json()
     assert snapshot['progress']['function'] == 'target' and snapshot['progress']['game'] == 'Demo donor'
-    assert snapshot['progress']['attempts'] == 7 and snapshot['progress']['attempt_limit'] == 1000000
+    assert snapshot['progress']['attempts'] == 7 and snapshot['progress']['attempt_limit'] == 0
     assert client.post('/api/job/cancel', headers={'X-Decomp':'1'}, json={'id':jid}).json()['cancelled']
     for _ in range(100):
         snapshot = client.get('/api/job', params={'id':jid}).json()

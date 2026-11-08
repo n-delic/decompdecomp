@@ -327,35 +327,7 @@
           <pre id="savedMatchLog" class="joblog" hidden></pre>
         </div>
       </details>
-      <section class="panel" id="crossGamePanel" hidden>
-        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games <span class="disclosure-context" id="crossGameContext"></span></button></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
-        <div id="crossGameBody">
-          <p class="transfer-intro">Reuse verified C from your other games and local SDKs. Every match is checked against this game.</p>
-          <div class="transfer-dashboard">
-            <div class="transfer-run-heading"><h3 id="crossGameState" role="status">Ready to search</h3><div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div></div>
-            <div id="crossGameWork" hidden>
-              <p id="crossGamePhaseStatus" class="transfer-phase" role="status"></p>
-              <p id="crossGameLeadStatus" class="transfer-lead-status" role="status">Checking saved fingerprints before scanning donor projects.</p>
-              <div id="crossGameActivity" class="workbar" role="progressbar" aria-label="Preparing cross-game search" hidden><i></i></div>
-              <progress id="crossGamePhaseBar" class="transfer-phase-bar" max="1" aria-label="Current search stage progress" hidden></progress>
-              <p id="crossGameBudgetStatus" class="muted small" role="status"></p>
-              <div id="crossGameBudgetBar" class="upbar" role="progressbar" aria-label="Candidate check budget used" aria-valuemin="0" aria-valuemax="128" aria-valuenow="0" hidden><i style="width:0%"></i></div>
-              <details class="transfer-technical"><summary>Technical output</summary><pre class="joblog" id="crossGameLog"></pre></details>
-            </div>
-            <div class="transfer-summary" id="crossGameSummary"></div>
-          </div>
-          <div class="transfer-controls">
-            <label class="transfer-time">Time limit<input id="crossGameMinutes" type="number" min="1" max="1440" step="1" value="20" required><span class="muted small">minutes</span></label>
-            <details class="transfer-advanced"><summary>Advanced search limits</summary><div class="transfer-budgets">
-              <label>Candidate checks<input id="crossGameAttempts" type="number" min="1" max="1000000" step="1" value="128" required></label>
-              <label>Preset<select id="crossGamePreset"><option value="custom">Custom</option><option value="standard" selected>Standard · 20 minutes</option><option value="quick">Quick · 2 minutes</option><option value="thorough">Thorough · 1 hour</option><option value="overnight">Overnight · 12 hours</option></select></label>
-            </div><p class="muted small">Stops at either limit or when candidates run out. Limits are saved for this project.</p></details>
-          </div>
-          <div class="transfer-results-heading"><h3>Search results</h3><label>Show <span class="transfer-filter-wrap"><select class="transfer-filter" id="crossGameFilter" aria-label="Show transfer results"><option value="matches">Successful matches</option><option value="improved">Recent improvements</option><option value="all">All recent attempts</option></select></span></label></div>
-          <ol class="transfer-list" id="crossGameRecent"></ol>
-          <details class="transfer-help"><summary>How to read these results</summary><p>Results are saved across runs. Verified matches reproduce this game’s bytes exactly. Partial improvements are better saved candidates, still unmatched. A lower mismatch score is better; 0 is exact. Assembly similarity is only a search hint. Open either function name to inspect its code.</p></details>
-        </div>
-      </section>
+
     </div>
 
     <div class="cols">
@@ -597,6 +569,26 @@
         <details id="deepSweepLogSection" hidden><summary>Combined technical log</summary><div id="deepSweepLog"></div></details>
       </div>
     </details>
+
+      <section class="panel" id="crossGamePanel" hidden>
+        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games <span class="disclosure-context" id="crossGameContext"></span></button></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
+        <div id="crossGameBody">
+          <p class="transfer-intro">Check all eligible candidates from your other games and local SDKs. Runs until finished or stopped; verified results save automatically.</p>
+          <div class="transfer-dashboard">
+            <div class="transfer-run-heading"><h3 id="crossGameState" role="status">Ready to search</h3><div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div></div>
+            <div id="crossGameWork" hidden>
+              <p id="crossGamePhaseStatus" class="transfer-phase" role="status"></p>
+              <p id="crossGameLeadStatus" class="transfer-lead-status" role="status">Checking saved fingerprints before scanning donor projects.</p>
+              <div id="crossGameActivity" class="workbar" role="progressbar" aria-label="Preparing cross-game search" hidden><i></i></div>
+              <progress id="crossGamePhaseBar" class="transfer-phase-bar" max="1" aria-label="Current search stage progress" hidden></progress>
+              <p id="crossGameRunStatus" class="muted small" role="status"></p>
+
+              <details class="transfer-technical"><summary>Technical output</summary><pre class="joblog" id="crossGameLog"></pre></details>
+            </div>
+            <div class="transfer-summary" id="crossGameSummary"></div>
+          </div>
+        </div>
+      </section>
 
     <details class="panel settings-disclosure" id="agentBlockerReviews">
       <summary class="panel-head"><h2>Agent blocker review <span class="disclosure-context" id="agentBlockerContext">— Loading</span></h2><button class="disclosure-action" type="button" id="agentBlockerRefresh">↻ Refresh</button></summary>

@@ -28,7 +28,7 @@ def machine(net, proj):
 
 
 def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None):
-    """Automatic passes try at most 64 donors; manual passes use their chosen shared budget and stop control."""
+    """Automatic passes try at most 64 donors; manual passes check every eligible donor until stopped."""
     from .shared_reuse import compatible
     net = twins.net
     if proj['slug'] in net.links:

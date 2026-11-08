@@ -265,6 +265,7 @@ class Job:
     tried: int = 0
     matched: int = 0
     asm: int = 0  # hand-written assembly (twins of asm functions, code no compiler makes), out of agents' way
+    cross_job: str | None = None  # UI reconnects to an existing manual search without starting another.
     cross_candidates: int = 0
     cross_tried: int = 0
     cross_matched: int = 0
@@ -910,7 +911,7 @@ class Twins:
                             self._compiler_key(compiler_for(cfg, row["vram"], row)), p.size,
                             row["matched_at"] or 0))
 
-    def cross_game_results(self, slug: str) -> dict:
+    def cross_game_results(self, slug: str, *, all_matches=False) -> dict:
         """What exact transfers tried, including failures and where accepted C came from."""
         proj = self.net.project_row(slug)
         store = self.net.project_store(proj['id'])
@@ -919,7 +920,7 @@ class Twins:
         def attempts(matched=False):
             rows = store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_project_id,a.source_function_id "
                              "FROM cross_game_attempts a JOIN functions f ON f.id=a.function_id WHERE a.project_id=? "
-                             + ("AND a.outcome='match' " if matched else '') + 'ORDER BY a.id DESC LIMIT 30', proj['id'])
+                             + ("AND a.outcome='match' " if matched else '') + 'ORDER BY a.id DESC' + ('' if matched and all_matches else ' LIMIT 30'), proj['id'])
             result = []
             for row in rows:
                 pid, fid = row['source_project_id'], row['source_function_id']
@@ -941,14 +942,15 @@ class Twins:
         def archived_rows(matched=False):
             rows = store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_name AS source,"
                              "a.source_game AS game,a.source_slug FROM library_transfers a JOIN functions f ON f.id=a.function_id "
-                             'WHERE a.project_id=? ' + ("AND a.outcome='match' " if matched else '') + 'ORDER BY a.id DESC LIMIT 30', proj['id'])
+                             'WHERE a.project_id=? ' + ("AND a.outcome='match' " if matched else '') + 'ORDER BY a.id DESC' + ('' if matched and all_matches else ' LIMIT 30'), proj['id'])
             return [dict(row) | {'source_slug':row['source_slug'] if row['source_slug'] in slugs else ''} for row in rows]
         archived, archived_matches = archived_rows(), archived_rows(True)
         totals={r['outcome']:r['n'] for r in counts}
         for r in store.all('SELECT outcome,COUNT(*) n FROM library_transfers WHERE project_id=? GROUP BY outcome',proj['id']):
             totals[r['outcome']]=totals.get(r['outcome'],0)+r['n']
         recent=sorted([dict(r) for r in [*rows,*archived]],key=lambda r:r['created_at'],reverse=True)[:30]
-        verified=sorted([dict(r) for r in [*matches,*archived_matches]],key=lambda r:r['created_at'],reverse=True)[:30]
+        verified=sorted([dict(r) for r in [*matches,*archived_matches]],key=lambda r:r['created_at'],reverse=True)
+        if not all_matches: verified = verified[:30]
         from .shared_reuse import summary
         return {'counts':totals,'recent':recent,'matches':verified,'discovery':summary(self,proj)}
 

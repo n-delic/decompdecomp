@@ -1907,7 +1907,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .transfer-phase-bar::-webkit-progress-bar { background:var(--line-soft); }
 .transfer-phase-bar::-webkit-progress-value { background:var(--hl); border-radius:99px; }
 .transfer-phase-bar::-moz-progress-bar { background:var(--hl); }
-#crossGameBudgetStatus { font-size:11px; margin:8px 0; line-height:1.6; }
+#crossGameRunStatus { font-size:11px; margin:8px 0; line-height:1.6; }
 #crossGameBudgetBar { height:3px; margin:8px 0 12px; }
 #crossGameBudgetBar[hidden], #crossGamePhaseBar[hidden] { display:none; }
 .transfer-technical { font-size:11px; color:var(--muted); margin-top:12px; }
@@ -2107,3 +2107,17 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .account-item span { display: block; color: var(--muted); font-size: 12px; }
 .account-link { background: none; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; cursor: pointer; color: inherit; }
 .account-link:hover b { text-decoration: underline; }
+
+/* Cross-game reuse shares the deep-permuter metric buttons, with one stage indicator. */
+#crossGamePanel .transfer-dashboard { border:0; padding:0; background:transparent; }
+#crossGamePanel .transfer-summary { border-top:1px solid var(--line-soft); padding-top:18px; }
+#crossGamePanel .deep-sweep-counts { border:0; background:transparent; }
+#crossGamePanel .deep-metric { background:transparent; border:0; border-left:1px solid var(--line-soft); padding:2px 20px; }
+#crossGamePanel .deep-metric:first-child { border:0; padding-left:0; }
+#crossGamePanel .deep-metric b { font-size:30px; letter-spacing:-.04em; }
+#crossGamePanel .deep-metric .cross-match-count { color:var(--match); }
+#crossGamePanel .deep-metric:hover { background:var(--bg-alt); }
+#dialogBody > .transfer-list { margin-top:18px; }
+
+#dialogBody .transfer-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+#dialogBody .transfer-score { grid-column:1/-1; text-align:left; border:0; padding:0; }
