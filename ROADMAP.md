@@ -868,6 +868,9 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **RetroReversing fork releases.** Tags and app versions use `X.Y.Z-rr.N`; Python packages
+  use `X.Y.Z+rr.N`. Updater ordering preserves fork revision numbers across Windows, macOS and Linux.
+
 - **Readable PS1 and PS2 titles.** Imports resolve serials through bundled offline metadata,
   keeping the game code and region. Unknown discs use a useful volume label or retain the serial.
   Existing serial-only project names resolve for display without rewriting project data.

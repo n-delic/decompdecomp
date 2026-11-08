@@ -360,3 +360,15 @@ def test_source_cannot_change_during_installation(monkeypatch):
     monkeypatch.setattr(updates, 'configure_source', lambda *args: pytest.fail('Must not change source'))
     with pytest.raises(ValueError, match='current update'):
         updater.set_source('another/fork', 'main')
+
+
+def test_fork_revisions_update_in_order_and_accept_python_metadata_spelling():
+    order = ['1.0.9-alpha.4', '1.0.9', '1.0.9-rr.1', '1.0.9-rr.2', '1.0.9-rr.10', '1.0.10-alpha.1']
+    keys = [updates.version_key(v) for v in order]
+    assert keys == sorted(keys) and len(set(keys)) == len(keys)
+    assert updates.version_key('v1.0.9-rr.1') == updates.version_key('1.0.9+rr.1')
+
+
+def test_branch_update_displays_the_fork_release_spelling(monkeypatch):
+    monkeypatch.setattr(updates, '_get', lambda *_: b'version = "1.0.9+rr.2"\n')
+    assert updates._branch_version('RetroReversing/decompdecomp', 'a' * 40) == '1.0.9-rr.2'

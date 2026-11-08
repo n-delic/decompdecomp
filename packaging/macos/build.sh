@@ -9,7 +9,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 uv python install 3.12 >/dev/null
 PYTHON="$(uv python find --system --managed-python 3.12)"
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/pyproject.toml")"
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$ROOT/src/decompnet/__init__.py")"
 ARCH="$(uname -m)"
 case "$ARCH" in arm64|x86_64) ;; *) echo "Unsupported Mac architecture: $ARCH" >&2; exit 1 ;; esac
 
