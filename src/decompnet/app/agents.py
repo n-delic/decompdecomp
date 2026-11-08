@@ -149,8 +149,11 @@ SPIN_RATIO = 4
 SPIN_MATCHES = 3
 
 
-# what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login")
-_SIGNED_OUT = re.compile(r"not logged in|run /login|run ['\"]?(?:agent|kimi) login|no model configured|"
+# what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login"; Oh My Pi:
+# "No default model selected. Use /login, ..." on stderr, and a failed request's "401 Incorrect API key provided: ..."
+# as the errorMessage of a stdout message_end, so the words are matched wherever a CLI says them)
+_SIGNED_OUT = re.compile(r"not logged in|run /login|use /login|run ['\"]?(?:agent|kimi) login|no model configured|"
+                         r"no api key found|incorrect api key|"
                          r"authentication required|invalid api key|not authenticated|please (?:log|sign) ?in|"
                          r"auth(?:entication)? method", re.I)
 # and when its sign-in stopped working (Claude Code, exit code 1 at once, nothing done: "Failed to authenticate: OAuth
