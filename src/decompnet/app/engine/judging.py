@@ -90,8 +90,10 @@ class JudgeMixin:
             return res.candidate, res.exact if res.candidate is not None else None, res.problems
         local = self.__dict__.get('_search_link_local')
         if local is not None and hasattr(local, 'last'):del local.last
+        from ...object_emission import inspect as emission_inventory
         from ..candidate_diagnostics import export_layout, text, unresolved
         checks = {'linked_bytes': {'exact': res.exact}, 'link': unresolved(res.problems),
+                  'object_emission': emission_inventory(obj, fn['name']),
                   'export': export_layout(obj, fn['name'], res.exact, res.placements)}
         if res.exact and not checks['export'].get('ready'):
             from ..compiler_context import verified

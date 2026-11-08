@@ -18,3 +18,8 @@ assert.match(get('fnDeepNow').textContent,/0 AI tokens/);
 render({});assert.doesNotMatch(get('fnDeepNow').textContent,/repeated outputs/);
 const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
 for(const id of ['fnDeepMaximum','deepSweepMaximum','fnDeepCompileSlots','deepSweepCompileSlots'])assert.ok(html.includes(`id="${id}"`));
+render({throughput:{local_proposal_generation_seconds:2.5,cleanup_generation_seconds:.1,compiler_execute_seconds:8.2,link_seconds:.4}});
+assert.match(get('fnDeepThroughput').textContent,/2.5s local proposals/);
+assert.match(get('fnDeepThroughput').textContent,/0.1s cleanup/);
+assert.match(get('fnDeepThroughput').textContent,/8.2s compiler work \(summed workers\)/);
+assert.match(get('fnDeepThroughput').textContent,/0.4s linking/);
