@@ -56,3 +56,10 @@ callee's existing by-value interface; they must fully inline. A helper taking th
 aggregate by value may fail to inline even when a scalar/pointer helper succeeds.
 Use current-input compiler-output history to avoid repeating identical outputs.
 Equal numeric scores alone do not prove identical assembly.
+
+Use frozen checkpoint replay to test the shortest proven repair path. A later
+winning bundle can contain unnecessary changes: in one KMC control, both score 125
+and score 60 recovered exactness by removing the same earlier one-pass scope.
+Report compiler calls separately from proposal-generation and linker time. An
+emitted-function/data inventory explains extra bodies and pools, but is not a
+replacement for linked-byte, data and complete-image verification.

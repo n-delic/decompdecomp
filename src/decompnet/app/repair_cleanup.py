@@ -5,6 +5,7 @@ Only a sole unescaped scalar assignment is unwrapped; declarations and loop cont
 """
 import re
 
+from .. import compile_timing
 from . import branch_call_support
 from .integer_repair_support import IDENT, edit, view
 
@@ -12,6 +13,7 @@ FAMILIES = ('revisit_one_shot_scope',)
 LIMIT = 8
 
 
+@compile_timing.timed('cleanup_generation')
 def variants(source, name, header='', arch=None):
     part = view(source, name)
     if not part or re.search(r'\b(?:volatile|asm|__asm__)\b', part.body) or '__LINE__' in source+'\n'+header:

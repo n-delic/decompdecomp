@@ -126,3 +126,38 @@ def test_replay_compares_child_to_its_real_parent_and_counts_offers():
     assert c['one']['generated_candidates']==c['two']['generated_candidates']==1
     assert c['two']['unchanged_parent_outputs']==1 and c['two']['compiler_invocations']==2
     assert c['one']['unchanged_parent_outputs']==0
+
+
+def test_proposal_and_compiler_timings_are_separate_worker_totals():
+    from decompnet.app.deep_throughput import Metrics
+    m=Metrics()
+    for name,value in [('proposal_generation',3),('cleanup_generation',.1),('execute',5),('link',.3),('queue',2)]:
+        m.add(name,value)
+    report=m.snapshot()
+    assert report['local_proposal_generation_seconds']==3
+    assert report['cleanup_generation_seconds']==.1
+    assert report['compiler_execute_seconds']==5 and report['link_seconds']==.3
+    assert report['compiler_queue_seconds']==2
+
+
+def test_recursive_generator_timing_counts_outer_work_once_and_resets_on_error(monkeypatch):
+    from decompnet import compile_timing
+    clock=[0.]
+    monkeypatch.setattr(compile_timing.time,'monotonic',lambda:clock[0])
+    @compile_timing.timed('proposal_generation')
+    def generate(depth):
+        clock[0]+=1
+        if depth:generate(depth-1)
+    counts=compile_timing.Counts()
+    with compile_timing.collect(counts):generate(2)
+    assert counts.values['proposal_generation']==3
+
+
+def test_generation_timer_is_restored_after_an_exception():
+    from decompnet import compile_timing
+    counts=compile_timing.Counts()
+    @compile_timing.timed('proposal_generation')
+    def fail():raise ValueError('test')
+    with compile_timing.collect(counts), pytest.raises(ValueError):fail()
+    assert counts.values['proposal_generation']>=0
+    assert 'proposal_generation' not in compile_timing._active.get()

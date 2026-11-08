@@ -385,6 +385,17 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
                       selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None, omit_families=()):
+    # A small inverse page runs before broad proposal generation, including benchmark replay.
+    # Its cursor is separate and exact-source scoped; a miss resumes ordinary pages fairly.
+    if selection is not None and 'revisit_one_shot_scope' not in omit_families:
+        from . import repair_cleanup
+        cleanup = repair_cleanup.variants(source, fn['name'], header, arch)
+        if cleanup:
+            cleanup_selection = selection.setdefault('cleanup_pages', {})
+            page = repair_selection.page(cleanup, source, cleanup_selection, limit)
+            if page:
+                return (repair_selection.Page(page, more=True) if tagged else
+                        repair_selection.Page([c for _,c in page], more=True))
     key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'),report.get('instruction_resolution'), report.get('repair_locations'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused, entry_scope)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None

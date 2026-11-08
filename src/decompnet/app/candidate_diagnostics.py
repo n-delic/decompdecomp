@@ -61,6 +61,10 @@ def text(checks):
         parts.append(f"Raw MIPS address at diff row {row['row']+1}: target 0x{row['target']:08X}, yours 0x{row['candidate']:08X}. Verify this expression before scheduling permutations; symbolic labels may obscure the address.")
     if checks.get('instructions', {}).get('exact') and checks.get('data'):
         parts.append('Instructions match; constant data differs. Check initializer values, object sizes and anonymous-array padding before changing control flow.\n'+'\n'.join(checks['data']))
+    emission = checks.get('object_emission') or {}
+    if emission.get('available') and (emission.get('extra_function_count') or emission.get('allocated_data_bytes')):
+        from ..object_emission import text as emission_text
+        parts.append(emission_text(emission))
     if checks.get('linked_bytes', {}).get('exact'):
         parts.append('Linked bytes verified identical. Symbolic relocation labels or displayed diff annotations do not override this verdict; do not repair those annotations.')
     if checks.get('export', {}).get('state') not in (None, 'unmatched'):
