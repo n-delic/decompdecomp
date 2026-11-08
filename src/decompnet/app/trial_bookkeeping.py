@@ -5,6 +5,7 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
+from itertools import groupby
 
 from .. import compile_timing
 
@@ -17,20 +18,40 @@ class Batch:
         self.max_statements = 256 if maximum else 64
         self.seconds = 1 if maximum else .5
         self.owner = threading.get_ident()
-        self.store = None
-        self.pending = []
-        self.bytes = 0
-        self.values = {}
+        self.buffers = []  # Identity-based: test adapters need not be hashable.
         self.started = time.monotonic()
 
-    def flush(self):
-        if not self.pending:return
-        with compile_timing.phase('history_write'), self.store.tx() as db:
-            for sql, args in self.pending:db.execute(sql, args)
-        self.pending.clear()
-        self.values.clear()
-        self.bytes = 0
-        self.started = time.monotonic()
+    @property
+    def pending(self):
+        return [statement for buffer in self.buffers for statement in buffer['pending']]
+
+    @property
+    def bytes(self):
+        return sum(buffer['bytes'] for buffer in self.buffers)
+
+    def buffer(self, store):
+        found=next((buffer for buffer in self.buffers if buffer['store'] is store),None)
+        if found is None:
+            found={'store':store,'pending':[],'values':{},'bytes':0}
+            self.buffers.append(found)
+        return found
+
+    def flush(self, store=None):
+        for buffer in list(self.buffers):
+            if store is not None and buffer['store'] is not store:continue
+            if buffer['pending']:
+                with compile_timing.phase('history_write'), buffer['store'].tx() as db:
+                    for sql, group in groupby(buffer['pending'],key=lambda statement:statement[0]):
+                        args=[arguments for _,arguments in group]
+                        # Preserve statement ordering and the adapter's SQL semantics.
+                        if len(args)>1 and hasattr(db,'executemany'):
+                            db.executemany(sql,args)
+                        else:
+                            for arguments in args:db.execute(sql,arguments)
+                compile_timing.add('history_transactions',1)
+                compile_timing.add('history_statements',len(buffer['pending']))
+            self.buffers.remove(buffer)  # Never replay a committed store if another flush fails.
+        if not self.buffers:self.started = time.monotonic()
 
 
 def current():
@@ -40,12 +61,14 @@ def current():
 
 def flush(store=None):
     value = current()
-    if value is not None and (store is None or value.store is store):value.flush()
+    if value is not None:value.flush(store)
 
 
 def lookup(store, key):
     value = current()
-    return value.values.get(key) if value is not None and value.store is store else None
+    if value is None:return None
+    buffer=next((buffer for buffer in value.buffers if buffer['store'] is store),None)
+    return buffer['values'].get(key) if buffer is not None else None
 
 
 def submit(store, statements, *, immediate=False, memo=None):
@@ -54,15 +77,15 @@ def submit(store, statements, *, immediate=False, memo=None):
         with store.tx() as db:
             for sql, args in statements:db.execute(sql, args)
         return
-    if value.store is not store:
-        value.flush();value.store = store
     size = sum(len(sql.encode()) + sum(len(arg.encode()) if isinstance(arg, str) else
                len(arg) if isinstance(arg, bytes) else 8 for arg in args) for sql, args in statements)
-    if value.pending and value.bytes + size > value.max_bytes:value.flush()
-    value.pending.extend(statements)
-    if memo is not None:value.values[memo[0]] = memo[1]
-    value.bytes += size
-    if immediate or value.bytes >= value.max_bytes or len(value.pending) >= value.max_statements or time.monotonic()-value.started >= value.seconds:value.flush()
+    if value.buffers and value.bytes + size > value.max_bytes:value.flush()
+    buffer=value.buffer(store)
+    buffer['pending'].extend(statements)
+    if memo is not None:buffer['values'][memo[0]] = memo[1]
+    buffer['bytes'] += size
+    if immediate:value.flush(store)
+    if value.bytes >= value.max_bytes or sum(len(b['pending']) for b in value.buffers) >= value.max_statements or time.monotonic()-value.started >= value.seconds:value.flush()
 
 
 @contextmanager

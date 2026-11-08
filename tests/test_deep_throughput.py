@@ -147,3 +147,15 @@ def test_live_rates_do_not_include_long_preparation_and_decay_when_idle(monkeypa
     clock[0]=106
     assert metrics.snapshot()['compiles_per_second']==0
     assert metrics.snapshot()['candidates_per_second']==0
+
+
+def test_average_compiler_slot_utilization_uses_elapsed_worker_time(monkeypatch):
+    clock=[100.]
+    monkeypatch.setattr(deep_throughput.time,'monotonic',lambda:clock[0])
+    metrics=deep_throughput.Metrics();metrics.gate=SimpleNamespace(limit=8,active=1)
+    metrics.add('execute',8);metrics.add('history_transactions',2)
+    clock[0]=102.
+    snapshot=metrics.snapshot()
+    assert snapshot['active_compiles']==1
+    assert snapshot['compiler_slot_utilization_percent']==50
+    assert snapshot['history_transactions']==2

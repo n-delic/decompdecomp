@@ -632,3 +632,19 @@ reduced payload-read callbacks from 1,000 to 200 with identical retained donor
 identities, targets, relocations and C. This measures callback counts, not a claim
 that every observed slow wrapper query is resolved; candidates retain the normal
 destination judge.
+
+### Independent catalog and project history batches
+
+Advisory search writes retain separate per-store buffers under one aggregate byte,
+statement-count and time limit. Switching between catalog policy statistics and
+project-local trial history no longer flushes either database. Explicit reads flush
+only their own store; winners remain immediate, and search exit/cancellation flushes
+pending misses. Successful store commits are removed before another store is tried,
+so a later failure cannot replay an already committed batch. Consecutive identical
+statements use executemany without reordering different SQL statements.
+
+A synthetic on-disk WAL/FULL-synchronous two-store workload (100 alternating
+candidates, 200 retained rows) took 0.2742s / 200 commits before and 0.0291s / two
+commits after. This isolates advisory history cost, not overall compiler throughput.
+The throughput view now reports completed history transactions and average compiler
+slot utilization across the run; instantaneous active slots remain a separate count.
