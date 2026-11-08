@@ -7,7 +7,7 @@ const ctx={$,S:{slug:'game',ov:{save_folder:'/save'}},Date,encodeURIComponent,re
  api(url,options){if(options){posted=options.body;return Promise.resolve({job:'setup'});}return new Promise(r=>resolve=r);},
  beginWork(log,label,fields){fields.forEach(f=>f.disabled=true);return()=>{finish++;fields.forEach(f=>f.disabled=false);};},
  showJobError(log,message){log.textContent=message;},followJob(id,log,onUpdate){assert.equal(log,null);update=onUpdate;return Promise.resolve({folder:'/save',root:'/save',repository:true,portable:true,checkpoint:false,linked:true,origin:false});}};
-vm.createContext(ctx);vm.runInContext(source,ctx);
+Object.assign(ctx,{setTimeout,clearTimeout});vm.createContext(ctx);vm.runInContext(source,ctx);
 (async()=>{
  const load=ctx.refreshRepositorySetup();
  resolve({folder:'/save',root:'',repository:false,portable:true,checkpoint:false,linked:true,origin:false});await load;
@@ -25,6 +25,7 @@ vm.createContext(ctx);vm.runInContext(source,ctx);
  ctx.renderRepositorySetup({folder:'/source',root:'/source',repository:true,portable:false,checkpoint:true,linked:false,origin:false});assert.equal($('repositoryOriginGo').disabled,false);
  update(['Old project secret'],{});assert.doesNotMatch($('repositorySetupLog').textContent,/Old project/);
 await loadingRegression();
+await stalePathAndTimeoutRegression();
 await simpleSetupRegression();
 })().catch(e=>{console.error(e);process.exit(1);});
 
@@ -33,7 +34,7 @@ async function loadingRegression() {
   const pending=[];
   const context={$:field,S:{slug:'first',ov:{overview_pending:true}},Date,encodeURIComponent,
     refreshRepositoryPush(){},api(){return new Promise(resolve=>pending.push(resolve));}};
-  vm.createContext(context);vm.runInContext(source,context);
+  Object.assign(context,{setTimeout,clearTimeout});vm.createContext(context);vm.runInContext(source,context);
   const state=(folder,extra={})=>({folder,save_folder:folder,root:folder,repository:true,portable:true,checkpoint:true,linked:true,origin:true,...extra});
   // The quick overview used to leave the field blank forever, even after Git status found its path.
   const first=context.refreshRepositorySetup();pending.shift()(state('/remembered/first'));await first;
@@ -103,7 +104,7 @@ async function simpleSetupRegression() {
  const context={$:get,S:{slug:'game',ov:{}},Date,encodeURIComponent,refreshRepositoryPush(){},updateWorkProgress(){},
    api:async(url,options)=>{actions.push(options.body.action);return{job:'setup'};},
    followJob:async()=>{if(failure)throw Error('Review staged changes');if(projectSwitch)context.S.slug='other';return{...state,linked:true};}};
- vm.createContext(context);vm.runInContext(source,context);
+ Object.assign(context,{setTimeout,clearTimeout});vm.createContext(context);vm.runInContext(source,context);
  context.renderRepositorySetup(state);
  assert.equal(get('repositoryAutoCommit').disabled,false,'a saved folder can prepare its first checkpoint when enabled');
  assert.equal(get('repositoryDestination').hidden,false);assert.equal(get('repositoryFolder').value,'/repo');
@@ -147,7 +148,7 @@ async function simpleSetupRegression() {
     beginWork(){return()=>{};},
     api(url,options){if(options)posts++;return Promise.resolve({job:'existing'});},
     followJob(job){assert.equal(job,'existing');follows++;return new Promise(resolve=>complete=resolve);}};
-  vm.createContext(context);vm.runInContext(source,context);
+  Object.assign(context,{setTimeout,clearTimeout});vm.createContext(context);vm.runInContext(source,context);
   await context.refreshRepositorySetup();
   assert.equal(posts,0);assert.equal(follows,1);assert.equal(field('repositorySetupStop').hidden,false);
   await field('repositoryGithubGo').onclick();assert.equal(posts,0);
@@ -162,7 +163,7 @@ async function simpleSetupRegression() {
   const context={$:field,S:{slug:'game'},Date,encodeURIComponent,document:{createElement(){return{};}},
     refreshRepositoryPush(){},showJobError(log,message){log.textContent=message;},
     beginWork(){return()=>{};},api(url,options){if(options)posts++;return Promise.resolve({owners:['person','Studio'],warning:''});}};
-  vm.createContext(context);vm.runInContext(source,context);
+  Object.assign(context,{setTimeout,clearTimeout});vm.createContext(context);vm.runInContext(source,context);
   context.renderRepositorySetup({folder:'/save',root:'/save',repository:true,portable:true,origin:false});
   await field('repositoryGithubGo').onclick();
   assert.match(field('repositorySetupLog').textContent,/Close and reopen/);assert.equal(posts,0);
@@ -173,3 +174,38 @@ async function simpleSetupRegression() {
   assert.deepEqual(field('repositoryGithubOwners').items.map(item=>item.value),['person','Studio']);
   assert.equal(field('repositoryGithubOwner').value,''); // Choosing an owner is deliberate.
 })().catch(e=>{console.error(e);process.exit(1);});
+
+
+async function stalePathAndTimeoutRegression() {
+  const fields={}, get=id=>fields[id]??={value:'',textContent:'',hidden:true,disabled:false,replaceChildren(){}};
+  const requests=[];let timeout;
+  const context={$:get,S:{slug:'old',ov:{save_folder:'/old/progress'}},Date,encodeURIComponent,
+    setTimeout(fn){timeout=fn;return 1;},clearTimeout(){},refreshRepositoryPush(){},
+    api(){return new Promise(resolve=>requests.push(resolve));}};
+  vm.createContext(context);vm.runInContext(source,context);
+  const state=(slug)=>({slug,folder:`/${slug}/progress`,save_folder:`/${slug}/progress`,root:`/${slug}`,
+    repository:true,portable:true,checkpoint:true,linked:true,origin:true});
+  const old=context.refreshRepositorySetup();requests.shift()(state('old'));await old;
+  assert.equal(get('repositorySetupState').textContent,'Git repository: /old');
+  context.S.slug='v-rally';context.S.ov={save_folder:'/v-rally/progress'};
+  const loading=context.refreshRepositorySetup();const late=requests.shift();
+  assert.match(get('repositorySetupState').textContent,/Checking this project/);
+  assert.doesNotMatch(get('repositorySetupState').textContent,/\/old/);
+  assert.equal(vm.runInContext('repositorySaveRoot',context),'');
+  assert.equal(get('repositoryFolder').value,'');
+  assert.equal(get('repositorySetupLoading').hidden,false);
+  for(const id of ['repositoryAutoCommit','repositoryScoreCommits','repositoryAutoPush']) assert.equal(get(id).disabled,true);
+  // Repeated dashboard renders must not duplicate an outstanding status read.
+  await context.refreshRepositorySetup();assert.equal(requests.length,0);
+  timeout();await loading;
+  assert.match(get('repositorySetupState').textContent,/took too long/);
+  assert.equal(get('repositorySetupRetry').hidden,false);
+  assert.equal(get('repositorySetupLoading').hidden,true);
+  const retry=get('repositorySetupRetry').onclick();requests.shift()(state('v-rally'));await retry;
+  assert.equal(get('repositoryAutoCommit').disabled,false);
+  assert.equal(get('repositorySetupState').textContent,'Git repository: /v-rally');
+  assert.equal(get('repositorySetupRetry').hidden,true);
+  late(state('old'));await Promise.resolve();
+  context.renderRepositorySetup(state('old'));
+  assert.equal(get('repositorySetupState').textContent,'Git repository: /v-rally');
+}

@@ -32,7 +32,7 @@ def register(app):
                 slug = str(request.query_params.get('slug', ''))
                 with app.jobs._lock:
                     if job := active_setup(slug):return JSONResponse({'job':job})
-                return JSONResponse(await app.call(repository_setup.status, app.net, slug))
+                return JSONResponse(await (app.fast_call or app.ui_call or app.call)(repository_setup.status, app.net, slug))
             data = await app.body(request)
             slug = str(data.get('slug', ''))
             with app.jobs._lock:

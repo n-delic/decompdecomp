@@ -41,7 +41,7 @@ def status(net, slug):
     if head and net.is_rom(proj):
         manifest = (path.relative_to(root)/saves.MANIFEST).as_posix()
         checkpoint = manifest in git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--', manifest).splitlines()
-    return {'folder': str(path), 'save_folder':str(saves.save_folder(net, slug).expanduser().resolve()),
+    return {'slug':slug, 'folder': str(path), 'save_folder':str(saves.save_folder(net, slug).expanduser().resolve()),
             'root': str(root) if root else '', 'repository': bool(root),
             'github_create': True, 'origin': origin, 'checkpoint': checkpoint, 'portable': net.is_rom(proj),
             'linked': path == saves.default_folder(net, slug).resolve(),

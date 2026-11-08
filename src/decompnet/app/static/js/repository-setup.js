@@ -1,6 +1,7 @@
 /* The save is the primary destination; an export checkout remains an explicit advanced tool. */
 let repositorySetupSlug = "", repositorySaveRoot = "", repositorySetupBusy = false, repositorySetupChecked = 0, repositorySetupRequest = 0, repositorySetupJob = null;
-let repositorySaveEdited = false, repositorySetupState = null;
+let repositorySaveEdited = false, repositorySetupState = null, repositorySetupLoading = false;
+let repositorySetupAbort = null;
 function repositorySavedFolder(state) {
   return state.save_folder ?? (state.portable ? state.folder : S.ov?.save_folder) ?? "";
 }
@@ -17,6 +18,7 @@ $("saveFolder").oninput = () => {
   if (repositorySetupState) renderRepositorySetup(repositorySetupState);
 };
 function renderRepositorySetup(state) {
+  if (state.slug && state.slug !== S.slug) return;
   repositorySetupState = state;
   if (!repositorySaveEdited) $("saveFolder").value = repositorySavedFolder(state);
   const unsaved = state.portable && $("saveFolder").value.trim() !== state.folder;
@@ -46,8 +48,13 @@ function renderRepositorySetup(state) {
 async function refreshRepositorySetup() {
   const slug = S.slug;
   if (!slug) return;
+  if (repositorySetupSlug === slug && repositorySetupLoading) return;
   if (repositorySetupSlug === slug && Date.now() - repositorySetupChecked < 10000) return;
   if (repositorySetupSlug !== slug) {
+    repositorySetupAbort?.abort();
+    repositorySetupLoading = false;
+    $("repositorySetupLoading").hidden = true;
+    $("repositorySetupRetry").hidden = true;
     repositorySetupSlug = slug; repositorySaveRoot = "";
     repositorySaveEdited = false; repositorySetupState = null; ++repositorySetupRequest;
     if ($("repositorySetupLog")._workStatus) $("repositorySetupLog")._workStatus.hidden = true;
@@ -63,20 +70,52 @@ async function refreshRepositorySetup() {
     $("saveFolder").value = S.ov?.save_folder || "";
     $("repositoryInit").hidden = true; $("repositoryCheckpoint").hidden = true;
     $("repositoryOriginGroup").hidden = true;
-    $("repositoryAutoCommit").disabled = true;
+    for (const id of ["repositoryAutoCommit", "repositoryScoreCommits", "repositoryAutoPush"]) $(id).disabled = true;
+    $("repositorySetupState").textContent = "Checking this project’s save repository…";
+    $("repositoryFolder").value = "";
+    $("repositoryBuildPath").textContent = "";
+    $("repositoryDestination").hidden = true;
   }
   if (repositorySetupBusy) return;
   repositorySetupChecked = Date.now();
   const request = ++repositorySetupRequest;
+  repositorySetupLoading = true;
+  $("repositorySetupLoading").hidden = false;
+  $("repositorySetupRetry").hidden = true;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  repositorySetupAbort = controller;
+  let timeout;
   try {
-    const state = await api(`/api/repository-setup?slug=${encodeURIComponent(slug)}`);
+    const expired = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        controller?.abort();
+        reject(new Error("Checking the save repository took too long. Check again to enable automatic commits."));
+      }, 15000);
+      timeout?.unref?.();
+    });
+    const state = await Promise.race([api(`/api/repository-setup?slug=${encodeURIComponent(slug)}`, controller ? {signal:controller.signal} : undefined), expired]);
     if (S.slug !== slug || request !== repositorySetupRequest) return;
-    if (state.job) { setupRepository(null, state.job); return; }
+    if (state.job) {
+      repositorySetupLoading = false; $("repositorySetupLoading").hidden = true;
+      setupRepository(null, state.job); return;
+    }
     renderRepositorySetup(state);
   } catch (error) {
-    if (S.slug === slug && request === repositorySetupRequest) $("repositorySetupState").textContent = error.message;
+    if (S.slug === slug && request === repositorySetupRequest) {
+      $("repositorySetupState").textContent = error.message;
+      $("repositorySetupRetry").hidden = false;
+      repositorySetupChecked = 0;
+    }
+  } finally {
+    clearTimeout(timeout);
+    if (S.slug === slug && request === repositorySetupRequest) {
+      repositorySetupLoading = false;
+      repositorySetupAbort = null;
+      $("repositorySetupLoading").hidden = true;
+    }
   }
 }
+$("repositorySetupRetry").onclick = () => { repositorySetupChecked = 0; return refreshRepositorySetup(); };
 async function setupRepository(action, existingJob = null) {
   if (repositorySetupBusy) return;
   const slug = S.slug, log = $("repositorySetupLog");
