@@ -1,6 +1,7 @@
 """Durable project-wide deep passes; each candidate gets a bounded turn through the normal judges."""
 import hashlib
 import json
+import logging
 import random
 import threading
 import time
@@ -597,6 +598,19 @@ class Sweeps:
             self.record(fn, scope, 'pending' if claim_wait else 'error', minutes, variants, error=str(error))
             activity.update(fn['name'], {'phase': 'waiting' if claim_wait else 'error', 'error': str(error)}, line=str(error), finished=True)
             log(f'{fn["name"]}: {error}')
+        except Exception as error:
+            # Cancellation still stops the pass; an individual search bug must not.
+            try:
+                log.check_cancel()
+            except BaseException:
+                activity.update(fn['name'], {'phase': 'interrupted'}, finished=True)
+                self.record(fn, scope, 'pending', minutes, variants)
+                raise
+            logging.getLogger('decompdecomp').exception('Deep search failed for %s; continuing with other functions', fn['name'])
+            message = f'{type(error).__name__}: {error}'
+            self.record(fn, scope, 'error', minutes, variants, error=message)
+            activity.update(fn['name'], {'phase': 'error', 'error': message}, line=message, finished=True)
+            log(f'{fn["name"]}: {message}; continuing with other functions.')
         except BaseException:
             activity.update(fn['name'], {'phase': 'interrupted'}, finished=True)
             self.record(fn, scope, 'pending', minutes, variants)

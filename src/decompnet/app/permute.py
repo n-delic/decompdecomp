@@ -537,6 +537,8 @@ class Permuter:
         if fn['status'] == 'matched':
             st.add(tried=1, matched=int(bool(preflight.get('applied'))), improved=int(bool(preflight.get('applied'))))
             return
+        if not fn['best_source'] or fn['best_score'] is None:
+            raise NetworkError('Saved C is no longer available for this function; waiting for a new saved candidate.')
         if preflight.get('link'):
             if self._hold(agent, fn):
                 st.add(tried=1)

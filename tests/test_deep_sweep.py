@@ -73,12 +73,14 @@ def test_budget_or_context_changes_retry_completed_passes(sweep, monkeypatch):
 
 def test_cancelled_function_is_not_complete_and_can_resume(sweep, monkeypatch):
     obj, net, calls, _ = sweep
+    log = Log()
     def cancel(*args):
-        raise RuntimeError('cancelled')
+        log.cancelled = True
+        log.check_cancel()
     original = deep_permuter.run
     monkeypatch.setattr(deep_permuter,'run',cancel)
     with pytest.raises(RuntimeError,match='cancelled'):
-        obj.run('game',1,10,Log())
+        obj.run('game',1,10,log)
     assert not obj.history('game',net._function('f0','game'))['completed']
     monkeypatch.setattr(deep_permuter,'run',original)
     assert obj.run('game',1,10,Log())['functions_tested'] == 2
@@ -227,12 +229,14 @@ def test_cancelled_search_keeps_partial_improvements_and_does_not_round_to_full_
     obj, net, _, _ = sweep
     with net.store.tx() as db:
         db.execute('UPDATE functions SET n_insns=100')
+    run_log = Log()
     def cancel(net, slug, name, minutes, variants, log):
         obj.improvement(net._function(name, slug), 1)
-        raise RuntimeError('cancelled')
+        run_log.cancelled = True
+        log.check_cancel()
     monkeypatch.setattr(deep_permuter, 'run', cancel)
     with pytest.raises(RuntimeError, match='cancelled'):
-        obj.run('game', 1, 10, Log())
+        obj.run('game', 1, 10, run_log)
     row = obj.status('game')['improvements'][0]
     assert row['new_percent_text'] == '99.9%'
     assert not obj.history('game', net._function('f0', 'game'))['completed']
@@ -385,15 +389,18 @@ def test_random_queue_uses_only_eligible_functions_once(sweep, monkeypatch, thre
 def test_restart_reshuffles_interrupted_functions(sweep, monkeypatch):
     obj, net, calls, _ = sweep
     selected = []
+    log = Log()
     def interrupted(*args):
         selected.append(args[2])
-        raise RuntimeError('stopped')
+        log.cancelled = True
+        log.check_cancel()
     monkeypatch.setattr(deep_permuter, 'run', interrupted)
-    with pytest.raises(RuntimeError, match='stopped'):
-        obj.run('game', 1, 10, Log())
+    with pytest.raises(RuntimeError, match='cancelled'):
+        obj.run('game', 1, 10, log)
+    log.cancelled = False
     monkeypatch.setattr(deep_sweep.random, 'shuffle', lambda batch: batch.reverse())
-    with pytest.raises(RuntimeError, match='stopped'):
-        obj.run('game', 1, 10, Log())
+    with pytest.raises(RuntimeError, match='cancelled'):
+        obj.run('game', 1, 10, log)
     assert selected == ['f0', 'f1']
 
 
@@ -875,3 +882,25 @@ def test_imported_source_seed_does_not_replace_saved_or_unscored_candidates(swee
     with net.store.tx() as db:db.execute("UPDATE functions SET best_source=NULL,best_score=NULL WHERE name='f0'")
     fn=net._function('f0','game')
     assert deep_permuter.prepare_source(net,proj,fn)['best_source'] is None
+
+
+@pytest.mark.parametrize("threads", [1, 2])
+def test_one_function_bug_does_not_stop_the_pass(sweep, monkeypatch, caplog, threads):
+    obj, net, calls, _ = sweep
+    original = deep_permuter.run
+
+    def search(net, slug, name, *args, **kwargs):
+        if name == 'f0':
+            calls.append(name)
+            raise TypeError("object of type 'NoneType' has no len()")
+        return original(net, slug, name, *args, **kwargs)
+
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    result = obj.run('game', 1, 10, Log(), threads)
+    assert sorted(calls) == ['f0', 'f1']
+    assert result['functions_tested'] == 1
+    row = net.store.one('SELECT state,error FROM deep_permutation_passes WHERE function_id=?', net._function('f0', 'game')['id'])
+    assert row['state'] == 'error'
+    assert 'TypeError' in row['error']
+    assert 'continuing with other functions' in caplog.text
+    assert obj.history('game', net._function('f1', 'game'))['completed']
