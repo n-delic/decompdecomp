@@ -1578,9 +1578,11 @@ normalization pseudo and reserved an additional spill slot. This is observed com
 behaviour, not proof of the original author's source.
 
 Inspect actual narrow stores after a frame-only plateau. Placement matters: normalizing a
-call expression did nothing and a byte-store variant regressed. Existing automatic
-`spill_normalization` handles masked word locals, not this halfword-store shape; do not
-assume a local-repair run already tested it. Keep the true destination width, accesses,
+call expression did nothing and a byte-store variant regressed. The `halfword_store_normalization` family now covers proven unsigned-halfword stores,
+including simple typed fields, explicit pointer casts and validated byte-address macros.
+Deep and iterative search try it before broad variants on a strict frame-only plateau;
+`spill_normalization` still covers masked word locals. A private replay recovered the
+known match in one compiler trial. This is a controlled replay, not a general success-rate claim. Keep the true destination width, accesses,
 ABI and compiler fixed. Never add dummy uses or an unread padding object to force the frame.
 See the 2026-11-08 halfword-store entry in `docs/COMPILER_MATCHING_LEARNINGS.md`.
 

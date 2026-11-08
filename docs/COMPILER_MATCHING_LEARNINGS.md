@@ -6651,3 +6651,40 @@ A future bounded extension should prove the destination width and unchanged eval
 then try explicit normalization at actual narrow stores when earlier spills agree and a
 consistent positive frame gap remains. Require the ordinary judge; never synthesize `USE`
 instructions, dummy reads, fixed registers or unsupported storage to manufacture space.
+
+### Controlled replay: automatic halfword-store frame recovery
+
+The unsigned-halfword-store opportunity recorded on 2026-11-08 is now emitted as
+`halfword_store_normalization`. It proves an unsigned sixteen-bit destination from
+a typed field, explicit cast/dereference, or a source-owned, unconditional byte-address
+macro with exactly one evaluation per argument. The input must be an ordinary,
+unescaped signed word or signed/unsigned halfword local in the actual lexical scope.
+Unknown widths, shadows, qualifiers, hidden macro effects, effectful arguments and
+unsupported syntax decline. No access, address, ABI or storage extent changes.
+
+A strict MIPS frame-only detector requires an equal instruction count, unchanged
+local stack accesses, a positive eight-byte-multiple frame gap (at most 64 bytes),
+and corresponding prologue/epilogue saved-register accesses shifted by that gap.
+Other changed body instructions or unresolved operands reject this classification.
+This displayed evidence prioritizes search; it never changes a score or match verdict.
+
+Both source frontiers reserve one body-correct frame alternative alongside the numeric
+winner, without a score-ratio gate: the measured score-2 to score-22 transition is useful
+even though the numeric score becomes eleven times larger. Width, depth and compiler
+budgets remain bounded; the alternative never replaces saved best C merely for its
+shape. Build-scoped agent notes retain that alternative and the numeric best within
+the existing eight-entry cache. Source evidence for one retained root is capped at
+64 KiB; changed inputs invalidate the packet. Briefs list the proven store locations,
+width, frame deficit and family, and reuse existing negative-trial evidence.
+
+Deep search and the optional iterative phase try a finite frame-repair page before
+broad generation. Exhaustion resumes ordinary pages; all trials spend the existing
+compile/time budgets. Reading guidance invokes no compiler or agent.
+
+Private replay of the padding-free, body-correct checkpoint with unchanged
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`: the strict detector found an eight-byte
+gap, the generator found one eligible store, and the actual deep local-repair path
+recovered score 22 to exact in one compiler trial, before broad proposal generation.
+All 1,004 ordinary linked bytes agree. This reproduces an already accepted match;
+it is not another game-function match, a complete-cartridge build, or a measured
+cross-game speedup. No production app or project was changed during replay.

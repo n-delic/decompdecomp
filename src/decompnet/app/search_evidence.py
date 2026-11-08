@@ -1,7 +1,15 @@
 """Bounded build-scoped search notes for agents: useful differences without full assembly replay."""
 import hashlib
 
-from . import agent_tokens, allocation_evidence, experiment_evidence, permuter_focus, region_repairs, repair_ranking
+from . import (
+    agent_tokens,
+    allocation_evidence,
+    experiment_evidence,
+    frame_plateau,
+    permuter_focus,
+    region_repairs,
+    repair_ranking,
+)
 
 LIMIT = 64
 
@@ -18,9 +26,13 @@ def remember(net, agent, proj, fn, source, score, *, output=None):
     parent_hash = (current_trial() or {}).get('base_source_sha256')
     parent = pool.get(parent_hash)
     regional = region_repairs.progress(parent['rows'],rows,proj['arch']) if parent else ''
-    pool[hashlib.sha256(source.encode()).hexdigest()] = {'score':score,'rows':rows,'kind':permuter_focus.classify(rows),'allocation':allocation_evidence.diagnose(rows,proj['arch']),'regional_progress':regional,'output':output,'family':(current_trial() or {}).get('family','manual')}
+    pool[hashlib.sha256(source.encode()).hexdigest()] = {'score':score,'rows':rows,'frame_source':source if frame_plateau.gap(rows,proj['arch']) and len(source)<=65536 else None,'kind':permuter_focus.classify(rows),'allocation':allocation_evidence.diagnose(rows,proj['arch']),'regional_progress':regional,'output':output,'family':(current_trial() or {}).get('family','manual')}
     while len(pool)>8:
-        del pool[next(iter(pool))]
+        frames=[key for key,value in pool.items() if frame_plateau.gap(value['rows'],proj['arch'])]
+        protected=min(frames,key=lambda key:(frame_plateau.gap(pool[key]['rows'],proj['arch']),pool[key]['score'])) if frames else None
+        best_hash=hashlib.sha256((current['best_source'] or '').encode()).hexdigest()
+        oldest=next(key for key in pool if key not in {protected,best_hash})
+        del pool[oldest]
     while len(cache)>LIMIT:
         del cache[next(iter(cache))]
 
@@ -58,6 +70,7 @@ def brief(net, proj, fn):
         if hint := advice(current['rows']):lines.append(hint)
         clues = allocation_evidence.text(current['rows'],proj['arch'])
         if clues:lines.append(clues)
+        if clue:=frame_plateau.brief(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],current['rows'],proj['arch']):lines.append(clue)
         if allocation_evidence.diagnose(current['rows'],proj['arch'])['register_only']:
             from .copy_lifetime_repairs import hint
             from .scratch_role_repairs import brief as scratch_brief
@@ -89,7 +102,15 @@ def brief(net, proj, fn):
         if measured := repair_sequence_metrics.brief(net,repair_sequences.profile(net,proj,fn),repair_sequences.focus(current['rows'],proj['arch'])):lines.append(measured)
         if learned:
             lines.append('Previously exact repair sequences start with: '+', '.join(learned[:2])+'. Use local variants when applicable; this is advisory.')
-        alternatives = [v for v in pool.values() if v is not current and v['score']>0 and v['score']<=max(1,current['score'])*1.25]
+        alternatives = [v for v in pool.values() if v is not current and v['score']>0 and (v['score']<=max(1,current['score'])*1.25 or (current['score']>0 and frame_plateau.gap(v['rows'],proj['arch'])))]
+        frames=sorted((v for v in alternatives if frame_plateau.gap(v['rows'],proj['arch'])),
+                      key=lambda v:(frame_plateau.gap(v['rows'],proj['arch']),v['score']))
+        if frames and frames[0].get('frame_source'):
+            alternative=frames[0]
+            alternative_source=alternative['frame_source']
+            lines.append('Historical root SHA256 '+hashlib.sha256(alternative_source.encode()).hexdigest()[:20]+': '+frame_plateau.brief(alternative_source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],alternative['rows'],proj['arch']))
+        if frames:
+            lines.append('Retained body-correct alternative: score '+str(frames[0]['score'])+'; frame '+str(frame_plateau.gap(frames[0]['rows'],proj['arch']))+' bytes short. Inspect its historical source and try halfword_store_normalization; lower numeric score alone is not a better repair root.')
         if alternatives:
             lines.append('Recent tested alternatives (not adopted): '+', '.join(f"{v['kind'] or 'mixed'} score {v['score']} (frame {v.get('allocation',{}).get('candidate_frame','unknown')})" for v in alternatives[-2:]))
     if current is None and getattr(net,'is_rom',lambda _:False)(proj) and not net.fork_slug(proj['slug']):

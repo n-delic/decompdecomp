@@ -3278,3 +3278,12 @@ replace that exact judge.
   save/stop/reopen handoff. Files stay in place; the successfully opened directory becomes the
   next-launch default. Explicit DECOMP_HOME retains precedence, release/development histories
   are separate, unavailable drives are not recreated, and switching rotates window credentials.
+
+- Done: bounded `halfword_store_normalization` at proven unsigned-halfword stores,
+  shared by local agent experiments and ordinary repair generation. Strict MIPS
+  frame-only evidence prioritizes a cheap page in deep and iterative search;
+  both frontiers retain one body-correct alternative alongside the numeric winner.
+  Current-input briefs name supported stores and reuse failed-trial evidence.
+  Typed C generation is shared across supported 32-bit architectures; the frame
+  detector is MIPS-specific because that is the measured compiler behaviour.
+  A private known-match replay used one compiler trial; no general success rate claimed.

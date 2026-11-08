@@ -79,4 +79,32 @@ def repair_layout(rows):
     register_rows=[r for r in rows if r[0]=='r']
     swap=pointer_swap([r for r in rows if r[0]!='s'])
     delta=frame_growth([r for r in rows if r[0]!='r']) if not register_rows or swap else None
-    return dict(result,inferred_growth=delta,pointer_swap=swap)
+    return dict(result,inferred_growth=delta,pointer_swap=swap,frame_only_gap=frame_only_gap(rows))
+
+
+def frame_only_gap(rows):
+    """Uniform save-area growth with equal body/local accesses; displayed advice, not a verdict."""
+    if not rows or len(rows)>16384 or any(not isinstance(r,(list,tuple)) or len(r)!=3
+            or not all(isinstance(s,str) for s in r) for r in rows):return None
+    info=layout(rows)
+    gap=info['frame_delta']
+    if gap is None or not 0<gap<=64 or gap%8 or info['local_deltas']!=[0]:return None
+    if sum(bool(r[1]) for r in rows)!=sum(bool(r[2]) for r in rows):return None
+    frame=re.compile(r'addiu\s+\$sp,\s*\$sp,\s*(-?0x[\da-fA-F]+|-?\d+)$')
+    slot=re.compile(r'(sw|lw)\s+(\$(?:ra|fp|s[0-8])),\s*(0x[\da-fA-F]+|\d+)\(\$sp\)$')
+    frames=[];stores=[];loads=[];index=0
+    count=sum(bool(r[1]) for r in rows)
+    for marker,left,right in rows:
+        position=index;index+=bool(left)
+        if marker==' ':continue
+        if marker!='s':return None
+        a,b=frame.fullmatch(left),frame.fullmatch(right)
+        if (a and b and abs(int(a[1],0))==info['target_frame'] and abs(int(b[1],0))==info['candidate_frame']
+                and int(a[1],0)*int(b[1],0)>0):
+            frames.append(-1 if int(a[1],0)<0 else 1);continue
+        a,b=slot.fullmatch(left),slot.fullmatch(right)
+        if not a or not b or (a[1],a[2])!=(b[1],b[2]) or int(a[3],0)-int(b[3],0)!=gap:return None
+        if not (position<32 if a[1]=='sw' else position>=count-32):return None
+        if not info['target_frame']-64<=int(a[3],0)<info['target_frame']:return None
+        (stores if a[1]=='sw' else loads).append((a[2],int(a[3],0),int(b[3],0)))
+    return gap if sorted(frames)==[-1,1] and stores and sorted(stores)==sorted(loads) else None

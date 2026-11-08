@@ -4,7 +4,7 @@ import re
 from ..forks.csource import _blank
 from .integer_repair_support import IDENT, NUMBER, edit, integer, locals_for, refs, view
 
-FAMILIES = ('call_return_normalization', 'split_narrow_lifetime', 'spill_normalization')
+FAMILIES = ('call_return_normalization', 'split_narrow_lifetime', 'spill_normalization', 'halfword_store_normalization')
 SIGNED = {'int', 's32', 'signed int'}
 NARROW = r'(?:s16|short|signed short)'
 
@@ -179,8 +179,9 @@ def frame_variants(source, name, rows):
     return list(dict.fromkeys(result))[:8]
 
 
-def variants(source, name, header=''):
-    return [('call_return_normalization', c) for c in call_returns(source, name, header)] + [
+def variants(source, name, header='', arch=None):
+    from . import halfword_store_repairs
+    return halfword_store_repairs.variants(source,name,header,arch) + [('call_return_normalization', c) for c in call_returns(source, name, header)] + [
         ('split_narrow_lifetime', c) for c in split_lifetimes(source, name)]
 
 

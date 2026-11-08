@@ -443,8 +443,14 @@ class Search(Permuter):
                 source, fn['name'], header, proj['arch']) if child not in self.local_seen]
             branch_frames=[]
             incoming=None
-            cleanup_pass = bool(cleanup)
-            if cleanup_pass:
+            from . import frame_plateau
+            frame_choices = [(family,child) for family,child in frame_plateau.proposals(source,fn['name'],header,rows,proj['arch']) if child not in self.local_seen]
+            frame_pass = bool(frame_choices)
+            cleanup_pass = bool(cleanup) and not frame_pass
+            if frame_pass:
+                choices = [child for _,child in frame_choices]
+                labels.update({child:family for family,child in frame_choices})
+            elif cleanup_pass:
                 choices = [child for _, child in cleanup]
                 labels.update({child: family for family, child in cleanup})
             else:
@@ -697,7 +703,7 @@ class Search(Permuter):
                             self.winner_diff = None
                         break
                 else:
-                    if cleanup_pass:
+                    if cleanup_pass or frame_pass:
                         # All inverses were measured/cache-checked. Resume the broad page once;
                         # do not treat a failed cleanup as exhaustion of ordinary repair families.
                         continue

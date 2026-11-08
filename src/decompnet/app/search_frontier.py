@@ -7,7 +7,7 @@ import hashlib
 from collections import Counter
 from difflib import SequenceMatcher
 
-from . import allocation_evidence, permuter_focus, region_repairs
+from . import allocation_evidence, frame_plateau, permuter_focus, region_repairs
 
 WIDTH = 6
 REGIONAL_SLOTS = 2
@@ -157,6 +157,12 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        # One body-correct root survives even a 2 -> 22 score regression. Width and
+        # ordinary depth/compile budgets stay unchanged; this never replaces the saved best.
+        frames=[n for n in pool if frame_plateau.gap(n['rows'],arch)]
+        if frames:
+            candidate=min(frames,key=lambda n:(frame_plateau.gap(n['rows'],arch),n['score']))
+            if candidate not in selected:selected.append(candidate)
         masks=[n for n in pool if baseline_score is not None and n['score']<=baseline_score*4
                and mask_recovery(baseline,n['rows'],arch)]
         if masks:

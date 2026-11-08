@@ -71,15 +71,17 @@ def retention_evidence(node, report, arch=None):
            and search_frontier.mask_recovery(node.get('baseline_rows'),report.get('rows'),arch))
     pipeline=(isinstance(score,(int,float)) and score<=node['ceiling']*4
               and search_frontier.pipeline_recovery(node.get('baseline_rows'),report.get('rows'),arch))
+    from . import frame_plateau
+    frame=bool(isinstance(score,(int,float)) and score>0 and frame_plateau.gap(report.get('rows'),arch))
     regional = regional_detour(node,report,arch)
     allocation = allocation_detour(node,report,arch)
     loop = loop_repair_lane.eligible(node,report,arch)
     structural = (isinstance(score,(int,float)) and score<=node['ceiling']*2
                   and search_frontier.structure_recovery(node.get('baseline_rows'),report.get('rows'),arch))
-    eligible = (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural or pattern or loop or masks or pipeline)
-                and (loop or masks or pipeline or pattern or regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or [])))
+    eligible = (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural or pattern or loop or masks or pipeline or frame)
+                and (frame or loop or masks or pipeline or pattern or regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or [])))
     return dict(eligible=bool(report.get('matched') or eligible),score=score,pattern=pattern,regional=regional,
-                allocation=allocation,loop=loop,structural=structural,masks=masks,pipeline=pipeline,repaired=repaired)
+                allocation=allocation,loop=loop,structural=structural,masks=masks,pipeline=pipeline,frame=frame,repaired=repaired)
 
 
 def expandable(parent, arch=None):
@@ -301,7 +303,10 @@ def expand_wave(state, variants, arch):
            search_frontier.mask_recovery(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
     pipelines=[n for n in ranked if n['score']<=n['ceiling']*4 and
                search_frontier.pipeline_recovery(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
-    best = list(dict.fromkeys(n['source'] for n in retained[:1]+masks+pipelines+bridges+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
+    from . import frame_plateau
+    frames=sorted((n for n in ranked if frame_plateau.gap(n['report'].get('rows'),arch)),
+                  key=lambda n:(frame_plateau.gap(n['report'].get('rows'),arch),n['score']))[:1]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+frames+masks+pipelines+bridges+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
@@ -419,6 +424,16 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
                       selection=None, limit=20, pool_cache=None, focused=True, entry_scope=None, omit_families=()):
+    # Frame-only evidence earns a finite cheap page, with its own fair source cursor.
+    # Exhausting it resumes existing pages; every compiler trial still spends the phase budget.
+    if selection is not None and 'halfword_store_normalization' not in omit_families:
+        from . import frame_plateau
+        choices=frame_plateau.proposals(source,fn['name'],header,report.get('rows'),arch)
+        if choices:
+            page=repair_selection.page(choices,source,selection.setdefault('frame_pages',{}),limit)
+            if page:
+                return (repair_selection.Page(page,more=True) if tagged else
+                        repair_selection.Page([c for _,c in page],more=True))
     # A small inverse page runs before broad proposal generation, including benchmark replay.
     # Its cursor is separate and exact-source scoped; a miss resumes ordinary pages fairly.
     if selection is not None and 'revisit_one_shot_scope' not in omit_families:

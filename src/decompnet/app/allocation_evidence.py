@@ -46,7 +46,7 @@ def diagnose(rows, arch=None):
     copy_near=bool(changed) and sum(r[0]=='>' for r in changed)==1 and all(
         (m=='r' and REGISTER.sub('$reg',a)==REGISTER.sub('$reg',b)) or
         (m=='>' and not a and re.fullmatch(r'move\s+\$\w+,\s*\$\w+',b)) for m,a,b in changed)
-    return {'return_copy_rotation':hints.get('return_copy_rotation',[]),'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': valid and bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'register_cycles':cycles(swaps), 'register_chains':hints.get('register_chains',[]), 'branch_target':hints.get('branch_target',False), 'delay_slot':hints.get('delay_slot',False), 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
+    return {'frame_only_gap':(frame or {}).get('frame_only_gap'),'return_copy_rotation':hints.get('return_copy_rotation',[]),'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': valid and bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'register_cycles':cycles(swaps), 'register_chains':hints.get('register_chains',[]), 'branch_target':hints.get('branch_target',False), 'delay_slot':hints.get('delay_slot',False), 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
             'target_frame':(frame or {}).get('target_frame'), 'candidate_frame':(frame or {}).get('candidate_frame'),
             'spill_offsets':slots, 'differences':len(changed)}
 
@@ -67,6 +67,8 @@ def text(rows, arch=None):
         hints.append('coherent root/derived memory-base swap; try bounded branch-local packing/store tails with cursor increments shared')
     if layout.get('inferred_growth'):
         hints.append(f"uniform {layout['inferred_growth']}-byte frame/save delta; an inferred reservation is not proof of original object extent")
+    if d['frame_only_gap']:
+        hints.append(f"body/local stack accesses agree, frame {d['frame_only_gap']} bytes short with uniform saved-register shift; prioritize halfword_store_normalization at real stores before padding or flags")
     if d['possible_tail_merging']:
         hints.append(f"{d['candidate_instructions']} candidate / {d['target_instructions']} target instructions with fewer repeated calls; inspect tail merging or missing logic, then try selective branch pointer lifetimes")
     if d['register_only']:
@@ -98,7 +100,9 @@ def text(rows, arch=None):
 def plan(rows, arch=None):
     """Small evidence record for agents/replays; categories do not establish a compiler cause."""
     d=diagnose(rows,arch)
-    if d['return_copy_rotation']:
+    if d['frame_only_gap']:
+        category='stack';families=['halfword_store_normalization','spill_normalization','local_declaration_order']
+    elif d['return_copy_rotation']:
         category='scheduling';families=['prepared_return_scope','prepared_call_scope','assigned_call_scope']
     elif d['register_only']:
         category='allocation';families=['scratch_role_reuse','parameter_carriers','dead_copy_source','divisor_normalization_copy','divisor_value_scope','divisor_flag_split','regional_load_reuse','later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse','allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']

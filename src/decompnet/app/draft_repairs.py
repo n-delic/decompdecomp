@@ -369,7 +369,7 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     for family, text in _generated(allocator_shape_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in _generated(normalization_repairs.variants, source, name, header):
+    for family, text in _generated(normalization_repairs.variants, source, name, header, arch):
         proposals.append(text)
         labels[text] = family
     for family, text in _generated(scheduling_repairs.variants, source, name):

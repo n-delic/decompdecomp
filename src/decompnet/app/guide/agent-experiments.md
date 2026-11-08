@@ -101,3 +101,12 @@ ordinary/diagnostic object parity. Missing capture evidence is not exhaustion.
 Read `get_function(section="brief")` for a compact structural comparison with a
 matched neighbour, including donors too large to inline. Differences are leads,
 not permission to copy its prototype, dead uses, or side-effect ordering.
+
+When the body and local spills agree but the frame is uniformly too small, read the
+frame-only packet before requesting more assembly or trying padding/flags. It lists
+actual unsigned-halfword store sites and `halfword_store_normalization`; use that
+family with `try_local_repairs`. Deep and iterative search try the same finite page
+first, within their existing budgets. A larger-score body-correct alternative can be
+a better repair root than a low-score source with misplaced local spills: both are
+retained, but only ordinary exact judging accepts a match. Check the current-input
+failed trials before repeating variants. Unknown store widths are not inferred.
