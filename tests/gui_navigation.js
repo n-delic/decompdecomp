@@ -20,7 +20,7 @@ function setup() {
     setEditorSourceMapping:data=>{S.sourceMap=data;},
     setEditor: source => {el('fnEdit').value=source;}, highlightAsm: String,
     nameChangeBusy: false, clock: String, groups: new Set(), L: {}, FUNCTION_ROWS: 200,
-    renderLog: () => {}, renderHeader: () => {}, renderStats: () => {}, renderForkSetup: () => {},
+    renderLog: () => {}, renderHeader: () => {}, renderStats: () => {}, renderForkSetup: () => {}, renderClaimOrder: () => {},
     setTab: tab => {S.tab=tab;}, poll: async () => {}, loadStats: () => {},
     setInterval: fn => {timers.push(fn);return timers.length;}, clearInterval: () => {}, loadState: async () => {},
     renderMapView: () => {}, resetMap: () => {}, layoutMap: () => {}, applyClaims: () => {}, renderList: () => {},

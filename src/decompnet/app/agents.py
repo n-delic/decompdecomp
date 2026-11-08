@@ -181,8 +181,12 @@ SPIN_RATIO = 4
 SPIN_MATCHES = 3
 
 
-# what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login")
-_SIGNED_OUT = re.compile(r"not logged in|(?:run|use) /login|invalid api key|not authenticated|please (?:log|sign) ?in|"
+# what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login"; Oh My Pi:
+# "No default model selected. Use /login, ..." on stderr, and a failed request's "401 Incorrect API key provided: ..."
+# as the errorMessage of a stdout message_end, so the words are matched wherever a CLI says them)
+_SIGNED_OUT = re.compile(r"not logged in|run /login|use /login|run ['\"]?(?:agent|kimi) login|no model configured|"
+                         r"no api key found|incorrect api key|"
+                         r"authentication required|invalid api key|not authenticated|please (?:log|sign) ?in|"
                          r"auth(?:entication)? (?:method|required)", re.I)
 # and when its sign-in stopped working (Claude Code, exit code 1 at once, nothing done: "Failed to authenticate: OAuth
 # session expired and could not be refreshed", its message marked "error": "authentication_failed"). Read as a plain
@@ -459,6 +463,7 @@ class Session:
 
     def snapshot(self, since: int = 0) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "can_login": agents.get(self.kind).supports_login, "label": self.label,
+                "account_id": self.options.get("account_id") or "", "account_name": self.options.get("account_name") or "",
                 "selection": self.options.get("selection") or {},
                 "boundary_function":self.options.get("boundary_function"), "boundary_until":self.options.get("boundary_until"),
                 "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
@@ -622,6 +627,10 @@ class Manager:
                            "json_extract(h.options, '$.task') END FROM helpers h "
                            "WHERE h.id=helper_sessions.helper_id AND h.project=helper_sessions.project "
                            "AND h.name=helper_sessions.agent), '')")
+            columns = {r[1] for r in db.execute("PRAGMA table_info(helper_sessions)")}
+            for column in ("account_id", "account_name"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE helper_sessions ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
             from .session_history import prepare
             prepare(db)
         # End process accounting; supported CLIs can still resume their saved conversation.
@@ -739,15 +748,30 @@ class Manager:
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
-            options.pop("model", None)  # a Gemini CLI model name may mean nothing to Antigravity: use its default
+            if not agent.alias_model_compatible:
+                options.pop("model", None)  # a legacy Gemini CLI model name may mean nothing to Antigravity
         configured = str(options.get('model') or agent.config_model() or '')
-        resolved = agent.resolve_model(configured, agent.models(_which(agent.command), run=False) if agent.command else [])
+        resolved = agent.resolve_known_model(configured, agent.models(_which(agent.command), run=False) if agent.command else [])
         if why := agent.validate_model(resolved):
             raise ValueError(why)
         if options.get('model') or resolved != configured:
             options['model'] = resolved
         if self._down:
             raise ValueError("decompdecomp is quitting")
+        # A helper keeps the model it starts on (#204): one started on the CLI's own default records that default
+        # now, so that changing the default later in the CLI's settings doesn't silently switch a resumed helper
+        # while its name still says the old model. The default as the CLI's settings spell it may not be a model id
+        # its command line takes (Antigravity's is a display name): resolve_model maps it from what the CLI last
+        # listed, or returns "" when it can't, and then the helper stays unpinned and starts on the CLI's default as
+        # before. An API helper's model is its endpoint's and is recorded there.
+        chosen = str(options.get("model") or "")
+        name_model = chosen
+        if agent.command and not chosen:
+            name_model = str(agent.default_model(options) or "")
+            if name_model:
+                pinned = agent.resolve_model(name_model, _which(agent.command))
+                if pinned:
+                    options["model"] = name_model = pinned
         ids = []
         report_start("Preparing the project before creating workers…")
         if not options.get("focus_id") and options.get("task") not in {"readable", "boundary"}:
@@ -756,7 +780,7 @@ class Manager:
         with self._lock:
             for index in range(max(1, min(int(count), MAX_AT_ONCE))):
                 report_start(f"Creating worker {index+1} / {max(1, min(int(count), MAX_AT_ONCE))}…")
-                model = options.get("model") or agent.config_model() or ""
+                model = name_model
                 if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
                     model = f"{model}#{options['effort']}"
                 # A new helper must never inherit attempts credited to an old identity.
@@ -765,7 +789,9 @@ class Manager:
                 reserved |= {r['agent'] for r in self.net.store.all('SELECT DISTINCT agent FROM helper_sessions')}
                 reserved |= {r['key'].removeprefix('helper-name:') for r in self.net.store.all(
                     "SELECT key FROM settings WHERE key LIKE 'helper-name:%'")}
-                name = helper_name(kind, model, reserved)
+                other_accounts = {s.agent_name for s in self.sessions.values() if s.slug == slug
+                                  and s.options.get("account_id", "") != options.get("account_id", "")}
+                name = helper_name(kind, model, reserved | other_accounts)
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
                 report_start(f"Launching {s.label}…")
@@ -915,7 +941,7 @@ class Manager:
                 raise ValueError(f"{s.agent_name} works on another game right now: start a new helper instead")
             options = self.options_now(s.kind, dict(s.options))
             if options is None:
-                raise ValueError("its API endpoint was removed: start a new helper on another one")
+                raise ValueError("its account or API endpoint was removed: start a new helper and choose another one")
             options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
             s.options, s.restarts = options, 0
             if not s.options.get("focus_id") and s.options.get("task") not in {"readable", "boundary"}:
@@ -941,7 +967,7 @@ class Manager:
                 if self._down or not resumable(s):
                     continue
                 if options is None:
-                    s.stopped_by, s.why = BY_ITSELF, "its API endpoint was removed"
+                    s.stopped_by, s.why = BY_ITSELF, "its account or API endpoint was removed"
                     self._save(s)
                     continue
                 s.options = options
@@ -1277,6 +1303,25 @@ class Manager:
         if usd or total:
             self.net.add_spend(s.slug, usd, total)
 
+    def rename_account(self, aid: str, name: str) -> None:
+        """An account's label is local UI text: update its helpers without restarting or changing their login."""
+        with self._lock:
+            for session in list(self.sessions.values()):
+                if session.options.get("account_id") != aid:
+                    continue
+                session.options["account_name"] = name
+                kept = {k: v for k, v in session.options.items() if k != "api_key"}
+                with self.net.store.tx() as db:
+                    db.execute("UPDATE helpers SET options=? WHERE id=?", (json.dumps(kept), session.id))
+
+    def account_usage(self) -> list[dict]:
+        """Finished sessions recorded here, across projects, even after their helper records were removed."""
+        rows = self.net.store.all("SELECT kind, account_id, MAX(account_name) AS name, SUM(tokens) AS tokens, "
+                                  "SUM(usd) AS usd, COUNT(*) AS sessions FROM helper_sessions "
+                                  "WHERE ended_at IS NOT NULL GROUP BY kind, account_id")
+        supported = {a.id for a in agents.AGENTS if a.uses_accounts}
+        return [dict(r) for r in rows if r["kind"] in supported]
+
     def over_budget(self, slug: str) -> float | None:
         """The budget (USD) when the project's agents have spent it, else None."""
         cap = self.budget()
@@ -1531,18 +1576,18 @@ class Manager:
                 self._wait(s,why,time.time()+30,todo)
                 continue
             if s.signed_out:
-                self._pause(s, s.error)
+                self._pause(s, s.error, kind.signin_for(s.options))
                 break
             if s.auth_failed:  # not a failure of the helper's: tried again a few times, then a new sign-in
                 s.auth_failed, auths = False, auths + 1
                 if auths >= AUTH_RETRIES:
                     self._pause(s, f"{kind.name} needs you to sign in again: its sign-in failed {auths} times in a "
-                                   f"row ({s.error})", kind.signin)
+                                   f"row ({s.error})", kind.signin_for(s.options))
                     break
                 s.restarts += 1
                 self._wait(s, f"{kind.name}'s sign-in failed ({s.error}); trying again, and if it keeps failing "
                               "this helper will ask you to sign in again", time.time() + AUTH_WAIT * 2 ** (auths - 1),
-                           kind.signin)
+                           kind.signin_for(s.options))
                 continue
             auths = 0
             if s.limited:  # the plan's allowance is used up for now: it resets, so wait as long as it takes
@@ -1569,7 +1614,7 @@ class Manager:
             failures += 1
             fast = fast + 1 if time.time() - began < FAST_FAILURE else 0
             if fast >= FAST_FAILURES_TO_PAUSE:
-                hint = kind.signin if _SIGNIN.search(s.error) else ""  # not after every failure: it misleads
+                hint = kind.signin_for(s.options) if _SIGNIN.search(s.error) else ""  # not after every failure: it misleads
                 self._pause(s, f"it failed {fast} times in a row, each soon after it started: {s.error}", hint)
                 break
             s.restarts += 1
@@ -1620,9 +1665,10 @@ class Manager:
         with self.net.store.tx() as db:
             db.execute('INSERT OR IGNORE INTO settings VALUES(?,?)', ('helper-name:'+s.agent_name,'1'))
         with self.net.project_store(s.slug).tx() as db:
-            row = db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task) "
-                              "VALUES(?,?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
-                                                      s.agent_name, time.time(), s.options.get("task") or "")).lastrowid
+            row = db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task, account_id, account_name) "
+                              "VALUES(?,?,?,?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
+                                                      s.agent_name, time.time(), s.options.get("task") or "",
+                                                      s.options.get("account_id") or "", s.options.get("account_name") or "")).lastrowid
         from .session_efficiency import context
         snapshot=context(self.net,s.slug,s.options)
         with self.net.project_store(s.slug).tx() as db:
@@ -1748,6 +1794,9 @@ class Manager:
                     text += '\n'+fn['name']+': '+local_experiments.summary(self.net,agent,s.slug,fn,source,revision)
         if s.startup_context:
             text += '\n\n' + s.startup_context
+        if (order := self.net.claim_order(s.slug)):
+            text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
+                     "claim_function without a function follows it; one you name still comes.\n")
         return text
 
     def _prompt(self, s: Session) -> str:
@@ -1773,6 +1822,10 @@ class Manager:
         """The agent's command line, environment and what goes in on stdin (the prompt; None when its prompt went in
         a file). Each helper connects only to this app's own MCP server, with its own token."""
         k = agents.get(s.kind)
+        options = self.options_now(s.kind, dict(s.options))
+        if options is None:
+            raise Fatal("Its account or API endpoint was removed. Start a new helper and choose another one.")
+        s.options = options
         exe = _which(k.command)
         if not exe:
             raise RuntimeError(f"{k.name} is not installed")
@@ -1801,6 +1854,10 @@ class Manager:
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
+        try:
+            env = k.session_environment(s.options, env)
+        except ValueError as e:
+            raise Fatal(str(e)) from e
         return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
     def _preflight_tools(self, token: str, *, session=None) -> bool:
@@ -2028,7 +2085,7 @@ class Manager:
             s.throttled = True
         if code != 0 and _SIGNED_OUT.search(everything):
             s.signed_out = True
-            s.error = f"{k.name} isn't signed in on this computer. {k.signin}"
+            s.error = f"{k.name} isn't signed in on this computer. {k.signin_for(s.options)}"
             s.push("error", s.error)
             return False
         if (code != 0 or not saw_tool) and AUTH_FAILED.search(everything):

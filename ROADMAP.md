@@ -740,6 +740,10 @@ individual drafts. Ordinary source-object units retain the table's existing beha
 other processors need their own linked-object writer.
 
 Where to start on a gap:
+- **Long C++ names in exports and Windows paths.** Progress saves shorten source filenames to fit a filesystem
+  component, but ROM exports still write the full symbol name (`rom/export_build.py`), and the save change does not
+  account for Windows' 260-character path limit. Extend the same safe naming and path handling to exports and check
+  complete paths on Windows.
 - **Public project build prerequisite hints** run in `ForkProject.run` for public checkouts. The other columns
   describe starting a game from scratch and do not use public-project setup.
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
@@ -759,8 +763,8 @@ Where to start on a gap:
   one file: the DLLs go in `orig/` by hand, as its README says), and a game whose .exe can't start (Visual C++
   2017 and newer) can't start from its DLLs either.
 - **Windows PC debug symbols** (`consoles/pc/debuginfo.py`): Ghidra's function boundaries stay Ghidra's, though a
-  PDB gives each function's size; CodeView embedded in the program (NB09, NB11: Visual C++ 4-5 with /PDB:NONE) and
-  Visual C++ 4's 16-bit type records aren't read; a class's methods aren't written into its struct (C++ calls a
+  PDB gives each function's size; CodeView embedded in the program (NB09, NB11: Visual C++ 4-5 with /PDB:NONE)
+  and Visual C++ 4's 16-bit type records aren't read; a class's methods aren't written into its struct (C++ calls a
   method only through a declaration in the class), and optimised code's register locals (2005's S_LOCAL ranges)
   aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
   can't take one in yet.
@@ -980,12 +984,11 @@ similar C through objdiff. Other processors need an instruction reader for this 
   game's own symbols do; a NID it doesn't know keeps `<library>_<NID>`). The disc's other PRX modules come with it,
   each a segment laid out after the main program (that game: 28 modules, 9,508 more functions to decompile, 36,002
   more stubs set aside), their functions matching with CodeWarrior 3.0.1 too. The game's own debug symbols come with
-  it: the symbol table and
-  CodeWarrior's DWARF 1 (source files, prototypes, types, also for CodeWarrior PS2 games). Diffs read the Allegrex's
-  VFPU and its own instructions through rabbitizer. Compilers: CodeWarrior for PSP 3.0.1 (11 builds), the PSP SDK's
-  GCC 3.3.3 (1.3.1 and 1.7.1) and SN's pspsnc (known by its code, which moves registers with `or`: the demo built with
-  it imports, matches at -O2 -G8 and rebuilds byte for byte). On a PSP game with debug symbols: 2,465 functions, 2,458
-  named, CodeWarrior 3.0.1 matching its functions byte for byte. Every row of the table was then tried on the PSP
+  it: the symbol table and CodeWarrior's DWARF 1 (source files, prototypes, types, also for CodeWarrior PS2 games). Diffs
+  read the Allegrex’s VFPU and its own instructions through rabbitizer. Compilers: CodeWarrior for PSP 3.0.1 (11 builds), the
+  PSP SDK’s GCC 3.3.3 (1.3.1 and 1.7.1) and SN's pspsnc (known by its code, which moves registers with `or`: the demo built
+  with it imports, matches at -O2 -G8 and rebuilds byte for byte). On a PSP game with debug symbols: 2,465 functions,
+  2,458 named, CodeWarrior 3.0.1 matching its functions byte for byte. Every row of the table was then tried on the PSP
   demo and that game: autopilot matched 251 of the game's 1,968 open functions from drafts and twins 19 more, and its
   export with those 270 in C rebuilds byte for byte, from a fresh clone too. What that turned up is fixed for every
   console: the permuter now reads autopilot's drafts, get_class reads GCC 3's and SNC's vtables, SNC's C++ names
@@ -1087,18 +1090,18 @@ similar C through objdiff. Other processors need an instruction reader for this 
   out of two functions of an older project, whose code still rebuilds byte for byte.
 - **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
   imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
-  user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each
-  runs through the pinned wibo (2010's with the redistributable's `msvcp100.dll` beside it). The import builds a game
-  with the build its Rich header names (`RICH_BUILDS`), or the closest of its version and says so, and tells a game
+  user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and
+  each runs through the pinned wibo (2010's with the redistributable's `msvcp100.dll` beside it). The import builds a
+  game with the build its Rich header names (`RICH_BUILDS`), or the closest of its version and says so, and tells a game
   whose compiler isn't installed which pack to install. The demo builds with each (`build.py 10.0SP1`), imports with
   that build, and agents' C matches. Functions inlined everywhere are found one by one between the int3s these
   compilers pad functions with: the demo built with 2010 had 14 of its 19 functions found, the five in the gaps run
   together. On real games: a 2005 game without a Rich header (its linker says 8.0) builds with 2005 SP1, its 28,777
   functions rebuild byte for byte, and 8 of 9 small functions written by hand matched on the first try; a 2010 SP1
   game builds with 2010 SP1, 27,023 functions, 6,583 exception-handling stubs set aside, and 4 of 8 matched at once
-  (the rest: two return types guessed wrong, a function compiled with frame pointers, which `#pragma optimize("y",
-  off)` gives, and a C runtime function built for size). That game keeps an ebp frame in about half its functions:
-  if all of it was built with /Oy-, a project flag would serve better than a pragma per function.
+  (the rest: two return types guessed wrong, a function compiled with frame pointers, which `#pragma optimize("y", off)`
+  gives, and a C runtime function built for size). That game keeps an ebp frame in about half its functions: if all of it was
+  built with /Oy-, a project flag would serve better than a pragma per function.
 - **PC projects get the newest build tools.** A PC project kept the `tools/` it was made with, so a newer names.py
   (constructors and destructors paired by their class) or delink.py never reached one. The template's tools have a
   version (`scratch.tools_version`, the manifest's "tools"): a project with another gets them when the app starts
@@ -1416,10 +1419,9 @@ link-time code generation (/GL, /LTCG), as most Xbox games were: the import tell
 dialog says), units build in harness mode (`tools/ltcg.py`: the unit, a driver calling its functions as the game's
 call sites do, and stand-ins, linked /LTCG by the compiler's own linker through wine), briefs show each function's
 convention, `standins_for` writes a starting harness, and a register-convention function of a retail game matched
-through its driver.
-Briefs also say when a function is a member function (its `this` in any register) and of which struct, and an
-attempt whose function got another convention than the original's says which registers differ. What's next is real
-games: a whole one rebuilt from C, then the console's status can say recommended.
+through its driver. Briefs also say when a function is a member function (its `this` in any register) and of which struct,
+and an attempt whose function got another convention than the original's says which registers differ. What's next is
+real games: a whole one rebuilt from C, then the console's status can say recommended.
 
 ### Game Boy Advance from your own copy
 
@@ -1509,7 +1511,8 @@ go back to the queue with their old attempts as notes. Each improvement to the s
 
 ### How much usage each agent has left
 
-A window that shows, for each agent you use, what's left of its limits: the 5-hour and weekly limits of Claude Code
+Named Claude accounts can be assigned to helpers, with separate recorded usage (#45). Remaining allowance is
+still planned. A window that shows, for each agent you use, what's left of its limits: the 5-hour and weekly limits of Claude Code
 and Codex, and a monthly limit or the credit left on an API key where the provider says it. Helpers already wait for a
 usage limit to reset; this shows it before they hit it, so you can pick which agents to start.
 

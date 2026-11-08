@@ -367,6 +367,33 @@ $("instrSave").onclick = async () => {
     toast("Saved. Agents get them from their next task on.");
   } catch (e) { toast(esc(e.message), "err"); }
 };
+/* Which functions helpers take first: the project's owner's order, enforced by the server, so an agent's own
+   strategy can't override it. A function an agent names still comes. */
+const CLAIM_ORDER_TEXT = {
+  "": "Default: each helper takes functions in the order it asks for (smallest first in ROM projects, the files closest to done in project mode).",
+  easiest: "Helpers take the smallest functions first.",
+  hardest: "Helpers take the largest functions first.",
+  closest: "Helpers take the functions closest to matching first (near misses).",
+  untried: "Helpers take functions nobody has tried yet first, then the smallest.",
+};
+function renderClaimOrder(ov) {
+  const value = (ov && ov.claim_order) || "";
+  $("claimOrder").value = value;
+  $("claimOrderHint").textContent = CLAIM_ORDER_TEXT[value] || CLAIM_ORDER_TEXT[""];
+}
+async function setClaimOrder(order) {
+  const before = (S.ov && S.ov.claim_order) || "";
+  try {
+    S.ov = await api("/api/claim-order", { method: "POST", body: { slug: S.slug, order } });
+    renderClaimOrder(S.ov);
+    toast(order ? `${CLAIM_ORDER_TEXT[order]} Agents' own order no longer applies.`
+      : "Each helper takes functions in its own order again.");
+  } catch (e) {
+    renderClaimOrder({ claim_order: before });
+    toast(esc(e.message), "err");
+  }
+}
+$("claimOrder").onchange = () => setClaimOrder($("claimOrder").value);
 /* ★: agents take a starred function before the others. */
 async function togglePrio(name, on) {
   try {

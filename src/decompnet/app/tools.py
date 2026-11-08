@@ -17,7 +17,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import __version__, agents, candidate_quality, consoles
-from ..network import Agent, Network, NetworkError
+from ..network import CLAIM_ORDERS, Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
 from . import (
     agent_tokens,
@@ -299,6 +299,9 @@ def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
         text += "\n" + known + "\n"
     if not detail and len(text) > 1800:
         text = text[:1800] + "\n… project_info(detail=true) shows the full project facts and suggestions.\n"
+    if (order := net.claim_order(slug)):
+        text += (f"\nThe project's owner chose the order helpers take functions in: {CLAIM_ORDERS[order]}. "
+                 "claim_function without a function follows it; name a function to get that one.\n")
     return text + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
 
 

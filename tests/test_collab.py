@@ -820,3 +820,164 @@ def test_restart_recovers_when_host_and_client_hold_different_leases(room):
     assert [r['name'] for r in held]==[names[1]]
     assert names[1] in guest.claim(agent,gslug)  # no zero-tool restart loop
     guest.release(agent,names[1],'Recovery regression finished.',gslug)
+def test_the_hosts_layout_applies_when_a_local_function_has_the_name_it_gives_a_split(built, tmp_path):  # noqa: F811
+    """#107: a member's own function already named like the host's new tail half (at another address) made the
+    INSERT fail on functions.name, and the link retried the same failure forever."""
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    clash = net._function("func_80000808", slug)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='func_800007D0', matched_source='/* mine */' WHERE id=?", (clash["id"],))
+    net.apply_remote_layout(slug, [{"name": "func_800007D0", "vram": 0x800007D0, "size": 4}], [])
+    tail = net.store.one("SELECT * FROM functions WHERE vram=? AND project_id=?", 0x800007D0, clash["project_id"])
+    assert tail["name"] == "func_800007D0" and tail["id"] != clash["id"]
+    mine = net.store.one("SELECT * FROM functions WHERE id=?", clash["id"])
+    assert mine["name"] != "func_800007D0" and mine["matched_source"] == "/* mine */"
+
+
+def test_a_name_the_host_moved_to_a_split_off_tail_still_applies(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "kim", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    agent, _ = host.local_agent("codex-1")
+    assert host.rename_symbol(agent, slug, "func_800007C4", "bounds").startswith("✅")
+    g.links[gslug].sync()
+    assert host.split_function(agent, slug, "bounds", "0x800007D0", "bounds_tail").startswith("✅")
+    assert host.rename_symbol(agent, slug, "bounds", "bounds_head").startswith("✅")
+    assert host.rename_symbol(agent, slug, "bounds_tail", "bounds").startswith("✅")
+    g.links[gslug].sync()  # used to fail with UNIQUE constraint failed: functions.project_id, functions.name
+    assert g._function("bounds", gslug)["vram"] == 0x800007D0
+    assert g._function("bounds_head", gslug)["vram"] == 0x800007C4
+
+
+def test_names_the_host_swapped_still_apply(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "pat", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    agent, _ = host.local_agent("codex-1")
+    assert host.rename_symbol(agent, slug, "func_800007C4", "first").startswith("✅")
+    assert host.rename_symbol(agent, slug, "func_80000808", "second").startswith("✅")
+    g.links[gslug].sync()
+    assert host.rename_symbol(agent, slug, "first", "spare").startswith("✅")
+    assert host.rename_symbol(agent, slug, "second", "first").startswith("✅")
+    assert host.rename_symbol(agent, slug, "spare", "second").startswith("✅")
+    g.links[gslug].sync()
+    assert g._function("first", gslug)["vram"] == 0x80000808
+    assert g._function("second", gslug)["vram"] == 0x800007C4
+    for r in g.store.all("SELECT name, vram FROM functions"):
+        assert g.store.one("SELECT 1 FROM symbols WHERE name=? AND address=?", r["name"], r["vram"]), r["name"]
+
+
+
+def _add_overlay_twin(net, slug, vram, name):
+    """What importing an overlay game leaves: a second function at an address the main code uses, with its own
+    symbol row (engine/importing.py)."""
+    pid = net._project(slug)["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,unit,vram,rom_offset) "
+                   "SELECT project_id,?,size,n_insns,target,relocs,asm,'ovl',vram,rom_offset "
+                   "FROM functions WHERE project_id=? AND vram=? AND unit!='ovl'", (name, pid, vram))
+        size = db.execute("SELECT size FROM functions WHERE project_id=? AND name=?", (pid, name)).fetchone()["size"]
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, name, vram, size, "func"))
+    net._syms.pop(pid, None)
+
+
+@pytest.mark.parametrize("which", ["main", "ovl"])
+def test_a_name_the_host_gives_one_overlay_twin_reaches_the_same_twin(built, tmp_path, which):  # noqa: F811
+    """#107 review: overlays share addresses, and both sides import a symbol row for each function. Renaming one
+    twin renamed both on the host (UNIQUE constraint failed), and a guest named whichever twin came first, or none."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "ola", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    for net, s in ((host, slug), (g, gslug)):
+        _add_overlay_twin(net, s, 0x800007C4, "ovl_func_800007C4")
+    agent, _ = host.local_agent("codex-1")
+    old, new = ("func_800007C4", "bounds") if which == "main" else ("ovl_func_800007C4", "ovl_bounds")
+    other = "ovl_func_800007C4" if which == "main" else "func_800007C4"
+    assert host.rename_symbol(agent, slug, old, new).startswith("✅")
+    assert host._function(other, slug)["vram"] == 0x800007C4  # the other twin kept its name
+    g.links[gslug].sync()
+    named = g._function(new, gslug)
+    assert (named["unit"] == "ovl") == (which == "ovl")
+    assert g._function(other, gslug)["unit"] != named["unit"]
+
+
+def test_an_older_hosts_name_for_an_overlay_address_is_left_alone(built, tmp_path):  # noqa: F811
+    """A state without the unit can't say which twin it named: renaming the address would rename both."""
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    _add_overlay_twin(net, slug, 0x800007C4, "ovl_func_800007C4")
+    net.apply_remote_layout(slug, [], [{"name": "bounds", "address": 0x800007C4, "size": 4, "kind": "func"}])
+    names = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE vram=?", 0x800007C4)}
+    assert names == {"func_800007C4", "ovl_func_800007C4"}
+
+
+def test_a_save_says_which_overlay_twin_a_name_belongs_to(built, tmp_path):  # noqa: F811
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    _add_overlay_twin(net, slug, 0x800007C4, "ovl_func_800007C4")
+    by_name = {s["name"]: s for s in net.layout_symbols(net._project(slug)["id"])}
+    assert by_name["ovl_func_800007C4"]["unit"] == "ovl"
+    assert all("unit" not in s for n, s in by_name.items() if n != "ovl_func_800007C4")  # one function, as before
+
+
+@pytest.mark.parametrize("order", ["moved_name_first", "tail_name_first"])
+def test_a_matched_function_whose_name_the_host_moves_keeps_c_that_says_its_name(built, tmp_path, order):  # noqa: F811
+    """#107 review: the host moved `clamp` to another address and named the old one `clamp_tail`. The guest's
+    matched function, its matched caller and the header must say `clamp_tail`, or the match is stale and a save
+    writes the wrong C; whichever of the two names arrives first."""
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    pid = net._project(slug)["id"]
+    x, caller, y = (net._function(n, slug) for n in ("func_80000808", "func_80004C00", "func_80004C74"))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='clamp', status='matched', matched_source=? WHERE id=?",
+                   ("s32 clamp(s32 v) { return v; }", x["id"]))
+        db.execute("UPDATE symbols SET name='clamp' WHERE project_id=? AND address=?", (pid, x["vram"]))
+        db.execute("UPDATE functions SET status='matched', matched_source=? WHERE id=?",
+                   ("s32 func_80004C00(s32 v) { return clamp(v) + 1; }", caller["id"]))
+        db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
+                   "VALUES(?,?,?,?,?,?,?)", (pid, net._next_version(db, pid), "s32 clamp(s32 v);\n", None, "", 0, ""))
+    net._syms.pop(pid, None)
+    syms = [{"name": "clamp", "address": y["vram"], "size": y["size"], "kind": "func"},
+            {"name": "clamp_tail", "address": x["vram"], "size": x["size"], "kind": "func"}]
+    if order == "tail_name_first":
+        syms.reverse()
+    net.apply_remote_layout(slug, [], syms)
+    mine = net.store.one("SELECT * FROM functions WHERE id=?", x["id"])
+    assert mine["name"] == "clamp_tail" and mine["status"] == "matched"
+    assert net._function("clamp", slug)["vram"] == y["vram"]
+    assert mine["matched_source"] == "s32 clamp_tail(s32 v) { return v; }"
+    calls = net.store.one("SELECT matched_source FROM functions WHERE id=?", caller["id"])["matched_source"]
+    assert calls == "s32 func_80004C00(s32 v) { return clamp_tail(v) + 1; }"
+    assert net._context(pid)["header"] == "s32 clamp_tail(s32 v);\n"
+    assert net.store.one("SELECT address FROM symbols WHERE project_id=? AND name='clamp_tail'", pid)["address"] == x["vram"]
+
+
+def test_both_overlay_twins_named_can_be_renamed_again(built, tmp_path):  # noqa: F811
+    """#117 review: with both twins named, the symbol table kept one name per address, so renaming the first again
+    said "`bounds` is not a symbol of this ROM". A guest follows each rename to the same twin."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "ola", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    for net, s in ((host, slug), (g, gslug)):
+        _add_overlay_twin(net, s, 0x800007C4, "ovl_func_800007C4")
+    agent, _ = host.local_agent("codex-1")
+    assert host.rename_symbol(agent, slug, "func_800007C4", "bounds").startswith("✅")
+    assert host.rename_symbol(agent, slug, "ovl_func_800007C4", "ovl_bounds").startswith("✅")
+    assert host.rename_symbol(agent, slug, "bounds", "bounds_head").startswith("✅")
+    assert host.rename_symbol(agent, slug, "ovl_bounds", "ovl_bounds_head").startswith("✅")
+    g.links[gslug].sync()
+    for net, s in ((host, slug), (g, gslug)):
+        assert net._function("bounds_head", s)["unit"] != "ovl"
+        assert net._function("ovl_bounds_head", s)["unit"] == "ovl"
+        syms = net.symbols(net._project(s)["id"])
+        assert syms.resolve("bounds_head") == syms.resolve("ovl_bounds_head") == 0x800007C4
+
+
+def test_an_overlay_twin_cant_take_the_other_twins_name(built, tmp_path):  # noqa: F811
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    _add_overlay_twin(net, slug, 0x800007C4, "ovl_func_800007C4")
+    agent, _ = net.local_agent("codex-1")
+    assert net.rename_symbol(agent, slug, "func_800007C4", "bounds").startswith("✅")
+    with pytest.raises(NetworkError, match="another function"):
+        net.rename_symbol(agent, slug, "ovl_func_800007C4", "bounds")
+    assert net._function("ovl_func_800007C4", slug)["unit"] == "ovl"

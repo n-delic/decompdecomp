@@ -344,7 +344,8 @@ class ImportMixin:
                         db.execute(
                             "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,unit=?,vram=?,"
                             "rom_offset=?,meta=?,status=?,best_score=NULL,best_source=NULL,best_agent_id=NULL,"
-                            "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,attempts=0,abandons=0,"
+                            "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,attempts=0,"
+                            "last_checked=NULL,last_improved=NULL,abandons=0,"
                             "fingerprint=NULL,boost=0,readable=0,permuted=0,seed_key=NULL WHERE id=?",
                             (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, status,
                              old["id"]))

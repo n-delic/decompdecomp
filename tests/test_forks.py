@@ -931,6 +931,27 @@ def test_a_match_that_is_lost_gets_its_score_back_so_the_queue_doesnt_say_it_is_
     assert events == [("reopen", "F (unit diff before a compile: 52.70%)")]
 
 
+def test_unit_diff_updates_improvement_date_without_a_local_check(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.store import Store
+
+    store = Store(tmp_path / "t.db")
+    with store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,status,best_score,unit,meta,asm) "
+                   "VALUES(1,7,'F',40,10,'open',900,'u','{\"symbol\": \"_F\"}','')")
+    eng = ForkEngine.__new__(ForkEngine)
+    eng.net = SimpleNamespace(store=store)
+    monkeypatch.setattr("decompnet.app.forkengine.time.time", lambda: 42)
+    eng._apply_scores({"id": 7, "root": str(tmp_path)}, "u", {"_F": 20.0})
+    row = store.one("SELECT best_score,last_checked,last_improved FROM functions WHERE id=1")
+    assert row["best_score"] < 900
+    assert (row["last_checked"], row["last_improved"]) == (None, 42)
+    eng._apply_scores({"id": 7, "root": str(tmp_path)}, "u", {"_F": 10.0})
+    assert store.one("SELECT last_improved FROM functions WHERE id=1")["last_improved"] == 42
+
+
 @needs_tools
 def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     # SQLite writes a row's pages even when an UPDATE sets the same values: 34,000 functions on every sync

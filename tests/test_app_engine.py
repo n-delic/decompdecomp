@@ -176,6 +176,10 @@ def test_steering_priority_instructions_spend(net):
     net.set_instructions(slug, "Focus on the game's own code first.")
     from decompnet.app import tools
     assert "Focus on the game's own code first." in tools.project_info(net, slug)
+    net.set_claim_order(slug, "untried")
+    assert net.overview(slug)["claim_order"] == "untried"
+    assert "nobody has tried yet" in tools.project_info(net, slug)
+    net.set_claim_order(slug, "")
     net.add_spend(slug, 0.25, 0)
     net.add_spend(slug, 0.5, 1200)
     sp = net.overview(slug)["spend"]

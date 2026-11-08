@@ -147,6 +147,21 @@ def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui
     assert fork_main == ["func_80000400", "lerp", "main_loop"] and nothing == []
 
 
+def test_the_project_can_choose_which_functions_helpers_take_first(gui):
+    """#205: the owner's order is a select beside the instructions, saved to the project; a refused save puts the
+    server's value back instead of leaving the page showing an order that isn't in force."""
+    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    for value, label in [("", "Default"), ("easiest", "Smallest first"), ("hardest", "Largest first"),
+                         ("closest", "Closest to matching first"), ("untried", "Not yet tried first")]:
+        assert f'<option value="{value}">{label}' in html, value
+    order = gui["checks"]["claimOrder"]
+    assert order["saved"] == {"url": "/api/claim-order", "body": {"slug": "a", "order": "untried"},
+                              "value": "untried"}
+    assert order["reverted"] == "untried" and "nobody has tried yet" in order["text"]
+    assert any("read-only" in note for note in order["notes"])
+
+
 def test_the_theme_button_goes_round_system_light_and_dark(gui):
     """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
     assert gui["checks"]["themes"] == ["light", "dark", ""]
@@ -198,14 +213,17 @@ def test_the_drop_zone_tells_psp_games_from_the_ps2s_and_says_what_to_do_with_wh
     assert psp["name"] == "PlayStation 1, 2 or PSP"
 
 
-def test_the_drop_zone_tells_64_bit_arm_and_dos_programs_apart(gui):
-    """It said "a 64-bit or non-x86 Windows program (or a DOS one)" for all three: it says which, and when 64-bit
-    games come, before uploading hundreds of megabytes the import would refuse."""
-    x64, arm, x86, dos = gui["checks"]["windows"]
-    assert x64[0] is None and "64-bit Windows program" in x64[1] and "Newer Windows games" in x64[1]
-    assert arm[0] is None and "ARM" in arm[1]
+def test_the_drop_zone_takes_64_bit_programs_and_tells_arm_and_dos_ones_apart(gui):
+    """It said "a 64-bit or non-x86 Windows program (or a DOS one)" for all three: it says which, before uploading
+    hundreds of megabytes the import would refuse. 64-bit games start now: a 64-bit program is the PC console's,
+    its entry above 4 GB shown whole, offered the pack of 2017's 64-bit compiler (the server's pack_x64)."""
+    x64, arm, x86, dos, damaged = gui["checks"]["windows"]
+    assert x64[0] == "win32" and x64[2] == ["64-bit Windows program (.exe)", "0x140001000", "msvc2015", "msvc2015",
+                                                "x64"]
+    assert arm[0] is None and "ARM" in arm[1] and "32-bit or 64-bit x86" in arm[1]
     assert x86[0] == "win32"  # a 32-bit x86 one is the PC console's (notSupported is asked only otherwise)
     assert dos[0] is None and "DOS program" in dos[1]
+    assert damaged[0] is None and "header is damaged" in damaged[1]
 
 
 def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):

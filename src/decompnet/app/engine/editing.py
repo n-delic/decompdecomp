@@ -9,7 +9,7 @@ import re
 import time
 
 from ... import arch
-from ...network import Agent, NetworkError
+from ...network import CLAIM_ORDERS, Agent, NetworkError
 from ...rom import split
 from ...rom.symbols import IDENT, Symbol, SymbolTable
 from .common import _ADDRESS
@@ -285,7 +285,7 @@ class EditMixin:
         for old, new in pairs:
             check_rename(old, new)
         syms = self.symbols(proj["id"])
-        trial = SymbolTable([Symbol(s.name, s.address, s.size, s.kind) for s in syms.by_name.values()])
+        trial = syms.copy()  # with every overlay twin's name (#117 review)
         addresses = {}
         for old, new in pairs:
             if not (IDENT.match(old) and IDENT.match(new)):
@@ -297,15 +297,24 @@ class EditMixin:
             taken = trial.resolve(new)
             if taken is not None and taken != addr:
                 raise NetworkError(f"`{new}` already names 0x{taken:08X}")
+            at = self.store.all("SELECT id, name, size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+            renamed = [r for r in at if r["name"] == old] or (at if len(at) == 1 else [])
+            if any(r["name"] == new for r in at) and not any(r["name"] == new for r in renamed):
+                # the other overlay function at this address has it: the names would collide (#117 review)
+                raise NetworkError(f"`{new}` already names another function at 0x{addr:08X} (an overlay's)")
             addresses[old] = addr
             if old in trial.by_name:
                 trial.rename(old, new)
             else:
-                fnrow = self.project_store(proj['id']).one("SELECT size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+                fnrow = at[0] if at else None
                 current, _ = syms.name_at(addr)
                 base = syms.by_name.get(current) if current != f"D_{addr:08X}" else None
-                trial.add(Symbol(new, addr, fnrow["size"] if fnrow else (base.size if base and base.address == addr else 0),
-                                 "func" if fnrow else (base.kind if base else "data")))
+                sym = Symbol(new, addr, fnrow["size"] if fnrow else (base.size if base and base.address == addr else 0),
+                             "func" if fnrow else (base.kind if base else "data"))
+                if len(at) > 1:  # an overlay twin still called by its address's name: the other twin's name stays
+                    trial.alias(sym)
+                else:
+                    trial.add(sym)
         new_of = dict(pairs)
         word = re.compile(r"\b(" + "|".join(re.escape(old) for old in new_of) + r")\b")
         swap = lambda text: word.sub(lambda m: new_of[m.group(1)], text)
@@ -343,10 +352,17 @@ class EditMixin:
                     s = trial.by_name[new]
                     db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                                (proj["id"], new, s.address, s.size, s.kind))
-                db.execute("UPDATE functions SET name=? WHERE project_id=? AND (name=? OR vram=?)", (new, proj["id"], old, addr))
+                renamed_rows = db.execute("SELECT id FROM functions WHERE project_id=? AND name=?", (proj["id"], old)).fetchall()
+                if renamed_rows:
+                    db.execute("UPDATE functions SET name=? WHERE project_id=? AND name=?", (new, proj["id"], old))
+                else:
+                    renamed_rows = db.execute("SELECT id FROM functions WHERE project_id=? AND vram=?", (proj["id"], addr)).fetchall()
+                    if len(renamed_rows) == 1:
+                        db.execute("UPDATE functions SET name=? WHERE id=?", (new, renamed_rows[0]["id"]))
+                    else:
+                        renamed_rows = []
                 from ..function_names import record
-                for renamed in db.execute("SELECT id FROM functions WHERE project_id=? AND vram=?",
-                                          (proj["id"], addr)).fetchall():
+                for renamed in renamed_rows:
                     record(db, renamed["id"], old, new)
 
             cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=?',(proj['id'],)).fetchone()['config'])
@@ -397,6 +413,20 @@ class EditMixin:
 
     def instructions(self, slug: str) -> str:
         return self.cfg(self._project(slug)).get("instructions") or ""
+
+    def set_claim_order(self, slug: str, order: str) -> str:
+        """Which functions helpers claim without a name take first, whatever strategy they ask for; "" is the
+        agent's own choice (easiest, or finish in project mode)."""
+        order = (order or "").strip()
+        if order not in ("", *CLAIM_ORDERS):
+            raise NetworkError(f"claim order must be left empty (the default) or be one of {', '.join(CLAIM_ORDERS)}")
+        self._update_cfg(slug, lambda cfg: cfg.__setitem__("claim_order", order) if order
+                         else cfg.pop("claim_order", None))
+        return order
+
+    def claim_order(self, slug: str) -> str:
+        order = self.cfg(self._project(slug)).get("claim_order") or ""
+        return order if order in CLAIM_ORDERS else ""
 
     def set_title(self, slug: str, title: str) -> str:
         """The name the project shows by, which the user can change: a disc's title is often only its serial

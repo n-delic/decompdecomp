@@ -202,6 +202,11 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
         endpoint was removed since). A model it was started on stays: the endpoint's default would record its costs
         against another model."""
+        if options.get("account_id"):
+            try:
+                return options | settings.account_options(kind, str(options["account_id"]))
+            except ValueError:
+                return None
         if not kinds.get(kind).uses_endpoints:
             return options
         saved = settings.endpoint(str(options.get("endpoint") or "")) if options.get("endpoint") else (

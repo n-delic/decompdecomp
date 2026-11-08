@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import sys
 from pathlib import Path
 
 from . import SAID_CHARS, Agent, args_brief, number, read_json, tool_name, usage_item
@@ -44,6 +46,7 @@ class ClaudeCode(Agent):
     signin = "Open a terminal, run `claude` and sign in with /login."
     docs = "https://docs.claude.com/en/docs/claude-code"
     family = "claude"
+    uses_accounts = True
     takes_effort = True  # `claude --effort`: the launcher sends it with the model's name ("opus#high")
     efforts = ("low", "medium", "high", "xhigh", "max")
 
@@ -53,7 +56,42 @@ class ClaudeCode(Agent):
                 + [{"id": i, "name": version_name(i), "note": PINNED_NOTE} for i in CLAUDE_VERSIONS])
 
     def config_model(self) -> str | None:
-        return read_json(Path.home() / ".claude" / "settings.json").get("model") or None
+        folder = os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude"
+        return read_json(Path(folder) / "settings.json").get("model") or None
+
+    def default_model(self, options: dict) -> str | None:
+        if not options.get("account_dir"):
+            return self.config_model()
+        return read_json(Path(options["account_dir"]) / "settings.json").get("model") or None
+
+    def session_environment(self, options: dict, env: dict) -> dict:
+        """#45: bind each helper to its named subscription without changing the app or other helpers."""
+        if not options.get("account_id"):
+            return env  # the existing default sign-in keeps the user's environment
+        # #45: inherited credentials outrank a directory's subscription login in headless Claude Code. Refuse
+        # them rather than silently charging a different account. Settings within the selected directory can
+        # also choose another credential, so these profiles must be signed in as subscriptions.
+        settings = read_json(Path(options["account_dir"]) / "settings.json")
+        configured_env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+        conflicts = [key for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+                                    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+                                    "ANTHROPIC_PROFILE") if env.get(key) or configured_env.get(key)]
+        if settings.get("apiKeyHelper"):
+            conflicts.append("apiKeyHelper")
+        if conflicts:
+            raise ValueError("The selected account is overridden by " + ", ".join(conflicts)
+                             + ". Remove these overrides from the environment or account settings to use its subscription login.")
+        return env | {"CLAUDE_CONFIG_DIR": options["account_dir"]}
+
+    def account_signin(self, config_dir: str) -> str:
+        if sys.platform == "win32":
+            return "$env:CLAUDE_CONFIG_DIR='" + config_dir.replace("'", "''") + "'; claude"
+        return "CLAUDE_CONFIG_DIR=" + shlex.quote(config_dir) + " claude"
+
+    def signin_for(self, options: dict) -> str:
+        if options.get("account_id"):
+            return "Open a terminal and sign in with /login using: " + self.account_signin(options["account_dir"])
+        return self.signin
 
     def investigation_command(self, exe: str, prompt: str) -> list[str]:
         return [exe, prompt]
@@ -97,20 +135,20 @@ class ClaudeCode(Agent):
             if state.get('claude_result_seen'):
                 return out
             state['claude_result_seen'] = True
+            cost, turns = event.get("total_cost_usd"), event.get("num_turns")
             if event.get("is_error") or event.get("status") == "error":
                 out.append(("error", str(event.get("result") or event.get("error") or "session failed")[:SAID_CHARS]))
             else:
-                cost = event.get("total_cost_usd")
-                turns = event.get("num_turns")
                 bits = [f"{turns} turns" if turns else "", f"${cost:.2f}" if isinstance(cost, (int, float)) else ""]
                 out.append(("info", "session finished" + (f" ({', '.join(b for b in bits if b)})" if any(bits) else "")))
-                usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
-                stats = event.get("stats") if isinstance(event.get("stats"), dict) else {}
-                final_counts = usage_item(usd=cost, tokens=0 if usage else max(0,number(stats, "total_tokens")-sum(state.get("usage_totals",{}).values())), turns=turns)
-                if usage_event and final_counts:
-                    out[0] = ('usage', json.dumps({**json.loads(usage_event[1]), **json.loads(final_counts[1])}))
-                elif final_counts:
-                    out.append(final_counts)
+            # A failed session still consumed tokens and may report its final usage.
+            usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+            stats = event.get("stats") if isinstance(event.get("stats"), dict) else {}
+            final_counts = usage_item(usd=cost, tokens=0 if usage else max(0, number(stats, "total_tokens") - sum(state.get("usage_totals", {}).values())), turns=turns)
+            if usage_event and final_counts:
+                out[0] = ('usage', json.dumps({**json.loads(usage_event[1]), **json.loads(final_counts[1])}))
+            elif final_counts:
+                out.append(final_counts)
         return out
 
 

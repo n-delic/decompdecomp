@@ -186,8 +186,15 @@ class Core(Network):
         if project_id in self._sym_override:
             return self._sym_override[project_id]
         if project_id not in self._syms:
-            rows = self.project_store(project_id).all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", project_id)
-            self._syms[project_id] = SymbolTable([Symbol(r["name"], r["address"], r["size"], r["kind"]) for r in rows])
+            rows = self.project_store(project_id).all(
+                "SELECT s.name, s.address, s.size, s.kind, f.id IS NOT NULL AS fn FROM symbols s "
+                "LEFT JOIN functions f ON f.project_id=s.project_id AND f.name=s.name "
+                "WHERE s.project_id=?", project_id)
+            table = SymbolTable([Symbol(r["name"], r["address"], r["size"], r["kind"]) for r in rows])
+            for row in rows:
+                if row["fn"] and row["name"] not in table.by_name:
+                    table.alias(Symbol(row["name"], row["address"], row["size"], row["kind"]))
+            self._syms[project_id] = table
         return self._syms[project_id]
 
     def _rom(self, proj) -> tuple[bytes, list[split.Segment]]:

@@ -48,7 +48,7 @@ class Opencode(Agent):
         rows = [r for r in lines if not self.validate_model(r) and r]
         return [{"id": r, "name": r.split("/", 1)[1], "note": r.split("/", 1)[0]} for r in rows]
 
-    def resolve_model(self, model: str, known: list[dict]) -> str:
+    def resolve_known_model(self, model: str, known: list[dict]) -> str:
         model = model.strip()
         base, separator, effort = model.partition('#')
         if base and '/' not in base:

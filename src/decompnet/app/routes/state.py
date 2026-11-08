@@ -142,7 +142,7 @@ def register(app: App) -> None:
                 "linux_vm": ({'ready': linuxvm.status()[0], 'why': linuxvm.status()[1]} if linuxvm.wanted() else None),
                 "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "bridges_removed": [] if settings.data.get("bridges_removed_seen") else cleanup.report(home),
-                "api_presets": API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
+                "account_usage": manager.account_usage(), "api_presets": API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
                 # every console: names, status, compilers, layout, features (consoles/, Console.describe)
                 "consoles": [c.describe() for c in consoles.CONSOLES]}
 

@@ -445,6 +445,10 @@ def register(app: App) -> None:
         net.set_instructions(slug, str(data.get("text", "")))
         return net.overview(slug)
 
+    def p_claim_order(slug, request, data):
+        net.set_claim_order(slug, str(data.get("order", "")))
+        return net.overview(slug)
+
     def p_title(slug, request, data):
         net.set_title(slug, str(data.get("title", "")))
         return net.overview(slug)
@@ -894,6 +898,7 @@ def register(app: App) -> None:
         "/api/cross-game/run": (p_cross_run, ["POST"]),
         "/api/cross-game/name": (p_cross_name, ["POST"]),
         "/api/cross-game/functions": (p_project_functions, ["GET"]),
+        "/api/claim-order": (p_claim_order, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),
         "/api/unanalysed": (p_unanalysed, ["POST"]),
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),

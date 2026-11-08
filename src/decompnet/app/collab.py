@@ -37,7 +37,6 @@ from decompnet.hostenv import NO_WINDOW
 
 from .. import toolchains
 from ..network import Agent, NetworkError, hash_token
-from ..rom.symbols import AUTO_NAME
 from . import forkroom, room_membership
 
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
@@ -395,8 +394,7 @@ class Room:
         out["best"] = [{"name": r["name"], "vram": r["vram"], "rom_offset":r['rom_offset'], "score": r["best_score"], "source": r["best_source"]} for r in best]
         out["a"] = upper
         if first or kinds & {"rename", "split"}:
-            out["symbols"] = [dict(r) for r in self.store.all(
-                "SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid) if not AUTO_NAME.match(r["name"])]
+            out["symbols"] = net.layout_symbols(pid)
         if first or fresh or kinds & {"rename", "split"}:
             # fresh: a guest sharing saved work asks for the layout without the room's whole history
             out["functions"] = [dict(r) for r in self.store.all(

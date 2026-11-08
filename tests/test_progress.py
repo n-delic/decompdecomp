@@ -12,7 +12,7 @@ import pytest
 
 from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
-from decompnet.app.progress import Progress, _read
+from decompnet.app.progress import Progress, _manifest, _read, _repair
 from decompnet.network import NetworkError
 from decompnet.rom import split
 
@@ -70,6 +70,97 @@ def test_metadata_pull_keeps_already_verified_local_matches(project):
     assert net.instructions('game') == 'new collaborator instructions'
     assert (folder/'src/f.c').read_text() == 'good local\n'
     assert not net.progress.sync('game', force=True)
+
+
+def test_long_template_names_survive_saves_edits_and_deletions(project):
+    net, folder, judged = project
+    name = "lower_bound__" + "template_argument_" * 40
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name=?,best_source='near miss',best_score=10 WHERE name='f'", (name,))
+    net.progress.sync("game", force=True)
+    file = saves._source_file(name)
+    assert len(file.encode()) < 255
+    assert saves._source_file(name + "other") != file
+    assert (folder / "best" / file).read_text() == "near miss\n"
+    assert name == json.loads((folder / saves.MANIFEST).read_text())["layout"][0]["name"]
+
+    # A fresh process must resolve the shortened file through the full names in the layout.
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    (folder / "best" / file).write_text("good edited", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged[-1] == (name, "good edited")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='good local',best_source='good local' WHERE name=?", (name,))
+    net.progress.sync("game", force=True)
+    assert (folder / "src" / file).read_text() == "good local\n"
+    export = folder.parent / "export"
+    saves.save(net, "game", export)
+    assert saves._saved_source(export, None, "src/" + file) == "good local\n"
+    assert "src/" + file in saves._read_owned(export)
+    (folder / "src" / file).unlink()
+    (folder / "best" / file).unlink(missing_ok=True)
+    net.progress.sync("game", force=True)
+    assert net._function(name, "game")["matched_source"] is None
+
+
+def test_portable_source_names_preserve_names_that_already_fit():
+    assert saves._source_file("f" * 249) == "f" * 249 + ".c"
+    assert len((saves._source_file("f" * 250) + ".tmp").encode()) <= 255
+
+
+def test_repair_keeps_a_shortened_file_for_a_known_long_symbol(tmp_path):
+    name = "lower_bound__" + "template_argument_" * 40
+    file = saves._source_file(name)
+
+    class Store:
+        @staticmethod
+        def all(query, project_id):
+            return [{"name": name}]
+
+    disk = {saves.MANIFEST: json.dumps({"layout": [{"name": "g"}]}), f"src/{file}": "edited source"}
+    repaired = _repair(SimpleNamespace(store=Store()), 1, tmp_path, disk, lambda *_: None)
+
+    assert f"src/{file}" in repaired
+    assert not (tmp_path / "unlisted" / "src" / file).exists()
+
+
+def test_unlisted_shortened_filename_error_names_the_full_function(project):
+    net, folder, _ = project
+    name = "lower_bound__" + "template_argument_" * 40
+    file = saves._source_file(name)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name=? WHERE name='f'", (name,))
+    files = _read(folder)
+    data = json.loads(files[saves.MANIFEST])
+    data["layout"] = []
+    data["functions"] = {}
+    files[saves.MANIFEST] = json.dumps(data)
+    files[f"src/{file}"] = "edited source"
+    cfg = net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))
+    with pytest.raises(NetworkError, match=name):
+        _manifest(files, cfg, {name})
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_manual_save_locations_survive_restart_and_belong_to_one_project(project, tmp_path, kind):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        cfg = dict(net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'")), kind=kind)
+        db.execute("UPDATE projects SET config=? WHERE slug='game'", (json.dumps(cfg),))
+        db.execute("INSERT INTO projects(slug,name,root,config) VALUES('other','Other',?,?)",
+                   (str(tmp_path / "other"), json.dumps(cfg)))
+    chosen = tmp_path / "saved-game"
+    saves.save(net, "game", chosen)
+    reopened = RomNetwork(tmp_path / "app.db", tmp_path)
+    assert saves.save_folder(reopened, "game") == chosen.resolve()
+    assert saves.save_folder(reopened, "other") == tmp_path / "other" / "progress"
+    assert saves.default_folder(reopened, "game") == folder
+    if kind == "rom":
+        assert "save_folder" not in json.loads((chosen / saves.MANIFEST).read_text())
+    saves.save(net, "game")  # clearing the field restores the project's default
+    assert saves.save_folder(net, "game") == folder.resolve()
+    assert "save_folder" not in net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))
 
 
 @pytest.mark.parametrize('source,expected', [('good local', 'matched'), ('different local', 'open')])

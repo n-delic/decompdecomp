@@ -51,6 +51,20 @@ class SymbolTable:
         if reindex:
             self.reindex_symbols()
 
+    def alias(self, sym: Symbol) -> None:
+        """Another name for an address that already has one: overlays load different functions at one address, and
+        each twin's name must resolve (#117 review), while name_at keeps the address's one name."""
+        self.by_name.setdefault(sym.name, sym)
+
+    def copy(self) -> SymbolTable:
+        """An independent table with the same names, aliases included (rebuilding one from by_name drops them)."""
+        clones = {id(s): Symbol(s.name, s.address, s.size, s.kind) for s in [*self.by_name.values(), *self.by_addr.values()]}
+        out = SymbolTable()
+        out.by_name = {n: clones[id(s)] for n, s in self.by_name.items()}
+        out.by_addr = {a: clones[id(s)] for a, s in self.by_addr.items()}
+        out.starts = list(self.starts)
+        return out
+
     def rename(self, old: str, new: str) -> Symbol:
         sym = self.by_name.pop(old)
         sym.name = new
