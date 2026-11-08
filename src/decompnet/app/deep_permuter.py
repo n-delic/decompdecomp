@@ -402,6 +402,12 @@ class Search(Permuter):
         current_scope=agent_tokens.target_scope(self.net,{**dict(fn),'best_source':source},'')
         feedback=deep_repair_feedback.Feedback(source,best,initial_rows,self.winner_output if self.winner_source==source and self.winner_scope==current_scope else None,getattr(self,'winner_output_granularity','function'))
         source_locations={source:getattr(self,'winner_locations',None)}
+        from . import layout_frontiers
+        layout_state={}
+        for saved_layout in layout_frontiers.saved(self.net,proj,fn,source,header):
+            layout_frontiers.offer(layout_state,saved_layout,header)
+        layout_frontiers.offer(layout_state,source,header)
+        layout_probes=0
         expanded = set()
         residual_bursts = 0
         counters = {'compile_failed': 0, 'frontier_pruned': 0, 'depth_limit': 0}
@@ -453,6 +459,11 @@ class Search(Permuter):
                 for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
                     labels[candidate]=family
                     choices.append(candidate)
+                from . import targeted_debug_layout
+                for family,candidate in targeted_debug_layout.variants(source,fn['name'],header,proj['arch'],flags,
+                        {'rows':rows,'repair_locations':source_locations.get(source)}):
+                    labels[candidate]=family
+                    choices.insert(0,candidate)
                 from . import scan_load_repairs
                 guided_scans=scan_load_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source))
                 for family,candidate in guided_scans:labels[candidate]=family
@@ -492,6 +503,11 @@ class Search(Permuter):
                 choices.sort(key=lambda c: (labels.get(c,'local_repair') not in preferred, ranked.index(labels.get(c, 'local_repair'))))
 
             choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
+            if not fork:
+                from . import compiler_phase_routing
+                phase_evidence=allocation_search.saved(self.net,proj,fn,source) or {}
+                choices=[c for _,c in compiler_phase_routing.order(source,
+                    [(labels.get(c,'local_repair'),c) for c in choices],phase_evidence.get('value_trace'),header)]
 
             from . import repair_localisation
             localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
@@ -502,7 +518,8 @@ class Search(Permuter):
             complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
             frame_sources={c for _,c in branch_frames}
             frame_prefix=[c for _,c in progressed if c in frame_sources]
-            queue = list(dict.fromkeys(frame_prefix+complete+[c for _,c in progressed]))
+            dispatch_prefix=[c for family,c in progressed if family=='effectful_dispatch_specialization'][:2]
+            queue = list(dict.fromkeys(frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             lane = getattr(self, "parallel_lane", None)
             if lane is not None:
@@ -552,6 +569,15 @@ class Search(Permuter):
                     from .region_repairs import resolution_text
                     if change := resolution_text(parent_rows,measured_rows):self.log(change)
                 feedback.record(parent_source,candidate,labels.get(candidate,'local_repair'),parent_path,score,measured_rows,measured_output,getattr(self,'_trial_reused',False),getattr(self,'_trial_output_granularity','function'))
+                layout_frontiers.offer(layout_state,candidate,header)
+                if score is not None and 0<score<feedback.proofs.get(parent_source,{}).get('score',score) and layout_probes<6:
+                    for family,child in layout_frontiers.followups(layout_state,parent_source,candidate,labels.get(candidate,''),header):
+                        if child in self.local_seen or child in queue:continue
+                        labels[child]=family
+                        parents[child]=(candidate,measured_rows,parent_path+[labels.get(candidate,'local_repair')])
+                        queue.insert(0,child)
+                        layout_probes+=1
+                        if layout_probes>=6:break
                 if not getattr(self,'_trial_reused',False):
                     proof=feedback.proofs.get(parent_source,{})
                     repair_sequences.observe(self.net,lineage.profile,lineage.focus,parent_path,

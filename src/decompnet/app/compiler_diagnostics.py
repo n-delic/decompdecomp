@@ -86,9 +86,9 @@ def phase_summary(work, name=None, arch=None):
     retired = sorted(set(result.get('flow',{}).get('registers',[]))-set(result.get('combine',{}).get('registers',[])))
     for row in result.values():
         row['register_count'] = len(row.pop('registers'))
-    from . import gcc_allocation, rtl_value_trace
+    from . import compiler_phase_routing, gcc_allocation, rtl_value_trace
     return {'phases':result,'removed_between_flow_and_combine':retired[:24],
-            **({'value_trace':rtl_value_trace.summarize(texts,name,arch),
+            **({'value_trace':{**rtl_value_trace.summarize(texts,name,arch),'early_constants':compiler_phase_routing.constants(texts,name)},
                 'allocation':gcc_allocation.summarize(texts,name,arch)} if name else {})}
 
 

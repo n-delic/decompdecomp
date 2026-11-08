@@ -2922,8 +2922,10 @@ class ForkEngine:
         if background and (keep or slug in self.net.links):
             raise NetworkError("Concurrent trials must restore unfinished source and run on the host project.")
         with self.net.attempt_turn(agent, self._fn(slug, function)):
-            return self._attempt_and_share(agent, slug, function, source, keep, prelude, quiet, comment,
+            result = self._attempt_and_share(agent, slug, function, source, keep, prelude, quiet, comment,
                                            **({"background": True} if background else {}))
+            for key in ('exact','new_match','adopted'):result.setdefault(key,False)
+            return result
 
     def _attempt_and_share(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
                            quiet: int | None = None, comment: bool = False, *, background: bool = False) -> dict:
@@ -3177,7 +3179,7 @@ class ForkEngine:
             line_note = render_candidate(mapped, mapped_source, source)
             from . import imported_output, repair_localisation
             compiled_output=imported_output.read(unit.base,symbol)
-            evidence={'compiled_output':compiled_output}
+            evidence={'compiled_output':compiled_output,'exact':bool(d.matched),'new_match':False,'adopted':False}
             locations=repair_localisation.rebase(source,mapped_source,mapped)
             if locations:evidence['repair_locations']=locations
 
@@ -3221,7 +3223,7 @@ class ForkEngine:
                 self._commit_paths(proj, fp, committed, f"Tidy {meta.get('demangled') or symbol} (still matches)\n\n"
                                                         f"Edited by {agent.name} with decompdecomp.")
                 return {**evidence,"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
-                        "score": 0, "matched": True}
+                        "score": 0, "matched": True, "adopted": True}
             self.net._record(fn, agent, score, code, 0, matched=matched)
             self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
                                via=f"unit diff after a compile of {fn['name']}")
@@ -3233,7 +3235,7 @@ class ForkEngine:
                                 f"project. Call claim_function for the next one.{_renamed_note(d)}"
                                 f"{self.net.dependents_note(fn['id'], project_id=fn['project_id'])}"
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
-                        "matched": True}
+                        "matched": True, "new_match": True, "adopted": True}
         stall = self.net.stall_note(fn["id"], agent.id)
         found = self._unresolved_lines(fp, meta, fn, unit, code) + self._convention_warning(fp, meta, fn, unit)
         missing = ((self._missing_note(unit, fn) if d.match_percent is None else "")
@@ -3242,7 +3244,7 @@ class ForkEngine:
             text = f"score {score} (0 = identical). {d.literals_note()}{missing}"
         else:
             text = f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{line_note}{missing}"
-        return {**evidence,"text": remembered(text, score) + stall, "score": score, "matched": False}
+        return {**evidence,"text": remembered(text, score) + stall, "score": score, "matched": False, "adopted": True}
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "", keep_match: bool = True) -> str:

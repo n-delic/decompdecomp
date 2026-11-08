@@ -30,6 +30,21 @@ a match to the final edit. Partially undoing a coupled rename can fail without p
 
 Keep the compiler, flags, header and symbol addresses fixed while comparing source repairs.
 
+For an exhaustive literal selector followed by a lookup/store, the local family
+`effectful_dispatch_specialization` can move that real operation into an inline
+dispatcher with independent mapping parameters. The selector must be dead afterwards;
+callbacks and table reloads stay in place. The helper must fully disappear from the
+object. Returning only the selector is a different experiment and need not schedule alike.
+
+Keep older line layouts even when their scalar score is worse. After structural
+progress, deep search and iterative repairs try a few saved-layout combinations.
+Only whitespace is borrowed from related saved C; its code is not transferred.
+Mapped debug/NOP residuals can receive a small line-boundary follow-up. Missing
+source mappings do not justify guessing where an assembly instruction came from.
+Verified phase dumps now record constants removed before allocation; this can defer
+tiny constant-only edits in favour of structural dispatch, without declaring any
+family exhausted. Unsupported or stale evidence leaves proposal order unchanged.
+
 1. **Too few instructions:** inspect shared tails in repeated branch bodies, then check for missing
    logic. Instruction count alone does not distinguish them or establish equivalent behavior.
 2. **Repeated branch bodies:** compare shared, branch-local and mixed pointer lifetimes. Keep a

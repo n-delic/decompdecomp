@@ -36,6 +36,18 @@ def test_agent_local_pass_settings_are_opt_in_and_validate_budgets(app):
     client.post('/api/settings',json={'agent_local_enabled':False},headers=headers)
 
 
+def test_try_route_keeps_exact_credit_and_adoption_separate(app,monkeypatch):
+    from .test_loading import tiny_game
+    client,net,_=app
+    tiny_game(net,'exact-recheck-fields')
+    monkeypatch.setattr(net,'attempt',lambda *a:{'score':0,'matched':False,'exact':True,'new_match':False,
+        'adopted':False,'text':'Exact scratch recheck','checks':{'linked_bytes':{'exact':True}}})
+    response=client.post('/api/try',headers={'X-Decomp':'1'},json={'slug':'exact-recheck-fields','name':'f','source':'candidate'})
+    assert response.status_code==200,response.text
+    result=response.json()
+    assert result['exact'] and not result['matched'] and not result['new_match'] and not result['adopted']
+
+
 def test_maintenance_cpu_setting_is_validated_saved_and_applied_live(app):
     from decompnet.app import maintenance
     client, net, *_ = app

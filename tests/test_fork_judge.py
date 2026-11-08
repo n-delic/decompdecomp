@@ -133,8 +133,9 @@ def test_a_literal_named_and_placed_differently_matches(fork):
 
 def test_resubmitting_a_matched_function_is_never_rejected(fork):
     net, slug, agent = fork
-    out = net.compile_and_diff(agent, "offset", OFFSET, slug)
-    assert "still matches" in out, out
+    out = net.forks.attempt(agent,slug,"offset",OFFSET)
+    assert "still matches" in out['text'], out
+    assert out['exact'] and out['adopted'] and not out['new_match']
 
 
 def test_a_wrong_constant_is_not_a_match(fork):
