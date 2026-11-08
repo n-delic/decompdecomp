@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ...rom import RomError
+from ..playstation_titles import title
 from ..ps2 import chd, cso, disc
 
 MAGIC = b"PS-X EXE"
@@ -31,7 +32,7 @@ def is_exe(head: bytes) -> bool:
 
 
 def read_exe(data: bytes, boot_name: str = "") -> tuple[bytes, dict]:
-    """The program as it loads (its header and the bytes the header says), with what the header and name say."""
+    """The loaded program and its identity, with an offline display title when its serial is known."""
     if not is_exe(data):
         raise RomError("this isn't a PlayStation program (a PS-X EXE, e.g. SLUS_000.01)")
     pc, gp, load, size = struct.unpack_from("<4I", data, HEADER_FIELDS)
@@ -46,7 +47,7 @@ def read_exe(data: bytes, boot_name: str = "") -> tuple[bytes, dict]:
                                                       "Unknown region")
     exe = data[:HEADER + size]
     return exe, {
-        "title": code or boot_name or "PlayStation game", "game_code": code, "region": region, "version": 0,
+        "title": title("ps", code, code or boot_name or "PlayStation game"), "game_code": code, "region": region, "version": 0,
         "entrypoint": pc, "gp": gp, "load": load, "crc1": 0, "crc2": 0, "size": len(exe),
         "sha1": hashlib.sha1(exe).hexdigest(), "byte_order": "exe", "compiler_guess": "PSYQ", "platform": "ps",
         "boot": boot_name,

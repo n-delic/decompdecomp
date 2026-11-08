@@ -66,6 +66,12 @@ class PlayStation2(Console):
 
         return elf.is_mips_elf(head) or chd.is_chd(head) or cso.is_cso(head) or disc.is_disc(head)
 
+    def display_title(self, name: str, info: dict) -> str:
+        from ..playstation_titles import title
+
+        code = info.get("game_code", "")
+        return title("ps2", code, name) if code and name == code else name
+
     def read_game(self, file, name: str = "") -> Picked:
         """The program: an ELF the user picked, or the one a disc image names (with the disc's overlays)."""
         from . import chd, cso, disc, elf
@@ -100,12 +106,14 @@ class PlayStation2(Console):
     def _from_disc(self, src) -> Picked:
         import struct
 
+        from ..playstation_titles import disc_title
         from . import disc, elf, overlays
 
         raw, boot = disc.from_disc(src)
         if not elf.is_mips_elf(raw):
             raise RomError(f"the disc's program {boot} isn't a PlayStation 2 program this app can read")
         program, info = elf.read_elf(raw, boot)
+        disc_title("ps2", info, disc._Disc(src))
         picked = Picked(self.id, program, "game.elf", info, False)
         segs = overlays.elf_segments(raw) or []
         main = (min((a for a, _ in segs), default=0), max((a + len(d) for a, d in segs), default=0))

@@ -68,6 +68,12 @@ class PlayStation(Console):
 
         return exe.is_exe(head) or exe.is_ps1_disc(file)
 
+    def display_title(self, name: str, info: dict) -> str:
+        from ..playstation_titles import title
+
+        code = info.get("game_code", "")
+        return title("ps", code, name) if code and name == code else name
+
     def read_game(self, file, name: str = "") -> Picked:
         """The program: a PS-X EXE the user picked, or the one a disc image boots (with the disc's overlays)."""
         from ..ps2 import disc
@@ -90,6 +96,7 @@ class PlayStation(Console):
     def _from_disc(self, src) -> Picked:
         import struct
 
+        from ..playstation_titles import disc_title
         from ..ps2 import disc, overlays
         from . import exe
 
@@ -106,6 +113,7 @@ class PlayStation(Console):
             # program it loads. shortcut: the loader's own code is left out, the game's is what's worth decompiling
             path, raw = loaded
         program, info = exe.read_exe(raw, boot)  # (named as the disc boots it: its game code and region)
+        disc_title("ps", info, image)
         if loaded is not None:
             info["program"] = path.replace("\\", "/")
         picked = Picked(self.id, program, "game.exe", info, False)

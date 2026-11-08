@@ -172,6 +172,10 @@ class Console:
         and its DLLs); None: not one of its games."""
         return None
 
+    def display_title(self, name: str, info: dict) -> str:
+        """A stored project's display name; consoles may resolve old serial-only names offline."""
+        return name
+
     # ROM mode
 
     def read_game(self, file: bytes | Path, name: str = "") -> Picked:
