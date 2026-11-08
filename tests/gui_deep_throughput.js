@@ -23,3 +23,7 @@ assert.match(get('fnDeepThroughput').textContent,/2.5s local proposals/);
 assert.match(get('fnDeepThroughput').textContent,/0.1s cleanup/);
 assert.match(get('fnDeepThroughput').textContent,/8.2s compiler work \(summed workers\)/);
 assert.match(get('fnDeepThroughput').textContent,/0.4s linking/);
+
+render({throughput:{compiler_slot_utilization_percent:62.5,history_write_seconds:1.2,history_transactions:3}});
+assert.match(get('fnDeepThroughput').textContent,/62.5% average slots busy/);
+assert.match(get('fnDeepThroughput').textContent,/1.2s history writes \(3 transactions\)/);

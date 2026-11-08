@@ -69,6 +69,7 @@ class Metrics:
                 'compile_requests_per_second':recent.get('requests',0)/rate_seconds,
                 'compiler_queue_seconds':values.get('queue',0),
                 'compiler_setup_seconds':values.get('setup',0),
+                'compiler_slot_utilization_percent':min(100,max(0,100*values.get('execute',0)/(elapsed*gate.limit))) if gate and gate.limit else 0,
                 'generation_seconds':values.get('generation',0),
                 'local_proposal_generation_seconds':values.get('proposal_generation',0),
                 'cleanup_generation_seconds':values.get('cleanup_generation',0),
@@ -76,6 +77,7 @@ class Metrics:
                 'link_seconds':values.get('link',0),
                 'local_generation_wait_seconds':values.get('local_generation',0),
                 'history_write_seconds':values.get('history_write',0),
+                'history_transactions':values.get('history_transactions',0),
                 'app_cpu_percent':max(0, 100*(time.process_time()-self.cpu)/elapsed)}
 
 
