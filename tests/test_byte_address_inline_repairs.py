@@ -141,7 +141,8 @@ def test_real_host_evaluation_and_effect_order_preserved(tmp_path):
         names.append(f'candidate{i}')
     path, libpath = tmp_path/'test.c', tmp_path/('test.dll' if os.name == 'nt' else 'test.so')
     path.write_text(code)
-    subprocess.run([cc, '-shared', '-std=c99', str(path), '-o', str(libpath)], check=True)
+    subprocess.run([cc, '-shared', *(['-fPIC'] if os.name != 'nt' else []), '-std=c99',
+                    str(path), '-o', str(libpath)], check=True)
     lib = ctypes.CDLL(str(libpath))
     for value in (-32768, -1, 0, 1, 32767):
         for flag in (0, 1):
