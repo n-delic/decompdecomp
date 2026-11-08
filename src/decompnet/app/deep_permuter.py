@@ -588,6 +588,20 @@ class Search(Permuter):
                     finally:
                         del self._parent_rows
                         self._trial_parent_output = self._trial_parent_granularity = None
+                    if score == 0:
+                        # The judge has finished this function. Do not generate more
+                        # feedback/paired proposals after publishing its exact result.
+                        if candidate in feedback.loan_sources:
+                            counters['sequence_evaluations'] = counters.get('sequence_evaluations', 0) + 1
+                        if not getattr(self, '_trial_reused', False):
+                            proof = feedback.proofs.get(parent_source, {})
+                            repair_sequences.observe(self.net, lineage.profile, lineage.focus, parent_path,
+                                labels.get(candidate, 'local_repair'), proof.get('score'), score, proof.get('output'),
+                                getattr(self, '_trial_output', None), exact=True,
+                                elapsed_ms=(time.monotonic()-sequence_started)*1000)
+                        self.local_status = {'reason': 'matched', **counters}
+                        self.log('Exact match found; stopping local repairs for this function.')
+                        return 0, self.net._function(fn['name'], proj['slug'])['best_source']
                     measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
                     measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
                     if not getattr(self,'_trial_reused',False):

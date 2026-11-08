@@ -41,7 +41,7 @@ function renderDeepActivity(progress = {}) {
        worker.reason?.startsWith("Budget rotation:") ? "Rotated early; eligible for the next run." :
        worker.reason || "This turn has ended. This card is recent history, not an active worker.");
     result.hidden = !result.textContent;
-    const percent = n => n == null ? "—" : `${Number(n).toFixed(1)}%`;
+    const percent = n => n == null ? "—" : `${Number(n) === 100 ? "100.0" : (Math.floor(Math.min(99.9, Number(n)) * 10 + 1e-8) / 10).toFixed(1)}%`;
     card.querySelector("[data-metrics]").textContent = `${percent(worker.starting_percent)} → ${percent(worker.best_percent)} · ${worker.improvements || 0} improvements · ${worker.tested || 0} / ${worker.variant_limit || "—"} tested`;
     const bar = card.querySelector("progress");
     bar.max = worker.variant_limit || 1; bar.value = Math.min(bar.max, worker.tested || 0);
