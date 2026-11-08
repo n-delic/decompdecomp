@@ -13,7 +13,7 @@ from .repair_tokens import TOKEN
 
 FAMILY = 'saved_layout_followup'
 LIMIT = 3
-STRUCTURAL = {'effectful_dispatch_specialization','aggregate_pointer_dispatch','aggregate_call_preparation'}
+STRUCTURAL = {'loop_test_snapshot','staged_scalar_arithmetic','unscaled_address_snapshot','loop_constant_snapshot','effectful_dispatch_specialization','aggregate_pointer_dispatch','aggregate_call_preparation'}
 
 
 def spans(source):

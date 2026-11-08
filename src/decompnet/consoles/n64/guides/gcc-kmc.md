@@ -1543,3 +1543,26 @@ the final three words. This was a combined source change, not proof of an origin
 macro or a general repair rule. Preserve evaluations and read/call order; do not
 add dummy uses, padding or register bindings. Verify ordinary linked bytes, not
 symbolic relocation annotations. See `COMPILER_MATCHING_LEARNINGS.md` for limits.
+
+
+### Coordinate phase repairs before widening the search
+
+For a loop near match, inspect storage lifetimes, arithmetic staging and source line
+boundaries together. A same-type dead local can snapshot a latch counter only when
+CFG liveness proves its old value unnecessary on every successor path. Staging a
+multiply or explicit word conversion can change first-CSE and allocation. Under a
+debug profile, joining dependent arithmetic statements can remove a pipeline NOP
+without changing any C tokens; do not cross comments or macros.
+
+Capture an unscaled index sum before a byte-array base when the setup order differs,
+then scale it. An explicit MIPS32 integer-address addition may correct the final ADDU
+operand order. Use real array addresses or declared nonvolatile constants for loop
+captures, never cache mutable fields or add fake volatile accesses. Existing explicit
+loop/backedge repairs can combine with these steps.
+
+The app's bounded compiler-phase families and targeted layout repairs try these
+shapes through the normal judge. A small, structurally useful pipeline regression may
+survive in a frontier slot, but is never saved as an improvement on that basis. See
+`docs/COMPILER_MATCHING_LEARNINGS.md` for the measured final-checkpoint regression and
+its limits. A symbolic relocation display discrepancy is not a reason to keep editing
+once the normal linker proves all bytes equal.

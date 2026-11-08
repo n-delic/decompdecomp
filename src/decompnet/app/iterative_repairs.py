@@ -69,15 +69,17 @@ def retention_evidence(node, report, arch=None):
     pattern = bool(repaired) and isinstance(score,(int,float)) and score<=node['ceiling']*2
     masks=(isinstance(score,(int,float)) and score<=node['ceiling']*4
            and search_frontier.mask_recovery(node.get('baseline_rows'),report.get('rows'),arch))
+    pipeline=(isinstance(score,(int,float)) and score<=node['ceiling']*4
+              and search_frontier.pipeline_recovery(node.get('baseline_rows'),report.get('rows'),arch))
     regional = regional_detour(node,report,arch)
     allocation = allocation_detour(node,report,arch)
     loop = loop_repair_lane.eligible(node,report,arch)
     structural = (isinstance(score,(int,float)) and score<=node['ceiling']*2
                   and search_frontier.structure_recovery(node.get('baseline_rows'),report.get('rows'),arch))
-    eligible = (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural or pattern or loop or masks)
-                and (loop or masks or pattern or regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or [])))
+    eligible = (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural or pattern or loop or masks or pipeline)
+                and (loop or masks or pipeline or pattern or regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or [])))
     return dict(eligible=bool(report.get('matched') or eligible),score=score,pattern=pattern,regional=regional,
-                allocation=allocation,loop=loop,structural=structural,masks=masks,repaired=repaired)
+                allocation=allocation,loop=loop,structural=structural,masks=masks,pipeline=pipeline,repaired=repaired)
 
 
 def expandable(parent, arch=None):
@@ -297,7 +299,9 @@ def expand_wave(state, variants, arch):
              search_frontier.allocation_bridge(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
     masks=[n for n in ranked if n['score']<=n['ceiling']*4 and
            search_frontier.mask_recovery(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
-    best = list(dict.fromkeys(n['source'] for n in retained[:1]+masks+bridges+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
+    pipelines=[n for n in ranked if n['score']<=n['ceiling']*4 and
+               search_frontier.pipeline_recovery(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+masks+pipelines+bridges+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []

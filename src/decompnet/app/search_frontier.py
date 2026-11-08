@@ -4,6 +4,8 @@ This is search guidance only. Displayed rows never prove byte identity, and alte
 replace the saved source. A normal judge must verify any later improvement.
 """
 import hashlib
+from collections import Counter
+from difflib import SequenceMatcher
 
 from . import allocation_evidence, permuter_focus, region_repairs
 
@@ -101,6 +103,31 @@ def mask_recovery(before, after, arch=None):
                 and abs(new['target_instructions']-new['candidate_instructions'])<=2)
 
 
+def pipeline_recovery(before, after, arch=None):
+    """Keep an otherwise recovered operation sequence with at most two extra MIPS NOPs.
+
+    Legacy debug line boundaries can insert a pipeline gap after a successful
+    structural change. No instructions are removed from a judge input here.
+    """
+    if arch!='mips' or not before or not after:return False
+    rows=permuter_focus.normalized(after)
+    if any(not isinstance(r,(tuple,list)) or len(r)!=3 or not all(isinstance(s,str) for s in r) for r in rows):return False
+    def sequence(column):
+        return [r[column].split()[0] for r in rows if r[column] and r[column].split()[0]!='nop']
+    extra=sum(r[2].split()[0]=='nop' for r in rows if r[2])-sum(r[1].split()[0]=='nop' for r in rows if r[1])
+    target,candidate=sequence(1),sequence(2)
+    if not target or len(target)>512 or Counter(target)!=Counter(candidate):return False
+    # Permit one small pre-existing scheduling region; do not require its repair
+    # before preserving a newly recovered arithmetic tail.
+    matched=sum(b.size for b in SequenceMatcher(None,target,candidate,autojunk=False).get_matching_blocks())
+    if len(target)-matched>2:return False
+    a,b=allocation_evidence.diagnose(before,arch),allocation_evidence.diagnose(rows,arch)
+    return bool(0<extra<=2
+                and a['target_frame'] is not None
+                and a['target_frame']==a['candidate_frame']==b['candidate_frame']==b['target_frame']
+                and structure(rows)<structure(before))
+
+
 class Frontier:
     def __init__(self):
         self.nodes = []
@@ -134,6 +161,11 @@ class Frontier:
                and mask_recovery(baseline,n['rows'],arch)]
         if masks:
             candidate=min(masks,key=lambda n:(n['missing_operations'],n['fitness'],n['score']))
+            if candidate not in selected:selected.append(candidate)
+        pipelines=[n for n in pool if baseline_score is not None and n['score']<=baseline_score*4
+                   and pipeline_recovery(baseline,n['rows'],arch)]
+        if pipelines:
+            candidate=min(pipelines,key=lambda n:(n['fitness'],n['score']))
             if candidate not in selected:selected.append(candidate)
         # A slightly worse register-only sibling may be one storage permutation
         # from exact. Reserve it before the other structural slots fill the beam.
