@@ -61,6 +61,7 @@ def test_source_tail_shared_paths_and_raw_machine_drafts(arch):
  lambda s:s.replace('color=255;', 'return; color=255;'),
  lambda s:s.replace('color=255;', 'goto outside; color=255;'),
  lambda s:s.replace('color=255;', 'u32 lo=0; color=255;'),
+ lambda s:s.replace('color=255;', 'u32 local __attribute__((cleanup(done)))=0; color=255;'),
  lambda s:s.replace('color=255;', 'u32 color,other; color=255;'),
  lambda s:s.replace('lo += hi;', 'lo += call();'),
  lambda s:s.replace('lo += hi;', 'lo += hi++;'),

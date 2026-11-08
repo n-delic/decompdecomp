@@ -72,7 +72,7 @@ def store_type(part, obj, member, pos, header, arch):
 
 def variants(source, name, header='', arch=None):
     part=view(source,name)
-    if not part or re.search(r'\b(?:volatile|asm|__asm__|setjmp|longjmp|__LINE__)\b',part.body) or '__LINE__' in source+'\n'+header:return []
+    if not part or re.search(r'\b(?:volatile|asm|__asm__|setjmp|longjmp|__LINE__|__attribute__|__cleanup__)\b',part.body) or '__LINE__' in source+'\n'+header:return []
     macros=set(re.findall(r'(?m)^\s*#\s*define\s+('+IDENT+r')\b',header+'\n'+source))
     result=[]
     for hit in reversed(list(re.finditer(r'\bif\s*\(',part.body))):
