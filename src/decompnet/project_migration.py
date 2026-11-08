@@ -33,7 +33,8 @@ def _file_hash(path):
 
 
 def durable(path):
-    with Path(path).open('rb') as handle:os.fsync(handle.fileno())
+    # Windows FlushFileBuffers needs write access, even after SQLite has closed the snapshot.
+    with Path(path).open('r+b') as handle:os.fsync(handle.fileno())
     if os.name != 'nt':
         descriptor = os.open(str(Path(path).parent),os.O_RDONLY)
         try:os.fsync(descriptor)
