@@ -177,6 +177,7 @@ def test_objdiff_scratch_platform_uses_console_version_facts(tmp_path, version, 
 def test_objdiff_unknown_or_conflicting_platform_is_not_guessed(tmp_path):
     from decompnet.forks.project import ForkProject
     root=repo(tmp_path/'game')
-    for units in ([{'scratch':{'platform':'unknown'}}], [{'scratch':{'platform':'gc'}},{'scratch':{'platform':'wii'}}]):
+    for units in ([{'scratch':{'platform':'unknown'}}], [{'scratch':{'platform':'gc'}},{'scratch':{'platform':'wii'}}],
+                  [{'target_path':'build/GFEE01/test.o','scratch':{'platform':'gc_wii'}},{'scratch':{'platform':'ps2'}}]):
         (root/'objdiff.json').write_text(json.dumps({'units':units}))
         assert ForkProject(root,create_state=False).detect_platform() == ''

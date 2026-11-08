@@ -59,7 +59,10 @@ class GameCube(Console):
 
     def recognizes_objdiff(self, config: dict) -> bool:
         units = config.get('units', [])
-        if not any(isinstance(unit, dict) and (unit.get('scratch') or {}).get('platform') == 'gc_wii' for unit in units):
+        platforms = {unit['scratch'].get('platform') for unit in units
+                     if isinstance(unit, dict) and isinstance(unit.get('scratch'), dict)
+                     and isinstance(unit['scratch'].get('platform'), str)}
+        if 'gc_wii' not in platforms or not platforms <= {'gc_wii', self.id}:
             return False
         versions = {part for unit in units if isinstance(unit, dict)
                     for key in ('target_path', 'base_path') for part in str(unit.get(key, '')).replace('\\', '/').split('/')
