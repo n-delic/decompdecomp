@@ -15,6 +15,8 @@ vm.runInContext(source.slice(source.indexOf('function paintRoomReconciliation'),
  await ctx.followRoomReconciliation(box,'game','job');assert.equal(calls.length,3);
  ctx.paintRoomReconciliation(box,{members:{old:{status:'update_required'},offline:{status:'offline'}},results:{}});
  assert.match(output.innerHTML,/Update this client/);assert.match(output.innerHTML,/Offline/);
+ ctx.paintRoomReconciliation(box,{members:{client:{status:'done'}},results:[{client:'client',function:'f',status:'queued',reason:'Uploaded'}]});
+ assert.match(output.innerHTML,/Uploads complete/);assert.match(output.innerHTML,/1 waiting/);assert.match(output.innerHTML,/queued on host/);
  ctx.followJob=async()=>{throw Error('Disconnected');};
  await ctx.followRoomReconciliation(box,'game','failed');assert(calls.includes('Disconnected'));
  ctx.followJob=async(_id,_el,update)=>{ctx.S.slug='other';update([],{progress:state});return state;};

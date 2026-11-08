@@ -2992,26 +2992,28 @@ def test_single_function_profile_response_does_not_restore_project(app, monkeypa
     assert calls == [(slug,'only','gcc-2.7.2-kmc',['-O2'])]
 
 
-def test_room_reconciliation_discovers_active_scoped_job_and_deduplicates(app,monkeypatch,tmp_path):
+@pytest.mark.parametrize("resume_uploaded",[False,True])
+def test_room_reconciliation_discovers_active_scoped_job_and_deduplicates(app,monkeypatch,tmp_path,resume_uploaded):
     from decompnet.app import room_reconcile
     client,net,*_=app
-    slug='reconcile-host'
+    slug='reconcile-host-resume' if resume_uploaded else 'reconcile-host'
     with net.store.tx() as db:
         db.execute("INSERT INTO projects(slug,root,config) VALUES(?,?,'{\"kind\":\"rom\"}')",(slug,str(tmp_path)))
     entered=threading.Event();release=threading.Event()
     from types import SimpleNamespace
     room=SimpleNamespace()
     net.rooms[slug]=room
-    monkeypatch.setattr(room_reconcile,'snapshot',lambda _: {'active':True,'members':{},'results':{}})
+    monkeypatch.setattr(room_reconcile,'snapshot',lambda _: {'active':True,'members':{},'results':{'saved':{'status':'queued'}} if resume_uploaded else {}})
     def work(room,log):
         entered.set()
         while not release.wait(.01):log.check_cancel()
         return {'active':False,'members':{},'results':{}}
     monkeypatch.setattr(room_reconcile,'run',work)
     try:
-        first=client.post('/api/collab/matches',json={'slug':slug,'reconcile':True},headers={'X-Decomp':'1'})
+        first=(client.get('/api/collab/matches?slug='+slug) if resume_uploaded else
+               client.post('/api/collab/matches',json={'slug':slug,'reconcile':True},headers={'X-Decomp':'1'}))
         assert first.status_code==200
-        identity=first.json()['job']
+        identity=first.json()['reconcile_job' if resume_uploaded else 'job']
         assert entered.wait(2)
         second=client.post('/api/collab/matches',json={'slug':slug,'reconcile':True},headers={'X-Decomp':'1'})
         assert second.json()['job']==identity

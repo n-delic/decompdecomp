@@ -573,3 +573,19 @@ it, so a destructor cannot wait for that daemon to release it. Normal worker
 teardown still closes the reader. A synthetic child process previously hung at
 exit with a daemon holding that lock; it now exits normally. This does not bypass
 writer commits or the application's graceful worker shutdown.
+
+### Room reconciliation uploads and host verification
+
+Updated room clients upload up to four fresh bundles concurrently and do not wait
+for compilation before sending the remaining inventory. The host acknowledges only
+after source, header/compiler evidence and queue references are saved. Uploaded
+submissions verify independently of client connections, with four host checks
+shared across all rooms/clients. Reopening an active room resumes its persisted
+queued or interrupted in-flight submissions. A host Stop stops queue dispatch;
+already-running checks can finish, and uploaded evidence remains available.
+
+The host still validates requested ownership/target identity, registered compiler
+settings and fresh linked bytes before publishing any match. The older synchronous
+apply route remains compatible. Inventory pages use one bounded target query;
+progress polling does not rewrite unchanged queue state. Clients and host both
+need this version for queued uploads.
