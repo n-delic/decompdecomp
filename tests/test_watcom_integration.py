@@ -60,13 +60,21 @@ def test_setting_watcom_as_the_default_keeps_its_namespace_and_changes_family_fl
     (tmp_path / "config/v/functions.json").write_text(json.dumps({"format": "LE" if dos else "PE"}))
     (tmp_path / "tools").mkdir()
     cfg = tmp_path / "tools/configure.py"
-    cfg.write_text('MSVC_VERSION = "6.0"\nCL_FLAGS = ["/c", "/O2"]\n')
+    cfg.write_text('MSVC_VERSION = "6.0"\nCL_FLAGS = ["/c", "/O2"]\nLTCG = True\n')
     scratch.set_own_compiler(tmp_path, {"version": "v", "compiler": "MSVC/6.0"}, "Watcom/watcom-copy-c-123", ["src/a.c"])
     assert 'MSVC_VERSION = "watcom-copy-c-123"' in cfg.read_text()
     assert '"-3r"' in cfg.read_text() and '"/O2"' not in cfg.read_text()
+    assert 'LTCG = False' in cfg.read_text()
     assert json.loads((tmp_path / ".decomp.wtf.json").read_text())["compiler"] == "Watcom/watcom-copy-c-123"
     assert ("-bt=dos4g" if dos else "-bt=nt") in cfg.read_text()
     assert scratch.compiler_id("watcom-copy-c-123") == "Watcom/watcom-copy-c-123"
+
+
+def test_switching_one_source_to_watcom_clears_msvc_flags(tmp_path):
+    (tmp_path / 'config/v').mkdir(parents=True)
+    scratch.set_file_flags(tmp_path, 'v', 'src/a.c', ['/Oy-'])
+    scratch.set_file_compiler(tmp_path, 'v', 'src/a.c', 'Watcom/watcom-copy-c-123', 'MSVC/6.0')
+    assert scratch.file_flags(tmp_path, 'v').get('src/a.c') is None
 
 
 @pytest.mark.parametrize("language", ["c", "cpp"])

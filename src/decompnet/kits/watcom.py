@@ -36,6 +36,8 @@ class Watcom(Kit):
     files = ("BINNT/WCC386.EXE",)
     places = ("WATCOM",)
     known = KNOWN
+    known_files = ("BINW/WCC386.EXE", "BINB/WCC386.EXE",
+                   "BINW/WPP386.EXE", "BINB/WPP386.EXE")
 
     def locate(self, folder: Path) -> Path | None:
         """A mounted CD or an installed root, ignoring the case of the WATCOM directory too."""
@@ -83,7 +85,9 @@ class Watcom(Kit):
         compilers = self.compilers(folder)
         if not compilers:
             return "No usable compiler body and headers: check BINB/BINW and H, or reinstall your own copy."
-        return "; ".join(c.name for c in compilers) + "; Windows PE / flat DOS LE; choose the game's exact compiler build."
+        return (super().verify(folder) + "; " + "; ".join(c.name for c in compilers)
+                + "; Windows PE / flat DOS LE; use your own licensed Watcom 10.0a/10.5 installation or media, "
+                  "and choose the game's exact compiler build.")
 
 
 WATCOM = Watcom()

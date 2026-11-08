@@ -103,7 +103,8 @@ class Linear:
         offsets = struct.unpack_from(f"<{total + 1}I", self.original, table)
         if offsets[0] or any(b < a for a, b in zip(offsets, offsets[1:])):
             raise ValueError("The LE fixup page table is invalid.")
-        if records + offsets[-1] > self.at + self.word(112):
+        import_modules = self.word(112)
+        if import_modules and records + offsets[-1] > self.at + import_modules:
             raise ValueError("The LE fixup records overlap another table.")
         self._slice(records, offsets[-1])
         mapped = {number: (obj, local) for number, obj, local, _, _, _ in self.pages}

@@ -2256,6 +2256,9 @@ def set_file_compiler(root: Path, version: str, source: str, compiler: str, defa
     if compiler_version(compiler) != compiler_version(default):
         found[source] = compiler_version(compiler)
     _write_compilers(compilers_file(root, version), found)
+    if compiler_version(compiler).startswith("watcom-"):
+        set_file_flags(root, version, source, [flag for flag in file_flags(root, version).get(source, [])
+                                               if not flag.startswith("/")])
 
 
 def file_ranges(root: Path, version: str) -> dict[str, list[tuple[int, int]]]:
@@ -2281,6 +2284,8 @@ def set_own_compiler(root: Path, manifest: dict, compiler: str, sources: list[st
         dos = info.exists() and json.loads(info.read_text(encoding="utf-8")).get("format") == "LE"
         flags = ["-bt=dos4g" if dos else "-bt=nt", "-mf", "-3r", "-ox"] if new.startswith("watcom-") else ["/nologo", "/c", "/O2", "/W3", "/GX"]
         text = re.sub(r"^CL_FLAGS = \[[^\]]*\]", f"CL_FLAGS = {json.dumps(flags)}", text, count=1, flags=re.M)
+        if new.startswith("watcom-"):
+            text = re.sub(r"^LTCG = (?:True|False)", "LTCG = False", text, count=1, flags=re.M)
     cfg.write_text(text, encoding="utf-8")
     (root / ".decomp.wtf.json").write_text(json.dumps({**manifest, "compiler": compiler}, indent=2), encoding="utf-8")
     return [path.relative_to(root).as_posix(), "tools/configure.py", ".decomp.wtf.json"]
@@ -2892,6 +2897,9 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     ensure_ghidra(log)
     pe = read_pe(game.read_bytes())
     modules, left_out = ([], []) if dos else find_modules(game, pe)
+    if watcom and modules:
+        raise ForkError("This Watcom game's DLLs may use different compilers. Importing them with the main "
+                        "program's Watcom build could give false matches; module compiler selection is not supported yet.")
     if modules or left_out:
         log(f"the game's own DLLs beside {game.name}: {', '.join(m.rel for m in modules) or 'none'}")
     for line in left_out_lines(left_out):
