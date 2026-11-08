@@ -11,10 +11,13 @@ Object.assign(ctx,{setTimeout,clearTimeout});vm.createContext(ctx);vm.runInConte
 (async()=>{
  const load=ctx.refreshRepositorySetup();
  resolve({folder:'/save',root:'',repository:false,portable:true,checkpoint:false,linked:true,origin:false});await load;
+ for(const id of ['repositoryAutoCommitGroup','repositoryScoreCommitGroup','repositoryAutoPushGroup','repositoryPublish'])assert.equal($(id).hidden,true,`${id} stays hidden without Git`);
  assert.equal($('repositoryInit').hidden,false);assert.equal($('repositoryAutoCommit').disabled,false);
  $('saveFolder').value='/new';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,true);assert.match($('repositorySetupState').textContent,/Save now/);
  $('saveFolder').value='/save';$('saveFolder').oninput();assert.equal($('repositoryInit').disabled,false);
  const init=$('repositoryInit').onclick();await init;assert.equal(posted.action,'init');assert.equal(finish,1);assert.equal($('repositoryOriginGroup').hidden,false);
+ assert.equal($('repositoryAutoCommitGroup').hidden,false);assert.equal($('repositoryScoreCommitGroup').hidden,false);
+ assert.equal($('repositoryAutoPushGroup').hidden,true);assert.equal($('repositoryPublish').hidden,true);
  ctx.renderRepositorySetup({folder:'/save',root:'/save',repository:true,portable:true,checkpoint:true,linked:true,origin:false,github_create:true});
  $('repositoryGithubOwner').value='person';$('repositoryGithubName').value='progress';$('repositoryGithubVisibility').value='public';
  await $('repositoryGithubGo').onclick();
@@ -22,7 +25,12 @@ Object.assign(ctx,{setTimeout,clearTimeout});vm.createContext(ctx);vm.runInConte
  update(['No old project logs'],{});
  ctx.S.slug='other';ctx.S.ov={save_folder:'/other'};const next=ctx.refreshRepositorySetup();resolve({folder:'/other',root:'/other',repository:true,portable:true,checkpoint:true,linked:true,origin:true});await next;
  assert.equal($('repositoryOriginGroup').hidden,true);assert.equal($('repositoryAutoCommit').disabled,false);
+ assert.equal($('repositoryAutoPushGroup').hidden,false);assert.equal($('repositoryPublish').hidden,false);
+ $('saveFolder').value='/unconfirmed';$('saveFolder').oninput();
+ for(const id of ['repositoryAutoCommitGroup','repositoryScoreCommitGroup','repositoryAutoPushGroup','repositoryPublish'])assert.equal($(id).hidden,true,'hide settings for an unsaved destination');
+ $('saveFolder').value='/other';$('saveFolder').oninput();assert.equal($('repositoryAutoPushGroup').hidden,false);
  ctx.renderRepositorySetup({folder:'/source',root:'/source',repository:true,portable:false,checkpoint:true,linked:false,origin:false});assert.equal($('repositoryOriginGo').disabled,false);
+ assert.equal($('repositoryAutoCommitGroup').hidden,true);assert.equal($('repositoryScoreCommitGroup').hidden,true);
  update(['Old project secret'],{});assert.doesNotMatch($('repositorySetupLog').textContent,/Old project/);
 await loadingRegression();
 await stalePathAndTimeoutRegression();
@@ -46,6 +54,7 @@ async function loadingRegression() {
   // A folder typed or picked before the status response arrives belongs to the user.
   context.S.slug='second';context.S.ov={overview_pending:true};
   const second=context.refreshRepositorySetup();
+  for(const id of ['repositoryAutoCommitGroup','repositoryScoreCommitGroup','repositoryAutoPushGroup','repositoryPublish'])assert.equal(field(id).hidden,true,'hide previous project settings while loading');
   field('saveFolder').value='/new/choice';field('saveFolder').oninput();
   pending.shift()(state('/remembered/second'));await second;
   assert.equal(field('saveFolder').value,'/new/choice');
@@ -209,3 +218,6 @@ async function stalePathAndTimeoutRegression() {
   context.renderRepositorySetup(state('old'));
   assert.equal(get('repositorySetupState').textContent,'Git repository: /v-rally');
 }
+
+const markup=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
+for(const id of ['repositoryAutoCommitGroup','repositoryScoreCommitGroup','repositoryAutoPushGroup','repositoryPublish'])assert.match(markup,new RegExp('id="'+id+'" hidden'),'Git settings must be hidden before the first status response');

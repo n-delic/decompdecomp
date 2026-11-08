@@ -2067,3 +2067,16 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .background-feedback > p { margin:0; }
 .background-feedback .workbar { width:140px; flex:0 0 140px; margin:0; height:3px; }
 .background-feedback > .err-msg, .background-feedback > .joblog { flex-basis:100%; }
+
+/* Git options appear only after the save destination has a repository. */
+.repository-auto-commit[hidden], .repository-publish[hidden] { display:none; }
+.repository-sync-heading { margin-bottom:12px; }
+.repository-auto-commit { margin:0; padding:18px 0; gap:8px; }
+.repository-auto-commit > .check { display:flex; align-items:start; gap:10px; font-weight:600; line-height:1.5; }
+.repository-auto-commit > .check input { flex:none; margin-top:3px; }
+.repository-auto-commit > p { margin:0 0 0 28px; max-width:65ch; font-size:12px; line-height:1.6; }
+.repository-auto-commit > .field { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-left:28px; font-size:12px; }
+.repository-auto-commit > .field input { width:95px; }
+.repository-auto-commit > button { margin-left:28px; }
+#repositoryInit { margin:4px 0 16px; }
+#repositoryOriginGroup { padding:16px 0; border-bottom:1px solid var(--line-soft); }

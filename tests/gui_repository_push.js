@@ -79,11 +79,11 @@ async function reconnect({failure=false}={}) {
 function modes() {
   const steering=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/steering.js'),'utf8');
   const block=steering.slice(steering.indexOf('  $("saveTitle").textContent'),steering.indexOf('  renderKnowledge();'));
-  const els={},ctx={$:id=>els[id]??={},ov:{kind:'fork'},S:{slug:'game'},refreshRepositorySetup(){},loadRepositoryFolder(){},renderRepositoryAutoCommit(){},refreshRepositoryPush(){}};
+  const els={repositoryAutoCommitGroup:{hidden:true},repositoryScoreCommitGroup:{hidden:true}},ctx={$:id=>els[id]??={},ov:{kind:'fork'},S:{slug:'game'},refreshRepositorySetup(){},loadRepositoryFolder(){},renderRepositoryAutoCommit(){},refreshRepositoryPush(){}};
   vm.createContext(ctx);vm.runInContext(block,ctx);
   assert.equal(els.repositorySync.hidden,false);assert.equal(els.repositoryAutoCommitGroup.hidden,true);assert.equal(els.repositorySyncActions.hidden,true);
   assert.match(els.repositorySyncTitle.textContent,/Push your project/);
   ctx.ov={kind:'rom'};vm.runInContext(block,ctx);
-  assert.equal(els.repositoryAutoCommitGroup.hidden,false);assert.equal(els.repositorySyncActions.hidden,false);
+  assert.equal(els.repositoryAutoCommitGroup.hidden,true,'overview cannot reveal Git settings before setup confirms a repository');assert.equal(els.repositorySyncActions.hidden,false);
 }
 (async()=>{modes();await run();await run({failure:true});await run({switchProject:true});await reconnect();await reconnect({failure:true});})().catch(e=>{console.error(e);process.exit(1);});

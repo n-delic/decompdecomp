@@ -107,12 +107,11 @@ function renderSteering(ov) {
   $("saveAbout").hidden = ov.kind === "fork";
   $("saveAboutFork").hidden = ov.kind !== "fork";
   $("repositorySync").hidden = false;
-  $("repositoryAutoCommitGroup").hidden = ov.kind === "fork";
-  $("repositoryScoreCommitGroup").hidden = ov.kind === "fork";
+  if (typeof renderRepositoryControls === "function") renderRepositoryControls();
   $("repositorySyncActions").hidden = ov.kind === "fork";
   $("repositorySyncHelp").hidden = ov.kind === "fork";
   $("repositorySyncTitle").textContent = ov.kind === "fork" ? "Push your project commits" : "Version history and sharing";
-  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Keep local progress commits, automatically commit new matches, and push them when ready.";
+  $("repositorySyncAbout").textContent = ov.kind === "fork" ? "Review and push existing project commits to origin. Uncommitted changes stay local." : "Keep a local history of your work. Connect a remote to share commits.";
   loadRepositoryFolder(S.slug);
   if (typeof refreshRepositorySetup === "function") refreshRepositorySetup();
   refreshRepositoryPush();
