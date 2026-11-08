@@ -868,6 +868,10 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Portable Windows app.** A ZIP bundles a relocatable `decompdecomp.exe`, Python and app
+  dependencies. No app installation is needed; Microsoft window prerequisites must already be
+  available. CI extracts the archive to a different path and checks the EXE and server imports.
+
 - **Separate fork data.** Installed copies default to `Decomp-RetroReversing` in the user home;
   checkouts and separate source handoffs use `Decomp-RetroReversing-dev`. Explicit `DECOMP_HOME`
   overrides still work. Upstream data is never selected or migrated automatically.

@@ -654,7 +654,15 @@ decomp
 ```
 
 The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
-brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp-RetroReversing` folder.
+brings back a window closed while helpers work.
+
+For a portable Windows download, extract `decompdecomp-<version>-windows-x64-portable.zip`
+and open `decompdecomp.exe`. Keep its bundled `python` and `packages` folders beside it;
+no app installation or administrator access is needed. The native window requires .NET
+Framework 4.8 and Microsoft Edge WebView2 Runtime. Projects use
+`%USERPROFILE%\Decomp-RetroReversing` (or your explicit `DECOMP_HOME`), so move that
+folder too when moving your work. The setup download can install missing Microsoft prerequisites.
+Free tools use Windows builds where available. Projects stay in your Windows `Decomp-RetroReversing` folder.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and

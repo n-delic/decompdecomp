@@ -57,6 +57,8 @@ def _shortcut_app_id(shortcut: Path) -> None:
 def install_launcher() -> str:
     """Put decompdecomp in the apps menu (a .desktop entry and its icon). A development copy gets none: it's started
     from its checkout."""
+    if os.environ.get("DECOMP_PORTABLE") == "1":
+        return "the portable app is available through decompdecomp.exe; no shortcuts were installed"
     if edition.DEV:
         return "a development copy gets no launcher: run it with `uv run decomp` in the checkout"
     if sys.platform == "darwin" and os.environ.get("DECOMP_PACKAGE") == "macos":
