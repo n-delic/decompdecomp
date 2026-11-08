@@ -208,11 +208,23 @@ class GuiMixin:
         proj = self._project(slug)
         subset = " AND f.id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""
         args = (proj['id'], json.dumps(function_ids)) if function_ids is not None else (proj['id'],)
-        rows = self.project_store(proj['id']).all(
+        query = (
             "SELECT f.id, f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
             "f.readable, "
             "c.agent_id, f.matched_agent_id FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
-            f"WHERE f.project_id=? AND f.{IN_BUILD}" + subset + " ORDER BY f.vram, f.unit, f.id", *args)
+            f"WHERE f.project_id=? AND f.{IN_BUILD}" + subset + " ORDER BY f.vram, f.unit, f.id")
+        store = self.project_store(proj['id'])
+        if quick:
+            # SQLite releases/reacquires the GIL for each stepped row. With busy
+            # background Python workers, thousands of handoffs can dominate this
+            # metadata-only read. Aggregate in SQLite and cross the boundary once.
+            columns = ('id','name','vram','size','n_insns','status','best_score','attempts',
+                       'unit','matched_at','meta','readable','agent_id','matched_agent_id')
+            packed = store.one('SELECT json_group_array(json_array(' + ','.join(columns) +
+                               ')) AS rows FROM (' + query + ')', *args)
+            rows = [dict(zip(columns, row)) for row in json.loads(packed['rows'])]
+        else:
+            rows = store.all(query, *args)
         from ..project_labels import label
         rows = label(self, rows, {'agent':'agent_id', 'matched_by':'matched_agent_id'})
         link = self.links.get(slug)
