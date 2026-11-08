@@ -11,7 +11,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS%20Intel%20%2F%20Apple%20Silicon-15140f?style=flat-square">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-15140f?style=flat-square">
   <a href="https://discord.gg/hhEm3zZagB"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
-  <img alt="Agents: Claude Code, Codex, Cursor, Kimi, opencode, Antigravity, ZCode, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Cursor%20%C2%B7%20Kimi%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20API%20models-157a49?style=flat-square">
+  <img alt="Agents: Claude Code, Codex, Cursor, Kimi, opencode, Antigravity, ZCode, Oh My Pi, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Cursor%20%C2%B7%20Kimi%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20Oh%20My%20Pi%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
 
 decompdecomp is an app that decompiles games you own. AI agents write C or C++ for each function of the game. The
@@ -47,6 +47,20 @@ already at the destination is converted before setup instead of being treated as
 This works for public projects whose declared SHA-1 is the original file's hash. dtk and configure projects do not
 declare a game SHA-1 in their setup metadata yet, so select their game files manually. PlayStation splat projects
 often hash an extracted file rather than the whole disc; a library of disc images will not match that hash.
+
+## Multiple Claude accounts
+
+In **Agents & models → Claude Code → Additional accounts**, click **Add account** to open the side drawer and label
+each Claude subscription account. The label only helps you recognize it in decompdecomp; it does not change your
+Claude login. Select an existing account and use **Save label** to rename it. Leave the configuration directory
+empty to give it a separate directory, or enter an existing one. Run the command shown in a terminal and
+sign in with `/login`. When starting helpers, choose their account. Start another group to use another account.
+Helpers keep their chosen account when they restart, and wait for its usage limit to reset.
+
+The accounts panel shows tokens and reported model cost from finished sessions across your projects. This is not
+your subscription bill or the allowance remaining; usage outside decompdecomp is not counted. The default sign-in
+keeps working as before. Named accounts refuse API-key, token and cloud-provider overrides that would select a
+different login. Removing an account stops its helpers but keeps its login files and usage history.
 
 ## Install
 
@@ -155,8 +169,8 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
    Demo Quest 64. For an N64, PlayStation or PlayStation 2 game, the app offers to install all of that console's
    compilers first. Then it tests which one built the game. Tick the box only if you accept the proprietary ones.
 2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
-   Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI and ZCode CLI. Run several, and different models: they work on different
-   functions at the same time.
+   Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI and Oh My Pi. Run several, and different
+   models: they work on different functions at the same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
    the easy ones for free, before any agent starts.
 4. **Export** (in the project's header). You get a decomp project that builds your game again, byte for byte.
