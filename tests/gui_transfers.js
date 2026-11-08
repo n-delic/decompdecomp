@@ -182,6 +182,22 @@ async function autopilotProgressChecks() {
   assert.equal(get('apBar').className,'workbar');
   assert.equal(get('apBar')['aria-valuenow'],undefined);
   assert.match(get('apSub').textContent,/Fingerprinting.*Total not yet known/);
+  const repairing={...ov,twins:null,autopilot:{state:'running',phase:'repairs',matched:3,tried:40,total:40,repair_done:2,repair_total:8}};
+  ctx.renderAutopilot(repairing);
+  assert.match(get('apTitle').textContent,/repairing saved C/);
+  assert.match(get('apSub').textContent,/2 of 8.*40 machine drafts/);
+  assert.equal(get('apBar')['aria-valuenow'],'2');
+  assert.equal(get('apBar').style['--work-progress'],'25%');
+  assert.equal(get('apBtn').textContent,'Stop');
+  // Reopening/refreshing uses the same server-owned phase and counters.
+  ctx.renderAutopilot(repairing);
+  assert.match(get('apSub').textContent,/2 of 8/);
+  ctx.api=async (_url,options)=>{action=options.body.action;return {...repairing,autopilot:{...repairing.autopilot,state:'stopped'}};};
+  await get('apBtn').onclick();
+  assert.equal(action,'stop');
+  assert.equal(get('apBar').hidden,true);
+  assert.match(get('apSub').textContent,/2 saved-source repairs checked/);
+
 }
 checks().then(autopilotProgressChecks).catch(error=>{console.error(error);process.exitCode=1;});
 

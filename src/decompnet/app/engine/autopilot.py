@@ -11,6 +11,7 @@ import os
 import threading
 import time
 from contextlib import nullcontext
+from contextvars import ContextVar
 from itertools import chain
 
 from ... import compiler, m2cfix, scoring, seeds, toolchains
@@ -20,6 +21,8 @@ from ...project import compiler_for, unknown_compiler_message
 from ...repair_feedback import trial as repair_trial
 from ..draft_context import candidate_context
 from ..purpose_work import Executor
+
+_draft_pipeline=ContextVar('autopilot_draft_pipeline',default=False)
 
 
 class AutopilotMixin:
@@ -139,10 +142,17 @@ class AutopilotMixin:
                 outcome = "fail"
             finally:
                 if acquired:background.release()
-            state["tried"] += 1
-            if outcome in ("match", "near"):
-                state[{"match": "matched", "near": "near"}[outcome]] += 1
+            counter='repair_done' if state['phase']=='repairs' else 'tried'
+            with queue_lock:
+                state[counter] = state.get(counter,0)+1
+                if outcome in ("match", "near"):
+                    state[{"match": "matched", "near": "near"}[outcome]] += 1
+                    if state['phase']=='repairs' and outcome=='match':
+                        state['repair_matched']=state.get('repair_matched',0)+1
 
+        from ..autopilot_claims import Batch
+        from ..autopilot_claims import scope as claim_scope
+        claim_batch=Batch()
         remaining = iter(ids)
         queue_lock = threading.Lock()
         def lane():
@@ -152,12 +162,14 @@ class AutopilotMixin:
             from ..trial_bookkeeping import scope as bookkeeping
             # Keep bounded preparation/output caches private to this worker across
             # functions. Session.prepare rechecks exact include bytes on every use.
-            with session(), m2c_sessions.scope(state['_foreground']), streaming(self), bookkeeping():
+            with session(), m2c_sessions.scope(state['_foreground']), streaming(self), bookkeeping(), claim_scope(claim_batch):
                 while not state['stop'].is_set():
                     with queue_lock:
                         fid = next(remaining, None)
                     if fid is None:return
-                    one(fid)
+                    token=_draft_pipeline.set(True)
+                    try:one(fid)
+                    finally:_draft_pipeline.reset(token)
                     from ..restore_effects import checkpoint
                     checkpoint()
         try:
@@ -165,19 +177,34 @@ class AutopilotMixin:
             if count:
                 with Executor(max_workers=count, purpose='Autopilot repair search', project=slug, stop=state['stop'].set) as pool:
                     list(pool.map(lambda _: lane(), range(count)))
+                if not state['stop'].is_set() and self.is_rom(proj):
+                    proj=self.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?',proj['id'])
+                    # Saved-source repair must not hold up the first machine draft
+                    # of thousands of other functions. Re-read eligibility afterward.
+                    repairs=[row['id'] for row in self.project_store(proj['id']).all(
+                        "SELECT id FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
+                        "AND id IN (SELECT value FROM json_each(?)) ORDER BY n_insns,vram",proj['id'],json.dumps(ids))]
+                    state.update(phase='repairs',repair_total=len(repairs),repair_done=0)
+                    remaining=iter(repairs)
+                    try_one=self._autopilot_repair_one
+                    if repairs:
+                        with Executor(max_workers=min(count,len(repairs)),purpose='Autopilot saved-source repair',
+                                      project=slug,stop=state['stop'].set) as pool:
+                            list(pool.map(lambda _: lane(),range(min(count,len(repairs)))))
         finally:
             state["state"] = "stopped" if state["stop"].is_set() else "done"
             state["finished_at"] = time.time()
             with self.project_store(proj['id']).tx() as db:
                 cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
                 cfg["autopilot"] = {k: state.get(k) for k in ("total", "tried", "matched", "near", "twins", "started_at",
-                                                              "finished_at", "no_drafts")}
+                                                              "finished_at", "no_drafts", "repair_total", "repair_done", "repair_matched")}
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
             drafts = state["matched"] - state.get("twins", 0)
             if drafts:  # (twins announce their own)
                 with self.project_store(proj['id']).tx() as db:
+                    method='machine drafts and saved-source repairs' if state.get('repair_matched') else 'machine drafts'
                     self._event(db, proj["id"], agent.id, "autopilot",
-                                f"{drafts} of {state['tried']} functions matched from machine drafts")
+                                f"{drafts} of {state['tried']} functions matched from {method}")
 
     def on_improvement(self, proj, function_id: int) -> None:
         from ..restore_effects import defer
@@ -267,20 +294,25 @@ class AutopilotMixin:
         with self.progress.judging(proj["slug"], synchronize=False) if hasattr(self, "progress") else nullcontext():
             return AutopilotMixin._autopilot_one_work(self, agent, proj, fid)
 
-    def _autopilot_one_work(self, agent, proj, fid: int) -> str:
+    def _autopilot_repair_one(self, agent, proj, fid):
+        with self.progress.judging(proj['slug'],synchronize=False) if hasattr(self,'progress') else nullcontext():
+            return self._autopilot_one_work(agent,proj,fid,repair_only=True)
+
+    def _autopilot_one_work(self, agent, proj, fid: int, *, repair_only=False) -> str:
         now = time.time()
         store = self.project_store(proj['id'])
-        identities = {} if store is self.store else {
-            'machine_ids': self._machine_agent_ids(), 'nonexclusive_ids': self._nonexclusive_agent_ids()}
+        from .. import autopilot_claims
+        identities = autopilot_claims.identities(self,store)
         with store.tx() as db:
-            self._expire_claims(db, **identities)
+            autopilot_claims.expire(self,db,fid,identities)
             fn = db.execute("SELECT * FROM functions WHERE id=?", (fid,)).fetchone()
             if fn is None or fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fid,)).fetchone():
                 return "skip"
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
         try:
             from ..return_repair_autopilot import run as return_repair
-            if return_repair(self, agent, proj, fn):
+            if repair_only:return 'match' if return_repair(self,agent,proj,fn) else 'skip'
+            if not _draft_pipeline.get() and return_repair(self, agent, proj, fn):
                 return 'match'
             ctx = self._context(proj["id"], fn["unit"])
             plan, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
@@ -323,25 +355,28 @@ class AutopilotMixin:
                 return 'fail'
             # (its compiler named in it: the same draft is worth judging again with another compiler)
             note = f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
-            candidates = [('raw_m2c', f"{note}{seeds.M2C_MACROS}\n{draft}\n")]
-            from ..loop_storage_shapes import variants as loop_shapes
-            for family,source in loop_shapes(draft,fn['name'],ctx['header'],proj['arch'])[:2]:
-                candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
-            if (seeds.m2c_target(toolchain) or "").startswith("mips"):
-                # next to m2c's own draft, the same with its usual mistakes undone (m2cfix.py): few lines change
-                refined = m2cfix.refine_draft(draft, fn["name"], target_asm)
-                if refined:
-                    candidates.append(('refined_m2c', f"{note}{seeds.M2C_MACROS}\n{refined}\n"))
-            from ..capture_followup_repairs import callee_evidence
-            from ..recent_capture_repairs import variants as captured_variants
-            known_callees=callee_evidence(self,proj,fn,draft)
-            for family,source in captured_variants(draft,fn['name'],'mips' if (seeds.m2c_target(toolchain) or '').startswith('mips') else '',target_asm,ctx['header'],known_callees):
-                if family in ('overlay_callee_alias','argument_home_slot','untouched_argument_forwarding'):
+            def draft_candidates():
+                yield 'raw_m2c', f"{note}{seeds.M2C_MACROS}\n{draft}\n"
+                candidates = []
+                from ..loop_storage_shapes import variants as loop_shapes
+                for family,source in loop_shapes(draft,fn['name'],ctx['header'],proj['arch'])[:2]:
                     candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
-            for canonical in (False,True):
-                if array := m2cfix.stack_array(draft,fn['name'],canonical):
-                    family = 'stack_array_indexed' if canonical else 'stack_array'
-                    candidates.append((family, f"{note}{seeds.M2C_MACROS}\n{array}\n"))
+                if (seeds.m2c_target(toolchain) or "").startswith("mips"):
+                    # next to m2c's own draft, the same with its usual mistakes undone (m2cfix.py): few lines change
+                    refined = m2cfix.refine_draft(draft, fn["name"], target_asm)
+                    if refined:
+                        candidates.append(('refined_m2c', f"{note}{seeds.M2C_MACROS}\n{refined}\n"))
+                from ..capture_followup_repairs import callee_evidence
+                from ..recent_capture_repairs import variants as captured_variants
+                known_callees=callee_evidence(self,proj,fn,draft)
+                for family,source in captured_variants(draft,fn['name'],'mips' if (seeds.m2c_target(toolchain) or '').startswith('mips') else '',target_asm,ctx['header'],known_callees):
+                    if family in ('overlay_callee_alias','argument_home_slot','untouched_argument_forwarding'):
+                        candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
+                for canonical in (False,True):
+                    if array := m2cfix.stack_array(draft,fn['name'],canonical):
+                        family = 'stack_array_indexed' if canonical else 'stack_array'
+                        candidates.append((family, f"{note}{seeds.M2C_MACROS}\n{array}\n"))
+                yield from candidates
             def local_candidates():
                 # Lazy fallback: successful normal drafts never pay for another m2c invocation.
                 # Imported projects use their file-context drafting route; forwarding their saved
@@ -377,7 +412,7 @@ class AutopilotMixin:
             from ..compiler_shape_repairs import machine_draft_copies
             from ..narrow_store_repairs import machine_drafts as narrow_drafts
             outcomes, seen = [], set()
-            for family, source in chain(narrow_drafts(machine_draft_copies(chain(candidates, local_candidates()), fn['name'], ctx['header']),fn['name'],ctx['header'],proj['arch']), recovery_candidates()):
+            for family, source in chain(narrow_drafts(machine_draft_copies(chain(draft_candidates(), local_candidates()), fn['name'], ctx['header']),fn['name'],ctx['header'],proj['arch']), recovery_candidates()):
                 if source in seen:
                     continue
                 seen.add(source)
@@ -389,7 +424,9 @@ class AutopilotMixin:
                     report['compiled'] = True
                     report['family'] = family
                     report['compiled_source'] = source
-                cand, verdict, _ = self._evaluate(fn, proj, result.obj) if result.ok else (None, None, None)
+                from .judging import search_evaluation
+                with search_evaluation():
+                    cand, verdict, _ = self._evaluate(fn, proj, result.obj) if result.ok else (None, None, None)
                 if cand is None:
                     if result.ok:
                         draft_reports.failure(report, 'link', family, 'Compiled C could not be evaluated against this target; review its symbols and data mapping.')
@@ -411,9 +448,10 @@ class AutopilotMixin:
                     break
             report['complete'] = True
             draft_reports.save(self, fid, report, project_id=proj['id'])
-            fresh = self._function(fn['name'], proj['slug'])
-            if fresh['status'] == 'open' and fresh['best_source'] != fn['best_source'] and return_repair(self, agent, proj, fresh):
-                return 'match'
+            if not _draft_pipeline.get():
+                fresh = store.one('SELECT * FROM functions WHERE id=? AND project_id=?',fid,proj['id'])
+                if fresh is not None and fresh['status'] == 'open' and fresh['best_source'] != fn['best_source'] and return_repair(self, agent, proj, fresh):
+                    return 'match'
             return min(outcomes or ['fail'], key=("match", "near", "far", "skip", "fail").index)
         finally:
             with self.project_store(proj['id']).tx() as db:

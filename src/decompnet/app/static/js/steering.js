@@ -614,6 +614,11 @@ function renderAutopilot(ov) {
     if (!(Number(progress.total) > 0)) $('apSub').textContent += ' · Total not yet known';
     $('apSub').textContent += ` · ${(tw?.matched || 0).toLocaleString()} verified matches${perm}`;
     $("apBtn").textContent = "Stop";
+  } else if (running && ap.phase === 'repairs') {
+    $("apTitle").textContent = `Autopilot: repairing saved C · ${ap.matched.toLocaleString()} matched for free`;
+    $("apSub").textContent = `${(ap.repair_done || 0).toLocaleString()} of ${(ap.repair_total || 0).toLocaleString()} checked after ${ap.tried.toLocaleString()} machine drafts. Agents work alongside it.${perm}`;
+    updateWorkProgress({_workBar: $('apBar'), _workStatus: {textContent: ''}}, {phase: 'Repairing saved C', done: ap.repair_done || 0, total: ap.repair_total || 0});
+    $("apBtn").textContent = "Stop";
   } else if (running) {
     $("apTitle").textContent = `Autopilot: trying each function's machine draft · ${ap.matched.toLocaleString()} matched for free`;
     $("apSub").textContent = `${ap.tried.toLocaleString()} of ${ap.total.toLocaleString()} tried${ap.near ? ` · ${ap.near} more are 90%+ there` : ""}${ap.twins ? ` · ${ap.twins.toLocaleString()} from reused C` : ""}. Agents work alongside it.${perm}`;
@@ -627,6 +632,7 @@ function renderAutopilot(ov) {
     if (twinsDone) parts.push(`${twinsDone.toLocaleString()} from reused C`);
     if (tw && tw.asm) parts.push(`${tw.asm.toLocaleString()} copies of assembly set aside (not for agents)`);
     if (ap && ap.tried) parts.push(`${ap.tried.toLocaleString()} machine drafts tried${ap.near ? `, ${ap.near} more 90%+ there` : ""}`);
+    if (ap && ap.repair_done) parts.push(`${ap.repair_done.toLocaleString()} saved-source repairs checked`);
     if (ap && ap.no_drafts && !ap.tried) $("apTitle").textContent = "Autopilot could not try machine drafts";
     $("apSub").textContent = (parts.length ? parts.join(" · ") + ". " : "") + (ap && ap.no_drafts ? ap.no_drafts : "Run it again after agents add types and names: drafts get better.") + perm;
     $("apBtn").textContent = "Run again";
