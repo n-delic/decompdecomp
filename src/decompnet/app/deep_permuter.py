@@ -426,43 +426,53 @@ class Search(Permuter):
             options = dict(limit=None,header=header,tables=switch_tables.read(self.net,proj,fn),
                 callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,source),
                 entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
-            if pool is not None and pool.maximum and ACTIVE.get() is None:
-                self.phase = 'generating local proposals'
-                self.report(force=True)
-                def generation_check():
-                    self.check()
-                    self.report()
-                choices, generated_labels, elapsed = pool.proposal_pool().generate(args,options,generation_check)
-                labels.update(generated_labels)
-                pool.metrics.add('local_generation',elapsed)
-                self.phase = ordinary_phase
+            # A fresh winner may no longer need an earlier lifetime wrapper. Generate this
+            # small inverse pass before the broad proposal pool, sharing all ordinary budgets.
+            from . import repair_cleanup
+            cleanup = [(family, child) for family, child in repair_cleanup.variants(
+                source, fn['name'], header, proj['arch']) if child not in self.local_seen]
+            cleanup_pass = bool(cleanup)
+            if cleanup_pass:
+                choices = [child for _, child in cleanup]
+                labels.update({child: family for family, child in cleanup})
             else:
-                choices = draft_repairs.variants(*args,labels=labels,**options)
-            from . import hazard_line_repairs
-            for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
-                labels[candidate]=family
-                choices.append(candidate)
-            from . import scan_load_repairs
-            guided_scans=scan_load_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source))
-            for family,candidate in guided_scans:labels[candidate]=family
-            choices=list(dict.fromkeys([c for _,c in guided_scans]+choices))
-            from . import targeted_storage_repairs
-            for family,candidate in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source)):
-                labels[candidate]=family
-                choices.append(candidate)
-            from . import expression_recipes
-            for candidate in expression_recipes.variants(self.net, lineage.profile, source):
-                labels[candidate] = 'learned_expression'
-                choices.append(candidate)
-            stack = stack_padding_repairs.grow(source, fn['name'], proj['arch'], rows)
-            for candidate in stack:
-                labels.setdefault(candidate, 'stack_padding')
-            choices += stack
-            from . import normalization_repairs
-            normalization_repairs.extend_frame(choices, labels, source, fn['name'], proj['arch'], rows)
-            for family, candidate in permuter_local.variants(source, fn['name']):
-                labels.setdefault(candidate, family)
-                choices.append(candidate)
+                if pool is not None and pool.maximum and ACTIVE.get() is None:
+                    self.phase = 'generating local proposals'
+                    self.report(force=True)
+                    def generation_check():
+                        self.check()
+                        self.report()
+                    choices, generated_labels, elapsed = pool.proposal_pool().generate(args,options,generation_check)
+                    labels.update(generated_labels)
+                    pool.metrics.add('local_generation',elapsed)
+                    self.phase = ordinary_phase
+                else:
+                    choices = draft_repairs.variants(*args,labels=labels,**options)
+                from . import hazard_line_repairs
+                for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
+                    labels[candidate]=family
+                    choices.append(candidate)
+                from . import scan_load_repairs
+                guided_scans=scan_load_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source))
+                for family,candidate in guided_scans:labels[candidate]=family
+                choices=list(dict.fromkeys([c for _,c in guided_scans]+choices))
+                from . import targeted_storage_repairs
+                for family,candidate in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source)):
+                    labels[candidate]=family
+                    choices.append(candidate)
+                from . import expression_recipes
+                for candidate in expression_recipes.variants(self.net, lineage.profile, source):
+                    labels[candidate] = 'learned_expression'
+                    choices.append(candidate)
+                stack = stack_padding_repairs.grow(source, fn['name'], proj['arch'], rows)
+                for candidate in stack:
+                    labels.setdefault(candidate, 'stack_padding')
+                choices += stack
+                from . import normalization_repairs
+                normalization_repairs.extend_frame(choices, labels, source, fn['name'], proj['arch'], rows)
+                for family, candidate in permuter_local.variants(source, fn['name']):
+                    labels.setdefault(candidate, family)
+                    choices.append(candidate)
             for candidate in choices:self.efficiency.generated(labels.get(candidate,'local_repair'),candidate)
             families = list(dict.fromkeys(labels.get(c, 'local_repair') for c in choices))
             from . import region_repairs
@@ -486,13 +496,6 @@ class Search(Permuter):
             progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
             complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
             queue = list(dict.fromkeys(complete+[c for _,c in progressed]))
-            # Revisit scaffolding from the new winner before another broad family wave.
-            # Fresh source/build scope and the existing local_seen/cache keep this finite.
-            from . import repair_cleanup
-            cleanup = repair_cleanup.variants(source, fn['name'], header, proj['arch'])
-            for family, child in cleanup:
-                labels[child] = family
-            queue = list(dict.fromkeys([c for _, c in cleanup]+queue))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             lane = getattr(self, "parallel_lane", None)
             if lane is not None:
@@ -618,6 +621,10 @@ class Search(Permuter):
                         self.winner_diff = None
                     break
             else:
+                if cleanup_pass:
+                    # All inverses were measured/cache-checked. Resume the broad page once;
+                    # do not treat a failed cleanup as exhaustion of ordinary repair families.
+                    continue
                 detour = next((node for node in alternatives.nodes
                                if node['source'] not in detours_used and node['source'] not in expanded and node['source'] not in self.local_seen), None)
                 # Local trials are already in local_seen; allow each retained source one expansion.

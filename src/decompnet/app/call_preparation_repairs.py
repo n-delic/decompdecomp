@@ -63,6 +63,8 @@ def dispatch(source, name, header='', arch=None):
     if PREFIX in context:
         return []
     known = records(context, arch)
+    if not known:
+        return []
     result = []
     for part, _, node, callee, args, types in _calls(source, name, header):
         aggregate = [i for i,t in enumerate(types) if t in known]
@@ -76,7 +78,7 @@ def dispatch(source, name, header='', arch=None):
             continue
         if any(not re.fullmatch(IDENT+r'(?:\s*\[\s*'+IDENT+r'\s*\])?', args[i]) for i in aggregate):
             continue
-        helper = PREFIX+callee
+        helper = PREFIX+name+'_'+callee
         if re.search(r'\b'+re.escape(helper)+r'\b', context):
             continue
         params = [t+(' *' if i in aggregate else ' ')+f'arg{i}' for i,t in enumerate(types)]

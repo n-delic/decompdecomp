@@ -14,7 +14,7 @@ def test_dispatch_keeps_callee_aggregate_abi_and_uses_private_pointer_helper():
     choices = repairs.dispatch(SOURCE, 'f', HEADER, 'mips')
     assert len(choices) == 1
     candidate = choices[0][1]
-    assert 'static __inline__ void __repair_aggregate_call_send(int arg0, int arg1, Packet *arg2)' in candidate
+    assert 'static __inline__ void __repair_aggregate_call_f_send(int arg0, int arg1, Packet *arg2)' in candidate
     assert 'send(arg0, arg1, *arg2)' in candidate and '&(packet)' in candidate
     assert repairs.dispatch(candidate, 'f', HEADER, 'mips') == []
     labels = {}

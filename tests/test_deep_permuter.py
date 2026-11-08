@@ -683,7 +683,11 @@ def test_a_new_winner_revisits_one_pass_scaffolding_before_broad_search(monkeypa
     net = setup(monkeypatch)
     original = net.function()['best_source']
     improved = 'int f(int a){ int delta; do { delta=a & 1; } while(0); return delta; }'
-    monkeypatch.setattr(draft_repairs, 'variants', lambda source,*args,**kwargs:['improved'] if source==original else [])
+    generated = []
+    def generate(source,*args,**kwargs):
+        generated.append(source)
+        return ['improved'] if source==original else []
+    monkeypatch.setattr(draft_repairs, 'variants', generate)
     visited = []
     def judge(self, agent, proj, fn, source, best, fork):
         visited.append(source)
@@ -699,3 +703,27 @@ def test_a_new_winner_revisits_one_pass_scaffolding_before_broad_search(monkeypa
     result = deep_permuter.run(net,'game','f',1,10,Log())
     assert result['matched']
     assert len(visited)==2 and 'do {' not in visited[1]
+    assert generated == [original]  # cleanup precedes broad proposal generation
+
+
+def test_failed_cleanup_resumes_broad_search_without_repeating_inverse(monkeypatch):
+    net = setup(monkeypatch)
+    source = 'int f(int a){ int delta; do { delta=a & 1; } while(0); return delta; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?', (source,))
+    visited, generated = [], []
+    def generate(source,*args,**kwargs):
+        generated.append(source)
+        return ['exact']
+    monkeypatch.setattr(draft_repairs, 'variants', generate)
+    def judge(self, agent, proj, fn, source, best, fork):
+        visited.append(source)
+        if source == 'exact':
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_score=0,best_source='exact',status='matched'")
+            return 0
+        return 40
+    monkeypatch.setattr(Permuter, '_score', judge)
+    result = deep_permuter.run(net, 'game', 'f', 1, 10, Log())
+    assert result['matched'] and len(visited)==2 and visited[-1]=='exact'
+    assert len(generated)==1

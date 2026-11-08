@@ -35,7 +35,7 @@ def brief(net, proj, fn):
     scratch_hint = ''
     # Scores alone cannot identify repeated machine code. Use only measured output fingerprints.
     groups = {}
-    for source_hash, trial in pool.items():
+    for source_hash, trial in list(pool.items()):
         if trial.get('output'):
             groups.setdefault(trial['output'], []).append((source_hash, trial))
     repeated = [trials for trials in groups.values() if len(trials) > 1]
