@@ -12,11 +12,27 @@ base_project = test_progress.project
 
 
 @pytest.fixture(params=["n64", "ps1", "ps2", "psp"])
-def project(base_project, request):
+def project(base_project, request, monkeypatch):
     net, folder, judged = base_project
-    net._update_cfg("game", lambda cfg: cfg.update(platform=request.param))
+    net._update_cfg("game", lambda cfg: cfg.update(platform="ps" if request.param == "ps1" else request.param))
     net.progress.sync("game", force=True)
-    return net, folder, judged
+    chosen = folder.parent/'repository'
+    saves.save(net, 'game', chosen)
+    net._update_cfg('game', lambda cfg: cfg.update(progress_folder=str(chosen)))
+    def export(net, slug, out, log):
+        import json
+        out.mkdir(parents=True)
+        (out/'build.py').write_text('# verified test build\n')
+        (out/'build.json').write_text(json.dumps({'platform':request.param, 'image':'baserom.bin'}))
+        (out/'README.md').write_text('# Full source tree\n')
+        (out/'src').mkdir()
+        (out/'src/function.c').write_text('void function(void) {}\n')
+        (out/'baserom.bin').write_bytes(b'PRIVATE ROM')
+        (out/'assets').mkdir()
+        (out/'assets/extracted.bin').write_bytes(b'PRIVATE DATA')
+        return {'path':str(out), 'identical':True}
+    monkeypatch.setattr(net.console(net.project_row('game')), 'export_project', export)
+    return net, chosen, judged
 from .test_repository_progress import git
 
 
@@ -37,7 +53,8 @@ def test_init_checkpoint_and_origin_allow_automatic_commits(project, tmp_path):
     state = repository_setup.run(net, 'game', 'checkpoint', '', lambda line: None)
     assert state['checkpoint']
     tracked = git(folder, 'ls-tree', '-r', '--name-only', 'HEAD').splitlines()
-    assert saves.MANIFEST in tracked and '.gitignore' in tracked
+    assert 'progress/'+saves.MANIFEST in tracked and '.gitignore' in tracked
+    assert {'build.py', 'build.json', 'src/function.c'} <= set(tracked)
     assert 'private.rom' not in tracked and 'notes.txt' not in tracked
     assert match_commits.configure(net, 'game', True, str(folder))['enabled']
     remote = tmp_path/'origin.git'
@@ -77,13 +94,13 @@ def test_remembered_save_can_become_live_progress(project, tmp_path):
     target = tmp_path/'backup'
     saves.save(net, 'game', target)
     state = repository_setup.run(net, 'game', 'init', '', lambda line: None)
-    assert state['linked'] and saves.default_folder(net, 'game') == target
+    assert state['linked'] and saves.default_folder(net, 'game') == target/'progress'
     assert folder.exists()
     assert (target/'.git').is_dir()
     with net.store.tx() as db:
         db.execute("UPDATE functions SET best_source='new draft',best_score=10 WHERE name='f'")
     net.progress.sync('game', force=True)
-    assert (target/'best/f.c').read_text() == 'new draft\n'
+    assert (target/'progress/best/f.c').read_text() == 'new draft\n'
     assert not (folder/'best/f.c').exists()
 
 
@@ -261,8 +278,8 @@ def test_checkpoint_accepts_save_writer_final_newline(project, tmp_path, monkeyp
     git(target, 'config', 'user.email', 'test@example.invalid')
     state = repository_setup.run(net, 'game', 'checkpoint', '', lambda line:None)
     assert state['checkpoint'] and state['linked']
-    assert saves.default_folder(net, 'game') == target
-    assert git(target, 'show', 'HEAD:'+relative).strip() == 'good source'
+    assert saves.default_folder(net, 'game') == target/'progress'
+    assert git(target, 'show', 'HEAD:progress/'+relative).strip() == 'good source'
 
 
 
@@ -293,7 +310,7 @@ def test_checkpoint_refreshes_untouched_app_backup_after_new_progress(project,tm
     messages=[]
     state=repository_setup.run(net,'game','checkpoint','',messages.append)
     assert state['checkpoint'] and state['linked']
-    assert git(target,'show','HEAD:best/f.c')=='new agent draft'
+    assert git(target,'show','HEAD:progress/best/f.c')=='new agent draft'
     assert any('outdated' in message for message in messages)
 
 
@@ -357,5 +374,63 @@ def test_unreceipted_old_attempt_refreshes_but_unknown_edits_survive(project, tm
     else:
         state = repository_setup.run(net, 'game', 'checkpoint', '', lambda line:None)
         assert state['checkpoint'] and state['linked']
-        assert git(target, 'show', 'HEAD:best/f.c') == 'new draft'
+        assert git(target, 'show', 'HEAD:progress/best/f.c') == 'new draft'
         assert match_commits.configure(net, 'game', True, str(target))['enabled']
+
+
+def test_upgrade_keeps_history_and_origin_and_ignores_all_game_data(project, tmp_path):
+    net, root, _ = project
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'existing portable history')
+    old = git(root, 'rev-parse', 'HEAD')
+    git(root, 'remote', 'add', 'origin', str(tmp_path/'remote.git'))
+    state = repository_setup.run(net, 'game', 'init', '', lambda _:None)
+    assert state['rebuildable'] and git(root, 'rev-parse', 'HEAD') == old
+    assert git(root, 'remote', 'get-url', 'origin') == str(tmp_path/'remote.git')
+    repository_setup.run(net, 'game', 'checkpoint', '', lambda _:None)
+    assert git(root, 'rev-parse', 'HEAD^') == old
+    tracked = git(root, 'ls-files').splitlines()
+    assert 'decompdecomp.json' not in tracked and 'progress/decompdecomp.json' in tracked
+    for name in ('baserom.bin', 'assets/extracted.bin', 'odd-game.unknown', 'asm/raw.s', 'build/output.bin'):
+        assert git(root, 'check-ignore', '--no-index', name) == name
+    (root/'src/function.c').write_text('a manual source edit\n')
+    repository_setup.run(net, 'game', 'checkpoint', '', lambda _:None)
+    assert git(root, 'show', 'HEAD:src/function.c') == 'void function(void) {}'
+    assert (root/'src/function.c').read_text() == 'a manual source edit\n'
+
+
+def test_failed_full_rebuild_never_falls_back_to_a_progress_repository(project, monkeypatch):
+    net, root, _ = project
+    original = {p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    cfg = net.cfg(net.project_row('game'))
+    monkeypatch.setattr(net.console(net.project_row('game')), 'export_project', lambda *a, **kw:{'identical':False})
+    with pytest.raises(NetworkError, match='did not reproduce'):
+        repository_setup.run(net, 'game', 'init', '', lambda _:None)
+    assert not (root/'.git').exists()
+    assert all((root/name).read_bytes() == data for name, data in original.items())
+    assert net.cfg(net.project_row('game')).get('progress_folder') == cfg.get('progress_folder')
+
+
+
+def test_export_does_not_regenerate_the_linked_source_repository(project):
+    from pathlib import Path
+    net, root, _ = project
+    # Use the normal default repository location for this regression.
+    net._update_cfg('game', lambda cfg: cfg.update(save_folder='', progress_folder=''))
+    net.progress.sync('game', force=True)
+    state = repository_setup.run(net, 'game', 'init', '', lambda _:None)
+    source = Path(state['root'])
+    assert source.name == 'source'
+    saved = (source/'progress/decompdecomp.json').read_bytes()
+    (source/'src/manual.c').write_text('curated source')
+    result = net.export_rom('game', lambda _:None)
+    assert Path(result['path']).name == 'source-export'
+    assert (source/'progress/decompdecomp.json').read_bytes() == saved
+    assert (source/'src/manual.c').read_text() == 'curated source'
+    assert (source/'.git').exists()
+    (Path(result['path'])/'.git').mkdir()
+    with pytest.raises(NetworkError, match='Update build files'):
+        net.export_rom('game', lambda _:None)

@@ -1,4 +1,4 @@
-"""Make a remembered portable save a Git checkout without adding unrelated files."""
+"""Create verified full source repositories with nested portable progress."""
 import json
 from pathlib import Path
 
@@ -45,7 +45,7 @@ def status(net, slug):
             'root': str(root) if root else '', 'repository': bool(root),
             'github_create': True, 'origin': origin, 'checkpoint': checkpoint, 'portable': net.is_rom(proj),
             'linked': path == saves.default_folder(net, slug).resolve(),
-            'build_folder': str(build or '')}
+            'build_folder': str(build or ''), 'rebuildable': bool(build and (build/'progress'/saves.MANIFEST).is_file())}
 
 
 
@@ -142,21 +142,18 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                 raise NetworkError('Another operation or queued push is using this repository. Wait for it to finish.')
             log = output
             root = root_at(path)
+            if action in ('init', 'checkpoint', 'github') and net.is_rom(proj):
+                from . import rebuildable_repository
+                if not rebuildable_repository.full(root):
+                    if (path/saves.MANIFEST).is_file():bind(net, slug, path, proj, log)
+                    path = rebuildable_repository.prepare(net, slug, path, root, log)
+                    root = root_at(path)
+                    proj = net.project_row(slug)
             if action == 'init':
                 if not net.is_rom(proj):raise NetworkError('Imported projects use their existing source checkout.')
-                if root:raise NetworkError('This save already belongs to a Git repository. Refresh its settings.')
-                saves._check_save_paths(path, chosen=True)
-                manifest = json.loads((path/saves.MANIFEST).read_text(encoding='utf-8'))
-                if manifest.get('game', {}).get('sha1') != net.cfg(proj).get('rom', {}).get('sha1'):
-                    raise NetworkError('Save this project to the selected folder before creating its repository.')
-                ignore = path/'.gitignore'
-                if ignore.is_symlink():raise NetworkError('Replace the .gitignore symbolic link before setting up Git.')
-                bind(net, slug, path, proj, log)
-                git(path, 'init', '--initial-branch=main')
-                # Existing rules stay last so a user's exclusions retain precedence.
-                previous = ignore.read_bytes() if ignore.exists() else b''
-                ignore.write_bytes(IGNORE.encode() + previous)
-                log('Created Git repository and .gitignore. No files were staged or committed.')
+                root = root or path.parent
+                if not (root/'.git').exists():git(root, 'init', '--initial-branch=main')
+                log('Created full rebuildable Git repository. Game images and extracted data are ignored; no files were staged or committed.')
             elif action == 'github':
                 if not root:raise NetworkError('Create a Git repository before connecting GitHub.')
                 if 'origin' in git(root, 'remote').splitlines():raise NetworkError('Origin is already configured. Refresh its settings.')
@@ -191,6 +188,11 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                         if not item.is_file():raise NetworkError('Save current progress before creating its first commit.')
                         files[(path.relative_to(root)/name).as_posix()] = item.read_bytes()
                     paths = set(files)
+                from . import rebuildable_repository
+                scaffold = rebuildable_repository.files(root)
+                files.update(scaffold)
+                paths.update(scaffold)
+                paths.update(rebuildable_repository.retired(root))
                 if root == path and (root/'.gitignore').is_file():
                     files['.gitignore'] = repository_sync.inside(root, '.gitignore').read_bytes()
                     paths.add('.gitignore')

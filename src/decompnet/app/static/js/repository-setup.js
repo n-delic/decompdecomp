@@ -1,4 +1,4 @@
-/* The save is the primary destination; an export checkout remains an explicit advanced tool. */
+/* Full source repositories retain portable app progress in their progress/ subfolder. */
 let repositorySetupSlug = "", repositorySaveRoot = "", repositorySetupBusy = false, repositorySetupChecked = 0, repositorySetupRequest = 0, repositorySetupJob = null;
 let repositorySaveEdited = false, repositorySetupState = null, repositorySetupLoading = false;
 let repositorySetupAbort = null;
@@ -32,7 +32,8 @@ function renderRepositorySetup(state) {
   const unsaved = state.portable && $("saveFolder").value.trim() !== state.folder;
   repositorySaveRoot = unsaved ? "" : state.root || "";
   for (const id of ["repositoryInit", "repositoryCheckpoint", "repositoryOriginGo", "repositoryGithubGo"]) $(id).disabled = unsaved || repositorySetupBusy;
-  $("repositoryInit").hidden = state.repository || !state.portable;
+  $("repositoryInit").hidden = !!state.rebuildable || !state.portable;
+  $("repositoryInit").textContent = state.repository ? "Upgrade to rebuildable repository" : "Create rebuildable repository";
   $("repositoryCheckpoint").hidden = !state.repository || !state.portable;
   $("repositoryOriginGroup").hidden = !state.repository || state.origin;
   $("repositoryAutoCommit").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoCommit").checked && !state.portable);
@@ -40,8 +41,8 @@ function renderRepositorySetup(state) {
   $("repositoryScoreCommits").disabled = repositorySetupBusy || unsaved || (!$("repositoryScoreCommits").checked && !state.portable);
   $("repositoryAutoPush").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoPush").checked && (!state.repository || !state.checkpoint || !state.origin));
   $("repositorySetupState").textContent = unsaved ? "Save now to apply the new location before changing its Git settings." : !state.repository
-    ? (state.portable ? "Keep saving normally, or create a Git repository to unlock version history and automatic commits." : "This source folder is not a Git repository. Source checkout setup is planned.")
-    : !state.checkpoint ? (state.portable ? "Enable automatic commits to create the first progress checkpoint, or commit saved progress now." : "Commit your source files with Git before pushing.")
+    ? (state.portable ? "Keep saving normally, or create a full rebuildable decompilation repository with saved app progress." : "This source folder is not a Git repository. Source checkout setup is planned.")
+    : !state.checkpoint ? (state.portable ? "Enable automatic commits to create the first rebuildable project checkpoint, or commit saved progress now." : "Commit your source files with Git before pushing.")
     : !state.linked && state.portable ? "Enable automatic commits to use this folder for ongoing saves. The first checkpoint is prepared for you."
     : `Git repository: ${state.root}`;
   const build = state.build_folder || "";
@@ -49,7 +50,7 @@ function renderRepositorySetup(state) {
   $("repositoryFolder").value = build;
   $("repositoryBuildPath").textContent = build;
   $("saveFolderHint").textContent = build && state.portable
-    ? `Build repository detected. Progress is saved in ${state.save_folder}; build files are updated separately below.`
+    ? `Build repository detected. Progress is saved in ${state.save_folder}; the full rebuildable source and build scripts are versioned at the repository root.`
     : state.portable ? "Choose a folder for your matches, drafts, notes and settings. No game files are saved."
     : "Closest attempts are saved here. Matched source stays in the imported project's checkout.";
   renderRepositoryControls();
@@ -75,7 +76,7 @@ async function refreshRepositorySetup() {
     $("repositoryGithubOwner").value = "";
     $("repositoryGithubOwners").replaceChildren();
     $("repositoryGithubOwnersState").textContent = "";
-    $("repositoryGithubName").value = slug + "-progress";
+    $("repositoryGithubName").value = slug + "-decomp";
     $("repositoryGithubVisibility").value = "private";
     $("repositorySetupStop").hidden = true;
     $("saveFolder").value = S.ov?.save_folder || "";
@@ -173,14 +174,14 @@ async function prepareRepositoryCommits(slug, log) {
   let state = repositorySetupState;
   if (!state || repositorySaveEdited) throw new Error("Save the selected folder before enabling automatic commits.");
   if (!state.portable) throw new Error("Automatic commits are available for saved ROM projects.");
-  if (state.repository && state.checkpoint && state.linked) return;
+  if (state.repository && state.rebuildable && state.checkpoint && state.linked) return;
   if (repositorySetupBusy) throw new Error("Repository setup is already running. Wait for it to finish.");
   repositorySetupBusy = true;
   const controls = [$("saveGo"), $("saveFolder"), $("repositoryCheckpoint"), $("repositoryInit")];
   const disabled = controls.map(field => field.disabled);
   controls.forEach(field => { field.disabled = true; });
   try {
-    for (const action of state.repository ? ["checkpoint"] : ["init", "checkpoint"]) {
+    for (const action of state.repository && state.rebuildable ? ["checkpoint"] : ["init", "checkpoint"]) {
       const {job} = await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:""}});
       repositorySetupJob = job;
       if (S.slug === slug) $("repositorySetupStop").hidden = false;

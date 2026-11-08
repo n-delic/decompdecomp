@@ -120,6 +120,10 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
         # older manifest selected only src/ and never listed the leftover best/ file.
         paths.update(prefix + f'best/{name}.c' for name, info in manifest['functions'].items()
                      if 'matched_by' in info and prefix + f'best/{name}.c' in tracked)
+        from . import rebuildable_repository
+        scaffold = rebuildable_repository.files(root)
+        paths.update(scaffold)
+        paths.update(rebuildable_repository.retired(root))
         changed = set(filter(None, repository_sync.git(root, 'diff', '--name-only', '--no-renames', '-z', 'HEAD').decode().split('\0')))
         changed.update(filter(None, repository_sync.git(root, 'ls-files', '--others', '--exclude-standard', '-z').decode().split('\0')))
         if changed - paths and not allow_unrelated_edits:
@@ -134,6 +138,7 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
             if name not in {'README.md', 'decompdecomp-progress.svg'} and normalized != text:
                 raise NetworkError('Progress changed while capturing it. Retry after its edits finish.')
             captured[prefix + name] = data
+        captured.update(scaffold)
         return captured, paths, manifest
 
 

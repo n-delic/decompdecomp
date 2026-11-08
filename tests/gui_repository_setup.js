@@ -119,7 +119,7 @@ async function simpleSetupRegression() {
  assert.equal(get('repositoryDestination').hidden,false);assert.equal(get('repositoryFolder').value,'/repo');
  assert.match(get('saveFolderHint').textContent,/Build repository detected/);
  await context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog'));
- assert.deepEqual(actions,['checkpoint']);assert.equal(vm.runInContext('repositorySaveRoot',context),'/repo');
+ assert.deepEqual(actions,['init','checkpoint']);assert.equal(vm.runInContext('repositorySaveRoot',context),'/repo');
  assert.equal(get('saveGo').disabled,false);assert.equal(get('repositorySetupStop').hidden,true);
  actions.length=0;context.renderRepositorySetup({...state,repository:false,checkpoint:false,linked:false,root:'',build_folder:''});
  await context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog'));assert.deepEqual(actions,['init','checkpoint']);
@@ -142,10 +142,10 @@ async function simpleSetupRegression() {
  const steering=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/steering.js'),'utf8');
  vm.runInContext(steering.slice(steering.indexOf('let repositoryAutoCommitBusy'),steering.indexOf('// Imported saves already remember')),context);
  context.renderRepositoryAutoCommit({enabled:false});get('repositoryAutoCommit').checked=true;
- await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['checkpoint','enable']);
+ await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['init','checkpoint','enable']);
  assert.equal(get('repositoryAutoCommit').checked,true);
  actions.length=0;failure=true;context.renderRepositorySetup(state);get('repositoryAutoCommit').checked=true;
- await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['checkpoint']);
+ await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['init']);
  assert.equal(get('repositoryAutoCommit').checked,false,'failed preparation never enables automatic commits');
 }
 

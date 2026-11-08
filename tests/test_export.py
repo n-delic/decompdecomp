@@ -363,3 +363,43 @@ def test_exported_build_reports_a_silent_linker_kill():
     exec(compile(ast.Module(body=functions,type_ignores=[]),'export-build-test','exec'),scope)
     with pytest.raises(SystemExit,match='exited with -9'):
         scope['run'](['ld','-EB'])
+
+
+@pytest.mark.parametrize('remote', [False, True])
+def test_default_repository_is_rebuildable_and_reopens_all_progress(tmp_path, remote, monkeypatch):
+    if not _ready('n64'):
+        pytest.skip('needs the N64 toolchain and binutils-mips')
+    from decompnet.app import repository_setup, saves
+    from tests.test_repository_progress import git
+    (tmp_path/'original-app').mkdir()
+    net, slug = _decompile(tmp_path/'original-app', 'n64')
+    before = net.overview(slug)['matched']
+    state = repository_setup.run(net, slug, 'init', '', lambda *_: None)
+    root = Path(state['root'])
+    assert root.name == 'source' and state['rebuildable']
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    repository_setup.run(net, slug, 'checkpoint', '', lambda *_: None)
+    tracked = git(root, 'ls-files').splitlines()
+    assert {'build.py', 'build.json', 'splat.yaml', 'progress/decompdecomp.json'} <= set(tracked)
+    assert not any(name.startswith(('baserom', 'asm/', 'assets/', 'build/')) for name in tracked)
+    clone = tmp_path/'clone'
+    git(tmp_path, 'clone', '-q', str(root), str(clone))
+    build = json.loads((clone/'build.json').read_text())
+    shutil.copyfile(root/build['image'], clone/build['image'])
+    built = subprocess.run([sys.executable, 'build.py'], cwd=clone, capture_output=True, text=True)
+    assert built.returncode == 0, built.stdout+built.stderr
+    assert 'identical' in built.stdout
+    reopened = RomNetwork(tmp_path/'reopened.db', tmp_path/'reopened')
+    messages = []
+    if remote:
+        def local_clone(source, into, log):
+            git(tmp_path, 'clone', '-q', str(root), str(into))
+            return into
+        monkeypatch.setattr(saves, 'fetch', local_clone)
+    restored = saves.restore(reopened, 'https://example.invalid/game.git' if remote else str(clone), DEMOS['n64'][0], log=messages.append)
+    assert reopened.overview(restored['slug'])['matched'] >= before, (restored, messages)
+    restored_root = saves.build_checkout(saves.default_folder(reopened, restored['slug']))
+    assert restored_root and (restored_root/'build.py').is_file()
+    assert (restored_root/'.git').exists()
+    assert git(restored_root, 'rev-parse', 'HEAD') == git(root, 'rev-parse', 'HEAD')

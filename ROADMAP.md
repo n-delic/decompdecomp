@@ -723,7 +723,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
-| Create Git repository and initial checkpoint from a portable save | ✓ | ✓ | ✓ | ✓ | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned |
+| Create full verified rebuildable repository with nested app progress | ✓ | ✓ | ✓ | ✓ | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned |
 | Add missing origin remote in Settings | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Opt-in automatic push after a configurable commit threshold | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Review and push existing Git commits to origin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -3311,3 +3311,7 @@ Display identities work wherever indexed signatures can identify targets. Fresh 
 code/data linking currently uses the local-ROM MIPS linker. Imported objdiff builds and other
 processors need explicit adapters before receiving the verified SDK-assembly badge; signature
 similarity alone is insufficient. Their ordinary assembly classifications still exclude C work.
+
+### Full project repositories
+
+- Done: this fork creates verified full source repositories by default, upgrades portable Git saves without replacing history/origin, ignores game images and extracted data, and retains the complete source checkout when opening a remote saved project. Saved global addresses are restored before rejudging C. Initial full-image proof is required; unsupported exports never fall back to progress-only Git repositories.
