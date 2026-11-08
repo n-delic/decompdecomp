@@ -78,6 +78,8 @@ def test_argument_reader_requires_a_consistent_ordinary_register_shift(big):
     before, after = words([0x00808021, 0x03e00008, 0], big), words([0x00a08021, 0x03e00008, 0], big)
     assert mips_arguments.evidence(before, after, set(), big) == ('incoming', 1, {0})
     assert mips_arguments.evidence(before, after, {0}, big) is None
+    assert mips_arguments.evidence(words([0x03e00008, 0x24820001], big),
+                                   words([0x03e00008, 0x24a20001], big), set(), big) == ('incoming', 1, {0})
     assert mips_arguments.evidence(b'x', b'y', set(), big) is None
     for prefix in [0x24040001, 0x24050001, 0x0c000800, 0x10000001]:
         assert mips_arguments.evidence(words([prefix, 0x00808021], big),
@@ -104,6 +106,21 @@ def test_calls_clobber_return_evidence_and_caller_consumption_stays_distinct():
         assert mips_return_paths.caller_use(asm('jal f', 'nop', tail, 'jr $ra', 'nop'), 'f')[0]['use'] == expected
     assert mips_returns.result(asm('move $v0, $s0', 'jr $ra', 'nop'))['caller_consumes'] is False
     assert mips_returns.result(asm('lw $v0, 0($a0)', 'jr $ra', 'nop'))['requires_caller']
+    assert mips_returns.result(asm('jr $ra', 'addiu $v0, $a0, 1'))
+    assert mips_returns.result(asm('jr $ra', 'addu $v0, $a0, $zero'))
+
+
+def test_objdiff_mips_text_gets_register_normalisation_for_advice():
+    rows = [('i', 'addiu sp, sp, -16', 'addiu sp, sp, -24'),
+            (' ', 'sw ra, 12(sp)', 'sw ra, 12(sp)'),
+            (' ', 'b 0x10', 'b 0x10'), (' ', 'nop', 'nop'),
+            (' ', 'lw ra, 12(sp)', 'lw ra, 12(sp)'),
+            (' ', 'jr ra', 'jr ra'), (' ', 'addiu sp, sp, 16', 'addiu sp, sp, 16')]
+    text = '\n'.join(advice.diff_lines('mips', rows, objdiff=True))
+    assert 'within-block register dependencies' in text
+    assert '0 explicit within-block' not in text
+    assert advice.assembly_lines('mips', 'jr ra\naddiu v0, a0, 1', objdiff=True)
+    assert mips_return_paths.read(asm('jr $ra', '')) is None
 
 
 @pytest.mark.parametrize('processor', ['x86', 'ppc', 'arm', 'unknown'])

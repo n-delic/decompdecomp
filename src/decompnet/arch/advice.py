@@ -1,11 +1,19 @@
 """Small processor-specific observations for agents, separate from matching and source edits."""
 
+import re
+
 from . import get
 
 MAX_ROWS = 8192
+_MIPS_REGISTER = re.compile(r'(?<![\w$])(zero|at|v[01]|a[0-3]|t[0-9]|s[0-8]|k[01]|gp|sp|fp|ra)(?!\w)')
 
 
-def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), big_endian=True):
+def _objdiff_mips(text):
+    """objdiff prints bare register names; the ROM readers expect dollar-prefixed ones."""
+    return _MIPS_REGISTER.sub(r'$\1', text)
+
+
+def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), big_endian=True, objdiff=False):
     """Bounded observations from a complete scored diff. Missing readers simply add no advice."""
     reader = get(processor)
     if (not rows or len(rows) > MAX_ROWS
@@ -13,6 +21,8 @@ def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), bi
                    or any(not isinstance(cell, str) for cell in row) for row in rows)
             or not any(row[0] != ' ' for row in rows)):
         return []
+    if objdiff and processor == 'mips':
+        rows = [(mark, _objdiff_mips(left), _objdiff_mips(right)) for mark, left, right in rows]
     lines = []
     if reader.stack_layout:
         stack = reader.stack_layout(rows)
@@ -44,10 +54,13 @@ def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), bi
             + ["- " + line for line in lines[:8]]) if lines else []
 
 
-def assembly_lines(processor, assembly):
+def assembly_lines(processor, assembly, *, objdiff=False):
     reader = get(processor)
     if not reader.source_return_paths or not isinstance(assembly, str) or not assembly or len(assembly) > 2_000_000:
         return []
+    if objdiff and processor == 'mips':
+        assembly = '\n'.join(f'/* {i * 4:08X} {0x80000000 + i * 4:08X} 00000000 */ {_objdiff_mips(line)}'
+                             for i, line in enumerate(assembly.splitlines()) if line.strip())
     paths = reader.source_return_paths(assembly)
     if not paths:
         return []

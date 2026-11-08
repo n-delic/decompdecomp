@@ -19,7 +19,9 @@ def graph(asm):
         if address:addresses[int(address[1],16)]=index;index+=1
     destinations={};delays=set()
     for i,row in enumerate(rows):
-        op=row.split()[0]
+        parts=row.split()
+        if not parts:return None
+        op=parts[0]
         if op in {'eret','deret','syscall','teq','tne','tge','tlt'}:return None
         if op=='jr' and not re.fullmatch(r'jr\s+\$ra',row):return None
         if op in flow.CONDITIONAL|flow.CALLS|flow.JUMPS:

@@ -35,7 +35,7 @@ def result(asm, caller='', name=''):
     if returns!=1 or not last:return None
     loaded=last[1]=='lw'
     if not loaded:
-        if last[1] not in {'move','addu','or'}:return None
+        if last[1] not in {'move','addu','or','addiu'}:return None
         regs=last[2]
         if len(regs)<2 or regs[1] in {'zero','ra','sp','v0'} or (len(regs)==3 and regs[2]!='zero'):return None
     consumed=False

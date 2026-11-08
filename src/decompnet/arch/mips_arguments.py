@@ -40,8 +40,10 @@ def evidence(candidate, target, relocated, big):
             return None
         if kind=='incoming':
             # Only reads of live incoming values, before calls and before either register is overwritten.
-            for w in left[:i]:
+            for prior, w in enumerate(left[:i]):
                 opcode=w>>26
+                if prior == i-1 and i == len(left)-1 and w == 0x03e00008:
+                    continue  # jr $ra runs its delay slot before returning
                 if opcode in (1,2,3,4,5,6,7) or opcode==0 and w&63 in (8,9):
                     return None
                 if opcode not in ({0,15,49,53,57,61}|IMMEDIATE) or opcode==0 and w&63 in (12,13):
