@@ -66,7 +66,7 @@ function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
     return;
   }
   set("current", progress.function);
-  set("tested", `${progress.tested} / ${progress.combinations} compiler and flag combinations`);
+  set("tested", `${progress.tested} / ${progress.combinations} compiler and flag combinations${progress.applying_function ? ` · rechecking ${progress.applying_function}` : progress.apply_pending ? ` · ${progress.apply_pending} rechecks queued` : ""}`);
   set("before", progress.before == null ? "—" : `${progress.before.toFixed(2)}%`);
   set("best", progress.best == null ? "—" : `${progress.best.toFixed(2)}%`);
   set("completed", progress.completed); set("improved", progress.improved);

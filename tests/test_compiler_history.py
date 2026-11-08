@@ -393,10 +393,10 @@ def test_auto_apply_reports_its_actual_stage(comparison, monkeypatch):
             snapshots.append(dict(value))
     monkeypatch.setattr(net, '_judge_with', lambda *a: (True, SimpleNamespace(percent=100, score=0), ''))
     def apply(*args):
-        assert snapshots[-1]['phase'] == 'applying'
+        assert snapshots[-1].get('applying_function') == args[1]
     monkeypatch.setattr(net, 'apply_function_compiler', apply)
     net.run_compiler_comparison('demo', log=Log(), auto_apply=True)
-    assert sum(s.get('phase') == 'applying' for s in snapshots) == 2
+    assert {s.get('applying_function') for s in snapshots} >= {'f0', 'f1'}
 
 
 def test_default_task_compares_every_function_past_old_batch_limit(comparison):
@@ -540,3 +540,23 @@ def test_apply_reuses_one_private_compile_session(comparison, monkeypatch):
     assert len(sessions) == 3
     assert sessions[0] is not None and all(s is sessions[0] for s in sessions)
     assert current() is None
+
+
+def test_bulk_comparison_continues_while_previous_apply_waits(comparison, monkeypatch):
+    import threading
+    net, *_ = comparison
+    applying, next_compared = threading.Event(), threading.Event()
+    def judge(proj, fn, *args):
+        if fn['name']=='f1':
+            assert applying.wait(3)
+            next_compared.set()
+        return True, SimpleNamespace(percent=100, score=0), ''
+    def apply(slug, name, *args):
+        if name=='f0':
+            applying.set()
+            assert next_compared.wait(3), 'Comparisons must continue during verification'
+    monkeypatch.setattr(net,'_judge_with',judge)
+    monkeypatch.setattr(net,'apply_function_compiler',apply)
+    result=net.run_compiler_comparison('demo',auto_apply=True)
+    assert result['applied_count']==2
+    assert all(row['applied'] for row in result['results'])
