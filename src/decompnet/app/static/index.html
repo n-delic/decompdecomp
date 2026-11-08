@@ -692,6 +692,8 @@
                 <p id="repositorySyncAbout">Commit your saved progress, or copy matching C into a rebuildable export checkout.</p>
               </header>
               <p class="small muted" id="repositorySetupState" role="status"></p>
+              <progress class="workbar" id="repositorySetupLoading" aria-label="Checking this project’s save repository" hidden></progress>
+              <button class="ghost small-btn" id="repositorySetupRetry" type="button" hidden>Check save repository again</button>
               <div class="row"><button class="ghost small-btn" id="repositoryInit" type="button" hidden>Create Git repository</button><button class="ghost small-btn" id="repositoryCheckpoint" type="button" hidden>Commit saved progress</button></div>
               <div id="repositoryOriginGroup" hidden><label class="field"><span>Origin repository URL</span><input id="repositoryOrigin" placeholder="https://github.com/you/project.git" autocomplete="off" spellcheck="false"></label><button class="ghost small-btn" id="repositoryOriginGo" type="button">Add origin</button><p class="small muted">Origin is where Push sends your commits. Adding it does not fetch or push.</p>
                 <details id="repositoryGithubDetails"><summary>Create a new GitHub repository</summary>

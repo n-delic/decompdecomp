@@ -111,6 +111,8 @@ def checkout(folder, *, clean=True, blocking=None):
     root = Path(folder).expanduser().resolve()
     if not root.is_dir() or Path(git(root,'rev-parse','--show-toplevel').decode().strip()).resolve() != root:
         raise NetworkError('Choose the root folder of a local Git checkout.')
+    if not clean:
+        return root  # Metadata-only callers do not need a potentially huge worktree/untracked scan.
     raw = git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
     if raw and clean:
         changes = checkout_changes(raw, only=blocking)

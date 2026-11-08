@@ -423,3 +423,14 @@ def test_blocking_path_preview_filters_generated_changes_and_keeps_rename_source
     raw = b' M README.md\0R  new name.c\0old name.c\0?? private.rom\0'
     assert sync.checkout_changes(raw, only={'private.rom'}) == ['  untracked: "private.rom"']
     assert sync.checkout_changes(raw, only={'old name.c'}) == ['  renamed (staged): "old name.c" -> "new name.c"']
+
+
+def test_metadata_checkout_does_not_scan_worktree(tmp_path,monkeypatch):
+    calls=[]
+    def metadata(root,*args):
+        calls.append(args)
+        assert args==('rev-parse','--show-toplevel'), 'Metadata lookup scanned worktree changes'
+        return str(tmp_path).encode()
+    monkeypatch.setattr(sync,'git',metadata)
+    assert sync.checkout(tmp_path,clean=False)==tmp_path.resolve()
+    assert calls==[('rev-parse','--show-toplevel')]
