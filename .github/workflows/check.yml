@@ -12,7 +12,7 @@ on:
 jobs:
   windows:
     needs: check
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
@@ -24,7 +24,7 @@ jobs:
           DECOMP_TRAY: "0"
   macos:
     needs: check
-    runs-on: macos-15
+    runs-on: blacksmith-6vcpu-macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
@@ -50,7 +50,7 @@ jobs:
           DECOMP_TEST_COCOA: "1"
           DECOMP_TRAY: "0"
   check:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0  # setup-uv has published no major tags since v7
