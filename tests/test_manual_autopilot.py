@@ -132,3 +132,49 @@ def test_promotion_before_twins_registration_is_not_lost():
         worker.start()
         try:assert entered.wait(1)
         finally:worker.join(1)
+
+
+@pytest.mark.parametrize('promote', [False, True])
+def test_default_manual_autopilot_uses_cores_and_restores_compile_limit(tmp_path, monkeypatch, promote):
+    from decompnet import compiler
+    from decompnet.compile_admission import Admission
+    from decompnet.compile_sessions import current
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    tiny_game(net)
+    monkeypatch.setattr('decompnet.app.engine.autopilot.os.cpu_count', lambda: 4)
+    monkeypatch.setattr('decompnet.app.engine.autopilot.seeds.available', lambda: True)
+    monkeypatch.setattr(compiler, '_SLOTS', Admission(2))
+    monkeypatch.setattr(net.twins, 'full_pass', lambda *a, **kw: SimpleNamespace(matched=0))
+    monkeypatch.setattr(net.twins, 'promote', lambda *a: None)
+    release = threading.Event()
+    three, four, finished = threading.Event(), threading.Event(), threading.Event()
+    lock = threading.Lock()
+    active = 0
+    def one(*args):
+        nonlocal active
+        assert current() is not None
+        with lock:
+            active += 1
+            if active == 3:three.set()
+            if active == 4:
+                assert compiler._SLOTS.limit >= 4
+                four.set()
+        assert release.wait(5)
+        return 'far'
+    monkeypatch.setattr(net, '_autopilot_one', one)
+    original = net._autopilot_work
+    def work(*args):
+        try:return original(*args)
+        finally:finished.set()
+    monkeypatch.setattr(net, '_autopilot_work', work)
+    state = net.start_autopilot('game', foreground=not promote)
+    try:
+        if promote:
+            assert three.wait(3)
+            assert not four.wait(.1), 'Automatic runs retain their three-worker ceiling'
+            assert net.start_autopilot('game', foreground=True) is state
+        assert four.wait(3), 'Manual runs must use four cores, including a promoted run'
+    finally:
+        release.set()
+        assert finished.wait(5)
+    assert state['tried'] == 4 and compiler._SLOTS.limit == 2
