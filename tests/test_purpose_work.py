@@ -116,3 +116,19 @@ def test_core_match_recheck_has_a_purpose_and_cannot_publish_after_stop():
         release.set();thread.join(5);groups.shutdown()
     assert not thread.is_alive() and 'verified' not in result
     assert isinstance(result['error'],NetworkError)
+
+
+def test_parent_stop_reaches_running_child_verification():
+    entered,release,cancelled=threading.Event(),threading.Event(),threading.Event()
+    def check():
+        if cancelled.is_set():raise RuntimeError('Parent cancelled')
+    with purpose_work.owner('game',cancelled.set,check):
+        with purpose_work.Executor(1,purpose='Child verification') as pool:
+            def work():
+                entered.set()
+                assert release.wait(5)
+                return True
+            future=pool.submit(work)
+            assert entered.wait(5)
+            cancelled.set();release.set()
+            with pytest.raises(RuntimeError,match='Parent cancelled'):future.result()

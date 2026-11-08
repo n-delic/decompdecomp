@@ -16,8 +16,8 @@ _ACTIVE = {}
 
 
 @contextmanager
-def owner(project, stop):
-    token = _OWNER.set((project or '', stop))
+def owner(project, stop, check=None):
+    token = _OWNER.set((project or '', stop, check))
     try:yield
     finally:_OWNER.reset(token)
 
@@ -28,6 +28,7 @@ class Executor(ThreadPoolExecutor):
         inherited = _OWNER.get()
         self.project = project or (inherited[0] if inherited else '')
         self.stop_owner = stop or (inherited[1] if inherited else None)
+        self.check_owner = inherited[2] if inherited else None
         self.stop_note = stop_note
         self.purpose = purpose
         self.key = uuid.uuid4().hex
@@ -40,6 +41,7 @@ class Executor(ThreadPoolExecutor):
         super().__init__(max_workers, **kwargs)
 
     def check_cancel(self):
+        if self.check_owner:self.check_owner()
         if self.cancelled.is_set():raise NetworkError(self.purpose+' stopped.')
 
     def stop(self, *, propagate=True):
@@ -58,7 +60,7 @@ class Executor(ThreadPoolExecutor):
             with _LOCK:self.thread_ids.add(tid)
             token = _CHECK.set(self.check_cancel)
             try:
-                with owner(self.project, self.stop), compiler.cancellable(self.check_cancel):
+                with owner(self.project, self.stop, self.check_cancel), compiler.cancellable(self.check_cancel):
                     if not self.always_run:self.check_cancel()
                     result = fn(*args, **kwargs)
                     self.check_cancel()
