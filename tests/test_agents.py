@@ -421,6 +421,7 @@ def _manager(tmp_path, monkeypatch, kind):
     exe.chmod(0o755)
     monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
     m = agents.Manager.__new__(agents.Manager)
+    m.options_now = lambda kind, options: options
     m.mcp_url, m.home = "http://127.0.0.1:6464/mcp", tmp_path
     m.prompt = lambda s: "line one\nline two with \"quotes\" & <ampersands>"
     return m
