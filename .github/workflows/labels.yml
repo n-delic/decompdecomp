@@ -18,7 +18,7 @@ permissions:
 jobs:
   branch-name:
     if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: The branch is named feat/..., fix/..., refactor/..., ...
         env:
@@ -29,7 +29,7 @@ jobs:
             exit 1
           fi
   label:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/github-script@v7
         with:

@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   linux:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -44,7 +44,7 @@ jobs:
 
   windows:
     needs: linux
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -78,7 +78,7 @@ jobs:
     needs: linux
     strategy:
       matrix:
-        runner: [macos-15, macos-15-intel]
+        runner: [blacksmith-6vcpu-macos-15, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
