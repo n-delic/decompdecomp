@@ -29,6 +29,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
     efficiency = Measurements()
     check_cancel()
     baseline = evaluate(source)
+    reports = {source:baseline}
     best_measured = [baseline.get('score')]
     baseline_diagnostics=diagnostics(baseline,arch)
 
@@ -37,6 +38,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
         # The baseline is already compiled by replay, and callers pass its frozen report.
         trial_started = time.monotonic()
         report = baseline if candidate == source else evaluate(candidate)
+        reports[candidate]=report
         measured_diagnostics=diagnostics(report,arch)
         check_cancel()
         if candidate != source:
@@ -51,7 +53,10 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             results.append(row)
             efficiency.observe(row['family'],score=report.get('score'),best=best_measured[0],
                 output=report.get('output_fingerprint'),granularity=report.get('output_granularity','allocated_object'),
-                scope='frozen-case',exact=bool(report.get('matched')),path=row['path'])
+                scope='frozen-case',exact=bool(report.get('matched')),path=row['path'],
+                compiler_invocations=report.get('compiler_invocations'),
+                parent_output=reports.get(node.get('parent_source',source),{}).get('output_fingerprint'),
+                parent_granularity=reports.get(node.get('parent_source',source),{}).get('output_granularity','allocated_object'))
             if isinstance(report.get('score'),(int,float)) and (best_measured[0] is None or report['score']<best_measured[0]):
                 best_measured[0]=report['score']
             progress({'tested': len(results), 'budget': trials, **row})
@@ -60,6 +65,8 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
     def variants(parent, report):
         pools = {}
         proposals = generate(parent, report) if generate_report else generate(parent)
+        proposals = repair_selection.Page(proposals, more=getattr(proposals, 'more',False)) if isinstance(proposals,repair_selection.Page) else list(proposals)
+        for family,candidate in proposals:efficiency.generated(family,candidate)
         if isinstance(proposals, repair_selection.Page):
             return proposals  # Already ordered/paged by the live selector; do not erase weighted follow-ups.
         for family, candidate in proposals:

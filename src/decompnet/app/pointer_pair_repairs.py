@@ -12,7 +12,7 @@ FAMILIES = ('pointer_load_inline', 'pointer_conditional_load_inline', 'pointer_c
 LIMIT = 24
 
 
-def declarations(part):
+def declarations(part, *, nested=False):
     result = []
     signature = part.clean[max(part.clean.rfind(ch,0,part.opening) for ch in ';{}')+1:part.opening]
     # A preceding macro's formal parameters are not function parameters.
@@ -21,7 +21,7 @@ def declarations(part):
         name = decl['name']
         prefix = part.clean[part.opening+1:decl.start()].rstrip()
         if prefix and prefix[-1] not in ';{}':continue
-        if block_path(part,decl.start()) != [part.opening]:continue
+        if not nested and block_path(part,decl.start()) != [part.opening]:continue
         # A uniquely declared local, no parameter shadow and no escaped storage.
         shadows=[m for m in re.finditer(rf'\b({IDENT})(?:\s+\**\s*|\s*\*+\s*){re.escape(name)}\s*(?=[;=,\[])',part.body)
                  if m[1] not in {'return','goto','case','break','continue','else','do'}]
@@ -57,7 +57,7 @@ def qualified_types(text):
     return qualified
 
 
-def context(source,name,header):
+def context(source,name,header, *, nested=False):
     part=view(source,name)
     if not part or re.search(r'\b(?:volatile|asm|__asm__|setjmp|longjmp)\b',part.clean):return None,[],{}
     combined=_blank(header)+'\n'+part.clean
@@ -65,7 +65,7 @@ def context(source,name,header):
     qualified=qualified_types(combined)
     active=part.clean[max(part.clean.rfind(ch,0,part.opening) for ch in ';{}')+1:part.end]
     if qualified & set(re.findall(IDENT,active)):return None,[],{}
-    pointers=declarations(part)
+    pointers=declarations(part,nested=nested)
     local_names={d['name'] for d in pointers}|{d['name'] for d in locals_for(part)}
     # Follow invoked macro dependencies too: a macro can capture a local through another
     # macro. Liveness only sees invocation arguments, not hidden names or stringification.

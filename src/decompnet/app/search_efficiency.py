@@ -1,4 +1,5 @@
 """Bounded source-free measurements; advisory only, never used to accept a match."""
+import hashlib
 from collections import Counter, deque
 
 LIMIT = 4096
@@ -12,17 +13,40 @@ class Measurements:
         self.order = deque()
         self.families = {}
         self.winning_path = []
+        self.proposals = set()
+        self.proposal_order = deque()
 
-    def observe(self, family, *, score=None, best=None, output=None, granularity=None,
-                scope=None, cached=False, exact=False, path=()):
-        if cached:
-            self.cached += 1
-            return
-        self.checks += 1
+    def counts(self, family):
         family = str(family)[:80]
         if family not in self.families and len(self.families) >= 128:family = 'other'
-        counts = self.families.setdefault(family, Counter())
+        return self.families.setdefault(family, Counter())
+
+    def generated(self, family, candidate, *, scope=''):
+        """Count distinct offered proposals in a bounded window, without retaining source."""
+        key = (str(family)[:80], hashlib.sha256((str(scope)+'\0'+candidate).encode()).digest())
+        if key in self.proposals:return
+        self.proposals.add(key);self.proposal_order.append(key)
+        if len(self.proposal_order)>LIMIT:self.proposals.remove(self.proposal_order.popleft())
+        self.counts(family)['generated_candidates'] += 1
+
+    def observe(self, family, *, score=None, best=None, output=None, granularity=None,
+                scope=None, cached=False, exact=False, path=(), compiler_invocations=None,
+                parent_output=None, parent_granularity=None):
+        counts = self.counts(family)
+        if cached:
+            self.cached += 1
+            counts['cached_skips'] += 1
+            return
+        self.checks += 1
         counts['candidate_checks'] += 1
+        if type(compiler_invocations) is int and compiler_invocations>=0:
+            counts['compiler_invocations'] += compiler_invocations
+            counts['invocation_measured_checks'] += 1
+        else:counts['invocation_unknown_checks'] += 1
+        if (isinstance(parent_output,str) and parent_output and granularity==parent_granularity
+                and isinstance(output,str) and output):
+            counts['parent_compared_checks'] += 1
+            counts['unchanged_parent_outputs'] += int(output==parent_output)
         counts['improvements'] += int(score is not None and best is not None and score < best)
         counts['exact_checks'] += int(exact)
         if all(isinstance(v,str) and 0<len(v)<=256 for v in (output,scope,granularity)):
@@ -45,7 +69,9 @@ class Measurements:
                     winning_path=list(self.winning_path), model_tokens=0,
                     **({'families':{k:dict(v) for k,v in self.families.items()}} if detail else {}),
                     note='Deterministic search uses no model tokens. Checks are not compiler processes; '
-                         'duplicates compare compatible fingerprints within the last 4096 distinct outputs.')
+                         'duplicates compare compatible fingerprints within the last 4096 distinct outputs. '
+                         'Generated counts use a 4096-proposal window. Invocation counts cover measured consumed trials; '
+                         'unknown checks and unconsumed speculative work are not inferred.')
 
 
 def combine(reports):

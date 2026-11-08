@@ -31,7 +31,22 @@ def phase(name):
 
 
 @contextmanager
-def collect(collector):
-    token = _collector.set(collector)
+def collect(collector, *, append=False):
+    previous = _collector.get()
+    if append and previous is not None:
+        class Both:
+            def add(self, name, value):
+                previous.add(name, value)
+                collector.add(name, value)
+        active = Both()
+    else:active = collector
+    token = _collector.set(active)
     try:yield
     finally:_collector.reset(token)
+
+
+class Counts:
+    """A per-trial numeric collector; append it to retain outer throughput metrics."""
+    def __init__(self):self.values = {}
+
+    def add(self, name, value):self.values[name] = self.values.get(name, 0) + value

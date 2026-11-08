@@ -222,6 +222,8 @@ def machine_drafts(candidates, name, header, arch):
     for family,source in candidates:
         yield family,source
         if remaining:
-            for kind,candidate in variants(source,name,header,arch)[:remaining]:
+            from . import record_lifetime_recovery
+            choices=record_lifetime_recovery.variants(source,name,header,arch)+variants(source,name,header,arch)
+            for kind,candidate in list(dict.fromkeys(choices))[:remaining]:
                 yield kind,candidate
                 remaining-=1

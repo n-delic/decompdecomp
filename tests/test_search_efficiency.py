@@ -85,3 +85,44 @@ def test_safety_and_new_repair_changes_invalidate_saved_search_inputs():
     rules=dict(repair_rules())
     for name in ('parameter_carriers.py','narrow_load_subtraction.py','permuter_dependencies.py','permuter_gen.py','permuter_capture.py'):
         assert len(rules[name])==64
+
+
+def test_proposals_invocations_parent_equality_and_cached_work_are_distinct(monkeypatch):
+    monkeypatch.setattr(search_efficiency,'LIMIT',2)
+    m=search_efficiency.Measurements()
+    m.generated('f','private source');m.generated('f','private source')
+    m.generated('f','other');m.generated('f','third')
+    assert len(m.proposals)==len(m.proposal_order)==2
+    m.observe('f',score=9,best=10,output='a',scope='s',granularity='function',
+              parent_output='a',parent_granularity='function',compiler_invocations=2)
+    m.observe('f',output='a',scope='s',granularity='object',parent_output='a',parent_granularity='function')
+    m.observe('f',cached=True,compiler_invocations=100)
+    c=m.snapshot()['families']['f']
+    assert c['generated_candidates']==3 and c['candidate_checks']==2
+    assert c['compiler_invocations']==2 and c['invocation_unknown_checks']==1
+    assert c['unchanged_parent_outputs']==c['parent_compared_checks']==1
+    assert c['cached_skips']==c['improvements']==1
+    assert 'private source' not in repr(m.snapshot()) and 'private source' not in repr(m.proposals)
+
+
+def test_nested_timing_collectors_keep_outer_counts_after_exception():
+    from decompnet import compile_timing
+    outer=compile_timing.Counts();inner=compile_timing.Counts()
+    with compile_timing.collect(outer):
+        with pytest.raises(ValueError),compile_timing.collect(inner,append=True):
+            compile_timing.add('invocations',2)
+            raise ValueError('stop')
+        compile_timing.add('invocations',1)
+    assert outer.values['invocations']==3 and inner.values['invocations']==2
+
+
+def test_replay_compares_child_to_its_real_parent_and_counts_offers():
+    result=repair_benchmark.run('seed',10,
+        lambda s:dict(score={'seed':10,'first':5,'exact':0}[s],matched=s=='exact',outcome='scored',
+                      output_fingerprint='a' if s=='seed' else 'b',output_granularity='function',compiler_invocations=2),
+        lambda s:{'seed':[('one','first')],'first':[('two','exact')]}.get(s,[]),
+        trials=2,deadline=time.monotonic()+2)
+    c=result['efficiency']['families']
+    assert c['one']['generated_candidates']==c['two']['generated_candidates']==1
+    assert c['two']['unchanged_parent_outputs']==1 and c['two']['compiler_invocations']==2
+    assert c['one']['unchanged_parent_outputs']==0

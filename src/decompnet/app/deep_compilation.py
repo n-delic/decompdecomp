@@ -7,7 +7,7 @@ import time
 from concurrent.futures import CancelledError, Future
 from contextlib import contextmanager
 
-from .. import compile_sessions, compile_sharing, compiler
+from .. import compile_sessions, compile_sharing, compile_timing, compiler
 
 
 class Ticket:
@@ -16,6 +16,7 @@ class Ticket:
         self.future = Future()
         self.stopped = threading.Event()
         self.counted = False
+        self.compile_counts = compile_timing.Counts()
 
     def cancel(self):
         self.stopped.set()
@@ -91,7 +92,8 @@ class Pool:
                 if not ticket.future.set_running_or_notify_cancel():continue
                 try:
                     ticket.checkpoint()
-                    with compiler.cancellable(ticket.checkpoint):result = ticket.run()
+                    with compiler.cancellable(ticket.checkpoint), compile_timing.collect(ticket.compile_counts, append=True):
+                        result = ticket.run()
                     ticket.checkpoint()
                     ticket.future.set_result(result)
                 except BaseException as error:

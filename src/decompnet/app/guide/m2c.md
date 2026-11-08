@@ -41,3 +41,11 @@ intermediate cast, or combine the two. Declared record types and scalar bounds a
 required; no missing layout is invented. These candidates also reach shared local
 and deep repair search. They are optional compiler-matching trials, not unconditional
 cleanup of m2c output. A narrow temporary and a wide temporary need not allocate alike.
+
+Those three extra trials can also try a bounded complete record-lifetime recipe:
+reuse compatible disjoint constructor-result storage, coordinate repeated field
+pairs across values/pointers of the same declared record, then apply the typed
+capture/fold. Raw drafts remain first. Missing types, overlapping lifetimes,
+address escapes or opaque macros prevent the relevant proposal; exact destination
+verification remains mandatory. A successful replay of a solved case is evidence
+for that shape, not proof that m2c recovered the original source.

@@ -198,6 +198,9 @@ class Search(Permuter):
             self.efficiency.observe(family, score=score, best=self.best if self.best is not None else best,
                 output=getattr(self,'_trial_output',None), granularity=getattr(self,'_trial_output_granularity',None),
                 scope=getattr(self,'_efficiency_scope',None), cached=outcome=='skipped',
+                compiler_invocations=getattr(self,'_trial_invocations',None),
+                parent_output=getattr(self,'_trial_parent_output',None),
+                parent_granularity=getattr(self,'_trial_parent_granularity',None),
                 exact=score==0, path=provenance.get('lineage') or [family])
         detail = ('compile failed' if getattr(self, '_trial_outcome', '') == 'compile_failed' else 'unscored')
         self.current_family, self.last_outcome, self.last_score = (
@@ -437,6 +440,7 @@ class Search(Permuter):
             for family, candidate in permuter_local.variants(source, fn['name']):
                 labels.setdefault(candidate, family)
                 choices.append(candidate)
+            for candidate in choices:self.efficiency.generated(labels.get(candidate,'local_repair'),candidate)
             families = list(dict.fromkeys(labels.get(c, 'local_repair') for c in choices))
             from . import region_repairs
             recovery=region_repairs.resolution(feedback.proofs.get(source,{}).get('baseline_rows'),rows)
@@ -457,7 +461,8 @@ class Search(Permuter):
             labels.update({c:family for family,c in localised})
             from . import proposal_progress
             progressed, cursor = proposal_progress.order(self.net,proj,fn,source,[(labels.get(c,'local_repair'),c) for c in choices])
-            queue = list(dict.fromkeys(c for _,c in progressed))
+            complete=[c for family,c in progressed if family=='record_lifetime_sequence'][:4]
+            queue = list(dict.fromkeys(complete+[c for _,c in progressed]))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             lane = getattr(self, "parallel_lane", None)
             if lane is not None:
@@ -489,6 +494,9 @@ class Search(Permuter):
                 trials += 1
                 parent_source,parent_rows,parent_path = parents.get(candidate,(source,rows,path))
                 self._parent_rows = parent_rows
+                parent_proof=feedback.proofs.get(parent_source,{})
+                self._trial_parent_output=parent_proof.get('output')
+                self._trial_parent_granularity=parent_proof.get('granularity')
                 sequence_started=time.monotonic()
                 try:
                     with repair_trial({'kind': 'deep local repair', 'family': labels.get(candidate, 'local_repair'),
@@ -497,6 +505,7 @@ class Search(Permuter):
                         score = self._score(agent, proj, fn, candidate, best, fork)
                 finally:
                     del self._parent_rows
+                    self._trial_parent_output = self._trial_parent_granularity = None
                 measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
                 measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
                 if not getattr(self,'_trial_reused',False):
@@ -757,7 +766,13 @@ class Search(Permuter):
             policy_focus = permuter_focus.classify(rows)
             policy_profile = adaptive_repairs.profile(self.net, proj, fn)
             started = time.monotonic()
-            score = super()._score(agent, proj, fn, source, best, fork)
+            from .. import compile_timing
+            counts = compile_timing.Counts()
+            with compile_timing.collect(counts, append=True):
+                score = super()._score(agent, proj, fn, source, best, fork)
+            ticket = getattr(self,'_ahead_current',None)
+            self._trial_invocations = (counts.values.get('invocations',0) +
+                                       (ticket.compile_counts.values.get('invocations',0) if ticket else 0)) if not fork else None
             elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
             if getattr(self, '_trial_outcome', '') == 'no_edit':
                 if getattr(self, '_ahead_current', None) is None:self.tested -= 1
