@@ -412,15 +412,19 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
 
     def extent(sec_idx: int, off: int) -> int:
         size = elf.get_section(sec_idx)["sh_size"]
+        sizes = [s["st_size"] for s in symtab.iter_symbols() if s["st_shndx"] == sec_idx
+                 and s["st_value"] == off and s["st_size"] > 0]
         bounds = {s["st_value"] for s in symtab.iter_symbols() if s["st_shndx"] == sec_idx
                   and s["st_info"]["type"] not in ("STT_SECTION", "STT_FILE") and not s.name.startswith("$")}
         bounds |= {o for (i, o) in own if i == sec_idx}
-        return next((b for b in sorted(bounds) if b > off), size) - off
+        return min(next((b for b in sorted(bounds) if b > off), size) - off, min(sizes) if sizes else size)
 
     def pointee(s, value: int) -> tuple[int | None, tuple[int, int] | None]:
         sname = elf.get_section(s["st_shndx"]).name if s["st_info"]["type"] == "STT_SECTION" else s.name
         if not _defined(s) or (s["st_info"]["type"] != "STT_SECTION" and symbols.resolve(sname) is not None):
-            base = symbols.resolve(sname)
+            base = (target.image.pointer(sname, symbols) if target.image is not None else None)
+            if base is None:
+                base = symbols.resolve(sname)
             return (None if base is None else (base + value) & 0xFFFFFFFF), None
         in_sec = value + (0 if s["st_info"]["type"] == "STT_SECTION" else s["st_value"])
         if s["st_shndx"] == fn_shndx:
@@ -478,6 +482,12 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
             dest, key = pointee(s, int.from_bytes(mine[at:at + 4], "little"))
             if key is not None:
                 dest = own.get(key)
+            if (dest is None and not _defined(s) and target.image is not None
+                    and int.from_bytes(mine[at:at + 4], "little") == 0
+                    and target.image.slot_matches(addr + at, s.name, symbols)):
+                original = read(addr + at, 4)
+                if original is not None:
+                    dest = int.from_bytes(original, "little")
             if dest is None:
                 problem(f"can't place a pointer inside your data at {sec.name}+0x{off + at:X}")
                 unplaced = True

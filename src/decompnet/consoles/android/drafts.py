@@ -131,7 +131,7 @@ def generate(net, proj, fn, header, valid=False):
             raw = None
     if raw is None:
         state = net.autopilots.get(proj['slug'], {})
-        stop = state.get('stop')
+        stop = state.get('stop') if state.get('state') == 'running' else None
         raw = ghidra_worker.request(program, request, cancel=stop.is_set if stop is not None else None,
                                     generation=cfg['rom']['sha1'])
         if not raw.strip():

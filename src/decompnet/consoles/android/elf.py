@@ -52,8 +52,10 @@ def split(data, workdir, log=print):
             if offset < 0 or offset + size > section['sh_size']:
                 continue
             safe = name if IDENT.fullmatch(name) else f'sub_{addr:08X}'
+            linker_stub = ('LongThunk_' in name or name.endswith(('_veneer', '_from_thumb', '_from_arm')))
             fn = Function(safe, addr, section['sh_offset'] + offset,
-                          payloads[sym['st_shndx']][offset:offset + size], bool(value & 1))
+                          payloads[sym['st_shndx']][offset:offset + size], bool(value & 1),
+                          asm_only=linker_stub)
             # Prefer a usable public name, with one function at an aliased address.
             if addr not in functions or functions[addr].name.startswith('sub_'):
                 functions[addr] = fn

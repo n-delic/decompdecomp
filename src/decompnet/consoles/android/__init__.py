@@ -6,7 +6,7 @@ assembly and editing for ARM/Thumb functions. The shared ARM judge rejects unsup
 relocations; the NDK's compiler versions are pinned in toolchains.toml.
 
 The largest armeabi-v7a library is the initial scope. DEX, other libraries, assets, APK signing,
-AArch64, machine drafts and a rebuildable package remain planned work in ROADMAP.md.
+AArch64 and a rebuildable package remain planned work in ROADMAP.md. Ghidra supplies machine drafts for native code.
 """
 
 from __future__ import annotations

@@ -43,12 +43,22 @@ class Image:
         """Only recognised linker veneers; their bytes, target and instruction modes are all checked."""
         from .arm import arm_b_dest
 
+        thumb = bool(address & 1 or address in self.thumb)
         address &= ~1
         if address in self.functions and address not in self.veneers:
             return address  # a named game function must be called by its own symbol, even if it happens to be a thunk
-        data = self.read(address, 16)
+        data = self.read(address, 16) or self.read(address, 12)
         if data is None:
             return address
+        if thumb and len(data) >= 12:
+            reader = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
+            reader.detail = True
+            ins = list(reader.disasm(data[:12], address))
+            if (len(ins) == 4 and [i.mnemonic for i in ins] == ['movw', 'movt', 'add', 'bx']
+                    and ins[0].op_str.startswith('ip, #') and ins[1].op_str.startswith('ip, #')
+                    and ins[2].op_str == 'ip, pc' and ins[3].op_str == 'ip'):
+                immediate = ins[0].operands[1].imm | ins[1].operands[1].imm << 16
+                return ((ins[2].address + 4) & ~3) + immediate & 0xFFFFFFFE
         if data[:2] == bytes.fromhex('78 47') and data[2:4] in (bytes.fromhex('00 bf'), bytes.fromhex('c0 46')):
             dest = arm_b_dest(data, 4, address + 4)
             if dest is not None:
@@ -60,6 +70,8 @@ class Image:
             return int.from_bytes(data[4:8], 'little') & ~1
         if data[:8] == bytes.fromhex('00 c0 9f e5 1c ff 2f e1'):
             return int.from_bytes(data[8:12], 'little') & ~1
+        if data[:12] == bytes.fromhex('04 c0 9f e5 0c c0 8f e0 1c ff 2f e1'):
+            return (address + 12 + int.from_bytes(data[12:16], 'little')) & 0xFFFFFFFE
         return address
 
     def value(self, name, symbols):
@@ -120,7 +132,7 @@ def image(program: bytes) -> Image:
                     result.values[name] = value
                     if symbol['st_info']['type'] == 'STT_FUNC':
                         result.functions.add(value & ~1)
-                        if name.endswith(('_from_thumb', '_from_arm', '_veneer')):
+                        if name.endswith(('_from_thumb', '_from_arm', '_veneer')) or 'LongThunk_' in name:
                             result.veneers.add(value & ~1)
                     if symbol['st_info']['type'] == 'STT_FUNC' and value & 1:
                         result.thumb.add(value & ~1)
@@ -141,9 +153,11 @@ def image(program: bytes) -> Image:
         symtab = elf.get_section(section['sh_link'])
         for rel in section.iter_relocations():
             at, kind = rel['r_offset'], rel['r_info_type']
+            symbol = symtab.get_symbol(rel['r_info_sym'])
+            if kind in (2, 21, 22) and symbol['st_shndx'] == 'SHN_UNDEF' and symbol.name:
+                result.slots[at] = (symbol.name, None)
             if not any(lo <= at < hi for lo, hi in got_ranges):
                 continue
-            symbol = symtab.get_symbol(rel['r_info_sym'])
             if kind in (2, 21, 22):  # ABS32, GLOB_DAT, JUMP_SLOT
                 value = None if symbol['st_shndx'] == 'SHN_UNDEF' else symbol['st_value']
                 if value is not None and kind != 22:

@@ -15,6 +15,7 @@ function renderAgentsPage() {
         ${(a.models || []).length ? `<details class="models"><summary>${a.models.length} model${a.models.length === 1 ? "" : "s"}</summary><div class="model-chips">${a.models.map((m) => `<span class="chip-s mono" title="${esc(m.note || "")}">${esc(m.name)}</span>`).join("")}</div></details>` : ""}
         <p class="muted small">${esc(a.signin)}</p>`
       : `<p class="muted small">${a.needs ? `Needs ${esc(a.needs)} first. ` : ""}Or install it yourself:</p>${cmdBox(a.install)}`}
+      ${a.uses_accounts ? `<details class="models"><summary>Additional accounts</summary><div id="agentAccounts-${esc(a.id)}"></div></details>` : ""}
       <pre class="joblog" data-ilog="${esc(a.id)}" hidden></pre></div>`).join("");
   wireCopies($("agList"));
   $("agList").querySelectorAll("[data-inst]").forEach((b) => {
@@ -30,6 +31,7 @@ function renderAgentsPage() {
       } catch (e) { showJobError(log, e.message); b.disabled = false; } finally { finish(); }
     };
   });
+  rows.filter((a) => a.uses_accounts).forEach((a) => renderAgentAccounts(a.id));
   const eps = S.st.settings.endpoints || [];
   const card = (e) => `<div class="ep-card" data-id="${esc(e.id || "")}">
       ${e.id ? `<div class="ar-head"><b>${esc(e.name)}</b><span class="muted small mono">${esc(e.model)} · ${esc(hostOf(e.base_url))}</span></div>` : `<div class="ar-head"><b>A new endpoint</b></div>`}
@@ -60,6 +62,76 @@ function renderAgentsPage() {
     if (cancel) cancel.onclick = () => { S.addingEndpoint = false; renderAgentsPage(); };
   });
   if ($("epAdd")) $("epAdd").onclick = () => { S.addingEndpoint = true; renderAgentsPage(); };
+}
+function accountUsageText(row) {
+  return row ? `${Number(row.tokens).toLocaleString()} tokens · ${money(row.usd)} reported cost` : "No recorded usage yet";
+}
+function renderAgentAccounts(kind) {
+  const box = $(`agentAccounts-${kind}`);
+  const accounts = (S.st.settings.agent_accounts || []).filter((a) => a.kind === kind);
+  const usage = (S.st.account_usage || []).filter((r) => r.kind === kind);
+  box.innerHTML = `<div class="account-list"><div class="account-item"><div><b>Default sign-in</b><span>Uses your existing login</span></div></div>
+    ${accounts.map((p) => `<button class="account-item account-link" data-account-open="${esc(p.id)}" type="button"><div><b>${esc(p.name)}</b>
+      <span>${accountUsageText(usage.find((r) => r.account_id === p.id))}</span></div><span aria-hidden="true">›</span></button>`).join("")}</div>
+    <button class="ghost small-btn" data-account-add type="button">+ Add account</button>`;
+  box.querySelectorAll("[data-account-open]").forEach((button) => {
+    button.onclick = () => openAgentAccount(kind, button.dataset.accountOpen);
+  });
+  box.querySelector("[data-account-add]").onclick = () => openAgentAccount(kind);
+}
+function openAgentAccount(kind, id = "") {
+  const agent = S.st.agents.find((a) => a.id === kind);
+  const account = (S.st.settings.agent_accounts || []).find((a) => a.kind === kind && a.id === id);
+  const usage = (S.st.account_usage || []).filter((r) => r.kind === kind);
+  const labelHelp = "This is a label used only in decompdecomp to help you recognize the account. It does not change your sign-in or the account name with your provider.";
+  const body = dialog(account ? account.name : `Add ${agent.name} account`, account ? `
+    <label class="field"><span>Account label</span><input data-account-name value="${esc(account.name)}" maxlength="80" autocomplete="off"></label>
+    <p class="muted small">${labelHelp}</p>
+    <button class="primary" data-account-rename type="button">Save label</button>
+    <p>Run this command in a terminal, then sign in with <code>/login</code>. Use <code>/status</code> to check the account.</p>
+    ${cmdBox(account.signin)}
+    <label class="field"><span>Configuration directory</span><code>${esc(account.config_dir)}</code></label>
+    <p>${accountUsageText(usage.find((r) => r.account_id === id))}</p>
+    <p class="muted small">Usage covers finished sessions in decompdecomp across your projects. Reported cost is a model estimate, not your subscription bill or remaining allowance.</p>
+    <p class="muted small">Removing this account stops its helpers. Login files and recorded usage are kept.</p>
+    <p class="bad small" data-account-error hidden></p>
+    <button class="ghost danger" data-account-remove type="button">Remove account and stop its helpers</button>` : `
+    <p>Keep another subscription login separate from your default account. After adding it, you’ll get a command to sign in.</p>
+    <label class="field"><span>Account label</span><input data-account-name placeholder="A name you’ll recognize" maxlength="80" autocomplete="off"></label>
+    <p class="muted small">${labelHelp}</p>
+    <details><summary>Use an existing configuration directory</summary><label class="field"><span>Directory (optional)</span><input data-account-dir placeholder="Absolute path to an existing account directory"></label></details>
+    <p class="muted small">Leave the directory blank to create a separate sign-in. Credentials stay with ${esc(agent.name)}.</p>
+    <p class="bad small" data-account-error hidden></p>
+    <div class="row"><button class="primary" data-account-save type="button">Add account</button><button class="ghost" data-close type="button">Cancel</button></div>
+    ${usage.some((r) => r.account_id && !(S.st.settings.agent_accounts || []).some((a) => a.id === r.account_id)) ? `<details><summary>Removed accounts’ usage</summary>${usage.filter((r) => r.account_id && !(S.st.settings.agent_accounts || []).some((a) => a.id === r.account_id)).map((r) => `<p><b>${esc(r.name)}</b><br>${accountUsageText(r)}</p>`).join("")}</details>` : ""}`, "agent-account");
+  const save = async (button, remove = false) => {
+    button.disabled = true;
+    const error = body.querySelector("[data-account-error]");
+    error.hidden = true;
+    const before = new Set((S.st.settings.agent_accounts || []).map((a) => a.id));
+    try {
+      S.st.settings = await api("/api/agent-accounts", { method: "POST", body: remove ? { remove: id } : account ? { id, name: body.querySelector("[data-account-name]").value } : {
+        kind, name: body.querySelector("[data-account-name]").value, config_dir: body.querySelector("[data-account-dir]").value } });
+      renderAgentAccounts(kind);
+      // A save can finish after this drawer was closed or replaced. Never reopen it over another task.
+      if (!$("dialog").hidden && $("dialogBody") === body && body.querySelector(remove ? "[data-account-remove]" : account ? "[data-account-rename]" : "[data-account-save]") === button) {
+        if (remove) closeDialog();
+        else if (account) openAgentAccount(kind, id);
+        else {
+          const added = S.st.settings.agent_accounts.find((a) => a.kind === kind && !before.has(a.id));
+          if (added) openAgentAccount(kind, added.id);
+        }
+      }
+    } catch (e) { error.textContent = e.message; error.hidden = false; } finally { button.disabled = false; }
+  };
+  if (account) {
+    const rename = body.querySelector("[data-account-rename]"), remove = body.querySelector("[data-account-remove]");
+    rename.onclick = () => save(rename);
+    remove.onclick = () => save(remove, true);
+  } else {
+    const add = body.querySelector("[data-account-save]");
+    add.onclick = () => save(add);
+  }
 }
 $("agRefresh").onclick = showAgentsPage;
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +20,26 @@ from decompnet.project import compiler_config
 from decompnet.rom.symbols import SymbolTable
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_stopped_autopilot_does_not_cancel_later_manual_draft(tmp_path, monkeypatch):
+    stopped = threading.Event()
+    stopped.set()
+    program = tmp_path / 'game.so'
+    program.write_bytes(b'program')
+    net = SimpleNamespace(
+        cfg=lambda _: {'rom': {'sha1': 'demo', 'program': 'game.so'}},
+        symbols=lambda _: SimpleNamespace(by_name={}),
+        autopilots={'demo': {'state': 'stopped', 'stop': stopped}},
+    )
+    proj = {'slug': 'demo', 'root': str(tmp_path), 'id': 1}
+    fn = {'name': 'function', 'vram': 0x1000, 'size': 4, 'meta': '{}'}
+    monkeypatch.setattr(drafts, 'ready', lambda: True)
+    def request(_program, _request, *, cancel, generation):
+        assert cancel is None and generation == 'demo'
+        return 'int function(void) { return 1; }'
+    monkeypatch.setattr(ghidra_worker, 'request', request)
+    assert 'int function' in drafts.generate(net, proj, fn, '')
 
 
 @pytest.fixture(scope='module')

@@ -8,12 +8,27 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.arch import arm
-from decompnet.arch.arm_image import image
+from decompnet.arch.arm_image import Image, image
 from decompnet.compiler import compile_source
 from decompnet.consoles.android import ANDROID, elf
 from decompnet.limits import capped
 from decompnet.project import compiler_config
 from decompnet.rom.symbols import Symbol, SymbolTable
+
+
+def test_pic_arm_veneer_resolves_its_relative_destination():
+    address, target = 0x1000, 0x1400
+    offset = (target - address - 12).to_bytes(4, 'little')
+    code = bytes.fromhex('04 c0 9f e5 0c c0 8f e0 1c ff 2f e1') + offset
+    context = Image(program=code, segments=[(address, 0, len(code))], veneers={address})
+    assert context.through_veneer(address) == target
+
+
+def test_lld_thumb_pic_long_thunk_resolves_its_relative_destination():
+    code = bytes.fromhex('41 f2 34 2c c0 f2 01 0c fc 44 60 47')
+    context = Image(program=code, segments=[(0x1000, 0, len(code))],
+                    veneers={0x1000}, thumb={0x1000})
+    assert context.through_veneer(0x1001) == 0x12240
 
 SOURCE = '''int first = 7;
 int second = 9;

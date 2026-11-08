@@ -146,7 +146,7 @@ class BriefMixin:
             try:
                 draft = (console.machine_draft(self, proj, fn, context) if console.draft_provider else
                          seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context, data_asm))
-            except NetworkError as error:
+            except (NetworkError, OSError) as error:
                 # A failed optional draft must never block a claim or hide the assembly from an agent.
                 logging.getLogger("decompdecomp").info("draft for %s: %s", fn["name"], error)
                 with self.store.tx() as db:
