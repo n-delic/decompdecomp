@@ -216,8 +216,10 @@ N64 segment detection also completes a parent cut after just the first one or tw
 prologue instructions, through its matching return and stack pop, without crossing
 another parent. That segment rule does not establish indirect or absolute-jump ownership.
 
-Existing projects use **Reimport** to receive the new analysis and the ordinary saved
-work restoration/judging protections. Opening a project does not rewrite its targets,
+Existing projects use **Settings → About this project → Reimport game** to receive the new analysis and the ordinary saved
+work restoration/judging protections. Reimport verifies and reuses the retained original game
+in the project folder; only a missing or unverifiable original requires file selection.
+Its progress and Stop control reattach when Settings is reopened. Opening a project does not rewrite its targets,
 claims or matches, and shared rooms still block reimport. Ambiguous mappings, kernel
 stubs and unproven entries retain the review workflow. Non-MIPS processors and project
 mode builds need their own boundary adapters; they receive no guessed MIPS repairs.

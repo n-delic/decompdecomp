@@ -893,6 +893,8 @@ function renderProjectFacts(ov) {
 async function renderProjectSettings() {
   const ov = S.ov;
   if (!ov) return;
+  $("reimportGame").hidden = ov.kind === "fork" && !ov.reimports;
+  refreshReimport();
   renderProjectFacts(ov);
   loadDataRegions();
   loadBlockerReviews();
@@ -1045,33 +1047,87 @@ $("setTcSave").onclick = async () => {
   } catch (e) { if (wholeProject) showJobError($("setTcLog"), e.message); else toast(esc(e.message), "err"); } finally { finish(); $("setTcSave").disabled = false; }
 };
 $("folderBtn").onclick = () => openFolder();
-$("reimportBtn").onclick = async () => {
-  const button = $("reimportBtn"), log = $("reimportLog"), work = $("reimportWork");
+let reimportFollower = null, reimportPreparation = null, reimportView = 0, reimportStarting = false;
+const reimportHandled = new Set();
+function resetReimportView(slug) {
+  const panel=$("reimportGame");
+  if (panel.dataset.slug===slug && panel.dataset.gen===String(S.gen)) return;
+  reimportView++;
+  reimportFollower?.finish(); reimportPreparation?.(); reimportPreparation=null;
+  reimportFollower=null; reimportStarting=false;
+  panel.dataset.slug=slug; panel.dataset.gen=String(S.gen);
+  const log=$("reimportLog"); log.textContent=""; log.hidden=true;
+  if(log._workStatus){log._workStatus.textContent="";delete log._workStatus.dataset.state;}
+  $("reimportBtn").disabled=false; $("reimportStop").hidden=true; $("reimportStop").disabled=false;
+  $("reimportStatus").textContent="";
+}
+async function followReimport(job, slug, gen) {
+  if (reimportFollower?.job===job) return;
+  const token=++reimportView, log=$("reimportLog"), button=$("reimportBtn"), stop=$("reimportStop");
+  reimportFollower?.finish();
+  showJobError(log, ""); log.hidden=false; log._showJobProgress=true;
+  const finish=beginWork(log,"Reimporting game",[button],"Game analysis updated.");
+  reimportFollower={job,finish}; stop.hidden=false;
+  $("reimportStatus").textContent="Reimporting…";
+  const active=()=>S.slug===slug && S.gen===gen && token===reimportView;
+  stop.onclick=async()=>{
+    stop.disabled=true;
+    try { await api("/api/job/cancel",{method:"POST",body:{id:job}}); }
+    catch(e) { if(active())showJobError(log,e.message); }
+    finally { if(active())stop.disabled=false; }
+  };
   try {
-    const { path } = await api("/api/pick", {
-      method: "POST", body: { kind: "file", title: "Choose your own copy of the game to reimport" },
-    });
-    if (!path) return;
-    if (!confirm("Reimport this project from the selected game file?\n\nMatched C is kept only for functions whose target bytes are unchanged. Changed functions reopen. Notes, settings and saved progress are kept. Helpers working on this project will stop.\n\nConfirm that this is your own legally obtained copy of the game.")) return;
-    button.disabled = true;
-    work.hidden = false;
-    showJobError(log, "");
-    const { job } = await api("/api/reimport", {
-      method: "POST", body: { slug: S.slug, path, confirmed: true },
-    });
-    const result = await followJob(job, log);
-    if (result.slug !== S.slug) return;
-    S.ov = await api(`/api/project?slug=${S.slug}`);
-    renderStats(S.ov);
-    renderProjectSettings();
-    await refreshMap(true);
-    toast(`Reimported ${plural(result.functions, "function")}; ${plural(result.matched, "matched function")} still match.`, "match");
-  } catch (e) {
-    showJobError(log, e.message);
+    const result=await followJob(job,log,null,active);
+    if(!active() || !result)return;
+    reimportHandled.add(job);
+    const overview=await api(`/api/project?slug=${encodeURIComponent(slug)}`);
+    if(!active())return;
+    S.ov=overview; renderStats(S.ov); renderProjectSettings(); await refreshMap(true);
+    if(active())toast(`Reimported ${plural(result.functions,"function")}; ${plural(result.matched,"matched function")} still match.`,"match");
+  } catch(e) {
+    if(active()){reimportHandled.add(job);showJobError(log,e.message);}
   } finally {
-    button.disabled = false;
-    work.hidden = true;
+    if(token===reimportView){finish();reimportFollower=null;stop.hidden=true;stop.disabled=false;$("reimportStatus").textContent="";}
   }
+}
+async function refreshReimport() {
+  const slug=S.slug, gen=S.gen;
+  resetReimportView(slug);
+  if(reimportFollower || reimportStarting || $("reimportGame").hidden)return;
+  const token=reimportView;
+  try {
+    const state=await api(`/api/reimport?slug=${encodeURIComponent(slug)}`);
+    if(S.slug!==slug || S.gen!==gen || token!==reimportView || reimportStarting)return;
+    if(state.job && !reimportHandled.has(state.job))await followReimport(state.job,slug,gen);
+  } catch(e) { if(S.slug===slug && S.gen===gen)showJobError($("reimportLog"),e.message); }
+}
+$("reimportBtn").onclick = async () => {
+  const slug=S.slug, gen=S.gen, button=$("reimportBtn"), log=$("reimportLog");
+  if(reimportStarting || reimportFollower)return;
+  resetReimportView(slug); reimportStarting=true;
+  const token=++reimportView, active=()=>S.slug===slug && S.gen===gen && token===reimportView;
+  const finish=beginWork(log,"Checking the saved game",[button],"");
+  reimportPreparation=finish;
+  let job;
+  try {
+    showJobError(log,"");
+    const state=await api(`/api/reimport?slug=${encodeURIComponent(slug)}`);
+    if(!active())return;
+    if(state.job && state.state==="running")job=state.job;
+    else {
+      let path;
+      if(!state.available){
+        showJobError(log,state.reason || "The saved original is unavailable. Choose your copy.");
+        ({path}=await api("/api/pick",{method:"POST",body:{kind:"file",title:"Choose your original copy of the game"}}));
+        if(!active() || !path)return;
+      }
+      if(!confirm(`Reimport this project using ${path ? "the selected game" : "the saved game"}?\n\nMatched C is kept where target bytes are unchanged. Changed functions reopen. Notes, settings and saved progress are kept. Helpers working on this project will stop.${path ? "\n\nConfirm that this is your own legally obtained copy." : ""}`))return;
+      if(!active())return;
+      ({job}=await api("/api/reimport",{method:"POST",body:{slug,...(path ? {path} : {}),confirmed:true}}));
+    }
+  } catch(e) { if(active())showJobError(log,e.message); }
+  finally { if(token===reimportView){finish();reimportPreparation=null;reimportStarting=false;} }
+  if(job && active())await followReimport(job,slug,gen);
 };
 
 /* Save your progress (app/saves.py): progress/ stays authoritative and follows local work and git contributions;

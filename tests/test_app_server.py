@@ -3217,3 +3217,46 @@ def test_synchronous_attempt_keeps_final_response_and_exposes_running_job(app, m
         finish.set();worker.join(5)
     assert not worker.is_alive() and responses[0].status_code==200
     assert responses[0].json()['score']==7 and 'job' not in responses[0].json()
+
+
+def test_reimport_uses_the_saved_original_and_reattaches_the_same_project_job(app,tmp_path,monkeypatch):
+    import hashlib
+
+    client,net,manager=app
+    root=tmp_path/'retained';root.mkdir();game=root/'original.z64';game.write_bytes(b'owned original')
+    cfg={'kind':'rom','platform':'n64','rom':{'program':game.name,'file':'analysis.bin',
+         'sha1':hashlib.sha1(game.read_bytes()).hexdigest()}}
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)',('retained','Game','mips',str(root),json.dumps(cfg)))
+    from types import SimpleNamespace
+
+    monkeypatch.setattr('decompnet.app.routes.projects.consoles.identify',lambda _:SimpleNamespace(id='n64'))
+    calls=[];release=threading.Event()
+    def run(slug,path,**kwargs):
+        calls.append((slug,path))
+        while not release.wait(.01):kwargs['log'].check_cancel()
+        return {'slug':slug,'functions':2,'matched':1}
+    monkeypatch.setattr(net,'reimport_rom',run)
+    monkeypatch.setattr(manager,'stop_project',lambda _:None)
+    h={'X-Decomp':'1'}
+    try:
+        state=client.get('/api/reimport?slug=retained').json()
+        assert state['available'] and state['name']==game.name
+        first=client.post('/api/reimport',json={'slug':'retained','confirmed':True},headers=h).json()
+        second=client.post('/api/reimport',json={'slug':'retained','confirmed':True},headers=h).json()
+        assert first['job']==second['job']
+        assert client.get('/api/reimport?slug=retained').json()=={'job':first['job'],'state':'running'}
+        assert client.get('/api/reimport?slug=unrelated').json().get('job') is None
+        client.post('/api/job/cancel',json={'id':first['job']},headers=h)
+        for _ in range(100):
+            job=client.get('/api/job?id='+first['job']).json()
+            if job['state']!='running':break
+            time.sleep(.01)
+        assert job['state']=='cancelled'
+        assert calls==[('retained',game)]
+        assert client.get('/api/reimport?slug=retained').json()['state']=='cancelled'
+        game.write_bytes(b'wrong copy')
+        assert not client.get('/api/reimport?slug=retained').json()['available']
+        response=client.post('/api/reimport',json={'slug':'retained','confirmed':True},headers=h)
+        assert response.status_code==400 and len(calls)==1
+    finally:release.set()

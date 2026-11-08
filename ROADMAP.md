@@ -322,6 +322,11 @@ resolution before worker creation, lease-bound release receipts for agent/room r
 selection/writer/score provenance in stale and continuation responses. ROM and imported-project metadata
 share the resolver; unavailable addresses remain unknown. See docs/AGENT_WORKFLOW_EFFICIENCY.md.
 
+Implemented: Reimport reuses the verified retained original in ROM and supported scratch
+projects, without asking for the file again. Missing/changed originals use file selection;
+flattened analysis images and files escaping the project root are excluded. Project-scoped
+jobs reattach progress/Stop after navigation and reject duplicate starts.
+
 Implemented: automatic framed MIPS import/reimport normalization joins generated fragments,
 retains overlapping delay slots once, and separates independently framed successors only
 when bounded direct flow, byte identity, mapping and reference guards agree. N64 detection
