@@ -39,6 +39,128 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_the_server_answers_while_saved_helpers_wait_for_project_sync(tmp_path, monkeypatch):
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    caller = threading.current_thread()
+
+    def resume(manager):
+        assert threading.current_thread() is not caller
+        entered.set()
+        try:
+            assert release.wait(10)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(agents.Manager, "resume", resume)
+    home = tmp_path / ".decomp"
+    home.mkdir()
+    net = RomNetwork(home / "decomp.db", tmp_path)
+    try:
+        mcp, _, security, _ = build(net, home, PORT, SECRET)
+        assert entered.wait(5)
+        client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                            base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+        assert client.get("/health").status_code == 200
+        assert client.get("/").status_code == 200
+        assert not finished.is_set()
+    finally:
+        release.set()
+        assert finished.wait(5)
+
+
+def test_shutdown_prevents_background_startup_from_launching_helpers(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    manager.sessions["1"] = agents.Session("1", "api", "helper", "game", "helper", {},
+                                          state="stopped", stopped_by=agents.BY_QUIT)
+    monkeypatch.setattr(net, "project_row", lambda slug: None)
+    monkeypatch.setattr(manager, "_prepare", lambda slug: setattr(manager, "_down", True))
+    monkeypatch.setattr(manager, "_launch", lambda session: pytest.fail("shutdown helper was launched"))
+    assert manager.resume() == []
+
+
+def test_start_after_shutdown_does_not_prepare_a_project(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    monkeypatch.setattr(manager, "_prepare", lambda slug: setattr(manager, "_down", True))
+    with pytest.raises(ValueError, match="is quitting"):
+        manager.start("api", "game")
+
+
+def test_resume_does_project_sync_outside_manager_lock_and_launches_under_it(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    session = agents.Session("1", "api", "helper", "game", "helper", {},
+                             state="stopped", stopped_by=agents.BY_QUIT)
+    manager.sessions[session.id] = session
+    entered, release, launched = threading.Event(), threading.Event(), threading.Event()
+
+    def project_row(slug):
+        entered.set()
+        assert release.wait(5)
+
+    def launch(s):
+        acquired = threading.Event()
+
+        def probe_lock():
+            with manager._lock:
+                acquired.set()
+
+        probe = threading.Thread(target=probe_lock)
+        probe.start()
+        probe.join(0.1)
+        assert not acquired.is_set()
+        launched.set()
+
+    monkeypatch.setattr(net, "project_row", project_row)
+    monkeypatch.setattr(manager, "_prepare", lambda slug: None)
+    monkeypatch.setattr(manager, "_launch", launch)
+    worker = threading.Thread(target=manager.resume)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        # A state request takes the same lock and must stay responsive during project synchronization.
+        state_ready = threading.Event()
+        state = threading.Thread(target=lambda: (manager.detected(), state_ready.set()))
+        state.start()
+        assert state_ready.wait(1)
+        state.join(1)
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert launched.is_set()
+
+
+def test_stopping_project_cancels_helpers_waiting_to_resume(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    sessions = [agents.Session(str(i), "api", f"helper{i}", "game", f"helper{i}", {},
+                               state="stopped", stopped_by=agents.BY_QUIT) for i in (1, 2)]
+    manager.sessions.update({session.id: session for session in sessions})
+    entered, release = threading.Event(), threading.Event()
+    launched = []
+
+    def project_row(slug):
+        if threading.current_thread().name == "resume-test":
+            entered.set()
+            assert release.wait(5)
+
+    monkeypatch.setattr(net, "project_row", project_row)
+    monkeypatch.setattr(manager, "_prepare", lambda slug: None)
+    monkeypatch.setattr(manager, "_launch", lambda session: launched.append(session.id))
+    monkeypatch.setattr(manager, "options_now", lambda kind, options: options)
+    worker = threading.Thread(target=manager.resume, name="resume-test")
+    worker.start()
+    try:
+        assert entered.wait(5)
+        manager.stop_project("game")
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert launched == []
+    assert all(session.stopped_by == agents.BY_YOU for session in sessions)
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
     from .test_loading import tiny_game
 
