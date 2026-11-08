@@ -868,6 +868,10 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Fork release 1.0.9-rr.2.** Blacksmith builds and verifies the Windows portable ZIP
+  alongside setup, with Apple Silicon macOS and Linux downloads. New installs use the
+  separate RetroReversing data folder.
+
 - **Lower-cost fork CI.** Ubuntu checks must pass before Windows or Apple Silicon macOS
   checks start. Intel macOS builds are paused, along with automatic labels and site deployment.
 

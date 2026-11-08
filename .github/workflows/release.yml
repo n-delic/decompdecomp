@@ -57,6 +57,9 @@ jobs:
         run: |
           $version = (Select-String '^__version__ = "(.*)"' src/decompnet/__init__.py).Matches.Groups[1].Value
           if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match project version $version" }
+      - name: Check portable launcher argument forwarding
+        shell: pwsh
+        run: uv run pytest tests/test_windows_portable.py -q
       - name: Build Windows setup and portable downloads
         shell: pwsh
         run: packaging/windows/build.ps1
