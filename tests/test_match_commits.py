@@ -420,6 +420,8 @@ def test_polished_commits_are_independent_and_preserve_frozen_source(automatic):
     git(root, 'commit', '-qm', 'matched before polish')
     state = match_commits.configure(net, 'game', True, str(root), kind='polished')
     assert state['polished_enabled'] and not state['enabled']
+    original_author = agent.name
+    agent, _ = net.local_agent('polishing helper')
     fn = net._function('f', 'game')
     source = '/* Readable purpose. ' + 'Detailed explanation. ' * 40 + '*/ void f(void) { return; }'
     context = net._context(fn['project_id'], fn['unit'])
@@ -430,6 +432,8 @@ def test_polished_commits_are_independent_and_preserve_frozen_source(automatic):
     job = net.store.one("SELECT * FROM auto_match_commits WHERE state='pending'")
     captured = json.loads(job['snapshot'])
     assert captured['kind'] == 'polished'
+    assert captured['info']['matched_by'] == original_author
+    assert captured['origin']['agent'] == agent.name
     assert captured['source'] == source
     assert captured['details']['source_sha256'] == __import__('hashlib').sha256(source.encode()).hexdigest()
     # Disabling new-match commits must leave the independent polish queue intact.
