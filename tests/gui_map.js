@@ -89,7 +89,7 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
 
   // a poll that brings a better score for one function and a claim on another: those two cells, not all 2,000
   reset();
-  live = { ...live, attempts: [{ id: 1, function: "f7", score: 3, created_at: 0, n_insns: 4 }],
+  live = { ...live, attempts: [{ id: 1, function: "f7", score: 3, compiled: 1, created_at: 0, n_insns: 4 }],
     claims: [{ name: "f9", agent: "claude", n_insns: 4 }] };
   await ctx.poll();
   await settle();
