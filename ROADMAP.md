@@ -889,6 +889,14 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Coordinated compiler-phase repairs.** Shared draft and deep/iterative searches
+  can combine dead-local latch snapshots, staged word arithmetic, byte-table index
+  captures, MIPS32 address operand order and immutable loop captures. Residual MIPS
+  debug NOPs can trigger bounded dependent-line joins; structurally recovered pipeline
+  detours retain an existing frontier slot and budget. The unchanged linker recovered
+  a frozen V-Rally final checkpoint in three compiler checks. Cross-game match rates
+  and token savings are not yet measured; compiler learning notes record the limits.
+
 - **Fork release 1.0.9-rr.2.** Blacksmith builds and verifies the Windows portable ZIP
   alongside setup, with Apple Silicon macOS and Linux downloads. New installs use the
   separate RetroReversing data folder.
