@@ -58,7 +58,7 @@ def test_benchmark_keeps_budget_counts_and_requires_explicit_exact_verdict(monke
     def evaluate(source):
         if source not in cache:
             cache[source] = dict(score={'seed':10,'zero':0,'exact':0}[source],matched=source=='exact',
-                                 outcome='exact_linked' if source=='exact' else 'scored')
+                                 outcome='exact_linked' if source=='exact' else 'scored',compiler_invocations=1)
         return cache[source]
     monkeypatch.setattr(bench,'evaluator',lambda *a:(evaluate,{'compiler':{}},'mips','',cache))
     def variants(parent, name, arch, asm, flags, labels, **kwargs):
@@ -122,3 +122,10 @@ def test_frozen_homemade_suite_covers_three_unrelated_functions(tmp_path):
     assert report['coverage']==dict(cases=3,distinct_functions=3,repeated_precursors=0)
     assert all(not c['baseline_exact'] for c in report['cases'])
     assert report['candidate_compiles']<=12
+
+
+def test_reported_compiler_cost_is_not_inferred_from_cache_entry_count():
+    assert bench.compiler_cost({'a':{'compiler_invocations':0},'b':{'compiler_invocations':2}})==dict(
+        compiler_invocations=2,fresh_compile_checks=2,invocation_measured_checks=2)
+    unknown=bench.compiler_cost({'a':{},'b':{'compiler_invocations':1}})
+    assert unknown['compiler_invocations'] is None and unknown['fresh_compile_checks']==2

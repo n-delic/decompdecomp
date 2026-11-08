@@ -63,8 +63,9 @@ def evaluator(root, name, header):
     cache = {}
     def evaluate(source):
         if source in cache:
-            return cache[source]
-        built = compile_source(cfg,header,source)
+            return dict(cache[source],compiler_invocations=0)
+        counts=compile_timing.Counts()
+        with compile_timing.collect(counts,append=True):built = compile_source(cfg,header,source)
         if not built.ok:
             result = dict(score=None,matched=False,outcome='compile_error')
         else:
@@ -86,6 +87,7 @@ def evaluator(root, name, header):
                               outcome='exact_linked' if linked.exact else 'scored',
                               candidate_target=hashlib.sha256(linked.linked_code).hexdigest(),
                               candidate_relocs=repr(linked.problems))
+        result['compiler_invocations']=counts.values.get('invocations',0)
         cache[source] = result
         return result
     scope = dict(manifest_sha256=hashlib.sha256(manifest_text.encode()).hexdigest(),
@@ -93,6 +95,14 @@ def evaluator(root, name, header):
                  target_sha256=hashlib.sha256(target.code).hexdigest(),compiler=profile,
                  compiler_identity=compiler_identity(profile))
     return evaluate,scope,console.arch,asm.read_text(),cache
+
+
+def compiler_cost(cache):
+    """A cache entry is a fresh candidate check, not necessarily one compiler process."""
+    values=[r.get('compiler_invocations') for r in cache.values()]
+    known=[n for n in values if type(n) is int and n>=0]
+    return dict(compiler_invocations=sum(known) if len(known)==len(values) else None,
+                fresh_compile_checks=len(values),invocation_measured_checks=len(known))
 
 
 def benchmark(root, name, source, header, *, trials=128, seconds=120, families=()):
@@ -112,7 +122,7 @@ def benchmark(root, name, source, header, *, trials=128, seconds=120, families=(
     result = repair_benchmark.run(source,baseline['score'],evaluate,generate,trials=trials,
                                   deadline=time.monotonic()+seconds,arch=arch,header=header)
     return {**result,'scope':scope,'starting_source_sha256':hashlib.sha256(source.encode()).hexdigest(),
-            'compiler_invocations':len(cache),'verdict':'Normal linked-byte and ROM-data judge; read-only, no adoption.'}
+            **compiler_cost(cache),'verdict':'Normal linked-byte and ROM-data judge; read-only, no adoption.'}
 
 
 def suite(root, cases, *, trials=16, seconds=30, focused=True, omit_families=()):
@@ -151,7 +161,7 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True, omit_families=())
     return result | {'scratch_role_coverage':dict(eligible_cases=sum(i['candidates']>0 for i in applicability),
                       declined_cases=sum(i['candidates']==0 for i in applicability),decline_reasons=dict(declines),decline_reason_cases=dict(reason_cases)),
                      'coverage':dict(cases=len(prepared),distinct_functions=distinct,repeated_precursors=len(prepared)-distinct),
-                     'compiler_invocations':sum(len(c['compiled']) for c in prepared),
+                     **compiler_cost({(i,key):r for i,c in enumerate(prepared) for key,r in c['compiled'].items()}),
                      'focused':focused,'omitted_families':list(omit_families),
                      'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
 
@@ -172,7 +182,7 @@ def audit(root,name,stages,header,*,proposals=256,probes=8,seconds=120):
     deadline=time.monotonic()+seconds
     result=repair_sequence_audit.audit(stages,evaluate,generate,retains=retains,proposals=proposals,probes=probes,
                                      stopped=lambda:time.monotonic()>=deadline)
-    return {**result,'scope':scope,'compiler_invocations':len(cache)}
+    return {**result,'scope':scope,**compiler_cost(cache)}
 
 
 def main():
