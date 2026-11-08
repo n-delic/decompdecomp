@@ -79,7 +79,7 @@ raise SystemExit(main())
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     if (-not (Test-Path -LiteralPath $compiler)) { throw 'The portable launcher needs the .NET Framework C# compiler.' }
     & $compiler /nologo /target:winexe /platform:x64 /reference:System.Windows.Forms.dll `
-        "/win32icon=$(Join-Path $app 'decompdecomp.ico')" "/out:$(Join-Path $app 'decompdecomp.exe')" `
+        "/win32icon:$(Join-Path $app 'decompdecomp.ico')" "/out:$(Join-Path $app 'decompdecomp.exe')" `
         (Join-Path $PSScriptRoot 'portable-launcher.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Could not compile the portable Windows launcher.' }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portable-README.txt') -Destination (Join-Path $app 'README.txt')

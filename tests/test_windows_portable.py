@@ -27,7 +27,8 @@ def test_portable_exe_forwards_arguments_and_exit_status_after_relocation(tmp_pa
     original = tmp_path / 'original'
     original.mkdir()
     subprocess.run([str(compiler), '/nologo', '/target:winexe', '/platform:x64',
-                    '/reference:System.Windows.Forms.dll', '/out:' + str(original / 'decompdecomp.exe'),
+                    '/reference:System.Windows.Forms.dll',
+                    '/win32icon:' + str(ROOT / 'src/decompnet/app/static/favicon.ico'), '/out:' + str(original / 'decompdecomp.exe'),
                     str(ROOT / 'packaging/windows/portable-launcher.cs')], check=True, capture_output=True)
     helper = tmp_path / 'probe.cs'
     helper.write_text('''using System;
