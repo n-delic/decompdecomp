@@ -48,16 +48,19 @@ def status(net, slug):
             'build_folder': str(build or '')}
 
 
-def bind(net, slug, path, proj):
-    """Only adopt a remembered backup after it agrees with the authoritative save."""
+def bind(net, slug, path, proj, log=lambda line:None):
+    """Refresh an untouched app backup, preserving external edits before adoption."""
     if path == saves.default_folder(net, slug).resolve():
         net._update_cfg(slug, lambda cfg: cfg.update(progress_folder=str(path)))
         return
     if net.cfg(proj).get('auto_commit_matches'):
         raise NetworkError('Turn off automatic commits before moving the progress folder.')
-    net.progress.sync(slug, force=True)
-    def comparable(folder):
-        files = saves._read_owned(folder)
+    previous = saves._read_owned(path)
+    receipt = net.cfg(proj).get('progress_save_receipt') or {}
+    untouched = receipt.get('folder') == str(path.resolve()) and receipt.get('digest') == saves.owned_digest(previous)
+    net.progress.sync(slug, force=True, logger=log)
+    if net.progress.errors.get(slug):raise NetworkError(net.progress.errors[slug])
+    def comparable(files):
         # Save now adds a final newline to C; an imported authoritative save may
         # retain the exact source without it. Use the save writer's normalization,
         # preserving leading/internal lines and headers (compiler inputs).
@@ -67,8 +70,19 @@ def bind(net, slug, path, proj):
         for key in ('revision', 'saved_at'):
             manifest.pop(key, None)
         return {**files, saves.MANIFEST: json.dumps(manifest, sort_keys=True)}
-    if comparable(path) != comparable(saves.default_folder(net, slug)):
-        raise NetworkError('This save differs from current progress. Review its edits and Save now before using it for automatic commits.')
+    current = saves._read_owned(saves.default_folder(net, slug))
+    saved, latest = comparable(previous), comparable(current)
+    if saved != latest:
+        differences = sorted(name for name in saved.keys() | latest.keys() if saved.get(name) != latest.get(name))
+        if not untouched:
+            detail = ', '.join(differences[:20])
+            if len(differences) > 20:detail += f' (and {len(differences)-20} more)'
+            raise NetworkError('This save differs from current progress and has external edits or no app save receipt. '
+                               'Files that differ: '+detail+'. Review these files before saving current progress to this folder. Nothing was overwritten.')
+        log(f'Refreshing {len(differences)} outdated saved progress file(s) before committing…')
+        if not saves._publish(path, current, previous, expected=previous, chosen=True):
+            raise NetworkError('The selected save changed while preparing the commit. Its external edits were preserved; review it and retry.')
+        saves._remember_revision(net, slug, json.loads(current[saves.MANIFEST]))
     net._update_cfg(slug, lambda cfg: cfg.update(progress_folder=str(path)))
 
 
@@ -89,7 +103,7 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                     raise NetworkError('Save this project to the selected folder before creating its repository.')
                 ignore = path/'.gitignore'
                 if ignore.is_symlink():raise NetworkError('Replace the .gitignore symbolic link before setting up Git.')
-                bind(net, slug, path, proj)
+                bind(net, slug, path, proj, log)
                 git(path, 'init', '--initial-branch=main')
                 # Existing rules stay last so a user's exclusions retain precedence.
                 previous = ignore.read_bytes() if ignore.exists() else b''
@@ -109,7 +123,7 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                 log('Added origin. Nothing was fetched or pushed.')
             elif action == 'checkpoint':
                 if not root or not net.is_rom(proj):raise NetworkError('Choose a portable Git progress save before committing.')
-                bind(net, slug, path, proj)
+                bind(net, slug, path, proj, log)
                 for identity in ('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT'):
                     git(root, 'var', identity, error='Set Git user.name and user.email before committing saved progress.')
                 head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)

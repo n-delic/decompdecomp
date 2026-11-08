@@ -280,3 +280,49 @@ def test_newline_comparison_still_rejects_source_or_line_changes(project, tmp_pa
         repository_setup.run(net, 'game', 'init', '', lambda line:None)
     assert saves.default_folder(net, 'game') == folder
     assert not (target/'.git').exists()
+
+
+def test_checkpoint_refreshes_untouched_app_backup_after_new_progress(project,tmp_path):
+    net,folder,_=project
+    target=tmp_path/'backup'
+    saves.save(net,'game',target)
+    git(target,'init','--initial-branch=main')
+    git(target,'config','user.name','Test');git(target,'config','user.email','test@example.invalid')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new agent draft',best_score=10 WHERE name='f'")
+    messages=[]
+    state=repository_setup.run(net,'game','checkpoint','',messages.append)
+    assert state['checkpoint'] and state['linked']
+    assert git(target,'show','HEAD:best/f.c')=='new agent draft'
+    assert any('outdated' in message for message in messages)
+
+
+def test_checkpoint_lists_external_edits_and_preserves_them(project,tmp_path):
+    net,folder,_=project
+    target=tmp_path/'backup'
+    saves.save(net,'game',target)
+    git(target,'init','--initial-branch=main')
+    (target/'include/common.h').write_text('external contribution')
+    with pytest.raises(NetworkError,match=r'Files that differ:.*include/common.h'):
+        repository_setup.run(net,'game','checkpoint','',lambda line:None)
+    assert (target/'include/common.h').read_text()=='external contribution'
+    assert saves.default_folder(net,'game')==folder
+    assert not repository_setup.git(target,'rev-parse','--verify','--quiet','HEAD',missing=True)
+
+
+def test_backup_refresh_detects_edits_during_capture(project,tmp_path,monkeypatch):
+    net,folder,_=project
+    target=tmp_path/'backup'
+    saves.save(net,'game',target)
+    git(target,'init','--initial-branch=main')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new draft',best_score=10 WHERE name='f'")
+    publish=saves._publish
+    def concurrent(path,*args,**kwargs):
+        if path==target:(target/'include/common.h').write_text('concurrent edit')
+        return publish(path,*args,**kwargs)
+    monkeypatch.setattr(saves,'_publish',concurrent)
+    with pytest.raises(NetworkError,match='changed while preparing'):
+        repository_setup.run(net,'game','checkpoint','',lambda line:None)
+    assert (target/'include/common.h').read_text()=='concurrent edit'
+    assert saves.default_folder(net,'game')==folder
