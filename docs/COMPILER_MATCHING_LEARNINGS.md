@@ -6460,3 +6460,37 @@ DECOMPNET_DISPATCH_CASE=/private/path/frozen-case uv run pytest tests/test_dispa
 The case directory contains private `inputs.json`, `baseline.c`, `layout.c` and
 `rom.z64`. The JSON records the frozen function/project/symbols/header/profile,
 `rom_sha256` and `baseline_score`. Without the supplied inputs only this gate skips.
+
+### KMC: prepared arguments and a single-pass call scope (2026-11-08)
+
+One 278-instruction N64 packing function matched with pinned KMC GCC 2.7.2,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. A near-match had all registers correct,
+but copied the call result after two buffer-address instructions rather than
+before them. Independent ordinary linking confirmed exactly three unequal words;
+two additional symbolic HI/LO annotations were not unequal raw bytes. Never
+change target metadata to remove those display differences.
+
+Copying the result earlier corrected the order but swapped the result and buffer
+registers. Allocation dumps showed a narrow priority boundary: the result had four
+weighted references across 28 versus 29 live instructions, while the buffer had
+23 across 322 versus 320. Moving a source assignment therefore changed allocation
+as well as scheduling. Declaration scopes, const bindings, whitespace layouts,
+and the tested scheduler settings did not recover the match in this case.
+
+The successful combined edit prepared the real item pointer before the call,
+collapsed the short-lived status copy into a direct result assignment, and
+enclosed that call/assignment in a single-pass `do { ... } while (0)` scope.
+The normal live judge saved a match, and a fresh
+ordinary compile using the saved source, current header, symbols and profile
+independently reproduced all 1,112 target bytes. No padding, register bindings,
+dummy evaluations or ABI changes were used. Existing packing scopes and the
+earlier recovered operations were retained; the individual contribution of each
+part of the final combined edit was not isolated.
+
+This is one measured compiler representation, not evidence of original macro
+use or a general success-rate claim. For an opposing allocation/order tradeoff,
+consider prepared arguments and a bounded single-pass call scope as a combined
+alternative. Preserve argument evaluation count and read/call order, including
+volatile and qualified effects. Private inputs and byte-verification receipts
+remain outside the repository. Verification was function-level; no complete
+image rebuild is claimed.

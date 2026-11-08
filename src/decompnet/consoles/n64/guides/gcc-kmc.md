@@ -1532,3 +1532,14 @@ budgets and exact verification, not assumed object extents. The frozen original
 52-point precursor recovered in four candidate compiles; its 40-point precursor
 needed one. Five unrelated regression functions retained the same best results,
 so broader match-rate or time savings are not established.
+
+### Call-copy ordering can conflict with register allocation
+
+When copying a return value earlier fixes instruction order but swaps its register
+with a buffer pointer, inspect both allocation and scheduling. In one verified
+278-instruction case, preparing the real argument pointer first and putting only
+the existing call/result assignment in a single-pass `do/while(0)` scope recovered
+the final three words. This was a combined source change, not proof of an original
+macro or a general repair rule. Preserve evaluations and read/call order; do not
+add dummy uses, padding or register bindings. Verify ordinary linked bytes, not
+symbolic relocation annotations. See `COMPILER_MATCHING_LEARNINGS.md` for limits.
