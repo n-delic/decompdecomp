@@ -206,10 +206,9 @@ def run(args) -> int:
 
 
 def _start(args,home,internal,state_file,log,restarted,headless):
-    import uvicorn
-
     from . import cleanup
     from .engine import RomNetwork
+    from .runtime_server import Server
     from .server import build
 
     sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or headless)
@@ -243,7 +242,7 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     elif not restarted or restarted.get("window", True):
         _open_when_ready(port)
     try:
-        uvicorn.Server(server_config(app)).run(sockets=[sock])
+        Server(server_config(app), quit_app).run(sockets=[sock])
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
         log.exception("the server stopped")
         traceback.print_exc()
@@ -261,7 +260,7 @@ def server_config(app):
     import uvicorn
 
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
-    return uvicorn.Config(app, log_config=None, access_log=False)
+    return uvicorn.Config(app, log_config=None, access_log=False, timeout_graceful_shutdown=5)
 
 
 def update_cmd(args) -> int:
