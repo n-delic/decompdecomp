@@ -6560,3 +6560,59 @@ and current refs/live lengths; reading them starts no tools. Optional parity-che
 captures remain budgeted and follow the cheap rotation lane. Keep the measured
 negative experiments in the earlier prepared-call entry: this repair does not
 justify dummy uses, ABI changes, or broad compiler-flag retries.
+
+### KMC: normalize a real halfword store to recover a missing spill reservation (2026-11-08)
+
+A private 251-instruction routine is now byte-exact through the live ordinary judge with
+unchanged `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The saved source was read
+back and independently compiled/linked again: all 1,004 bytes agree with the cartridge.
+Ordinary and `-da -save-temps` builds also agree completely. Only the focal function body
+is emitted. This is a newly accepted function match, not a whole-cartridge rebuild.
+
+The earlier score-2 candidate used an unexplained eight-byte automatic array and put one
+cached pointer's two spill accesses at `sp+0x34` instead of `sp+0x14`. Removing the array
+and moving that pointer declaration first recovered every body instruction and all four
+real pointer spills, but reduced the frame from `0x60` to `0x58`, leaving 22 save/restore
+and frame-size differences. More padding merely moved the real slots again.
+
+The winning change starts from that padding-free body-exact source. Immediately before
+an existing unsigned-halfword store, explicitly normalize its existing `u16` local through
+an inline signed-halfword helper:
+
+```c
+static inline short normalize_halfword(int x) {
+    x = (unsigned int)x << 16;
+    x = (int)x >> 16;
+    return x;
+}
+/* At the existing store: */
+*destination = normalize_halfword(existing_halfword);
+```
+
+Here `destination` is the original unsigned-short destination; no pointer type, address,
+read, store, call order, or ABI changes. Exhaustive checking of all 65,536 possible unsigned
+halfword values confirms that the final store preserves its original low sixteen bits
+under the observed compiler's signed-shift behaviour. The transformation expresses the
+actual store's narrowing, rather than inserting a dummy evaluation or an artificial use.
+
+The installed compiler's dumps retain pseudo 174 with twelve references across four
+instructions, no global conflicts and no assigned hard register. The emitted `.frame`
+changes from `vars=32` to `vars=40`, with the same ten saved registers and sixteen outgoing
+argument bytes. The resulting `0x60` frame has all original body/spill bytes unchanged;
+no extra runtime instruction or helper call appears. This agrees with the earlier measured
+normalization/spill-reservation behaviour; it does not prove the original C used this helper.
+
+Negative controls retained privately: sixteen explicit table-storage shapes, sixteen narrow
+call-scope variants across the two roots, and twenty consumed real-constant preparations did
+not improve the score-2 result. For the final normalization family, applying signed-halfword
+normalization to a masked call expression retained score 22; applying it to a byte-add store
+regressed to 462. The actual halfword-store site matched on its first test. These differences
+matter: a normalization belongs at a real conversion boundary, and its placement affects
+allocation. No padded array remains in the accepted source.
+
+Automation gap: existing `spill_normalization` discovers signed word locals masked below
+bit fifteen. It does not discover this unsigned-halfword-local-to-halfword-store site.
+A future bounded extension should prove the destination width and unchanged evaluation,
+then try explicit normalization at actual narrow stores when earlier spills agree and a
+consistent positive frame gap remains. Require the ordinary judge; never synthesize `USE`
+instructions, dummy reads, fixed registers or unsupported storage to manufacture space.
