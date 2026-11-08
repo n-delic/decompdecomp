@@ -699,6 +699,10 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     data = []
     for path in sorted((workdir / "asm" / "data").glob("**/*.s")):
         data += parse_data(path)
+    from .automatic_boundaries import repair
+
+    segments = segments_from_config(config)
+    unique = repair(unique, data, rom, console, segments, symbols=symbols or (), log=log)
     unique = merge_switch_cases(unique, data, rom, big_endian)
     if not unique:
         raise RomError("splat found no functions; the code may be compressed or use an unusual boot layout")

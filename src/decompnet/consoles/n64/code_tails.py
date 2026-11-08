@@ -18,7 +18,9 @@ def complete(rom, segments, taken=()):
         word = lambda at:int.from_bytes(rom[at:at+4],'big')
         # Alignment adds at most 12 bytes after a return and its delay slot.
         returns = [at for at in range(max(start,end-32),end-4,4) if word(at)==JR_RA]
-        last = returns[-1]+8 if returns else end
+        # A separately detected segment can contain only the next prologue's
+        # first one or two instructions, without a preceding return in this parent.
+        last = returns[-1]+8 if returns else start if is_frame(word(start)) else end
         if last>=end or not any(word(at) for at in range(last,end,4)):
             result.append((start,end,vram));continue
         # A compiler may schedule one or two loads before the frame, caught by padding.

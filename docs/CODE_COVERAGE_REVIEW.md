@@ -200,3 +200,24 @@ These checks protect existing work; they do not prove the new boundary is correc
 Guided repair and advisory investigation currently use mapped MIPS ROM extents (N64,
 PS1, PS2 scalar MIPS and PSP). Other processors and imported builds need evidence/layout
 adapters before this workflow can safely reach them; they remain planned in ROADMAP.md.
+
+## Automatic import repairs
+
+New MIPS ROM imports and explicit reimports repair generated fragments before creating
+project targets. The pass accepts only a bounded, closed, single-frame scalar body
+with balanced return delay slots in one unambiguous mapping. It can join fragments,
+deduplicate an overlapping delay slot, and separate a following framed routine. Every
+original instruction is retained; this is boundary analysis, never a C match.
+
+Explicit symbols, data, independent calls/branches, recorded function pointers,
+competing overlays, invalid bytes, switches and unresolved flow prevent automatic
+ownership changes. New interior frame entries require a preceding balanced return.
+N64 segment detection also completes a parent cut after just the first one or two
+prologue instructions, through its matching return and stack pop, without crossing
+another parent. That segment rule does not establish indirect or absolute-jump ownership.
+
+Existing projects use **Reimport** to receive the new analysis and the ordinary saved
+work restoration/judging protections. Opening a project does not rewrite its targets,
+claims or matches, and shared rooms still block reimport. Ambiguous mappings, kernel
+stubs and unproven entries retain the review workflow. Non-MIPS processors and project
+mode builds need their own boundary adapters; they receive no guessed MIPS repairs.

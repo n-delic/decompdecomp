@@ -60,3 +60,16 @@ def test_recovery_respects_same_ram_segment_and_scan_bound():
     from decompnet.consoles.n64.code_tails import MAX_TAIL
     rom=image([0]*(MAX_TAIL//4)+[0x03e00008,0x27bd0018])
     assert complete(rom,[(0,12,0x80001000)])==[(0,12,0x80001000)]
+
+
+def test_a_segment_truncated_to_one_or_two_prologue_instructions_is_completed():
+    rom=struct.pack('>7I',0x27bdffe8,0xafbf0014,0,0,0x8fbf0014,0x03e00008,0x27bd0018)
+    for end in (4,8):
+        assert complete(rom,[(0,end,0x80001000)])==[(0,len(rom),0x80001000)]
+
+
+def test_a_standalone_partial_prologue_never_crosses_another_parent_or_unbalanced_return():
+    rom=struct.pack('>7I',0x27bdffe8,0xafbf0014,0,0,0x8fbf0014,0x03e00008,0x27bd0010)
+    assert complete(rom,[(0,4,0x80001000)])==[(0,4,0x80001000)]
+    rom=rom[:-4]+struct.pack('>I',0x27bd0018)
+    assert complete(rom,[(0,4,0x80001000)],[(16,28,0x90001000)])==[(0,4,0x80001000)]
