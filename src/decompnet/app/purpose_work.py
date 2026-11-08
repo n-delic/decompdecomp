@@ -1,6 +1,7 @@
 """Purpose-owned worker groups with cooperative cancellation and live thread identity."""
 import threading
 import uuid
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -59,7 +60,9 @@ class Executor(ThreadPoolExecutor):
             try:
                 with owner(self.project, self.stop), compiler.cancellable(self.check_cancel):
                     if not self.always_run:self.check_cancel()
-                    return fn(*args, **kwargs)
+                    result = fn(*args, **kwargs)
+                    self.check_cancel()
+                    return result
             finally:
                 _CHECK.reset(token)
                 with _LOCK:self.thread_ids.discard(tid)
@@ -115,3 +118,27 @@ def shutdown():
     """Signal active work without changing the user's saved background preferences."""
     with _LOCK:groups = list(_ACTIVE.values())
     for group in groups:group.stop(propagate=False)
+
+
+class Groups:
+    """Lifecycle owner for independent verification operations, never a shared executor."""
+    def __init__(self, width):
+        self.width = width
+        self.groups = weakref.WeakSet()
+        self.lock = threading.Lock()
+        self.closed = False
+
+    def group(self, purpose, project):
+        with self.lock:
+            if self.closed:raise NetworkError('Verification is shutting down.')
+            work = Executor(self.width, purpose=purpose, project=project)
+            self.groups.add(work)
+            return work
+
+    def shutdown(self, wait=True):
+        with self.lock:
+            self.closed = True
+            groups = list(self.groups)
+        for work in groups:
+            work.stop(propagate=False)
+            work.shutdown(wait=wait, cancel_futures=True)

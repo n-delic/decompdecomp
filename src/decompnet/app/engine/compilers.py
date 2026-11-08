@@ -1163,16 +1163,18 @@ class CompilerMixin:
             _, diff, _ = self._judge_with(trial, fn, own["toolchain"], list(own["flags"]), source) if source else (False, None, "")
             return fn['id'], diff.score if diff is not None else None, fn['name']
         report({'phase':'Updating saved scores', 'done':0, 'total':len(rescored), 'affected':len(affected)})
-        # Reuse the bounded judge pool; agents keep seeing the old settings until every result is validated.
+        # Use a purpose-owned judge group; agents keep seeing the old settings until every result is validated.
         # A single-entry apply stays in its private compile session, reusing exact
         # compiler output from validation while still judging the current target.
-        rescoring = map(rescore, rescored) if len(rescored) == 1 else self._pool.map(rescore, rescored)
-        for done, (fid, score, name) in enumerate(rescoring, 1):
-            scores[fid] = score
-            report({'phase':'Updating saved scores', 'done':done, 'total':len(rescored),
-                    'affected':len(affected), 'function':name})
-            if done == len(rescored) or done % 25 == 0:
-                log(f"Updating score {done} of {len(rescored)}: {name}")
+        from contextlib import nullcontext
+        with nullcontext(None) if len(rescored) == 1 else self._pool.group('Saved attempt rescoring', proj['slug']) as pool:
+            rescoring = map(rescore, rescored) if len(rescored) == 1 else pool.map(rescore, rescored)
+            for done, (fid, score, name) in enumerate(rescoring, 1):
+                scores[fid] = score
+                report({'phase':'Updating saved scores', 'done':done, 'total':len(rescored),
+                        'affected':len(affected), 'function':name})
+                if done == len(rescored) or done % 25 == 0:
+                    log(f"Updating score {done} of {len(rescored)}: {name}")
         # An agent can finish while checks run. Never overwrite its work with a verdict from an older snapshot.
         def population(items):
             return [tuple(r[k] for k in ("id", "name", "vram", "rom_offset", "unit", "size", "target", "relocs", "meta",

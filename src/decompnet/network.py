@@ -17,7 +17,6 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -427,7 +426,8 @@ class Network:
         self.claim_ttl = claim_ttl
         self._compile_ahead_local = threading.local()
         self._attempt_locks: dict[tuple[int, int], threading.RLock] = {}
-        self._pool = ThreadPoolExecutor(max_workers=8)
+        from .app.purpose_work import Groups
+        self._pool = Groups(8)
         # (agent id, function id) -> its last compile's diff rows and their legend, for last_diff
         from .repair_feedback import RepairFeedback
         self.repair_feedback = RepairFeedback(self)
@@ -2155,11 +2155,12 @@ class Network:
             res = self._compile(proj, header, "")
             return [] if res.ok else [("<header>", res.log.strip()[:300])]
         broken = []
-        for done, result in enumerate(self._pool.map(check, matched), 1):
-            if result:
-                broken.append(result)
-            if progress:
-                progress({"phase": "Checking affected matches", "done": done, "total": len(matched)})
+        with self._pool.group('Matched function verification', proj['slug']) as pool:
+            for done, result in enumerate(pool.map(check, matched), 1):
+                if result:
+                    broken.append(result)
+                if progress:
+                    progress({"phase": "Checking affected matches", "done": done, "total": len(matched)})
         return broken
 
     # ------------------------------------------------------------------ notes

@@ -129,4 +129,4 @@ def test_purpose_group_threads_and_stop_are_exposed_in_inventory():
             assert stopped.is_set()
             assert next(r for r in m.snapshot()['items'] if r['key']==pool.key)['state']=='stopping'
         finally:release.set()
-        future.result()
+        with pytest.raises(NetworkError,match='stopped'):future.result()
