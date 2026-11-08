@@ -861,9 +861,11 @@ async function renderTeam(box) {
   renderHost(box, info);
   teamTimer = setInterval(async () => {
     if (!teamOpen()) { clearInterval(teamTimer); return; }
-    if (box._editingAddress) return;
+    if (box._editingAddress || box._working || box._hostActionError) return;
+    const revision=box._hostActionRevision || 0;
     if (box.contains(document.activeElement) && document.activeElement.matches("input")) return;  // typing
     const inf = await api(`/api/collab?slug=${S.slug}`).catch(() => null);
+    if (revision!==(box._hostActionRevision || 0)) return;
     if (inf && (inf.sharing || inf.restoring || inf.restore_error || info.restoring) && teamOpen()) renderHost(box, inf);
   }, TEAM_HOST_EVERY_MS);
 }
@@ -980,7 +982,7 @@ function renderHost(box, info) {
     ${waiting ? `<div class="setup-group"><h3>Waiting to join</h3>${waiting}</div>` : ""}
     <div class="setup-group"><h3>In the room · ${members.length} member${members.length === 1 ? "" : "s"}, ${online} online</h3>${people || `<p class="muted small">Nobody yet.</p>`}</div>
     ${opts(info)}
-    <div class="row"><button class="ghost" data-room-matches>Review pending matches</button>${!info.stable_link ? `<button class="ghost" id="stableAddress" type="button">Use stable address…</button>` : ""}<button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`);
+    <div class="row"><button class="ghost" data-room-matches>Review pending matches</button>${!info.stable_link ? `<button class="ghost" id="stableAddress" type="button">Use stable address…</button>` : ""}<button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div><pre class="joblog" data-host-action-log hidden></pre>`);
   wireCopies(box);
   wireRoomMatchReview(box);
   wireTeamJoin(box);
@@ -998,10 +1000,33 @@ function renderHost(box, info) {
     renderHost(box, {...info, sharing:false, was_sharing:true, mode:'address', changing_address:true});
   };
   box.querySelector("#rotate").onclick = () => { if (confirm("Make a new invite link? The old one stops working for people who haven't joined yet; members stay in.")) manage({ action: "rotate" }); };
-  box.querySelector("#stopShare").onclick = async () => {
-    await api("/api/collab/stop", { method: "POST", body: { slug: S.slug } });
-    renderHost(box, await api(`/api/collab?slug=${S.slug}`));
-  };
+  box.querySelector("#stopShare").onclick = () => stopRoomSharing(box,S.slug);
+}
+
+async function stopRoomSharing(box,slug) {
+  if(box._working)return;
+  box._working=true;
+  box._hostActionError=false;
+  box._hostActionRevision=(box._hostActionRevision || 0)+1;
+  const button=box.querySelector('#stopShare'),log=box.querySelector('[data-host-action-log]');
+  const original=button.textContent;
+  log.hidden=false;
+  showJobError(log,'');
+  button.textContent='Stopping sharing…';
+  const finish=beginWork(log,'Stopping sharing',[...box.querySelectorAll('button,input')],'Sharing stopped.');
+  let info;
+  try {
+    await api('/api/collab/stop',{method:'POST',body:{slug}});
+    info=await api('/api/collab?slug='+encodeURIComponent(slug));
+  } catch(error) {
+    box._hostActionError=true;
+    showJobError(log,error.message);
+  } finally {
+    finish();
+    button.textContent=original;
+    box._working=false;
+  }
+  if(info && S.slug===slug && button.isConnected)renderHost(box,info);
 }
 
 function openReconnect() {

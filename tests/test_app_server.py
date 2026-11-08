@@ -3281,3 +3281,29 @@ def test_reimport_uses_the_saved_original_and_reattaches_the_same_project_job(ap
         response=client.post('/api/reimport',json={'slug':'retained','confirmed':True},headers=h)
         assert response.status_code==400 and len(calls)==1
     finally:release.set()
+
+
+def test_stop_sharing_closes_persisted_room_and_reports_retryable_errors(app,monkeypatch,tmp_path):
+    from decompnet.app import collab, room_reconcile
+    client,net,*_=app
+    slug='stop-sharing-feedback'
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,root,config) VALUES(?,?,?)',
+            (slug,str(tmp_path),json.dumps({'kind':'rom','collab':{'open':True}})))
+    room=collab.Room(net,slug);net.rooms[slug]=room
+    room_reconcile.start(room)
+    close=room.close
+    def failed():raise OSError('Temporary storage failure')
+    monkeypatch.setattr(room,'close',failed)
+    failed_response=client.post('/api/collab/stop',json={'slug':slug},headers={'X-Decomp':'1'})
+    assert failed_response.status_code==400
+    assert 'Temporary storage failure' in failed_response.json()['error']
+    assert net.rooms[slug] is room
+    monkeypatch.setattr(room,'close',close)
+    response=client.post('/api/collab/stop',json={'slug':slug},headers={'X-Decomp':'1'})
+    assert response.status_code==200 and response.json()['ok']
+    assert slug not in net.rooms
+    assert not net.cfg(net.project_row(slug))['collab']['open']
+    assert not room_reconcile.snapshot(room)['active']
+    # A repeated stop is safe, including a room that only exists in saved settings.
+    assert client.post('/api/collab/stop',json={'slug':slug},headers={'X-Decomp':'1'}).status_code==200
