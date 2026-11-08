@@ -180,7 +180,8 @@ def test_imported_donor_uses_saved_best_not_unverified_current_file(pair, monkey
     assert len(calls) == 1 and 'return x + 59;' in calls[0]
 
 
-def test_manual_partial_budget_can_exceed_the_automatic_trial_cap(pair, monkeypatch):
+@pytest.mark.parametrize("limit", [10, float("inf")])
+def test_manual_partial_budget_can_exceed_the_automatic_trial_cap(pair, monkeypatch, limit):
     from decompnet.app.free_candidates import budget
     from decompnet.app.twins import Print
     prepare(pair)
@@ -193,8 +194,18 @@ def test_manual_partial_budget_can_exceed_the_automatic_trial_cap(pair, monkeypa
     calls = []
     monkeypatch.setattr(pair, 'try_quietly', judge(pair, calls, 20))
     job = Job()
-    budget(job, seconds=60, attempts=10)
-    job.partial_limit = 10
+    budget(job, seconds=float("inf") if limit == float("inf") else 60, attempts=limit)
+    job.partial_limit = limit
     partial_reuse.run(pair.twins, pair.project_row('destination'), {'same':[2,3]},
                       pair.twins.prints(pair.project_row('destination')), job)
     assert len(calls) == 2 and job.reuse_attempts == 2
+
+
+def test_all_saved_cross_game_matches_are_loaded_on_demand(pair):
+    with pair.store.tx() as db:
+        db.executemany("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,outcome,reason,created_at) VALUES(2,2,1,1,'match','verified',?)", [(i,) for i in range(45)])
+    assert len(pair.twins.cross_game_results('destination')['matches']) == 30
+    full = pair.twins.cross_game_results('destination', all_matches=True)
+    assert len(full['matches']) == 45
+    assert full['counts']['match'] == 45
+    assert len(full['recent']) == 30

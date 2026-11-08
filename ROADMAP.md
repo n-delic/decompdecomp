@@ -1745,7 +1745,7 @@ snapshots local source/header/build inputs (at most 10,000 files / 32 MiB).
 
 Cross-game transfer results use compact, responsive rows with separate provenance, result labels and score changes; recent partial improvements can be filtered independently.
 
-Cross-game checks show discovery progress and the current donor/target through the shared job bar, with a separate check-budget bar. Per-project device preferences, quick/hour/overnight presets and Stop support manual budgets up to 24 hours and 1,000,000 checks in ROM and imported modes, including unfinished C.
+Cross-game checks live below Deep permuter in project Settings. Manual searches check all eligible candidates without time or trial budgets, including unfinished C, until finished or stopped. One stage indicator shows current donor/target progress. Shared metric buttons open results in a side drawer; full saved matches load on demand. Active manual searches reconnect to their existing server job after reopening the window. Automatic matching passes retain their existing limits.
 
 Cross-game results can be collapsed per project without losing state on live refresh; Run now launches a dedicated, bounded cross-game check with progress and duplicate-run protection, in ROM and imported modes.
 

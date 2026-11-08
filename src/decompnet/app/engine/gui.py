@@ -84,7 +84,7 @@ class GuiMixin:
                        "permuter": self.permuter.status(proj["slug"]), "source_preparation": source_settings(self, proj),
                        "twins": None if twins is None else {
                            k: getattr(twins, k) for k in ("state", "progress", "pairs", "tried", "matched", "asm",
-                                                        "cross_candidates", "cross_tried", "cross_matched")},
+                                                        "cross_candidates", "cross_tried", "cross_matched", "cross_job")},
                        "cross_game": self.twins.cross_game_results(slug),
                        "free_search": dict(self.project_store(proj['id']).one('SELECT * FROM reuse_runs WHERE project_id=? ORDER BY id DESC LIMIT 1', proj['id']) or {}),
                        "auto_commit": match_commits.status(self, proj), "auto_push": auto_push.status(self, proj), "score_commits":score_commits.status(self, proj),

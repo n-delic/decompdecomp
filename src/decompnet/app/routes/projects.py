@@ -738,9 +738,8 @@ def register(app: App) -> None:
         return net.overview(slug)
 
     def p_cross_run(slug, request, data):
-        from ..cross_game_progress import limits, report
+        from ..cross_game_progress import report
         from ..twins import Job
-        seconds, attempts = limits(data)
         net.project_row(slug)
         if slug in net.links:
             raise ValueError('Run cross-game checks on the room host.')
@@ -752,29 +751,30 @@ def register(app: App) -> None:
             net.twins.jobs[slug] = check
         def work(log):
             from ..free_candidates import budget
-            budget(check, seconds=seconds, attempts=attempts)
+            budget(check, seconds=float("inf"), attempts=float("inf"))
+            check.cross_exhaustive = True
             check.stop = log.cancel_event
             check.cross_report = log.progress
             check.cross_started = time.monotonic()
-            check.cross_seconds = seconds
-            # Manual budgets also govern partial donors, rather than silently stopping them at 64 trials.
-            check.partial_limit = attempts
+            check.cross_seconds = 0
+            # Manual searches exhaust the eligible queue; automatic passes retain their caps.
+            check.partial_limit = float("inf")
             try:
                 report(check, 'Reading saved transfer results')
-                log(f'Budget: {seconds:,} seconds · {attempts:,} candidate checks. Stops at either limit or when candidates run out.')
+                log('Checking all eligible candidates. Stop at any time; verified results are saved.')
                 before = net.twins.cross_game_results(slug)['counts'].get('improved', 0)
                 matched = net.twins.across_games(slug, check)
                 improved = net.twins.cross_game_results(slug)['counts'].get('improved', 0) - before
-                from ..free_candidates import exhausted
-                reason = 'Budget reached' if exhausted(check) else 'All eligible candidates checked'
+                reason = 'Search stopped' if check.stop.is_set() else 'All eligible candidates checked'
                 report(check, reason)
                 log(f'{reason}. {matched} verified matches · {improved} partial improvements · {check.cross_tried} checks.')
                 return {'matched': matched, 'improved': improved, 'tried': check.cross_tried}
             finally:
                 check.state = 'stopped' if check.stop.is_set() else 'done'
         try:
-            return {'job': jobs.start('cross-game', work,
-                                      cancel_message='Cross-game check stopped. Verified matches and improvements are saved.')}
+            check.cross_job = jobs.start('cross-game', work,
+                                         cancel_message='Cross-game check stopped. Verified matches and improvements are saved.')
+            return {'job': check.cross_job}
         except Exception:
             check.state = 'done'
             raise
@@ -891,7 +891,7 @@ def register(app: App) -> None:
         "/api/permuter/function": (p_deep_permuter, ["POST"]),
         "/api/source-preparation": (p_source_preparation, ["GET", "POST"]),
         "/api/drafts": (p_machine_drafts, ["GET", "POST"]), "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
-        "/api/cross-game": (lambda s, r, d: {"results": net.twins.cross_game_results(s),
+        "/api/cross-game": (lambda s, r, d: {"results": net.twins.cross_game_results(s, all_matches=r.query_params.get("all_matches") == "1"),
                             "suggestions": net.twins.suggestions(s, r.query_params.get("function", ""))
                             if r.query_params.get("function") else []}, ["GET"]),
         "/api/sdk-signatures": (p_sdk, ["POST"]),

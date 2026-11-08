@@ -489,45 +489,21 @@ function renderAutopilot(ov) {
     toggle.setAttribute('aria-expanded', String(!body.hidden));
   };
   $("crossGameWork").hidden = $("crossGameLog")._slug !== ov.slug;
-  const run = $("crossGameRun"), minutes = $("crossGameMinutes"), attempts = $("crossGameAttempts");
-  const preset = $("crossGamePreset"), stop = $("crossGameStop");
+  const run = $("crossGameRun"), stop = $("crossGameStop");
   stop.hidden = !run._working || $("crossGameLog")._slug !== ov.slug;
   run.hidden = !stop.hidden;
-  const budgetKey = `cross-game-budget:${ov.slug}`;
-  if (minutes._slug !== ov.slug) {
-    let saved;
-    try { saved = JSON.parse(localStorage.getItem(budgetKey)); } catch (_) { /* Storage may be unavailable. */ }
-    // Migrate only the old default pair; keep explicitly saved Quick and custom budgets.
-    if (saved && !saved.version && saved.minutes === 2 && saved.attempts === 128) saved = {...saved, minutes:20};
-    minutes.value = saved?.minutes || 20; attempts.value = saved?.attempts || 128;
-    minutes._slug = ov.slug;
-    preset.value = saved?.preset || (Number(minutes.value) === 20 && Number(attempts.value) === 128 ? 'standard' : 'custom');
-  }
-  const saveBudget = () => {
-    try { localStorage.setItem(budgetKey, JSON.stringify({version:2, preset:preset.value, minutes: Number(minutes.value), attempts: Number(attempts.value)})); }
-    catch (_) { /* The search still works when device storage is unavailable. */ }
-  };
-  minutes.onchange = attempts.onchange = () => { preset.value = 'custom'; saveBudget(); };
-  preset.onchange = () => {
-    const values = {standard: [20, 128], quick: [2, 128], thorough: [60, 10000], overnight: [720, 100000]}[preset.value];
-    if (values) { [minutes.value, attempts.value] = values; saveBudget(); }
-  };
   const busy = ov.twins?.state === 'running' || ov.autopilot?.state === 'running';
   run.disabled = !!run._working || busy;
   run.textContent = busy || run._working ? 'Searching…' : 'Start search';
   const logState = $("crossGameLog");
   $("crossGameState").textContent = run._working ? logState._slug === ov.slug ? logState._state || "Searching other games" : "A search is running in another project" : busy ? "A free matching pass is running" : logState._slug === ov.slug && logState._state ? logState._state : "Ready to search";
-  run.onclick = async () => {
-    if (run._working || !minutes.reportValidity() || !attempts.reportValidity()) return;
+  const startCrossGame = async (existingJob=null) => {
+    if (run._working || (!existingJob && run.disabled)) return;
     body.hidden = false; collapsed.delete(ov.slug);
     toggle.setAttribute('aria-expanded', 'true');
-    saveBudget();
-    const seconds = Number(minutes.value) * 60, limit = Number(attempts.value);
     const slug = ov.slug, log = $("crossGameLog");
-    const status = $("crossGameBudgetStatus"), bar = $("crossGameBudgetBar");
-    status.textContent = `Preparing · 0 / ${limit.toLocaleString()} checks used · ${Number(minutes.value).toLocaleString()} min limit`;
-    bar.setAttribute('aria-valuemax', String(limit)); bar.setAttribute('aria-valuenow', '0');
-    bar.firstElementChild.style.width = '0%'; bar.hidden = true;
+    const status = $("crossGameRunStatus");
+    status.textContent = 'Preparing to check all eligible candidates…';
     $('crossGamePhaseStatus').textContent = 'Requesting a search worker…';
     $('crossGameActivity').hidden = false;
     $("crossGamePhaseBar").hidden = true;
@@ -535,19 +511,21 @@ function renderAutopilot(ov) {
     log._showJobProgress = false;
     run._working = true; run.hidden = true; run.textContent = "Starting…"; log._slug = slug; $("crossGameWork").hidden = false;
     showJobError(log, '');
-    const finish = beginWork(log, 'Checking other games', [run, minutes, attempts, preset], 'Cross-game check finished.');
+    const finish = beginWork(log, 'Checking other games', [run], 'Cross-game check finished.');
+    if(log._workBar)log._workBar.hidden=true; // The visible stage bar already reports this job.
     stop.hidden = false; stop.disabled = true; stop.textContent = 'Starting…';
     const startedAt = Date.now();
     let latestProgress = null;
     const updateElapsed = () => {
       if (S.slug !== slug) return;
       const p = latestProgress, elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-      status.textContent = `${(p?.attempts || 0).toLocaleString()} / ${(p?.attempt_limit || limit).toLocaleString()} checks used · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s elapsed · ${Math.round((p?.second_limit || seconds) / 60)} min limit · ${p?.confirmed || 0} verified this run`;
+      status.textContent = `${(p?.attempts || 0).toLocaleString()} checked · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s elapsed · ${p?.confirmed || 0} verified this run`;
+
     };
     updateElapsed();
     const elapsedTimer = setInterval(updateElapsed, 1000);
     try {
-      const {job} = await api('/api/cross-game/run', {method:'POST', body:{slug, seconds, attempts: limit}});
+      const {job} = existingJob ? {job:existingJob} : await api('/api/cross-game/run', {method:'POST', body:{slug}});
       stop.disabled = false; stop.textContent = 'Stop'; run.textContent = 'Searching…';
       log._state = 'Searching other games';
       if (S.slug === slug) { $('crossGameState').textContent = log._state; $('crossGamePhaseStatus').textContent = 'Waiting for the search worker to report its current step…'; }
@@ -562,9 +540,7 @@ function renderAutopilot(ov) {
         if (!p || S.slug !== slug) return;
         latestProgress = p; updateElapsed();
         renderCrossGameProgress(p);
-        bar.hidden = !p.attempts;
-        bar.setAttribute('aria-valuemax', String(p.attempt_limit)); bar.setAttribute('aria-valuenow', String(p.attempts));
-        bar.firstElementChild.style.width = `${Math.min(100, 100 * p.attempts / p.attempt_limit)}%`;
+
       });
       log._state = 'Search complete';
       if (S.slug === slug) {
@@ -581,44 +557,16 @@ function renderAutopilot(ov) {
     }
     finally { clearInterval(elapsedTimer); if (S.slug === slug) $('crossGameActivity').hidden = true; finish(); stop.hidden = true; stop.textContent = 'Stop'; run._working = false; run.hidden = false; run.textContent = 'Start search'; }
   };
+  run.onclick = () => startCrossGame();
+  if(ov.twins?.state==='running' && ov.twins.cross_job && !run._working)startCrossGame(ov.twins.cross_job);
+  if(S.dialogKind==='cross-game-results' && $('dialogBody').dataset.crossSlug!==ov.slug)closeDialog();
   const cross = ov.cross_game || { counts: {}, recent: [] };
   const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
   $("crossGamePanel").hidden = false;
   $("crossGameContext").textContent=`— ${count.toLocaleString()} verified · ${tried.toLocaleString()} checked`;
-  $("crossGameSummary").innerHTML = `<p class="transfer-saved-caption">Results across all searches</p><div class="transfer-totals" aria-label="Saved results across runs"><span><strong>${count.toLocaleString()}</strong> verified matches</span><span><strong>${(cross.counts.improved || 0).toLocaleString()}</strong> partial improvements</span><span><strong>${tried.toLocaleString()}</strong> candidate checks</span></div>`;
-  const discovery = cross.discovery;
-  $("crossGameSummary").innerHTML += discovery
-    ? `<details class="transfer-context"><summary>Shared-code leads <span class="muted">· ${discovery.ready.toLocaleString()} ready to test</span></summary><p><b>${discovery.detected.toLocaleString()}</b> functions with shared code detected · <b>${discovery.ready.toLocaleString()}</b> ready to test · <b>${discovery.blocked.toLocaleString()}</b> need writable C scaffolding.</p><p class="muted small">Signatures are leads, not recovered C. The search prepares supported assembly-only units and tests candidates with this project's judge. Unsupported builds keep their original setup.</p>${discovery.block_reason ? `<p class="muted small">Setup blocker: ${esc(discovery.block_reason)}</p>` : ''}</details>`
-    : "";
-  if (ov.free_search?.seconds > 0) $("crossGameSummary").innerHTML += `<details class="transfer-context"><summary>Last free matching pass</summary><p>${ov.free_search.matched} matches from ${ov.free_search.attempts} checks. The saved totals above cover cross-game transfers.</p></details>`;
-  if(!count && tried && !$('crossGameFilter')._chosen)$('crossGameFilter').value='all';
-  const renderTransfers = () => {
-    const filter = $("crossGameFilter").value;
-    const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match')) : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
-    const list = $("crossGameRecent");
-    const expanded = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.transferDetail));
-    list.innerHTML = rows.slice(0, 12).map((r) => {
-      const detailKey = encodeURIComponent(JSON.stringify([ov.slug, r.created_at, r.target, r.source_slug, r.source, r.reason]));
-      const matched = r.outcome === 'match', improved = r.outcome === 'improved';
-      const status = matched ? 'Verified byte match' : improved ? 'Improved · not matched' : r.outcome === 'miss' ? 'Not matched' : r.outcome === 'skip' ? 'Skipped' : r.outcome === 'asm' ? 'Assembly only' : r.outcome;
-      const similarity = (r.reason || '').match(/similar code \((\d+)%\)/);
-      const score = (r.reason || '').match(/score\s+(\d+)/);
-      const previous = (r.reason || '').match(/previous score\s+(\d+|None)/);
-      const scoreText = matched ? 'Exact match' : score ? previous && previous[1] !== 'None' ? `${previous[1]} → ${score[1]}` : previous ? `First score: ${score[1]}` : `Score: ${score[1]}` : 'No score';
-      const targetLink = `<button class="fn" type="button" data-transfer-function="${esc(r.target)}" data-slug="${esc(ov.slug)}" title="Open target function"><b>${esc(r.target)}</b></button>`;
-      const sourceLink = r.source_slug ? `<button class="fn" type="button" data-transfer-function="${esc(r.source)}" data-slug="${esc(r.source_slug)}" title="Open original function in ${esc(r.game)}">${esc(r.source)}</button>` : esc(r.source);
-      const hint = similarity ? `Assembly similarity: ${similarity[1]}%` : '';
-      return `<li class="transfer-row"><div class="transfer-target">${targetLink}<span class="transfer-status ${matched ? 'verified' : improved ? 'improved' : ''}">${esc(status)}</span></div>
-        <div class="transfer-source"><span>From ${esc(r.game)}</span>${sourceLink}</div>
-        <div class="transfer-score ${improved ? 'improved' : ''}" title="${esc(r.reason || (matched ? 'The receiving game verified identical bytes.' : 'No scored result.'))}"><strong>${esc(scoreText)}</strong><span>${matched ? 'Byte for byte' : score ? 'Mismatch score · lower is better' : hint || 'Not compiled'}</span>${score && hint ? `<span>${hint}</span>` : ''}</div>${!matched && r.reason ? `<details class="transfer-diagnostic" data-transfer-detail="${esc(detailKey)}"${expanded.has(detailKey) ? " open" : ""}><summary>Check details</summary><p>${esc(r.reason.split(';').filter(part=>part.trim()!=='transfer').join(' · '))}</p></details>` : ''}</li>`;
-    }).join('') || `<li class="transfer-empty">${filter === 'matches' ? run._working ? 'Searching indexed matches first. Candidate checks and rejection reasons appear here as they finish.' : tried ? 'No exact matches from these checks yet. Choose All recent attempts to see why candidates did not pass.' : 'Start a search to check saved matches first, then other projects and local SDKs.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : 'No recent transfer attempts.'}</li>`;
-  };
-  $("crossGameRecent").onclick = e => {
-    const button = e.target.closest("button[data-transfer-function]");
-    if (button) openNoted(button.dataset.slug, button.dataset.transferFunction);
-  };
-  $("crossGameFilter").onchange = () => {$("crossGameFilter")._chosen=true;renderTransfers();};
-  renderTransfers();
+  $("crossGameSummary").innerHTML = `<div class="deep-sweep-counts" aria-label="Cross-game results"><button type="button" class="deep-metric" data-cross-metric="matches" aria-haspopup="dialog"><b class="cross-match-count">${count.toLocaleString()}</b><span>Matched<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="improved" aria-haspopup="dialog"><b>${(cross.counts.improved || 0).toLocaleString()}</b><span>Improved<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="all" aria-haspopup="dialog"><b>${tried.toLocaleString()}</b><span>Checked<span aria-hidden="true">↗</span></span></button></div>`;
+  $("crossGameSummary").querySelectorAll('[data-cross-metric]').forEach(button=>{button.onclick=()=>openCrossGameResults(ov,button.dataset.crossMetric);});
+  if(S.dialogKind==='cross-game-results' && $('dialogBody').dataset.crossSlug===ov.slug)renderCrossGameResults(ov);
   const box = $("autopilot"), ap = ov.autopilot, tw = ov.twins, pm = ov.permuter;
   const canRun = (ov.kind !== "fork" || ov.ready) && cFunctions(ov) - ov.matched > 0;
   box.hidden = !ap && !canRun && !tw && !pm;
@@ -686,6 +634,56 @@ function renderAutopilot(ov) {
   };
 }
 
+let crossGameDrawerMatches = null;
+async function openCrossGameResults(ov, filter='matches') {
+  const slug=ov.slug;
+  crossGameDrawerMatches=null;
+  dialog('Matches from other games', `<p class="small muted">Saved results across searches. Only verified byte matches count toward progress.</p><label class="field"><span>Show</span><select id="crossGameFilter"><option value="matches">Verified matches</option><option value="improved">Recent improvements</option><option value="all">Recent checks</option></select></label><p id="crossGameDrawerStatus" class="small muted" role="status"></p><ol class="transfer-list" id="crossGameRecent"></ol>`, 'cross-game-results');
+  $('dialogBody').dataset.crossSlug=slug;
+  $('crossGameFilter').value=filter;
+  renderCrossGameResults(ov);
+  const active=()=>S.slug===slug && S.dialogKind==='cross-game-results' && $('dialogBody').dataset.crossSlug===slug;
+  const status=$('crossGameDrawerStatus');
+  const finish=beginWork(status,'Loading saved matches',[], '');
+  try {
+    const data=await api(`/api/cross-game?slug=${encodeURIComponent(slug)}&all_matches=1`);
+    if(active()){ crossGameDrawerMatches=data.results.matches; $('crossGameDrawerStatus').textContent=''; renderCrossGameResults({...ov,cross_game:data.results}); }
+  } catch(error){if(active())showJobError(status,`Could not load all matches: ${error.message}`);}
+  finally{finish();if(status._workStatus?.dataset.state==='done')status._workStatus.hidden=true;}
+}
+function renderCrossGameResults(ov) {
+  const cross = {...(ov.cross_game || {counts:{},recent:[]})};
+  if(crossGameDrawerMatches){
+    const merged=new Map([...crossGameDrawerMatches,...(cross.matches || [])].map(row=>[JSON.stringify([row.target,row.source_slug,row.source,row.created_at]),row]));
+    cross.matches=[...merged.values()].sort((a,b)=>(b.created_at || 0)-(a.created_at || 0));
+  }
+  const run = $("crossGameRun"), tried = Object.values(cross.counts).reduce((a,b)=>a+b,0);
+    const filter = $("crossGameFilter").value;
+    const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match')) : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
+    const list = $("crossGameRecent");
+    const expanded = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.transferDetail));
+    list.innerHTML = rows.map((r) => {
+      const detailKey = encodeURIComponent(JSON.stringify([ov.slug, r.created_at, r.target, r.source_slug, r.source, r.reason]));
+      const matched = r.outcome === 'match', improved = r.outcome === 'improved';
+      const status = matched ? 'Verified byte match' : improved ? 'Improved · not matched' : r.outcome === 'miss' ? 'Not matched' : r.outcome === 'skip' ? 'Skipped' : r.outcome === 'asm' ? 'Assembly only' : r.outcome;
+      const similarity = (r.reason || '').match(/similar code \((\d+)%\)/);
+      const score = (r.reason || '').match(/score\s+(\d+)/);
+      const previous = (r.reason || '').match(/previous score\s+(\d+|None)/);
+      const scoreText = matched ? 'Exact match' : score ? previous && previous[1] !== 'None' ? `${previous[1]} → ${score[1]}` : previous ? `First score: ${score[1]}` : `Score: ${score[1]}` : 'No score';
+      const targetLink = `<button class="fn" type="button" data-transfer-function="${esc(r.target)}" data-slug="${esc(ov.slug)}" title="Open target function"><b>${esc(r.target)}</b></button>`;
+      const sourceLink = r.source_slug ? `<button class="fn" type="button" data-transfer-function="${esc(r.source)}" data-slug="${esc(r.source_slug)}" title="Open original function in ${esc(r.game)}">${esc(r.source)}</button>` : esc(r.source);
+      const hint = similarity ? `Assembly similarity: ${similarity[1]}%` : '';
+      return `<li class="transfer-row"><div class="transfer-target">${targetLink}<span class="transfer-status ${matched ? 'verified' : improved ? 'improved' : ''}">${esc(status)}</span></div>
+        <div class="transfer-source"><span>From ${esc(r.game)}</span>${sourceLink}</div>
+        <div class="transfer-score ${improved ? 'improved' : ''}" title="${esc(r.reason || (matched ? 'The receiving game verified identical bytes.' : 'No scored result.'))}"><strong>${esc(scoreText)}</strong><span>${matched ? 'Byte for byte' : score ? 'Mismatch score · lower is better' : hint || 'Not compiled'}</span>${score && hint ? `<span>${hint}</span>` : ''}</div>${!matched && r.reason ? `<details class="transfer-diagnostic" data-transfer-detail="${esc(detailKey)}"${expanded.has(detailKey) ? " open" : ""}><summary>Check details</summary><p>${esc(r.reason.split(';').filter(part=>part.trim()!=='transfer').join(' · '))}</p></details>` : ''}</li>`;
+    }).join('') || `<li class="transfer-empty">${filter === 'matches' ? run._working ? 'Searching indexed matches first. Candidate checks and rejection reasons appear here as they finish.' : tried ? 'No exact matches from these checks yet. Choose Recent checks to see why candidates did not pass.' : 'Start a search to check saved matches first, then other projects and local SDKs.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : 'No recent transfer attempts.'}</li>`;
+
+  $("crossGameRecent").onclick = e => {
+    const button = e.target.closest("button[data-transfer-function]");
+    if (button) openNoted(button.dataset.slug, button.dataset.transferFunction);
+  };
+  $("crossGameFilter").onchange = () => {$("crossGameFilter")._chosen=true;renderCrossGameResults(ov);};
+}
 function renderCrossGameProgress(p) {
   const known=p.total>0 && p.done!=null;
   $('crossGamePhaseStatus').textContent=`${p.phase || 'Checking candidates'}${known ? ` · ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${Math.floor(100*p.done/p.total)}%)` : ''}${p.game ? ` · ${p.game}` : ''}${p.function ? ` · ${p.function}` : ''}`;
