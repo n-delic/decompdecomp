@@ -15,7 +15,8 @@ def diagnostics(report, arch=None):
     if (not isinstance(rows,(list,tuple)) or any(not isinstance(r,(list,tuple)) or len(r)!=3
             or not all(isinstance(v,str) for v in r) or r[0] not in {' ','<','>','|','o','r','s','i'} for r in rows)):
         raise ValueError('Replay needs complete structured diff rows, not rendered or truncated output.')
-    return {'available':True,**allocation_evidence.plan(rows,arch)}
+    from .snapshot_branch_repairs import diagnosis
+    return {'available':True,**allocation_evidence.plan(rows,arch), **diagnosis(rows)}
 
 
 def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_cancel=lambda: None,

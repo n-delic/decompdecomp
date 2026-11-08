@@ -92,6 +92,9 @@ def order(families, rows):
         preferred = GUARDED + ('revisit_one_shot_scope', 'aggregate_call_preparation',
             'call_preparation_bundle', 'aggregate_pointer_dispatch', 'debug_statement_boundary',
             'scalar_schedule_order') + preferred
+    from .snapshot_branch_repairs import missing_masks
+    if missing_masks(rows):
+        preferred=GUARDED+('narrow_snapshot_branches','local_width','inline_scalar_shape')+preferred
     ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
     from .trial_evidence import order as evidence_order
     return evidence_order(ranked,rows,evidence=diagnosis)

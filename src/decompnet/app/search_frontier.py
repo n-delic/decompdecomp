@@ -90,6 +90,17 @@ def allocation_bridge(before, after, arch=None):
                 and a['target_frame']==a['candidate_frame'] and structure_recovery(before,after,arch))
 
 
+def mask_recovery(before, after, arch=None):
+    """One advisory sibling for restored halfword masks; no frame growth or large expansion."""
+    if arch != 'mips':return False
+    from .snapshot_branch_repairs import missing_masks
+    old,new=allocation_evidence.diagnose(before,arch),allocation_evidence.diagnose(after,arch)
+    return bool(missing_masks(before)>missing_masks(after) and old['target_instructions']
+                and old['target_instructions']==new['target_instructions']
+                and old['target_frame'] is not None and old['target_frame']==old['candidate_frame']==new['candidate_frame']
+                and abs(new['target_instructions']-new['candidate_instructions'])<=2)
+
+
 class Frontier:
     def __init__(self):
         self.nodes = []
@@ -119,6 +130,11 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        masks=[n for n in pool if baseline_score is not None and n['score']<=baseline_score*4
+               and mask_recovery(baseline,n['rows'],arch)]
+        if masks:
+            candidate=min(masks,key=lambda n:(n['missing_operations'],n['fitness'],n['score']))
+            if candidate not in selected:selected.append(candidate)
         # A slightly worse register-only sibling may be one storage permutation
         # from exact. Reserve it before the other structural slots fill the beam.
         bridges=[n for n in pool if baseline_score is not None and n['score']<=baseline_score*2

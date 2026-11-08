@@ -46,6 +46,8 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
+                    if request.url.path == '/api/try':
+                        return fn(slug, request, data)  # Return the job before any synchronization.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
                         # Deep-pass controls schedule local workers; the workers synchronize before judging.
                         # Starting/stopping or reading their status must not wait for a project sync.
@@ -335,13 +337,52 @@ def register(app: App) -> None:
             settings.save()
         return {"ok": True}
 
+    def function_attempt(slug, name):
+        with jobs._lock:
+            job = next((j for j in reversed(jobs.jobs.values()) if j['kind']=='function-attempt'
+                        and j['state']=='running' and j.get('scope')=={'slug':slug,'function':name}), None)
+            return {k:job[k] for k in ('id','state','progress','scope') if k in job} if job else None
+
+    def g_try_status(slug, request, data):
+        active = function_attempt(slug, request.query_params.get('name',''))
+        return {'job':active['id'], **active} if active else {'job':None}
+
     def p_try(slug, request, data):
         """You, editing a function in the GUI: judged like an agent's attempt (and credited to "you")."""
-        agent, _ = net.local_agent("you")
-        res = net.attempt(agent, str(data.get("name", "")), str(data.get("source", "")), slug)
-        return {"score": res["score"], "matched": res["matched"], "exact": res.get('exact',False),
-                "new_match": res.get('new_match',False), "adopted": res.get('adopted',False),
-                "text": res["text"][-4000:], "checks": res.get("checks", {})}
+        def run(log=None):
+            from ...attempt_status import watch
+            name = str(data.get('name', ''))
+            observer = watch(name, log.progress) if log is not None else nullcontext()
+            with observer, net.progress.foreground():
+                agent, _ = net.local_agent("you")
+                res = net.attempt(agent, name, str(data.get("source", "")), slug)
+                if log is not None:
+                    net.progress.foreground_changed(slug, name)
+                    net.progress.sync(slug, force=True)
+                return {"score": res["score"], "matched": res["matched"], "exact": res.get('exact',False),
+                        "new_match": res.get('new_match',False), "adopted": res.get('adopted',False),
+                        "text": res["text"][-4000:], "checks": res.get("checks", {})}
+        import hashlib
+        digest = hashlib.sha256(str(data.get('source','')).encode()).hexdigest()
+        with jobs._lock:
+            active = function_attempt(slug, str(data.get('name','')))
+            if active:
+                job = active['id']
+                if jobs.jobs[job].get('source_sha256') != digest:
+                    raise NetworkError('This function is already compiling another candidate. Wait for its result before submitting again.')
+            else:
+                job = jobs.start('function-attempt', run, project=slug)
+                jobs.jobs[job]['scope'] = {'slug':slug,'function':str(data.get('name',''))}
+                jobs.jobs[job]['source_sha256'] = digest
+        if data.get('background'):return {'job':job}
+        # Keep the existing synchronous API contract for CLIs. The server-owned job
+        # remains visible if a caller times out or opens the function in the GUI.
+        while True:
+            with jobs._lock:
+                snapshot = jobs.jobs[job]
+                if snapshot['state']=='done':return snapshot['result']
+                if snapshot['state']!='running':raise NetworkError(snapshot.get('error') or 'Attempt ended without a result.')
+            time.sleep(.05)
 
     def p_release(slug, request, data):
         agent, _ = net.local_agent("you")
@@ -812,6 +853,7 @@ def register(app: App) -> None:
         "/api/agent-reviews": (g_agent_reviews, ["GET"]), "/api/agent-review": (p_agent_review, ["POST"]),
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
+        "/api/try/status": (g_try_status, ["GET"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/claim/handover": (p_claim_handover, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),
         "/api/finish-near": (p_finish_near, ["POST"]),

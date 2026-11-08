@@ -3147,3 +3147,44 @@ def test_project_directory_history_requires_guard_and_native_switch(app,tmp_path
     assert calls==[(str(tmp_path),True)]
     assert client.post('/api/data-directories',json={**payload,'action':'unsafe'},headers={'X-Decomp':'1'}).status_code==400
     assert not (tmp_path/'locations.json').exists()
+
+
+def test_background_attempt_returns_before_verification_and_is_rediscoverable(app, monkeypatch):
+    from decompnet.attempt_status import update
+
+    from .test_loading import tiny_game
+    client,net,_=app
+    tiny_game(net,'attempt-stages')
+    entered,finish=threading.Event(),threading.Event()
+    calls=[]
+    def attempt(agent,name,source,slug):
+        calls.append((name,source,slug))
+        entered.set()
+        assert finish.wait(5)
+        update('compiling',name)
+        update('checking',name)
+        update('saving',name)
+        return {'score':0,'matched':True,'exact':True,'new_match':True,'adopted':True,'text':'exact','checks':{}}
+    monkeypatch.setattr(net,'attempt',attempt)
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**k:False)
+    body={'slug':'attempt-stages','name':'f','source':'candidate','background':True}
+    try:
+        response=client.post('/api/try',json=body,headers={'X-Decomp':'1'})
+        assert response.status_code==200,response.text
+        job=response.json()['job']
+        assert entered.wait(5)
+        status=client.get('/api/try/status?slug=attempt-stages&name=f').json()
+        assert status['job']==job and status['progress']['stage']=='waiting'
+        assert status['scope']=={'slug':'attempt-stages','function':'f'}
+        assert client.get('/api/try/status?slug=attempt-stages&name=another').json()['job'] is None
+        assert client.post('/api/try',json=body,headers={'X-Decomp':'1'}).json()['job']==job
+        assert len(calls)==1
+    finally:finish.set()
+    for _ in range(100):
+        result=client.get('/api/job?id='+job).json()
+        if result['state']!='running':break
+        time.sleep(.01)
+    assert result['state']=='done',result
+    assert result['result']['matched'] and result['result']['adopted']
+    assert result['progress']['stage']=='saving'
+    assert client.get('/api/try/status?slug=attempt-stages&name=f').json()['job'] is None

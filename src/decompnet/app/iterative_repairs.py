@@ -67,15 +67,17 @@ def retention_evidence(node, report, arch=None):
     score = report.get('score')
     repaired = search_frontier.mismatch_positions(node.get('baseline_rows')) - search_frontier.mismatch_positions(report.get('rows'))
     pattern = bool(repaired) and isinstance(score,(int,float)) and score<=node['ceiling']*2
+    masks=(isinstance(score,(int,float)) and score<=node['ceiling']*4
+           and search_frontier.mask_recovery(node.get('baseline_rows'),report.get('rows'),arch))
     regional = regional_detour(node,report,arch)
     allocation = allocation_detour(node,report,arch)
     loop = loop_repair_lane.eligible(node,report,arch)
     structural = (isinstance(score,(int,float)) and score<=node['ceiling']*2
                   and search_frontier.structure_recovery(node.get('baseline_rows'),report.get('rows'),arch))
-    eligible = (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural or pattern or loop)
-                and (loop or pattern or regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or [])))
+    eligible = (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural or pattern or loop or masks)
+                and (loop or masks or pattern or regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or [])))
     return dict(eligible=bool(report.get('matched') or eligible),score=score,pattern=pattern,regional=regional,
-                allocation=allocation,loop=loop,structural=structural,repaired=repaired)
+                allocation=allocation,loop=loop,structural=structural,masks=masks,repaired=repaired)
 
 
 def expandable(parent, arch=None):
@@ -293,7 +295,9 @@ def expand_wave(state, variants, arch):
     positioned=sorted(ordinary,key=position_rank)[:1]
     bridges=[n for n in ranked if n['score']<=n['ceiling']*2 and
              search_frontier.allocation_bridge(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
-    best = list(dict.fromkeys(n['source'] for n in retained[:1]+bridges+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
+    masks=[n for n in ranked if n['score']<=n['ceiling']*4 and
+           search_frontier.mask_recovery(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+masks+bridges+positioned+repaired+structural+regional+diverse+fallback))[:WIDTH]
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
@@ -402,8 +406,11 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     # of losing the second orientation behind unrelated family round-robin work.
     recipes=[item for item in tagged if item[0]=='record_lifetime_sequence'][:4]
     dispatch_lane=[item for item in tagged if item[0]=='effectful_dispatch_specialization'][:2]
+    from .snapshot_branch_repairs import missing_masks
+    snapshot_lane=([item for item in tagged if item[0]=='narrow_snapshot_branches'][:2]
+                   if missing_masks(report.get('rows')) else [])
     from .compiler_phase_routing import order as phase_order
-    return phase_order(source,list(dict.fromkeys(guarded+branch_frames+recipes+dispatch_lane+layouts+near_loops[:3]+storage_lane+tagged)),report.get('value_trace'),header)
+    return phase_order(source,list(dict.fromkeys(guarded+snapshot_lane+branch_frames+recipes+dispatch_lane+layouts+near_loops[:3]+storage_lane+tagged)),report.get('value_trace'),header)
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,

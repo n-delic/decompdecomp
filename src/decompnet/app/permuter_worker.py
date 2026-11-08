@@ -25,7 +25,7 @@ from . import edition, local_claims, workers
 
 log = logging.getLogger("decompdecomp")
 WATCHED = ("permuter_claims.py", "app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
-           "app/dispatch_specialization.py", "app/layout_frontiers.py", "app/targeted_debug_layout.py", "app/compiler_phase_routing.py",
+           "app/snapshot_branch_repairs.py", "app/dispatch_specialization.py", "app/layout_frontiers.py", "app/targeted_debug_layout.py", "app/compiler_phase_routing.py",
            "app/permuter_macro_effects.py", "app/inline_scheduling_repairs.py", "app/call_preparation_repairs.py", "app/repair_cleanup.py", "inline_helpers.py", "object_emission.py", "app/argument_mask_repairs.py", "app/store_result_repairs.py", "app/loop_weight_repairs.py", "app/local_flow.py",
            "permuter_gen.py", "permuter_capture.py", "permuter_formatting.py")
 POLL_SECONDS = 1

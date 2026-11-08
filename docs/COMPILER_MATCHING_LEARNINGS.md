@@ -1,5 +1,51 @@
 # Compiler matching learning log
 
+
+### KMC GCC 2.7.2: combine narrow snapshots, producer shape and failure branches
+
+A V-Rally halfword-snapshot case needed three source changes together: use unsigned
+short locals, replace two pure inline halfword getters with direct field loads, and
+spell the two equality tests as sequential failure branches to the existing fallback.
+The comparisons, call/store order and byte-truncated restores remain unchanged.
+Changing only the locals back to word width lost two `andi ..., 0xFFFF` operations.
+Restoring the short-return getters changed allocation and added an instruction;
+recombining the conditions into short-circuit OR also failed. Moving the first byte
+capture was unnecessary: both tested placements matched.
+
+The `narrow_snapshot_branches` family emits the complete recipe directly, at most two
+sites per source. It requires ordinary unescaped unsigned word/halfword locals, single pure
+halfword-getter assignments, narrow-only subsequent uses, simple two-literal equality
+guards, matching pointer types and explicit braced alternatives. Unknown types,
+qualifiers, used macros, effectful getters, other uses, shadows and ambiguous sites
+decline. The direct expression retains the getter's unsigned-short conversion.
+No fake effects, broad loads or compiler changes are introduced.
+
+Target-only halfword masks prioritize this family. Both search frontiers can retain
+one mask-recovering sibling within their existing width, ordinary depth and compile
+budgets, even at up to four times the parent's score. This requires unchanged frame
+size and target length, and at most two instructions of candidate length difference.
+Retention never replaces the numeric winner or accepts a match.
+
+A frozen pre-match checkpoint already containing an independently verified ADDU
+operand-order correction was replayed with the unchanged pinned profile
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The integrated targeted selector rediscovered
+all **620 linked bytes** with the **first candidate compile**, in about **1.5 seconds**
+including the baseline check. This is a retrospective single-case regression, not a
+held-out success rate or a measured AI-token saving. No game source or ROM is in tests.
+Synthetic tests exercise boundary values, fallback effects and unsafe-input rejection.
+
+The symbolic display diff still scored 20 because two relocation renderings differed;
+the ordinary linker reported byte identity. The live app correctly saved score 0.
+Exact linked-byte verdicts already stop the permuter and are covered by a regression;
+never continue repairing symbolic aliases after authoritative equality.
+
+GUI submissions now expose waiting for saved-file verification, compiling, linked-byte
+checking and saving through server-owned jobs. Existing synchronous API callers still
+receive the final result; the GUI can attach while they wait. Reopening the function
+rediscovers its job, and duplicate submissions do not start another compile. This
+makes long verification visible; it does not bypass verification or make it faster.
+
+
 ### Check native substitution dependencies and measure transfer before promotion
 
 The native-pass audit found that assignment splitting, temporary extraction,

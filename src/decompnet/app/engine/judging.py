@@ -78,6 +78,8 @@ class JudgeMixin:
         return obj
 
     def _evaluate(self, fn, proj, obj: bytes):
+        from ...attempt_status import update
+        update('checking', fn['name'])
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
         link_scope=self._diagnostic_scope(fn,proj)
@@ -310,12 +312,16 @@ class JudgeMixin:
             fn = self._function(function, project)
             slug = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
             with self.progress.judging(slug):
+                from ...attempt_status import update
+                update('compiling', fn['name'])
                 try:
                     return self._attempt(agent, function, source, project)
                 finally:
                     self.progress.foreground_changed(slug, fn['name'])
 
     def _record(self, fn, *args, **kwargs):
+        from ...attempt_status import update
+        update('saving', fn['name'])
         slug = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         matching = kwargs.get('matched', args[4] if len(args) > 4 else False)
         proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?', fn['project_id']) if matching and not self.progress.applying else None
