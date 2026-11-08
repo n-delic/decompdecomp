@@ -483,7 +483,7 @@ def register(app: App) -> None:
 
         def build() -> dict:
             from ..view_snapshots import map_payload
-            return map_payload(net, slug, request.query_params.get('since'), request.query_params.get('delta') == '1')
+            return map_payload(net, slug, request.query_params.get('since'), request.query_params.get('delta') == '1', quick=request.query_params.get('quick') == '1')
 
         try:
             def snapshot():
@@ -493,7 +493,8 @@ def register(app: App) -> None:
             queued = time.monotonic()
             def respond():
                 return response(snapshot, queued, lambda data: packed(request, data), '/api/map')
-            result = await (app.ui_call or call)(respond)
+            reader = app.fast_call if request.query_params.get('quick') == '1' else app.ui_call
+            result = await (reader or call)(respond)
         except (NetworkError, ValueError) as e:
             return fail(e)
         return result

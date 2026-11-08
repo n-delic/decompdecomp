@@ -73,7 +73,7 @@ async function openProject(slug, tab = "overview") {
     finally { statusPending = false; }
   }, 1000);
   // Overview and function-map reads are independent. Do not serialize their latency.
-  const mapRequest = api(`/api/map?slug=${slug}`, {signal:controller?.signal}).then(data => { steps.functions = true; paintLoading(); return data; });
+  const mapRequest = api(`/api/map?slug=${slug}&quick=1`, {signal:controller?.signal}).then(data => { steps.functions = true; paintLoading(); return data; });
   mapRequest.catch(() => {});  // setup-only projects may not need this response
   try {
     const [ov] = await Promise.all([
@@ -112,6 +112,8 @@ async function openProject(slug, tab = "overview") {
   if (gen !== S.gen) return;
   steps.view = true; paintLoading();
   finishProjectLoading(gen);
+  // Paint saved rows before fetching history/SDK/other-project annotations.
+  refreshMap(true).catch(() => { if (gen === S.gen) S.mapPending = true; });
   await poll();
   if (gen !== S.gen) return;  // (or its timers would poll the next project too)
   S.timer = setInterval(poll, POLL_MS);
