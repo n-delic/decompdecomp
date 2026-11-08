@@ -789,6 +789,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     compiler = compiler or (WII_DEFAULT if platform == "wii" else GC_DEFAULT)
     template = toolchains.ensure("dtk-template", log=log)
     shutil.copytree(template, root, ignore=shutil.ignore_patterns(".decompnet-toolchain.json"))
+    from . import template_paths
+    template_paths.prepare(root)
     for placeholder in ("orig/GAMEID", "config/GAMEID"):
         shutil.rmtree(root / placeholder, ignore_errors=True)
     orig, config = root / "orig" / gid, root / "config" / gid
