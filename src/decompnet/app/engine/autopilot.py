@@ -7,12 +7,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import nullcontext
 from itertools import chain
 
-from ... import m2cfix, scoring, seeds, toolchains
+from ... import compiler, m2cfix, scoring, seeds, toolchains
 from ...candidate_work import trial
 from ...network import Agent, NetworkError
 from ...project import compiler_for, unknown_compiler_message
@@ -21,7 +22,7 @@ from ..draft_context import candidate_context
 
 
 class AutopilotMixin:
-    def start_autopilot(self, slug: str, workers: int = 3, *, foreground=False) -> dict:
+    def start_autopilot(self, slug: str, workers: int | None = None, *, foreground=False) -> dict:
         """Try every open function's machine draft (m2c, compilable form) through the judge, smallest first, in the
         background unless explicitly requested with foreground=True. Matches are saved before agents spend tokens; drafts that compile
         become the function's best attempt, so agents start from them. Agents and autopilot never collide: a
@@ -34,6 +35,12 @@ class AutopilotMixin:
                 self.twins.promote(slug)
             return state
         fork = self.fork_slug(slug)
+        automatic_workers = 3 if workers is None else max(1, min(32, workers))
+        # Manual ROM runs can use the machine's cores. Imported builds share build
+        # directories and retain their existing two-worker safety ceiling.
+        width = min(32, os.cpu_count() or 4) if workers is None else automatic_workers
+        workers = automatic_workers
+        if fork:width = min(width, 2)
         # #118: a project from another tool may name a compiler decompdecomp doesn't have. Say which and where to pick
         # one, rather than failing later as "m2c can't read this project's code" or the registry's list of ids.
         if not fork:
@@ -64,7 +71,7 @@ class AutopilotMixin:
         state['_foreground']=threading.Event()
         if foreground:state['_foreground'].set()
         self.autopilots[slug] = state
-        threading.Thread(target=self._autopilot_run, args=(slug, ids, state, workers, try_one),
+        threading.Thread(target=self._autopilot_run, args=(slug, ids, state, (workers, width), try_one),
                          daemon=True, name=f"autopilot-{slug}").start()
         return state
 
@@ -91,6 +98,8 @@ class AutopilotMixin:
 
         from .. import maintenance
 
+        automatic_workers, width = workers if isinstance(workers, tuple) else (workers, workers)
+        background = threading.BoundedSemaphore(automatic_workers)
         agent, _ = self.local_agent("autopilot")
         proj = self._project(slug)
         try_one = try_one or self._autopilot_one
@@ -108,17 +117,30 @@ class AutopilotMixin:
         def one(fid: int) -> None:
             if state["stop"].is_set():
                 return
+            acquired = False
+            while not state['_foreground'].is_set() and not state['stop'].is_set():
+                acquired = background.acquire(timeout=.05)
+                if acquired:break
+            if state['stop'].is_set():
+                if acquired:background.release()
+                return
+            manual = state['_foreground'].is_set()
             try:
-                with maintenance.foreground(state['_foreground']):
+                from ...compile_sessions import session
+                with maintenance.foreground(state['_foreground']), session(), \
+                        compiler._SLOTS.capacity(width) if manual else nullcontext(), \
+                        compiler.throughput_slots(manual):
                     outcome = try_one(agent, proj, fid)
             except Exception:  # one odd function must not stop the rest
                 outcome = "fail"
+            finally:
+                if acquired:background.release()
             state["tried"] += 1
             if outcome in ("match", "near"):
                 state[{"match": "matched", "near": "near"}[outcome]] += 1
 
         try:
-            with ThreadPoolExecutor(max_workers=workers) as pool:
+            with ThreadPoolExecutor(max_workers=max(automatic_workers, width)) as pool:
                 list(pool.map(one, ids))
         finally:
             state["state"] = "stopped" if state["stop"].is_set() else "done"
