@@ -940,7 +940,7 @@
         <details id="fnSdkEvidence" hidden><summary>SDK identification</summary><pre class="joblog" id="fnSdkEvidenceText"></pre></details>
       </div>
       <div class="row fn-header-actions">
-        <span class="badge" id="fnStatus"></span><button class="ghost small-btn" id="fnClaimHandover" type="button" hidden>Let agents work on this</button>
+        <span class="badge" id="fnStatus"></span><span class="badge polished" id="fnPolished" hidden title="Polished C that still matches">polished</span><button class="ghost small-btn" id="fnClaimHandover" type="button" hidden>Let agents work on this</button>
         <button class="ghost small-btn pin" id="fnPin" type="button" title="Agents take this function next">★ Next</button>
         <button class="ghost small-btn" id="fnSetAside" type="button" hidden title="You know no C makes this function (hand-written assembly, a piece of another function): set it aside now, without waiting for agents to agree. It turns red, leaves agents' work and the percentage, and Give it back to the agents undoes it.">Set aside: no C makes it</button>
       </div>
@@ -1034,6 +1034,11 @@
         <div><p class="col-title">Target assembly (from your game)<button class="link-btn" id="copyAsm" type="button" title="Copy assembly without address annotations">Copy</button></p><pre class="code asm" id="fnAsm"></pre></div>
         <div>
           <p class="col-title"><span id="fnSrcKind">C</span><button class="link-btn" id="copySrc" type="button">Copy</button></p>
+          <div class="seg small polish-source-choice" id="fnPolishWhich" role="group" aria-label="Compare polishing" hidden>
+            <button type="button" data-polish="polished" class="on" aria-pressed="true">Polished</button>
+            <button type="button" data-polish="unpolished" aria-pressed="false">Unpolished</button>
+          </div>
+          <p class="small muted" id="fnPolishNote" role="status" hidden></p>
           <div class="editor" id="editor">
             <div class="source-gutter" id="fnGutter" aria-label="Source line differences"></div>
             <pre class="code c" id="fnSrc" aria-hidden="true"></pre>

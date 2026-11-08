@@ -2121,3 +2121,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 #dialogBody .transfer-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
 #dialogBody .transfer-score { grid-column:1/-1; text-align:left; border:0; padding:0; }
+
+/* Use the map's polished colour beside the independent matched badge. */
+.badge.polished { background: var(--polished); color: var(--bg); border-color: transparent; }
+.polish-source-choice { margin-bottom: 12px; flex-wrap: wrap; }

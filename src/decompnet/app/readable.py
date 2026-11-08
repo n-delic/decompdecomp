@@ -305,13 +305,14 @@ class Readability:
         claim = self.net.project_store(proj['id']).one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
         if claim is not None and claim["agent_id"] != agent.id:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
-        if " ".join(source.split()) == " ".join(self._matching_c(proj, fn).split()):
+        original = self._matching_c(proj, fn)
+        if " ".join(source.split()) == " ".join(original.split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
         if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
             res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source, comment=True)
             if not res.get("matched"):
                 return res["text"]
-            return self._readable(proj, fn, agent, source)
+            return self._readable(proj, fn, agent, source, original=original)
         ctx = self.net._context(proj["id"], fn["unit"])
         result = self.net._compile(proj, ctx["header"], source, fn)
         if not result.ok:
@@ -327,14 +328,18 @@ class Readability:
             note = "\n".join(f"- {p}" for p in problems)
             return (f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
                     f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""))
-        return self._readable(proj, fn, agent, source)
+        return self._readable(proj, fn, agent, source, original=original)
 
-    def _readable(self, proj, fn, agent: Agent, source: str) -> str:
+    def _readable(self, proj, fn, agent: Agent, source: str, *, original=None) -> str:
         """A rewrite that still matches: it's the function's C now, and the function counts as readable."""
-        with self.net.progress._project_lock(proj["slug"]), self.net.project_store(proj['id']).tx() as db:
+        from .polish_history import detail as polish_detail
+        store = self.net.project_store(proj['id'])
+        baseline = polish_detail(store,fn)['unpolished_source'] if fn['readable'] else original or fn['matched_source']
+        with self.net.progress._project_lock(proj["slug"]), store.tx() as db:
             self.net.progress.check_result()
-            db.execute("UPDATE functions SET matched_source=?, best_source=?, readable=1 WHERE id=?",
-                       (source, source, fn["id"]))
+            db.execute("UPDATE functions SET unpolished_source=CASE WHEN readable=0 THEN ? "
+                       "ELSE COALESCE(unpolished_source, ?) END, matched_source=?, best_source=?, readable=1 WHERE id=?",
+                       (baseline, baseline, source, source, fn["id"]))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             self.net._event(db, proj["id"], agent.id, "readable", fn["name"])
             if self.net.is_rom(proj):
