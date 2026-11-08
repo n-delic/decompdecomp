@@ -57,7 +57,7 @@ jobs:
         run: |
           $version = (Select-String '^__version__ = "(.*)"' src/decompnet/__init__.py).Matches.Groups[1].Value
           if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match project version $version" }
-      - name: Build the Windows setup bundle
+      - name: Build Windows setup and portable downloads
         shell: pwsh
         run: packaging/windows/build.ps1
       - name: Attach it to the release
@@ -67,11 +67,13 @@ jobs:
         run: |
           $installer = (Get-ChildItem dist -Filter '*-windows-x64-setup.exe' | Select-Object -First 1).FullName
           if (-not $installer) { throw 'Windows setup bundle was not created.' }
+          $portable = (Get-ChildItem dist -Filter '*-windows-x64-portable.zip' | Select-Object -First 1).FullName
+          if (-not $portable) { throw 'Windows portable ZIP was not created.' }
           gh release view $env:TAG 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $installer --clobber
+            gh release upload $env:TAG $installer $portable --clobber
           } else {
-            gh release create $env:TAG $installer --generate-notes --latest
+            gh release create $env:TAG $installer $portable --generate-notes --latest
           }
 
   macos:
