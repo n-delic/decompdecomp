@@ -49,3 +49,10 @@ capture/fold. Raw drafts remain first. Missing types, overlapping lifetimes,
 address escapes or opaque macros prevent the relevant proposal; exact destination
 verification remains mandatory. A successful replay of a solved case is evidence
 for that shape, not proof that m2c recovered the original source.
+
+Optional post-draft alternatives can distribute a small unsigned packing/store
+tail into an exhaustive if/else-if/else chain. Cursor/count updates stay shared.
+This uses the existing three-extra-trial allowance and keeps the raw draft first.
+Measured local/deep search can later combine the tail alternative with a uniformly
+supported frame reservation. Inferred frame padding is labeled as such; it does
+not recover the original reservation's purpose or enlarge known objects.

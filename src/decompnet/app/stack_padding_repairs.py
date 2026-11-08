@@ -57,3 +57,36 @@ def grow(source, name, arch, rows):
         return []
     return [source[:opening+1]+'\nchar '+fresh+'['+str(count)+'];'+source[opening+1:]
             for count in (delta, delta//2)]
+
+
+def measured(source, name, arch, rows):
+    """Place one explicitly inferred reservation after existing outer declarations.
+
+    A consistent frame/save delta is evidence for storage, not its original purpose.
+    Existing objects and callee contracts keep their types and extents.
+    """
+    from .integer_repair_support import view
+    from .pattern_repairs import close
+    part=view(source,name)
+    fresh='__repair_stack_padding'
+    if not part or re.search(r'\b(?:volatile|asm|__asm__|'+fresh+r')\b',part.clean):return []
+    reader=arches.get(arch).stack_layout
+    evidence=reader(rows) if reader else {}
+    delta=evidence.get('inferred_growth')
+    if delta is None:return []
+    # Keep all existing declaration order and physical lines. In particular, do
+    # not insert before escaped vectors/matrices and move their observed offsets.
+    pos=part.opening+1;last=pos
+    while pos<part.end-1:
+        while part.clean[pos:pos+1].isspace():pos+=1
+        if not re.match(r'(?:typedef\b|struct\b|union\b|'+IDENT+r'(?:[ \t]+'+IDENT+r')*[ \t]+\**[ \t]*'+IDENT+r'\s*(?=[;=,\[]))',part.clean[pos:]):break
+        end=pos
+        while end<part.end-1 and part.clean[end]!=';':
+            if part.clean[end] in '({[':
+                opening=part.clean[end];end=close(part.clean,end,opening,{'(':')','{':'}','[':']'}[opening])
+                if not end:return []
+            else:end+=1
+        if end>=part.end-1:return []
+        last=pos=end+1
+    note='\n/* Inferred frame reservation; original purpose unknown. */\nchar '+fresh+'['+str(delta)+'];'
+    return [('inferred_frame_reservation',source[:last]+note+source[last:])]

@@ -3176,3 +3176,15 @@ shape before building. Add transactional helper placement/removal in the owning 
 persist its prelude with retained candidates, and verify complete inlining with the
 unit's object reader before enabling this family for imported builds. Existing
 `edit_file` remains the manual way to add such a helper there.
+
+### Branch-local packing and measured frame composition
+
+- Done: bounded unsigned arithmetic/store-tail distribution across exhaustive
+  braced if/else-if/else chains in shared local/deep/agent repair and optional
+  m2c alternatives; cursor/count updates remain shared and raw drafts remain.
+- Done: MIPS coherent memory-base register-swap evidence combined with a strict
+  uniform frame/save delta; labeled inferred storage follows existing declarations.
+  Independent frame/tail controls and bounded compositions use ordinary budgets.
+- Planned: corresponding mixed frame/pointer evidence readers for non-MIPS
+  architectures. Their supported 32-bit source-tail families already work;
+  inferred frame proposals remain unavailable without an architecture witness.

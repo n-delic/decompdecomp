@@ -54,3 +54,29 @@ def layout(rows):
             'frame_delta': target_frame-candidate_frame if target_frame is not None and candidate_frame is not None else None,
             'saved_slots': saves, 'local_operands': locals_,
             'saved_deltas': sorted({r['delta'] for r in saves}), 'local_deltas': sorted({r['delta'] for r in locals_})}
+
+
+def pointer_swap(rows):
+    """A coherent two-register exchange present in memory bases, not a general allocation verdict."""
+    if not rows or any(not isinstance(r,(tuple,list)) or len(r)!=3 or not all(isinstance(v,str) for v in r) for r in rows):return False
+    changed=[r for r in rows if r[0]!=' ']
+    if not changed or any(r[0]!='r' for r in changed):return False
+    register=re.compile(r'\$\w+');mapping={};reverse={};bases=set()
+    for _,left,right in changed:
+        if '$sp' in left+right or register.sub('$reg',left)!=register.sub('$reg',right):return False
+        for a,b in zip(register.findall(left),register.findall(right)):
+            if mapping.get(a,b)!=b or reverse.get(b,a)!=a:return False
+            mapping[a]=b;reverse[b]=a
+        bases.update(re.findall(r'\((\$\w+)\)',left+' '+right))
+    swap={a:b for a,b in mapping.items() if a!=b}
+    return len(swap)==2 and all(swap.get(b)==a for a,b in swap.items()) and set(swap)<=bases
+
+
+def repair_layout(rows):
+    """Preserve a strict frame proof while separately recognizing one non-stack pointer swap."""
+    if not rows or any(not isinstance(r,(tuple,list)) or len(r)!=3 or not all(isinstance(v,str) for v in r) for r in rows):return {}
+    result=layout(rows)
+    register_rows=[r for r in rows if r[0]=='r']
+    swap=pointer_swap([r for r in rows if r[0]!='s'])
+    delta=frame_growth([r for r in rows if r[0]!='r']) if not register_rows or swap else None
+    return dict(result,inferred_growth=delta,pointer_swap=swap)
