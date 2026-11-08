@@ -24,6 +24,11 @@ def binary_digest(path, size, modified):
 
 
 def compiler_identity(settings):
+    if settings and not isinstance(settings, dict):
+        # Imported builds may name their compiler version directly. Preserve that
+        # identity without treating it as one of the app's ROM toolchain profiles.
+        return {'toolchain':None,'registry_sha256':None,'install_sha256':None,'executables':{},
+                'build_compiler':settings}
     tool = settings.get('toolchain') if settings else None
     if not tool:
         return {'toolchain':None,'registry_sha256':None,'install_sha256':None,'executables':{}}
