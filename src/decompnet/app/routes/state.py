@@ -20,6 +20,7 @@ from ... import __version__, consoles, hostenv, linuxvm, toolchains
 from ...agents.api import API_PRESETS
 from ...forks.project import SCOPES
 from ...network import NetworkError
+from ...read_cache import ReadPending
 from .. import build_info, cleanup, edition, picker, saves, updates, window
 from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, job_error, static_file
@@ -495,6 +496,10 @@ def register(app: App) -> None:
                 return response(snapshot, queued, lambda data: packed(request, data), '/api/map')
             reader = app.fast_call if request.query_params.get('quick') == '1' else app.ui_call
             result = await (reader or call)(respond)
+        except ReadPending as e:
+            # A bounded single-flight wait is temporary contention, not an ASGI crash.
+            saves.log.warning('Function map metadata busy; retry the request')
+            return JSONResponse({'error': str(e)}, status_code=503, headers={'Retry-After': '1'})
         except (NetworkError, ValueError) as e:
             return fail(e)
         return result

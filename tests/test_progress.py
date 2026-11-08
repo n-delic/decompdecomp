@@ -2724,3 +2724,41 @@ def test_local_verified_profile_publication_does_not_restart_rechecking(project,
     assert judged == []
     assert net._function('f', 'game')['status'] == 'matched'
     assert not net.progress.sync('game', force=True)
+
+
+@pytest.mark.parametrize('export_fails', [False, True])
+def test_finished_saved_judge_releases_lane_before_export_and_preserves_next_owner(project, monkeypatch, export_fails):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    worker = net.progress
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good imported source')
+    exporting, finish = threading.Event(), threading.Event()
+    activity = worker._activity
+    def report(slug, **fields):
+        activity(slug, **fields)
+        if fields.get('phase') == 'Saving verified progress':
+            exporting.set()
+            assert finish.wait(3)
+            if export_fails:raise RuntimeError('Synthetic export failure')
+    monkeypatch.setattr(worker, '_activity', report)
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            assert exporting.wait(3)
+            assert judged == [('f', 'good imported source')]
+            assert worker.verification_owner is None
+            with worker._project_lock('other'):
+                with worker._verification('other') as acquired:
+                    assert acquired
+                    finish.set()
+                    if export_fails:
+                        with pytest.raises(RuntimeError, match='Synthetic export failure'):future.result(timeout=3)
+                    else:assert future.result(timeout=3)
+                    assert worker.verification_owner[0] == 'other'
+                    assert not worker.verification_slot.acquire(blocking=False)
+        finally:finish.set()
+    assert worker.verification_owner is None
+    assert worker.verification_slot.acquire(blocking=False)
+    worker.verification_slot.release()
+    assert net.project_store('game').one("SELECT matched_source FROM functions WHERE name='f'")[0] == 'good imported source'

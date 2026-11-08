@@ -1010,12 +1010,26 @@ class Progress:
             return
         with self.activity_lock:
             self.verification_owner = (slug, time.monotonic())
-        try:
-            yield True
-        finally:
+        released = False
+        def release():
+            nonlocal released
+            if released:return
+            released = True
             with self.activity_lock:
                 self.verification_owner = None
             self.verification_slot.release()
+        previous = getattr(self.local, 'verification', None)
+        self.local.verification = (slug, release)
+        try:
+            yield True
+        finally:
+            release()
+            self.local.verification = previous
+
+    def _release_verification(self, slug):
+        lease = getattr(self.local, 'verification', None)
+        if lease is not None and lease[0] == slug:
+            lease[1]()
 
     def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
@@ -1547,6 +1561,10 @@ class Progress:
             self.results[slug], recheck = self._judge_saved(slug, folder, manifest, by_name,
                                                     saved, report,
                                                     files=disk, judge_code=needs_judging)
+            # The saved judge has finished (including its worker's publications).
+            # Rendering/export still holds this project's lock and file guards, but
+            # must not occupy another project's compiler admission lane.
+            self._release_verification(slug)
             self._activity(slug, phase="Saving verified progress", function=None)
             net.bump_generation(pid)
             proj = net._project(slug)

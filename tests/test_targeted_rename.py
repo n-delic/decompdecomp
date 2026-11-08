@@ -49,3 +49,41 @@ def test_failed_affected_match_keeps_original_name_and_sources(tmp_path,monkeypa
     assert net.store.one("SELECT name FROM functions WHERE vram=4096")[0] == 'old'
     assert 'old()' in net.store.one("SELECT matched_source FROM functions WHERE name='caller'")[0]
     assert not net._sym_override
+
+
+def test_rename_does_not_decode_unaffected_function_payloads(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
+
+    from decompnet import payload_storage
+    net, checked = prepare(tmp_path, monkeypatch)
+    unused = 'unrelated assembly and draft ' * 100
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET asm=?,seed=?,best_source=? WHERE name='unrelated'", (unused,unused,unused))
+        db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?", (payload_storage.digest(unused),))
+    agent, _ = net.local_agent('you')
+    assert net.rename_symbol(agent,'game','old','new').startswith('✅')
+    assert checked == ['new','caller']
+    # Unused damaged payloads were not read; selecting one explicitly still rejects corruption.
+    with pytest.raises(sqlite3.OperationalError, match='user-defined function'):
+        net.store.one("SELECT asm FROM functions WHERE name='unrelated'")
+
+
+def test_rename_address_lookup_and_writes_use_owning_project_store(tmp_path, monkeypatch):
+    from decompnet.store import Store
+    net, _ = prepare(tmp_path, monkeypatch)
+    agent, _ = net.local_agent('you')
+    leaf = Store(tmp_path/'project.sqlite3', repair_archive=net.store.conn.repair_archive)
+    net.store.conn.backup(leaf.conn)
+    monkeypatch.setattr(net, 'project_store', lambda project: leaf)
+    catalog_all = net.store.all
+    def catalog_read(query, *args):
+        assert 'SELECT id, name, size FROM functions' not in query, 'Address lookup belongs to the project'
+        return catalog_all(query, *args)
+    monkeypatch.setattr(net.store, 'all', catalog_read)
+    try:
+        assert net.rename_symbol(agent,'game','old','new').startswith('✅')
+        assert leaf.one("SELECT name FROM functions WHERE vram=4096")[0] == 'new'
+        assert net.store.one("SELECT name FROM functions WHERE vram=4096")[0] == 'old'
+    finally:leaf.conn.close()

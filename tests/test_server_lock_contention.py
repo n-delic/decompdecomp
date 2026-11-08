@@ -279,3 +279,39 @@ def test_async_routes_do_not_take_project_import_locks():
         for child in ast.iter_child_nodes(node):walk(child,path,active)
     for path in Path(routes.__file__).parent.glob('*.py'):walk(ast.parse(path.read_text()),path)
     assert not failures,failures
+
+
+def test_snapshot_builder_timeout_is_not_relabelled_as_contention(monkeypatch):
+    from concurrent.futures import Future
+
+    from decompnet.app.view_snapshots import Snapshots
+    from decompnet.read_cache import ReadPending
+    cache=Snapshots()
+    failed=Future()
+    failed.builder_thread=-1
+    failed.set_exception(TimeoutError('External worker timed out'))
+    cache.pending['failed']=failed
+    with pytest.raises(TimeoutError,match='External worker timed out') as error:
+        cache.get('failed',lambda:pytest.fail('Duplicate build'))
+    assert not isinstance(error.value,ReadPending)
+
+
+@pytest.mark.parametrize('status', [200, 400, 502, 503])
+def test_http_failure_diagnostics_record_fast_status_without_secrets(status, caplog):
+    import logging
+
+    from decompnet.ui_diagnostics import Diagnostics
+    sent=[]
+    async def app(scope,receive,send):
+        await send({'type':'http.response.start','status':status,'headers':[(b'secret-header',b'private')]})
+        await send({'type':'http.response.body','body':b'private source body'})
+    async def receive():return {'type':'http.disconnect'}
+    async def send(message):sent.append(message)
+    scope={'type':'http','path':'/unknown/private-token','query_string':b'token=private-query','headers':[(b'authorization',b'private-auth')]}
+    with caplog.at_level(logging.WARNING,logger='decompdecomp'):
+        anyio.run(Diagnostics(app),scope,receive,send)
+    assert sent[0]['status']==status and sent[-1]['body']==b'private source body'
+    assert ('HTTP failure' in caplog.text)==(status>=500)
+    if status>=500:assert f'status={status}' in caplog.text and 'route=API request' in caplog.text
+    for secret in ('private-token','private-query','private-auth','private source','secret-header'):
+        assert secret not in caplog.text

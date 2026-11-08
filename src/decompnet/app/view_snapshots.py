@@ -6,6 +6,8 @@ import time
 from collections import OrderedDict
 from concurrent.futures import Future
 
+from ..read_cache import ReadPending
+
 SNAPSHOT_WAIT_SECONDS = 10
 
 
@@ -42,7 +44,9 @@ class Snapshots:
             try:
                 return future.result(timeout=SNAPSHOT_WAIT_SECONDS)
             except TimeoutError:
-                raise TimeoutError('The project view is still being prepared. Try again shortly.') from None
+                if future.done() and isinstance(future.exception(), TimeoutError):
+                    raise future.exception()  # Preserve a builder's own timeout.
+                raise ReadPending('The project view is still being prepared. Try again shortly.') from None
         try:
             value = build()
             cost = max(1, weight(value))
@@ -178,7 +182,7 @@ def incremental_map(net, slug):
     with snapshots.lock:
         lock = snapshots.map_locks.setdefault(pid, threading.Lock())
     if not lock.acquire(timeout=SNAPSHOT_WAIT_SECONDS):
-        raise TimeoutError('The function map is still being prepared. Try again shortly.')
+        raise ReadPending('The function map is still being prepared. Try again shortly.')
     try:
         revision = store.one('SELECT revision FROM map_clock WHERE id=1')['revision']
         shared = (peer_revision(net), store.read_version('fingerprints', pid),

@@ -65,11 +65,17 @@ class Diagnostics:
         if scope['type']!='http':
             return await self.app(scope,receive,send)
         began=_clock()
-        try:await self.app(scope,receive,send)
+        status=None
+        async def observed_send(message):
+            nonlocal status
+            if message['type']=='http.response.start':status=message['status']
+            await send(message)
+        try:await self.app(scope,receive,observed_send)
         finally:
             elapsed=_clock()-began
-            if elapsed>=.5 and scope.get('path','').startswith('/api/'):
-                # Only inspect routing for slow API calls, not every poll or MCP stream.
+            failed=status is not None and status>=500
+            if failed or elapsed>=.5 and scope.get('path','').startswith('/api/'):
+                # Inspect routing only for slow API calls and failed HTTP responses.
                 # Never retain query values, invite tokens or arbitrary raw URLs.
                 route=getattr(scope.get('route'),'path','')
                 if not route:
@@ -78,4 +84,10 @@ class Diagnostics:
                             route=getattr(candidate,'path','')
                             break
                 label=route or getattr(scope.get('endpoint'),'__name__','API request')
-                await asyncio.to_thread(record,'Slow UI request',elapsed,label)
+                if failed:
+                    # Access logging is disabled. Record status/template only, never
+                    # response bodies, headers, query strings or user-supplied paths.
+                    await asyncio.to_thread(logging.getLogger('decompdecomp').warning,
+                                            'HTTP failure status=%d route=%s elapsed=%.3fs',status,label,elapsed)
+                if elapsed>=.5 and scope.get('path','').startswith('/api/'):
+                    await asyncio.to_thread(record,'Slow UI request',elapsed,label)

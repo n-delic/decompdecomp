@@ -790,7 +790,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                 payload={'name':name,'call_id':call_id,'timings':timings}
                 payload['error' if error else 'content']=str(error) if error else result
                 observe(agent,slug,prefix+'tool_response',payload)
-            if isinstance(error,NetworkError):
+            from ..read_cache import ReadPending
+            if isinstance(error,(NetworkError,ReadPending)):
                 raise ToolError(str(error)) from None
             if error:
                 raise error

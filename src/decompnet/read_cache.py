@@ -6,6 +6,10 @@ from collections import OrderedDict
 READ_WAIT_SECONDS = 10
 
 
+class ReadPending(TimeoutError):
+    """Another reader owns this metadata build; retry without treating it as a broken tool."""
+
+
 class ReadCache:
     def __init__(self, bypass=lambda: False):
         self.bypass = bypass
@@ -32,7 +36,7 @@ class ReadCache:
             self._trim()
         try:
             if not entry['lock'].acquire(timeout=READ_WAIT_SECONDS):
-                raise TimeoutError('Shared metadata is still being prepared. Try again shortly.')
+                raise ReadPending('Shared metadata is still being prepared. Try again shortly.')
             try:
                 if entry.get('builder') == threading.get_ident():
                     raise RuntimeError('A read cache cannot recursively build its own entry.')

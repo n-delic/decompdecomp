@@ -160,3 +160,20 @@ def test_deferred_threads_have_explanations():
     from decompnet.app.thread_activity import purpose
     assert purpose('startup-maintenance')[0] == 'Startup maintenance'
     assert purpose('compiler-status-project')[0] == 'Compiler evidence'
+
+
+@pytest.mark.parametrize('quick', [False, True])
+def test_map_metadata_contention_returns_retryable_response_and_can_recover(app, monkeypatch, quick, caplog):  # noqa: F811
+    from decompnet.app import view_snapshots
+    from decompnet.read_cache import ReadPending
+    client, _, _ = app
+    def pending(*args, **kwargs):raise ReadPending('The project view is still being prepared. Try again shortly.')
+    monkeypatch.setattr(view_snapshots, 'map_payload', pending)
+    with caplog.at_level(logging.WARNING, logger='decompdecomp'):
+        response = client.get('/api/map?slug=synthetic' + ('&quick=1' if quick else ''))
+    assert response.status_code == 503
+    assert response.headers['retry-after'] == '1'
+    assert 'still being prepared' in response.json()['error']
+    assert 'Function map metadata busy' in caplog.text
+    monkeypatch.setattr(view_snapshots, 'map_payload', lambda *args, **kwargs: {'sig':'ready','keys':[],'rows':[]})
+    assert client.get('/api/map?slug=synthetic').status_code == 200

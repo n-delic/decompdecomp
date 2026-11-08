@@ -399,3 +399,21 @@ def test_many_simultaneous_startups_do_not_retry_or_lose_slots(tmp_path,monkeypa
     assert all(results) and completed==40 and 1 < peak <= 8
     for _ in range(8):assert manager._tool_startup_slots.acquire(False)
     assert not manager._tool_startup_slots.acquire(False)
+
+
+@pytest.mark.parametrize('pending', [True, False])
+def test_cache_contention_is_actionable_but_unrelated_timeouts_remain_errors(tmp_path, monkeypatch, pending):
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    from decompnet.read_cache import ReadPending
+    net, agent, _ = game(tmp_path)
+    monkeypatch.setattr(Context, 'headers', property(lambda self: {}))
+    def dispatch(*args, **kwargs):
+        raise (ReadPending if pending else TimeoutError)('Synthetic metadata wait')
+    monkeypatch.setattr(tools, '_dispatch', dispatch)
+    records = []
+    server = tools.build_mcp(net, lambda ctx: (agent, 'game'), lambda *args: records.append(args[-1]))
+    async def run():return await server.call_tool('project_info', {'detail': False})
+    with pytest.raises(ToolError if pending else UnexpectedToolError, match='Synthetic metadata wait' if pending else 'Error executing tool'):
+        anyio.run(run)
+    assert records[-1]['error'] == 'Synthetic metadata wait'

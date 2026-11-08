@@ -297,7 +297,7 @@ class EditMixin:
             taken = trial.resolve(new)
             if taken is not None and taken != addr:
                 raise NetworkError(f"`{new}` already names 0x{taken:08X}")
-            at = self.store.all("SELECT id, name, size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+            at = self.project_store(proj["id"]).all("SELECT id, name, size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
             renamed = [r for r in at if r["name"] == old] or (at if len(at) == 1 else [])
             if any(r["name"] == new for r in at) and not any(r["name"] == new for r in renamed):
                 # the other overlay function at this address has it: the names would collide (#117 review)
@@ -319,9 +319,13 @@ class EditMixin:
         word = re.compile(r"\b(" + "|".join(re.escape(old) for old in new_of) + r")\b")
         swap = lambda text: word.sub(lambda m: new_of[m.group(1)], text)
         units = self._unit_contexts(proj["id"])
-        current_ctx = {u: self._context(proj["id"], u) for u in ({""} | units)}
+        current_ctx = self._contexts(proj["id"], {""} | units)
         changed = {u: swap(c["header"]) for u, c in current_ctx.items() if word.search(c["header"])}
-        matched = self.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
+        store = self.project_store(proj['id'])
+        # Scan only rename inputs. Full targets and other packed payloads are needed
+        # for affected matches, not every already verified body in the project.
+        matched = store.all("SELECT id,name,unit,vram,matched_source FROM functions "
+                            "WHERE project_id=? AND status='matched'", proj["id"])
         rewritten = {r["id"]: swap(r["matched_source"]) for r in matched if word.search(r["matched_source"] or "")}
         # A header change can affect every body in its effective unit. Also include the
         # destination identifier: renaming can capture an existing use of the new spelling.
@@ -329,7 +333,11 @@ class EditMixin:
         affected = [r for r in matched if r["vram"] in addresses.values()
                     or affected_word.search(current_ctx[self._effective_unit(r, units)]["header"])
                     or affected_word.search(r["matched_source"] or "")]
-        renamed_rows = [dict(r) | {"name": new_of.get(r["name"], r["name"])} for r in affected]
+        affected_ids = json.dumps([r['id'] for r in affected])
+        full_rows = store.all("SELECT * FROM functions WHERE project_id=? AND id IN "
+                              "(SELECT value FROM json_each(?))", proj['id'], affected_ids)
+        by_id = {r['id']: r for r in full_rows}
+        renamed_rows = [dict(by_id[r['id']]) | {"name": new_of.get(r["name"], r["name"])} for r in affected]
         if progress:
             progress({"done": 0, "total": len(affected), "phase": "Checking affected matches",
                       "message": f"Checking {len(affected)} affected matches; {len(matched)-len(affected)} unchanged matches need no rebuild."})
