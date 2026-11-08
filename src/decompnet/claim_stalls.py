@@ -22,7 +22,7 @@ def repair_rules():
     paths += [app/'repair_cleanup.py',Path(__file__).parent/'inline_helpers.py',Path(__file__).parent/'object_emission.py',app/'record_lifetime_recovery.py',app/'record_store_bundles.py',app/'parameter_carriers.py',app/'narrow_load_subtraction.py',
               Path(__file__).parent/'permuter_gen.py',Path(__file__).parent/'permuter_dependencies.py',
               Path(__file__).parent/'permuter_capture.py']
-    paths += [app/'branch_tail_distribution.py',app/'branch_frame_recovery.py',Path(__file__).parent/'arch/mips_stack.py']
+    paths += [app/'branch_tail_distribution.py',app/'branch_frame_recovery.py',app/'dispatch_specialization.py',app/'layout_frontiers.py',app/'targeted_debug_layout.py',app/'compiler_phase_routing.py',Path(__file__).parent/'arch/mips_stack.py']
     paths += [Path(__file__).parent/'arch/mips_local_storage.py',Path(__file__).parent/'arch/mips_hazards.py',Path(__file__).parent/'arch/mips_source_recovery.py',Path(__file__).parent/'arch/mips_materializations.py',Path(__file__).parent/'arch/mips_regions.py',Path(__file__).parent/'arch/mips_search.py',Path(__file__).parent/'arch/mips_live_return_address.py',Path(__file__).parent/'arch/mips_addresses.py']
     return [(p.name,file_digest(p)) for p in paths]
 

@@ -746,7 +746,7 @@ class Network:
                 f"({_ago(hit['at'])}), and nothing it depends on changed since, so it wasn't built again and doesn't "
                 "count toward the move-on number. That compile's result:\n")
         return {"text": head + hit["text"] + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": hit["score"],
-                "matched": False, "repeat": True}
+                "matched": False, "exact": False, "new_match": False, "adopted": False, "repeat": True}
 
     def remember_compile(self, key: str, agent: Agent, fn, text: str, score: int | None) -> None:
         """A compile's result (without its move-on line), for repeat_of."""
@@ -1646,7 +1646,9 @@ class Network:
     @trial
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         with self.attempt_turn(agent, self._function(function, project)):
-            return self._attempt_unlimited(agent, function, source, project)
+            result = self._attempt_unlimited(agent, function, source, project)
+            for key in ('exact','new_match','adopted'):result.setdefault(key,False)
+            return result
 
     def _attempt_unlimited(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         """Compile, score and record one attempt. Returns {"text", "score", "matched"} (score None: didn't compile)."""
@@ -1713,12 +1715,14 @@ class Network:
 
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
+            if d.bytes_match:head += '; EXACT recheck; no new credit or source replacement'
         elif d.bytes_match:
             return {"text": f"✅ MATCH! {fn['name']} is byte-identical to the target ({fn['n_insns']} instructions). "
                             f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
                             f"{self.dependents_note(fn['id'], project_id=fn['project_id'])}"
                             + ("\n" + checks["message"] if checks.get("message") else ""),
-                    "score": 0, "matched": True, "checks": checks, "compiled_output": compiled_output}
+                    "score": 0, "matched": True, "exact": True, "new_match": True, "adopted": True,
+                    "checks": checks, "compiled_output": compiled_output}
         else:
             best = store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
             head = (f"score {d.score} ({scoring.percent_text(d.percent)} match) — best so far {best}. "
@@ -1743,7 +1747,11 @@ class Network:
         if not scratch:
             self.remember_compile(key, agent, fn, text, d.score)
             text += self.same_score_note(fn["id"], agent.id, d.score, source, project_id=fn["project_id"])
-        return {"text": text + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": d.score, "matched": False, "checks": checks, "compiled_output": compiled_output}
+        selected = store.one('SELECT best_source FROM functions WHERE id=?',fn['id'])
+        return {"text": text + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": d.score,
+                "matched": False, "exact": d.bytes_match, "new_match": False,
+                "adopted": bool(not scratch and selected and selected['best_source']==source),
+                "checks": checks, "compiled_output": compiled_output}
 
     @staticmethod
     def _what_changed(d: scoring.DiffResult, last: int | None, best: int | None = None) -> str:

@@ -19,11 +19,13 @@ def diagnostics(report, arch=None):
 
 
 def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_cancel=lambda: None,
-        progress=lambda value: None, collect_exact=False, generate_report=False, arch=None, paired_search=True, output_diversity=True, header=''):
+        progress=lambda value: None, collect_exact=False, generate_report=False, arch=None, paired_search=True, output_diversity=True, header='', layouts=()):
     """Measure rediscovery effort, including failures; evaluator must supply its exact control verdict."""
     if type(paired_search)!=bool or type(output_diversity)!=bool:raise ValueError('Search ablations must be boolean.')
     started = time.monotonic()
     state = dict(pending=[dict(source=source, depth=0, ceiling=baseline_score)], next=[], seen=[source], explore_plateaus=True, paired_search=paired_search,output_diversity=output_diversity)
+    from .layout_frontiers import offer
+    for layout in layouts:offer(state,layout,header)
     results = []
     from .search_efficiency import Measurements
     efficiency = Measurements()

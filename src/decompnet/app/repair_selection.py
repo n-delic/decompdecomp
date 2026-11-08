@@ -11,6 +11,7 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'effectful_dispatch_specialization': ('saved_layout_followup','targeted_debug_layout','revisit_one_shot_scope'),
     'inferred_frame_reservation': ('branch_packing_tail',),
     'branch_packing_tail': ('inferred_frame_reservation',),
     'aggregate_pointer_dispatch': ('call_preparation_bundle', 'aggregate_call_preparation', 'revisit_one_shot_scope'),

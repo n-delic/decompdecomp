@@ -6367,3 +6367,50 @@ already used only wrapper removal and could not be shortened further in its
 12-trial budget. This is controlled replay, not new matching progress. Keep the
 verified recipe and distinguish retained chronology from demonstrated necessity.
 See `benchmarks/aggregate-call-checkpoints.md` for reproduction and limits.
+## Effectful dispatch and preserved line layouts (8 November 2026)
+
+Pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, one frozen
+328-instruction function: an exhaustive literal selector followed by a real
+lookup/global store was expressed through an inline dispatcher. Its independent
+mapping formals specialize at the original call site. The old selector local is
+unescaped and dead on outgoing CFG edges; callbacks and table reloads retain their
+original positions. All helpers disappear and no allocated game data is added.
+This is an equivalent compiler representation, not recovered original source.
+
+The dispatch change on the printer layout improved 630 to 440. Borrowing only
+whitespace from a related, older score-750 layout then recovered all 1,312 linked
+bytes. The older layout had fewer physical instruction differences despite its
+worse scalar score. Never use scalar score alone to delete layout alternatives.
+The default targeted selector and ordinary repair beam rediscovered this existing
+match in two candidate checks plus the baseline, about 1.98 seconds locally.
+This controlled single-case recovery is not a broad performance claim or a new
+function match. Private sources, contexts, original image and receipts remain on
+the Data volume. No full-image rebuild is claimed.
+
+Earlier scalar-return and stride helpers did not recover it. Stride constants
+present in initial RTL disappeared in first CSE. Bounds that retained the value
+also consumed it in extra comparisons. Returning only the selected scalar changed
+the frame/branch tree. These observations justify a different structural experiment,
+not inventing unused work or concluding that every constant family is impossible.
+Ordinary output parity is required before optional diagnostic dumps can reorder
+proposals. Constant-only edits are deferred, not removed.
+
+The generated family requires explicit prototypes, exhaustive supported switches,
+CFG liveness, representable literal mappings and no hidden macro/qualified effects.
+Saved layout follow-ups are bounded to six probes per search and share existing
+compiler/time limits. Related donors may lend whitespace along shared token runs;
+their source tokens, comments and directives never replace candidate code.
+Debug-line follow-ups require a current source mapping and a residual MIPS NOP.
+
+Public tests use homemade C, every unsigned-byte selector value, independent
+parameter values, callback/store ordering, negative guards and ordinary search
+integration. The optional private regression uses the full targeted selector and
+normal frozen linker, including helper/data emission checks:
+
+```sh
+DECOMPNET_DISPATCH_CASE=/private/path/frozen-case uv run pytest tests/test_dispatch_layout_repairs.py -q
+```
+
+The case directory contains private `inputs.json`, `baseline.c`, `layout.c` and
+`rom.z64`. The JSON records the frozen function/project/symbols/header/profile,
+`rom_sha256` and `baseline_score`. Without the supplied inputs only this gate skips.

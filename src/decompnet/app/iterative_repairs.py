@@ -13,6 +13,7 @@ from ..project import compiler_for
 from . import (
     allocation_evidence,
     first_difference,
+    layout_frontiers,
     loop_repair_lane,
     paired_local_repairs,
     region_repairs,
@@ -159,6 +160,21 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 expand_wave(state, variants, arch)
             continue
         paired_local_repairs.offer(state,node,report,arch,header)
+        layout_frontiers.offer(state,node['source'],header)
+        # A structural winner may need an older, numerically worse line layout.
+        # At most six children share the same ordinary compiler/time budget.
+        if (isinstance(report.get('score'),(int,float)) and report['score']>0
+                and report['score']<node.get('parent_score',report['score'])
+                and state.get('layout_probes',0)<6):
+            for family,candidate in layout_frontiers.followups(state,node.get('parent_source',''),node['source'],
+                    (node.get('path') or [''])[-1],header):
+                if candidate in state['seen']:continue
+                state['seen'].append(candidate)
+                state['pending'].insert(0,dict(source=candidate,depth=node['depth']+1,ceiling=report['score'],
+                    parent_source=node['source'],parent_output=output_key(report),parent_score=report['score'],
+                    baseline_rows=report.get('rows'),path=node.get('path',[])+[family]))
+                state['layout_probes']=state.get('layout_probes',0)+1
+                if state['layout_probes']>=6:break
         if not report.get('cached'):
             from .inert_pair_search import offer
             for pair in offer(state,node.get('parent_source',''),node['source'],(node.get('path') or [''])[-1],
@@ -330,6 +346,8 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     for family,text in branch_frames:proposals.append(text);labels[text]=family
     from . import hazard_line_repairs
     hazards=hazard_line_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [])
+    from . import targeted_debug_layout
+    layouts=targeted_debug_layout.variants(source,fn['name'],header,arch,flags,report)
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
     from . import targeted_storage_repairs
     storage=targeted_storage_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
@@ -343,7 +361,7 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     loops=loop_storage_shapes.variants(source,fn['name'],header,arch,report.get('repair_locations'))
     from . import scan_load_repairs
     scans=scan_load_repairs.variants(source,fn['name'],header,arch,report.get('rows') or [],report.get('repair_locations'))
-    operand_focused = scratch + carriers + load_subtractions + loops + reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    operand_focused = layouts + scratch + carriers + load_subtractions + loops + reuse + scans + storage + hazards + independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
     labels.update({text: family for family, text in operand_focused})
     for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):
@@ -383,7 +401,9 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     # Complete guarded recipes are few; retain their alternatives together instead
     # of losing the second orientation behind unrelated family round-robin work.
     recipes=[item for item in tagged if item[0]=='record_lifetime_sequence'][:4]
-    return list(dict.fromkeys(guarded+branch_frames+recipes+near_loops[:3]+storage_lane+tagged))
+    dispatch_lane=[item for item in tagged if item[0]=='effectful_dispatch_specialization'][:2]
+    from .compiler_phase_routing import order as phase_order
+    return phase_order(source,list(dict.fromkeys(guarded+branch_frames+recipes+dispatch_lane+layouts+near_loops[:3]+storage_lane+tagged)),report.get('value_trace'),header)
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
@@ -495,6 +515,8 @@ def _run(twins, slug, job):
         if state is None or fn['best_source'] not in state['seen']:
             state = dict(pending=[dict(source=fn['best_source'], depth=0, ceiling=fn['best_score'])],
                          next=[], seen=[fn['best_source']], explore_plateaus=True)
+        for alternative in layout_frontiers.saved(net,proj,fn,fn['best_source'],header):
+            layout_frontiers.offer(state,alternative,header)
         build_scope = candidate_scope.key(net, proj, fn)
         policy_profile = adaptive_repairs.profile(net, proj, fn)
         from . import repair_promotion

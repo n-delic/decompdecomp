@@ -324,3 +324,18 @@ Shutdown first signals every managed helper, closes room admission and cancels q
 Recovery reads helper claims once per operational database, commits active helpers' conversation/options and function handoffs in one registry transaction, then releases claims in database batches. Run boundaries are recorded only for the helper's project or its actual claims. Other users' claims remain untouched. Room clients send one lease-release notification per room concurrently, with a shared short wait; unreachable hosts fall back to lease expiry. Ordinary Stop still uses its existing per-helper path.
 
 The app allows up to 60 seconds for worker cleanup and final progress-folder synchronization, followed by at most 5 seconds for the Wine runtime. Individual phases also have limits and name the current database/operation in terminal status. A blocked cleanup cannot wait forever: committed database matches, drafts and notes remain durable; pending recovery/claims are handled at startup. If agent recovery is incomplete, the final folder flush is deferred rather than racing it. A folder flush that times out may lag the database until synchronization resumes. `decomp stop` waits long enough for this bounded shutdown.
+## Exactness, credit and adoption
+
+Attempt responses expose three separate booleans:
+
+- `exact`: the ordinary linker/data judge or objdiff accepted this candidate.
+- `new_match`: this attempt newly matched an unfinished function.
+- `adopted`: this candidate was retained as selected source by this operation.
+
+The legacy `matched` field keeps its previous behaviour for existing clients.
+In ROM mode an exact scratch recheck of an already matched function has
+`exact: true`, `new_match: false`, `adopted: false`, `matched: false`.
+It does not replace selected C or give new credit. In PROJECT mode a successful
+polishing rewrite can be exact and adopted without being a new match.
+Failed builds and rejected changes are not exact. A cached failed attempt is not
+a new adoption. Score zero or identical printed instructions alone is insufficient.

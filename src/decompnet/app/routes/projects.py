@@ -339,7 +339,9 @@ def register(app: App) -> None:
         """You, editing a function in the GUI: judged like an agent's attempt (and credited to "you")."""
         agent, _ = net.local_agent("you")
         res = net.attempt(agent, str(data.get("name", "")), str(data.get("source", "")), slug)
-        return {"score": res["score"], "matched": res["matched"], "text": res["text"][-4000:], "checks": res.get("checks", {})}
+        return {"score": res["score"], "matched": res["matched"], "exact": res.get('exact',False),
+                "new_match": res.get('new_match',False), "adopted": res.get('adopted',False),
+                "text": res["text"][-4000:], "checks": res.get("checks", {})}
 
     def p_release(slug, request, data):
         agent, _ = net.local_agent("you")

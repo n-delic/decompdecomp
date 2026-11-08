@@ -13,7 +13,7 @@ from . import branch_call_support as support
 from . import integer_abi, local_flow
 from .integer_repair_support import IDENT, edit, view
 
-FAMILIES = ('aggregate_pointer_dispatch', 'call_preparation_bundle', 'aggregate_call_preparation', 'direct_field_call_preparation')
+FAMILIES = ('aggregate_pointer_dispatch', 'call_preparation_bundle', 'aggregate_call_preparation', 'direct_field_call_preparation', 'effectful_dispatch_specialization')
 PREFIX = '__repair_aggregate_call_'
 LIMIT = 12
 
@@ -233,7 +233,8 @@ def field_bundles(source, name, header='', arch=None):
 
 
 def variants(source, name, header='', arch=None):
-    result = dispatch(source, name, header, arch)+bundles(source, name, header, arch)+field_bundles(source, name, header, arch)
+    from .dispatch_specialization import variants as specialize
+    result = specialize(source, name, header, arch)+dispatch(source, name, header, arch)+bundles(source, name, header, arch)+field_bundles(source, name, header, arch)
     # Preserve combinations even when the first shape is numerically inert.
     for _, first in result[:2]:
         for _, combined in bundles(first, name, header, arch)[:3]:
