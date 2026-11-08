@@ -379,3 +379,20 @@ New feedback-generated children retain the existing ownership guard. Worker wait
 checks cancellation and the original search deadline; shutdown terminates proposal
 processes and releases their pipes. Specialized cooperative generation sessions retain
 their in-process path so family/budget filters are unchanged.
+
+### Autopilot draft pipeline
+
+Explicit autopilot lanes keep a private pinned m2c interpreter warm across functions,
+recycling it after 64 requests. Automatic runs keep the ordinary CLI path until
+promoted by the user. Stop and timeout terminate the generator process; an unavailable
+worker falls back to the pinned CLI. A local 12-request small MIPS draft check took
+1.35 seconds through separate CLI launches and 0.17 seconds through the warmed
+interpreter, including its first startup, with identical output. This measures draft
+generation, not total autopilot throughput.
+
+Each trial retains the saved-file revision guard but leaves project-wide file
+synchronization to the watcher. Verified results are saved immediately. Optional
+reuse/archive follow-ups run separately in bounded batches and index the changed
+functions rather than rescanning the project. Advisory draft reports share bounded
+trial bookkeeping; completed resume receipts flush immediately. Stopping a lane
+flushes advisory reports and queues follow-ups for its already committed results.
