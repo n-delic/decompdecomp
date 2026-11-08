@@ -410,3 +410,60 @@ def test_background_commit_does_not_wait_for_shared_autosave_lane(automatic):
         for worker in auto.workers.values():
             worker['thread'].join(3)
             if worker.get('commit_thread'):worker['commit_thread'].join(3)
+
+
+def test_polished_commits_are_independent_and_preserve_frozen_source(automatic):
+    net, root, _, agent = automatic
+    match(automatic)
+    net.progress.sync('game', force=True)
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'matched before polish')
+    state = match_commits.configure(net, 'game', True, str(root), kind='polished')
+    assert state['polished_enabled'] and not state['enabled']
+    original_author = agent.name
+    agent, _ = net.local_agent('polishing helper')
+    fn = net._function('f', 'game')
+    source = '/* Readable purpose. ' + 'Detailed explanation. ' * 40 + '*/ void f(void) { return; }'
+    context = net._context(fn['project_id'], fn['unit'])
+    net._record(fn, agent, 0, source, context['version'])
+    net.readability._readable(net.project_row('game'), fn, agent, source)
+    state = match_commits.status(net, net.project_row('game'))
+    assert state['pending'] == 1
+    job = net.store.one("SELECT * FROM auto_match_commits WHERE state='pending'")
+    captured = json.loads(job['snapshot'])
+    assert captured['kind'] == 'polished'
+    assert captured['info']['matched_by'] == original_author
+    assert captured['origin']['agent'] == agent.name
+    assert captured['source'] == source
+    assert captured['details']['source_sha256'] == __import__('hashlib').sha256(source.encode()).hexdigest()
+    # Disabling new-match commits must leave the independent polish queue intact.
+    match_commits.configure(net, 'game', False)
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 1
+    match_commits.process(net, 'game', lambda *_: None)
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    assert git(root, 'log', '-1', '--format=%s') == 'Polish f'
+    assert 'Polished by: '+agent.name in git(root, 'log', '-1', '--format=%B')
+    assert git(root, 'show', 'HEAD:src/f.c').strip() == source
+    # A later verified polish has its own queue entry, and can be cancelled independently.
+    fresh = net._function('f', 'game')
+    later = source + ' /* Further explanation. */'
+    net._record(fresh, agent, 0, later, context['version'])
+    net.readability._readable(net.project_row('game'), fresh, agent, later)
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 1
+    match_commits.configure(net, 'game', False, kind='polished')
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    assert net.store.one("SELECT COUNT(*) n FROM auto_match_commits WHERE state='cancelled'")['n'] == 1
+
+
+def test_polish_queue_is_opt_in_and_disabling_only_cancels_polish(automatic):
+    net, root, _, agent = automatic
+    enable(automatic)
+    match(automatic)
+    fn = net._function('f', 'game')
+    match_commits.enqueue(net, net.project_row('game'), fn['id'], polished=True)
+    assert net.store.one('SELECT COUNT(*) n FROM auto_match_commits')['n'] == 1
+    match_commits.configure(net, 'game', True, str(root), kind='polished')
+    # Enabling is future-only and does not backfill the old match.
+    assert net.store.one('SELECT COUNT(*) n FROM auto_match_commits')['n'] == 1
+    match_commits.configure(net, 'game', False, kind='polished')
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 1

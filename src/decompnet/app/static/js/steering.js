@@ -140,26 +140,27 @@ function renderRepositoryAutoCommit(state = {}) {
   }
   repositoryAutoCommitState = state;
   $("repositoryAutoCommit").checked = !!state.enabled;
+  $("repositoryPolishedCommit").checked = !!state.polished_enabled;
   $("repositoryAutoCommitDetails").hidden = !state.pending;
   $("repositoryAutoCommitDetails").textContent = `Pending commits (${state.pending || 0})`;
   const status = $("repositoryAutoCommitState");
-  status.textContent = state.error || (state.enabled
-    ? `${state.pending || 0} pending · ${state.last_commit ? "Last commit: " + state.last_commit.slice(0, 8) : "Waiting for new matches."}`
-    : "Off. Existing matches will not be committed automatically.");
+  status.textContent = state.error || (state.enabled || state.polished_enabled
+    ? `${state.pending || 0} pending · ${state.last_commit ? "Last commit: " + state.last_commit.slice(0, 8) : "Waiting for new matches or polished functions."}`
+    : "Off. Matches and polished functions will not be committed automatically.");
   status.classList.toggle("err", !!state.error);
 }
 $("repositoryAutoCommitDetails").onclick = () => {
   const state = repositoryAutoCommitState;
-  dialog("Pending match commits", `<p>Each match uses its agent’s notes, or a short “Match &lt;function&gt;” message when notes are absent.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}${item.agent || item.method ? `<br><span class="small muted">${esc([item.agent, item.method].filter(Boolean).join(" · "))}</span>` : ""}<br><span class="small muted">${esc(item.error || "Waiting for the next autosave check.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
+  dialog("Pending function commits", `<p>Matches use agent notes or “Match &lt;function&gt;”. Polished rewrites use “Polish &lt;function&gt;” and identify the polishing author.</p>${(state.items || []).map(item => `<p>${fnLink(item.name)}${item.agent || item.method ? `<br><span class="small muted">${esc([item.agent, item.method].filter(Boolean).join(" · "))}</span>` : ""}<br><span class="small muted">${esc(item.error || "Queued for the automatic commit worker.")}</span></p>`).join("")}<button class="ghost" type="button" data-close>Close</button>`);
 };
-$("repositoryAutoCommit").onchange = async () => {
-  const field = $("repositoryAutoCommit"), slug = S.slug, enabled = field.checked;
+for (const [id, kind] of [["repositoryAutoCommit", "match"], ["repositoryPolishedCommit", "polished"]]) $(id).onchange = async () => {
+  const field = $(id), slug = S.slug, enabled = field.checked;
   repositoryAutoCommitBusy = true;
-  const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [field], "Automatic commit preference saved.");
+  const finish = beginWork($("repositoryAutoCommitLog"), "Saving automatic commit preference", [$("repositoryAutoCommit"), $("repositoryPolishedCommit")], "Automatic commit preference saved.");
   showJobError($("repositoryAutoCommitLog"), "");
   try {
     if (enabled && typeof prepareRepositoryCommits === "function") await prepareRepositoryCommits(slug, $("repositoryAutoCommitLog"));
-    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, folder:(typeof repositorySaveRoot === "undefined" ? "" : repositorySaveRoot) || $("repositoryFolder").value.trim()}});
+    const state = await api("/api/repository-auto-commit", {method:"POST", body:{slug, enabled, kind, folder:(typeof repositorySaveRoot === "undefined" ? "" : repositorySaveRoot) || $("repositoryFolder").value.trim()}});
     if (S.slug === slug) {
       repositoryAutoCommitBusy = false;
       if (S.ov) S.ov.auto_commit = state;
