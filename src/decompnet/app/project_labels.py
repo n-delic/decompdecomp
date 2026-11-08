@@ -1,6 +1,8 @@
 """Attach shared identity labels to bounded project-owned result sets."""
 import json
 
+from .. import consoles
+
 
 def names(net, ids):
     ids = sorted({aid for aid in ids if aid is not None})
@@ -24,13 +26,15 @@ def label(net, rows, columns, *, require=()):
 
 def projects(net):
     """Catalog discovery with canonical project titles; legacy needs only one read."""
-    rows = net.store.all('SELECT id,slug,name FROM projects ORDER BY id DESC')
+    rows = net.store.all('SELECT id,slug,name,config FROM projects ORDER BY id DESC')
     result = []
     for row in rows:
         store = net.project_store(row['id'])
-        selected = row if store is net.store else store.one('SELECT slug,name FROM projects WHERE id=?',row['id'])
+        selected = row if store is net.store else store.one('SELECT slug,name,config FROM projects WHERE id=?',row['id'])
         if selected is None:
             from ..network import NetworkError
             raise NetworkError('This project is missing from its database. Restore it from backup.')
-        result.append({'slug':selected['slug'],'name':selected['name']})
+        cfg = json.loads(selected['config'])
+        name = consoles.of(cfg).display_title(selected['name'], cfg.get('rom', {}))
+        result.append({'slug':selected['slug'],'name':name})
     return result

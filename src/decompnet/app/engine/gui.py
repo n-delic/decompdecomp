@@ -120,11 +120,12 @@ class GuiMixin:
         tc = toolchains.get(compiler_id) if toolchains.known(compiler_id) else None
         console = self.console(proj)
         return {
-            "slug": proj["slug"], "title": proj["name"], "description": proj["description"],
+            "slug": proj["slug"], "title": console.display_title(proj["name"], cfg.get("rom", {})), "description": proj["description"],
             "code_audit": self.is_rom(proj) and proj["arch"]=="mips",
             **console.project_facts(),
             "compilers": [c.id for c in console.compilers],
-            "rom": {k: cfg["rom"].get(k) for k in ("title", "game_code", "region", "size", "sha1", "byte_order", "compiler_guess")},
+            "rom": {k: cfg["rom"].get(k) for k in ("title", "game_code", "region", "size", "sha1", "byte_order", "compiler_guess")}
+                   | {"title": console.display_title(cfg["rom"].get("title", ""), cfg["rom"])},
             "compiler": {"toolchain": compiler_id, "name": consoles.compiler_name(compiler_id),
                          "flags": cfg["compiler"]["flags"],
                          "installed": tc is not None and toolchains.installed(tc.id) is not None,
@@ -181,7 +182,7 @@ class GuiMixin:
         else:
             about = {"rom": {k: cfg["rom"].get(k) for k in ("game_code", "region")},
                      "compiler": {"name": consoles.compiler_name(cfg.get("compiler", {}).get("toolchain", ""))}}
-        return {"slug": proj["slug"], "title": proj["name"], **console.project_facts(),
+        return {"slug": proj["slug"], "title": console.display_title(proj["name"], cfg.get("rom", {})), **console.project_facts(),
                 "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
                 "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
                 "set_aside_bytes": agg["set_aside_bytes"] or 0,

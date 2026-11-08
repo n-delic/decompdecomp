@@ -11,6 +11,7 @@ import struct
 
 from ...arch.mips import JR_RA, OPCODE_SHIFT, RA, REGISTER_BITS, RS_SHIFT, RT_SHIFT, SD, SP, SPECIAL, SQ
 from ...rom import RomError
+from ..playstation_titles import title
 from .disc import region_of
 
 # ELF32's header and tables (little-endian on the PS2)
@@ -173,7 +174,7 @@ def read_elf(data: bytes, boot_name: str = "") -> tuple[bytes, dict]:
         code = f"{m.group(1)}-{m.group(2)}{m.group(3)}"
     has_symbols = b".symtab" in data[-65536:] or b".symtab" in data[:65536]
     return data, {
-        "title": code or boot_name or "PlayStation 2 game", "game_code": code, "region": region_of(code) if code else "Unknown region",
+        "title": title("ps2", code, code or boot_name or "PlayStation 2 game"), "game_code": code, "region": region_of(code) if code else "Unknown region",
         "version": 0, "entrypoint": entry, "gp": 0, "crc1": 0, "crc2": 0, "size": len(data),
         "sha1": hashlib.sha1(data).hexdigest(), "byte_order": "elf", "compiler_guess": guess_compiler(data), "platform": "ps2",
         "boot": boot_name, "symbols": has_symbols,

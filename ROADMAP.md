@@ -868,6 +868,10 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- **Readable PS1 and PS2 titles.** Imports resolve serials through bundled offline metadata,
+  keeping the game code and region. Unknown discs use a useful volume label or retain the serial.
+  Existing serial-only project names resolve for display without rewriting project data.
+
 - Project opening uses an accurate compact summary on reserved UI capacity; expensive diagnostics, build preflight and room refreshes arrive after the page appears. Header version reads no longer fetch shared header text.
 - Optional startup work is split into named per-task threads with project context, progress and cooperative Stop controls in Background work. Heavy tasks remain serialized; unchanged ROM library archives are skipped using persistent input stamps.
 
