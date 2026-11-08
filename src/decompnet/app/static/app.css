@@ -2080,3 +2080,22 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .repository-auto-commit > button { margin-left:28px; }
 #repositoryInit { margin:4px 0 16px; }
 #repositoryOriginGroup { padding:16px 0; border-bottom:1px solid var(--line-soft); }
+
+.repository-connect { display:grid; gap:18px; }
+.repository-connect[hidden] { display:none; }
+.repository-connect-heading h4 { margin:0 0 5px; font-size:14px; }
+.repository-connect-heading p, .repository-github-form > p { margin:0; line-height:1.6; }
+.repository-github { border-top:1px solid var(--line-soft); padding-top:16px; }
+.repository-github > summary { font-size:13px; font-weight:600; }
+.repository-github-form { display:grid; gap:16px; padding-top:18px; }
+.repository-github-fields { display:grid; grid-template-columns:minmax(0,2fr) minmax(120px,1fr); gap:14px; }
+.repository-owner-status:empty { display:none; }
+.repository-github-form > .workbar { margin:0; }
+.repository-github-submit { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
+.repository-github-help { font-size:11px; color:var(--muted); }
+.repository-github-help p { margin:8px 0 0; line-height:1.6; }
+@media(max-width:560px) {
+ .repository-github-fields { grid-template-columns:1fr; }
+ .repository-connect .pick-row { flex-wrap:wrap; }
+ .repository-connect .pick-row input { flex-basis:100%; }
+}

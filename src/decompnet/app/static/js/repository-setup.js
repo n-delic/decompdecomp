@@ -209,16 +209,21 @@ async function loadRepositoryGithubOwners() {
   const slug = S.slug, status = $("repositoryGithubOwnersState");
   if (!repositorySetupState?.github_create) { status.textContent = "Close and reopen decompdecomp after updating, then reload Settings to load GitHub owners."; return; }
   repositoryGithubOwnersBusy = true;
-  const finish = beginWork(status, "Loading GitHub accounts and organizations", [$("repositoryGithubOwnersGo")]);
+  const finish = beginWork(status, "Loading GitHub accounts", [$("repositoryGithubOwnersGo")], "");
+  if (status._workStatus) status._workStatus.hidden = false;
   try {
     const state = await api(`/api/repository-github-owners?slug=${encodeURIComponent(slug)}`);
     if (S.slug !== slug) return;
     $("repositoryGithubOwners").replaceChildren(...state.owners.map(name => {
       const option = document.createElement("option"); option.value = name; return option;
     }));
-    status.textContent = state.warning || "Choose an owner above, or type an organization name. GitHub checks your permission when creating.";
+    status.textContent = state.warning || `${state.owners.length} account${state.owners.length === 1 ? "" : "s"} available. Choose one above, or enter an organization.`;
   } catch (error) { if (S.slug === slug) showJobError(status, error.message); }
-  finally { finish(); repositoryGithubOwnersBusy = false; }
+  finally {
+    finish();
+    if (status._workStatus?.dataset.state === "done") status._workStatus.hidden = true;
+    repositoryGithubOwnersBusy = false;
+  }
 }
 $("repositoryGithubOwnersGo").onclick = loadRepositoryGithubOwners;
 $("repositoryGithubDetails").ontoggle = () => { if ($("repositoryGithubDetails").open) loadRepositoryGithubOwners(); };
