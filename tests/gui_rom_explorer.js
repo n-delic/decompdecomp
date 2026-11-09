@@ -27,6 +27,15 @@ function setup(){
   return {context,nodes,calls,renders,run:code=>vm.runInContext(code,context)};
 }
 (async()=>{
+  {
+    const t=setup();
+    const html=t.run("romAssetHTML({start:128,size:96,detected_asset:{frames:2,palettes:1,preview_settings:{format:'ci4',width:32,height:16}}})");
+    assert.match(html,/Detected CI4 texture bank/);
+    assert.match(html,/32 × 16/);
+    assert.match(html,/2 frame/);
+    assert.match(html,/Detect asset \/ texture bank/);
+  }
+
   // A start acknowledges before the network returns, prevents duplicate starts,
   // and preserves a measured follow through completion.
   {

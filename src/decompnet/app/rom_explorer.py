@@ -18,7 +18,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=2
+ANALYSIS_REVISION=3
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'font', 'container', 'repeated bytes')
 
 
@@ -118,7 +118,8 @@ def _run(net, slug, log):
                               big_endian=bool(proj['big_endian']),gp=cfg.get('gp',0),cpu=console.cpu_variant,ram=console.ram,
                               check=log.check_cancel,progress=log.progress)
         report = analyse(image,cfg['segments'],functions,symbols,big_endian=bool(proj['big_endian']),
-                         progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']])
+                         progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']],
+                         assets=console.asset_regions(image,check=log.check_cancel,progress=log.progress))
         asset_flow.attach(report,flow)
     log.check_cancel()
     if revision!=_revision(net,proj):raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
@@ -242,29 +243,36 @@ def asset_preview(net,slug,data):
 
 def _asset_preview(net,slug,data):
     from ..rom.asset_formats import preview
-    return _asset_read(net,slug,data,lambda image,options:preview(image,options))
+    return _asset_read(net,slug,data,lambda image,options:preview(image,options),detect=True)
 
 
-def _asset_read(net,slug,data,read):
+def _asset_read(net,slug,data,read, *, detect=False):
     """Verify and read a bounded interpretation from the original or decoded image."""
     from ..rom import asset_formats
     proj,state,row=_current(net,slug,data.get('region'),data.get('image_hash'))
     options=_preview_settings(data.get('options',{}))
+    detected=row.get('detected_asset')
+    using_detected=bool(detect and detected and options.get('format','auto')=='auto' and
+                        options.get('source','rom')=='rom' and
+                        asset_formats.integer(options.get('offset',row['start']),'Data offset',0,state['report']['size']-1)==row['start'])
+    if using_detected:options=dict(detected['preview_settings'])
     path=Path(proj['root'])/net.cfg(proj)['rom']['file']
     with path.open('rb') as stream,mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
         if hashlib.sha256(image).hexdigest()!=data['image_hash']:raise NetworkError('The image changed. Reopen ROM Explorer before previewing assets.')
         offset=asset_formats.integer(options.get('offset',row['start']),'Data offset',0,len(image)-1) if options.get('source','rom')=='rom' else row['start']
         header=image[offset:offset+4]
-        compressed=header in (b'Yaz0',b'Yay0',b'MIO0') or header.startswith(b'\x1f\x8b\x08') or len(header)>=2 and header[0]==0x78 and int.from_bytes(header[:2],'big')%31==0
+        compressed=header in (b'Yaz0',b'Yay0',b'MIO0',b'RNC\x01',b'RNC\x02') or header.startswith(b'\x1f\x8b\x08') or len(header)>=2 and header[0]==0x78 and int.from_bytes(header[:2],'big')%31==0
         auto_decode=options.get('source','rom')=='rom' and options.get('format','auto')=='auto' and compressed
         if options.get('source','rom')=='decoded' or auto_decode:
             block=offset if auto_decode else asset_formats.integer(options.get('block_offset',row['start']),'Compressed block offset',0,len(image)-1)
-            raw,codec=asset_formats.unpack(image[block:block+asset_formats.MAX_BYTES])
+            block_data=image[block:block+asset_formats.MAX_BYTES]
+            raw,codec=net.console(proj).asset_decode(block_data) or asset_formats.unpack(block_data)
             selected={**options,'offset':0 if auto_decode else options.get('offset',0)}
             result=read(raw,selected)
             result['decoded']=dict(codec=codec,bytes=len(raw),block_offset=block)
         else:
             result=read(image,{**options,'offset':options.get('offset',row['start'])})
+    if using_detected:result['details']['note']=detected['reason']
     result['settings']=options
     return result
 

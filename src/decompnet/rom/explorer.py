@@ -50,29 +50,31 @@ def _clue(image, offset, budget):
                               (b'OggS','Ogg container','audio'),(b'VAGp','VAGp audio','audio')):
         if head.startswith(magic):
             clue=dict(offset=offset,kind=kind,label=name,confidence='tentative',reason='Format signature only; payload and extent have not been validated.')
-            if kind in ('image','audio') and name!='Ogg container' and budget[0]>0:
+            if kind in ('image','audio') and name!='Ogg container':
                 from .asset_formats import MAX_BYTES, AssetError, identify
-                budget[0]-=1
+                if not budget[1]:return None
+                budget[1]-=1
                 try:
                     info=identify(image[offset:offset+MAX_BYTES])
                     clue.update(size=info['size'],confidence='tentative' if info['format']=='JPEG' else 'validated',
                                 reason=info.get('note','Bounded dimensions, container structure and payload checks passed.'))
-                except AssetError as exc:clue['reason']=str(exc)
+                except AssetError:return None
             return clue
     if head.startswith(b'RIFF'):
         subtype = head[8:12]
         clue=dict(offset=offset,kind='audio' if subtype==b'WAVE' else 'container',label='RIFF '+subtype.decode('ascii','replace'),confidence='tentative',reason='Container header only; payload and extent have not been validated.')
-        if subtype==b'WAVE' and budget[0]>0:
+        if subtype==b'WAVE':
             from .asset_formats import MAX_BYTES, AssetError, identify
-            budget[0]-=1
+            if not budget[1]:return None
+            budget[1]-=1
             try:
                 info=identify(image[offset:offset+MAX_BYTES]);clue.update(size=info['size'],confidence='validated',reason='PCM WAVE structure, format and duration checks passed.')
-            except AssetError as exc:clue['reason']=str(exc)
+            except AssetError:return None
         return clue
     return None
 
 
-def analyse(image, segments, functions, symbols, *, big_endian=True, progress=lambda _: None, check=lambda: None, ranges=()):
+def analyse(image, segments, functions, symbols, *, big_endian=True, progress=lambda _: None, check=lambda: None, ranges=(), assets=()):
     """Partition the entire image, retaining overlapping mappings rather than choosing an overlay.
 
     Large anonymous spans are display pages, not inferred asset boundaries. Function
@@ -126,15 +128,22 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
             entry = dict(s, segment=m['segment'], ambiguous=len(mappings)>1)
             symbol_spans.append(entry)
             span(lo, hi, 'symbol', len(symbol_spans)-1)
-    clues = []
-    budget = [MAX_DECODE_PROBES]
+    clues = [dict(asset) for asset in assets]
+    asset_starts = sorted(c['offset'] for c in assets)
+    asset_ends = []
+    for c in sorted(assets,key=lambda c:c['offset']):
+        asset_ends.append(max(asset_ends[-1] if asset_ends else 0,c['offset']+c['size']))
+    for clue in clues:
+        cuts.update((clue["offset"],clue["offset"]+clue["size"]))
+    budget = [MAX_DECODE_PROBES,MAX_DECODE_PROBES]
     format_limit=False;contained_end=0
     # Scan each byte once, including headers straddling a display page.
     for lo in range(0, size, PAGE_BYTES):
         check()
         for hit in HEADERS.finditer(image,lo,min(size,lo+PAGE_BYTES+16)) if not format_limit else ():
             if hit.start() >= lo+PAGE_BYTES:break
-            if hit.start()<contained_end:continue
+            asset_index=bisect.bisect_right(asset_starts,hit.start())-1
+            if hit.start()<contained_end or asset_index>=0 and hit.start()<asset_ends[asset_index]:continue
             if len(clues)>=MAX_FORMAT_CLUES:
                 format_limit=True;break
             clue = _clue(image, hit.start(), budget)
@@ -167,6 +176,7 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
             evidence.append(dict(label='Loader source range',confidence='inferred',reason=f"Call arguments describe ROM {transfer['start']:#x}–{transfer['end']:#x} (exclusive); may contain code or assets."))
         kind, confidence = 'unknown', 'unknown'
         if owners:kind, confidence = 'code', 'recorded'
+        elif any('preview_settings' in e for e in evidence):kind,confidence='image','validated'
         elif syms:
             kind, confidence = ('strings' if all(s['kind']=='string' for s in syms) else 'data'), 'recorded'
             if any(s['ambiguous'] for s in syms):confidence = 'tentative'
@@ -181,7 +191,8 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
             if entropy >= 7.5:evidence.append(dict(label='High entropy',confidence='tentative',reason='Could be compressed, encrypted or dense raw data. Entropy alone cannot identify a format.'))
         rows.append(dict(id=f'{lo:x}-{hi:x}',start=lo,end=hi,size=hi-lo,kind=kind,confidence=confidence,
                          mappings=maps,symbols=syms,functions=owners,evidence=evidence,entropy=entropy,
-                         sampled_bytes=len(sample),references=[],pointers=[]))
+                         sampled_bytes=len(sample),references=[],pointers=[],
+                         detected_asset=next((e for e in evidence if 'preview_settings' in e),None)))
     starts = [r['start'] for r in rows]
 
     def region(offset):
@@ -243,5 +254,5 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
         row['reference_count'] = len(row['references'])
         totals['recorded' if row['confidence'] in ('recorded','validated') else 'unknown' if row['confidence']=='unknown' else 'tentative'] += row['size']
     return dict(schema=1,image_hash=identity,size=size,regions=rows,runtime_symbols=runtime,totals=dict(totals),complete=True,
-                decoder_probes=MAX_DECODE_PROBES-budget[0],format_limit=format_limit,
-                note=('Format-candidate limit reached; additional signatures were not inspected. ' if format_limit else '')+'Coverage describes the analysis image, which may include expanded code. Recorded labels come from the import; validated labels confirm a bounded compressed stream, not runtime use. Anonymous spans are display pages, not asset boundaries. References can be incomplete; no references found does not mean unused. Pointer chains are leads, not proven data flow. Entropy and pointer sampling examine at most 4 KiB per region. No code or matching status is changed.')
+                decoder_probes=MAX_DECODE_PROBES-budget[0],media_probes=MAX_DECODE_PROBES-budget[1],format_limit=format_limit,
+                note=('Media-validation budget reached; additional media headers were not classified. ' if not budget[1] else '')+('Format-candidate limit reached; additional signatures were not inspected. ' if format_limit else '')+'Coverage describes the analysis image, which may include expanded code. Recorded labels come from the import; validated labels confirm a bounded stream or asset structure, not runtime use. Anonymous spans are display pages, not asset boundaries. References can be incomplete; no references found does not mean unused. Pointer chains are leads, not proven data flow. Entropy and pointer sampling examine at most 4 KiB per region. No code or matching status is changed.')
