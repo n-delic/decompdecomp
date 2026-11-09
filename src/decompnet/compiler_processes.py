@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -102,16 +103,43 @@ def _monitor():
             pass  # Tracking must not turn a disk error into a compiler failure.
 
 
-def finish(proc):
-    """Kill remaining children even if their driver already exited, and remove its ownership record."""
+def finish(proc, *, failed=False):
+    """Reap the child and orphan group without hiding an existing failure.
+
+    A denied group signal must still attempt direct-child cleanup, close pipes
+    and release tracking. A cleanup failure on an otherwise successful build
+    remains an error; log only process metadata, never command/source text.
+    """
+    cleanup_error = None
+    stage = None
+    def remember(where, error):
+        nonlocal cleanup_error, stage
+        if cleanup_error is None:
+            cleanup_error, stage = error, where
     try:
         if os.name != 'nt':
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except OSError as error:
+                remember('group_signal', error)
         if proc.poll() is None:
             from .hostenv import stop_process_tree
-            stop_process_tree(proc)
+            try:stop_process_tree(proc)
+            except OSError as error:remember('child_stop', error)
     finally:
-        untrack(proc.pid)
+        try:
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    try:stream.close()
+                    except OSError as error:remember('pipe_close', error)
+        finally:
+            try:untrack(proc.pid)
+            except OSError as error:remember('untrack', error)
+    if cleanup_error is not None:
+        logging.getLogger('decompdecomp').warning(
+            'Compiler process cleanup failed pid=%d errno=%s; primary_failure=%s stage=%s',
+            proc.pid, cleanup_error.errno, failed, stage)
+        if not failed:
+            raise cleanup_error

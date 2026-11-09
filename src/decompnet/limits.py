@@ -175,6 +175,19 @@ class CompilerMemoryWatchdog:
                         os.killpg(self.proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                except OSError as error:
+                    # A denied group signal must not strand a silent build in
+                    # its stdout reader. Stop the owned child without closing
+                    # pipes here; the caller still owns output and cleanup.
+                    import logging
+                    logging.getLogger('decompdecomp').warning(
+                        'Compiler watchdog group stop failed pid=%d errno=%s; timed_out=%s memory_limit=%s',
+                        self.proc.pid, error.errno, self.timed_out, self.exceeded)
+                    from .hostenv import stop_process_tree
+                    try:stop_process_tree(self.proc)
+                    except OSError as fallback:
+                        logging.getLogger('decompdecomp').warning(
+                            'Compiler watchdog child stop failed pid=%d errno=%s', self.proc.pid, fallback.errno)
                 return
 
     def __exit__(self, *_):
