@@ -392,3 +392,30 @@ Failed zlib/gzip decoding produces **rejected evidence**, not a compressed type;
 that cannot finish within their budget also do not label bytes as compressed. Strong headers
 for other unvalidated codecs can remain tentative clues. Map legends count display regions,
 not unique assets; directory paths and native offsets identify whole resources.
+
+### Audio browser and libmus pointer banks
+
+**Audio browser** lists detected samples and validated PCM WAVE/mono VAGp streams on
+ROM platforms. Filter by name, codec or function, sort by heading and page through all
+entries. **Prepare audio** makes one bounded WAV preview; **Play** starts playback.
+Stop cancels preparation, and changing projects/tabs, closing the card or changing filters
+ends the current preview. Errors remain visible and the controls recover for retry.
+
+N64 scans recognize unrelocated `N64 PtrTablesV2` banks: tuning arrays, waveform records,
+order-2 predictor books and loop extents must fit. Up to 128 banks / marked wave tables,
+2,048 samples per bank, 1 MiB of control data and four million frame-header checks are
+allowed per scan. Exactly one marked `N64 WaveTables` candidate must fit every sample
+and ADPCM selector. This pairing remains a static inference; ambiguous placement stays
+unresolved and does not classify sample data. The parser uses the
+[libmus pointer-bank layout](https://github.com/cdlewis/libmus/blob/master/src/libmus_data.h).
+
+The pointer bank stores no sample rate. Its 22,050 Hz default is an editable preview
+choice, not a verified original rate or pitch. Region details can save the chosen rate
+and sample. Output remains mono, limited to 30 seconds / 4 MiB, with no pitch, mixing
+or loop recreation. Existing B1 banks retain their recorded nominal rates.
+
+CRC-checked ZIP `.bin` members whose indexed channel/volume/bend tables fit are shown
+as tentative sequence candidates. Track commands and musical interpretation are not
+validated, and sequence synthesis is not implemented. They are never offered as WAV
+waveforms. Unsupported formats and remapped banks remain unclassified. This native
+adapter is N64-only; other consoles keep generic audio browsing and raw previews.

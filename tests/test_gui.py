@@ -699,3 +699,10 @@ def test_native_audio_choices_show_evidence_and_do_not_autoplay():
         pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_audio.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_audio_browser_cancellation_errors_and_explicit_playback():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_audio_browser.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
