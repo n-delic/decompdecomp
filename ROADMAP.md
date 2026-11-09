@@ -695,6 +695,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, embedded ZIP packs) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / metadata | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic indexed model geometry and local mesh wireframes (raw, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic B1 audio banks, table evidence and mono VADPCM/PCM16 previews | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Native frame/palette/mip selection and explicit animation | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -979,7 +980,10 @@ validate member CRCs and complete trailer-count layouts, with per-texture, palet
 selection; old maps refresh automatically. Other archived asset formats need format adapters. N64 indexed geometry detection validates
 node/part/section tables, byte-plane vertices and cache-relative polygon runs; raw and RNC 1/2
 models offer mesh selection and local wireframes. Other native formats, assembled skeleton poses,
-animation and textured model rendering remain planned.
+animation playback and textured model rendering remain planned. A validated indexed cartridge
+directory supplies typed animation, collision, grid/bounds, placement, sequence and demo
+metadata. Empty records stay explicit, and failed zlib/gzip probes no longer classify bytes
+as compressed. Scene reconstruction, sequence synthesis and other native schemas remain planned.
 
 A project tab maps every byte of an imported ROM analysis image, including unknown and
 unmapped ranges. Inspect recorded functions/data symbols, interior-address references,

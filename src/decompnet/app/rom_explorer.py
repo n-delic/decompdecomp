@@ -18,8 +18,8 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=8
-KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'font', 'container', 'repeated bytes')
+ANALYSIS_REVISION=9
+KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
 
 
 def _project(net, slug):
