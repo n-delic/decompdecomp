@@ -38,7 +38,9 @@ def test_sn64_pipeline_order_and_failed_steps(tmp_path, monkeypatch):
     tools = {key: tmp_path / key for key in ['cc', 'cpp', 'assembler', 'converter', 'runner']}
     for tool in tools.values():
         tool.touch()
-    src, out, inc = tmp_path / 'probe.c', tmp_path / 'probe.o', tmp_path / 'include'
+    src, out, inc = tmp_path / 'src/code_80132004/func_801382A0.c', tmp_path / 'build/src/code_80132004/func_801382A0.o', tmp_path / 'include'
+    src.parent.mkdir(parents=True)
+    out.parent.mkdir(parents=True)
     src.write_text('int probe(void){return 0;}')
     seen = []
     def run(argv, **kwargs):
@@ -49,7 +51,10 @@ def test_sn64_pipeline_order_and_failed_steps(tmp_path, monkeypatch):
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(subprocess, 'run', run)
     monkeypatch.chdir(tmp_path)
-    sn_compile(**tools, source=src, output=out, include=Path('include'), flags=['-O2', '-DTEST=1'])
+    sn_compile(**tools, source=src.relative_to(tmp_path), output=out.relative_to(tmp_path),
+               include=Path('include'), flags=['-O2', '-DTEST=1'])
+    assert seen[0][-3:] == [str(src), '-o', str(out.with_suffix('.sn.i'))]
+    assert seen[2][-5:] == ['-I', str(inc), '-o', str(out.with_suffix('.sn.obj')), str(out.with_suffix('.sn.s'))]
     assert '-I' + str(inc) in seen[0]
     assert [Path(a[1]).name if a[0] == str(tools['runner']) else Path(a[0]).name for a in seen] == ['cpp', 'cc', 'assembler', 'converter']
     assert '-DTEST=1' in seen[0] and '-DTEST=1' not in seen[1]
@@ -81,6 +86,28 @@ def test_original_sn64_compiles_and_preserves_relocations(tmp_path, tid):
     result = compile_source(cfg, '', 'float probe(float x){return x*1.25f;}')
     assert result.ok, result.log
     assert extract_function(result.obj, 'probe').code
+
+
+@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006'])
+def test_original_sn64_supports_export_style_relative_builds(tmp_path, tid):
+    from decompnet.compiler import run_in
+
+    if any(toolchains.installed(t) is None for t in [tid, 'wibo', 'psyq-obj-parser']):
+        pytest.skip('needs accepted local SN64 compilers, wibo and the pinned converter')
+    if not all((toolchains.require(tid) / name).is_file() for name in ['cc1n64.exe', 'cppn64.exe', 'asn64.exe']):
+        pytest.skip('older compiler-only pack needs reinstalling with its preprocessor and assembler')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': tid}})
+    (tmp_path / 'include').mkdir()
+    (tmp_path / 'include/probe.h').write_text('#define VALUE 3\n')
+    (tmp_path / 'src/code_80132004').mkdir(parents=True)
+    (tmp_path / 'build/src/code_80132004').mkdir(parents=True)
+    (tmp_path / 'src/code_80132004/func_801382A0.c').write_text('#include "probe.h"\nint probe(int x){return x+VALUE;}\n')
+    subst = {'{src}': 'src/code_80132004/func_801382A0.c', '{obj}': 'build/src/code_80132004/func_801382A0.o', '{include}': 'include'}
+    result = run_in(cfg, tmp_path, [subst.get(arg, arg) for arg in cfg.cmd],
+                    inputs=['src/code_80132004/func_801382A0.c', 'include/probe.h'], outputs=['build/src/code_80132004/func_801382A0.o'])
+    assert result.returncode == 0, result.stderr
+    fn = extract_function((tmp_path / 'build/src/code_80132004/func_801382A0.o').read_bytes(), 'probe')
+    assert fn.code == bytes.fromhex('03e0000824820003')
 
 
 def test_sn64_uses_gcc_flag_search_and_permuter_weights():

@@ -32,6 +32,8 @@ def compile_source(cc: Path, cpp: Path, assembler: Path, converter: Path, runner
     def run(argv):
         subprocess.run([str(a) for a in argv], check=True, timeout=30)
 
+    # ASN under wibo misreads relative paths in exported repository builds.
+    source, output, include = source.resolve(), output.resolve(), include.resolve()
     preprocessed = output.with_suffix('.sn.i')
     assembly = output.with_suffix('.sn.s')
     obj = output.with_suffix('.sn.obj')
