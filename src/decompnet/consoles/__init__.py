@@ -84,6 +84,8 @@ class Console:
     aliases: tuple[str, ...] = ()  # other ids older configs or public decomps use for it ("win32" for "pc")
     status = PUBLIC  # RECOMMENDED, BETA or PUBLIC
     arch = ""  # its processor, an id in arch/ ("mips")
+    asset_argument_count = 4  # register arguments read by the processor's asset-flow adapter
+    asset_calls: dict = {}  # console-specific named transfer contracts, appended to shared libc contracts
     cpu_variant: str = ""  # a variant of it capstone can't decode, read by arch/'s own reader ("allegrex": the PSP's)
     big_endian = False
     mode = ""  # ROM, PROJECT, or "" (only public decomps)

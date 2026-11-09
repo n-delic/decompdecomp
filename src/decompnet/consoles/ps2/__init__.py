@@ -28,6 +28,7 @@ OBJECT_READING = 1  # how elf.object_compilers reads a program: a higher one rea
 
 
 class PlayStation2(Console):
+    asset_argument_count = 8  # EE EABI uses a0-a3 and t0-t3
     id = "ps2"
     name = "PlayStation 2"
     short = "PS2"

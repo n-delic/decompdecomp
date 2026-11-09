@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <title>decompdecomp</title>
 <link rel="manifest" href="/assets/manifest.webmanifest">
 <meta name="theme-color" content="#1d1b14">
@@ -439,6 +439,8 @@
         <label class="field"><span>Find regions</span><input type="search" id="romFilter" placeholder="Label, type, segment or offset range"></label>
         <button id="romFunctionFilter" type="button" class="ghost small-btn" hidden></button>
         <details id="romRuntime" hidden><summary>Runtime-only data (no ROM bytes)</summary><p class="small muted">Imported BSS symbols describe memory reserved at runtime. Their address references are leads; overlay ownership may be unresolved. These bytes are excluded from image totals.</p><div id="romRuntimeItems"></div></details>
+        <details id="romLoaderGroups" hidden><summary>Loader source groups <span id="romLoaderCount"></span></summary><p class="small muted" id="romLoaderNote"></p><div id="romLoaderItems"></div></details>
+        <details id="romLoaderRoles"><summary>Describe a loader function</summary><p class="small muted">For an unnamed copy, DMA or decompression function, record which arguments hold source, destination and byte length. These are your hypotheses; they never edit symbols or build inputs. Argument numbers start at 0.</p><div id="romLoaderRoleBody"></div><pre id="romLoaderRoleWork" class="joblog" hidden></pre></details>
         <div id="romResult"></div>
       </div>
     </details>
@@ -1137,6 +1139,7 @@
 <script src="/assets/js/compiler-progress.js"></script>
 <script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/code-audit.js"></script>
+<script src="/assets/js/rom-assets.js"></script>
 <script src="/assets/js/rom-explorer.js"></script>
 <script src="/assets/js/boundary-repairs.js"></script>
 <script src="/assets/js/repository-setup.js"></script>

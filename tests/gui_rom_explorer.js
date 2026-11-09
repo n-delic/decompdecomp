@@ -6,7 +6,7 @@ const base=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/b
 const tick=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 function element(){return {disabled:false,hidden:false,textContent:'',value:'',dataset:{},children:[],style:{setProperty(){}},attrs:{},
-  append(c){this.children.push(c);},before(c){},remove(){},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},replaceChildren(...c){this.children=c;},
+  addEventListener(){},append(c){this.children.push(c);},before(c){},remove(){},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},replaceChildren(...c){this.children=c;},
   querySelectorAll(){return [];},querySelector(k){return this.fields[k] || (this.fields[k]=element());},fields:{},classList:{add(){},remove(){}},getContext(){return {scale(){},fillRect(){}};}};}
 function setup(){
   const nodes=new Map(),calls=[],renders=[];
@@ -20,6 +20,7 @@ function setup(){
   });
   vm.runInContext(base.slice(base.indexOf('function beginWork('),base.indexOf('async function followJob(')),context);
   vm.runInContext(base.slice(base.indexOf('function showJobError('),base.indexOf('/*',base.indexOf('function showJobError('))),context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-assets.js'),'utf8'),context);
   vm.runInContext(source,context);
   vm.runInContext('renderRomExplorer=(view)=>renders.push(view.report);',Object.assign(context,{renders}));
   return {context,nodes,calls,renders,run:code=>vm.runInContext(code,context)};
@@ -123,6 +124,28 @@ function setup(){
     const promise=button.onclick();await tick();assert.equal(button.disabled,true);assert.equal(body.querySelector('[data-rom-notes]').disabled,true);
     await button.onclick();assert.equal(t.calls.filter(c=>c.options?.method==='POST').length,1);
     saving.reject(new Error('Save failed'));await promise;assert.equal(button.disabled,false);assert.match(body.querySelector('[data-rom-save-work]').textContent,/Save failed/);
+  }
+  // Preview starts acknowledge immediately, block duplicates, never autoplay,
+  // and retain decode failures or ignore late results after navigation.
+  {
+    const t=setup(),pending=deferred(),body=element(),fields=[];
+    for(const [key,value] of Object.entries({source:'rom',format:'pcm-u8',offset:'0',width:'1',height:'1',channels:'1',rate:'22050',length:'8',block_offset:'0',palette_offset:'0',palette_format:'rgba5551-be'})){
+      const field=body.querySelector(`[data-asset-${key}]`);field.value=value;fields.push(field);
+    }
+    body.querySelectorAll=selector=>selector.includes('.rom-asset-fields') ? fields : [];
+    t.context.body=body;t.context.reply=()=>pending.promise;
+    t.run("setupRomAsset(body,{id:'0-10',start:0},'first','hash',()=>S.slug==='first')");
+    const button=body.querySelector('[data-asset-preview]'),result=body.querySelector('[data-asset-result]');
+    const first=button.onclick();await tick();assert.equal(button.disabled,true);assert.ok(fields.every(f=>f.disabled));
+    await button.onclick();assert.equal(t.calls.length,1);
+    pending.resolve({media:'audio',data_url:'data:audio/wav;base64,AA==',details:{seconds:1}});await first;
+    assert.equal(result.children[0].controls,true);assert.equal(result.children[0].preload,'none');assert.ok(!result.children[0].autoplay);
+    assert.equal(button.disabled,false);
+    result.children[0].onerror();assert.match(body.querySelector('[data-asset-work]').textContent,/could not decode/);
+    t.context.reply=async()=>{throw Error('Invalid texture extent');};await button.onclick();assert.match(body.querySelector('[data-asset-work]').textContent,/Invalid texture/);
+    const late=deferred();t.context.reply=()=>late.promise;
+    const leaving=button.onclick();t.context.S.slug='second';late.resolve({media:'audio',data_url:'data:audio/wav;base64,AA=='});await leaving;
+    assert.equal(result.children.length,0,'A late preview must not paint another project');
   }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

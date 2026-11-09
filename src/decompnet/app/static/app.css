@@ -2141,3 +2141,15 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 #romExplorerPanel .pad, #romExplorerPanel .pad > * { min-width:0; max-width:100%; }
 #romExplorerPanel .joblog { white-space:pre-wrap; overflow-wrap:anywhere; }
 #romResult table { min-width:640px; }
+
+.rom-asset-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:12px 0; }
+.rom-asset-fields .field { min-width:0; }
+.rom-preview-media { display:block; max-width:100%; max-height:480px; margin:12px 0; }
+img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); border:1px solid var(--line); }
+.rom-flow, .rom-asset-preview { border-top:1px solid var(--line); padding-top:14px; margin-top:14px; }
+.rom-flow-chain { padding:10px 0; border-bottom:1px solid var(--line-soft); overflow-wrap:anywhere; }
+.rom-flow-chain ol { padding-left:24px; display:grid; gap:12px; }
+#romLoaderItems, #romLoaderRoleBody { overflow-wrap:anywhere; }
+@media (max-width:600px) { .rom-asset-fields { grid-template-columns:minmax(0,1fr); } }
+#dialogBody.rom-region-body pre { max-width:100%; overflow:auto; }
+#dialogBody.rom-region-body details { min-width:0; }

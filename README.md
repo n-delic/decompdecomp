@@ -41,8 +41,11 @@ labels and notes; **Explore referenced data** in a function opens its regions.
 Scans run locally without compilers or AI calls. Stop retains the previous complete map;
 returning to the tab or opening another window attaches to the same scan. Unknown or
 unreferenced bytes are never called unused. This is separate from exact code progress.
-Analysis images may contain expanded code; physical-media mapping and object-build
-adapters are planned, along with proven loader/consumer tracing and asset decoders.
+Loader source groups show bounded static copy/DMA/decompression arguments and later buffer
+passes or reads. Open a region for image, raw texture/palette and audio previews, including
+supported decompressed blocks. Unknown helper roles and raw layouts can be recorded locally.
+See [ROM Explorer](docs/ROM_EXPLORER.md) for formats, evidence and limits. Analysis images may
+contain expanded code; physical-media mapping and object-build adapters remain planned.
 
 ## Match through the live app
 

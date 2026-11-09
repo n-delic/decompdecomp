@@ -671,6 +671,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Image, texture/palette and audio previews | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | ROM Explorer: whole analysis image, references, clues and notes | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — image adapter planned | — image adapter planned | — image adapter planned | — image adapter planned |
 | Automatic guarded-return diagnostic pairs | ✓ MIPS ROM | ✓ shared MIPS reader | ✓ shared MIPS reader | ✓ shared MIPS reader | — return-path reader | — return-path reader | — return-path reader | — immutable private diagnostics |
 | Reviewed diagnostic-root deep lane | ✓ local ROM | ✓ shared ROM lane | ✓ shared ROM lane | ✓ shared ROM lane | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot |
@@ -931,6 +933,12 @@ and bounded gzip/zlib validation. Save local labels and evidence notes. Opening 
 project-scoped scan with Stop, measured progress and reattachment in another window;
 a stopped rescan retains the previous complete map. Classification is separate from
 matching and never establishes that an unreferenced region is unused.
+
+Loader source groups now retain complete source extents and block-local call/load evidence,
+including named DMA/copy/decompression contracts, small wrappers and user-declared roles.
+Raw texture/palette previews, PNG/JPEG images, PCM WAVE/standard mono VAGp playback and
+bounded gzip/zlib/Yaz0/MIO0/Yay0 decoding share one local preview panel. Unchanged inputs
+reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and limits.
 
 
 - **Verified SDK assembly and independent display names.** Indexed local SDK objects
@@ -1440,11 +1448,12 @@ with verified expansion/container mappings is still needed. ROM mode's shared im
 adapter also serves other imported processors; demo validation currently covers the
 four MIPS ROM columns in the table.
 
-Trace DMA/file-ID/loader tables and follow buffers through decompression into consumers,
-with instruction-level evidence and explicit ambiguity. Indexed-load/stride analysis,
-console texture/palette/audio decoders and previews, additional bounded compression
-validators, and user-reviewed boundaries remain planned. Current pointer chains are
-sampled address leads, not proven data flow or inferred asset extents.
+Extend the current block-local loader/buffer evidence through indexed file-ID tables,
+mutable memory, cross-branch paths and arbitrary interprocedural consumers. Establish
+asynchronous DMA completion before presenting runtime guarantees. Add console texture
+tilings, automatic raw-image dimensions/palette inference and more audio/compression
+formats. Current source groups and named contracts are static evidence, not runtime
+proof; raw preview choices remain manual interpretations.
 
 
 ### Your own compiler for GameCube, Wii and DS

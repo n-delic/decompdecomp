@@ -25,6 +25,13 @@ class Nintendo64(Console):
     short = "N64"
     status = RECOMMENDED  # tested on real games (Super Mario 64, GoldenEye, Perfect Dark), rebuilt byte for byte
     arch = "mips"
+    asset_calls = {
+        'osPiRawStartDma': dict(role='dma',source=1,destination=2,length=3,domain='rom',direction=0,source_alignment=2,destination_alignment=8,length_alignment=2,max_length=16*1024*1024),
+        'osPiStartDma': dict(role='dma',source=3,destination=4,length=5,domain='rom',direction=2,source_alignment=2,destination_alignment=8,length_alignment=2,max_length=16*1024*1024),
+        # Only explicit stores to these OSIoMesg fields are read, never mutable ROM initializers.
+        'osEPiStartDma': dict(role='dma',source=1,destination=1,length=1,domain='rom',direction=2,
+                             fields={'source':12,'destination':8,'length':16},source_alignment=2,destination_alignment=8,length_alignment=2,max_length=16*1024*1024),
+    }
     big_endian = True
     mode = ROM
     layout = "splat"

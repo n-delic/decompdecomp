@@ -19,7 +19,7 @@ SAMPLE_BYTES = 4096
 DECODE_BYTES = 1024 * 1024
 MAX_DECODE_PROBES = 256
 MAX_FORMAT_CLUES = 8192
-HEADERS = re.compile(b'\x1f\x8b\x08|\x78[\x01\x5e\x9c\xda]|Yaz0|Yay0|MIO0|RNC[\x01\x02]|\x89PNG\r\n\x1a\n|RIFF|OggS|\xff\xd8\xff')
+HEADERS = re.compile(b'\x1f\x8b\x08|\x78[\x01\x5e\x9c\xda]|Yaz0|Yay0|MIO0|RNC[\x01\x02]|\x89PNG\r\n\x1a\n|RIFF|OggS|VAGp|\xff\xd8\xff')
 STRINGS = re.compile(rb'[\x20-\x7e]{8,}\x00')
 
 
@@ -47,18 +47,32 @@ def _clue(image, offset, budget):
     for magic, name, kind in ((b'Yaz0','Yaz0','compressed'), (b'Yay0','Yay0','compressed'),
                               (b'MIO0','MIO0','compressed'), (b'RNC','RNC','compressed'),
                               (b'\x89PNG\r\n\x1a\n','PNG image','image'), (b'\xff\xd8\xff','JPEG image','image'),
-                              (b'OggS','Ogg container','audio')):
-        if head.startswith(magic):return dict(offset=offset, kind=kind, label=name, confidence='tentative',
-                                              reason='Format signature only; payload and extent have not been validated.')
+                              (b'OggS','Ogg container','audio'),(b'VAGp','VAGp audio','audio')):
+        if head.startswith(magic):
+            clue=dict(offset=offset,kind=kind,label=name,confidence='tentative',reason='Format signature only; payload and extent have not been validated.')
+            if kind in ('image','audio') and name!='Ogg container' and budget[0]>0:
+                from .asset_formats import MAX_BYTES, AssetError, identify
+                budget[0]-=1
+                try:
+                    info=identify(image[offset:offset+MAX_BYTES])
+                    clue.update(size=info['size'],confidence='tentative' if info['format']=='JPEG' else 'validated',
+                                reason=info.get('note','Bounded dimensions, container structure and payload checks passed.'))
+                except AssetError as exc:clue['reason']=str(exc)
+            return clue
     if head.startswith(b'RIFF'):
         subtype = head[8:12]
-        return dict(offset=offset, kind='audio' if subtype == b'WAVE' else 'container',
-                    label='RIFF '+subtype.decode('ascii','replace'), confidence='tentative',
-                    reason='Container header only; payload and extent have not been validated.')
+        clue=dict(offset=offset,kind='audio' if subtype==b'WAVE' else 'container',label='RIFF '+subtype.decode('ascii','replace'),confidence='tentative',reason='Container header only; payload and extent have not been validated.')
+        if subtype==b'WAVE' and budget[0]>0:
+            from .asset_formats import MAX_BYTES, AssetError, identify
+            budget[0]-=1
+            try:
+                info=identify(image[offset:offset+MAX_BYTES]);clue.update(size=info['size'],confidence='validated',reason='PCM WAVE structure, format and duration checks passed.')
+            except AssetError as exc:clue['reason']=str(exc)
+        return clue
     return None
 
 
-def analyse(image, segments, functions, symbols, *, big_endian=True, progress=lambda _: None, check=lambda: None):
+def analyse(image, segments, functions, symbols, *, big_endian=True, progress=lambda _: None, check=lambda: None, ranges=()):
     """Partition the entire image, retaining overlapping mappings rather than choosing an overlay.
 
     Large anonymous spans are display pages, not inferred asset boundaries. Function
@@ -95,6 +109,7 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
         events.setdefault(lo, []).append((True, kind, record))
         events.setdefault(hi, []).append((False, kind, record))
 
+    for i, r in enumerate(ranges):span(r['start'],r['end'],'transfer',i)
     for i, s in enumerate(segments):span(s['rom_start'], s['rom_end'], 'mapping', i)
     for i, f in enumerate(functions):
         check()
@@ -113,24 +128,27 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
             span(lo, hi, 'symbol', len(symbol_spans)-1)
     clues = []
     budget = [MAX_DECODE_PROBES]
-    format_limit=False
+    format_limit=False;contained_end=0
     # Scan each byte once, including headers straddling a display page.
     for lo in range(0, size, PAGE_BYTES):
         check()
         for hit in HEADERS.finditer(image,lo,min(size,lo+PAGE_BYTES+16)) if not format_limit else ():
             if hit.start() >= lo+PAGE_BYTES:break
+            if hit.start()<contained_end:continue
             if len(clues)>=MAX_FORMAT_CLUES:
                 format_limit=True;break
             clue = _clue(image, hit.start(), budget)
             if clue:
                 clues.append(clue)
                 cuts.add(clue['offset'])
-                if clue.get('size'):cuts.add(clue['offset']+clue['size'])
+                if clue.get('size'):
+                    cuts.add(clue['offset']+clue['size'])
+                    if clue['confidence']=='validated':contained_end=max(contained_end,clue['offset']+clue['size'])
         progress(dict(phase='Reading image',done=min(size,lo+PAGE_BYTES),total=size))
     for i,c in enumerate(clues):
         span(c['offset'],min(size,c['offset']+c.get('size',16)),'clue',i)
     ordered = sorted(cuts)
-    active = {k:set() for k in ('mapping','function','symbol','clue')}
+    active = {k:set() for k in ('mapping','function','symbol','clue','transfer')}
     rows = []
     for lo, hi in zip(ordered, ordered[1:]):
         check()
@@ -144,12 +162,16 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
         counts = Counter(sample)
         entropy = round(-sum((n/len(sample))*math.log2(n/len(sample)) for n in counts.values()), 2) if sample else 0
         evidence = sorted([clues[i] for i in active['clue']],key=lambda c:c['confidence']!='validated')
+        for i in sorted(active['transfer']):
+            transfer=ranges[i]
+            evidence.append(dict(label='Loader source range',confidence='inferred',reason=f"Call arguments describe ROM {transfer['start']:#x}–{transfer['end']:#x} (exclusive); may contain code or assets."))
         kind, confidence = 'unknown', 'unknown'
         if owners:kind, confidence = 'code', 'recorded'
         elif syms:
             kind, confidence = ('strings' if all(s['kind']=='string' for s in syms) else 'data'), 'recorded'
             if any(s['ambiguous'] for s in syms):confidence = 'tentative'
-        elif evidence:kind, confidence = evidence[0]['kind'], evidence[0]['confidence']
+        elif any('kind' in e for e in evidence):
+            clue=next(e for e in evidence if 'kind' in e);kind,confidence=clue['kind'],clue['confidence']
         elif sample and len(counts)==1:
             # This is a sample clue, never a claim that the whole range is padding.
             kind, confidence = 'repeated bytes', 'tentative'

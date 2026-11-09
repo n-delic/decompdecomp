@@ -69,7 +69,7 @@ def register(app: App) -> None:
                     # The per-function publisher uses current DB inputs with exact/revision
                     # guards. Let autosave export it rather than blocking the response on a full import.
                     function_profile = request.url.path == '/api/compiler' and data.get('function')
-                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
@@ -240,6 +240,14 @@ def register(app: App) -> None:
         from ..rom_explorer import annotate
         with net.progress.view():
             return annotate(net,slug,data)
+
+    def p_rom_preview(slug, request, data):
+        from ..rom_explorer import asset_preview
+        with net.progress.view():return asset_preview(net,slug,data)
+
+    def p_rom_loaders(slug, request, data):
+        from ..rom_explorer import loader_contracts
+        with net.progress.view():return loader_contracts(net,slug,data if request.method=='POST' else None)
 
     def p_code_audit(slug, request, data):
         from .. import rom_gap_audit
@@ -883,6 +891,8 @@ def register(app: App) -> None:
         return measurements(net)
 
     routes = {
+        "/api/rom-explorer/preview": (p_rom_preview,["POST"]),
+        "/api/rom-explorer/loaders": (p_rom_loaders,["GET","POST"]),
         "/api/rom-explorer": (p_rom_explorer, ["GET", "POST"]),
         "/api/rom-explorer/annotation": (p_rom_annotation, ["POST"]),
         "/api/boundary-evidence": (g_boundary_evidence, ["GET"]),

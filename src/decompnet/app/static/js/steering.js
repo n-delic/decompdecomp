@@ -14,7 +14,7 @@ function hideDrawer(id) {
   const d = $(id);
   if (d.hidden) return;
   if (id === "drawer") { if (typeof cancelFunctionRead === "function") cancelFunctionRead(); giveBack(null); S.fn = null; S.fnDetail = null; S.fnNav = (S.fnNav || 0) + 1; if (S.map.length) drawMap(); }
-  if (id === "dialog") S.dialogKind = "";
+  if (id === "dialog") { if(typeof stopRomAssetAudio=== "function")stopRomAssetAudio(); S.dialogKind = ""; }
   d.hidden = true;
   if ($("drawer").hidden && $("dialog").hidden) document.body.classList.remove("locked");
   const back = S[id + "From"];
@@ -59,6 +59,8 @@ function wireCopies(root) {
 /* The side panel for one task (decompiling together, the export, a rename...). `kind` says which, for what keeps it
    up to date while it's open. */
 function dialog(title, html, kind = "") {
+  if(typeof stopRomAssetAudio=== "function")stopRomAssetAudio();
+  $("dialogBody").classList.remove("rom-region-body");
   $("dialogTitle").textContent = title;
   $("dialogBody").innerHTML = html;
   $("dialogBody")._html = null;  // (setHtml's memory of what another panel showed here)

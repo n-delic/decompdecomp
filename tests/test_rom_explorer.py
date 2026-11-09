@@ -189,7 +189,7 @@ def test_flattened_program_hash_is_not_mistaken_for_analysis_hash(project):
     net,pid,root=project
     with net.progress.view():
         proj=net.project_row('game');cfg=dict(net.cfg(proj))
-        cfg['rom']=dict(cfg['rom'],program='program.elf',sha1='program-hash')
+        cfg['rom']=dict(cfg['rom'],program='program.elf',sha1='program-hash',analysis_sha1=hashlib.sha1((root/'game.rom').read_bytes()).hexdigest())
         with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
         rom_explorer.run(net,'game',Log())
         report=rom_explorer.listing(net,'game')

@@ -295,4 +295,8 @@ def test_rom_explorer_reads_the_imported_image_without_changing_targets(demo):
         assert report['regions'][0]['start']==0 and report['regions'][-1]['end']==report['size']
         row=report['regions'][0]
         assert rom_explorer.detail(net,slug,row['id'],report['image_hash'])['preview']
+        assert report['loader_flow']['supported']==bool(arch.get(proj['arch']).asset_flow)
+        preview=rom_explorer.asset_preview(net,slug,dict(region=row['id'],image_hash=report['image_hash'],
+            options=dict(format='rgba5551-be',width=1,height=1,offset=row['start'])))
+        assert preview['data_url'].startswith('data:image/png;base64,')
         assert before==[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,target,status FROM functions WHERE project_id=?',proj['id'])]
