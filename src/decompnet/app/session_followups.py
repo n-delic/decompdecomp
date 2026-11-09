@@ -4,6 +4,9 @@ import json
 import re
 import time
 
+# Long analysis-only sessions can evade the existing fast-failure backoff forever.
+NO_PROGRESS_SESSIONS = 3
+
 
 def account_key(session):
     # CLI helpers share their connector's local sign-in. API helpers share only a credential/endpoint pair.

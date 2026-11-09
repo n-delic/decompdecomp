@@ -140,12 +140,18 @@ class Opencode(Agent):
                 out.append(("text", text))
         elif t in ("step_finish", "step-finish") and isinstance(event.get("part"), dict):  # one step of the model
             part = event["part"]
+            # Keep categories only, never arbitrary provider text or request bodies.
+            reason = part.get('reason')
+            state['finish_reason'] = reason if reason in ('stop', 'length', 'tool-calls', 'content-filter', 'error', 'other', 'unknown') else 'not reported'
             tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
             cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
             out.append(usage_item(usd=part.get("cost"), input=number(tokens, "input"),
                                   output=number(tokens, "output") + number(tokens, "reasoning"),
                                   cache_read=number(cache, "read"), cache_write=number(cache, "write"), turns=1))
         return out
+
+    def exit_reason(self, state: dict) -> str:
+        return state.get('finish_reason', 'not reported')
 
     def clean_stderr(self, line: str) -> str:
         """--print-logs: keep the error itself, drop the stack noise."""

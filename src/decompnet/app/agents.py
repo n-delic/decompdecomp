@@ -75,6 +75,10 @@ class Fatal(RuntimeError):
     """A helper can't work until the user changes something: it pauses with this, instead of trying again."""
 
 
+class StartupMetadataPending(RuntimeError):
+    """Local derived metadata is in flight; no model process has been launched."""
+
+
 class ToolConnectionUnavailable(RuntimeError):
     """A recoverable tool connection failure; a CLI handshake retry may require a model request."""
 
@@ -1422,6 +1426,7 @@ class Manager:
             twins.ordered.wait(ORDER_WAIT)
         s.tool_handshake_failures = 0
         failures = fast = throttles = limits = auths = connection_failures = transport_failures = 0
+        no_progress_sessions = 0
         while not s.stop.is_set():
             if not focused_agents.ready(self,s,agent):continue
             if getattr(self, 'source_update_pending', False):
@@ -1439,8 +1444,15 @@ class Manager:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
                 break
             agent_startup.stage(s, "Selecting eligible work")
-            counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in {"readable", "boundary"} else None
-            policy = self.net.selection(s.slug, agent.name)
+            from ..read_cache import ReadPending
+            try:
+                counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in {"readable", "boundary"} else None
+                policy = self.net.selection(s.slug, agent.name)
+            except ReadPending:
+                if s.stop.is_set():break
+                self._wait(s, 'Waiting for project metadata before the next model request.', time.time()+5,
+                           'This helper retries automatically when local metadata is ready.')
+                continue
             if counts is not None and (policy.get("match_below") is not None or policy.get("max_tries") or policy.get("model_untried")):
                 if not counts["selected"] and not self.net.project_store(s.slug).one(
                         "SELECT 1 FROM claims WHERE agent_id=?", agent.id):
@@ -1495,6 +1507,12 @@ class Manager:
                     s.push('info','Continuing the same focused conversation; provider context compaction stays enabled.')
                     if s.stop.wait(SESSION_GAP):break
                     ok = self._run_cli(s, token, workdir)
+            except StartupMetadataPending:
+                self._session_end(s, row, agent, began, 'stopped' if s.stop.is_set() else 'metadata_retry')
+                if s.stop.is_set():break
+                self._wait(s, 'Waiting for project metadata before the next model request.', time.time()+5,
+                           'This helper retries automatically when local metadata is ready.')
+                continue
             except ToolConnectionUnavailable as error:
                 connection_failures += 1
                 s.error = str(error)
@@ -1552,6 +1570,10 @@ class Manager:
                 s.push('info', 'Session ended early; continuing once with explicit compilation guidance.')
             readable_progress = task == 'readable' and self.net.project_store(s.slug).one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
             work_remains = task != "boundary" and self._left(s.slug,task) > 0
+            no_progress = (task not in {'boundary', 'readable'} and ok and not investigation
+                           and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0
+                           and not (s.limited or s.throttled or s.auth_failed or s.signed_out))
+            no_progress_sessions = no_progress_sessions + 1 if no_progress else 0
             if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
                 s.error = "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
@@ -1563,6 +1585,10 @@ class Manager:
                 s.push("info", investigation+"; no compilation was needed for this report.")
             self._session_end(s, row, agent, began, "investigated" if task == "boundary" and investigation else "stopped" if s.stop.is_set() else "rotated" if s.rotated else "early_finish" if followup else "investigated" if ok and investigation else "ok" if ok else
                               "limit" if s.limited else "signin" if s.auth_failed else "failed")
+            if no_progress_sessions >= session_followups.NO_PROGRESS_SESSIONS:
+                self._pause(s, f'{no_progress_sessions} consecutive sessions ended without a build or investigation. Automatic retries paused.',
+                            'Review recent tool errors or choose another model, then press Start. Saved sources and handoffs are retained.')
+                break
             if task == 'boundary' and ok:
                 self._finish(s, 'Boundary recommendation saved; review it in Review function boundaries.')
                 break
@@ -1922,40 +1948,44 @@ class Manager:
 
     @agent_startup.current_projects
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
-        k = agents.get(s.kind)
-        if why := k.validate_model(s.model):
-            raise Fatal(why)
-        if self._preflight_tools(token, session=s) is False:
-            return True
-        if s.context_budget and s.context_budget.waiting:
-            s.rotated = True
-            s.push('info','No eligible work; waiting without starting a model request.')
-            return True
-        agent = self.net.authenticate(token)
-        # Availability may change after the runner's selection check while local
-        # connection setup is in progress. Do not launch a paid handshake for an
-        # empty queue; retained claims and explicitly targeted tasks still run.
-        if not s.options.get('focus_id') and s.options.get('task') not in {'readable', 'boundary'}:
-            counts = self.net.selection_counts(s.slug, agent)
-            if not counts['available'] and not self.net.project_store(s.slug).one(
-                    'SELECT 1 FROM claims WHERE agent_id=?', agent.id):
-                if s.context_budget:s.context_budget.waiting = True
-                s.rotated = True
-                s.push('info', 'No eligible work after the connection check; waiting without a model request.')
+        from ..read_cache import ReadPending
+        try:
+            k = agents.get(s.kind)
+            if why := k.validate_model(s.model):
+                raise Fatal(why)
+            if self._preflight_tools(token, session=s) is False:
                 return True
-        pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
-        # Selection was checked by the runner. The authenticated claim rechecks live availability.
-        if s.options.get('task') not in {'readable', 'boundary'}:
-            pending.add((agent.id, s.slug))
-            s.tool_handshake_required = True
-        agent_startup.stage(s, "Preparing compact startup context")
-        self.prepare_session(s, token=token)
-        if s.context_budget and s.context_budget.waiting:
-            s.rotated=True
-            s.push('info','No eligible work; waiting without starting a model request.')
-            return True
-        agent_startup.stage(s, "Preparing agent CLI")
-        cmd, env, prompt = self._command(s, token, workdir)
+            if s.context_budget and s.context_budget.waiting:
+                s.rotated = True
+                s.push('info','No eligible work; waiting without starting a model request.')
+                return True
+            agent = self.net.authenticate(token)
+            # Availability may change after the runner's selection check while local
+            # connection setup is in progress. Do not launch a paid handshake for an
+            # empty queue; retained claims and explicitly targeted tasks still run.
+            if not s.options.get('focus_id') and s.options.get('task') not in {'readable', 'boundary'}:
+                counts = self.net.selection_counts(s.slug, agent)
+                if not counts['available'] and not self.net.project_store(s.slug).one(
+                        'SELECT 1 FROM claims WHERE agent_id=?', agent.id):
+                    if s.context_budget:s.context_budget.waiting = True
+                    s.rotated = True
+                    s.push('info', 'No eligible work after the connection check; waiting without a model request.')
+                    return True
+            pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
+            # Selection was checked by the runner. The authenticated claim rechecks live availability.
+            if s.options.get('task') not in {'readable', 'boundary'}:
+                pending.add((agent.id, s.slug))
+                s.tool_handshake_required = True
+            agent_startup.stage(s, "Preparing compact startup context")
+            self.prepare_session(s, token=token)
+            if s.context_budget and s.context_budget.waiting:
+                s.rotated=True
+                s.push('info','No eligible work; waiting without starting a model request.')
+                return True
+            agent_startup.stage(s, "Preparing agent CLI")
+            cmd, env, prompt = self._command(s, token, workdir)
+        except ReadPending as error:
+            raise StartupMetadataPending('Shared startup metadata is still being prepared.') from error
         if s.rotated:return True
         if s.record:
             previous = s.record
@@ -2041,6 +2071,8 @@ class Manager:
                 _terminate(proc)
                 break
         code = proc.wait()
+        s.push('termination', f'CLI exited: code={code}; stdout_tools_seen={str(saw_tool).lower()}; '
+                             f'provider_finish={k.exit_reason(state)}.')
         _close_windows_job(proc.pid)
         # Fast failures may close stdout before the stderr reader receives the sign-in error.
         # Bound the wait in case a descendant inherited the pipe.

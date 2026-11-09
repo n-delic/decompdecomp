@@ -287,6 +287,10 @@ class Agent:
         carries what spans lines, for one session (Antigravity streams its text in pieces)."""
         return []
 
+    def exit_reason(self, state: dict) -> str:
+        """A bounded, non-content provider finish category for the final CLI diagnostic."""
+        return 'not reported'
+
     def clean_stderr(self, line: str) -> str:
         """One line of the agent's stderr as worth showing, or "" for noise: the last ones say why a session failed."""
         return line.strip()

@@ -495,7 +495,9 @@ def feedback(net, agent, slug, function, text, previous):
     if note:head+=note+'\n'
     if (measured_baseline or {}).get('regional_progress'):
         head += measured_baseline['regional_progress']+'\n'
-    head += mismatch(diagnostic)+'\n'
+    # Changed rows are rendered below; do not send an overlapping instruction
+    # window as well. Unchanged replies still need their small context window.
+    head += mismatch(diagnostic, window=previous == rows)+'\n'
     positions = [text.index(marker) for marker in ('\ncompiler output:', '\nwhen linking your code') if marker in text]
     warn = text[min(positions):] if positions else ''
     if warn:

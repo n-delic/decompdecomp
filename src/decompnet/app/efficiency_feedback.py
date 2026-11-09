@@ -5,7 +5,7 @@ LABELS={'register':'register allocation','stack':'stack layout','call':'calls / 
         'constant':'constants / addresses','control':'instruction order / control flow'}
 
 
-def mismatch(rows):
+def mismatch(rows, *, window=True):
     rows=normalized(rows)
     different=[(i,r) for i,r in enumerate(rows) if r[0]!=' ']
     if not different:
@@ -17,7 +17,7 @@ def mismatch(rows):
     categories = ', '.join(f'{n} {key.replace("_", " ")}' for key,n in counts.items() if n)
     return (f'Mismatch focus: {category}; first differing row {index}; {len(different)} differing rows ({categories}; advisory).\n'
             f'Target: {row[1][:180]}\nCandidate: {row[2][:180]}\n'
-            + instruction_window(rows,index))
+            + (instruction_window(rows,index) if window else ''))
 
 
 def instruction_window(rows, index=None):

@@ -169,6 +169,7 @@ def test_compile_response_has_one_summary_and_preserves_score_and_warnings(tmp_p
     assert result.count('Mismatch focus:')==1 and '1 register' in result
     assert 'Mismatch categories' not in result and '1 regalloc' not in result and 'old detail' not in result
     assert len(result)<len(original)+500
+    assert 'Advisory instruction window' not in result  # Changed rows already provide the instruction view.
 
 
 def test_frontload_refreshes_claim_state_even_when_revision_did_not_change(tmp_path,monkeypatch):
