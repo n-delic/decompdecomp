@@ -129,3 +129,37 @@ def test_another_workers_claim_is_preserved(example):
     assert net.permuter._hold(agent,fn,count_turn=False,seconds=60)
     assert not sdk_assembly.verify(net,proj,fn,{'names':['sdkToy'],'corpora':['Toy SDK']})
     assert net.project_store(proj['id']).one('SELECT agent_id FROM claims WHERE function_id=?',fid)['agent_id']==agent.id
+
+
+def test_same_entry_aliases_verify_without_guessing_name(example):
+    net,proj,fid,path=example
+    source=path.with_suffix('.s')
+    source.write_text(source.read_text()+ '\n.globl aliasToy\n.set aliasToy,sdkToy\n.type aliasToy,@notype\n.size aliasToy,0\n')
+    assembler=next(toolchains.path('binutils-mips').glob('*-as'))
+    subprocess.run([str(assembler),'-EB','-32','-mips3','-o',str(path),str(source)],check=True,capture_output=True)
+    net.twins.import_sdk_objects(path,'Toy SDK')
+    assert sdk_assembly.discover(net,proj)==1
+    fn=net._function('func_80001000','game')
+    proof=source_assembly.detail(proj,fn)
+    assert proof['verified'] and proof['names']==['aliasToy','sdkToy']
+    assert proof['alias_note']
+    assert net.function_detail('game',fn['name'],include_hints=False)['display_name']=='aliasToy / sdkToy'
+    assert source_assembly.breakdown(net,proj)['exact_c']==0
+    agent,_=net.local_agent('worker')
+    assert net.claim_row(agent,'game') is None
+    brief=net._brief(fn,agent,'FUNCTION')
+    assert 'No C matching required' in brief and 'unverified approximations' in brief
+
+
+def test_identical_bytes_from_different_objects_are_not_aliases():
+    base={'name':'first','object_sha256':'one','entry':[1,0,40]}
+    assert sdk_assembly.combine([base,dict(base,name='second',object_sha256='two')]) is None
+    assert sdk_assembly.combine([base,dict(base,name='second',entry=[1,40,40])]) is None
+
+
+def test_undefined_export_is_not_treated_as_an_alias(example):
+    net,proj,fid,path=example
+    source=path.with_suffix('.s');source.write_text(source.read_text()+'\n.globl undefinedAlias\n')
+    assembler=next(toolchains.path('binutils-mips').glob('*-as'))
+    subprocess.run([str(assembler),'-EB','-32','-mips3','-o',str(path),str(source)],check=True,capture_output=True)
+    assert 'undefinedAlias' not in sdk_assembly.object_prints(path.read_bytes())

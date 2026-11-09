@@ -75,7 +75,7 @@ def _identify(net, proj, *, include_asm=False):
         for row in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='asm' AND json_extract(meta,'$.verified_assembly.kind')='sdk'",proj['id']):
             proof=detail(proj,row)
             if proof and proof['verified'] and (selected is None or proof['corpus'] in selected):
-                out[row['id']]={'names':[proof['name']],'corpora':[proof['corpus']],
+                out[row['id']]={'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']],
                                 'evidence':proof['evidence'],'verified_assembly':True,
                                 'sdk_file':proof['source_file'],'sdk_stamp':proof.get('source_stamp')}
     for fid, hint in binary.items():
@@ -88,3 +88,11 @@ def _identify(net, proj, *, include_asm=False):
         else:
             out[fid] = hint
     return out
+
+
+def display_name(hint, fallback):
+    if not hint:return fallback
+    names=hint.get('names',[])
+    if len(names)==1 or hint.get('verified_assembly'):
+        return ' / '.join(names) or fallback
+    return fallback

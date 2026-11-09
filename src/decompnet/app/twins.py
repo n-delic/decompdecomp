@@ -1054,10 +1054,12 @@ class Twins:
                     continue
                 arch_id, order = machine
                 big = int((order or ("little" if elf.little_endian else "big")) == "big")
+                from .sdk_assembly import object_prints as sdk_prints
                 from .sdk_hypotheses import shapes as library_shapes
-                shapes += library_shapes(member, corpus, object_prints(member))
+                prints = sdk_prints(member)
+                shapes += library_shapes(member, corpus, prints)
                 signatures += [(corpus, arch_id, big, name, p.key, p.size)
-                               for name, p in object_prints(member).items() if p.size >= ACROSS_MIN_BYTES]
+                               for name, p in prints.items() if p.size >= ACROSS_MIN_BYTES]
             except (ELFError, ValueError, KeyError, OSError):
                 continue  # an archive can contain a non-object symbol table
         with self.net.store.tx() as db:

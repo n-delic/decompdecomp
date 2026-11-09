@@ -476,7 +476,7 @@ async function refreshFn(first) {
       $("fnAsideWhy").title=`${a.verified ? "Verified supplied source assembly" : "Previous proof; fresh verification required"}: ${a.source_file || ""} · source SHA-256 ${a.original_file_sha256 || a.source_sha256 || "unavailable"}`;
     } else $("fnAsideWhy").title="";
     $("fnAsideWhy").textContent = d.set_aside ? `Set aside, agents aren't handed it: ${d.set_aside}.` : "";
-    if (d.assembly_verification?.verified && d.assembly_verification.kind === "sdk") $("fnAsideWhy").textContent = "SDK assembly verified against linked code and referenced data. Excluded from C agents and the permuter; no C coverage added.";
+    if (d.assembly_verification?.verified && d.assembly_verification.kind === "sdk") $("fnAsideWhy").textContent = (d.assembly_verification.alias_note ? d.assembly_verification.alias_note + " " : "") + "SDK assembly verified against linked code and referenced data. Excluded from C agents and the permuter; no C coverage added. Saved C attempts are unverified approximations and must not replace this assembly.";
     if (d.assembly_verification && !d.assembly_verification.verified) $("fnAsideWhy").textContent="Previous source-assembly proof; fresh verification required. Kept as assembly, not matching C.";
 
     $("fnReopen").onclick = async () => {

@@ -275,6 +275,14 @@ class BriefMixin:
         initial_report = draft_reports.read(self,fn['id'],project_id=fn['project_id'])
         header_report = draft_reports.summary(initial_report)
         proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+        from ..source_assembly import detail as assembly_detail
+        assembly=assembly_detail(proj,fn)
+        if assembly and assembly.get('verified') and assembly.get('kind')=='sdk':
+            return (header+': '+fn['name']+' — '+assembly['name']+'\n'
+                    'Verified SDK assembly: exact linked code and referenced data. No C matching required. '
+                    'Do not spend compiler or permuter attempts on this routine. '
+                    'Saved C attempts are unverified approximations, not replacements. '
+                    +assembly.get('alias_note',''))
         warning=self.console(proj).boundary_reason(fn['target'] or b'') if fn['status']!='matched' else None
         review='\n\nBoundary review before tuning:\n'+warning if warning else ''
         if header_report:review += '\n\n'+header_report

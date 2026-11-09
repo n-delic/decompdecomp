@@ -249,11 +249,11 @@ class GuiMixin:
         cross_project = frozenset() if quick else cross_project_ids(self, proj)
         from ..code_coverage import boundaries
         incomplete = {r["function"]: r["reason"] for r in ([] if quick else boundaries(self, proj)) if not r.get("override")}
-        from ..sdk_identity import identify
+        from ..sdk_identity import display_name, identify
         sdk = {} if quick else identify(self,proj,self.sdk_functions(proj),include_asm=True)
         from ..source_assembly import detail as assembly_detail
         proofs={r['id']:assembly_detail(proj,self._function(r['name'],slug)) for r in rows if r['status']=='asm' and 'verified_assembly' in (r['meta'] or '')}
-        return [{"id": r["id"], "cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "display_name": ((sdk.get(r["id"]) or {}).get("names") or [r["name"]])[0] if len((sdk.get(r["id"]) or {}).get("names",[]))==1 else r["name"], "assembly_verification":proofs.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
+        return [{"id": r["id"], "cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "display_name": display_name(sdk.get(r["id"]),r["name"]), "assembly_verification":proofs.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote or r["name"] in searching) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)) or searching.get(r["name"]),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],
@@ -384,7 +384,7 @@ class GuiMixin:
         fn = self._function(name, slug)
         deep_pass = sweep.history(slug, fn) if sweep else {'state': 'not tried', 'completed': False}
         proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?', fn['project_id'])
-        from ..sdk_identity import identify
+        from ..sdk_identity import display_name, identify
         sdk = identify(self,proj,self.sdk_functions(proj),include_asm=True).get(fn['id'])
         if (fork := self.fork_slug(slug)):
             return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | polish_detail(self.project_store(fn['project_id']),fn) | {'sdk':sdk, 'display_name':sdk['names'][0] if sdk and len(sdk.get('names',[]))==1 else fn['name'], 'id':fn['id'], 'deep_pass': deep_pass, 'verification': bundle_status(self,fn), 'machine_draft_report': draft_report(self,fn['id'],project_id=fn['project_id'])}
@@ -402,7 +402,7 @@ class GuiMixin:
         initial_report = draft_report(self,fn['id'],project_id=fn['project_id'])
         return {
             **polish_detail(self.project_store(fn['project_id']),fn),
-            "sdk": sdk, "display_name":sdk["names"][0] if sdk and len(sdk.get("names",[]))==1 else fn["name"], "assembly_verification":assembly_detail(proj,fn),
+            "sdk": sdk, "display_name":display_name(sdk,fn["name"]), "assembly_verification":assembly_detail(proj,fn),
             "machine_draft_report": initial_report,
             **name_state(fn), "id":fn["id"], "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
             "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),

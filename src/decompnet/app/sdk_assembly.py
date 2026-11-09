@@ -23,8 +23,32 @@ def index(db, path, corpus):
                (PREFIX+corpus,json.dumps({'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})))
 
 
+def entries(elf):
+    """Include exported zero-size aliases only at an explicitly sized function entry."""
+    found=_function_symbols(elf)
+    symtab=elf.get_section_by_name('.symtab')
+    if symtab is None:return found
+    typed={(s['st_shndx'],s['st_value']):(s['st_shndx'],s['st_value'],s['st_size'])
+           for s in symtab.iter_symbols() if s['st_info']['type']=='STT_FUNC' and s['st_size']>0}
+    for s in symtab.iter_symbols():
+        key=(s['st_shndx'],s['st_value'])
+        if s.name and s['st_info']['type']=='STT_NOTYPE' and s['st_info']['bind'] in ('STB_GLOBAL','STB_WEAK') and s['st_size']==0 and key in typed:
+            found[s.name]=typed[key]
+    return found
+
+
+def object_prints(data):
+    from .twins import object_prints as prints
+    out=prints(data);elf=ELFFile(BytesIO(data));symbols=entries(elf)
+    for name,entry in symbols.items():
+        if name in out:continue
+        original=next((n for n in out if symbols.get(n)==entry),None)
+        if original:out[name]=out[original]
+    return out
+
+
 def objects(net, hint):
-    from .twins import _ar_members, object_prints
+    from .twins import _ar_members
     for corpus in hint.get('corpora',[])[:4]:
         row=net.store.one('SELECT value FROM settings WHERE key=?',PREFIX+corpus)
         if not row:continue
@@ -51,7 +75,7 @@ def link(net, proj, fn, obj, name):
     if proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return None
     elf=ELFFile(BytesIO(obj))
     if elf['e_machine']!='EM_MIPS' or elf.little_endian==bool(net.cfg(proj).get('big_endian',True)):return None
-    found=_function_symbols(elf).get(name)
+    found=entries(elf).get(name)
     if not found:return None
     shndx,start,size=found
     if size!=fn['size']:return None
@@ -72,13 +96,16 @@ def link(net, proj, fn, obj, name):
     for symbol,address in bindings.items():
         # This private map resolves SDK spelling, not a suggested global rename.
         syms.by_name[symbol]=Symbol(symbol,address)
-    result=match.link(obj,name,target,syms,net.reader(proj,fn))
+    # The linker uses sized function entries. An untyped alias can otherwise be
+    # truncated by an internal assembler label; judge the canonical sized entry.
+    canonical=next((s.name for s in elf.get_section_by_name('.symtab').iter_symbols()
+                    if s['st_info']['type']=='STT_FUNC' and (s['st_shndx'],s['st_value'],s['st_size'])==found),name)
+    result=match.link(obj,canonical,target,syms,net.reader(proj,fn))
     return result if result.exact and not result.problems else None
 
 
 def verify(net, proj, fn, hint, *, publish=True):
     if fn['status']!='asm' or len(hint.get('names',[]))!=1:return False
-    if verified(proj,fn):return True
     candidates=list(objects(net,hint))
     if not candidates:return False
     expected=fingerprint(proj,fn)
@@ -86,14 +113,33 @@ def verify(net, proj, fn, hint, *, publish=True):
         if signature.size!=fn['size']:continue
         result=link(net,proj,fn,obj,name)
         if result is None:continue
-        proof={'verified':True,'kind':'sdk','name':name,'corpus':corpus,'fingerprint':expected,
+        symbols=entries(ELFFile(BytesIO(obj)))
+        aliases=sorted(n for n in object_prints(obj) if symbols.get(n)==symbols[name])
+        proof={'verified':True,'kind':'sdk','alias_schema':1,'names':aliases,'name':name,'corpus':corpus,'fingerprint':expected,
                'source_file':record['path'],'source_stamp':record['stamp'],'original_file_sha256':record['sha256'],
                'object_sha256':hashlib.sha256(obj).hexdigest(),
+               'entry':list(entries(ELFFile(BytesIO(obj)))[name]),
                'target_sha256':hashlib.sha256(bytes(fn['target'])).hexdigest(),
                'bytes':len(result.linked_code),'evidence':'Exact linked SDK code and referenced data; not matching C.', 'at':time.time()}
+        proof=combine([proof])
         if not publish:return proof
         return save(net,proj,fn,proof)
     return False
+
+
+def combine(proofs):
+    """Different spellings are aliases only with structural same-entry evidence.
+
+    Two distinct functions can compile to identical bytes; that is not alias proof.
+    Object hashes bind section indexes/offsets to the same symbol table.
+    """
+    if not proofs:return None
+    names=sorted({name for p in proofs for name in p.get('names',[p['name']])})
+    if len(names)>1:
+        entries={(p['object_sha256'],tuple(p.get('entry',[]))) for p in proofs}
+        if len(entries)!=1 or not proofs[0].get('entry'):return None
+    return {**proofs[0],'name':' / '.join(names),'names':names,
+            'alias_note':'Same SDK object entry; original symbol spelling is unknown.' if len(names)>1 else ''}
 
 
 def save(net,proj,fn,proof):
@@ -103,7 +149,7 @@ def save(net,proj,fn,proof):
         if fresh['status']!='asm' or fingerprint(current,fresh)!=proof['fingerprint']:return False
         if db.execute('SELECT 1 FROM claims WHERE function_id=?',(fn['id'],)).fetchone():return False
         meta=json.loads(fresh['meta'] or '{}');meta['verified_assembly']=proof
-        meta['sdk_display']={'name':proof['name'],'corpora':[proof['corpus']]}
+        meta['sdk_display']={'name':proof['name'],'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']]}
         meta['asm_code']='Verified SDK assembly; excluded from C matching.'
         db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),fn['id']))
         net._event(db,proj['id'],None,'assembly-verified',fn['name']+': '+proof['name'])
@@ -114,7 +160,8 @@ def discover(net,proj,limit=32):
     """SDK objects can contain fixed MMIO immediates which a ROM annotates as relocations.
 
     Same-size indexed names are bounded leads only. The full linker must agree;
-    ambiguous successful names and truncated candidate sets receive no identity.
+    Only aliases of the same object entry may share an identity. Distinct entries
+    and truncated candidate sets receive no identity.
     """
     if proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return 0
     from .sdk_library import allowed
@@ -129,7 +176,7 @@ def discover(net,proj,limit=32):
     for fn in rows:
         if time.monotonic()-started>3:break
         examined=fn['id']
-        if verified(proj,fn):continue
+        if verified(proj,fn) and json.loads(fn['meta'] or '{}').get('verified_assembly',{}).get('alias_schema')==1:continue
         leads=net.store.all('SELECT DISTINCT corpus,name FROM sdk_signatures WHERE arch=? AND big_endian=? AND size=? '
                             'AND (? IS NULL OR corpus IN (SELECT value FROM json_each(?))) ORDER BY corpus,name LIMIT 33',
                             proj['arch'],int(net.cfg(proj).get('big_endian',True)),fn['size'],
@@ -144,7 +191,8 @@ def discover(net,proj,limit=32):
             if not allowed(net,proj,lead['corpus']):continue
             proof=verify(net,proj,fn,{'names':[lead['name']],'corpora':[lead['corpus']]},publish=False)
             if proof:proofs.append(proof)
-        if complete and proofs and len({p['name'] for p in proofs})==1:
-            count+=int(save(net,proj,fn,proofs[0]))
+        if complete and proofs:
+            proof=combine(proofs)
+            if proof:count+=int(save(net,proj,fn,proof))
     with store.tx() as db:db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',(cursor_key,str(examined)))
     return count

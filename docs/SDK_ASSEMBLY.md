@@ -25,8 +25,10 @@ Relocation-normalized signatures locate candidates. A ROM may label a fixed hard
 as a relocation even when the SDK object encodes it literally. A bounded same-size fallback
 therefore uses the full linker rather than treating missing signature equality as failure.
 External relocation bindings must be consistent; internal SDK data must match the ROM.
-Multiple successful names, unsupported relocations and truncated candidate sets receive no
-new verified identity. Index references retain the selected file path and checksum and refuse
+Multiple successful names are accepted only when they are aliases of the same section, offset
+and size in the same SDK object. The UI shows every alias without guessing the original
+spelling. Separate identical implementations, unsupported relocations and truncated candidate
+sets receive no new verified identity. Index references retain the selected file path and checksum and refuse
 changed files. Proofs are bound to current target/address/profile inputs, not a familiar name.
 Background discovery uses finite pages, a persistent rotation cursor and cooperative checkpoints.
 
@@ -39,3 +41,11 @@ Homemade objects exercise privileged instructions, external relocations, owned d
 library files, disabled corpora, stale targets and C-work exclusion. On an isolated V-Rally
 copy, the existing local `osSetIntMask` object reproduced all 160 bytes and its referenced table.
 No game source, ROM or SDK object is committed. The live app was not updated or restarted.
+
+
+Verified SDK assembly briefs explicitly tell agents no C matching is required. Saved C
+attempts remain available as evidence, with a warning that they are unverified approximations;
+a full-word C store, for example, need not preserve a partial unaligned assembly store.
+This status requires an existing assembly classification: arbitrary SDK objects may themselves
+have been compiled from C, so byte equality alone must not turn open C work into assembly.
+Automatic discovery runs through the selected local SDK maintenance pass for active projects.
