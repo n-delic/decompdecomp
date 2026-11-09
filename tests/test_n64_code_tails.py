@@ -47,7 +47,7 @@ def test_touching_discovered_segments_do_not_add_zero_length_bins(tmp_path,monke
     path=tmp_path/'synthetic.yaml';path.write_text(yaml.safe_dump(cfg))
     (tmp_path/'rom.z64').write_bytes(bytes(256))
     monkeypatch.setattr(code,'unpack_code',lambda _:[])
-    monkeypatch.setattr(code,'find_segments',lambda *_:[(32,64,0x80000420),(64,128,0x80000440)])
+    monkeypatch.setattr(code,'find_segments',lambda *_,**__:[(32,64,0x80000420),(64,128,0x80000440)])
     code.add_segments(path,tmp_path,'rom.z64',log=lambda _:None)
     segments=yaml.safe_load(path.read_text())['segments']
     starts=[s[0] if isinstance(s,list) else s['start'] for s in segments]

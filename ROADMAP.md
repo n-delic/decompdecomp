@@ -73,6 +73,16 @@
   use existing background source-restoration locks. Hosts accept legacy permutation
   claim/release requests without leases, and startup clears only legacy permutation claims.
 
+- Done: N64 imports scan all unowned intervals in corroborated loader banks,
+  following newly recovered calls and materialized callback addresses to completion.
+  Quiet balanced frames need adjacency or independently corroborated callees and
+  an RA spill/restore; unknown mappings, data-only patterns, overlapping bodies and
+  independent interior entries remain unpromoted. Existing targets stay unchanged.
+  Shared MIPS validators also accept short return stubs and frame pops immediately
+  before JR, reject edges bypassing a pop, and use the full bounded 64 KiB body
+  budget rather than the smaller review-audit instruction budget. Other consoles
+  need a verified loader-range adapter before the bank-scanning rule can apply.
+
 - Done: N64 imports split discovered code at explicit ROM-to-RAM bank ranges when
   two independent helper calls agree on at least three adjacent transfers. Shared
   MIPS import repair also separates closed frameless leaves after established
@@ -709,6 +719,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
 | Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
+| Closed-body recovery throughout verified loader banks | ✓ | — | — | — | — | — | — | — |
 | Automatic proven framed/leaf boundary repair on import/reimport | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Guided boundary repair and advisory agent investigation (local mapped ROM) | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |

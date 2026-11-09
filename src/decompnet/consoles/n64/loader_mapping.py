@@ -74,15 +74,18 @@ def transfers(image, taken):
     return sorted(result)
 
 
+def verified(image, taken):
+    """Only non-overlapping, corroborated copies outside explicit code mappings."""
+    ranges=transfers(image,taken)
+    return [t for t in ranges if not any(t!=s and (s[0]<t[1] and t[0]<s[1]
+            or s[2]<t[2]+t[1]-t[0] and t[2]<s[2]+s[1]-s[0]) for s in ranges)
+            and not any(v<t[2]+t[1]-t[0] and t[2]<v+b-a for a,b,v in taken)]
+
+
 def refine(image, segments, taken=(), log=print):
     """Split only discovered code covered by unambiguous explicit loader ranges."""
-    ranges=transfers(image,taken)
-    if not ranges:return segments
-    # Overlapping copies can be overlays or alternate destinations. They require
-    # explicit support, rather than silently choosing one in an address-keyed project.
-    safe=[t for t in ranges if not any(t!=s and (s[0]<t[1] and t[0]<s[1]
-          or s[2]<t[2]+t[1]-t[0] and t[2]<s[2]+s[1]-s[0]) for s in ranges)
-          and not any(v<t[2]+t[1]-t[0] and t[2]<v+b-a for a,b,v in taken)]
+    safe=verified(image,taken)
+    if not safe:return segments
     result=[];changed=0
     for lo,hi,vram in segments:
         cuts=sorted({lo,hi}|{p for a,b,_ in safe for p in (a,b) if lo<p<hi})

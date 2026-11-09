@@ -23,19 +23,19 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     amount=0x10000-(frame&0xffff)
     if amount%8 or amount>0x1000:
         return None
-    info=extent(image,start,end,vram,order,cpu)
+    info=extent(image,start,end,vram,order,cpu,max_steps=MAX_BYTES//4)
     size=info['extent_bytes']
     if not info['direct_flow_closed'] or info['step_limit'] or size<16:
         return None
     body=image[start:start+size]
     if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):
         return None
-    # One frame, popped in each return's delay slot. More elaborate valid
-    # epilogues stay visible to the audit rather than weakening this import rule.
+    # One frame, popped in the return delay slot or immediately before the
+    # return. Pre-return pops cannot be delay slots or have edges bypassing them.
     pop=0x27BD0000|amount
     returns=0
     destinations=set()
-    pops=set()
+    pops=set();protected_returns=set()
     import rabbitizer
 
     from .mips import rabbitizer_category
@@ -46,10 +46,13 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
             return None
         if at>start and is_frame(w):
             return None
-        # No other stack writes: a restore before a return or an add to a saved
-        # frame pointer would need path-sensitive stack accounting.
+        # Other stack writes need path-sensitive accounting. A pre-return pop
+        # must fall straight into JR, never execute in another transfer's delay slot.
         ins=rabbitizer.Instruction(w,0,rabbitizer_category(cpu))
-        if ins.modifiesRt() and ins.rt.value==29 and not (w==pop and at>=start+4 and word(at-4)==JR_RA):
+        before_return=(at+4<start+size and word(at+4)==JR_RA and at>=start+4
+                       and not rabbitizer.Instruction(word(at-4),0,rabbitizer_category(cpu)).hasDelaySlot())
+        valid_pop=w==pop and (at>=start+4 and word(at-4)==JR_RA or before_return)
+        if ins.modifiesRt() and ins.rt.value==29 and not valid_pop:
             if at!=start:return None
         if ins.modifiesRs() and ins.rs.value==29:
             return None
@@ -62,11 +65,15 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
             delta=w&0xFFFF
             destinations.add(at+4+(delta-0x10000 if delta&0x8000 else delta)*4)
         if w==JR_RA:
-            if at+8>start+size or word(at+4)!=pop:
-                return None
+            if at+8>start+size:return None
+            if word(at+4)==pop:
+                if at>start and word(at-4)==pop:return None
+                pops.add(at+4)
+            elif at>start and word(at-4)==pop:
+                protected_returns.update((at,at+4))
+            else:return None
             returns+=1
-            pops.add(at+4)
-    if start in destinations or pops & destinations:
+    if start in destinations or (pops|protected_returns) & destinations:
         return None  # no loop can allocate the entry frame again or enter a return delay slot
     return size if returns else None
 
@@ -74,19 +81,19 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
 def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None):
     """A closed frameless leaf: no calls, stack writes or callee-saved clobbers.
 
-    Callers must establish its entry from an existing return boundary, never scan
-    arbitrary raw data for an instruction pattern. Indirect flow remains review-only.
+    Callers must independently establish its entry from a call, callback or known
+    return boundary, never scan arbitrary data for a pattern. Indirect flow stays review-only.
     """
     import rabbitizer
 
     from .mips import _mips_uses, rabbitizer_category
 
-    end=min(end,start+0x1000)
-    if start<0 or start%4 or start+16>end or end>len(image):return None
+    end=min(end,start+MAX_BYTES)
+    if start<0 or start%4 or start+8>end or end>len(image):return None
     order='big' if big_endian else 'little'
-    info=extent(image,start,end,vram,order,cpu)
+    info=extent(image,start,end,vram,order,cpu,max_steps=MAX_BYTES//4)
     size=info['extent_bytes']
-    if not info['direct_flow_closed'] or info['step_limit'] or size<16:return None
+    if not info['direct_flow_closed'] or info['step_limit'] or size<8:return None
     body=image[start:start+size]
     if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):return None
     preserved={*range(16,24),29,30,31}

@@ -42,7 +42,7 @@ def _code_like(words: tuple[int, ...]) -> bool:
     return any(w == JR_RA or is_frame(w) for w in words)
 
 
-def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int, ...] = ()) -> list[tuple[int, int, int]]:
+def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int, ...] = (), *, log=print) -> list[tuple[int, int, int]]:
     """(rom_start, rom_end, vram) of code segments outside `taken` (rom_start, rom_end, vram of the known ones).
     `ends`: where the known segments end, their data included (splat's config): code found after one can begin
     right there."""
@@ -120,12 +120,14 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
         end = min((lo + returns[-1] + 8 + 0xF) & ~0xF, len(rom))
         accept(start, end, start + mapping)
     from .code_tails import complete
-    from .loader_mapping import refine
+    from .loader_code import complete as loaded_code
+    from .loader_mapping import refine, verified
 
     found=complete(rom,sorted(found),taken)
     from .code_references import complete as referenced_gaps
 
-    return sorted(refine(rom,found+referenced_gaps(rom,sorted(taken+found)),taken))
+    found=refine(rom,found+referenced_gaps(rom,sorted(taken+found)),taken,log)
+    return loaded_code(rom,found,verified(rom,taken),taken,log)
 
 
 # ---------------------------------------------------------------------------------------------- compressed code
@@ -268,7 +270,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         kib = sum(len(d) for _, d in packed) // 1024
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
     taken = split.code_ranges(config)
-    found = find_segments(rom, taken, tuple(s.rom_end for s in split.segments_from_config(config))) if taken else []
+    found = find_segments(rom, taken, tuple(s.rom_end for s in split.segments_from_config(config)),log=log) if taken else []
     from .boot_mapping import recover
 
     recover(config, rom, found, log)

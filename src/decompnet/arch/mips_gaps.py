@@ -8,14 +8,14 @@ MAX_STEPS = 4096
 MAX_CANDIDATES = 128
 
 
-def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_choices=()):
+def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_choices=(), max_steps=MAX_STEPS):
     """Follow direct flow and reviewed bounded table edges; other indirects remain unresolved."""
     import rabbitizer
 
     from .mips_indirect import jump_table
 
     pending=[start];seen=set();returns=0;unknown=False;highest=start;indirect=[];tables=[]
-    while pending and len(seen)<MAX_STEPS:
+    while pending and len(seen)<max_steps:
         at=pending.pop()
         if at in seen:continue
         if at<start or at+4>end:
@@ -27,8 +27,11 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
         transfer=op in (1,2,3,4,5,6,7,20,21,22,23) or (op==17 and (w>>21)&31==8) or (op==0 and w&63 in (8,9))
         if not transfer:
             pending.append(at+4);continue
-        if at+8>end or not rabbitizer.Instruction(int.from_bytes(image[at+4:at+8],order),0,rabbitizer_category(cpu)).isValid():
+        if at+8>end:
             unknown=True;continue
+        delay=rabbitizer.Instruction(int.from_bytes(image[at+4:at+8],order),0,rabbitizer_category(cpu))
+        if not delay.isValid() or delay.hasDelaySlot():
+            unknown=True;continue  # a transfer inside a delay slot is unpredictable
         seen.add(at+4);highest=max(highest,at+8)
         if w==JR_RA:
             returns+=1;continue

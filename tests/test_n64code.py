@@ -118,7 +118,7 @@ def test_discovered_code_preserves_the_original_explicit_bss_extent(tmp_path, mo
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     (tmp_path / "rom.z64").write_bytes(bytes(0x2000))
     monkeypatch.setattr(code, "unpack_code", lambda _: [])
-    monkeypatch.setattr(code, "find_segments", lambda *_: [(0x200, 0x400, 0x80000600)])
+    monkeypatch.setattr(code, "find_segments", lambda *_, **__: [(0x200, 0x400, 0x80000600)])
     code.add_segments(path, tmp_path, "rom.z64", log=lambda _: None)
     changed = yaml.safe_load(path.read_text())
     options.initialize(changed, [path])

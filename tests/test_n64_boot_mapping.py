@@ -78,7 +78,7 @@ def test_segment_discovery_repairs_a_boot_mapping_even_without_additional_gaps(t
     path,rom,start,end=layout(tmp_path)
     (tmp_path/'rom.z64').write_bytes(rom)
     monkeypatch.setattr(code,'unpack_code',lambda _:[])
-    monkeypatch.setattr(code,'find_segments',lambda *a:[])
+    monkeypatch.setattr(code,'find_segments',lambda *a,**kw:[])
     assert code.add_segments(path,tmp_path,'rom.z64',log=lambda _:None)=='rom.z64'
     segments=segments_from_config(path)
     assert any(s.rom_start==start and s.rom_end==end and s.vram==start+0x801FF400 for s in segments)
