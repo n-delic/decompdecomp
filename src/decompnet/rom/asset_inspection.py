@@ -59,6 +59,9 @@ def usage(row,flow):
         evidence=dict(role=role,instruction=instruction,reason=reason)
         if evidence not in item['evidence']:item['evidence'].append(evidence)
     for ref in row['references']:add(ref['function'],'address reference',ref['instruction'],ref['reason'])
+    for ref in (row.get('detected_asset') or {}).get('loader_refs',[]):
+        add(ref['function'],ref.get('role','native asset loader argument'),ref['instruction'],
+            ref.get('reason','Static named-loader argument; runtime use is not established.'))
     for chain in flow.get('chains',[]):
         add(chain['function'],'loader caller',chain['instruction'],chain['reason'])
         for step in chain['steps']:

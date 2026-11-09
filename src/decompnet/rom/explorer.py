@@ -176,7 +176,9 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
             evidence.append(dict(label='Loader source range',confidence='inferred',reason=f"Call arguments describe ROM {transfer['start']:#x}–{transfer['end']:#x} (exclusive); may contain code or assets."))
         kind, confidence = 'unknown', 'unknown'
         if owners:kind, confidence = 'code', 'recorded'
-        elif any('preview_settings' in e for e in evidence):kind,confidence='image','validated'
+        elif any('preview_settings' in e for e in evidence):
+            asset=next(e for e in evidence if 'preview_settings' in e)
+            kind,confidence=asset['kind'],asset['confidence']
         elif syms:
             kind, confidence = ('strings' if all(s['kind']=='string' for s in syms) else 'data'), 'recorded'
             if any(s['ambiguous'] for s in syms):confidence = 'tentative'
