@@ -32,7 +32,7 @@ function setupRomDiscovery(body,region,slug,imageHash,active) {
               body.querySelector('[data-asset-format]').onchange();body.querySelector('[data-asset-preview]').click();};result.append(choice);
           }
         } else renderRomModel(result,preview,active);
-      }catch(error){if(active())showJobError(work,error.message);}finally{body._romAssetBusy=false;finish();}
+      }catch(error){if(active())showJobError(work,error.message);}finally{if(active())body._romAssetBusy=false;finish();}
     };
   }
 }

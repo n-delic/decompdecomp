@@ -130,6 +130,7 @@ async function renderCosts(force = false) {
 }
 
 function helperResults(stats, task) {
+  if (task === "assets") return `<b>Asset discovery · review findings in ROM Explorer</b>`;
   if (task === "readable") return `<b class="ok">${stats?.polished || 0} polished</b>`;
   return `<b class="ok">${stats?.matched || 0} matched</b> · <span title="Distinct functions where this agent beat the previous best matching score. Includes matches; repeated improvements to the same function count once. An initial candidate must improve on 0%.">${stats?.improved || 0} improved</span>`;
 }
@@ -152,7 +153,8 @@ function sortAgentCards(sessions, board, mode, now = Date.now() / 1000) {
       : mode === "model" ? (a.model || a.agent).localeCompare(b.model || b.agent)
       : mode === "efficiency" ? (agentTokenRate(a, x) ?? Infinity) - (agentTokenRate(b, y) ?? Infinity)
       : STATE_ORDER[a.state] - STATE_ORDER[b.state];
-    return (a.task === "readable") - (b.task === "readable") || value || a.label.localeCompare(b.label);
+    const rank={assets:1,boundary:2,readable:3};
+    return (rank[a.task]||0)-(rank[b.task]||0) || value || a.label.localeCompare(b.label);
   });
 }
 async function showAgentResults(session, kind) {
@@ -200,6 +202,7 @@ function compactAgentNumber(value) {
   return String(n);
 }
 function agentMetrics(s, stats) {
+  if(s.task==='assets')return `<p class="small">Discovering data · advisory findings in <a href="#/p/${esc(s.slug)}/rom">ROM Explorer</a>. No compilation or matching.</p>`;
   const elapsed = agentRuntime(s);
   const runtime = LIVE.includes(s.state) ? `${Math.floor(elapsed / 3600)}h ${Math.floor(elapsed % 3600 / 60)}m` : "Not running";
   const metric = (kind,count) => `<button type="button" class="agent-metric-link" data-agent-results="${esc(s.id)}" data-result-kind="${kind}" ${count ? '' : 'disabled'} aria-label="View ${count} ${kind} functions for ${esc(s.label)}"><strong>${count}</strong><span>${kind === "worked" ? "worked on" : kind} <span aria-hidden="true">↗</span></span></button>`;
@@ -255,15 +258,16 @@ function renderSessions(sessions, refreshCosts = true) {
   $("removePaused").textContent = paused.length ? `Remove paused (${paused.length})` : "Remove paused";
   // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
   const sorted = sortAgentCards(sessions, board, agentSort);
-  const both = sorted.some((s) => s.task === "readable") && sorted.some((s) => s.task !== "readable");
+  const taskGroup=s=>s.task==='assets'?'Discovering assets':s.task==='boundary'?'Reviewing boundaries':s.task==='readable'?'Polishing':'Decompiling';
+  const both=new Set(sorted.map(taskGroup)).size>1;
   const html = sorted.map((s, i) => {
-    const group = s.task === "readable" ? "Polishing" : "Decompiling";
-    const head = both && (i === 0 || (sorted[i - 1].task === "readable") !== (s.task === "readable"))
+    const group=taskGroup(s);
+    const head = both && (i === 0 || taskGroup(sorted[i-1])!==group)
       ? `<h3 class="session-group">${group}</h3>` : "";
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = s.metrics || board.get(s.agent);
-    const facts = [s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.account_name ? `account: ${esc(s.account_name)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
+    const facts = [s.task === "assets" ? `<b>discovering assets</b>` : s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.account_name ? `account: ${esc(s.account_name)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" && !s.configuration_error ? " Then press Start again." : ""}` : "";
@@ -273,21 +277,21 @@ function renderSessions(sessions, refreshCosts = true) {
         <details class="agent-menu" data-agent-menu="${id}" ${agentMenusOpen.has(s.id) ? 'open' : ''}><summary aria-label="Actions for ${esc(s.label)}" title="Agent actions">⋮</summary><div class="agent-menu-items">
           <button data-rename="${id}" type="button">Rename</button><button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
           <button data-log="${id}" type="button" aria-pressed="${S.logFor === s.id}">${S.logFor === s.id ? 'Back to everything' : 'What it said and did'}</button>
-          ${s.task === "readable" ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
+          ${["readable","boundary","assets"].includes(s.task) ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
           <button data-reset-metrics="${id}" type="button" class="agent-menu-reset">Reset metrics</button>
           ${live ? '' : `<button data-remove="${id}" type="button">Remove agent</button>`}</div></details></div>
       ${agentMetrics(s, b)}
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
       ${["starting", "working"].includes(s.state) && s.startup_stage ? `<progress class="workbar" aria-label="Agent startup"></progress>` : ""}
       ${todo ? `<span class="todo-line">${esc(todo)}</span>${s.can_login && !live && /login|sign.?in/i.test(s.todo || "") ? `<button class="ghost" type="button" data-login="${id}">Sign in to ${esc(s.kind_name)}</button>` : ""}` : ''}
-      ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : s.task !== "readable" && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
+      ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : !["readable","boundary","assets"].includes(s.task) && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
       ${agentUsage(s)}
       <details class="agent-details" data-agent-details="${id}" ${agentDetailsOpen.has(s.id) ? 'open' : ''}><summary>Details</summary><div class="agent-details-body">
       <span class="facts-line">${facts.join(' · ')}</span>
       ${rate == null ? '' : `<span class="small muted">${compactAgentNumber(rate)} reported tokens / match${s.estimated_cost != null && b?.matched ? ` · ≈ ${money(s.estimated_cost / b.matched)} / match` : ''}</span>`}
       ${agentEfficiency(s)}
       ${s.metrics_since ? `<span class="small muted">Metrics since reset · ${new Date(s.metrics_since * 1000).toLocaleString()}</span>` : ''}
-      <span class="small muted">Work settings · ${s.per_session || 8} functions/session${s.task === "readable" ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
+      <span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':'functions'}/session${["readable","assets","boundary"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
       ${s.last_message ? `<div class="agent-message"><b class="small">Latest agent reply${["starting", "working", "waiting"].includes(s.state) ? " · helper continues" : ""}</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
       </div></details></div>`;
   }).join("");
@@ -324,12 +328,12 @@ function renderSessions(sessions, refreshCosts = true) {
   box.querySelectorAll('[data-agent-tools]').forEach(button => { button.onclick = () => showAgentTools(sessions.find(s => s.id === button.dataset.agentTools)); });
   box.querySelectorAll("[data-queue]").forEach((b) => { b.onclick = () => {
     const s = sessions.find((x) => x.id === b.dataset.queue);
-    const panel = dialog(`Work selection · ${s.label}`, `${s.task === "readable" ? assemblySetting(s.selection) : selectionFields(s.selection)}<label class="field"><span>Functions per session</span><input data-session-size type="number" min="1" max="20" value="${s.per_session || 8}"></label><p class="muted small">Session size changes apply at the next session. The current function stays with its agent.</p><button class="primary" data-save-selection>Save</button><button class="ghost" data-cancel-selection>Cancel</button>`);
+    const panel = dialog(`Work selection · ${s.label}`, `${s.task === "assets" ? "<p>Discovery scope and progress are in ROM Explorer.</p>" : s.task === "readable" ? assemblySetting(s.selection) : selectionFields(s.selection)}<label class="field"><span>${s.task==='assets'?'Regions per provider session':'Functions per session'}</span><input data-session-size type="number" min="1" max="20" value="${s.per_session || 8}"></label><p class="muted small">Session size changes apply at the next session. The current function stays with its agent.</p><button class="primary" data-save-selection>Save</button><button class="ghost" data-cancel-selection>Cancel</button>`);
     panel.addEventListener("change", () => updateSelectionDescription(panel));
     panel.querySelector("[data-cancel-selection]").onclick = closeDialog;
     panel.querySelector("[data-save-selection]").onclick = async () => {
       try {
-        const selection = s.task === "readable" ? {...(s.selection || {}), assembly_metadata: panel.querySelector("[data-assembly-metadata]").checked} : readSelection(panel);
+        const selection = s.task === "assets" ? s.selection || {} : s.task === "readable" ? {...(s.selection || {}), assembly_metadata: panel.querySelector("[data-assembly-metadata]").checked} : readSelection(panel);
         await api("/api/agents/selection", { method: "POST", body: { id: s.id, selection, per_session: Number(panel.querySelector("[data-session-size]").value) } });
         s.selection = selection;
         s.per_session = Number(panel.querySelector("[data-session-size]").value);
@@ -570,6 +574,12 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     else if (effortOf(a) && !model && !models.length) throw new Error("pick a model to set its effort");
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
+    if(LZ.task==='assets'){
+      const scope=LZ.assetSlug===slug?LZ.assetScope:{mode:'unknown'};
+      let run=LZ.assetSlug===slug?LZ.assetRun:'';
+      if(!run){const prepared=await api('/api/rom-explorer/discovery',{method:'POST',body:{slug,action:'prepare',scope}});run=prepared.run;}
+      options.asset_run=run;options.asset_scope=scope;
+    }
     if (!LZ.task) options.selection = btn?.closest(".lz-body")?.querySelector("[data-selection-strategy]")
       ? readSelection(btn.closest(".lz-body")) : LZ.selection;
     const result = await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug, count, options, background: true } });
@@ -591,7 +601,8 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     }
     if (S.slug === slug) hideLaunch();
     const total = LZ.multiple ? models.length * count : count;
-    toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    if(LZ.task==='assets'&&S.slug===slug&&S.tab==='rom')loadAssetAgents();
     poll(false);
     loadNav();
   } catch (e) {
@@ -609,7 +620,8 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
 /* The launcher, in the header's Start agents popover: the one place agents start from. `compact`: an API endpoint
    typed in here asks only what starting needs (the rest is on Agents & models). */
 const TASKS = [["", "Decompile", "match functions the game has, byte for byte"],
-  ["readable", "Polish matched code", "give matched functions real names, types and a comment; they still match"]];
+  ["readable", "Polish matched code", "give matched functions real names, types and a comment; they still match"],
+  ["assets","Discover assets","investigate ROM data and propose names and formats for user review"]];
 const POLISH_FROM_SHARE = 0.5;  // polishing comes once most of the work is matching: before that, agents decompile
 // of the game's own code (cFunctions, as the header counts): an Xbox game whose 33 functions all matched had no Polish
 // to choose, its 241 set-aside ones (library code, assembly) counted against it
@@ -682,8 +694,10 @@ function renderLauncher(box, compact = true) {
   }
   const ready = a.installed;
   // helpers can also polish matched C (app/readable.py), once half the game matches
-  const tasks = polishOffered(S.ov) ?`<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
-    TASKS.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
+  const availableTasks=TASKS.filter(([key])=>!key || key==='readable'&&polishOffered(S.ov) || key==='assets'&&!!S.ov&&S.ov.kind!=='fork');
+  if(!availableTasks.some(([key])=>key===LZ.task))LZ.task="";
+  const tasks = availableTasks.length>1 ?`<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
+    availableTasks.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
     <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}</span></div>` : "";
   if (!tasks) LZ.task = "";
   box.innerHTML = `${tasks}<div class="lz-kinds">${kinds}</div>

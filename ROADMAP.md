@@ -694,6 +694,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Image, texture/palette and audio previews | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Agent asset discovery, leased claims and human-reviewed interpretations | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | ROM Explorer: whole analysis image, references, clues and notes | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — image adapter planned | — image adapter planned | — image adapter planned | — image adapter planned |
 | Automatic guarded-return diagnostic pairs | ✓ MIPS ROM | ✓ shared MIPS reader | ✓ shared MIPS reader | ✓ shared MIPS reader | — return-path reader | — return-path reader | — return-path reader | — immutable private diagnostics |
 | Reviewed diagnostic-root deep lane | ✓ local ROM | ✓ shared ROM lane | ✓ shared ROM lane | ✓ shared ROM lane | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot |
@@ -946,6 +947,19 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### Agent asset discovery
+
+ROM Explorer can assign agents the entire unknown-data queue, a ROM range or a function’s
+referenced data. Durable project-scoped passes have leased region claims, progress, Stop/resume,
+restart recovery, provider-session continuation and paginated findings. CLI and API workers
+share a restricted inspection/proposal tool set; matching tools, symbol edits and review actions
+are unavailable to them. Proposals retain names, formats, layouts, advisory boundaries, related
+regions, citations, counter-evidence and uncertainty. Failed approaches and review feedback
+are retained for later passes. Human review can preview/edit, accept or reject proposals;
+acceptance updates local annotations only and checks original-image/layout and note revisions.
+No decoder scripts run. Object-build adapters and executing/reviewing proposed decoders remain
+planned; asset format descriptions are advisory text.
 
 ### ROM Explorer
 

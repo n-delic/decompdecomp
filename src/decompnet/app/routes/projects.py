@@ -69,7 +69,7 @@ def register(app: App) -> None:
                     # The per-function publisher uses current DB inputs with exact/revision
                     # guards. Let autosave export it rather than blocking the response on a full import.
                     function_profile = request.url.path == '/api/compiler' and data.get('function')
-                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/rom-explorer/inspect", "/api/rom-explorer/discovery", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
@@ -82,7 +82,10 @@ def register(app: App) -> None:
                         if policy is not None:policy.touch(slug)
                         return response(perform, started, JSONResponse, request.url.path)
                     finally:current_project.reset(token)
-                return await ((reader or call) if request.method == "GET" else call)(respond)
+                execute=(reader or call) if request.method=="GET" else call
+                if request.url.path=='/api/rom-explorer/discovery' and (request.query_params.get('view')=='activity' or data.get('action')=='stop'):
+                    execute=app.control  # Discovery admission/cancellation must not queue behind builds.
+                return await execute(respond)
             except (NetworkError, ValueError, toolchains.ToolchainError, OSError) as e:
                 return fail(e)
             finally:
@@ -248,6 +251,28 @@ def register(app: App) -> None:
     def p_rom_inspect(slug, request, data):
         from ..rom_explorer import asset_inspect
         with net.progress.view():return asset_inspect(net,slug,data)
+
+    def p_asset_discovery(slug,request,data):
+        from .. import asset_agents
+        with net.progress.view():
+            if request.method=='GET':
+                if request.query_params.get('view')=='activity':
+                    net.project_row(slug)
+                    with jobs._lock:
+                        job=next((job for job in reversed(list(jobs.jobs.values())) if job['kind']=='Create asset discovery agents' and job.get('activity_project')==slug),None)
+                        return {'creation_job':{key:job[key] for key in ('id','state','progress','error') if key in job} if job else None}
+                if request.query_params.get('finding'):return asset_agents.review(net,slug,request.query_params['finding'])
+                return asset_agents.status(net,slug,manager,request.query_params.get('page',0))
+            action=data.get('action')
+            if action in ('prepare','resume'):
+                return {'run':asset_agents.prepare(net,slug,data.get('scope'),data.get('run',''),resume=action=='resume')}
+            if action=='stop':
+                with jobs._lock:creating=[job['id'] for job in jobs.jobs.values() if job['kind']=='Create asset discovery agents' and job['state']=='running' and job.get('activity_project')==slug]
+                for identity in creating:jobs.cancel(identity)
+                return asset_agents.stop(net,slug,manager)
+            if action in ('accept','reject'):
+                return asset_agents.review(net,slug,data.get('finding'),action,data.get('edits'),data.get('annotation_version',''),data.get('feedback',''))
+            raise NetworkError('Choose a discovery pass or proposal review action.')
 
     def p_rom_loaders(slug, request, data):
         from ..rom_explorer import loader_contracts
@@ -897,6 +922,7 @@ def register(app: App) -> None:
     routes = {
         "/api/rom-explorer/preview": (p_rom_preview,["POST"]),
         "/api/rom-explorer/loaders": (p_rom_loaders,["GET","POST"]),
+        "/api/rom-explorer/discovery": (p_asset_discovery,["GET","POST"]),
         "/api/rom-explorer/inspect": (p_rom_inspect, ["POST"]),
         "/api/rom-explorer": (p_rom_explorer, ["GET", "POST"]),
         "/api/rom-explorer/annotation": (p_rom_annotation, ["POST"]),

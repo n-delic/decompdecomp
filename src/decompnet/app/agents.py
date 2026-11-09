@@ -737,7 +737,7 @@ class Manager:
 
     def start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
         # Creation only records the worker. Its thread synchronizes saved files before work.
-        if (options or {}).get('focus_function'):
+        if (options or {}).get('focus_function') or (options or {}).get('task')=='assets':
             with self.net.progress.view():
                 return self._start(kind, slug, count, options)
         return self._start(kind, slug, count, options)
@@ -752,6 +752,8 @@ class Manager:
         options = focused_agents.configure(self.net,slug,options,count)
         from . import boundary_investigations
         options = boundary_investigations.configure(self.net,slug,options,count)
+        from . import asset_agents
+        options = asset_agents.configure(self.net,slug,options,count)
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
@@ -781,7 +783,7 @@ class Manager:
                     options["model"] = name_model = pinned
         ids = []
         report_start("Preparing the project before creating workers…")
-        if not options.get("focus_id") and options.get("task") not in {"readable", "boundary"}:
+        if not options.get("focus_id") and options.get("task") not in {"readable", "boundary", "assets"}:
             self._prepare(slug)
         report_start("Waiting for the worker registry, then reserving new identities…")
         with self._lock:
@@ -834,7 +836,7 @@ class Manager:
         with self._lock:
             session=self.sessions.get(sid)
             if session is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
-            if session.options.get('task')=='readable':raise ValueError('Retry paused functions applies to matching agents.')
+            if session.options.get('task') in ('readable','boundary','assets'):raise ValueError('Retry paused functions applies to matching agents.')
             slug, name = session.slug, session.agent_name
         agent=self.net.attribution_agent(name)
         return retry_paused.retry(self.net,slug,agent,limit,log=log)
@@ -871,6 +873,9 @@ class Manager:
                 db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
 
     def app_instructions(self, session):
+        if session.options.get("task")=="assets":
+            from .asset_agents import INSTRUCTIONS
+            return INSTRUCTIONS
         if session.options.get('task') == 'boundary':
             from .boundary_investigations import INSTRUCTIONS
             return INSTRUCTIONS
@@ -928,7 +933,7 @@ class Manager:
         with self._lock:
             for s in self.sessions.values():
                 if (s.agent_name!=row['name'] or s.slug!=proj['slug'] or s.state!='working'
-                        or s.stop.is_set() or s.options.get('task') in ('readable','boundary')):continue
+                        or s.stop.is_set() or s.options.get('task') in ('readable','boundary','assets')):continue
                 s.rotated=True
                 completed(s,self.net)
                 s.continuation_note=function+' was matched and saved by another operation. Claim a different eligible function.'
@@ -952,7 +957,7 @@ class Manager:
                 raise ValueError("its account or API endpoint was removed: start a new helper and choose another one")
             options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
             s.options, s.restarts = options, 0
-            if not s.options.get("focus_id") and s.options.get("task") not in {"readable", "boundary"}:
+            if not s.options.get("focus_id") and s.options.get("task") not in {"readable", "boundary", "assets"}:
                 self._prepare(s.slug)
             self._launch(s)
 
@@ -969,7 +974,7 @@ class Manager:
             except NetworkError:
                 continue
             options = self.options_now(s.kind, dict(s.options))
-            if options is not None and not options.get("focus_id") and options.get("task") not in {"readable", "boundary"}:
+            if options is not None and not options.get("focus_id") and options.get("task") not in {"readable", "boundary", "assets"}:
                 self._prepare(s.slug)
             with self._lock:
                 if self._down or not resumable(s):
@@ -1099,7 +1104,7 @@ class Manager:
                  "GROUP BY kind, model")
         self.transcripts.for_project(slug)
         rows = self.net.project_store(slug).all(query.format(""), slug, 0)
-        recent = [dict(r) for r in self.net.project_store(slug).all(query.format("AND task NOT IN ('readable','boundary')"), slug,
+        recent = [dict(r) for r in self.net.project_store(slug).all(query.format("AND task NOT IN ('readable','boundary','assets')"), slug,
                                                       time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
         out = []
@@ -1287,6 +1292,9 @@ class Manager:
         """What the session's task has left in the project: open functions, or for polishing, matched ones it can
         still take (app/readable.py)."""
         proj = self.net.project_row(slug)
+        if task == "assets":
+            from .asset_agents import left
+            return left(self.net,slug)
         if task == "readable":
             return self.net.readability.left(proj)
         row = self.net.project_store(proj["id"]).one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
@@ -1395,7 +1403,8 @@ class Manager:
         return True
 
     def _run(self, s: Session) -> None:
-        from . import boundary_investigations, focused_agents
+        from . import asset_agents, boundary_investigations, focused_agents
+        if s.options.get("task")=="assets":return asset_agents.run(self,s)
         if s.options.get("task") == boundary_investigations.TASK:
             return boundary_investigations.run(self,s)
         focused_agents.run(self,s)
@@ -1408,16 +1417,17 @@ class Manager:
         self.net.set_selection(s.slug, agent.name, s.options.get("selection"))
         self.assignments[agent.id] = s.slug
         focused_agents.bind(self.net,s,agent)
-        from . import boundary_investigations
+        from . import asset_agents, boundary_investigations
         boundary_investigations.bind(self.net,s,agent)
+        asset_agents.bind(self.net,s,agent)
         if not hasattr(self.net, '_agent_tool_tasks'): self.net._agent_tool_tasks = {}
-        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'matching'
+        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'assets' if s.options.get('task')=='assets' else 'matching'
 
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
         s.push("info", f"{s.label} starting on {s.slug}")
         # Targeted work already has its input; unrelated matching preparation cannot unlock it.
-        targeted = bool(s.options.get("focus_id")) or s.options.get("task") in {"readable", "boundary"}
+        targeted = bool(s.options.get("focus_id")) or s.options.get("task") in {"readable", "boundary", "assets"}
         if not targeted and (prep := self._prep.get(s.slug)) is not None:
             agent_startup.stage(s, "Waiting for source preparation")
             self._set(s, "starting", "first giving the game's code without a source file one (about a minute)")
@@ -1441,6 +1451,13 @@ class Manager:
                 s.stop.wait(1)
                 continue
             task = s.options.get("task") or ""
+            if task=='assets':
+                try:asset_ready=asset_agents.ready(self.net,s,agent)
+                except network.NetworkError as error:
+                    self._pause(s,str(error));break
+                if not asset_ready:
+                    self._finish(s,'Asset discovery has no unclaimed work; review findings in ROM Explorer.')
+                    break
             if task == 'boundary' and boundary_investigations.reported(self.net,s):
                 self._finish(s,'Boundary recommendation saved; review it in Review function boundaries.')
                 break
@@ -1450,7 +1467,7 @@ class Manager:
             agent_startup.stage(s, "Selecting eligible work")
             from ..read_cache import ReadPending
             try:
-                counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in {"readable", "boundary"} else None
+                counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in {"readable", "boundary", "assets"} else None
                 policy = self.net.selection(s.slug, agent.name)
             except ReadPending:
                 if s.stop.is_set():break
@@ -1465,7 +1482,7 @@ class Manager:
                     self._pause(s, why + " for this worker (unscored functions also count)",
                                 "Change Work selection, then press Start again.")
                     break
-            if not s.options.get('focus_id') and task not in {'readable', 'boundary'} and not counts['available'] and not self.net.project_store(s.slug).one(
+            if not s.options.get('focus_id') and task not in {'readable', 'boundary', 'assets'} and not counts['available'] and not self.net.project_store(s.slug).one(
                     'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
                 why, todo = self.net.selection_wait_reason(s.slug, agent, counts=counts)
                 self._wait(s, why, time.time()+30, todo)
@@ -1475,7 +1492,7 @@ class Manager:
                 break
             if self._room_away(s):
                 continue
-            if task != "boundary" and (broken := self._build_problem(s.slug)) is not None:
+            if task not in {"boundary","assets"} and (broken := self._build_problem(s.slug)) is not None:
                 self._pause(s, f"the project doesn't build on this computer, so no session starts: {broken}",
                             "Fix the project's setup (its page says what's wrong), then press Start again.")
                 break
@@ -1496,6 +1513,7 @@ class Manager:
                 self._set(s, "working")
             began = time.time()
             before = self._progress(agent.id, project=s.slug)
+            asset_before=asset_agents.progress(self.net,s.slug,agent.id) if task=='assets' else 0
             activity_before = self.net.project_store(s.slug).one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] if task == 'readable' else 0
             agent_startup.stage(s, "Preparing session records and prompt settings")
             row = self._session_begin(s)
@@ -1565,7 +1583,9 @@ class Manager:
             if task == 'boundary' and boundary_investigations.reported(self.net,s):
                 ok = True
                 investigation = 'Boundary recommendation submitted'
-            followup = task != "boundary" and ok and not s.rotated and not investigation and session_followups.premature(self, s, agent, compiled)
+            if task=="assets" and asset_agents.progress(self.net,s.slug,agent.id)>asset_before:
+                investigation="Asset findings or unsuccessful approaches saved for review"
+            followup = task not in {"boundary","assets"} and ok and not s.rotated and not investigation and session_followups.premature(self, s, agent, compiled)
             if compiled >= 2:
                 s.continuation_attempts = 0
             if followup:
@@ -1579,7 +1599,7 @@ class Manager:
                            and not (s.limited or s.throttled or s.auth_failed or s.signed_out))
             no_progress_sessions = no_progress_sessions + 1 if no_progress else 0
             if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
-                s.error = "the session ended without compiling anything (its messages are in its details)"
+                s.error = "The discovery session ended without a structured finding or unsuccessful approach." if task=="assets" else "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
                 ok = False
             if task == 'boundary' and ok and not boundary_investigations.reported(self.net,s):
@@ -1677,6 +1697,10 @@ class Manager:
             if row is None:
                 return
             agent = network.Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
+        if s.options.get("task")=="assets":
+            from .asset_agents import release
+            release(self.net,s,agent)
+            return
         agent_id = agent.id
         held = self.net.project_store(s.slug).one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                                   agent_id)
@@ -1770,6 +1794,9 @@ class Manager:
         """Preload facts and one ordinary claim, once; previews never claim work."""
         if s.startup_context is not None:
             return
+        if s.options.get("task")=="assets":
+            s.startup_context="First call project_info(detail=false), then claim_asset_region. No function has been claimed."
+            return
         if s.options.get('task') == 'boundary':
             s.startup_context = 'First check project_info(detail=false), then get_boundary_evidence. No function has been claimed.'
             return
@@ -1794,6 +1821,9 @@ class Manager:
     def prompt(self, s: Session) -> str:
         from . import focused_agents
         from .session_handoffs import previous
+        if s.options.get("task")=="assets":
+            from .asset_agents import prompt
+            return prompt(s)+"\nUser project instructions: "+self.net.instructions(s.slug)
         if s.options.get('task') == 'boundary':
             from .boundary_investigations import prompt
             return prompt(s)
@@ -1970,7 +2000,7 @@ class Manager:
             # Availability may change after the runner's selection check while local
             # connection setup is in progress. Do not launch a paid handshake for an
             # empty queue; retained claims and explicitly targeted tasks still run.
-            if not s.options.get('focus_id') and s.options.get('task') not in {'readable', 'boundary'}:
+            if not s.options.get('focus_id') and s.options.get('task') not in {'readable', 'boundary', 'assets'}:
                 counts = self.net.selection_counts(s.slug, agent)
                 if not counts['available'] and not self.net.project_store(s.slug).one(
                         'SELECT 1 FROM claims WHERE agent_id=?', agent.id):
@@ -1980,7 +2010,7 @@ class Manager:
                     return True
             pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
             # Selection was checked by the runner. The authenticated claim rechecks live availability.
-            if s.options.get('task') not in {'readable', 'boundary'}:
+            if s.options.get('task') not in {'readable', 'boundary', 'assets'}:
                 pending.add((agent.id, s.slug))
                 s.tool_handshake_required = True
             agent_startup.stage(s, "Preparing compact startup context")

@@ -21,6 +21,7 @@ from ..network import CLAIM_ORDERS, Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
 from . import (
     agent_tokens,
+    asset_agents,
     boundary_investigations,
     claim_state,
     compiler_experiments,
@@ -63,6 +64,7 @@ class CompilerTrial(BaseModel):
 TOOL_HELP = {}
 
 GUIDES = {
+    "asset-discovery": "advisory region claims, format investigations and evidence-based proposals",
     "agent-experiments": "repair families, candidate revisions, compiler trials and recovery",
     "workflow": "the matching loop, reading diffs, priorities",
     "mips": "MIPS registers, calling convention, delay slots, types from instructions",
@@ -496,6 +498,11 @@ def _resolve_addresses(net, agent, slug, queries, context_function=""):
 
 
 HANDLERS: dict[str, Callable[..., str]] = {
+    "claim_asset_region": asset_agents.claim,
+    "inspect_asset_region": asset_agents.inspect,
+    "preview_asset_region": asset_agents.preview,
+    "propose_asset_region": asset_agents.propose,
+    "defer_asset_region": asset_agents.defer,
     "get_boundary_evidence": boundary_investigations.evidence,
     "suggest_boundary": boundary_investigations.report,
     "get_claims": claim_state.get_claims,
@@ -575,7 +582,7 @@ READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
-ROM_ONLY = {"review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -631,6 +638,9 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
 
 @contextmanager
 def _tool_foreground(net, agent, slug, name, args):
+    if asset_agents.scope(net,agent):
+        with net.progress.view():yield
+        return
     # Ordinary judgements, current candidate/target reads and notes can use context
     # already installed by a saved recheck. Settings/layout/prerequisite changes
     # still serialize behind the complete import.
@@ -661,6 +671,8 @@ def _tool_foreground(net, agent, slug, name, args):
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
+    if asset_agents.scope(net,agent):
+        with net.progress.view():return _dispatch(net,agent,slug,name,args)
     if boundary_investigations.scope(net,agent):
         return _dispatch(net,agent,slug,name,args)
     if (name == 'project_info' and not args.get('detail', False)
@@ -677,6 +689,7 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
 
 
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
+    asset_agents.guard(net,agent,slug,name,args)
     boundary_investigations.guard(net,agent,slug,name,args)
     pending = getattr(net, '_pending_tool_handshakes', set())
     handshake = (agent.id, slug) in pending
@@ -693,6 +706,9 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
         budget.begin()
     result=''
     try:
+        if asset_agents.scope(net,agent) and name=='project_info':
+            if handshake:pending.discard((agent.id,slug))
+            return 'Asset discovery connection ready. Call claim_asset_region; do not claim or compile functions.'
         named=_named(net,agent,slug,args,name)
         # A real CLI handshake confirms authenticated access, not a saved-code
         # import. Keep its compact facts on the current database snapshot so a
@@ -811,6 +827,31 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         TOOL_HELP[fn.__name__] = full
         description = full if len(full) <= 240 else full[:195].rsplit(' ', 1)[0] + f". More: guide(topic='tool:{fn.__name__}')."
         return mcp.tool(meta=ALWAYS_LOAD, description=description)(fn)
+
+    @tool
+    async def claim_asset_region(ctx: Context) -> str:
+        """Claim or recover one data region in your asset discovery run; includes prior attempts and evidence."""
+        return await run(ctx,"claim_asset_region")
+
+    @tool
+    async def inspect_asset_region(ctx: Context, region: str, claim_token: str, offset: int | None = None, length: int = 256) -> str:
+        """Inspect a held region, neighbours and static usage; up to 4096 original bytes per window."""
+        return await run(ctx,"inspect_asset_region",region=region,claim_token=claim_token,offset=offset,length=length)
+
+    @tool
+    async def preview_asset_region(ctx: Context, region: str, claim_token: str, action: str = "textures", options: dict | None = None, model_settings: dict | None = None) -> str:
+        """Compare texture layouts, validate an image/audio preview, or test geometry; no base64 payloads."""
+        return await run(ctx,"preview_asset_region",region=region,claim_token=claim_token,action=action,options=options,model_settings=model_settings)
+
+    @tool
+    async def propose_asset_region(ctx: Context, region: str, claim_token: str, proposal: dict) -> str:
+        """Submit an advisory name/type, evidence, counter, uncertainty, approach, citations and optional layouts/boundaries. User review is required."""
+        return await run(ctx,"propose_asset_region",region=region,claim_token=claim_token,proposal=proposal)
+
+    @tool
+    async def defer_asset_region(ctx: Context, region: str, claim_token: str, approach: str, findings: str) -> str:
+        """Record an unsuccessful approach and release this region; then claim another."""
+        return await run(ctx,"defer_asset_region",region=region,claim_token=claim_token,approach=approach,findings=findings)
 
     @tool
     async def project_info(ctx: Context, detail: bool = False) -> str:

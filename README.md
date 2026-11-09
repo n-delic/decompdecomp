@@ -46,6 +46,9 @@ passes or reads. Open a region for image, raw texture/palette and audio previews
 supported decompressed blocks. Unknown helper roles and raw layouts can be recorded locally. Compare texture guesses as thumbnails,
 follow the linked usage summary, group regions by symbol/loader extents, and inspect raw 3D
 vertex/index buffers as a rotatable wireframe.
+Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
+referenced regions. Agents claim regions, retain failed approaches and propose names, formats
+and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.
 See [ROM Explorer](docs/ROM_EXPLORER.md) for formats, evidence and limits. Analysis images may
 contain expanded code; physical-media mapping and object-build adapters remain planned.
 

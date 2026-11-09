@@ -12,7 +12,7 @@ function setup(){
   const nodes=new Map(),calls=[],renders=[];
   const context=vm.createContext({console,Map,Set,Math,Number,Array,Object,String,Promise,Error,encodeURIComponent,
     S:{slug:'first',tab:'rom',dialogKind:''},$:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},
-    window:{addEventListener(){}},MutationObserver:class {observe(){}},document:{createElement:element,documentElement:element()},
+    loadAssetAgents(){},window:{addEventListener(){}},MutationObserver:class {observe(){}},document:{createElement:element,documentElement:element()},
     esc:s=>String(s),hex8:n=>String(n),getComputedStyle:()=>({getPropertyValue:()=>''}),
     dialog(title,html,kind){context.S.dialogKind=kind;return context.$('body');},closeDialog(){context.S.dialogKind='';},
     api(url,options){calls.push({url,options});return context.reply(url,options);},

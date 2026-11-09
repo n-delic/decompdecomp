@@ -20,6 +20,7 @@ async function loadRomExplorer() {
   const slug=S.slug, epoch=++romEpoch, view=romView(slug), log=romWorkLog();
   view.busy=true;romControls(view);
   $('romTypeMapPanel').hidden=true;$('romTypeStatus').textContent='';$('romResult').replaceChildren();$('romSummary').textContent='';$('romMap').hidden=true;$('romMapRange').textContent='';$('romStale').hidden=true;$('romNotes').textContent='';$('romRuntime').hidden=true;$('romRuntimeItems').replaceChildren();$('romLoaderGroups').hidden=true;$('romLoaderItems').replaceChildren();
+  $('assetAgentPanel').hidden=true;
   const roles=$('romLoaderRoleBody');if(roles.dataset.slug!==slug){roles.replaceChildren();roles.dataset.slug=slug;}
   showJobError(log,'');
   const finish=beginWork(log,'Finding ROM scans',[],'ROM Explorer ready.');
@@ -29,7 +30,7 @@ async function loadRomExplorer() {
     const status=await api('/api/rom-explorer?view=status&slug='+encodeURIComponent(slug));
     if(!romCurrent(slug,epoch))return;
     if(!status.supported){$('romLoaderRoles').hidden=true;$('romReload').hidden=true;$('romMap').hidden=true;$('romSummary').textContent='This project uses an object build. ROM Explorer needs an original-image mapping adapter; support is planned.';view.report=null;return;}
-    $('romReload').hidden=false;$('romLoaderRoles').hidden=false;
+    $('romReload').hidden=false;$('romLoaderRoles').hidden=false;loadAssetAgents();
     if($('romLoaderRoles').open && !roles.children.length)loadRomLoaderRoles();
     job=status.job;
     if(job?.state==='running')view.job=job.id;
@@ -164,7 +165,7 @@ async function openRomRegion(id) {
       try {const result=await api('/api/rom-explorer/annotation',{method:'POST',body:{slug,region:id,image_hash:report.image_hash,name:label.value,notes:notes.value,kind:kind.value,preview_settings:romAssetOptions(body),model_settings:romModelOptions(body)}});
         const row=report.regions.find(row=>row.id===id);if(row)row.annotation=result.annotation;
         if(S.slug===slug && S.tab==='rom')renderRomExplorer(romView(slug));
-      }catch(error){showJobError(work,error.message);}finally{saving=false;body._romAssetBusy=false;done();}
+      }catch(error){showJobError(work,error.message);}finally{saving=false;if(active())body._romAssetBusy=false;done();}
     };
   } catch(error){if(active())showJobError(log,error.message);}finally{finish();}
 }
