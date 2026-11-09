@@ -2118,7 +2118,6 @@ class Manager:
                     stream_errors.append(failure)
                     stream_rejected.set()
                     errors.append(failure)
-                    s.push('error', failure)
                     _terminate(proc)  # unblock stdout; normal limit handling keeps work and cooldowns
                 text=k.clean_stderr(line).replace(token,'[redacted]')
                 if text and (not errors or errors[-1] != text):
@@ -2167,6 +2166,8 @@ class Manager:
         if s.stop.is_set() or s.rotated:
             return True
         said.extend(stream_errors)
+        for failure in stream_errors:
+            s.push('error', failure)
         everything = " ".join([*said, *errors])
         if (k.focus_resume and code and (s.options.get('resume_conversation') or s.options.get('focus_conversation'))
                 and re.search(r'(?:no (?:session|conversation|thread) found|(?:session|conversation|thread).{0,100}(?:not found|does not exist|could not be found))', everything, re.I)):
