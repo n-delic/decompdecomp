@@ -28,6 +28,11 @@ EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.s
               f"WHERE e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
 
 
+def _same_source(a: str | None, b: str | None) -> bool:
+    """Whether two pieces of C are the same text, whitespace aside."""
+    return (a is not None and b is not None
+            and re.sub(r"\s+", " ", a).strip() == re.sub(r"\s+", " ", b).strip())
+
 
 class GuiMixin:
     def export_rom(self, slug: str, log=print) -> dict:
@@ -210,7 +215,7 @@ class GuiMixin:
         """The target next to an attempt, instruction by instruction, for the GUI: the matched C, else the latest
         (or best) attempt, compiled and linked like the judge does. Cached, so watching an agent costs nothing."""
         if (fork := self.fork_slug(slug)):
-            return self.forks.function_diff(fork, name)
+            return self.forks.function_diff(fork, name, which)
         fn = self._function(name, slug)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         latest = self.store.one("SELECT source FROM attempts WHERE function_id=? AND source IS NOT NULL "
@@ -262,9 +267,12 @@ class GuiMixin:
         if not (fn["matched_source"] or fn["best_source"] or latest) and fn["status"] == "open":
             self._seed_for(fn, proj)  # (made again first when what it's made from changed)
             fn = self._function(fn["name"], slug)
+        best_differs = (fn["status"] != "matched" and fn["best_source"] is not None
+                        and not _same_source(fn["best_source"], latest["source"] if latest else None))
         return {
             "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
-            "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
+            "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"],
+            "best_differs": best_differs, **set_aside(fn),
             "asm": self._asm_text(fn, proj),
             "source": fn["matched_source"] or fn["best_source"] or (latest["source"] if latest else None) or fn["seed"],
             "source_kind": "matched" if fn["matched_source"] else "best" if fn["best_source"] else

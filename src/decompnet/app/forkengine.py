@@ -481,6 +481,7 @@ class ForkEngine:
         # (project id, unit) -> (sha1 of its source, base object mtime, {function: match %}): what objdiff said
         # the last time it measured the unit, so a compile doesn't need a second objdiff run to know the baseline
         self._scores: dict[tuple[int, str], tuple[str, int | None, dict]] = {}
+        self._best_diffs: dict[str, dict] = {}  # a best attempt's diff, by what it was built from
         self._index: dict[int, dict] = {}  # project id -> {unit: {"mtime", "order", "ops"}}
         self._indexing: set[int] = set()
         self._index_dirty: set[int] = set()  # projects whose index has entries index.json doesn't have yet
@@ -2831,6 +2832,47 @@ class ForkEngine:
         except NetworkError:
             pass
 
+    def _place(self, proj, fp: ForkProject, unit, fn, source: str, names: list[str], comment: bool = False,
+               prelude: str = "") -> tuple[str, str, Path, str]:
+        """`source`'s definition written into its unit's source file as it is now: (the code, the file after,
+        the file, the file before)."""
+        _, span = self._find(source, names)
+        if span is None:
+            raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
+        # with the comment right above it (what it does, from polishing): the file kept the definition only
+        # Polishing's only: a twin's note or a decompiling agent's scratch comment replaced a forked decomp's own
+        # doc comments, and piled up in its files
+        if comment:
+            span = (csource.comment_above(source, span[0]), span[1])
+        code = source[span[0]:span[1]]
+        commented = code.lstrip().startswith(("//", "/*"))
+        if not unit.source:
+            raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
+        path = fp.safe_path(unit.source, write=True)
+        try:
+            before = path.read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            before = ""
+        includes, before_lines, after_lines = _around(source, span, before, unit.source)
+        _, old_span = self._find(before, names)
+        pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
+        if old_span:
+            lo, hi = old_span
+            kept = ""  # the file's comment, when none was sent
+            if commented:  # a new comment replaces the old one; without one, the file's stays
+                lo = csource.comment_above(before, lo)
+            if any(_PRAGMA.match(ln) for ln in before_lines + after_lines):  # a new wrapper replaces the old one
+                above = csource.comment_above(before, lo)
+                wrapped, hi = _pragmas_around(before, lo, hi)
+                if not commented and wrapped < above:
+                    kept = before[above:lo]
+                lo = wrapped
+            after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
+        else:
+            after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
+        after = _with_includes(after, includes, prelude)
+        return code, after, path, before
+
     def _attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
                  quiet: int | None = None, comment: bool = False) -> dict:
         proj, fp, cfg = self.get(slug)
@@ -2856,36 +2898,25 @@ class ForkEngine:
                 _, span = self._find(source, names)
         if span is None:
             raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
-        # with the comment right above it (what it does, from polishing): the file kept the definition only
-        # Polishing's only: a twin's note or a decompiling agent's scratch comment replaced a forked decomp's own
-        # doc comments, and piled up in its files
-        if comment:
-            span = (csource.comment_above(source, span[0]), span[1])
-        code = source[span[0]:span[1]]
-        commented = code.lstrip().startswith(("//", "/*"))
         unit = fp.unit(fn["unit"])
         if not unit.source:
             raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
-        try:
-            have = (fp.root / unit.source).read_text(errors="replace", encoding="utf-8")
-        except OSError:
-            have = ""
-        includes, before_lines, after_lines = _around(source, span, have, unit.source)
-        with self.net.store.tx() as db:  # claim bookkeeping, as for ROM projects
-            self.net._expire_claims(db)
-            claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
-            if claim is not None and claim["agent_id"] != agent.id:
-                raise NetworkError(f"{fn['name']} is claimed by {self.net._agent_name(claim['agent_id'])}")
-            now = time.time()
-            if claim is None and fn["status"] != "matched":
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.net.claim_ttl))
-            elif claim is not None:
-                db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.net.claim_ttl, fn["id"]))
-        path = fp.safe_path(unit.source, write=True)
         symbol = meta.get("symbol") or fn["name"]
         linked = unit.complete and fp.linkable()  # the game is built from this file: changes must keep it identical
         with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
-            before = path.read_text(errors="replace", encoding="utf-8") if path.exists() else ""
+            code, after, path, before = self._place(proj, fp, unit, fn, source, names, comment, prelude)
+            with self.net.store.tx() as db:  # claim bookkeeping, as for ROM projects
+                self.net._expire_claims(db)
+                claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
+                if claim is not None and claim["agent_id"] != agent.id:
+                    raise NetworkError(f"{fn['name']} is claimed by {self.net._agent_name(claim['agent_id'])}")
+                now = time.time()
+                if claim is None and fn["status"] != "matched":
+                    db.execute("INSERT INTO claims VALUES(?,?,?,?)",
+                               (fn["id"], agent.id, now, now + self.net.claim_ttl))
+                elif claim is not None:
+                    db.execute("UPDATE claims SET expires_at=? WHERE function_id=?",
+                               (now + self.net.claim_ttl, fn["id"]))
             # What matches in the file as it is now is what this change must keep (not the database's idea of it,
             # which a change outside decompdecomp or a different measurement can leave behind)
             scores, builds = self._baseline(proj, fp, unit, before)
@@ -2899,23 +2930,6 @@ class ForkEngine:
                 protected = {n for n, pct in (self._last_scores(proj, unit) or {}).items()
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
-            hit, old_span = self._find(before, names)
-            pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
-            if old_span:
-                lo, hi = old_span
-                kept = ""  # the file's comment, when none was sent
-                if commented:  # a new comment replaces the old one; without one, the file's stays
-                    lo = csource.comment_above(before, lo)
-                if any(_PRAGMA.match(ln) for ln in before_lines + after_lines):  # a new wrapper replaces the old one
-                    above = csource.comment_above(before, lo)
-                    wrapped, hi = _pragmas_around(before, lo, hi)
-                    if not commented and wrapped < above:
-                        kept = before[above:lo]
-                    lo = wrapped
-                after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
-            else:
-                after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
-            after = _with_includes(after, includes, prelude)
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
             agents_try = keep and quiet is None and not was_matched
@@ -4059,11 +4073,69 @@ class ForkEngine:
                 self._keep_scores(proj, u, text, after[u.name])
                 self._apply_scores(proj, u.name, after[u.name], text=text)
 
-    def function_diff(self, slug: str, name: str) -> dict:
-        """objdiff's diff of the function as it is in the source tree now."""
+    def _best_diff(self, proj, fp: ForkProject, fn) -> dict:
+        """objdiff's diff of a function's best attempt: written into its file like a try, built, and undone, so
+        neither the source nor the object it built stays changed. Cached by what it was built from."""
+        meta = self._meta(fn)
+        unit = fp.unit(fn["unit"])
+        source = fn["best_source"]
+        names = self._names(meta, fn)
+        _, span = self._find(source, names)
+        if span:  # the definition alone: a polishing comment above it isn't placed again
+            source = source[span[0]:span[1]]
+        symbol = meta.get("symbol") or fn["name"]
+        linked = unit.complete and fp.linkable()
+        try:
+            with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), \
+                    self._unit_lock(proj, unit.name):
+                _, after, path, before = self._place(proj, fp, unit, fn, source, names)
+                existed = path.exists()
+                target = unit.target.stat().st_mtime_ns if unit.target is not None and unit.target.exists() else None
+                key = self.net.compile_key(fn, unit.name, source, after, before, str(target))
+                if key in self._best_diffs:
+                    return dict(self._best_diffs[key])
+                _rewrite(path, after)
+                try:
+                    ok, log = self._build_unit(proj, fp, unit)
+                    if not ok:
+                        out = {"kind": "best", "rows": None,
+                               "error": f"The best attempt didn't compile:\n{_tail(log)}"}
+                    else:
+                        d = fp.diff(unit, symbol)
+                        if d.match_percent is None:
+                            out = {"kind": "best", "rows": None}
+                        else:
+                            problems = [f"{'a reference differs' if isinstance(m, MappingConflict) else 'a loaded constant differs'}: "
+                                        f"{m.describe()}" for m in d.literals]
+                            problems += [f"refers to `{mine}` where the original refers to `{orig}`"
+                                         for orig, mine in d.renamed]
+                            out = {"kind": "best", "rows": [list(r) for r in d.rows], "score": None,
+                                   "percent": _floor_pct(d.match_percent, d.matched), "problems": problems}
+                finally:
+                    if existed:
+                        _rewrite(path, before)
+                    else:  # a unit with no source file yet: leave none behind
+                        path.unlink(missing_ok=True)
+                    self._build_unit(proj, fp, unit)  # the file's object is its own source's again
+        except NetworkError as e:
+            return {"kind": "best", "rows": None, "error": str(e)}
+        except (ObjdiffError, ForkError) as e:
+            return {"kind": "best", "rows": None, "error": f"objdiff: {e}"}
+        if len(self._best_diffs) > 32:
+            self._best_diffs.pop(next(iter(self._best_diffs)))
+        self._best_diffs[key] = out
+        return dict(out)
+
+    def function_diff(self, slug: str, name: str, which: str = "latest") -> dict:
+        """objdiff's diff of the function as it is in the source tree now, or of its best attempt (`which`)."""
         proj, fp, cfg = self.get(slug)
         fn = self._fn(slug, name)
         meta = self._meta(fn)
+        if which == "best" and fn["status"] != "matched":
+            if not fn["best_source"]:
+                return {"kind": "best", "rows": None,
+                        "message": "There's no best attempt for this function yet."}
+            return self._best_diff(proj, fp, fn)
         try:
             d = fp.diff(fp.unit(fn["unit"]), meta.get("symbol") or fn["name"])
         except (ObjdiffError, ForkError) as e:
@@ -4095,9 +4167,18 @@ class ForkEngine:
                                       "ON a.id=t.agent_id WHERE t.function_id=? ORDER BY t.id", fn["id"])
         notes = self.net.store.all("SELECT n.text, n.created_at, a.name AS agent FROM notes n LEFT JOIN agents a "
                                    "ON a.id=n.agent_id WHERE n.function_id=? ORDER BY n.id DESC LIMIT 10", fn["id"])
+        best_source = fn["best_source"]
+        best_code = best_source
+        if best_source:
+            _, span = self._find(best_source, self._names(meta, fn))
+            if span:
+                best_code = best_source[span[0]:span[1]]
+        best_differs = (fn["status"] != "matched" and bool(best_source)
+                        and (current is None or _digest(current) != _digest(best_code)))
         return {"name": fn["name"], "vram": fn["vram"] or 0, "rom_offset": 0, "size": fn["size"], "insns": fn["n_insns"],
-                "status": fn["status"], "best": fn["best_score"], "asm": asm, "unit": fn["unit"], **set_aside(fn),
-                "source": current or fn["best_source"], "source_kind": "matched" if fn["status"] == "matched" else
-                ("latest" if current else "best" if fn["best_source"] else None),
+                "status": fn["status"], "best": fn["best_score"], "best_differs": best_differs, "asm": asm,
+                "unit": fn["unit"], **set_aside(fn),
+                "source": current or best_source, "source_kind": "matched" if fn["status"] == "matched" else
+                ("latest" if current else "best" if best_source else None),
                 "match_percent": pct, "scores": [{"score": a["score"], "t": a["created_at"], "agent": a["agent"]} for a in attempts],
                 "notes": [dict(n) for n in notes], "calls": [], "called_by": []}
