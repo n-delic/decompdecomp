@@ -705,3 +705,26 @@ median idle query time was 4.26 ms versus 0.159 ms; with a competing Python CPU 
 1.927 s versus 20.5 ms. These measure the discovery query component, not live app or
 full cross-game pass latency. They do not establish that every long synchronization
 or source-fetch wait has been resolved.
+
+### Current function reads during saved verification
+
+`get_function` summary, brief, candidate and supporting current-state views use the
+foreground read lane once the imported context and saved evidence are committed.
+They retain the saved-file signature guard and wait while evidence is being installed.
+Recovery/experiment views still wait for the complete recheck. A read does not create a
+verdict, and the compiler's ordinary revision and byte checks still apply afterward.
+`progress_recheck_wait_ms` measures the condition wait separately from file validation,
+SQL, shared verification admission and compiler time.
+
+Cross-project donor discovery transfers scalar metadata in one JSON row per compatible
+project. Bodies are read only for selected candidates, with their usual checksum checks.
+The persistent twin index tests source presence in the physical function table; its
+metadata count/reindex queries must not invoke the compressed-source detail view.
+
+Bounded synthetic checks (2,001 donor rows, three trials) reduced native row transfers
+from 2,001 to one. Median query time was 3.79 to 1.33 ms idle and 517.33 to 14.10 ms with
+one competing Python thread bounded to two seconds. An actual Store fixture with 513
+compressed bodies reduced index-count payload callbacks from 513 to zero, with identical
+count/latest values (7.17 to 0.047 ms median). These are component measurements, not
+end-to-end runtime speedups. Regressions keep a saved compiler future unresolved while
+reading current function data, then complete the same ordinary saved judgment afterward.

@@ -646,7 +646,13 @@ def _tool_foreground(net, agent, slug, name, args):
     # Ordinary judgements, current candidate/target reads and notes can use context
     # already installed by a saved recheck. Settings/layout/prerequisite changes
     # still serialize behind the complete import.
-    allowed = name in {'compile_and_diff','compile_patch','compile_variants','add_note','get_assembly'} or (
+    # get_function's current DB views use the same committed context as
+    # get_candidate/get_assembly. They must not queue for every saved verdict.
+    # Experimental recovery suggestions retain the complete-import boundary.
+    function_read = name == 'get_function' and args.get('section', 'summary') in {
+        'summary', 'brief', 'candidate', 'source', 'draft', 'matched', 'all', 'full',
+        'warnings', 'quality', 'history', 'notes', 'declarations', 'compiler', 'layouts'}
+    allowed = function_read or name in {'compile_and_diff','compile_patch','compile_variants','add_note','get_assembly'} or (
         name == 'get_candidate' and args.get('base','current') == 'current') or (
         name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
     notes = allowed and name in {'add_note','release_function'}
@@ -809,7 +815,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                      'before_dispatch_ms':round((dispatch-started)*1000,2)}
             timings.update({phase+'_ms':round(metrics.get(phase,0.)*1000,2)
                             for phase in ('sql_connection','sql_lock_wait','sql_execute','sql_fetch',
-                                          'progress_project_lock_wait','progress_verification_wait','progress_sync',
+                                          'progress_project_lock_wait','progress_verification_wait','progress_recheck_wait','progress_sync',
                                           'progress_stat','progress_files','progress_manifest','progress_render','progress_import',
                                           'progress_saved_judge','progress_publish')})
             if observe:

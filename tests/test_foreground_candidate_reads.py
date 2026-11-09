@@ -1,4 +1,5 @@
 """Read the installed candidate/target during a ready recheck, without inventing a verdict."""
+import json
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
 
@@ -12,10 +13,17 @@ project=project_fixture
 
 
 @pytest.mark.parametrize('transport',['direct','mcp'])
-@pytest.mark.parametrize('tool',['get_candidate','get_assembly'])
-def test_current_reads_finish_during_saved_compile_using_real_handlers(project,monkeypatch,transport,tool):
+@pytest.mark.parametrize('tool,args',[('get_candidate',{}),('get_assembly',{}),
+    ('get_function',{}),('get_function',{'section':'brief'}),
+    ('get_function',{'section':'candidate'}),('get_function',{'section':'history'})])
+def test_current_reads_finish_during_saved_compile_using_real_handlers(project,monkeypatch,transport,tool,args):
     net,folder,judged=project
     with net.store.tx() as db:
+        # Briefs need the compiler facts a real imported project always has.
+        # An empty toolchain keeps this synthetic judge independent of SDK installs.
+        db.execute("UPDATE projects SET config=json_set(config,'$.compiler',json(?))",
+                   (json.dumps({'toolchain':'','flags':[]}),))
+        db.execute("UPDATE functions SET relocs='[]',meta='{}',rom_offset=(id-1)*4")
         db.execute("UPDATE functions SET best_source='int f(void) { return 3; }',best_score=50,asm='nop' WHERE name='f'")
     net.progress.sync('game',force=True)
     agent,_=net.local_agent('reader')
@@ -24,17 +32,19 @@ def test_current_reads_finish_during_saved_compile_using_real_handlers(project,m
         waiting.set()
         yield 'f',{'matched_by':'helper'},'src','good imported C','f',('compile',compilation)
     monkeypatch.setattr(saves,'_saved_checks',checks)
+    monkeypatch.setattr(net,'_rom',lambda *a:(bytes(16),[]))
+    monkeypatch.setattr(net,'compiler_map',lambda *a,**k:None)  # no binary in this synthetic project
     monkeypatch.setattr(agent_evidence,'baseline',lambda *a,**k:None)
     monkeypatch.setattr(local_experiments,'summary',lambda *a,**k:'No synthetic trials available.')
     monkeypatch.setattr(net,'_compile',lambda *a,**k:pytest.fail('read must not invent a compiler result'))
     (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('good imported C')
-    def invoke():return tools.call(net,agent,'game',tool,{'function':'f'})
+    def invoke():return tools.call(net,agent,'game',tool,{'function':'f',**args})
     if transport=='mcp':
         import anyio
         from mcp.server.mcpserver import Context
         monkeypatch.setattr(Context,'headers',property(lambda self:{}))
         server=tools.build_mcp(net,lambda ctx:(agent,'game'))
-        async def request():return await server.call_tool(tool,{'function':'f'})
+        async def request():return await server.call_tool(tool,{'function':'f',**args})
         def invoke():return str(anyio.run(request))
     with ThreadPoolExecutor(2) as pool:
         background=pool.submit(net.progress.sync,'game',force=True)
@@ -48,6 +58,10 @@ def test_current_reads_finish_during_saved_compile_using_real_handlers(project,m
             if tool=='get_candidate':
                 assert 'Candidate revision' in reply and 'return 3;' in reply
                 assert 'historical/unverified' in reply
+            elif tool=='get_function':
+                if not args:assert 'f: open' in reply and 'saved historical score 50' in reply
+                elif args['section'] in {'candidate','brief'}:assert 'return 3;' in reply
+                else:assert 'No attempt history' in reply
             else:assert 'nop' in reply
         finally:compilation.set_result(None)
         assert background.result(timeout=5)
@@ -55,7 +69,8 @@ def test_current_reads_finish_during_saved_compile_using_real_handlers(project,m
     assert not getattr(net.progress.local,'foreground',False)
 
 
-@pytest.mark.parametrize('tool,args',[('get_candidate',{}),('get_assembly',{}),
+@pytest.mark.parametrize('tool,args',[('get_candidate',{}),('get_assembly',{}),('get_function',{}),
+                                     ('get_function',{'section':'experiment'}),
                                      ('get_candidate',{'base':'saved_best'}),('get_candidate',{'base':'last_compiling'}),
                                      ('get_candidate',{'base':'reported_corrected'})])
 def test_current_reads_wait_for_evidence_and_recovery_choices_wait_for_recheck(project,monkeypatch,tool,args):
@@ -75,7 +90,7 @@ def test_current_reads_wait_for_evidence_and_recovery_choices_wait_for_recheck(p
         assert future.result(timeout=3)=='read ready'
 
 
-@pytest.mark.parametrize('tool',['get_candidate','get_assembly'])
+@pytest.mark.parametrize('tool',['get_candidate','get_assembly','get_function'])
 def test_ready_read_rejects_changed_saved_files_before_handler(project,monkeypatch,tool):
     net,folder,_=project;worker=net.progress
     agent,_=net.local_agent('reader')
@@ -89,7 +104,7 @@ def test_ready_read_rejects_changed_saved_files_before_handler(project,monkeypat
     assert not getattr(worker.local,'foreground',False)
 
 
-@pytest.mark.parametrize('tool',['get_candidate','get_assembly'])
+@pytest.mark.parametrize('tool',['get_candidate','get_assembly','get_function'])
 def test_read_outside_recheck_still_imports_and_judges_changed_source(project,monkeypatch,tool):
     net,folder,judged=project
     with net.store.tx() as db:db.execute("UPDATE functions SET asm='nop' WHERE name='f'")
@@ -101,3 +116,29 @@ def test_read_outside_recheck_still_imports_and_judges_changed_source(project,mo
     assert not reply.startswith('error:')
     assert judged==[('f','good external source')]
     assert net._function('f','game')['status']=='matched'
+
+
+def test_unready_recheck_wait_has_its_own_timing_until_evidence_is_installed(project):
+    from decompnet import request_timing
+    net,folder,_=project;worker=net.progress
+    active=_Recheck(folder,worker._signature(folder),ready=False)
+    worker.rechecking['game']=active
+    metrics={};entered=threading.Event()
+    def read():
+        with request_timing.capture() as captured, worker.foreground():
+            entered.set()
+            try:return worker.sync('game',force=True)
+            finally:metrics.update(captured)
+    with ThreadPoolExecutor(1) as pool:
+        pending=pool.submit(read)
+        try:
+            assert entered.wait(2)
+            with pytest.raises(TimeoutError):pending.result(timeout=.15)
+            with worker._project_lock('game'):
+                active.ready=True
+                threading.Condition(worker._project_lock('game')).notify_all()
+            assert pending.result(timeout=2) is False
+            assert metrics['progress_recheck_wait']>=.10
+            assert metrics.get('progress_import',0)==0
+        finally:
+            with worker._project_lock('game'):worker.rechecking.pop('game',None)

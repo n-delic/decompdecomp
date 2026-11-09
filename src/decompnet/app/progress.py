@@ -1091,7 +1091,8 @@ class Progress:
                 if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
                 self._check_paused(slug)
                 # Public Condition.wait also releases an outer batch's recursive lock.
-                threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
+                with span('progress_recheck_wait'):
+                    threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
             if self._batching(slug):
                 return False
             while (preparing := self.rendering.get(slug)) is not None:
