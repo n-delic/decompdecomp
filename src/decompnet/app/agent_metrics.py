@@ -2,6 +2,7 @@
 import time
 
 from ..history_changes import append_only
+from ..metadata_rows import rows as metadata_rows
 
 
 def results(net, slug, sessions):
@@ -25,8 +26,12 @@ def results(net, slug, sessions):
             old = {'key': key, 'revision': None, 'last': 0, 'best': {}, 'agents': {}}
         if old['revision'] != revision:
             limits = dict(boundaries)
-            rows = net.project_store(pid).all(
-                'SELECT t.id,t.function_id,t.agent_id,t.score,t.compiled,t.created_at,f.n_insns '
+            # Keep ordering and the full historical score baseline, but avoid one
+            # SQLite/Python handoff per attempt under background CPU contention.
+            rows = metadata_rows(net.project_store(pid),
+                ('id','function_id','agent_id','score','compiled','created_at','n_insns'),
+                'SELECT t.id,t.function_id,t.agent_id,t.score,t.compiled, '
+                "CASE WHEN t.created_at IS NOT NULL THEN printf('%!.17g',t.created_at) END AS created_at,f.n_insns "
                 'FROM main.functions f JOIN main.attempts t ON t.function_id=f.id '
                 'WHERE f.project_id=? AND t.id>? ORDER BY t.function_id,t.id', pid, old['last'])
             from .project_labels import names
@@ -45,7 +50,8 @@ def results(net, slug, sessions):
                             counts['zero'].add((fid, r['agent_id']))
                         if score >= 0 and previous is not None and score < previous:
                             counts['improved'].add(fid)
-                            at = r['created_at']
+                            # JSON's default float rendering can round subsecond timestamps.
+                            at = float(r['created_at']) if r['created_at'] is not None else None
                             if at is not None:
                                 counts['last_improvement'] = max(counts['last_improvement'] or at, at)
                 if r['compiled'] and score is not None:
@@ -55,7 +61,8 @@ def results(net, slug, sessions):
         if not transactional:
             cache['state'] = old
         # Match ownership can change without adding an attempt, so read it fresh.
-        matched = {(r['id'], r['matched_agent_id']) for r in net.project_store(pid).all(
+        matched = {(r['id'], r['matched_agent_id']) for r in metadata_rows(
+            net.project_store(pid), ('id','matched_agent_id'),
             "SELECT id,matched_agent_id FROM main.functions WHERE project_id=? AND status='matched'", pid)}
         board = {name: {'agent': name, 'compiles': c['compiles'], 'worked': len(c['worked']),
                         'improved': len(c['improved']), 'matched': len(c['zero'] & matched),
