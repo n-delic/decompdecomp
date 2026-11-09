@@ -7,6 +7,8 @@ import os
 import sys
 import threading
 import time
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +29,7 @@ class FakeNet:
     links: dict = {}
 
     def __init__(self):
+        self.progress = SimpleNamespace(judging=lambda slug: nullcontext())
         self.store = Store(IN_MEMORY)
         with self.store.tx() as db:
             db.execute("INSERT INTO projects(id, slug, name, arch, root, config) VALUES(1, 'game', 'Game', 'mips', '.', ?)",
@@ -34,6 +37,12 @@ class FakeNet:
             db.execute("INSERT INTO agents(id, name, token_hash) VALUES(1, 'permuter', 'x')")
             db.execute("INSERT INTO functions(id, project_id, name, n_insns, best_score, best_source, vram) "
                        "VALUES(1, 1, 'f', 10, 40, ?, 2147483648)", (SOURCE,))
+
+    def is_rom(self, proj):
+        return True
+
+    def xrefs(self, proj):
+        return {"calls": {}}
 
     def cfg(self, proj):
         return json.loads(proj["config"])

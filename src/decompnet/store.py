@@ -79,6 +79,10 @@ CREATE INDEX IF NOT EXISTS idx_symbols_addr ON symbols(project_id, address);
 -- matches, which is claimed first meanwhile; then it comes first once
 CREATE TABLE IF NOT EXISTS waits(
   function_id INTEGER PRIMARY KEY, needs_id INTEGER NOT NULL, agent_id INTEGER, created_at REAL);
+CREATE TABLE IF NOT EXISTS callee_probes(
+  function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
+  cache_key TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL,
+  PRIMARY KEY(function_id, cache_key));
 CREATE TABLE IF NOT EXISTS twin_misses(
   function_id INTEGER NOT NULL, source_hash TEXT NOT NULL, project_id INTEGER, at REAL, why TEXT,
   PRIMARY KEY(function_id, source_hash));
