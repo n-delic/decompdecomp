@@ -64,3 +64,28 @@ Any remaining failure rejects the entire rename, including proposed settings.
 These profiles survive saves and rebuildable exports through existing function compiler support.
 Imported builds, custom commands and other compiler families retain their existing guarded
 rename behavior; they need compiler-specific adapters before automatic flag retries.
+
+
+## Automatic detection at import
+
+N64 ROM imports now carry a small built-in fingerprint pack for the independently
+reproduced, self-contained libultra `bcmp` and `bzero` assembly bodies. Both verified
+`bcmp` assembler expansions (`move` as `addu` or `or`) are covered. No SDK, compiler,
+model call or network download is required. This pack stores SHA-256 hashes and
+provenance, not SDK instructions. The full body, exact length and big-endian encoding
+must agree, with no external relocations; partial or normalized similarity never
+excludes a function from C work.
+
+Classification occurs inside import before the claim queue is populated. A unique
+entry gets its canonical SDK source name when the generated name has no collision.
+Duplicate entries retain unique source symbols and receive the proper SDK display name.
+SDK assembly is counted separately from C. Existing active ROM projects receive the
+same classification/display-name backfill through SDK maintenance, preserving live
+claims, matched C, deliberate names and explicit Reopen decisions. Existing source
+renames continue to require the guarded rename workflow.
+
+Known digest proofs are rechecked against the built-in pack and current target inputs,
+so they work across saves without depending on a private SDK path. The pack does not
+identify an exact SDK release or prove which synonymous original label was used.
+Imported project mode and other consoles need their own exact-body packs/adapters;
+unrecognized functions retain their current workflow and local-object SDK support.

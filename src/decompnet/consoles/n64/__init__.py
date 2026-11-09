@@ -5,6 +5,7 @@
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
+- sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
 - guides/: what agents read about the N64 (n64.md) and its compilers (gcc-kmc.md, ido.md, sn64.md).
 
 Its demo game is projects/demo-rom (the Demo Quest game in projects/demo-n64/original, built with KMC GCC).
@@ -143,6 +144,12 @@ class Nintendo64(Console):
         if move and src.resolve() != dest.resolve():
             src.unlink()
         return True
+
+    sdk_assembly_sizes = (160,272)
+
+    def sdk_assembly_identity(self, code, big_endian=True):
+        from .sdk_assembly import identify
+        return identify(code,big_endian)
 
     def read_game(self, file, name: str = "") -> Picked:
         from .rom import read_info

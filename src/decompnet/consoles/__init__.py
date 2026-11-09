@@ -328,6 +328,12 @@ class Console:
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """Work a new project gets once (`chosen`: the user picked its compiler)."""
 
+    sdk_assembly_sizes: tuple[int, ...] = ()
+
+    def sdk_assembly_identity(self, code: bytes, big_endian: bool = True) -> dict | None:
+        """Exact self-contained handwritten SDK bodies only; no heuristic C exclusion."""
+        return None
+
     def scan_sdk(self, net, proj, job=None) -> None:
         """Optional binary SDK evidence, refreshed by the shared background naming task.
 

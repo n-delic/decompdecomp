@@ -13,3 +13,8 @@ const helpers=text.slice(text.indexOf('function searchFunctions('),text.indexOf(
 ctx.rows=[{name:'func_80001000',display_name:'sdkToy',vram:0x80001000,unit:''}];ctx.hex8=n=>n.toString(16);
 assert.equal(vm.runInContext("searchFunctions(rows,'sdktoy',false).length",ctx),1);
 assert.equal(vm.runInContext("searchFunctions(rows,'func_',false).length",ctx),1);
+
+ctx.esc=x=>x;
+vm.runInContext(text.slice(text.indexOf('function sdkBadge('),text.indexOf('function functionAge(')),ctx);
+ctx.verifiedRow={sdk:{names:['sdkToy'],corpora:['Toy'],verified_assembly:true}};
+assert.match(vm.runInContext('sdkBadge(verifiedRow)',ctx),/excluded from C agents/);

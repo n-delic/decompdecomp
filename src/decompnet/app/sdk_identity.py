@@ -55,6 +55,16 @@ def _identify(net, proj, *, include_asm=False):
                                      net.store.read_version('sdk_names'), corpus_index)
     from .sdk_evidence import identities
     binary = identities(net, proj, include_asm=include_asm)
+    selection = net.cfg(proj).get('sdk_libraries')
+    selected = set(selection) if selection is not None else None
+    if include_asm:
+        from .source_assembly import detail
+        for row in net.project_store(proj['id']).all("SELECT id,name,vram,rom_offset,size,target,relocs,meta,status FROM functions WHERE project_id=? AND status='asm' AND json_extract(meta,'$.verified_assembly.kind')='sdk'",proj['id']):
+            proof=detail(proj,row)
+            if proof and proof['verified'] and (proof.get('verification_method')=='builtin-sdk-digest' or selected is None or proof['corpus'] in selected):
+                binary[row['id']]={'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']],
+                                'evidence':proof['evidence'],'verified_assembly':True,
+                                **({'sdk_file':proof['source_file'],'sdk_stamp':proof.get('source_stamp')} if proof.get('source_file') else {})}
     if not by_key:
         return binary  # No local corpus: avoid reading target objects merely to discover there is no evidence.
     selection = net.cfg(proj).get('sdk_libraries')
@@ -70,15 +80,10 @@ def _identify(net, proj, *, include_asm=False):
         if (include_asm or not target.asm) and target.size >= 32 and len(names) == 1:
             out[fid] = {"names": sorted(names), "corpora": sorted({r["corpus"] for r in hints}),
                         "fingerprint": target.key, "evidence": "exact relocation-normalized SDK signature"}
-    if include_asm:
-        from .source_assembly import detail
-        for row in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='asm' AND json_extract(meta,'$.verified_assembly.kind')='sdk'",proj['id']):
-            proof=detail(proj,row)
-            if proof and proof['verified'] and (selected is None or proof['corpus'] in selected):
-                out[row['id']]={'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']],
-                                'evidence':proof['evidence'],'verified_assembly':True,
-                                'sdk_file':proof['source_file'],'sdk_stamp':proof.get('source_stamp')}
     for fid, hint in binary.items():
+        if hint.get('verified_assembly'):
+            out[fid]=hint
+            continue
         if fid in ambiguous:
             continue
         if fid in out and out[fid]['names'] != hint['names']:

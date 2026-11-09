@@ -704,6 +704,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned |
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — own build adapter planned | — own build adapter planned | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned |
+| Built-in exact SDK assembly detection before claims | ✓ bcmp/bzero | — pack planned | — pack planned | — pack planned | — pack planned | — pack planned | — pack planned | — owned-build adapter planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | ✓ | ✓ counts | ✓ counts | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | ✓ | body only¹ | body only¹ | body only¹ | body only¹ |
 | Verified neighbour context hypotheses and separate body/header bundles | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — own build adapter planned | — own build adapter planned | — own build adapter planned | — own build adapter planned |
@@ -3388,3 +3389,13 @@ similarity alone is insufficient. Their ordinary assembly classifications still 
   a per-function `-fno-builtin` fallback, persisting only exact linked-code results.
 - Planned: compiler-specific builtin suppression adapters for imported project builds,
   custom commands and non-GCC toolchains. Existing regression checks still reject unsafe renames.
+
+
+### SDK assembly detection before agents
+
+- Done: N64 local-ROM import classifies exact, self-contained libultra bcmp/bzero
+  byte variants before claims and names unique entries. Active existing projects
+  receive classification/display-name backfill without replacing source symbols.
+- Planned: additional independently verified reference-free SDK bodies and imported
+  project/other-console adapters. Relocated code still needs the full linker proof;
+  partial SDK signatures never establish handwritten assembly.

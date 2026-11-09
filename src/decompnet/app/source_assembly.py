@@ -25,7 +25,12 @@ def fingerprint(proj, fn):
 def verified(proj, fn):
     proof=json.loads(fn['meta'] or '{}').get('verified_assembly',{})
     if not isinstance(proof,dict):return False
-    if proof.get('kind')=='sdk':
+    if proof.get('verification_method')=='builtin-sdk-digest':
+        from .. import consoles
+        from .sdk_assembly import known_proof
+        current=known_proof(consoles.of(json.loads(proj['config'])),proj,fn)
+        if not current or current['target_sha256']!=proof.get('target_sha256') or current['names']!=proof.get('names'):return False
+    elif proof.get('kind')=='sdk':
         try:
             stat=Path(proof['source_file']).stat()
             if proof.get('source_stamp')!=[stat.st_mtime_ns,stat.st_size]:return False

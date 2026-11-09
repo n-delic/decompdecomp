@@ -190,6 +190,23 @@ class ImportMixin:
             cfg.pop("system_calls_named", None)
         header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if consoles.small_gp(cfg) else "")
         header += self._debug_types(debug, cfg, workdir, log)
+        # A fresh import has no caller C to protect. Name unique exact SDK entries
+        # before symbols/assembly are generated; reimports preserve existing source names.
+        sdk_original_names={}
+        if reimport is None and console.sdk_assembly_sizes:
+            from ..function_names import generated
+            leads=[]
+            for fn in res.functions:
+                if fn.size not in console.sdk_assembly_sizes:continue
+                code=b''.join(line.word.to_bytes(4,'big' if picked.big_endian else 'little') for line in fn.lines)
+                hint=console.sdk_assembly_identity(code,picked.big_endian)
+                if hint:leads.append((fn,hint['name']))
+            counts=Counter(name for _,name in leads)
+            taken=set(res.named) | {fn.name for fn in res.functions}
+            for fn,name in leads:
+                if generated(fn.name) and counts[name]==1 and name not in taken:
+                    sdk_original_names[name]=fn.name
+                    fn.name=name; taken.add(name)
         symbols = SymbolTable()
         for name, addr in res.named.items():
             symbols.add(Symbol(name, addr, 0, "func"), reindex=False)
@@ -282,6 +299,7 @@ class ImportMixin:
                         f"{', '.join(lost[:8])}; their C is kept in the project's notes")
 
                 preserved = 0
+                sdk_classified = 0
                 for fn in res.functions:
                     check_cancel()
                     target = console.target_from_split(fn, symbols.resolve, picked.big_endian, res.gp)
@@ -304,6 +322,20 @@ class ImportMixin:
                         # Classify before the target reaches the claim queue; keep its bytes and symbols.
                         meta_data["asm_code"] = why
                         status = "asm"
+                    if status in ('open','asm') and fn.size in console.sdk_assembly_sizes and not meta_data.get('reopened'):
+                        from ..sdk_assembly import known_proof
+                        proof=known_proof(console,{'config':json.dumps(cfg)},
+                            {'name':fn.name,'vram':fn.vram,'rom_offset':fn.rom,'size':fn.size,
+                             'target':target.code,'relocs':relocs})
+                        if proof:
+                            sdk_classified += 1
+                            status='asm'
+                            meta_data['verified_assembly']=proof
+                            meta_data['sdk_display']={'name':proof['name'],'names':proof['names'],'corpora':[proof['corpus']]}
+                            meta_data['asm_code']='Verified handwritten SDK assembly; no C matching required.'
+                            if fn.name in sdk_original_names:
+                                meta_data['naming']={'original_name':sdk_original_names[fn.name],'name':fn.name,
+                                    'method':'sdk_exact_digest','at':now}
                     from ..boundary_repairs import reason as boundary_reason
                     warning = boundary_reason(console, {'target': target.code, 'status': status})
                     if warning:meta_data['boundary_review'] = warning
@@ -394,6 +426,7 @@ class ImportMixin:
             except OSError as e:
                 log(f"the old project files could not be removed; they remain at {backup}: {e}")
             log(f"reimport kept {preserved} matched functions whose targets were unchanged")
+        if sdk_classified:log(f"Identified {sdk_classified} known SDK assembly functions; excluded from C agents.")
         log(f"ready: {len(res.functions)} functions to decompile")
         return slug
 

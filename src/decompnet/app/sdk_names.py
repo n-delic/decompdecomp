@@ -39,6 +39,8 @@ def _name_functions(net, slug, job=None):
     if slug in net.links:
         return 0
     net.console(proj).scan_sdk(net, proj, job)
+    from .sdk_assembly import discover_known
+    discover_known(net,proj)
     if (not net.store.one('SELECT 1 FROM sdk_signatures LIMIT 1') and not net.project_store(proj['id']).one(
             "SELECT 1 FROM functions WHERE project_id=? AND json_extract(meta,'$.sdk_identity') IS NOT NULL LIMIT 1", proj['id'])):
         return 0  # No evidence: do not synchronize imported projects or open their target objects.

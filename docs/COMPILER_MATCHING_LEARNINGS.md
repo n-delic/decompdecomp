@@ -6786,3 +6786,14 @@ A current private V-Rally snapshot also allowed a `bzero` rename with unchanged
 flags: 17 affected matches passed. This does **not** establish builtin expansion
 as the cause of an earlier live rejection. A tiny GCC 2.7.2 `bzero` probe retained
 its call with and without suppression. Do not apply builtin flags from a name alone.
+
+
+## SDK assembler choice: bcmp move expansions
+
+Independent local reproduction of libultra `src/libc/bcmp.s`, big-endian MIPS3:
+period GNU assembler from the pinned GCC 2.7.2 pack expands two `move` pseudoinstructions
+as `addu`, while the modern pinned MIPS assembler uses `or`. The period result matches
+all 272 target bytes; the modern result differs at exactly those two instructions.
+No SDK instruction edits were made. Both exact body hashes are supported for import
+identification; do not normalize away an assembler difference when claiming byte identity.
+No SDK instructions or game fixtures are committed.

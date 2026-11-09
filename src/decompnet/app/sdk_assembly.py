@@ -146,12 +146,13 @@ def save(net,proj,fn,proof):
     with net.project_store(proj['id']).tx() as db:
         fresh=db.execute('SELECT * FROM functions WHERE id=?',(fn['id'],)).fetchone()
         current=net.project_row(proj['slug'])
-        if fresh['status']!='asm' or fingerprint(current,fresh)!=proof['fingerprint']:return False
+        if fresh['status'] not in (('open','asm') if proof.get('verification_method')=='builtin-sdk-digest' else ('asm',)) or fingerprint(current,fresh)!=proof['fingerprint']:return False
+        if json.loads(fresh['meta'] or '{}').get('reopened'):return False
         if db.execute('SELECT 1 FROM claims WHERE function_id=?',(fn['id'],)).fetchone():return False
         meta=json.loads(fresh['meta'] or '{}');meta['verified_assembly']=proof
         meta['sdk_display']={'name':proof['name'],'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']]}
         meta['asm_code']='Verified SDK assembly; excluded from C matching.'
-        db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),fn['id']))
+        db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?",(json.dumps(meta),fn['id']))
         net._event(db,proj['id'],None,'assembly-verified',fn['name']+': '+proof['name'])
     return True
 
@@ -195,4 +196,35 @@ def discover(net,proj,limit=32):
             proof=combine(proofs)
             if proof:count+=int(save(net,proj,fn,proof))
     with store.tx() as db:db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',(cursor_key,str(examined)))
+    return count
+
+
+
+def known_proof(console,proj,fn):
+    """A full-body digest is proof only for curated, reference-free assembly entries."""
+    cfg=json.loads(proj['config'])
+    if cfg.get('kind')=='fork' or json.loads(fn['relocs'] or '[]'):return None
+    code=bytes(fn['target'] or b'')
+    if fn['size']!=len(code):return None
+    found=console.sdk_assembly_identity(code,bool(cfg.get('big_endian',True)))
+    if not found:return None
+    return {**found,'verified':True,'kind':'sdk','verification_method':'builtin-sdk-digest',
+            'alias_schema':1,'fingerprint':fingerprint(proj,fn),
+            'evidence':'Exact complete bytes of a verified self-contained handwritten SDK routine; no C coverage.',
+            'at':time.time()}
+
+
+def discover_known(net,proj):
+    """Backfill active ROM projects without SDK files, compiling code or starting agents."""
+    if not net.is_rom(proj) or net.fork_slug(proj['slug']):return 0
+    console=net.console(proj);sizes=console.sdk_assembly_sizes
+    if not sizes:return 0
+    store=net.project_store(proj['id']);count=0
+    rows=store.all("SELECT id,name,project_id,vram,rom_offset,size,target,relocs,status,meta FROM functions WHERE project_id=? AND status IN ('open','asm') AND size IN ("+','.join('?' for _ in sizes)+')',proj['id'],*sizes)
+    for fn in rows:
+        from .maintenance import checkpoint
+        checkpoint()
+        if json.loads(fn['meta'] or '{}').get('reopened') or verified(proj,fn):continue
+        proof=known_proof(console,proj,fn)
+        if proof:count+=int(save(net,proj,fn,proof))
     return count
