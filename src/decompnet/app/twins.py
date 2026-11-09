@@ -858,14 +858,16 @@ class Twins:
 
     def _index_project(self, proj) -> int:
         cfg = self.net.cfg(proj)
-        counts = self.net.project_store(proj['id']).one("SELECT COUNT(*) AS n,MAX(matched_at) AS latest FROM functions "
+        # These predicates need presence, not source text. The detail view would
+        # decompress every matched body just to count/reindex metadata.
+        counts = self.net.project_store(proj['id']).one("SELECT COUNT(*) AS n,MAX(matched_at) AS latest FROM main.functions "
                                     "WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL", proj["id"])
         stamp = (self.net._layout_key(proj), self._compiler_key(cfg["compiler"]),
                  self._compiler_key({"ranges": cfg.get("compiler_ranges") or [],'functions':cfg.get('function_compilers') or {}}), counts["n"], counts["latest"])
         if self._index_stamps.get(proj["id"]) == stamp:
             return counts["n"]
         prints = self.prints(proj)
-        rows = self.net.project_store(proj['id']).all("SELECT id,name,vram,rom_offset,matched_at FROM functions WHERE project_id=? AND status='matched' "
+        rows = self.net.project_store(proj['id']).all("SELECT id,name,vram,rom_offset,matched_at FROM main.functions WHERE project_id=? AND status='matched' "
                                   "AND matched_source IS NOT NULL", proj["id"])
         entries = [(r["id"], proj["id"], prints[r["id"]].key,
                     self._compiler_key(compiler_for(cfg, r["vram"], r)), prints[r["id"]].size,

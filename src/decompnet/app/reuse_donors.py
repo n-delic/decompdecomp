@@ -6,6 +6,8 @@ all their trials were cached misses. This cache lasts one reuse pass, so the nex
 from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 
+from ..metadata_rows import rows as metadata_rows
+
 MAX_BODIES = 1024
 NEARBY_SLOTS = 32
 
@@ -21,7 +23,8 @@ class Donors:
             other = store.one('SELECT id,arch,big_endian FROM projects WHERE id=?', project['id'])
             if other is None:raise ValueError('Donor project metadata is missing from its database.')
             if (other['arch'], other['big_endian']) != (proj['arch'], proj['big_endian']):continue
-            self.rows.extend(dict(row) for row in store.all(
+            self.rows.extend(metadata_rows(store,
+                ('function_id','project_id','size','compiler','fingerprint','vram'),
                 'SELECT i.function_id,i.project_id,i.size,i.compiler,i.fingerprint,f.vram FROM cross_game_index i '
                 "JOIN functions f ON f.id=i.function_id AND f.status='matched' WHERE i.project_id=?",
                 other['id']))
