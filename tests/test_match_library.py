@@ -665,3 +665,24 @@ def test_project_startup_archive_does_not_open_idle_donors(library, monkeypatch)
     monkeypatch.setattr(lib, 'prune_payloads', lambda *_: pytest.fail('global pruning on project view'))
     lib.backfill(only_changed=True, slug='game1')
     assert opened and lib.summary()['occurrences'] == 1
+
+
+def test_archive_batches_source_receipt_reads_without_loading_other_function_bodies(library,monkeypatch):
+    from decompnet import payload_storage
+    net,lib=library
+    with net.store.tx() as db:
+        body='int f1(void){return 42;}\n'+'/* synthetic */\n'*100
+        db.execute('UPDATE functions SET matched_source=?,matched_at=? WHERE id=1',(body,1794217763.152982))
+    expected=lib.snapshot(net.project_row('game1'),1)
+    with net.store.tx() as db:
+        unused='/* unrelated candidate */\n'*100
+        db.execute('UPDATE functions SET asm=?,seed=?,best_source=? WHERE id=1',(unused,unused,unused))
+        db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?",(payload_storage.digest(unused),))
+    writes=[];original=net.store.all
+    monkeypatch.setattr(lib,'write',lambda rows:writes.extend(rows))
+    def read(sql,*args):
+        assert not sql.startswith('SELECT id,name,unit,vram,rom_offset,size,matched_source,matched_at,meta FROM functions'), 'native archive source rows'
+        return original(sql,*args)
+    monkeypatch.setattr(net.store,'all',read)
+    lib.archive_project(net.project_row('game1'))
+    assert writes==[expected]

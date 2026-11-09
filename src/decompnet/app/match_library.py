@@ -276,10 +276,10 @@ class Library:
                 inputs=self._inputs(current)
                 ids=[row['id'] for row in rows[start:start+ARCHIVE_BATCH]]
                 marks=','.join('?' for _ in ids)
-                fields='id,name,unit,vram,rom_offset,size,matched_source,matched_at,meta'
-                functions={row['id']:row for row in self.net.project_store(proj['id']).all(
-                    f"SELECT {fields} FROM functions WHERE project_id=? AND status='matched' AND id IN ({marks})",
-                    proj['id'],*ids)}
+                from ..function_rows import selected
+                fields=('id','name','unit','vram','rom_offset','size','matched_source','matched_at','meta')
+                functions={row['id']:row for row in selected(self.net.project_store(proj['id']),
+                    proj['id'],ids,columns=fields,matched_only=True)}
                 proofs={row['function_id']:row for row in self.net.project_store(proj['id']).all(
                     f'SELECT function_id,source,header,details FROM verified_matches WHERE function_id IN ({marks})',
                     *ids)} if inputs['proofs'] else {}

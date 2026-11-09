@@ -84,3 +84,22 @@ def test_damaged_selected_field_fails_and_other_project_is_ignored(saved_sources
     assert function_rows.selected(store, 2, [fid]) == []
     with pytest.raises(sqlite3.OperationalError, match='user-defined function'):
         function_rows.selected(store, 1, [fid])
+
+
+def test_narrow_matched_snapshot_does_not_read_unrequested_payloads_or_targets(saved_sources):  # noqa: F811
+    store, _ = saved_sources
+    columns=('id','name','matched_source','matched_at')
+    ids=[r['id'] for r in store.all('SELECT id FROM main.functions')]
+    expected=[dict(r) for r in store.all('SELECT id,name,matched_source,matched_at FROM functions '
+        "WHERE project_id=1 AND status='matched' ORDER BY id")]
+    def narrow(action, table, column, *_):
+        if action==sqlite3.SQLITE_READ and table=='functions' and column in {'asm','target','seed','best_source','unpolished_source'}:
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+    reader=store._reader();reader.set_authorizer(narrow)
+    try:
+        assert function_rows.selected(store,1,ids,columns=columns,matched_only=True)==expected
+    finally:reader.set_authorizer(None)
+    assert function_rows.selected(store,1,ids,columns=('id',)) == [{'id':r['id']} for r in legacy(store,1,ids)]
+    with pytest.raises(ValueError,match='columns'):
+        function_rows.selected(store,1,ids,columns=('id','not_a_column'))
