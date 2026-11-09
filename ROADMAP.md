@@ -927,8 +927,8 @@ similar C through objdiff. Other processors need an instruction reader for this 
 A project tab maps every byte of an imported ROM analysis image, including unknown and
 unmapped ranges. Inspect recorded functions/data symbols, interior-address references,
 overlay ambiguity, bounded hex/text previews, sampled pointer chains, format signatures
-and bounded gzip/zlib validation. Save local labels and evidence notes. A user-started,
-project-scoped scan offers Stop, measured progress and reattachment in another window;
+and bounded gzip/zlib validation. Save local labels and evidence notes. Opening the tab starts a
+project-scoped scan with Stop, measured progress and reattachment in another window;
 a stopped rescan retains the previous complete map. Classification is separate from
 matching and never establishes that an unreferenced region is unused.
 

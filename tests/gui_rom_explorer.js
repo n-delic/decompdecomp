@@ -32,11 +32,41 @@ function setup(){
     t.context.reply=(url,opts)=>opts?.method==='POST' ? start.promise : Promise.resolve({available:true,size:20,regions:[]});
     t.context.follow=()=>follow.promise;
     const promise=t.run('scanRomExplorer()');await tick();
-    assert.equal(t.context.$('romScan').disabled,true);assert.equal(t.calls.length,1);
+    assert.equal(t.context.$('romReload').disabled,true);assert.equal(t.calls.length,1);
     await t.run('scanRomExplorer()');assert.equal(t.calls.length,1);
     start.resolve({job:'one'});await tick();assert.equal(t.context.$('romStop').hidden,false);
     follow.resolve({});await promise;
-    assert.equal(t.context.$('romScan').disabled,false);assert.equal(t.context.$('romStop').hidden,true);assert.equal(t.renders.length,1);
+    assert.equal(t.context.$('romReload').disabled,false);assert.equal(t.context.$('romStop').hidden,true);assert.equal(t.renders.length,1);
+  }
+  // Every supported tab entry starts once, including when a saved map exists.
+  // Completion and Stop do not trigger another automatic pass.
+  {
+    const t=setup();
+    t.context.reply=async(url,opts)=>url.includes('view=status') ? {supported:true} : opts?.method==='POST' ? {job:'new'} : {available:true,size:20,regions:[]};
+    await t.run('loadRomExplorer()');
+    assert.equal(t.calls.filter(c=>c.options?.method==='POST').length,1);
+    await t.run('loadRomExplorer()');
+    assert.equal(t.calls.filter(c=>c.options?.method==='POST').length,2);
+    assert.ok(!source.includes("$('romScan')"));
+  }
+  {
+    const t=setup();t.context.reply=async()=>({supported:false});await t.run('loadRomExplorer()');
+    assert.equal(t.calls.length,1);assert.equal(t.context.$('romReload').hidden,true);
+  }
+  {
+    const t=setup(),status=deferred();t.context.reply=()=>status.promise;
+    const loading=t.run('loadRomExplorer()');t.context.S.tab='overview';status.resolve({supported:true});await loading;
+    assert.equal(t.calls.length,1,'Leaving during discovery must not start new work');
+  }
+  // Reopening while the start response is delayed reuses that request.
+  {
+    const t=setup(),start=deferred();
+    t.context.reply=async(url,opts)=>url.includes('view=status') ? {supported:true} : opts?.method==='POST' ? start.promise : {available:true,size:20,regions:[]};
+    const first=t.run('loadRomExplorer()');await tick();
+    const second=t.run('loadRomExplorer()');await tick();
+    assert.equal(t.calls.filter(c=>c.options?.method==='POST').length,1);
+    start.resolve({job:'pending'});await Promise.all([first,second]);
+    assert.equal(t.renders.length,1);
   }
   // Fresh windows discover active work before any large saved-map request.
   {
@@ -44,8 +74,8 @@ function setup(){
     t.context.reply=async url=>url.includes('view=status') ? {supported:true,job:{id:'live',state:'running'}} : {available:false,regions:[]};
     t.context.follow=id=>{followed=id;return job.promise;};
     const promise=t.run('loadRomExplorer()');await tick();
-    assert.equal(followed,'live');assert.equal(t.calls.length,1);assert.equal(t.context.$('romScan').disabled,true);
-    job.resolve({});await promise;assert.equal(t.calls.length,2);assert.equal(t.context.$('romScan').disabled,false);
+    assert.equal(followed,'live');assert.equal(t.calls.length,1);assert.equal(t.context.$('romStop').hidden,false);
+    job.resolve({});await promise;assert.equal(t.calls.length,2);assert.equal(t.context.$('romReload').disabled,false);
   }
   // Errors and Stop retain the previous complete map; Stop acknowledges a delayed
   // request and surfaces failures without losing the running job.
@@ -62,19 +92,19 @@ function setup(){
     stop.reject(new Error('Cannot stop yet'));await stopping;assert.equal(t.context.$('romStop').disabled,false);
     assert.match(t.run('romView().log.textContent'),/Cannot stop yet/);
     const error=new Error('Scan stopped');error.job={state:'cancelled'};follow.reject(error);await running;
-    assert.equal(t.context.$('romScan').disabled,false);assert.equal(t.context.$('romStop').hidden,true);assert.equal(t.renders.at(-1).size,10);
+    assert.equal(t.context.$('romReload').disabled,false);assert.equal(t.context.$('romStop').hidden,true);assert.equal(t.renders.at(-1).size,10);
   }
   // Navigation and late statistics cannot put another project's map in this view.
   {
     const t=setup(),saved=deferred();
-    t.context.reply=url=>url.includes('view=status') ? Promise.resolve({supported:true}) : saved.promise;
+    t.context.reply=url=>url.includes('view=status') ? Promise.resolve({supported:true,job:{id:'live',state:'running'}}) : saved.promise;
     const promise=t.run('loadRomExplorer()');await tick();t.context.S.slug='second';saved.resolve({available:true,size:999});await promise;
     assert.equal(t.renders.length,0);assert.equal(t.run("romView('first').report"),null);
   }
   // Start failure restores controls and leaves a visible error.
   {
     const t=setup();t.context.reply=async()=>{throw new Error('Disk unavailable');};await t.run('scanRomExplorer()');
-    assert.equal(t.context.$('romScan').disabled,false);assert.match(t.run('romView().log.textContent'),/Disk unavailable/);
+    assert.equal(t.context.$('romReload').disabled,false);assert.match(t.run('romView().log.textContent'),/Disk unavailable/);
   }
   // Numeric sort, missing-last, row identity and function filter survive refreshes.
   {

@@ -31,7 +31,8 @@ a tenth of a second (1.4 s before), and agents restart by themselves after a cra
 
 ## Explore the rest of a ROM
 
-Open a ROM project → **ROM Explorer** → **Scan ROM**. The map covers the entire imported
+Open a ROM project → **ROM Explorer**. Opening the tab automatically scans the image;
+an existing scan is reattached instead of duplicated. The map covers the entire imported
 analysis image, including unknown bytes. Click a region for hex/text previews, imported
 symbols, function references, sampled pointer chains and format evidence. Labels distinguish
 recorded import facts, validated compressed streams and tentative clues. Save your own
