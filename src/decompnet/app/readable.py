@@ -257,8 +257,12 @@ class Readability:
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
                   "is;\n- name things in the style the names around them already use.\n")
+        from ..release_receipts import current
+        lease = current(self.net, fn, agent)
         return (f"{given_up}MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
-                f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n\n"
+                f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n"
+                f"claim_token: {lease}\n"
+                "Pass this claim_token to release_function if you leave this function for another helper.\n\n"
                 f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
                 "Make it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
