@@ -25,8 +25,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Status | recommended | beta | beta | beta | beta | beta | beta | beta | beta | beta | the project's own |
 | Start from your own copy | ✓ | ✓ | ✓ | ✓ decrypted EBOOT.ELF | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ ROM | ✓ | ✓ | ✓ default.xbe, .xiso or Redump .iso | ✓ | fork by address |
 | Judge | link · compare | link · compare | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff | objdiff |
-| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | — | — |
+| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — (no assembly to read) | by architecture |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | ✓ (RTTI, vtables) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -34,24 +34,24 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs (64-bit: the funclets its exception data names) | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Pieces of functions joined to their function | — | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`; 64-bit: .pdata's extents, none to join) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | ✓ import stubs (NIDs) and `sc` calls | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — | — |
+| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | partly: code no C makes set aside; no new analysis yet | ✓ | ✓ | ✓ | ✓ |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | ✓ import stubs (NIDs) and `sc` calls | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — (BIOS calls set aside, not named) | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
 | Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | ✓ | ✓ | — | ✓ your Visual C++, for 32-bit games (64-bit ones build with the pack's 2017) | ✓ your XDK | — | the project's own build |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | ✓ | — | the project's build | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ over source files | ✓ | — | — |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | ✓ | — | — (the project's flags only) | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | — (the project's flags only) | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ | — | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ | — | ✓ from scratch: per source file; else the project's build | ✓ over source files | ✓ | ✓ from scratch: per source file; else the project's build | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ (named by RTTI where the program has it) | ✓ (RTTI where the program has it) | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | names (types and prototypes: —) | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols (64-bit games': untested) | — (an XBE has none) | — | — |
-| Twins across your games | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (between PC projects) | ✓ (as PC's; not run on two Xbox games yet) | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ (between project-mode games; not run on two GameCube games yet) | ✓ (between PC projects) | ✓ (as PC's; not run on two Xbox games yet) | ✓ (between project-mode games; not run on two DS games yet) | — |
 | Named Claude accounts, assigned per helper; recorded usage per account | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
-| Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
+| Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | partly: the project's git, best attempts saved; a new copy starts without them | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved; the PE view made again from your XBE or disc | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | ✓ | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
@@ -68,10 +68,11 @@ Where to start on a gap:
   complete paths on Windows.
 - **Public project build prerequisite hints** run in `ForkProject.run` for public checkouts. The other columns
   describe starting a game from scratch and do not use public-project setup.
-- **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
-  mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). x86
-  has its reader (`arch/x86_fields.py`): PC classes and struct layouts come from it (`Console.classes`,
-  `Console.structs`); a PowerPC reader would give GameCube and Wii the same through those parts.
+- **PowerPC (GameCube, Wii) and ARM (DS) readers.** For these processors, class recovery and struct layouts would
+  work on a project's objects in fork mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable
+  pointer is often not at offset 0). x86 has its reader (`arch/x86_fields.py`): PC classes and struct layouts come
+  from it (`Console.classes`, `Console.structs`); PowerPC and ARM readers (`arch/ppc.py`, `arch/arm.py`, their
+  `Arch.field_accesses`) would give GameCube, Wii and DS the same through those parts.
 - **Xbox** shares the Windows PC column's code (`consoles/xbox/` only makes the program); a gap there is usually
   a PC gap.
 - **Windows PC**: autopilot's Ghidra drafts compile, but rarely match beyond the tiny shapes exact drafts cover:
@@ -95,7 +96,8 @@ Where to start on a gap:
   aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
   can't take one in yet.
 - **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
-  (`Console.cut_function`: PC's functions.json). DS and GameCube projects need theirs.
+  (`Console.cut_function`: PC's functions.json). DS and GameCube/Wii projects need theirs, so their agents aren't
+  offered `report_boundary` yet.
 - **Tidying a ROM project**: its C is the database's, one function at a time, with one shared header per segment
   (`edit_context`), so there's no file to tidy (`app/readable.py`, `_untidy`). The header is the place to start: its
   types and names, then the functions' C that uses them, each still matching.
@@ -107,8 +109,9 @@ Where to start on a gap:
   and the sign of a field the code only or's and tests.
 - **Twins across games** and **restoring a save** work on ROM projects (`app/twins.py`, `app/saves.py`). In project
   mode a project's matched C is its git repository; twins across games pair two projects' target objects
-  (`Twins._across_projects`, PC so far: GameCube, Wii and DS projects of two games would work the same way but
-  weren't tried); what's missing is opening a save's best attempts in a new copy of the project.
+  (`Twins._across_projects`), the same path for every project-mode console (PC proved it; GameCube, Wii and DS use
+  that code, but weren't run on two of their games); what's missing is opening a save's best attempts in a new copy
+  of the project.
 
 ## Recently done
 
@@ -284,8 +287,8 @@ Where to start on a gap:
   (`rangecheck.evaluate`); refuted on both sides it's a quirk, with a note; a file nobody can tell goes to an agent.
   The Settings answer shows the survey and checks. On the demo, the file holding a function matched with 6.0
   refutes 7.1, built for real, and keeps 6.0; a Visual C++ 6.0 game's header names five 6.0 builds, so its survey
-  has nothing else to try. DS has the code path (its files each have a CodeWarrior) but no Rich header and wasn't
-  run.
+  has nothing else to try. DS has the code path (its files each have a CodeWarrior); where the ROM names no compiler
+  the survey tries the project's own versions, nearest first, but a real DS game hasn't been run.
 - **Windows PC: function-end reports.** Ghidra sometimes runs a function on into the data after its return, or
   into the next function. `report_boundary` works on PC projects: once three agents of two models give the same
   end (an address, or an offset into the function), the function ends there and the rest becomes a function of its
@@ -442,8 +445,9 @@ Where to start on a gap:
 - **Agents join what the rules miss** (project mode). `join_functions(function, with_function, reason)`: once 3
   agents of 2 models say two functions are one the analysis cut, the console joins them (DS: `recover.join_functions`,
   across two source files too), checked as an analysis is (the game rebuilt byte for byte, else taken back), never a
-  matched function; a refused join is remembered. Check again only ever joins, so what agents joined stays. Other
-  project consoles keep the agents' agreement until they can join.
+  matched function; a refused join is remembered. Check again only ever joins, so what agents joined stays. A
+  console that can't join yet (GameCube/Wii) isn't offered `join_functions`, and a join is refused before any votes
+  are recorded, so nothing goes into `joins_refused`.
 - **What no C makes is out of agents' way, and progress counts the rest.** On a DS game 159 of 557 open functions
   were pieces of others (ds-decomp's symbols in the middle of functions: a lone epilogue, a register save running on
   into the next symbol, a lone `bx ip`), each given up on by five to seven agents in turn. ARM code that pops pc
@@ -528,8 +532,8 @@ Where to start on a gap:
 - **Reimport a ROM project** (Settings): replace the split from a newly selected copy, keeping matched C only where
   its target is unchanged, plus notes, settings, saves and the names agents gave (functions are paired by address).
   A matched function the new split doesn't have keeps its C in a note. PC projects reimport too (Ghidra again);
-  other project-mode consoles can't yet: their project's own analysis makes the functions, and Check again redoes
-  what decompdecomp adds to it.
+  other project-mode consoles can't yet: their project's own analysis makes the functions (DS's Check again redoes
+  what decompdecomp adds to it; GameCube/Wii's doesn't yet: Next).
 - **Polish matched code** (ROM projects): helpers give matched functions real names, types and a comment; a change
   counts only when the function still matches. The project shows matched and readable.
 - **Shared knowledge**: what agents learn about a game reaches every agent once helpers of two different models
@@ -567,12 +571,12 @@ Where to start on a gap:
   follow the page's theme too. Closing asks whether to keep helpers working. Kernel jobs end helper children after
   a session or an app crash. Tools have pinned Windows builds; Linux-only compilers use WSL 2 with Linux-side tool
   and build caches. Windows CI checks the native and portable code beside the existing Linux checks.
-- **Struct layouts from loads and stores** (MIPS: PlayStation 2, N64). Every load and store through a function's
-  pointer arguments, the pointers loaded from them and globals, made into types along the call graph: the brief
-  names each pointer argument's likely fields (offset, width, how many functions agree), `guess_struct` writes the
-  struct as C, says where else the type flows and which name matched code already gives it. Checked against the
-  structs agents gave matched functions on GTA San Andreas: 95% of the offsets it proposes from other functions are
-  right. PowerPC and x86 need their instruction readers (`Arch.field_accesses`).
+- **Struct layouts from loads and stores** (MIPS: PlayStation 2, N64; x86: Windows PC, Xbox). Every load and store
+  through a function's pointer arguments, the pointers loaded from them and globals, made into types along the call
+  graph: the brief names each pointer argument's likely fields (offset, width, how many functions agree),
+  `guess_struct` writes the struct as C, says where else the type flows and which name matched code already gives it.
+  Checked against the structs agents gave matched functions on GTA San Andreas: 95% of the offsets it proposes from
+  other functions are right. x86's reader is `arch/x86_fields.py`; PowerPC and ARM need theirs (`Arch.field_accesses`).
 - **Range checks** (MIPS ROM projects). An agent's "this range was built by another compiler" is a hypothesis: the
   judge tests the functions next to it (their matches, agents' attempts, the survey, habits), and where nothing
   settles it the nearest neighbour goes to an agent as a task. A range applies once a second function matches only
@@ -602,6 +606,61 @@ Their projects (dtk-template, ds-decomp) take CodeWarrior by version from the co
 holds every build known, so no game has needed one of its own yet. When one does: the project's build gets a
 compilers folder of the user's beside the archive's (dtk-template's configure.py reads one), and the console lists
 its versions (`Console.kit_compilers`), as Windows PC does for Visual C++ through `--own`.
+
+### GameCube, Wii and DS: the rest of the table (#232)
+
+PC got these first; these are the columns still short. In progress this round: a DS autopilot that says why it has
+no drafts, and the DS latest/best attempt switch (PR #254). The rest:
+
+- **Drafts in project mode** (`app/drafts.py`, `app/forkengine.py`). The background drafter starts only for a ROM
+  project or a console whose `own_drafts` is set (PC), and `redraft` refuses a project-mode console that isn't PC: a
+  GameCube or Wii m2c draft is made once and never follows the headers, and DS has no draft at all, because
+  `forks/drafts.py` looks for assembly in the project tree and a ds-decomp project keeps only delinked objects. Make
+  the drafter cache and remake m2c drafts when a header changes, let `redraft` pass an agent's declarations to m2c
+  (`seeds.generate_from_asm`), and for DS read the unit's target object (`ForkProject.unit(...).target`) or write a
+  temporary `.s` for m2c. The DS autopilot's "no drafts" guard is in progress this round.
+
+- **C++ methods as `Class::method` on GameCube, Wii and DS.** The rewrite is `Arch.method_draft`, which only x86 has
+  (`arch/x86.py`), and the class reader is MIPS and x86 (`classes.py`); both need the PowerPC/ARM readers in "C++
+  classes and struct layouts for PowerPC and ARM" below. Then `_method_draft` (`app/forkengine.py`) and the brief's
+  class lines work without a console-specific branch.
+
+- **Check again and Reimport on GameCube/Wii; Reimport on DS** (`Core.recheck`, `Console.on_start`,
+  `Console.reimport`). Check again calls the console's `on_start`; GameCube/Wii keep the default no-op, so they only
+  set aside code no C makes, and `reimports` is PC's alone. Give `consoles/gc_wii/scratch.py` an analysis step like
+  DS's `consoles/nds/recover.py` (dtk's splits and assembly, through `ForkEngine.reanalyse`), then a reimport that
+  runs dtk again and pairs functions by address; DS's reimport runs `dsd` and `recover.py` again.
+
+- **Compiler map, survey, range checks and flag search on GameCube, Wii and DS** (`app/filecompilers.py`,
+  `app/rangecheck.py`, `ForkEngine.search_flags`). The map and the judge's survey work over source files where
+  `Console.file_compiler` is set: a GameCube, Wii or DS program names no compilers, so the survey tries up to six of
+  the project's own versions, nearest its own first, and range checks use the same candidates; a public fork's build
+  decides alone. Their agents are offered `compiler_map`. `search_flags` is not offered, because `Console.file_flags`
+  is `None`: start with per-file flags in dtk's `configure.py` and DS's build config, then `file_flags`/`flag_variants`
+  as PC's.
+
+- **Pieces of functions on ROM projects and GameCube/Wii** (`Console.join_functions`, `rom/split.py`,
+  `arch/mips.py`, `arch/ppc.py`). DS (`recover.merge_pieces`) and PC (`scratch.merge_pieces`) join what their
+  analyzers cut, and their agents are offered `join_functions`; N64, PS1, PS2 and GameCube/Wii have neither a piece
+  rule nor a join (GameCube/Wii refuse one before any votes and don't offer the tool), though a saved layout can be
+  joined (`rom/split.join_saved_functions`). Add `Arch.piece` for MIPS and PowerPC, then a ROM project join that
+  keeps the split's layout and rebuilds; GameCube/Wii join in `consoles/gc_wii/scratch.py` as DS's does.
+
+- **Kernel and SDK library code set aside and named (N64, GameCube, Wii, DS)** (`Console.sets_aside`,
+  `consoles/*/scratch.py`, `arch/arm.py`). PC and Xbox set aside the code their compiler and libraries generate; these
+  consoles count their SDK's linked-in library code as the game's, and DS's BIOS calls are set aside as assembly
+  without their names. Start with known-library signatures or a hash list (`Console.library_candidate`, `kits/` for
+  SDKs) and name the DS `svc` numbers as PS2's syscalls are (`consoles/ps2/syscalls.py`).
+
+- **The game's own debug symbols on N64, PS1, GameCube, Wii and DS** (`Console.debug_info`/`debug_of`,
+  `consoles/ps2/debuginfo.py`, `consoles/pc/debuginfo.py`). PS2 reads STABS/DWARF 1 and PC its PDB, map and COFF
+  symbols; these consoles return nothing. Start with a map or SYM file the user's copy has (the common retail
+  formats carry none), then the DWARF a full ELF or development build keeps, and give the function's brief its
+  prototype and types through `debug_brief`.
+
+- **Saved best attempts in a new copy (project-mode games)** (`app/saves.py`, `_save_best` and `_judge_saved`). A
+  project's save writes each open function's closest attempt, but restoring a save judges the matches and leaves
+  `best/` behind. Open those attempts in the new copy too, by function name, and keep them as the functions' best.
 
 ### PlayStation 3 from your own copy
 
@@ -787,11 +846,14 @@ class and the parameter types, so carrying them over gives agents real signature
 constants they use, spread the pairs through the call graph, and let the user approve the names in bulk (as boundary
 reports are approved now). Names only: matching is unaffected. It also names the classes `get_class` finds.
 
-### C++ classes for PowerPC
+### C++ classes and struct layouts for PowerPC and ARM
 
 The class recovery reads MIPS and x86 (Windows PC: RTTI's names, the classes of code built without it, and their
-fields: done). Left: GameCube and Wii (CodeWarrior: the vtable pointer often isn't at offset 0), with a PowerPC
-reader (`Arch.field_accesses`), in fork mode.
+fields: done), and struct layouts read MIPS and x86 loads and stores. Left: GameCube and Wii (CodeWarrior: the vtable
+pointer often isn't at offset 0) with a PowerPC reader, and DS with an ARM one, in fork mode: a class reader and the
+processor's `Arch.field_accesses` (`arch/ppc.py`, `arch/arm.py`), which `classes.from_facts` and `structs.py` use as
+x86's do (`arch/x86_fields.py`). GBA gains the ARM reader too. Until then their agents aren't offered `get_class` or
+`guess_struct`.
 
 ### A modding-ready check for the export
 
