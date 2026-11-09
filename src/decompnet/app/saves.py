@@ -605,7 +605,7 @@ def _source_files(rows) -> dict[str, str]:
 
 @phase('progress_render')
 def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None = None,
-            readme_key: tuple | None = None) -> tuple[dict[str, str], dict]:
+            readme_key: tuple | None = None, write_readme: bool = True) -> tuple[dict[str, str], dict]:
     proj = net._project(slug)
     cfg = net.cfg(proj)
     readme_folder = folder or default_folder(net, slug)
@@ -620,7 +620,7 @@ def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None =
     for unit in sorted(units):
         files["include/" + _header_file(unit)] = (contexts[unit] or {"header": ""})["header"]
     files[MANIFEST] = json.dumps(manifest, indent=1) + "\n"
-    if readme_key is None or _readme_key(manifest) != readme_key:
+    if write_readme and (readme_key is None or _readme_key(manifest) != readme_key):
         _write_readme(net, proj, readme_folder, manifest, functions)
     matched = sum(1 for f in functions.values() if "matched_by" in f)
     return files, {"matched": matched, "best": len(functions) - matched}
@@ -628,7 +628,7 @@ def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None =
 
 @phase('progress_render')
 def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool = False,
-                    readme_key: tuple | None = None) -> tuple[dict[str, str], dict]:
+                    readme_key: tuple | None = None, write_readme: bool = True) -> tuple[dict[str, str], dict]:
     """Render the manifest and only the named functions' files (plus every header when one changed).
 
     A match, a rename or a header edit touches a handful of files; rebuilding the other 17,999 sources' text is what
@@ -648,7 +648,7 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
             chunk = names[start:start + 400]
             selected = _function_rows(net, pid, sources=True, names=chunk)
             files.update(_source_files(selected))
-    if readme_key is None or _readme_key(manifest) != readme_key:
+    if write_readme and (readme_key is None or _readme_key(manifest) != readme_key):
         _write_readme(net, proj, folder, manifest, functions)
     matched = sum(1 for f in functions.values() if "matched_by" in f)
     return files, {"matched": matched, "best": len(functions) - matched}

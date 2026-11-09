@@ -25,6 +25,7 @@ import stat
 import threading
 import time
 from contextlib import ExitStack, contextmanager
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -438,6 +439,7 @@ class Progress:
         self.activity: dict[str, dict] = {}
         self.paused: set[str] = set()
         self.batches: dict[str, int] = {}
+        self.rendering: dict[str, tuple[Path, tuple]] = {}
         self.verification_slot = threading.Semaphore(1)
         self.verification_owner: tuple[str, float] | None = None
         from .progress_file_cache import FileCache
@@ -1066,6 +1068,16 @@ class Progress:
                 threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
             if self._batching(slug):
                 return False
+            while (preparing := self.rendering.get(slug)) is not None:
+                if saves.default_folder(self.net, slug) != preparing[0] or self._signature(preparing[0]) != preparing[1]:
+                    break  # External contributions still take the ordinary import path.
+                if getattr(self.local, 'foreground', False) or self.viewing:
+                    # Only DB-to-disk preparation is in flight. Foreground work can
+                    # use the current DB; explicit saves/checkpoints wait for it.
+                    return False
+                if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
+                self._check_paused(slug)
+                threading.Condition(self._project_lock(slug)).wait(timeout=.1)
             if logger is not None:getattr(logger, "check_cancel", lambda: None)()
             self._check_paused(slug)
             self._activity(slug, phase="Reading saved files", done=0, total=None, function=None, full_recheck=False)
@@ -1250,6 +1262,40 @@ class Progress:
                        dirty.token, dirty_tokens)
         return bool(changes or removed)
 
+    def _prepare_publication(self, slug, folder, render):
+        """Read-only rendering may yield every recursive project lock acquisition.
+
+        The caller must validate its captured baseline, dirty generation, settings
+        and disk signature before any file write or dirty-token acknowledgment.
+        Only one off-lock renderer per project; a changed-file importer may still
+        render synchronously while overtaking this preparation.
+        """
+        if slug in self.rendering:
+            try:return True, render()
+            except BaseException as error:return False, error
+        condition = threading.Condition(self._project_lock(slug))
+        marker = (folder, self._signature(folder))
+        self.rendering[slug] = marker
+        outcome = []
+        context = copy_context()
+        def run():
+            self.local.busy = True
+            try:
+                outcome.append((True, context.run(render)))
+            except BaseException as error:
+                outcome.append((False, error))
+            finally:
+                self.local.busy = False
+                with condition:condition.notify_all()
+        worker = threading.Thread(target=run, name='saved-render-'+slug, daemon=True)
+        try:
+            worker.start()
+            while not outcome:condition.wait(timeout=.1)
+        finally:
+            self.rendering.pop(slug, None)
+        ok, result = outcome[0]
+        return ok, result
+
     def _publish_changes(self, slug: str, proj, folder: Path, baseline: _Baseline, dirty: _Dirty,
                          config_key: str) -> bool | None:
         """Publish only the files the database changed since the last sync; None means the folder moved meanwhile."""
@@ -1267,11 +1313,33 @@ class Progress:
         readme_key = None
         if baseline.projected.manifest is not None:
             readme_key = saves._readme_key(json.loads(baseline.projected.manifest))
-        if full:
-            files, _ = saves._render(net, slug, readme_key=readme_key)
-        else:
-            files, _ = saves._render_partial(net, proj, folder, names, headers=flags.headers,
-                                             readme_key=readme_key)
+        signature = self._signature(folder)
+        def render():
+            if full:
+                return saves._render(net, slug, readme_key=readme_key, write_readme=False)
+            return saves._render_partial(net, proj, folder, names, headers=flags.headers,
+                                         readme_key=readme_key, write_readme=False)
+        ok, prepared = self._prepare_publication(slug, folder, render)
+        # Cancellation and programming failures must survive even a stale receipt.
+        if not ok and not isinstance(prepared, (NetworkError, OSError, UnicodeError, json.JSONDecodeError)):
+            raise prepared
+        current_proj = net._project(slug)
+        # Another writer/publisher can overtake the read-only render. Discard all
+        # prepared bytes, including failures caused by inputs removed meanwhile.
+        # In particular never acknowledge a newer generation against older bytes.
+        if self._signature(folder) != signature:
+            return None
+        if (self._baseline(pid) is not baseline or self._dirty(pid) != dirty
+                or [dict(r) for r in self._dirty_files(pid)] != [dict(r) for r in rows]
+                or _config_key(current_proj, net.cfg(current_proj)) != config_key
+                or saves.default_folder(net, slug) != folder):
+            return False
+        self._check_paused(slug)
+        if not ok:raise prepared
+        files, _ = prepared
+        manifest = json.loads(files[saves.MANIFEST])
+        if saves._manifest_revision(manifest) != saves._next_revision(net, current_proj, folder):
+            return False
         changes = {name: text for name, text in files.items()
                    if baseline.projected.files.get(name) != _hash(text)}
         if full:
@@ -1294,6 +1362,8 @@ class Progress:
             if _hash(current) != baseline.disk.files.get(name):
                 return None  # a pull or an editor wrote while this was rendering: read it next pass
             expected[name] = current
+        if readme_key is None or saves._readme_key(manifest) != readme_key:
+            saves._write_readme(net, current_proj, folder, manifest, manifest['functions'])
         if not changes and not removed:
             self._remember_changes(pid, {}, files[saves.MANIFEST], config_key, dirty.token, dirty_tokens)
             return False
@@ -1446,12 +1516,16 @@ class Progress:
                     matched_names = {row['name'] for row in store.all(
                         "SELECT name FROM functions WHERE project_id=? AND status='matched'", pid)}
                     # Unpublished drafts still need judging. An already verified
-                    # match being exported is not an external source change.
+                    # match being exported is not an external source change. A
+                    # source that arrived on disk (including recovered missing C)
+                    # is a contribution even when its bytes equal today's DB.
+                    external_code = {path for path in changed if path in disk
+                                     and path.startswith(('src/', 'best/')) and path.endswith('.c')}
                     affected.update(source_name(path, matched_names | known_names) for path in applied_changed
                                     if path.startswith(('src/', 'best/')) and path.endswith('.c')
-                                    and source_name(path, matched_names | known_names) not in matched_names)
+                                    and (source_name(path, matched_names | known_names) not in matched_names or path in external_code))
                     applied_changed = {path for path in applied_changed
-                                       if path in input_changes or not path.startswith(('src/', 'best/'))
+                                       if path in input_changes or path in external_code or not path.startswith(('src/', 'best/'))
                                        or source_name(path, matched_names | known_names) not in matched_names}
                 all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")

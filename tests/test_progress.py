@@ -2836,3 +2836,217 @@ def test_deep_policy_reads_around_the_judge_do_not_sync_saved_files(project, mon
     monkeypatch.setattr(search, '_score_current', score)
     assert search._score(None, proj, fn, fn['best_source'], 1, None) == 1
     assert not net.progress.viewing and search._ahead_current is None
+
+
+@pytest.mark.parametrize('change', ['none', 'source', 'rollback', 'settings', 'external'])
+def test_publication_prepares_without_recursive_lock_and_revalidates_receipt(project, monkeypatch, change):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good prepared',best_score=10 WHERE name='f'")
+    prepared, release = threading.Event(), threading.Event()
+    render = saves._render_partial
+    calls = []
+    readme = saves._write_readme
+    def write_readme(*args, **kwargs):
+        assert threading.current_thread().name != 'saved-render-game', 'Read-only preparation wrote README'
+        return readme(*args, **kwargs)
+    monkeypatch.setattr(saves, '_write_readme', write_readme)
+    def held(*args, **kwargs):
+        result = render(*args, **kwargs)
+        calls.append(kwargs)
+        if len(calls) == 1:
+            prepared.set()
+            assert release.wait(5), 'test did not release prepared render'
+        return result
+    monkeypatch.setattr(saves, '_render_partial', held)
+    def publish():
+        # Exercise the caller's outer recursive acquisitions, not just sync's own.
+        with net.progress._project_lock('game'), net.progress._project_lock('game'):
+            return net.progress.sync('game', force=True)
+    def foreground():
+        with net.progress.foreground(), net.progress.batch('game'):
+            if change == 'source':
+                with net.store.tx() as db:
+                    db.execute("UPDATE functions SET best_source='good newer' WHERE name='f'")
+            elif change == 'rollback':
+                try:
+                    with net.store.tx() as db:
+                        db.execute("UPDATE functions SET best_source='uncommitted' WHERE name='f'")
+                        raise ValueError('rollback')
+                except ValueError:pass
+            elif change == 'settings':
+                proj=net.project_row('game');cfg=json.loads(proj['config']);cfg['instructions']='new settings'
+                with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending=pool.submit(publish)
+        assert prepared.wait(3)
+        blocked=False
+        try:
+            if change == 'external':
+                manifest(folder,instructions='external edit')
+                edit=pool.submit(net.progress.sync,'game',force=True)
+            else:edit=pool.submit(foreground)
+            try:
+                edit.result(timeout=2)
+                published_manifest=(folder/saves.MANIFEST).read_bytes()
+            except FutureTimeout:blocked=True
+        finally:release.set()
+        result=pending.result(timeout=5)
+        if blocked:edit.result(timeout=5)
+    assert not blocked, 'Foreground work waited for publication rendering while the project lock was held'
+    assert not net.progress.rendering
+    if change in ('source','settings','external'):
+        assert result is False, 'A stale prepared render must not publish or acknowledge newer work'
+        if change != 'external':
+            assert not (folder/'best/f.c').exists()
+            assert net.progress._dirty(net.store.one("SELECT id FROM projects WHERE slug='game'")[0]).token != net.progress._state(net.store.one("SELECT id FROM projects WHERE slug='game'")[0]).dirty_token
+        net.progress.sync('game',force=True)
+    else:assert result is True
+    if change == 'source':assert (folder/'best/f.c').read_text()=='good newer\n'
+    elif change != 'external':assert (folder/'best/f.c').read_text()=='good prepared\n'
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    if change=='settings':assert data['instructions']=='new settings'
+    if change=='external':
+        assert data['instructions']=='external edit'
+        assert (folder/saves.MANIFEST).read_bytes()==published_manifest
+    assert all(call['write_readme'] is False for call in calls)
+
+
+def test_failed_readonly_publication_preserves_error_and_pending_work(project, monkeypatch):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    before=(folder/saves.MANIFEST).read_bytes()
+    def failed(*args, **kwargs):raise NetworkError('Synthetic render failure.')
+    monkeypatch.setattr(saves,'_render_partial',failed)
+    with pytest.raises(NetworkError,match='Synthetic render failure'):
+        net.progress.sync('game',force=True)
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not (folder/'best/f.c').exists()
+    assert net.progress._dirty(net.store.one("SELECT id FROM projects WHERE slug='game'")[0]).functions
+    assert not net.progress.rendering
+
+
+def test_stale_render_failure_cannot_replace_newer_publication_state(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared, release=threading.Event(),threading.Event()
+    before=(folder/saves.MANIFEST).read_bytes()
+    def failed(*args, **kwargs):
+        prepared.set()
+        assert release.wait(5)
+        raise NetworkError('Removed input from an obsolete render.')
+    monkeypatch.setattr(saves,'_render_partial',failed)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True)
+        assert prepared.wait(3)
+        try:
+            with net.progress.foreground(), net.progress.batch('game'):
+                with net.store.tx() as db:
+                    db.execute("UPDATE functions SET best_source='good replacement' WHERE name='f'")
+        finally:release.set()
+        assert pending.result(timeout=5) is False
+    assert 'game' not in net.progress.errors
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not net.progress.rendering
+
+
+def test_pause_during_publication_preparation_prevents_file_writes(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, _=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event()
+    before=(folder/saves.MANIFEST).read_bytes();render=saves._render_partial
+    def held(*args, **kwargs):
+        result=render(*args, **kwargs);prepared.set()
+        assert release.wait(5)
+        return result
+    monkeypatch.setattr(saves,'_render_partial',held)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True)
+        assert prepared.wait(3)
+        try:net.progress.pause('game')
+        finally:release.set()
+        with pytest.raises(NetworkError,match='paused'):pending.result(timeout=5)
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not (folder/'best/f.c').exists()
+    assert not net.progress.rendering
+
+
+def test_explicit_publication_waiter_captures_completed_files(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+    net,folder,_=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event();render=saves._render_partial
+    def held(*args, **kwargs):
+        result=render(*args, **kwargs);prepared.set();assert release.wait(5);return result
+    monkeypatch.setattr(saves,'_render_partial',held)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        publisher=pool.submit(net.progress.sync,'game',force=True);assert prepared.wait(3)
+        waiter=pool.submit(net.progress.sync,'game',force=True)
+        try:
+            with pytest.raises(FutureTimeout):waiter.result(timeout=.05)
+            assert not (folder/'best/f.c').exists()
+        finally:release.set()
+        assert publisher.result(timeout=5)
+        assert waiter.result(timeout=5) is False
+    assert (folder/'best/f.c').read_text()=='good pending\n'
+
+
+def test_render_cancellation_survives_a_newer_dirty_generation(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net,folder,_=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event()
+    before=(folder/saves.MANIFEST).read_bytes()
+    def cancelled(*args, **kwargs):
+        prepared.set();assert release.wait(5);raise RuntimeError('Synthetic cancellation.')
+    monkeypatch.setattr(saves,'_render_partial',cancelled)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True);assert prepared.wait(3)
+        try:
+            with net.progress.foreground(),net.progress.batch('game'):
+                with net.store.tx() as db:db.execute("UPDATE functions SET best_source='good replacement' WHERE name='f'")
+        finally:release.set()
+        with pytest.raises(RuntimeError,match='Synthetic cancellation'):pending.result(timeout=5)
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not net.progress.rendering
+
+
+def test_publication_does_not_defer_import_from_new_progress_destination(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net,folder,_=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event();render=saves._render_partial
+    def held(*args, **kwargs):
+        result=render(*args, **kwargs)
+        if not prepared.is_set():
+            prepared.set();assert release.wait(5)
+        return result
+    monkeypatch.setattr(saves,'_render_partial',held)
+    before=(folder/saves.MANIFEST).read_bytes()
+    destination=folder.parent/'new-progress';shutil.copytree(folder,destination)
+    manifest(destination,instructions='destination contribution')
+    def change_destination():
+        with net.progress.foreground(),net.progress.batch('game'):
+            proj=net.store.one("SELECT * FROM projects WHERE slug='game'")
+            cfg=json.loads(proj['config']);cfg['progress_folder']=str(destination)
+            with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True);assert prepared.wait(3)
+        try:pool.submit(change_destination).result(timeout=3)
+        finally:release.set()
+        assert pending.result(timeout=5) is False
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))['instructions']=='destination contribution'
+    assert json.loads((destination/saves.MANIFEST).read_text())['instructions']=='destination contribution'
