@@ -227,6 +227,22 @@ browser. Saved scans refresh automatically after this detector update.
 RNC method-2 token grammar was checked against the
 [ScummVM decoder](https://github.com/scummvm/scummvm/blob/master/common/compression/rnc_deco.cpp).
 
+### Texture packs inside embedded ZIP archives
+
+N64 scans also recognize trailer-count texture packs inside embedded ZIP archives,
+including archives followed by ROM padding. CI4/CI8 palettes, RGBA32 images, multiple
+textures per pack, alternate palettes and supported CI4 frames are checked against
+complete member layouts. Use **Texture** in region details to choose a pack member's
+texture, then select its palette or frame. Saved preview settings retain these choices.
+Archive paths supply display names; no archive files are extracted or executed.
+
+The reader validates central/local headers, complete stored/deflate streams, lengths and
+CRC32. It checks up to 64 archive end records and 16,384 members per archive, with a
+4 MiB member limit and 64 MiB of attempted pack expansion per scan. Unsupported records,
+partial packs, odd-width packed CI4 rows, ZIP64, split/encrypted archives and other ZIP
+methods remain unclassified. Other archived asset formats need separate format adapters.
+The updated scan revision refreshes existing maps on tab entry, retaining local notes.
+
 ### Texture browser and playback
 
 Open the sibling **Texture browser** card for detected banks and structurally recognized

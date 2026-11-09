@@ -1,24 +1,32 @@
 /* Detected banks share the guarded preview API. No game data leaves this page. */
 function romTextureControlsHTML(region) {
-  const asset=region.detected_asset;if(!asset || ['audio','model'].includes(asset.media))return '';
-  const saved=region.annotation?.preview_settings || {},levels=asset.levels || [{width:asset.preview_settings.width,height:asset.preview_settings.height}];
+  const detected=region.detected_asset;if(!detected || ['audio','model'].includes(detected.media))return '';
+  const saved=region.annotation?.preview_settings || {},texture=Math.max(0,Math.min((detected.textures?.length||1)-1,Number(saved.texture)||0)),asset=detected.textures?.[texture]||detected,levels=asset.levels || [{width:asset.preview_settings.width,height:asset.preview_settings.height}];
   const select=(key,label,count,caption)=>`<label class="field"><span>${label}</span><select data-texture-${key}>${Array.from({length:count},(_,i)=>`<option value="${i}"${Number(saved[key] || 0)===i ? ' selected' : ''}>${caption(i)}</option>`).join('')}</select></label>`;
-  return `<div class="rom-asset-fields">${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
+  return `<div class="rom-asset-fields">${detected.textures?.length>1?select('texture','Texture',detected.textures.length,i=>{const s=detected.textures[i].preview_settings;return `${i+1} · ${s.width} × ${s.height} · ${s.format}`;}):''}${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
 }
 function setupRomTextureControls(body,region,active) {
   if(!region.detected_asset || ['audio','model'].includes(region.detected_asset.media))return;
   const get=key=>body.querySelector(`[data-texture-${key}]`),button=get('play'),status=get('status');
+  const current=()=>region.detected_asset.textures?.[Number(get('texture')?.value||0)]||region.detected_asset;
   let playing=false,timer=null,generation=0;
   const stop=(cancel=true)=>{
     playing=false;generation++;clearTimeout(timer);timer=null;
     if(cancel)body._romCancelPreview?.();
-    button.textContent='Animate frames';button.disabled=region.detected_asset.frames<2;
+    button.textContent='Animate frames';button.disabled=current().frames<2;
     status.textContent='Animation stopped. Frame, palette and mip selections are retained.';
   };
   body._romAnimationStop=stop;
   const native=()=>{
     for(const [key,value] of [['source','rom'],['format','auto'],['offset','0x'+region.start.toString(16)]]){const field=body.querySelector(`[data-asset-${key}]`);if(field)field.value=value;}
     body.querySelector('[data-asset-format]')?.onchange?.();
+  };
+  if(region.detected_asset.textures?.length>1)get('texture').onchange=()=>{
+    stop();const asset=current();
+    for(const [key,count] of [['frame',asset.frames],['palette',Math.max(1,asset.palettes)],['mip',1]]){
+      get(key).innerHTML=Array.from({length:count},(_,i)=>`<option value="${i}">${key==='mip'?'0':key==='palette'&&!asset.palettes?'Direct color (no palette)':`${i+1} of ${count}`}</option>`).join('');get(key).value='0';
+    }
+    button.disabled=asset.frames<2;native();body._romPreviewFrame?.();
   };
   for(const key of ['frame','palette','mip'])get(key).onchange=()=>{stop();native();body._romPreviewFrame?.();};
   get('rate').onchange=()=>stop();
@@ -31,12 +39,12 @@ function setupRomTextureControls(body,region,active) {
     const tick=async()=>{
       if(!playing || run!==generation || !active()){stop();return;}
       get('frame').value=String(next);
-      status.textContent=`Playing frame ${Number(get('frame').value)+1} of ${region.detected_asset.frames} · ${rate} frames/s requested`;
+      status.textContent=`Playing frame ${Number(get('frame').value)+1} of ${current().frames} · ${rate} frames/s requested`;
       const rendered=await body._romPreviewFrame();
       if(!active()){stop();return;}
       if(!playing || run!==generation)return;
       if(!rendered){stop(false);return;}
-      next=(next+1)%region.detected_asset.frames;
+      next=(next+1)%current().frames;
       timer=setTimeout(tick,1000/rate);
     };
     tick();
@@ -93,7 +101,7 @@ function renderRomTextureGallery(view=romView()) {
     const tasks=[];
     for(const bank of page) {
       const card=document.createElement('article');card.className='rom-texture-card';
-      card.innerHTML=`<button type="button" class="ghost rom-texture-open" data-texture-region${report.stale ? ' disabled' : ''}><span data-texture-thumb class="rom-texture-thumb">Waiting for preview</span><b>${esc(bank.name)}</b><span class="small">${esc(bank.format)} · ${bank.width && bank.height ? `${bank.width} × ${bank.height}` : 'dimensions unavailable'} · ${hex8(bank.offset)}</span><span class="small">${bank.asset.frames || 1} frame(s) · ${bank.asset.palettes ?? '—'} palette(s)</span></button><div data-texture-usage></div>`;
+      card.innerHTML=`<button type="button" class="ghost rom-texture-open" data-texture-region${report.stale ? ' disabled' : ''}><span data-texture-thumb class="rom-texture-thumb">Waiting for preview</span><b>${esc(bank.name)}</b><span class="small">${esc(bank.format)} · ${bank.width && bank.height ? `${bank.width} × ${bank.height}` : 'dimensions unavailable'} · ${hex8(bank.offset)}</span><span class="small">${bank.asset.textures?.length?bank.asset.textures.length+' texture(s) · ':''}${bank.asset.frames || 1} frame(s) · ${bank.asset.palettes ?? '—'} palette(s)</span></button><div data-texture-usage></div>`;
       card.querySelector('[data-texture-region]').onclick=()=>openRomRegion(bank.region);
       const usage=card.querySelector('[data-texture-usage]');
       const links=(names,label)=>{

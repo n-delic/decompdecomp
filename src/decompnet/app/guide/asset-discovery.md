@@ -35,7 +35,7 @@ A proposal is a JSON object with:
 Preview settings use source (rom/decoded), block_offset for a compressed block, and offset in the
 chosen source. Formats include rgba8888, rgb888, rgba5551-be, rgb565-be/le, i4/i8, ia4/ia8/ia16,
 ci4/ci8, palette-rgba5551/palette-ia16, pcm-s16be/le, pcm-u8, or auto for recognized formats.
-Native detected texture banks support zero-based frame, palette and mip indices with format=auto,
+Native detected texture banks support zero-based texture (for archived packs), frame, palette and mip indices with format=auto,
 source=rom and the selected region offset; the app resolves their validated offsets.
 Detected N64 audio banks accept a zero-based sample index with the same automatic source
 controls. Inspect samples and table_confidence first: valid control metadata does not confirm
