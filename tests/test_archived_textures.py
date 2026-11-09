@@ -148,3 +148,21 @@ def test_zip_data_descriptors_and_duplicate_end_records_are_bounded():
     members=asset_archives.zip_members(image)
     assert len(members)==1 and asset_archives.member_bytes(image,members[0])==pack()
     assert len(texture_packs.regions(image))==1
+
+
+def test_detector_revision_refreshes_saved_map_without_losing_notes(project,monkeypatch):  # noqa: F811
+    net,pid,root=project;image=archive();(root/'game.rom').write_bytes(image)
+    with net.progress.view():cfg=json.loads(json.dumps(net.cfg(net.project_row('game'))))
+    cfg['rom']['sha1']=hashlib.sha1(image).hexdigest()
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+    with monkeypatch.context() as old:
+        old.setattr(rom_explorer,'ANALYSIS_REVISION',rom_explorer.ANALYSIS_REVISION-1)
+        rom_explorer.run(net,'game',Log());report=rom_explorer.listing(net,'game')
+        row=next(r for r in report['regions'] if r.get('detected_asset'))
+        rom_explorer.annotate(net,'game',dict(region=row['id'],image_hash=report['image_hash'],name='My retained label',notes='Private notes'))
+    assert rom_explorer.listing(net,'game')['stale']
+    assert not rom_explorer.run(net,'game',Log()).get('cached')
+    current=rom_explorer.listing(net,'game')
+    assert not current['stale']
+    assert next(r for r in current['regions'] if r['id']==row['id'])['annotation']['notes']=='Private notes'
+    assert rom_explorer.run(net,'game',Log())['cached']
