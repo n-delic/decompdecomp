@@ -1,6 +1,7 @@
 """Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC, IDO and SN64 GCC, ROM mode.
 
 - audio.py: source-assisted B1 sound banks, sample tables and mono VADPCM previews.
+- resources.py: validated directory schemas, animation/world metadata and RNC extents.
 - models.py: validated indexed geometry and local mesh wireframes.
 - textures.py: source-assisted indexed texture banks and bounded RNC asset previews.
 - texture_packs.py: trailer-count image/palette packs inside embedded ZIP members.
@@ -73,13 +74,14 @@ class Nintendo64(Console):
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n'
 
     def asset_regions(self, image, *, context=None, **kwargs):
-        from . import audio, models, texture_packs, textures
-        return textures.regions(image, **kwargs)+texture_packs.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)+models.regions(image, **kwargs)
+        from . import audio, models, resources, texture_packs, textures
+        known=textures.regions(image, **kwargs)+texture_packs.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)+models.regions(image, **kwargs)
+        return known+resources.regions(image,known=known,**kwargs)
 
     def asset_preview(self, data, asset, selection):
-        from . import audio, models, texture_packs, textures
+        from . import audio, models, resources, texture_packs, textures
         if asset.get('layout')=='trailer-count-texture-pack':return texture_packs.preview(data,asset,selection)
-        return {'audio':audio.preview,'model':models.preview}.get(asset.get('media'),textures.preview)(data, asset, selection)
+        return {'audio':audio.preview,'model':models.preview,'metadata':resources.preview}.get(asset.get('media'),textures.preview)(data, asset, selection)
 
     def asset_decode(self, data):
         from .textures import decode

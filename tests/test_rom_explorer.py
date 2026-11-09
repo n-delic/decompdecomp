@@ -205,3 +205,24 @@ def test_hostile_header_density_is_bounded_but_byte_coverage_remains_complete(mo
     assert report['format_limit'] and 'limit reached' in report['note']
     assert sum(r['size'] for r in report['regions'])==400
     assert len(report['regions'])<20
+
+
+def test_rejected_and_unverified_compression_headers_do_not_classify_bytes(monkeypatch):
+    import decompnet.rom.explorer as module
+    bad=b'\x78\x9cgarbage'+b'\x1f\x8b\x08'+bytes(20)
+    report=analyse(bad,[],[],[])
+    assert not any(row['kind']=='compressed' for row in report['regions'])
+    assert any(e['confidence']=='rejected' for row in report['regions'] for e in row['evidence'])
+    monkeypatch.setattr(module,'MAX_DECODE_PROBES',0)
+    report=analyse(zlib.compress(b'valid but unprobed'),[],[],[])
+    assert not any(row['kind']=='compressed' for row in report['regions'])
+    assert any('budget' in e['reason'] for row in report['regions'] for e in row['evidence'])
+
+
+def test_native_resources_do_not_consume_the_generic_signature_budget(monkeypatch):
+    import decompnet.rom.explorer as module
+    monkeypatch.setattr(module,'MAX_FORMAT_CLUES',1)
+    image=bytes(32)+zlib.compress(b'genuine compressed payload')
+    asset=dict(offset=0,size=8,kind='data',label='Native record',confidence='validated')
+    report=analyse(image,[],[],[],assets=[asset])
+    assert any(r['kind']=='compressed' and r['confidence']=='validated' for r in report['regions'])

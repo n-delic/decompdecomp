@@ -30,7 +30,7 @@ def _clue(image, offset, budget):
     if head.startswith(b'\x1f\x8b\x08'):label = 'gzip'
     elif len(head) >= 2 and head[0] == 0x78 and (head[0]*256+head[1]) % 31 == 0:label = 'zlib'
     if label:
-        clue = dict(offset=offset, kind='compressed', label=label, confidence='tentative',
+        clue = dict(offset=offset, label=label, confidence='tentative',
                     reason='Recognized stream header; decoding not validated within the scan budget.')
         if budget[0] > 0:
             budget[0] -= 1
@@ -39,10 +39,11 @@ def _clue(image, offset, budget):
                 raw = image[offset:offset+DECODE_BYTES]
                 output = decoder.decompress(raw, DECODE_BYTES)
                 if decoder.eof:
-                    clue.update(confidence='validated', size=len(raw)-len(decoder.unused_data),
+                    clue.update(kind='compressed',confidence='validated', size=len(raw)-len(decoder.unused_data),
                                  expanded_size=len(output), reason='Decoder reached the stream end and validated its checksum.')
             except zlib.error:
-                clue['reason'] = 'Header resembles a compressed stream, but bounded decoding failed.'
+                clue['confidence']='rejected'
+                clue['reason'] = 'Rejected compression signature: decoding failed. These bytes are not classified as compressed.'
         return clue
     for magic, name, kind in ((b'Yaz0','Yaz0','compressed'), (b'Yay0','Yay0','compressed'),
                               (b'MIO0','MIO0','compressed'), (b'RNC','RNC','compressed'),
@@ -144,7 +145,7 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
             if hit.start() >= lo+PAGE_BYTES:break
             asset_index=bisect.bisect_right(asset_starts,hit.start())-1
             if hit.start()<contained_end or asset_index>=0 and hit.start()<asset_ends[asset_index]:continue
-            if len(clues)>=MAX_FORMAT_CLUES:
+            if len(clues)-len(assets)>=MAX_FORMAT_CLUES:
                 format_limit=True;break
             clue = _clue(image, hit.start(), budget)
             if clue:

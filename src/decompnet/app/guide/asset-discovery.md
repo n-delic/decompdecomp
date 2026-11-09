@@ -18,7 +18,7 @@ you do not edit files, compile, rename linker symbols or accept findings. ROM st
 
 A proposal is a JSON object with:
 - name: descriptive proposed local label, at most 120 characters; no invented semantic certainty.
-- kind: unknown, data, strings, pointer table, compressed, image, palette, audio, 3d model, font,
+- kind: unknown, data, strings, pointer table, compressed, image, palette, audio, 3d model, animation, collision, object placements, world grid, music sequence, demo, font,
   container or repeated bytes. These are advisory interpretations, never function classifications.
 - confidence: strong, tentative or unclear, expressing your assessment rather than proof/probability.
 - evidence, counter, uncertainty: concrete supporting evidence, counter-evidence (or none observed),
@@ -68,3 +68,5 @@ Automatic checks record supported parser results and compare proposed extents wi
 static loader arguments. They do not prove asset meaning, consumer dimensions or
 runtime execution. Similar-region search supplies structural leads, including
 common headers, compatible raw layouts and entropy. It never copies labels.
+
+Native directory evidence can supply resource paths and typed metadata. These are storage roles, not execution proof or recovered character/track names. Check the reported header/record limits; music sequence inspection does not synthesize audio, and animation metadata does not establish a pose. Failed zlib/gzip probes remain rejected evidence rather than compressed classifications.
