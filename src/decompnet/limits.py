@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
+import time
 from functools import lru_cache
 
 
@@ -103,22 +105,46 @@ def compiler_memory_limit() -> int:
     return mb << 20
 
 
-def _process_memory_tree(root_pid: int) -> list[tuple[int, int]]:
-    """Snapshot resident sizes (bytes) of a process and its descendants on macOS."""
-    try:
-        result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,rss='], capture_output=True,
-                                text=True, timeout=2, check=True)
-    except (OSError, subprocess.SubprocessError):
-        return []
-    children = {}
-    sizes = {}
-    for line in result.stdout.splitlines():
+# Concurrent compilers must not each spawn a system-wide ps every quarter second.
+# Keep the same per-tree enforcement, sharing only a very recent OS observation.
+_MEMORY_SNAPSHOT_LOCK = threading.Lock()
+_MEMORY_SNAPSHOT = None
+MEMORY_SNAPSHOT_SECONDS = 0.1
+
+
+def _process_memory_snapshot():
+    global _MEMORY_SNAPSHOT
+    with _MEMORY_SNAPSHOT_LOCK:
+        now = time.monotonic()
+        identity = (os.getpid(), subprocess.run)
+        if _MEMORY_SNAPSHOT is not None:
+            started, owner, children, sizes = _MEMORY_SNAPSHOT
+            if owner == identity and 0 <= now-started < MEMORY_SNAPSHOT_SECONDS:
+                return children, sizes
         try:
-            pid, parent, rss = map(int, line.split())
-        except ValueError:
-            continue
-        children.setdefault(parent, []).append(pid)
-        sizes[pid] = rss * 1024
+            result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,rss='], capture_output=True,
+                                    text=True, timeout=2, check=True)
+        except (OSError, subprocess.SubprocessError):
+            # Share failed attempts briefly too; queued watchdogs must not each
+            # wait through another two-second ps timeout. Never return old RSS.
+            _MEMORY_SNAPSHOT = (time.monotonic(), identity, {}, {})
+            return {}, {}
+        children, sizes = {}, {}
+        for line in result.stdout.splitlines():
+            try:
+                pid, parent, rss = map(int, line.split())
+            except ValueError:
+                continue
+            children.setdefault(parent, []).append(pid)
+            sizes[pid] = rss * 1024
+        # Age from the start of sampling: a slow ps must never extend freshness.
+        _MEMORY_SNAPSHOT = (now, identity, children, sizes)
+        return children, sizes
+
+
+def _process_memory_tree(root_pid: int) -> list[tuple[int, int]]:
+    """Resident sizes of this tree, from a bounded shared macOS process snapshot."""
+    children, sizes = _process_memory_snapshot()
     pending, seen = [root_pid], set()
     while pending:
         pid = pending.pop()

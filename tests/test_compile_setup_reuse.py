@@ -14,7 +14,7 @@ def configurations(tmp_path,monkeypatch):
     manifest=tool/'install.json';manifest.write_text('one')
     executable=tool/'cc';executable.write_text('one')
     tc=SimpleNamespace(local=False,via_vm=False,via_wsl=False,wine=False,requires=(),headers=())
-    monkeypatch.setattr(compile_configuration.toolchains,'registry',lambda:{'test':tc})
+    monkeypatch.setattr(compile_configuration.toolchains,'_registered',lambda tid:tc if tid=='test' else None)
     monkeypatch.setattr(compile_configuration.toolchains,'get',lambda _:tc)
     monkeypatch.setattr(compile_configuration.toolchains,'path',lambda _:tool)
     monkeypatch.setattr(compile_configuration.toolchains,'MANIFEST','install.json')

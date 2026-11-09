@@ -500,6 +500,12 @@ the helper immediately; change the model or effort before restarting it.
 
 ### Agent names, history and estimated costs
 
+For an existing CLI agent, open its **⋮ → Change model** action, choose a model and press
+**Replace agent**. The replacement keeps its task, account and work settings. The original
+stops after creation succeeds and remains in Agents with its history and credited work.
+OpenCode's model picker groups **OpenCode Go** separately from **OpenCode**; select a Go
+model to use the Go account configured in the CLI.
+
 Use **Rename** on an agent card to give it a display name. Its internal identity, claims and
 credited work stay unchanged, and the name survives app restarts. **Add agents** creates fresh
 identities with fresh counts; **Start again** resumes a stopped agent and keeps its history.
