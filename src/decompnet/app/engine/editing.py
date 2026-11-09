@@ -337,10 +337,15 @@ class EditMixin:
                       "message": f"Checking {len(affected)} affected matches; {len(matched)-len(affected)} unchanged matches need no rebuild."})
         header_for = lambda fn: changed.get(self._effective_unit(fn, units),
                                             current_ctx[self._effective_unit(fn, units)]["header"])
+        builtin_guards={}
+        protected_proj=proj
         self._sym_override[proj["id"]] = trial
         try:
             broken = self.regression_test(proj, None, sources=rewritten, only=renamed_rows, header_for=header_for,
                                           **({"progress": progress} if progress else {}))
+            if broken:
+                from ..rename_builtins import protect
+                protected_proj,broken,builtin_guards=protect(self,proj,pairs,renamed_rows,rewritten,header_for,broken,progress)
         finally:
             self._sym_override.pop(proj["id"], None)
         if broken:
@@ -368,6 +373,11 @@ class EditMixin:
                     record(db, renamed["id"], old, new)
 
             cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=?',(proj['id'],)).fetchone()['config'])
+            if builtin_guards:
+                guarded=json.loads(protected_proj['config'])['function_compilers']
+                for profile in builtin_guards.values():
+                    key=next(k for k,v in guarded.items() if v==profile)
+                    cfg.setdefault('function_compilers',{})[key]=profile
             if cfg.get('function_compilers'):
                 for profile in cfg['function_compilers'].values():
                     profile['function']=new_of.get(profile.get('function'),profile.get('function'))
@@ -385,11 +395,12 @@ class EditMixin:
                     db.execute("UPDATE functions SET best_source=? WHERE id=?", (swap(r["best_source"]), r["id"]))
             self._event(db, proj["id"], agent.id, "rename", msg if len(pairs) > 1 else f"{pairs[0][0]} → {pairs[0][1]}")
         self._syms.pop(proj["id"], None)
+        guard_note=(f" Builtin optimizations disabled in {len(builtin_guards)} affected function profile(s), verified byte-exact." if builtin_guards else "")
         if len(pairs) == 1:
             (old, new), = pairs
             return (f"✅ 0x{addresses[old]:08X} is now `{new}` (was `{old}`); {len(affected)} affected matches checked; {len(rewritten)} matched sources updated, "
-                    f"all still match.")
-        return f"✅ renamed {len(pairs)} symbols; {len(affected)} affected matches checked; {len(rewritten)} matched sources updated, all still match."
+                    f"all still match."+guard_note)
+        return f"✅ renamed {len(pairs)} symbols; {len(affected)} affected matches checked; {len(rewritten)} matched sources updated, all still match."+guard_note
 
     def edit_context(self, agent: Agent, project: str | None, old: str, new: str, message: str,
                      function: str | None = None) -> str:

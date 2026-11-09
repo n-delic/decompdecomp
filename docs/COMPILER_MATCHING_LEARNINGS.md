@@ -6770,3 +6770,19 @@ not evidence of a general speedup. The new composition lane is covered separatel
 by synthetic semantic/control-flow and stop/resume tests. Game source, ROM and
 private evidence remain outside Git. A broader cold-start exact recovery remains
 an empirical benchmark, not a claimed result.
+
+
+## GNU GCC: names can enable builtin expansion
+
+Controlled homemade MIPS regression, GCC 2.7.2 KMC, flags
+`-G0 -mips3 -mgp32 -mfp32 -O2`: renaming an external 16-byte copy call to
+`memcpy` changes it to inline loads/stores. `-fno-builtin-memcpy` is accepted but
+still expands it on this compiler. `-fno-builtin` restores the original external
+call and passes the exact linked ROM judge. The app scopes this fallback to the
+failed caller's function compiler profile; it never changes project defaults.
+Reproduction: `tests/test_builtin_rename.py` (homemade source, no game data).
+
+A current private V-Rally snapshot also allowed a `bzero` rename with unchanged
+flags: 17 affected matches passed. This does **not** establish builtin expansion
+as the cause of an earlier live rejection. A tiny GCC 2.7.2 `bzero` probe retained
+its call with and without suppression. Do not apply builtin flags from a name alone.

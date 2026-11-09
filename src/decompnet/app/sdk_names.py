@@ -73,7 +73,7 @@ def _name_functions(net, slug, job=None):
         if len(names) != 1:
             continue
         name = names[0]
-        if not re.fullmatch(r'[A-Za-z_]\w*', name) or generated(name) or name in BUILTIN_NAMES or name in taken:
+        if not re.fullmatch(r'[A-Za-z_]\w*', name) or generated(name) or (fork and name in BUILTIN_NAMES) or name in taken:
             continue
         if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', row['id']):
             continue

@@ -3364,3 +3364,11 @@ similarity alone is insufficient. Their ordinary assembly classifications still 
 ### Full project repositories
 
 - Done: this fork creates verified full source repositories by default, upgrades portable Git saves without replacing history/origin, ignores game images and extracted data, and retains the complete source checkout when opening a remote saved project. Saved global addresses are restored before rejudging C. Initial full-image proof is required; unsupported exports never fall back to progress-only Git repositories.
+
+
+### Builtin-safe source names
+
+- Done: local ROM GCC renames retry known builtin names with per-name suppression and
+  a per-function `-fno-builtin` fallback, persisting only exact linked-code results.
+- Planned: compiler-specific builtin suppression adapters for imported project builds,
+  custom commands and non-GCC toolchains. Existing regression checks still reject unsafe renames.

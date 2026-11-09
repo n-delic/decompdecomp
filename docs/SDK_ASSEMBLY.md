@@ -49,3 +49,18 @@ a full-word C store, for example, need not preserve a partial unaligned assembly
 This status requires an existing assembly classification: arbitrary SDK objects may themselves
 have been compiled from C, so byte equality alone must not turn open C work into assembly.
 Automatic discovery runs through the selected local SDK maintenance pass for active projects.
+
+
+## Names recognised by the compiler
+
+A proper library name can enable a compiler builtin and change callers' bytes.
+ROM renames still check every affected matched function first. If a known builtin
+name breaks a GNU GCC caller, the app tests `-fno-builtin-NAME`, then `-fno-builtin`
+for that one function. Period GCC can accept the per-name option without disabling
+the optimization, so acceptance of a flag is never sufficient: linked bytes decide.
+Only byte-exact settings are saved, as per-function compiler profiles, in the same
+transaction as the rename. Project/range defaults and unrelated functions stay intact.
+Any remaining failure rejects the entire rename, including proposed settings.
+These profiles survive saves and rebuildable exports through existing function compiler support.
+Imported builds, custom commands and other compiler families retain their existing guarded
+rename behavior; they need compiler-specific adapters before automatic flag retries.

@@ -128,3 +128,65 @@ def test_rename_batches_complete_affected_rows_without_dropping_judge_inputs(tmp
     agent, _ = net.local_agent('you')
     assert net.rename_symbol(agent,'game','old','new').startswith('✅')
     assert seen == ['new','caller']
+
+
+def test_builtin_rename_retries_and_persists_only_verified_callers(tmp_path,monkeypatch):
+    import json
+
+    from decompnet.project import compiler_for
+    net,_=prepare(tmp_path,monkeypatch)
+    with net.store.tx() as db:
+        cfg={'kind':'rom','compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
+        db.execute('UPDATE projects SET config=?',(json.dumps(cfg),))
+    trials=[]
+    def regression(proj,header,sources=None,only=None,**kwargs):
+        trials.append([r['name'] for r in only])
+        for row in only:
+            flags=compiler_for(json.loads(proj['config']),row['vram'],row)['flags']
+            if row['name']=='caller' and '-fno-builtin' not in flags:
+                return [('caller','no longer matches')]
+        return []
+    monkeypatch.setattr(net,'regression_test',regression)
+    assert net.rename_symbol(net.local_agent('you')[0],'game','old','bzero').startswith('✅')
+    assert trials==[['bzero','caller'],['caller'],['caller']]
+    cfg=json.loads(net.project_row('game')['config'])
+    assert cfg['compiler']['flags']==['-O2']
+    assert len(cfg['function_compilers'])==1
+    caller=net._function('caller','game');other=net._function('unrelated','game')
+    assert compiler_for(cfg,caller['vram'],caller)['flags']==['-O2','-fno-builtin']
+    assert compiler_for(cfg,other['vram'],other)['flags']==['-O2']
+
+
+def test_failed_builtin_fallback_rolls_back_flags_names_and_sources(tmp_path,monkeypatch):
+    import json
+    net,_=prepare(tmp_path,monkeypatch)
+    cfg={'kind':'rom','compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=?',(json.dumps(cfg),))
+    monkeypatch.setattr(net,'regression_test',lambda *args,**kwargs:[('caller','no longer matches')])
+    result=net.rename_symbol(net.local_agent('you')[0],'game','old','memcpy')
+    assert result.startswith('❌')
+    assert json.loads(net.project_row('game')['config'])==cfg
+    assert 'old()' in net._function('caller','game')['matched_source']
+    assert net._function('old','game') and not net._sym_override
+
+
+
+def test_targeted_builtin_guard_preserves_flag_order_and_existing_profile(tmp_path,monkeypatch):
+    import json
+
+    from decompnet.project import compiler_for
+    net,_=prepare(tmp_path,monkeypatch)
+    original=['-O2','-O1','-O2']
+    cfg={'kind':'rom','compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O0']},
+         'function_compilers':{'caller-own':{'function':'caller','vram':4112,'toolchain':'gcc-2.7.2-kmc','flags':original,'evidence':'retained'}}}
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=?',(json.dumps(cfg),))
+    def regression(proj,header,sources=None,only=None,**kwargs):
+        for row in only:
+            flags=compiler_for(json.loads(proj['config']),row['vram'],row)['flags']
+            if row['name']=='caller' and '-fno-builtin-bzero' not in flags:return [('caller','changed')]
+        return []
+    monkeypatch.setattr(net,'regression_test',regression)
+    assert net.rename_symbol(net.local_agent('you')[0],'game','old','bzero').startswith('✅')
+    cfg=net.cfg(net.project_row('game'))
+    fn=net._function('caller','game')
+    assert compiler_for(cfg,fn['vram'],fn)['flags']==original+['-fno-builtin-bzero']

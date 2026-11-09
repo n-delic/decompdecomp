@@ -8,7 +8,7 @@ _GENERATED = re.compile(r"_?(?:func|fn|FUN|sub)_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*(?
 
 
 # Giving a symbol a compiler builtin's spelling can change calls or reject existing prototypes.
-BUILTIN_NAMES = frozenset("memcpy memmove memset memcmp memchr strlen strchr strrchr strcpy strncpy strcmp "
+BUILTIN_NAMES = frozenset("bzero bcopy bcmp memcpy memmove memset memcmp memchr strlen strchr strrchr strcpy strncpy strcmp "
                           "strncmp strcat strncat strstr sqrt sqrtf sin sinf cos cosf tan tanf fabs fabsf "
                           "abs labs malloc calloc realloc free printf sprintf snprintf puts putchar exit abort".split())
 

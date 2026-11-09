@@ -55,7 +55,7 @@ def test_selected_sdk_names_use_normal_rom_or_imported_validation(sdk_case, monk
     assert calls == [('func_80001000', 'sdkHelper')]
 
 
-@pytest.mark.parametrize('reason', ['named','claimed','disabled','builtin','collision','ambiguous','duplicate','size','generated'])
+@pytest.mark.parametrize('reason', ['named','claimed','disabled','collision','ambiguous','duplicate','size','generated'])
 def test_names_are_not_guessed_or_overwritten(sdk_case, monkeypatch, reason):
     net, pid, fid = sdk_case
     agent = net.local_agent('worker')[0] if reason == 'claimed' else None
@@ -154,3 +154,25 @@ def test_duplicate_rom_assembly_fingerprint_is_not_named(sdk_case, monkeypatch):
     monkeypatch.setattr(net.twins,'prints',lambda _: {})
     monkeypatch.setattr(net,'rename_symbols',lambda *args:pytest.fail('duplicate identity must not rename'))
     assert name_functions(net,'demo') == 0
+
+
+def test_imported_builtin_name_remains_conservative(sdk_case,monkeypatch):
+    net,pid,fid=sdk_case
+    monkeypatch.setattr(net,'fork_slug',lambda _: 'demo')
+    with net.store.tx() as db:db.execute('UPDATE sdk_signatures SET name=?',('memcpy',))
+    monkeypatch.setattr(net,'rename_symbols',lambda *args:pytest.fail('unsupported builtin adapter'))
+    monkeypatch.setattr(net,'rename_symbol',lambda *args:pytest.fail('unsupported builtin adapter'))
+    assert name_functions(net,'demo')==0
+
+
+def test_rom_builtin_names_use_guarded_rename_instead_of_blanket_skip(sdk_case,monkeypatch):
+    net,pid,fid=sdk_case
+    with net.store.tx() as db:db.execute('UPDATE sdk_signatures SET name=?',('memcpy',))
+    calls=[]
+    def reject(agent,slug,pairs,message):
+        calls.extend(pairs)
+        return '❌ original byte checks rejected this rename'
+    monkeypatch.setattr(net,'rename_symbols',reject)
+    assert name_functions(net,'demo')==0
+    assert calls==[('func_80001000','memcpy')]
+    assert net._function('func_80001000','demo')
