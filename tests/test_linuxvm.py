@@ -300,6 +300,8 @@ def test_vm_installs_are_separate_and_keep_dependency_routing(vm, monkeypatch):
         profiles[tid] = replace(original[tid], parts=[{'url': archive.as_uri(), 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                                                      'platforms': ['linux-x86_64']}])
     monkeypatch.setattr(toolchains, 'registry', lambda: profiles)
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     native = toolchains.path('gcc-4.4.0-n64', vm=False)
     native.mkdir(parents=True)
     (native / 'preserved').write_text('native install')
@@ -370,6 +372,8 @@ def test_proxy_installer_preserves_case_colliding_archive_without_extracting(vm,
         'url': archive.as_uri(), 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
         'platforms': ['linux-x86_64']}])
     monkeypatch.setattr(toolchains, 'registry', lambda: {'ido-5.2': profile})
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     monkeypatch.setattr(toolchains, '_extract', lambda *_: pytest.fail('must extract on Linux'))
     directory = toolchains.install('ido-5.2', accept_license=True, log=lambda *_: None)
     metadata = toolchains.installed('ido-5.2')

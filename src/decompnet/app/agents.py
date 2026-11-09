@@ -605,6 +605,7 @@ class Manager:
         self.sessions: dict[str, Session] = {}
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.RLock()
+        self._model_change_lock = threading.Lock()
         net.on_external_match = self.matched_elsewhere
         # Bound only short local connection probes, never the number of running agents.
         self._tool_startup_slots = threading.BoundedSemaphore(8)
@@ -741,6 +742,37 @@ class Manager:
             with self.net.progress.view():
                 return self._start(kind, slug, count, options)
         return self._start(kind, slug, count, options)
+
+    def change_model(self, sid: str, slug: str, kind: str, model: str) -> list[str]:
+        """Replace one worker without changing the identity of its saved exchanges."""
+        with self._model_change_lock:
+            old = self.sessions.get(sid)
+            if old is None or old.slug != slug or old.kind != kind:
+                raise ValueError('This agent is no longer available in this project. Refresh Agents.')
+            if agents.get(kind).uses_endpoints:
+                raise ValueError('Start a new API agent with its endpoint settings instead.')
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError('Choose a model before replacing this agent.')
+            # Persist the result on the retained record: a repeated request must not
+            # create another paid worker, including after reopening the app.
+            replacement = old.options.get('model_replacement')
+            if replacement:
+                raise ValueError('This agent was already replaced. Change the new agent instead.')
+            options = dict(old.options)
+            options['model'] = model
+            report_start('Validating and creating the replacement; the original is kept if creation fails…')
+            ids = self.start(kind, slug, 1, options)
+            old.options['model_replacement'] = ids[0]
+            try:
+                self._save(old)
+            except Exception:
+                old.options.pop('model_replacement', None)
+                for replacement_id in ids:
+                    self.stop(replacement_id)
+                raise
+            report_start('Stopping the original agent; its history and saved work are retained…')
+            self.stop(sid)
+            return ids
 
     def _start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
         if getattr(self, 'source_update_pending', False):

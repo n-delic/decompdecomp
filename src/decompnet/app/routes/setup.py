@@ -184,6 +184,14 @@ def register(app: App) -> None:
     def create_agents(data):
         kind, slug = str(data.get("kind", "")), str(data.get("slug", ""))
         given = data.get("options") or {}
+        if data.get('replace'):
+            try:
+                if data.get('count', 1) != 1 or given.get('models') or given.get('multiple_models'):
+                    raise ValueError('Changing a model replaces exactly one agent.')
+                ids = manager.change_model(str(data['replace']), slug, kind, given.get('model'))
+                return JSONResponse({'started': ids})
+            except (NetworkError, ValueError) as error:
+                return fail(error)
         requested_models = given.get("models", [])
         if not isinstance(requested_models, list) or any(
                 not isinstance(model, (str, dict)) or

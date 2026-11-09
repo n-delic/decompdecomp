@@ -69,3 +69,28 @@ for the next session. Python does not reload those implementations mid-search. T
 is advisory search-version evidence only; compiler, header, target, environment and
 revision checks remain fresh for actual candidates. Outside sessions, implementation
 fingerprints remain fresh on each call.
+
+## Concurrent macOS compiler overhead
+
+Compiler metadata lookups construct only the requested toolchain instead of rebuilding
+objects for the entire catalogue. The catalogue listing remains available for Setup;
+individual lookups still return fresh metadata and local SDK copies remain dynamic.
+
+Native macOS compiler watchdogs share a system process snapshot for at most 100 ms,
+measured from the start of the scan. Each watchdog still walks its own descendant tree,
+checks its own memory limit and timeout, and stops only its owned process group. The
+250 ms watchdog interval and limits are unchanged. This avoids concurrent watchdogs
+spawning duplicate system-wide `ps` scans; failed scans are retried after at most 100 ms and a slow
+scan is not retained as fresh. No compiler results or judge decisions are reused here.
+
+To compare this path, use the same benchmark script on both revisions:
+
+```sh
+PYTHONPATH=src python tools/benchmark_deep_pipeline.py --full-search \
+  --functions 32 --workers 32 --slots 32 --variants 32 --search-seconds 180
+```
+
+The synthetic saved source starts at a conservative score rather than a fabricated
+near-match. Otherwise reloading that row could overwrite the measured baseline and
+make the reported best-score digest depend on scheduling. This fixture correction
+must also be applied to the baseline checkout when comparing revisions.

@@ -133,6 +133,6 @@ def sequences(image, *, check=lambda:None, progress=lambda _:None):
         except AssetError:continue
         info=sequence_layout(data)
         if info:
-            results.append(dict(offset=member['offset'],size=member['size'],kind='audio',confidence='tentative',media='audio',audio_kind='libmus sequence',label=member['name'],samples=[],archive=member,**info,
+            results.append(dict(offset=member['offset'],size=member['size'],kind='music sequence',confidence='tentative',media='audio',audio_kind='libmus sequence',label=member['name'],samples=[],archive=member,**info,
                                 reason='ZIP member CRC passed; indexed channel, volume and pitch-stream pointers fit. Track commands and musical interpretation are not verified. This is a sequence candidate, not a recorded waveform; sequence playback is not implemented.',preview_settings=dict(format='auto',source='rom',offset=member['offset'])))
     return results

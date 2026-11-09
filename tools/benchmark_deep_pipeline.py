@@ -37,10 +37,12 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
         db.execute("INSERT INTO projects(id,slug,name,arch,big_endian,root,config) VALUES(1,'bench','Synthetic','mips',1,?,?)",
                    (str(root),json.dumps(cfg)))
         db.execute("INSERT INTO context_versions(project_id,unit,version,header) VALUES(1,'',1,?)", (header,))
+        # Start with a conservative score, never a fabricated near-match that could
+        # overwrite the freshly measured baseline when a search reloads its row.
         for i in range(functions):
             name = f'f_{i}'
             db.execute("INSERT INTO functions(project_id,name,status,n_insns,size,target,relocs,asm,best_source,best_score,vram,rom_offset) "
-                       "VALUES(1,?,'open',4,?,?,'[]','',?,1,?,0)",
+                       "VALUES(1,?,'open',4,?,?,'[]','',?,400,?,0)",
                        (name,len(target.code),target.code,f'int {name}(int x){{return x+1;}}',0x80001000+i*256))
     # These functions contain no data references: the real linker needs no backing image reads.
     net._roms[1] = (b'', [])

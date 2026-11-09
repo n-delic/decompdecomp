@@ -224,5 +224,22 @@ function setup(){
     t.context.reply=async()=>{throw Error('Mesh is invalid. Refresh ROM Explorer.');};await button.onclick();assert.match(body.querySelector('[data-asset-work]').textContent,/Mesh is invalid/);
     const late=deferred();t.context.reply=()=>late.promise;const closing=button.onclick();body._romCancelPreview();late.resolve({media:'model',vertices:[]});await closing;assert.deepEqual(painted,[3]);
   }
+  // Typed directory resources never become texture controls or media URLs.
+  {
+    const t=setup(),body=element(),pending=deferred();t.context.body=body;
+    t.context.region={id:'anim',start:128,size:100,detected_asset:{media:'metadata',resource_type:'animation',resource_path:'directory/objects/object[9]/animations/animation[2]',compression:{codec:'RNC method 1',packed_bytes:100,expanded_bytes:400}}};
+    const html=t.run('romAssetHTML(region)');assert.match(html,/Inspect resource/);assert.match(html,/animation\[2\]/);assert.ok(!html.includes('texture bank ·'));
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-textures.js'),'utf8'),t.context);
+    assert.equal(t.run('romTextureControlsHTML(region)'),'');assert.equal(t.run('romTextureBanks({regions:[region]}).length'),0);
+    for(const [key,value] of Object.entries({source:'rom',format:'auto',offset:'128'}))body.querySelector(`[data-asset-${key}]`).value=value;
+    const button=body.querySelector('[data-asset-preview]');body.querySelectorAll=key=>key==='input,select,button' ? [button] : [];
+    t.context.reply=()=>pending.promise;t.run('setupRomAsset(body,region,"first","hash",()=>S.slug==="first")');
+    const waiting=button.onclick();await tick();assert.equal(button.disabled,true);await button.onclick();assert.equal(t.calls.length,1);
+    pending.resolve({media:'metadata',title:'Animation',fields:{frames:12,nodes:3},note:'No pose is reconstructed.'});await waiting;
+    const result=body.querySelector('[data-asset-result]');assert.equal(result.children[0].textContent,'Animation');assert.equal(result.children[1].textContent,'frames: 12');assert.equal(button.disabled,false);
+    t.context.reply=async()=>{throw Error('Resource header changed. Rescan.');};await button.onclick();assert.match(body.querySelector('[data-asset-work]').textContent,/Rescan/);
+    t.run("romView().report={regions:[{id:'anim',kind:'animation',symbols:[],mappings:[],functions:[],detected_asset:region.detected_asset}]};romView().query='object[9]'");
+    assert.equal(t.run('romRows(romView()).length'),1);assert.equal(t.run('romRegionType({kind:"animation"})[1]'),'Animation');
+  }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

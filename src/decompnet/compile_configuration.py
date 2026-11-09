@@ -11,8 +11,7 @@ def resolve(root,cfg,build):
     session=compile_sessions.current()
     if session is None:return build(root,cfg)
     compiler=cfg['compiler'];tid=compiler.get('toolchain')
-    registry=toolchains.registry()
-    tc=registry.get(tid)
+    tc=toolchains._registered(tid)
     if tc is None or compiler.get('cmd') or tc.local or tc.via_vm or tc.via_wsl or tc.wine:
         return build(root,cfg)
     # Read small install manifests exactly. Reinstalls, dependency changes, profile

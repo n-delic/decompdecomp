@@ -2060,3 +2060,28 @@ def test_opencode_temporary_failures_do_not_become_privacy_refusals():
                     'Connection reset while sending request data',
                     'A training request timed out', 'Rate limit exceeded'):
         assert not agent.fatal(message)
+
+
+def test_changed_model_has_new_identity_and_old_history_survives_restart(tmp_path, monkeypatch, quiet):
+    _stand_in_cli(tmp_path, monkeypatch, 'opencode')
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    (old,) = m.start('opencode', 'game', 1, {'model':'opencode/example-free', 'per_session':3})
+    old_name = m.sessions[old].agent_name
+    m.sessions[old].push('text', 'Synthetic retained exchange')
+    (other,) = m.start('opencode', 'game', 1, {'model':'opencode/another-free'})
+    (new,) = m.change_model(old, 'game', 'opencode', 'opencode-go/example')
+    assert new != old
+    assert m.sessions[new].agent_name != old_name
+    assert m.sessions[old].model == 'opencode/example-free'
+    assert m.sessions[new].model == 'opencode-go/example'
+    assert m.sessions[new].options['per_session'] == 3
+    assert m.sessions[old].state == 'stopped'
+    assert m.sessions[other].state == 'starting'
+    assert m.sessions[old].stopped_by == agents.BY_YOU
+    later = agents.Manager(net, tmp_path, URL)
+    assert later.sessions[old].options['model_replacement'] == new
+    assert later.sessions[old].agent_name == old_name
+    assert later.sessions[new].model == 'opencode-go/example'
+    with pytest.raises(ValueError, match='already replaced'):
+        later.change_model(old, 'game', 'opencode', 'opencode-go/example')

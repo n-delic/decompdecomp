@@ -57,7 +57,10 @@ are listed separately; music sequencing, pitch, mixing and loops are not rendere
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
 Supported indexed N64 geometry is detected automatically, including RNC-compressed models.
 Open a model region, select a mesh and press **Preview asset** for a rotatable wireframe.
-Meshes use local coordinates; skeleton poses, animation and textured rendering remain planned.
+Meshes use local coordinates; skeleton poses, animation playback and textured rendering remain planned.
+A supported indexed cartridge directory is also recognized by structure: animations, collision,
+object placements, grid sections/bounds, music sequences and demo recordings gain typed labels
+and metadata inspection. No game names or fixed ROM offsets are used.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
 referenced regions. Agents claim regions, retain failed approaches and propose names, formats
 and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.

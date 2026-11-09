@@ -346,13 +346,52 @@ compression format; the corrected method-1 reader also serves compressed-code im
 and rebuild validation. Its tail-word prefetch is separate from physical control-bit and
 literal bounds, and both checksums remain mandatory.
 
-This is not a universal native-asset classifier. The source-assisted audit's animation,
-collision, grid/bounds, placement and demo categories depend on a specific directory
-schema; they are not yet classified automatically by the application. Its compressed
-music sequences also need a sequence reader and synthesizer, separately from existing
-sample-bank previews. Other games' native formats need their own validated rules; a generic
-compressed label alone does not establish its contents. The shared ROM inspector still
-recognizes supported standard media headers and provides explicit manual layouts.
+This is not a universal native-asset classifier. A supported indexed cartridge directory
+now supplies animation, collision, grid/bounds, placement and binary-resource roles after
+its complete hierarchy and ID-count relationships pass validation. The same schema in
+another N64 game can be recognized without its source checkout. Different native formats
+need additional rules. The shared ROM inspector still recognizes supported standard media
+headers and provides explicit manual layouts.
+
+### Native resource directories and metadata
+
+The N64 adapter searches for a candidate eleven-part indexed directory, validates all
+object/level/animation/grid index tables, matches object and binary ID counts against their
+collections, and checks that binary IDs are ordered and unique. It never chooses a release
+address or a game name. A broken or unfamiliar hierarchy supplies no semantic directory
+roles. Compressed leaves must pass RNC sizes and both checksums; corrupt leaves remain
+unclassified rather than inheriting a confident asset type.
+
+New types in the square map and region notes are **animation**, **collision**, **object
+placements**, **world grid**, **music sequence** and **demo**. Existing image, model and audio
+preview descriptors retain priority and gain directory paths where available. Empty grid
+sections and geometry without meshes are reported as empty storage records, never unused
+space. Search the region table for a type, directory path or numeric object/level identity.
+Imported function regions retain priority; nothing changes the judge or code progress.
+
+Open a typed resource and choose **Inspect resource** to see its path, compression and byte
+sizes, frame/node/record counts, track headers or demo frame/start-location IDs. Animation
+streams validate record extents and translation/rotation set indices; missing initial
+orientation records are flagged. Collision, bounds, placement and grid collections validate
+record widths and extents. Binary resources need additional sequence or demo header checks
+before receiving those types; arbitrary binary data retains its generic role. Sequence
+headers validate track offsets and time division, not the complete event program. Demo
+headers validate frame counts and ordered bitstream offsets, not playback. No skeleton pose,
+scene reconstruction, animation playback, demo playback or music synthesis is implied.
+
+Compression is retained as a separate property alongside the semantic type. Standalone RNC
+streams also receive validated extents and output sizes without a recognized directory.
+Code-like MIPS output is labelled as a packed program image only when its decoded bytes
+exactly match another location in the same analysis image. That label does not establish
+that every byte is an instruction or certify physical cartridge mappings.
+
+Directory work is capped at 128 root candidates, 16,384 tables/resources, 4 MiB per leaf and
+64 MiB of attempted decoded/raw payload inspection per pass. Cancellation is checked between
+tables and leaves. Generic signature limits are independent of native resource counts.
+Failed zlib/gzip decoding produces **rejected evidence**, not a compressed type; probes
+that cannot finish within their budget also do not label bytes as compressed. Strong headers
+for other unvalidated codecs can remain tentative clues. Map legends count display regions,
+not unique assets; directory paths and native offsets identify whole resources.
 
 ### Audio browser and libmus pointer banks
 
