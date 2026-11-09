@@ -77,6 +77,7 @@ def worked(built, tmp_path):  # noqa: F811
     net.release(agent, other, "tried an empty body", slug)
     net.add_note(agent, slug, "clamps to [lo, hi]", "clamp_s32")
     net.set_instructions(slug, "Name functions in snake_case.")
+    net.set_claim_order(slug, "untried")
     return net, slug, other
 
 
@@ -102,6 +103,7 @@ def test_a_saved_project_comes_back_on_another_computer(worked, tmp_path):
     fn = fresh._function("clamp_s32", out["slug"])
     assert fn["status"] == "matched" and fn["vram"] == 0x800007D0  # the split and the name came back
     assert fresh.instructions(out["slug"]) == "Name functions in snake_case."
+    assert fresh.claim_order(out["slug"]) == "untried"
     assert fresh._function(other, out["slug"])["best_source"]
     assert any("clamps" in r["text"] for r in fresh.store.all("SELECT text FROM notes"))
     assert fresh.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0  # nothing left claimed

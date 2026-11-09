@@ -85,7 +85,7 @@ def compiler_memory_limit() -> int:
 def _process_memory_tree(root_pid: int) -> list[tuple[int, int]]:
     """Snapshot resident sizes (bytes) of a process and its descendants on macOS."""
     try:
-        result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,rss='], capture_output=True,
+        result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,rss=,sess='], capture_output=True,
                                 text=True, timeout=2, check=True)
     except (OSError, subprocess.SubprocessError):
         return []
@@ -93,11 +93,11 @@ def _process_memory_tree(root_pid: int) -> list[tuple[int, int]]:
     sizes = {}
     for line in result.stdout.splitlines():
         try:
-            pid, parent, rss = map(int, line.split())
+            pid, parent, rss, session = map(int, line.split())
         except ValueError:
             continue
         children.setdefault(parent, []).append(pid)
-        sizes[pid] = rss * 1024
+        sizes[pid] = (rss * 1024, session)
     pending, seen = [root_pid], set()
     while pending:
         pid = pending.pop()
@@ -105,7 +105,9 @@ def _process_memory_tree(root_pid: int) -> list[tuple[int, int]]:
             continue
         seen.add(pid)
         pending.extend(children.get(pid, ()))
-    return [(pid, sizes[pid]) for pid in seen if pid in sizes]
+    # A build driver can exit while its compiler still holds stdout open.
+    # Its descendants retain the isolated session even after reparenting.
+    return [(pid, rss) for pid, (rss, session) in sizes.items() if pid in seen or session == root_pid]
 
 
 def compiler_time_limit() -> float:
@@ -137,6 +139,14 @@ def attach_job(proc) -> None:
     proc._decomp_job = job
 
 
+def release_job(proc) -> None:
+    """Close a completed Windows job handle without terminating a successful compile."""
+    if os.name == 'nt' and (job := getattr(proc, '_decomp_job', None)):
+        import ctypes
+        ctypes.WinDLL('kernel32', use_last_error=True).CloseHandle(ctypes.c_void_p(job))
+        proc._decomp_job = None
+
+
 def stop_group(proc, descendants: set[int] | None = None) -> None:
     """Stop a tool and descendants, including build commands in their own process groups."""
     if os.name == 'nt':
@@ -154,9 +164,16 @@ def stop_group(proc, descendants: set[int] | None = None) -> None:
         return
     import signal
     import time
-    pids = {proc.pid, *(descendants or ()), *(pid for pid, _ in _process_memory_tree(proc.pid))}
+    candidates = {proc.pid, *(descendants or ()), *(pid for pid, _ in _process_memory_tree(proc.pid))}
+    pids = set()
+    for pid in candidates:
+        try:
+            if os.getsid(pid) == proc.pid:
+                pids.add(pid)
+        except (ProcessLookupError, PermissionError):
+            pass  # A remembered PID may have exited or been reused in another session.
     own_group = os.getpgrp()
-    groups = {proc.pid}
+    groups = set()
     for pid in pids:
         try:
             group = os.getpgid(pid)
@@ -164,6 +181,8 @@ def stop_group(proc, descendants: set[int] | None = None) -> None:
                 groups.add(group)
         except (ProcessLookupError, PermissionError):
             pass
+    if not pids:
+        return
     for sig in (signal.SIGTERM, signal.SIGKILL):
         for group in groups:
             if group == own_group:
@@ -194,6 +213,7 @@ class CompilerMemoryWatchdog:
         self.timeout = timeout
         self._stop = threading.Event()
         self._thread = None
+        self.descendants = set()
 
     def __enter__(self):
         import sys
@@ -207,14 +227,13 @@ class CompilerMemoryWatchdog:
         import sys
         import time
         started = time.monotonic()
-        descendants = set()
         while not self._stop.wait(0.25):
             tree = _process_memory_tree(self.proc.pid)
-            descendants.update(pid for pid, _ in tree)
+            self.descendants.update(pid for pid, _ in tree)
             self.timed_out = self.timeout is not None and time.monotonic() - started >= self.timeout
             self.exceeded = sys.platform == 'darwin' and any(rss > self.limit for _, rss in tree)
             if self.timed_out or self.exceeded:
-                stop_group(self.proc, descendants)
+                stop_group(self.proc, self.descendants)
                 return
 
     def __exit__(self, *_):

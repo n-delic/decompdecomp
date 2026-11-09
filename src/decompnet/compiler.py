@@ -172,7 +172,7 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
         proc.communicate()
         raise
     finally:
-        limits.stop_group(proc)
+        limits.release_job(proc)
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,

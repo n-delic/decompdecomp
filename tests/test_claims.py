@@ -4,8 +4,60 @@ leftovers around (Mario Party 6: 16 agents, one match, on 326 big functions rele
 
 import json
 
+import pytest
+
 from decompnet import network
 from decompnet.app.engine import RomNetwork
+
+
+def _ordered_game(tmp_path, kind: str, order: str = ""):
+    """A project with functions of different sizes and best scores, in the order the owner chose."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    config = {"kind": kind}
+    if order:
+        config["claim_order"] = order
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "mips", 0, str(tmp_path), json.dumps(config))).lastrowid
+        # name, instructions, attempts, done with, best score (below 100: near = 99.5%)
+        for name, n, attempts, abandons, score in [
+                ("tiny", 4, 2, 0, 350), ("fresh", 8, 0, 0, None), ("near", 100, 2, 0, 50),
+                ("medium", 50, 1, 1, 1200), ("big", 400, 3, 0, 8000), ("fresh_big", 200, 0, 0, None)]:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,attempts,abandons,best_score) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)",
+                       (pid, name, n * 4, n, "open", "a", attempts, abandons, score))
+    return net
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+@pytest.mark.parametrize("order, expected", [("easiest", "tiny"), ("hardest", "big"), ("closest", "near"),
+                                             ("untried", "fresh")])
+def test_the_projects_claim_order_chooses_the_next_function(tmp_path, kind, order, expected):
+    """The owner's setting, ROM and project mode alike, whatever strategy the helper would have used."""
+    net = _ordered_game(tmp_path, kind, order)
+    agent, _ = net.local_agent("helper")
+    against = "hardest" if order != "hardest" else "easiest"  # no setting: this one would pick something else
+    assert net.claim_row(agent, "game", None, against)["name"] == expected
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_the_projects_claim_order_overrides_the_agents_strategy_but_not_a_named_function(tmp_path, kind):
+    net = _ordered_game(tmp_path, kind, "hardest")
+    first, _ = net.local_agent("first")
+    assert net.claim_row(first, "game", None, "easiest")["name"] == "big"
+    second, _ = net.local_agent("second")
+    assert net.claim_row(second, "game", "tiny")["name"] == "tiny"  # by name: at once
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_untried_takes_every_function_nobody_compiled_before_the_smallest_tried(tmp_path, kind):
+    """A first pass over everything before polishing near misses, then easiest's order."""
+    net = _ordered_game(tmp_path, kind, "untried")
+    order = []
+    for k in range(3):
+        agent, _ = net.local_agent(f"a{k}")
+        order.append(net.claim_row(agent, "game", None, "hardest")["name"])
+    assert order == ["fresh", "fresh_big", "tiny"]
 
 
 def test_fresh_small_functions_first_and_files_close_to_done_among_equals(tmp_path):
@@ -258,6 +310,34 @@ def test_a_function_agents_of_two_models_agree_no_c_makes_is_set_aside(tmp_path)
         raise AssertionError("a verdict without a reason")
     except network.NetworkError as e:
         assert "why" in str(e)
+
+
+def test_an_agent_isnt_handed_back_what_it_said_no_c_makes_and_the_user_hears_when_only_that_is_left(tmp_path):
+    """Two agents of one model claimed an x86 demo's last function, a hand-written float-to-int helper, a dozen times
+    between them, each time writing that no C makes it: one model never reaches NOT_C_MODELS, and once an agent's
+    run started again its own release no longer kept it off. Its verdict does now; when every open function is
+    waiting on such a verdict, the agent is told to stop and the user is told (once) to set it aside."""
+    net = _one_function_game(tmp_path)
+    first, _ = net.local_agent("claude-opus-5-5-1")
+    second, _ = net.local_agent("claude-opus-5-5-2")
+    for agent in (first, second):
+        net.claim_row(agent, "game", "piece")
+        net.release(agent, "piece", "fistp on an st(0) it never loads: hand-written", "game", not_c=True)
+        with net.store.tx() as db:  # (its run starts again: its own recent releases no longer keep it off)
+            net._event(db, 1, agent.id, "freed", "")
+    assert net.claim_row(first, "game", None, "easiest") is None
+    said = net.nothing_to_claim(first, net.project_row("game"))
+    assert "1 you said no C makes: piece" in said and "Stop working on this project" in said
+    net.nothing_to_claim(second, net.project_row("game"))  # (asked again: told once)
+    told = net.store.all("SELECT detail FROM events WHERE kind='not_c'")
+    assert len(told) == 1 and told[0]["detail"].startswith("piece: waiting for you. 2 agents (claude-opus-5-5)")
+    other, _ = net.local_agent("claude-sonnet-5-5-1")  # another model can still look
+    assert net.claim_row(other, "game", None, "easiest")["name"] == "piece"
+    # and when it released the function for now, it isn't told to stop: its verdict is the one they wait for
+    net.release(other, "piece", "", "game")
+    assert net.claim_row(other, "game", None, "easiest") is None
+    said = net.nothing_to_claim(other, net.project_row("game"))
+    assert "Stop working on this project" not in said and "you released yourself" in said, said
 
 
 def test_a_set_aside_function_the_user_gives_back_stays_open(tmp_path, monkeypatch):

@@ -31,6 +31,13 @@ def test_compiler_timeout_stops_its_child(tmp_path):
     assert not marker.exists()
 
 
+def test_successful_compile_does_not_run_process_tree_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setattr(limits, 'stop_group', lambda *_: pytest.fail('success must not scan or stop process groups'))
+    cfg = compiler.CompilerConfig(cmd=[], sandbox='none')
+    result = compiler._exec(cfg, tmp_path, [sys.executable, '-c', 'print("ok")'], timeout=2)
+    assert result.returncode == 0 and result.stdout.strip() == 'ok'
+
+
 def test_project_build_timeout_stops_its_child(tmp_path):
     marker = tmp_path / 'child-finished'
     child = f"import time,pathlib; time.sleep(0.8); pathlib.Path({str(marker)!r}).write_text('finished')"
