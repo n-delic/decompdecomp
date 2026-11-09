@@ -133,6 +133,29 @@ def test_preflight_against_real_isolated_app(tmp_path, monkeypatch):
             manager._preflight_tools(token)
             assert [kind for kind,_ in events] == ['connection_check_tools','connection_check_tool_request','connection_check_tool_response']
             assert net.store.one('SELECT calls FROM agent_tool_usage WHERE name=?','project_info') is None
+            # Probes retain the exact authorized names without synchronously
+            # serializing every description/schema into another transcript row.
+            compact=events[0][1]
+            assert all(set(row)=={'name'} for row in compact)
+            assert {'project_info','claim_function','compile_and_diff','release_function'} <= {row['name'] for row in compact}
+            async def normal_listing():
+                from mcp import ClientSession
+                from mcp.client.streamable_http import streamable_http_client
+                from mcp.shared._httpx_utils import create_mcp_http_client
+                async with create_mcp_http_client(headers={'Authorization':'Bearer '+token}) as http:
+                    async with streamable_http_client(manager.mcp_url,http_client=http) as streams:
+                        async with ClientSession(*streams[:2]) as client:
+                            await client.initialize()
+                            return await client.list_tools()
+            import anyio
+            full=anyio.run(normal_listing)
+            recorded=next(value for kind,value in events if kind=='tool_definitions')
+            assert recorded==[tool.model_dump(mode='json') for tool in full.tools]
+            assert compact==[{'name':tool.name} for tool in full.tools]
+            assert any(tool.input_schema.get('properties') for tool in full.tools)
+            import json
+            assert len(json.dumps(compact)) < len(json.dumps(recorded))/10
+
             monkeypatch.setattr(manager, 'project_of', lambda agent: None)
             with pytest.raises(Fatal, match='No model request'):
                 manager._preflight_tools(token)

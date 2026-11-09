@@ -278,8 +278,13 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
                 return ListToolsResult(tools=[])
             keep=set(tools.project_tools(net,slug,agent))
             selected=[t for t in everything if t.name in keep]
-            manager.record_agent(agent,slug,'connection_check_tools' if checking else 'tool_definitions',
-                                 [t.model_dump(mode='json') for t in selected])
+            # The authenticated wiring probe validates names, not schemas. Saving
+            # every full definition here compresses a repeated large payload on
+            # the response path and occupies the shared metadata lane. Actual
+            # agent discovery still records and receives every complete schema.
+            recorded = ([{'name':t.name} for t in selected] if checking else
+                        [t.model_dump(mode='json') for t in selected])
+            manager.record_agent(agent,slug,'connection_check_tools' if checking else 'tool_definitions',recorded)
             return ListToolsResult(tools=selected)
         return await anyio.to_thread.run_sync(select,limiter=mcp_metadata_limiter)
 
