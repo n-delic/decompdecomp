@@ -35,7 +35,9 @@ A proposal is a JSON object with:
 Preview settings use source (rom/decoded), block_offset for a compressed block, and offset in the
 chosen source. Formats include rgba8888, rgb888, rgba5551-be, rgb565-be/le, i4/i8, ia4/ia8/ia16,
 ci4/ci8, palette-rgba5551/palette-ia16, pcm-s16be/le, pcm-u8, or auto for recognized formats.
-Textures use width/height and optionally palette_offset/palette_format. Audio uses channels,
+Native detected banks support zero-based frame, palette and mip indices with format=auto,
+source=rom and the selected region offset; the app resolves their validated offsets. Other
+textures use width/height and optionally palette_offset/palette_format. Audio uses channels,
 rate and length. Never claim a format just because random bytes produce a plausible thumbnail.
 
 Geometry uses the same source/offset plus model_settings: vertex_format (s16be/s16le/f32be/f32le),

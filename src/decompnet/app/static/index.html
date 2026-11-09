@@ -440,6 +440,16 @@
         <div class="row"><button type="button" class="ghost small-btn" id="assetAgentPrevious">Previous findings</button><span class="small muted" id="assetAgentPage"></span><button type="button" class="ghost small-btn" id="assetAgentNext">Next findings</button></div>
       </div>
     </details>
+    <details class="panel settings-disclosure" id="romTexturePanel" hidden>
+      <summary class="panel-head"><h2>Texture browser <span class="disclosure-context" id="romTextureContext"></span></h2></summary>
+      <div class="pad"><p>Browse detected images and texture banks, compare their layouts and follow recorded references or static loader leads.</p>
+        <div class="rom-asset-fields"><label class="field"><span>Find textures or functions</span><input type="search" id="romTextureFilter"></label><label class="field"><span>Format</span><select id="romTextureFormat"></select></label><label class="field"><span>Dimensions</span><select id="romTextureDimensions"></select></label></div>
+        <p class="small muted">Thumbnails show the first frame and palette. Open a bank for all frames, palettes and mip levels. References do not establish runtime rendering; no references found does not mean unused.</p>
+        <button id="romTextureStop" class="ghost small-btn" type="button" hidden>Stop loading thumbnails</button><pre id="romTextureWork" class="joblog" hidden></pre>
+        <div id="romTextureItems" class="rom-texture-gallery"></div>
+        <div class="row"><button id="romTexturePrevious" type="button" class="ghost small-btn">Previous textures</button><span id="romTexturePage" class="small muted"></span><button id="romTextureNext" type="button" class="ghost small-btn">Next textures</button></div>
+      </div>
+    </details>
     <details class="panel settings-disclosure" id="romExplorerPanel" open>
       <summary class="panel-head"><h2>ROM Explorer <span class="disclosure-context" id="romContext"></span></h2></summary>
       <div class="pad">
@@ -1164,6 +1174,7 @@
 <script src="/assets/js/code-audit.js"></script>
 <script src="/assets/js/rom-assets.js"></script>
 <script src="/assets/js/rom-discovery.js"></script>
+<script src="/assets/js/rom-textures.js"></script>
 <script src="/assets/js/rom-explorer.js"></script>
 <script src="/assets/js/asset-agents.js"></script>
 <script src="/assets/js/boundary-repairs.js"></script>

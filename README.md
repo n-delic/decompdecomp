@@ -46,7 +46,9 @@ passes or reads. Open a region for image, raw texture/palette and audio previews
 supported decompressed blocks. Unknown helper roles and raw layouts can be recorded locally. Compare texture guesses as thumbnails,
 follow the linked usage summary, group regions by symbol/loader extents, and inspect raw 3D
 vertex/index buffers as a rotatable wireframe. N64 scans also recognize supported indexed texture banks,
-including RNC-compressed banks, and use their dimensions and palettes for automatic previews.
+including RNC-compressed banks, direct-color RGBA32 and supported RGBA16 mipmaps.
+Open **Texture browser** for a thumbnail gallery, format/dimension filters and reference links.
+Select any frame, palette or mip level in a bank; animate frames at a chosen preview rate.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
 referenced regions. Agents claim regions, retain failed approaches and propose names, formats
 and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.

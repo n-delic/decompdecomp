@@ -149,6 +149,9 @@ class Console:
     def asset_regions(self, image, *, check=lambda: None, progress=lambda _: None):
         return []  # consoles can recognize structurally validated native asset containers
 
+    def asset_texture_preview(self, data, asset, selection):
+        return None  # native layouts can resolve validated frame/palette/mip selections
+
     def asset_decode(self, data):
         return None  # None delegates to the common preview codecs
 

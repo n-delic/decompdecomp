@@ -685,3 +685,10 @@ def test_asset_agent_queue_and_review_ui():
     if not NODE:pytest.skip('node is not installed')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_asset_agents.js'))],check=True,
                    capture_output=True,text=True,timeout=30)
+
+
+def test_texture_browser_paging_usage_cancellation_and_explicit_animation():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_textures.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
