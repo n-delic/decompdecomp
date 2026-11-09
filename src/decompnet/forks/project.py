@@ -640,6 +640,8 @@ class ForkProject:
             return False, f"{cmd[0]} isn't installed"
         from .. import compiler_processes
         compiler_processes.track(proc.pid)
+        primary_failure = False
+        watchdog = None
         try:
             with CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
                 out, seen, quiet = [], collections.Counter(), 0
@@ -656,14 +658,22 @@ class ForkProject:
                 try:
                     code = proc.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
+                    primary_failure = True
                     proc.kill()
                     return False, "timed out"
+        except BaseException:
+            primary_failure = True
+            raise
         finally:
-            compiler_processes.finish(proc)
+            compiler_processes.finish(proc, failed=primary_failure or bool(
+                watchdog and (watchdog.timed_out or watchdog.exceeded)))
         if watchdog.timed_out:
             return False, f"Build timed out after {timeout}s; its compiler processes were stopped."
         if watchdog.exceeded:
             out.append(watchdog.message())
+            # The process may exit normally while the watchdog's signal races
+            # with it (or is denied). Crossing the limit still fails the build.
+            if code == 0:code = 1
         if quiet:
             log(f"({quiet} repeated lines and linker warnings not shown)")
         if killed_for_memory(code):

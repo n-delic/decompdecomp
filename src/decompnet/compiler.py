@@ -9,7 +9,6 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import importlib
-import logging
 import os
 import re
 import shutil
@@ -22,7 +21,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW, stop_process_tree
+from decompnet.hostenv import NO_WINDOW
 
 from . import compile_sessions, compile_timing, limits, linuxvm, wsl
 from .compile_admission import Admission
@@ -268,37 +267,7 @@ def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: floa
         failed = True
         raise
     finally:
-        # Cleanup must not turn a normal search limit/cancellation into a failed
-        # repair job. A denied group signal still needs direct-child cleanup and
-        # pipe/registry release; never return a successful result if cleanup alone fails.
-        cleanup_error = None
-        try:
-            if os.name != "nt":
-                import signal
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                except OSError as error:
-                    cleanup_error = error
-            if failed or cleanup_error is not None:
-                try:
-                    stop_process_tree(proc)
-                except OSError as error:
-                    cleanup_error = error
-        finally:
-            try:
-                for stream in (proc.stdout, proc.stderr):
-                    if stream is not None:
-                        stream.close()
-            finally:
-                compiler_processes.untrack(proc.pid)
-        if cleanup_error is not None:
-            logging.getLogger('decompdecomp').warning(
-                'Compiler process cleanup failed pid=%d errno=%s; primary_failure=%s',
-                proc.pid, cleanup_error.errno, failed)
-            if not failed:
-                raise cleanup_error
+        compiler_processes.finish(proc, failed=failed)
 
 
 
