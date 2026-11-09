@@ -44,14 +44,16 @@ def _code_digest(path, mtime, ctime, size, inode):
 def signature(net, proj, fn, common=None, shared=None):
     from . import candidate_scope
     stamp = common if common is not None else common_state(net,proj)
-    return hashlib.sha256(repr((stamp,candidate_scope.key(net,proj,fn,shared),json.loads(proj['config']).get('instructions'),fn['best_source'])).encode()).hexdigest()
+    return hashlib.sha256(repr((stamp,candidate_scope.key(net,proj,fn,shared),json.loads(proj['config']).get('instructions'),fn['best_source'],fn['seed'])).encode()).hexdigest()
 
 
 def released(net, fn, *, exhausted=False, agent=None):
     store = net.project_store(fn['project_id'])
     proj = store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     current = store.one('SELECT * FROM functions WHERE id=?',fn['id'])
-    if current['status'] != 'open' or not current['best_source']:
+    # Repeated no-build releases also exhaust raw, source-free candidates.
+    # Their target/context scope still invalidates on a new seed or saved C.
+    if current['status'] != 'open':
         return
     stamp = signature(net,proj,current)
     from .pause_scope import identity

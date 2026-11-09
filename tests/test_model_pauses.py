@@ -180,3 +180,53 @@ def test_retry_rechecks_candidate_changes_between_grants(tmp_path):
                 db.execute("UPDATE functions SET status='matched' WHERE name='f1'")
     result=retry_paused.retry(net,'game',a,2,log=progress)
     assert result['functions']==['f0','f2']
+
+
+@pytest.mark.parametrize('source',[None,''])
+def test_source_free_releases_pause_only_repeated_model_and_invalidate_new_inputs(tmp_path,source):
+    net,(a,b,c)=setup(tmp_path);proj=net._project('game')
+    with net.store.tx() as db:db.execute('UPDATE functions SET best_source=?,seed=NULL,best_score=NULL',(source,))
+    fn=net._function('f0','game')
+    for i in range(3):
+        assert net.claim_row(a,'game','f0')['id']==fn['id']
+        net.release(a,'f0','Raw jump-word entry requires independent review.','game',not_c=True)
+        assert bool(claim_stalls.blocked(net,proj,a))==(i==2)
+    assert claim_stalls.blocked(net,proj,c)==[fn['id']]
+    assert not claim_stalls.blocked(net,proj,b)
+    assert net._function('f0','game')['status']=='open'
+    assert not net.store.one('SELECT 1 FROM attempts')
+    assert net.claim_row(a,'game') is None
+    with pytest.raises(ValueError):
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET target=?',(b'new synthetic target',))
+            assert not claim_stalls.blocked(net,proj,a)
+            raise ValueError('rollback')
+    assert claim_stalls.blocked(net,proj,a)==[fn['id']]
+    with pytest.raises(ValueError):
+        with net.store.tx() as db:
+            db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,1,'typedef int new_type;','')",(proj['id'],))
+            assert not claim_stalls.blocked(net,proj,a)
+            raise ValueError('rollback')
+    assert claim_stalls.blocked(net,proj,a)==[fn['id']]
+    assert net.claim_row(b,'game')['id']==fn['id']
+    # A new draft is an actual new opportunity, without erasing prior evidence.
+    with net.store.tx() as db:db.execute("UPDATE functions SET seed='void f0(void){return;}'")
+    assert not claim_stalls.blocked(net,proj,a)
+    with net.store.tx() as db:db.execute('UPDATE functions SET seed=NULL')
+    assert claim_stalls.blocked(net,proj,a)==[fn['id']]
+    with net.store.tx() as db:db.execute("UPDATE functions SET best_source='void f0(void){}'")
+    assert not claim_stalls.blocked(net,proj,a)
+
+
+def test_source_free_explicit_retry_grants_one_turn_without_any_match_credit(tmp_path):
+    net,(a,b,_)=setup(tmp_path);proj=net._project('game')
+    with net.store.tx() as db:db.execute('UPDATE functions SET best_source=NULL,seed=NULL,best_score=NULL')
+    fn=net._function('f0','game')
+    for _ in range(3):claim_stalls.released(net,fn,agent=a)
+    assert retry_paused.retry(net,'game',a,1)['resumed']==1
+    assert net.claim_row(a,'game')['id']==fn['id']
+    net.release(a,'f0','Still needs independent investigation.','game')
+    assert claim_stalls.blocked(net,proj,a)==[fn['id']]
+    assert not claim_stalls.blocked(net,proj,b)
+    assert net._function('f0','game')['status']=='open'
+    assert not net.store.one('SELECT 1 FROM attempts')

@@ -323,8 +323,10 @@ class Knowledge:
 
     def _function_mentions(self, proj, text):
         words = set(re.findall(r'[A-Za-z_]\w*', text))
-        return [r['name'] for r in self._store(proj['id']).all('SELECT name FROM functions WHERE project_id=?', proj['id'])
-                if r['name'] in words]
+        if not words:return []
+        return [r['name'] for r in self._store(proj['id']).all(
+            'SELECT name FROM functions WHERE project_id=? AND name IN (SELECT value FROM json_each(?))',
+            proj['id'],json.dumps(sorted(words)))]
 
     def for_function(self, fn):
         """Retain legacy function-specific knowledge at its relevant function, without editing user data."""

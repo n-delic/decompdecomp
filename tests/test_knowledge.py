@@ -210,3 +210,28 @@ def test_explicit_compiler_or_flag_selection_still_requires_compiler_tools(net,s
     with pytest.raises(NetworkError,match='compiler map'):
         net.knowledge.share(agent(net,'claude-opus-1'),'game',selection)
     assert net.knowledge.listing('game')['items']==[]
+
+
+def test_function_mentions_only_fetch_token_matches_in_owning_project(net,monkeypatch):
+    proj=net.project_row('game');other=net.project_row('other')
+    with net.store.tx() as db:
+        db.executemany('INSERT INTO functions(project_id,name) VALUES(?,?)',
+                       [(proj['id'],f'noise_{i}') for i in range(300)]+[(proj['id'],'zeta'),(proj['id'],'alpha'),(other['id'],'other_only')])
+    store=net.knowledge._store(proj['id']);original=store.all
+    expected=[r['name'] for r in original('SELECT name FROM functions WHERE project_id=?',proj['id'])
+              if r['name'] in {'alpha','zeta','other_only'}]
+    fetched=[]
+    def read(sql,*args):
+        rows=original(sql,*args)
+        if 'FROM functions' in sql:fetched.append(len(rows))
+        return rows
+    monkeypatch.setattr(store,'all',read)
+    assert net.knowledge._function_mentions(proj,'alpha alpha zeta other_only')==expected
+    assert fetched==[2]
+    assert net.knowledge._function_mentions(proj,'123 !!!')==[] and fetched==[2]
+    with pytest.raises(ValueError):
+        with store.tx() as db:
+            db.execute('INSERT INTO functions(project_id,name) VALUES(?,?)',(proj['id'],'new_symbol'))
+            assert net.knowledge._function_mentions(proj,'new_symbol')==['new_symbol']
+            raise ValueError('rollback')
+    assert net.knowledge._function_mentions(proj,'new_symbol')==[]
