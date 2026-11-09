@@ -258,3 +258,43 @@ def test_watchdog_denied_group_signal_stops_owned_child_without_closing_pipes(mo
     finally:
         stop_process_tree(proc)
         proc.stdout.close();proc.stderr.close()
+
+
+def test_concurrent_watchdogs_share_scan_but_keep_separate_trees(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+    calls = []
+    clock = [100.0]
+    def scan(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout='10 1 100\n11 10 200\n20 1 300\n21 20 400\n')
+    monkeypatch.setattr(limits, '_MEMORY_SNAPSHOT', None)
+    monkeypatch.setattr(limits.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(limits.subprocess, 'run', scan)
+    with ThreadPoolExecutor(16) as workers:
+        trees = list(workers.map(limits._process_memory_tree, [10,20]*32))
+    assert len(calls) == 1
+    assert all(dict(tree) == ({10:102400,11:204800} if index%2 == 0 else {20:307200,21:409600})
+               for index,tree in enumerate(trees))
+    clock[0] += .101
+    limits._process_memory_tree(10)
+    assert len(calls) == 2
+
+
+def test_slow_or_failed_scan_is_not_kept_as_fresh(monkeypatch):
+    from types import SimpleNamespace
+    clock = [100.0];calls = []
+    def scan(*args, **kwargs):
+        calls.append(args);clock[0] += .2
+        if len(calls) == 2:raise subprocess.TimeoutExpired('ps', 2)
+        return SimpleNamespace(stdout='10 1 100\n')
+    monkeypatch.setattr(limits, '_MEMORY_SNAPSHOT', None)
+    monkeypatch.setattr(limits.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(limits.subprocess, 'run', scan)
+    assert limits._process_memory_tree(10) == [(10,102400)]
+    assert limits._process_memory_tree(10) == []
+    assert limits._process_memory_tree(10) == []
+    assert len(calls) == 2
+    clock[0] += .101
+    assert limits._process_memory_tree(10) == [(10,102400)]
+    assert len(calls) == 3

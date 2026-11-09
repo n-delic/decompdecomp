@@ -1,5 +1,7 @@
 # Roadmap
 
+- Done: single-toolchain metadata lookup avoids rebuilding the whole catalogue; macOS
+  compiler watchdogs coalesce recent OS process scans while preserving per-tree limits.
 - Done: agent start/stop requests use reserved control workers; stopping one helper
   releases only its project. Usage accounting skips source synchronization, and
   active cleanup owns its eligibility scan.

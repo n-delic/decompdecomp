@@ -127,6 +127,8 @@ def _fake(monkeypatch, tc_root, sha):
     fake = toolchains.Toolchain(id="fake", name="Fake", license="MIT", source="test",
                                 parts=[{"url": archive.as_uri(), "sha256": sha or digest}])
     monkeypatch.setattr(toolchains, "registry", lambda: {"fake": fake})
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     return digest
 
 
@@ -575,6 +577,8 @@ def _pack_and_sdk(monkeypatch, tc_root) -> dict:
                                         parts=[{"url": url, "sha256": sha, "keep": {"bin": "Bin", "include": "Include"},
                                                 "into": version} for version in ("1.0", "1.0-x64")])}
     monkeypatch.setattr(toolchains, "registry", lambda: reg)
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     return reg
 
 
@@ -733,6 +737,8 @@ def test_install_repairs_missing_runtime_without_reinstalling_compiler(tc_root, 
                                        parts=[{'url':compiler_url,'sha256':compiler_sha}]),
     }
     monkeypatch.setattr(toolchains, 'registry', lambda: reg)
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     toolchains.install('compiler', log=lambda _:None)
     compiler = toolchains.path('compiler')
     stamp = (compiler/toolchains.MANIFEST).stat().st_mtime_ns
@@ -744,3 +750,29 @@ def test_install_repairs_missing_runtime_without_reinstalling_compiler(tc_root, 
     assert toolchains.require('runner').is_dir()
     assert len(toolchains.runtime_dirs('compiler')) == 2
     assert next(t for t in toolchains.status() if t['id'] == 'compiler')['missing_dependencies'] == []
+
+
+def test_single_toolchain_lookup_constructs_only_the_requested_entry(monkeypatch):
+    original = toolchains.Toolchain
+    made = []
+    def construct(**fields):
+        made.append(fields['id'])
+        return original(**fields)
+    monkeypatch.setattr(toolchains, 'Toolchain', construct)
+    monkeypatch.setattr(toolchains, 'registry', lambda: pytest.fail('single lookup rebuilt the full catalogue'))
+    assert toolchains.get('gcc-2.7.2-kmc').id == 'gcc-2.7.2-kmc'
+    assert made == ['gcc-2.7.2-kmc']
+
+
+def test_single_toolchain_lookup_keeps_metadata_fresh(monkeypatch):
+    spec = dict(name='First', license='MIT', source='synthetic', flags=['-O1'])
+    monkeypatch.setattr(toolchains, '_registry_data', lambda: {'synthetic':spec})
+    monkeypatch.setattr(toolchains, '_own', lambda tid: None)
+    first = toolchains.get('synthetic')
+    first.name = 'caller edit'
+    spec['name'] = 'Updated'
+    second = toolchains.get('synthetic')
+    assert second is not first and second.name == 'Updated'
+    assert second.flags == ['-O1']
+    with pytest.raises(toolchains.ToolchainError, match='unknown toolchain'):
+        toolchains.get('missing')

@@ -163,14 +163,20 @@ def _own(tid: str):
     return None if tid in _registry_data() else kits.own_compiler(tid)
 
 
+def _registered(tid: str) -> Toolchain | None:
+    """One packaged entry, excluding dynamic compiler versions from user SDK copies."""
+    spec = _registry_data().get(tid)
+    return Toolchain(id=tid, **spec) if spec is not None else None
+
+
 def get(tid: str) -> Toolchain:
-    reg = registry()
-    if tid not in reg and (own := _own(tid)) is not None:
+    # A compile needs one entry, not fresh objects for every compiler and SDK.
+    if (tc := _registered(tid)) is not None:
+        return tc
+    if (own := _own(tid)) is not None:
         return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
                          description="A compiler in your own SDK copy.", flags=list(own.flags))
-    if tid not in reg:
-        raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(reg))}")
-    return reg[tid]
+    raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(_registry_data()))}")
 
 
 
@@ -237,7 +243,7 @@ def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) ->
         return None
     if not get(tid).local and (changed(tid, manifest, path(tid, linux, vm=vm)) or _unbuilt(tid, linux)):
         return None
-    tc = registry().get(tid)
+    tc = _registered(tid)
     if tc is not None and any(installed(h, linux, vm=vm) is None for h in tc.headers):
         return None
     return manifest
@@ -288,7 +294,7 @@ def changed(tid: str, manifest: dict, where: Path | None = None) -> bool:
     made before installs recorded their entry's fingerprint is judged by the archives it records; one that still
     matches is given the fingerprint (in `where`, its folder, when it can be written), so a later change to the entry
     is seen too."""
-    tc = registry().get(tid)
+    tc = _registered(tid)
     if tc is None:  # (a project names a toolchain decompdecomp doesn't have: known())
         return False
     linux = bool(manifest.get("wsl") or manifest.get("linux_vm"))
