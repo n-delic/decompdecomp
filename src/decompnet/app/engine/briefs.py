@@ -514,7 +514,7 @@ class BriefMixin:
             lines += ["", "### Looks like (already matched; read with get_function)",
                       ", ".join(f"{r['name']} ({sim * 100:.0f}% similar)" for r, sim in alike)]
             r, sim = alike[0]
-            src = self.project_store(proj['id']).one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], r["name"])
+            src = self.project_store(proj['id']).one("SELECT matched_source FROM functions WHERE project_id=? AND name=? AND status='matched'", proj["id"], r["name"])
             from ..donor_structure import brief as donor_brief
             if hint := donor_brief(fn['best_source'] or fn['seed'] or '', src['matched_source'] if src else '', sim):
                 lines.append(hint)
@@ -592,9 +592,16 @@ class BriefMixin:
                       for h in cross]
         best = next((r for r, _ in hits if r["status"] == "matched"), None)
         if best is not None:
-            src = self.project_store(proj['id']).one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], best["name"])
+            src = self.project_store(proj['id']).one("SELECT matched_source FROM functions WHERE project_id=? AND name=? AND status='matched'", proj["id"], best["name"])
             if src and src["matched_source"]:
-                lines += ["", f"Matching C of {best['name']}:", "```c", src["matched_source"].strip()[:4000], "```"]
+                source = src['matched_source']
+                lines += ["", f"Matched donor {best['name']}; source SHA-256 {hashlib.sha256(source.encode()).hexdigest()}."]
+                if len(source) <= 4000:
+                    lines += ['Complete matching C:', '```c', source.strip(), '```']
+                else:
+                    lines += [f'Complete source is {len(source)} characters. Retrieve it with '
+                              f'get_function(function="{best["name"]}", section="matched"). '
+                              'No partial C is supplied; preserve its scopes, line breaks and repeated branch tails.']
         return "\n".join(lines)
 
     def list_functions(self, project: str | None, status: str = "open", limit: int = 40) -> str:

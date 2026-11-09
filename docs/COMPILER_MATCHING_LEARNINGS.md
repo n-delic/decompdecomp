@@ -6797,3 +6797,32 @@ all 272 target bytes; the modern result differs at exactly those two instruction
 No SDK instruction edits were made. Both exact body hashes are supported for import
 identification; do not normalize away an assembler difference when claiming byte identity.
 No SDK instructions or game fixtures are committed.
+
+### Fresh sibling source and coordinated interpolation scale (2026-11-09)
+
+- **Compiler:** KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+- **Measured private replay:** a previously matched sibling's current complete C,
+  renamed for the destination, required eight related `50` → `500` edits together:
+  a comparison, coefficient subtraction and six divisions. Restoring the destination's
+  pointer parameter type retained its interface. The generated candidate matched all
+  476 linked bytes / 119 instructions in one compiler invocation (0.30 seconds for
+  candidate generation, compilation and judging on this machine).
+- This is a **reproduction of an existing match**, not additional progress or a timing
+  guarantee. The replay starts with the correct donor already available; full-project
+  indexing, donor discovery and app synchronization are not included in that timing.
+- Keep the donor's source shape: branch scopes, local temporaries, duplicated tails,
+  field types and reloads. These were validated as a bundle; no individual feature's
+  causal contribution was isolated. Flattened older candidates failed to recover it.
+- The free similar-code pass now prioritizes aligned threshold/subtraction/reciprocal
+  evidence, including same-project donors. It proposes bounded related C-literal edits;
+  the original compiler regenerates division reciprocals and shifts. Register changes,
+  unsupported reciprocal forms, unrelated instruction changes and external jump changes
+  reject this proposal. Ordinary linking and exact destination judging remain required.
+- Read the current verified donor after ranking and record its source hash. Large source
+  is retrieved completely through `get_function(section="matched")`, never as truncated C.
+  Public regression fixtures are synthetic; private game code/bytes remain outside Git.
+
+To repeat a local/private replay, keep its fixture outside Git and run
+`PYTHONPATH=src TMPDIR=/path/on/data-volume python tools/replay_parameter_transfer.py /private/fixture.json`.
+The tool's docstring describes the fixture schema. It calls the ordinary compiler/link
+judge without an app connection; fixtures with referenced data need a future data-reader adapter.
