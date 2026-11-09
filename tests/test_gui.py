@@ -56,6 +56,15 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_a_big_game_is_read_where_it_is_instead_of_copied_through_the_window():
+    """#154: dropping a 792 MB disc image sent the whole file through WebView2, whose browser process died and ended
+    the app. A game over the copy limit now goes to the path dialog (tests/gui_drop.js)."""
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_drop.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 @pytest.fixture(scope="module")
 def gui():
     if NODE is None:

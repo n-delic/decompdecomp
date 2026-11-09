@@ -185,7 +185,8 @@ def test_hidden_webview2_window_loads_and_respects_close():
 
 
 def test_a_dead_webview2_process_is_logged_and_the_renderer_reloaded(native_module, monkeypatch, caplog):
-    """#154: the window went black and the log said nothing."""
+    """#154: the window went black and the log said nothing. A dead browser process ends the window with
+    BROWSER_FAILED, which the app answers with a new window instead of quitting."""
     reloads, exits = [], []
     monkeypatch.setattr(native_module.os, "_exit", exits.append)
     sender = SimpleNamespace(Reload=lambda: reloads.append(1))
@@ -194,4 +195,4 @@ def test_a_dead_webview2_process_is_logged_and_the_renderer_reloaded(native_modu
         native_module.process_failed(sender, SimpleNamespace(ProcessFailedKind="GpuProcessExited"))
     assert reloads == [1] and not exits and "OutOfMemory" in caplog.text and "GpuProcessExited" in caplog.text
     native_module.process_failed(sender, SimpleNamespace(ProcessFailedKind="BrowserProcessExited"))
-    assert exits == [1]
+    assert exits == [window.BROWSER_FAILED]
