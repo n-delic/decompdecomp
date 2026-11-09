@@ -37,10 +37,25 @@ def _boundaries(net,proj):
 
     from .boundary_repairs import reason
     console=net.console(proj);out=[]
-    for row in net.project_store(proj['id']).all(f"SELECT name,vram,size,target,status,meta FROM functions WHERE project_id=? AND {IN_BUILD} AND status!='matched'",proj['id']):
-        if warning:=reason(console,row):
-            out.append({'function':row['name'],'vram':row['vram'],'size':row['size'],'stored_status':row['status'],
-                        'analysis_state':'boundary_review','reason':warning,'override':bool(json.loads(row['meta'] or '{}').get('boundary_override'))})
+    # Preserve complete target bytes. Page their hex representation with scalar
+    # metadata to avoid one native SQLite/Python handoff per field and function.
+    # No source/header payloads or SQL Python decoder callbacks are involved.
+    pages=net.project_store(proj['id']).all(f"""WITH candidates AS (
+        SELECT name,vram,size,CASE WHEN target IS NULL THEN NULL ELSE hex(target) END AS target,status,meta,
+               row_number() OVER () AS ordinal
+        FROM functions WHERE project_id=? AND {IN_BUILD} AND status!='matched')
+        SELECT json_group_array(json_array(name,vram,size,target,status,meta)) AS packet
+        FROM candidates GROUP BY (ordinal-1)/128 ORDER BY min(ordinal)""",proj['id'])
+    fields=('name','vram','size','target','status','meta')
+    pages.reverse()
+    while pages:
+        # Drop encoded pages as they expand instead of retaining both forms.
+        for values in json.loads(pages.pop()['packet']):
+            row=dict(zip(fields,values))
+            row['target']=bytes.fromhex(row['target']) if row['target'] is not None else None
+            if warning:=reason(console,row):
+                out.append({'function':row['name'],'vram':row['vram'],'size':row['size'],'stored_status':row['status'],
+                            'analysis_state':'boundary_review','reason':warning,'override':bool(json.loads(row['meta'] or '{}').get('boundary_override'))})
     return out
 
 

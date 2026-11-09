@@ -132,3 +132,48 @@ def test_coverage_review_and_results_belong_to_collapsible_project_settings():
     assert settings < coverage < results < html.index('id="sourcePrepPanel"')
     assert '<details class="panel settings-disclosure" id="codeCoveragePanel"' in html
     assert '<details id="coverageAuditTechnical"' in html
+
+
+def test_boundary_transport_pages_complete_bytes_and_preserves_findings(tmp_path,monkeypatch):
+    from decompnet.app.boundary_repairs import reason
+    from decompnet.network import IN_BUILD
+    net,proj=fixture(tmp_path)
+    targets=[None,b'',bytes(4),words(0x27bdffe8),words(0x03e00008,0),words(0x0c000400,0),
+             words(0x03e00008,0)+bytes(range(256))*32,b'\x00\xff\x80']
+    with net.store.tx() as db:
+        for i in range(300):
+            db.execute('INSERT INTO functions(project_id,name,vram,size,target,status,meta) VALUES(?,?,?,?,?,?,?)',
+                       (proj['id'],f'名字\0{i}',2**60+i,4,targets[i%len(targets)],'open',
+                        json.dumps({'boundary_tail_review':'retained review','boundary_override':bool(i%2)})))
+        db.execute("INSERT INTO functions(project_id,name,size,target,status,meta) VALUES(1,'gone',4,?,'open',?)",(words(0x27bdffe8),json.dumps({'gone':True})))
+        db.execute("INSERT INTO functions(project_id,name,size,target,status) VALUES(1,'exact',4,?,'matched')",(words(0x27bdffe8),))
+        db.execute("INSERT INTO projects(id,slug,name,arch,root,config) VALUES(2,'other','Other','mips','.','{}')")
+        db.execute("INSERT INTO functions(project_id,name,size,target,status) VALUES(2,'other_cut',4,?,'open')",(words(0x27bdffe8),))
+    original=net.project_store(proj['id']).all
+    rows=original(f"SELECT name,vram,size,target,status,meta FROM functions WHERE project_id=? AND {IN_BUILD} AND status!='matched'",proj['id'])
+    console=net.console(proj);expected=[]
+    for row in rows:
+        if warning:=reason(console,row):
+            expected.append({'function':row['name'],'vram':row['vram'],'size':row['size'],'stored_status':row['status'],
+                             'analysis_state':'boundary_review','reason':warning,'override':bool(json.loads(row['meta'] or '{}').get('boundary_override'))})
+    reads=[]
+    def counted(sql,*args):
+        result=original(sql,*args)
+        if 'FROM candidates GROUP BY' in sql:reads.append(len(result))
+        return result
+    monkeypatch.setattr(net.project_store(proj['id']),'all',counted)
+    # Observe exact complete bytes delivered to the real boundary reviewer.
+    seen=[]
+    def checked(c,row):
+        seen.append(row['target'])
+        return reason(c,row)
+    monkeypatch.setattr('decompnet.app.boundary_repairs.reason',checked)
+    assert code_coverage._boundaries(net,proj)==expected
+    assert seen==[row['target'] for row in rows]
+    assert reads==[3]  # 301 complete records, bounded to 128 per native row.
+    with pytest.raises(ValueError):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET target=? WHERE name='cut'",(words(0x03e00008,0),))
+            assert not any(r['function']=='cut' for r in code_coverage.boundaries(net,proj))
+            raise ValueError('rollback')
+    assert any(r['function']=='cut' for r in code_coverage.boundaries(net,proj))

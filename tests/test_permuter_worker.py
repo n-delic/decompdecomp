@@ -96,7 +96,7 @@ def test_worker_diagnostics_have_timestamp_pid_revision_and_keep_stdout_json(tmp
     assert 'Synthetic normal exit' not in result.stderr
 
 
-@pytest.mark.parametrize('module', ['read_cache.py','metadata_rows.py','candidate_scope.py','match_bundle.py','network.py','compiler.py','app/view_snapshots.py','app/progress.py'])
+@pytest.mark.parametrize('module', ['read_cache.py','metadata_rows.py','candidate_scope.py','match_bundle.py','network.py','compiler.py','app/view_snapshots.py','app/code_coverage.py','app/progress.py'])
 def test_shared_contract_update_changes_worker_revision(tmp_path, monkeypatch, module):
     root=tmp_path/'decompnet'
     file=root/module
