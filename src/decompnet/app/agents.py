@@ -1455,6 +1455,10 @@ class Manager:
                 try:asset_ready=asset_agents.ready(self.net,s,agent)
                 except network.NetworkError as error:
                     self._pause(s,str(error));break
+                if not asset_ready and asset_agents.awaiting_peer(self.net,s,agent):
+                    self._set(s,'waiting','Waiting for another worker’s discovery before independent review',None)
+                    s.stop.wait(1)
+                    continue
                 if not asset_ready:
                     self._finish(s,'Asset discovery has no unclaimed work; review findings in ROM Explorer.')
                     break

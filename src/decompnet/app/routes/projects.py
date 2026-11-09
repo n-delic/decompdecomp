@@ -270,7 +270,7 @@ def register(app: App) -> None:
                 with jobs._lock:creating=[job['id'] for job in jobs.jobs.values() if job['kind']=='Create asset discovery agents' and job['state']=='running' and job.get('activity_project')==slug]
                 for identity in creating:jobs.cancel(identity)
                 return asset_agents.stop(net,slug,manager)
-            if action in ('accept','reject'):
+            if action in ('accept','reject','similar'):
                 return asset_agents.review(net,slug,data.get('finding'),action,data.get('edits'),data.get('annotation_version',''),data.get('feedback',''))
             raise NetworkError('Choose a discovery pass or proposal review action.')
 
