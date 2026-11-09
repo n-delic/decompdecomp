@@ -17,9 +17,8 @@ def run(net,slug,log=print):
     from .code_audit_reviews import revision
     input_revision=revision(net,proj['id'])
     image,segments=net._rom(proj)
-    expected=net.cfg(proj).get('rom',{}).get('sha1')
-    if expected and hashlib.sha1(image).hexdigest()!=expected:
-        raise NetworkError('The analysis image differs from the recorded ROM hash. Restore the original image before auditing.')
+    from .analysis_image import verify
+    verify(image,proj,net.cfg(proj),check=getattr(log,'check_cancel',lambda:None))
     console=net.console(proj)
     functions=[dict(name=f['name'],rom=f['rom_offset'],vram=f['vram'],size=f['size'],
                     handwritten=bool(console.asm_reason(f['target']))) for f in net.project_store(proj['id']).all(

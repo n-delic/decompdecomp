@@ -173,7 +173,8 @@ def test_reimport_still_blocks_projects_with_an_active_room(tmp_path):
         net.import_split(console, Picked("n64", b"rom", "game.z64", {}, True), reimport_slug="game")
 
 
-def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypatch):
+@pytest.mark.parametrize('derived', [False, True])
+def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypatch, derived):
     from decompnet import consoles
 
     root = tmp_path / 'banks'
@@ -181,7 +182,7 @@ def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypat
     net = RomNetwork(tmp_path / 'banks.db', tmp_path)
     cfg = {'kind': 'rom', 'platform': 'n64', 'big_endian': True,
            'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']},
-           'rom': {'file': 'rom.z64', 'sha1': 'same'}, 'segments': []}
+           'rom': {'file': 'rom.z64', 'sha1': 'same', 'analysis_sha1': 'stale'}, 'segments': []}
     originals = {}
     with net.store.tx() as db:
         pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
@@ -202,11 +203,16 @@ def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypat
             line = split.AsmLine(index * 4, 0x80300000, 0x24020000 + index, 'addiu', f'v0, zero, {index}')
             functions.append(split.RomFunction(f'func_80300000_{unit}', 0x80300000, index * 4, unit,
                                                 [line], work / (unit + '.s')))
-        return split.SplitResult(functions, [], [], {}, work / 'splat.yaml', 'KMC', '')
+        if derived:(work/'analysis.bin').write_bytes(b'derived image')
+        return split.SplitResult(functions, [], [], {}, work / 'splat.yaml', 'KMC', '', image='analysis.bin' if derived else '')
     monkeypatch.setattr(split, 'split_rom', replacement)
     picked = Picked('n64', bytes(16), 'rom.z64', {'title': 'Banks', 'size': 16, 'sha1': 'same',
                     'game_code': 'DEMO', 'region': 'Test', 'compiler_guess': 'KMC'}, True)
     net.import_split(consoles.get('n64'), picked, reimport_slug='banks', log=lambda *_: None)
+    import hashlib
+    recorded = net.cfg(net.project_row('banks'))['rom']
+    assert recorded['sha1'] == 'same'
+    assert recorded['analysis_sha1'] == hashlib.sha1(b'derived image' if derived else bytes(16)).hexdigest()
     for fid, (name, body) in originals.items():
         row = net.store.one('SELECT * FROM functions WHERE id=?', fid)
         assert row['name'] == name and row['target'] == body and row['status'] == 'matched'

@@ -5,6 +5,7 @@ header, with what the console adds (more code to split, the game's own symbols, 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -166,7 +167,8 @@ class ImportMixin:
             log(f"Compiler {toolchain}: {info['compiler_why']}")
         cfg = {
             "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
-            "rom": {**info, "file": res.image or picked.filename, "program": picked.filename},
+            "rom": {**info, "file": res.image or picked.filename, "program": picked.filename,
+                    "analysis_sha1": hashlib.sha1(rom).hexdigest()},
             "segments": [vars(s) for s in res.segments],
             "coverage_notes": getattr(res, 'coverage_notes', []),
             "compiler": {"toolchain": toolchain, "flags": flags, "timeout": 20},
