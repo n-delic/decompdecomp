@@ -109,11 +109,20 @@ def _definitions(text: str, clean: str, pos: int, bound: int):
         yield min(i, brace), k, brace
 
 
+# what's written before a declaration with parentheses of its own, never the function's name
+_DECLARATION_MACROS = {"__declspec", "__attribute__", "__attribute", "alignas", "_Alignas", "__pragma", "_Pragma"}
+_NAME_THEN_PAREN = re.compile(  # (not `int (*Pick(int a))(int b)`'s `int (*`: a declarator's parenthesis)
+    r"(?<![\w~:<>])((?:[\w~<>]+::)*operator\s*(?:\(\)|[^\s(]+)|(?:[\w~<>]+::)*~?\w+)\s*\((?!\s*[*&^])")
+
+
 def defined_name(text: str, span: tuple[int, int]) -> str | None:
-    """The name a definition gives its function (`CAIBehaviour::Update` for `void CAIBehaviour::Update(int)`)."""
-    head = _blank(text[span[0]:span[1]]).split("(", 1)[0]
-    m = re.search(r"((?:[\w~<>]+::)*~?\w+|(?:[\w<>]+::)*operator\s*\S+)\s*$", head)
-    return m.group(1) if m else None
+    """The name a definition gives its function (`CAIBehaviour::Update` for `void CAIBehaviour::Update(int)`): the
+    name right before its parameter list, past `__declspec(noinline)` and `__attribute__((...))`, which were taken
+    for it (a parked draft's `__declspec(noinline) int F(void)` read as `__declspec`, and the next function written
+    the same way was taken for its visible copy)."""
+    clean = _blank(text[span[0]:span[1]])
+    return next((m.group(1) for m in _NAME_THEN_PAREN.finditer(clean.split("{", 1)[0])
+                 if m.group(1) not in _DECLARATION_MACROS), None)
 
 
 def _unbalanced(between: str) -> bool:

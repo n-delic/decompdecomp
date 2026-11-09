@@ -274,6 +274,10 @@ def test_an_inline_helper_in_the_map_isnt_judged_as_the_annotated_function(tmp_p
     assert dll2coff.definition(text, clean, at, len(text), ["_func_00011000", "Tail"]) == "inline int __stdcall Tail("
     assert dll2coff.definition(text, clean, at, len(text), ["_func_00011000", "Car::Go"]) == "void Car::Go("
     assert dll2coff.definition(text, clean, at, len(text), ["_func_00011000", "Bus::Go"]) == "void Car::Go("
+    # `__declspec(noinline)` on a line of its own: that line was taken for the definition's (`?__declspec@@`)
+    text = "// FUNCTION: 0x11000\n__declspec(noinline)\nvoid G(int a)\n{\n}\n"
+    decl = dll2coff.definition(text, dll2coff._blank(text), at, len(text), ["_func_00011000"])
+    assert decl == "void G(" and dll2coff.symbol_hint(decl) == "?G@@"
 
 
 @pytest.mark.parametrize("text,app,judge", [

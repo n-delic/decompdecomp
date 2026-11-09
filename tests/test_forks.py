@@ -394,6 +394,14 @@ def test_the_definition_the_build_sees_beside_a_parked_one_is_found_by_its_annot
     assert text[span[0]:span[1]].endswith("return 2;\n}\n")
     seen = ForkEngine._seen_beside(fp, text, span, key, [key, "func_00011000"])
     assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
+    # the parked draft's name past `__declspec(noinline)`: read as `__declspec`, the next function written the same
+    # way (H) was taken for its visible copy, and a try overwrote it
+    text = ("// FUNCTION: 0x11000\n#ifdef PARKED\n__declspec(noinline) int F(void) { return 2; }\n#endif\n"
+            "__declspec(noinline) int H(void) { return 3; }\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, key), key, [key, "func_00011000"]) is None
+    text = text.replace("#endif\n", "#else\nint F(void) { return 1; }\n#endif\n")
+    seen = ForkEngine._seen_beside(fp, text, csource.find(text, key), key, [key, "func_00011000"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int F(void) { return 1; }\n"
 
 
 def test_csource_takes_no_macro_written_prototype_for_a_definition():
@@ -1180,6 +1188,8 @@ def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
     ok, _ = fp.build_all(failed=failed)
     assert not ok and [Path(t).as_posix() for t in failed] == ["b/part.o"] and fp.failed_units(failed) == {"b"}
     assert fp.build_unit(fp.unit("a"))[0] and (tmp_path / "sub" / "a.o").exists()
+    # and a run of builds names them so too: it asked for sub/a.o and sub/c.o, failed, and built each alone
+    assert fp.build_units([fp.unit("a"), fp.unit("c")]) == [(True, ""), (True, "")]
 
 
 def _steps_project(tmp_path: Path, broken: str = "b"):

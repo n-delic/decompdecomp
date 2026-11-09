@@ -64,6 +64,8 @@ def _blank(text: str) -> str:
 
 
 _INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
+# what's written before a declaration with parentheses of its own (the app's csource skips the same)
+_DECLARATION_MACROS = re.compile(r"\b(?:__declspec|__attribute__|__attribute|alignas|_Alignas)\s*\((?:[^()]|\([^()]*\))*\)")
 
 
 def _past(clean: str, brace: int) -> int:
@@ -134,8 +136,9 @@ def _definition_lines(text: str, clean: str, pos: int, bound: int):
             pos = _past(clean, brace)  # past the type (or initialiser)
             continue
         at, found = head_at, None
-        for ln in clean[head_at:brace].split("\n"):  # its first line: the one with the "(" (not a #pragma)
-            if "(" in ln and not ln.lstrip().startswith("#"):
+        for ln in clean[head_at:brace].split("\n"):  # its first line: the one with the "(" (not a #pragma, nor a line
+            # of only `__declspec(noinline)`: a definition written over two lines was cut as `?__declspec@@`)
+            if "(" in _DECLARATION_MACROS.sub("", ln) and not ln.lstrip().startswith("#"):
                 start = at + len(ln) - len(ln.lstrip())
                 # up to its last "(" (`__declspec(noinline) bool A::F(`); the real text: extern "C" keeps its "C"
                 found = text[start:at + ln.rindex("(") + 1]

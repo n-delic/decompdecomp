@@ -945,7 +945,7 @@ class ForkProject:
             except Exception as e:  # noqa: BLE001 - its caller's, not the others'
                 return e
 
-        rels = [os.path.normpath(os.path.relpath(u.base, self.root)) for u in units]
+        rels = [self._target(u.base) for u in units]  # (named from the build's folder: `-C sub` builds final.o)
         ninja = [tool, *cfg.get("custom_args", [])]
         code, _, _ = self._execute([*ninja, "-k", "0", *dict.fromkeys(rels)], log, UNIT_SECONDS, None)
         if code == 0:
