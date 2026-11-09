@@ -675,3 +675,18 @@ in place. A bounded two-project regression stalls export, admits the next projec
 verification, then completes or fails the first export while checking that cleanup
 cannot release or clear the next owner's lane. This removes export duration from shared
 admission occupancy; it does not remove pre-judge comparison time or same-project waits.
+
+### Preserve cancellation through compiler cleanup
+
+A denied process-group signal must not replace a search's own time-limit or
+cancellation exception. Compiler cleanup now attempts direct-child termination,
+closes both pipes and removes process tracking even when group signalling fails.
+The cleanup denial remains a warning with PID and errno; when cleanup is the only
+failure, it still fails the compiler invocation instead of returning a candidate.
+The operating-system reason for a denied group signal is not inferred from this fix.
+
+The dedicated permuter's stderr log now includes timestamps, PID and startup source
+revision, including uncaught exceptions. Its stdout remains the JSON control
+protocol. Development worker revision checks also cover shared cache, network,
+compiler and progress contracts: lazily importing a new view against a cached old
+read-cache module previously caused an ImportError after source updates.

@@ -24,7 +24,10 @@ from ..network import NetworkError
 from . import edition, local_claims, workers
 
 log = logging.getLogger("decompdecomp")
-WATCHED = ("permuter_claims.py", "app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
+# Shared modules can be imported lazily after an update. Replace the child when
+# these contracts change too, rather than mixing cached old and new definitions.
+WATCHED = ("read_cache.py", "network.py", "store.py", "compiler.py", "limits.py",
+           "app/view_snapshots.py", "app/progress.py", "app/permuter_worker.py", "permuter_claims.py", "app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
            "app/snapshot_branch_repairs.py", "app/dispatch_specialization.py", "app/layout_frontiers.py", "app/targeted_debug_layout.py", "app/compiler_phase_repairs.py", "app/carrier_sequence_repairs.py", "app/compiler_phase_routing.py",
            "app/permuter_macro_effects.py", "app/inline_scheduling_repairs.py", "app/call_preparation_repairs.py", "app/repair_cleanup.py", "inline_helpers.py", "object_emission.py", "app/argument_mask_repairs.py", "app/store_result_repairs.py", "app/loop_weight_repairs.py", "app/local_flow.py",
            "permuter_gen.py", "permuter_capture.py", "permuter_formatting.py")
@@ -319,11 +322,26 @@ class PermuterWorker:
         self._stop_process()
 
 
+def _worker_logging():
+    """Keep stderr diagnostics attributable without touching the JSON stdout protocol."""
+    from . import build_info
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(levelname)s [%(name)s pid=%(process)d %(threadName)s] %(message)s',
+                        stream=sys.stderr)
+    def uncaught(kind, value, tb):
+        if issubclass(kind, SystemExit):return
+        log.error('Uncaught permuter worker error', exc_info=(kind, value, tb))
+    sys.excepthook = uncaught
+    threading.excepthook = lambda args: uncaught(args.exc_type, args.exc_value, args.exc_traceback)
+    log.info('Permuter worker starting: %s', build_info.label())
+
+
 def child(db_path: str, workspace: str) -> None:
     """Own one engine and its permuter; stdout carries only framed JSON replies."""
     from .engine import RomNetwork
     from .permute import Permuter
 
+    _worker_logging()
     net = RomNetwork(db_path, Path(workspace))
     permuter = net.permuter = Permuter(net)
     output_lock = threading.Lock()

@@ -70,3 +70,39 @@ def test_permuter_restarts_without_replacing_the_app_engine(tmp_path, monkeypatc
     finally:
         worker.close()
         workers.configure(previous_workers)
+
+
+
+def test_worker_diagnostics_have_timestamp_pid_revision_and_keep_stdout_json(tmp_path, monkeypatch):
+    import json
+    import re
+    import subprocess
+    import sys
+
+    monkeypatch.setenv('HOME',str(tmp_path))
+    monkeypatch.setenv('DECOMP_HOME',str(tmp_path/'data'))
+    script = ("import json,sys; from decompnet.app.permuter_worker import _worker_logging,log; "
+              "_worker_logging(); log.warning('Synthetic worker warning'); "
+              "sys.stdout.write(json.dumps({'kind':'status','jobs':{}})); "
+              "sys.excepthook(ValueError,ValueError('Synthetic worker failure'),None); "
+              "sys.excepthook(SystemExit,SystemExit('Synthetic normal exit'),None)")
+    result=subprocess.run([sys.executable,'-c',script],capture_output=True,text=True,timeout=10,check=True)
+    assert json.loads(result.stdout)=={'kind':'status','jobs':{}}
+    assert len(result.stdout.splitlines())==1
+    assert re.search(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} WARNING .*pid=\d+',result.stderr)
+    assert 'Permuter worker starting:' in result.stderr and 'RetroReversing fork' in result.stderr
+    assert 'Uncaught permuter worker error' in result.stderr
+    assert 'Synthetic worker failure' in result.stderr
+    assert 'Synthetic normal exit' not in result.stderr
+
+
+@pytest.mark.parametrize('module', ['read_cache.py','network.py','compiler.py','app/view_snapshots.py','app/progress.py'])
+def test_shared_contract_update_changes_worker_revision(tmp_path, monkeypatch, module):
+    root=tmp_path/'decompnet'
+    file=root/module
+    file.parent.mkdir(parents=True,exist_ok=True)
+    file.write_text('old')
+    monkeypatch.setattr(permuter_worker,'__file__',str(root/'app/permuter_worker.py'))
+    before=permuter_worker.revision()
+    file.write_text('updated shared contract')
+    assert permuter_worker.revision()!=before

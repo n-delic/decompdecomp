@@ -114,3 +114,41 @@ def test_cancelled_compiler_closes_pipes_even_while_exception_is_retained(tmp_pa
     proc=processes[0]
     assert proc.poll() is not None
     assert proc.stdout.closed and proc.stderr.closed
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX process group cleanup')
+@pytest.mark.parametrize('cancelled', [False, True])
+def test_denied_group_cleanup_preserves_cancellation_closes_pipes_and_unregisters(tmp_path, monkeypatch, caplog, cancelled):
+    import errno
+    import logging
+
+    from decompnet import compiler, compiler_processes
+    from decompnet.app.deep_permuter import SearchLimit
+    processes=[]
+    popen=subprocess.Popen
+    def start(*args,**kwargs):
+        proc=popen(*args,**kwargs);processes.append(proc);return proc
+    monkeypatch.setattr(compiler.subprocess,'Popen',start)
+    def deny_group(pid,sig):raise PermissionError(errno.EPERM,'Synthetic signal permission denied')
+    monkeypatch.setattr(compiler.os,'killpg',deny_group)
+    removed=[]
+    monkeypatch.setattr(compiler_processes,'untrack',removed.append)
+    def check():
+        if cancelled:raise SearchLimit('Time limit reached')
+    try:
+        with compiler.cancellable(check), caplog.at_level(logging.WARNING,logger='decompdecomp'):
+            with pytest.raises(SearchLimit if cancelled else PermissionError,match='Time limit reached' if cancelled else 'Synthetic signal permission denied'):
+                compiler._exec(compiler.CompilerConfig(cmd=[],sandbox='none'),tmp_path,
+                               [sys.executable,'-c','import time;time.sleep(30)' if cancelled else 'pass'],10)
+        proc=processes[0]
+        assert proc.poll() is not None
+        assert proc.stdout.closed and proc.stderr.closed
+        assert removed == [proc.pid]
+        assert 'Compiler process cleanup failed' in caplog.text
+        assert f'primary_failure={cancelled}' in caplog.text
+    finally:
+        # The same regression can be run against the broken cleanup implementation.
+        for proc in processes:
+            compiler.stop_process_tree(proc)
+            for stream in (proc.stdout,proc.stderr):
+                if stream is not None:stream.close()

@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import importlib
+import logging
 import os
 import re
 import shutil
@@ -236,6 +237,7 @@ def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: floa
     from . import compiler_processes
     compiler_processes.track(proc.pid)
     started = time.monotonic()
+    failed = False
     try:
         with limits.CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
             while True:
@@ -252,27 +254,40 @@ def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: floa
                     if time.monotonic() - started > timeout:
                         raise subprocess.TimeoutExpired(proc.args, timeout)
     except BaseException:
-        if os.name != "nt":
-            import signal
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        stop_process_tree(proc)
+        failed = True
         raise
     finally:
-        # A driver may exit before its children. Always reap its isolated group, not just the driver PID.
-        if os.name != "nt":
-            import signal
+        # Cleanup must not turn a normal search limit/cancellation into a failed
+        # repair job. A denied group signal still needs direct-child cleanup and
+        # pipe/registry release; never return a successful result if cleanup alone fails.
+        cleanup_error = None
+        try:
+            if os.name != "nt":
+                import signal
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError as error:
+                    cleanup_error = error
+            if failed or cleanup_error is not None:
+                try:
+                    stop_process_tree(proc)
+                except OSError as error:
+                    cleanup_error = error
+        finally:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        # communicate closes these on success, but cancellation can happen first.
-        for stream in (proc.stdout, proc.stderr):
-            if stream is not None:
-                stream.close()
-        compiler_processes.untrack(proc.pid)
+                for stream in (proc.stdout, proc.stderr):
+                    if stream is not None:
+                        stream.close()
+            finally:
+                compiler_processes.untrack(proc.pid)
+        if cleanup_error is not None:
+            logging.getLogger('decompdecomp').warning(
+                'Compiler process cleanup failed pid=%d errno=%s; primary_failure=%s',
+                proc.pid, cleanup_error.errno, failed)
+            if not failed:
+                raise cleanup_error
 
 
 
