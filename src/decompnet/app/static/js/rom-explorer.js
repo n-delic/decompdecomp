@@ -18,6 +18,8 @@ function romControls(view) {
 }
 async function loadRomExplorer() {
   const slug=S.slug, epoch=++romEpoch, view=romView(slug), log=romWorkLog();
+  if(typeof stopRomTextureGallery==='function')stopRomTextureGallery();
+  $('romTexturePanel').hidden=true;view._textureReport=null;
   view.busy=true;romControls(view);
   $('romTypeMapPanel').hidden=true;$('romTypeStatus').textContent='';$('romResult').replaceChildren();$('romSummary').textContent='';$('romMap').hidden=true;$('romMapRange').textContent='';$('romStale').hidden=true;$('romNotes').textContent='';$('romRuntime').hidden=true;$('romRuntimeItems').replaceChildren();$('romLoaderGroups').hidden=true;$('romLoaderItems').replaceChildren();
   $('assetAgentPanel').hidden=true;
@@ -125,6 +127,7 @@ function renderRomExplorer(view=romView()) {
   host.querySelectorAll('[data-rom-region]').forEach(b=>b.onclick=()=>openRomRegion(b.dataset.romRegion));
   const more=host.querySelector('[data-rom-more]');if(more)more.onclick=()=>{view.limit+=100;renderRomExplorer(view);};
   drawRomMap(view);drawRomTypeMap(view);
+  if(typeof renderRomTextureGallery==='function' && view._textureReport!==report){view._textureReport=report;renderRomTextureGallery(view);}
 }
 function drawRomMap(view=romView()) {
   const canvas=$('romMap'),report=view.report;if(!report?.available)return;
@@ -164,7 +167,7 @@ async function openRomRegion(id) {
       const done=beginWork(work,'Saving region notes',[...new Set([button,label,notes,kind,...body.querySelectorAll('input,select,button')])],'Region notes saved.');showJobError(work,'');
       try {const result=await api('/api/rom-explorer/annotation',{method:'POST',body:{slug,region:id,image_hash:report.image_hash,name:label.value,notes:notes.value,kind:kind.value,preview_settings:romAssetOptions(body),model_settings:romModelOptions(body)}});
         const row=report.regions.find(row=>row.id===id);if(row)row.annotation=result.annotation;
-        if(S.slug===slug && S.tab==='rom')renderRomExplorer(romView(slug));
+        if(S.slug===slug && S.tab==='rom'){romView(slug)._textureReport=null;renderRomExplorer(romView(slug));}
       }catch(error){showJobError(work,error.message);}finally{saving=false;if(active())body._romAssetBusy=false;done();}
     };
   } catch(error){if(active())showJobError(log,error.message);}finally{finish();}

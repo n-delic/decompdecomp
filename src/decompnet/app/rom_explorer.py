@@ -18,7 +18,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=3
+ANALYSIS_REVISION=4
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'font', 'container', 'repeated bytes')
 
 
@@ -80,7 +80,8 @@ def listing(net, slug):
     regions = [{k:v for k,v in r.items() if k not in ('references','pointers')} |
                {'annotation':state['annotations'].get(r['id'],{}),'used_by':len(users[r['id']][0] | users[r['id']][1]),
                 'direct_users':len(users[r['id']][0]),'traced_users':len(users[r['id']][1]),
-                'function_refs':sorted(users[r['id']][0] | users[r['id']][1])}
+                'function_refs':sorted(users[r['id']][0] | users[r['id']][1]),
+                'direct_function_refs':sorted(users[r['id']][0]),'traced_function_refs':sorted(users[r['id']][1])}
                for r in report['regions']]
     from ..rom.asset_inspection import groups
     return {k:v for k,v in report.items() if k!='regions'} | dict(available=True,stale=report['revision']!=_revision(net,proj),regions=regions,asset_groups=groups({**report,'regions':regions}))
@@ -225,7 +226,7 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
@@ -254,8 +255,12 @@ def _asset_read(net,slug,data,read, *, detect=False):
     detected=row.get('detected_asset')
     using_detected=bool(detect and detected and options.get('format','auto')=='auto' and
                         options.get('source','rom')=='rom' and
-                        asset_formats.integer(options.get('offset',row['start']),'Data offset',0,state['report']['size']-1)==row['start'])
-    if using_detected:options=dict(detected['preview_settings'])
+                        asset_formats.integer(options.get('offset',row['start']),'Data offset',0,state['report']['size']-1) in (row['start'],detected['offset']))
+    if using_detected:
+        selection=dict(options)
+        options=dict(detected['preview_settings'])
+        original_read=read
+        read=lambda image,settings:net.console(proj).asset_texture_preview(image,detected,selection) or original_read(image,settings)
     path=Path(proj['root'])/net.cfg(proj)['rom']['file']
     with path.open('rb') as stream,mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
         if hashlib.sha256(image).hexdigest()!=data['image_hash']:raise NetworkError('The image changed. Reopen ROM Explorer before previewing assets.')
@@ -272,8 +277,7 @@ def _asset_read(net,slug,data,read, *, detect=False):
             result['decoded']=dict(codec=codec,bytes=len(raw),block_offset=block)
         else:
             result=read(image,{**options,'offset':options.get('offset',row['start'])})
-    if using_detected:result['details']['note']=detected['reason']
-    result['settings']=options
+    if 'settings' not in result:result['settings']=options
     return result
 
 

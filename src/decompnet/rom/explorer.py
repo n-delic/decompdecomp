@@ -56,7 +56,7 @@ def _clue(image, offset, budget):
                 budget[1]-=1
                 try:
                     info=identify(image[offset:offset+MAX_BYTES])
-                    clue.update(size=info['size'],confidence='tentative' if info['format']=='JPEG' else 'validated',
+                    clue.update(size=info['size'],format=info['format'],width=info.get('width'),height=info.get('height'),confidence='tentative' if info['format']=='JPEG' else 'validated',
                                 reason=info.get('note','Bounded dimensions, container structure and payload checks passed.'))
                 except AssetError:return None
             return clue

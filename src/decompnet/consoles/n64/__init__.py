@@ -73,6 +73,10 @@ class Nintendo64(Console):
         from .textures import regions
         return regions(image, **kwargs)
 
+    def asset_texture_preview(self, data, asset, selection):
+        from .textures import preview
+        return preview(data, asset, selection)
+
     def asset_decode(self, data):
         from .textures import decode
         return decode(data)

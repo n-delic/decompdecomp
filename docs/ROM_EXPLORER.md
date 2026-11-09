@@ -204,14 +204,16 @@ mapping remains planned before these tools can reach project-mode consoles.
 
 N64 scans recognize source-assisted indexed texture banks, including RNC methods 1 and 2.
 Recognition checks the nested offset tables, format, dimensions, every bitmap and palette
-extent, and both compression checksums. Supported variants are CI8/RGBA16, CI4/RGBA16 and
-CI4/IA16. **Detect asset / texture bank** previews the first frame with its first palette;
-the region shows dimensions and frame/palette counts. Detection needs neither a source
+extent, and both compression checksums. Supported variants are CI8/RGBA16, CI4/RGBA16, CI4/IA16, RGBA32 and a fixed
+six-level 32×32 RGBA16 mipmap layout. **Detect asset / texture bank** defaults to the first frame with its first palette;
+the region shows dimensions and frame/palette counts. Frame, palette and mip selectors
+resolve validated offsets automatically, and saved preview settings retain those choices. Detection needs neither a source
 checkout nor release-specific ROM addresses. Generic data symbols retain their names and
 references while validated texture banks appear as images. Function regions retain priority.
 
-This validates the container layout, not runtime use. Direct-color, mipmapped, tiled and
-other proprietary layouts still need manual investigation. Native recognition is N64-only;
+This validates the container layout, not runtime use. Other mipmap shapes, tiled and
+proprietary layouts still need manual investigation. RGBA32 is validated with synthetic fixtures
+and the source loader; the private cartridge check exercised indexed and RGBA16 mipmap banks. Native recognition is N64-only;
 other ROM consoles retain the shared PNG/JPEG/audio detection and manual preview controls.
 The native pass caps blocks at 16,384, individual input/output at 4 MiB and total attempted
 expanded output at 64 MiB; assets beyond those limits may be missed. It checks cancellation
@@ -225,3 +227,30 @@ browser. Saved scans refresh automatically after this detector update.
 
 RNC method-2 token grammar was checked against the
 [ScummVM decoder](https://github.com/scummvm/scummvm/blob/master/common/compression/rnc_deco.cpp).
+
+### Texture browser and playback
+
+Open the sibling **Texture browser** card for detected banks and structurally recognized
+PNG/JPEG images on any ROM platform. It stays collapsed until opened and preserves that state
+across refreshes. Filter by format, dimensions, name, ROM offset or function. Pages contain
+24 banks, grouped by their detected extent across display-page splits. Three concurrent
+thumbnail requests bound loading; Stop cancels outstanding requests immediately. Errors stay
+on their individual thumbnails with a region link for investigation. Changing pages/filters,
+closing the browser or switching projects cannot paint late thumbnails into another view.
+
+Each tile links to its ROM region and separately lists recorded address references and
+static loader/buffer leads, deduplicated across the whole bank. These are static links, not
+proof that the game renders the image; none found never means unused. Original imported
+symbols and exact-code results remain unchanged.
+
+Supported native banks offer frame/palette/mip selectors and explicit **Animate frames** /
+**Stop animation** controls. Selecting a native view restores automatic format/offset selection.
+Animation visits every frame, starts only on request, uses a chosen 1–24 frames/s preview rate,
+and stops on drawer/project navigation or another inspection. Requests remain sequential;
+actual playback can be slower than the requested rate. No original animation timing is claimed.
+RGBA16 mipmaps use the source display-list offsets, padded rows and odd-row four-byte word
+swap; all six levels are independently previewable. No palette is invented for direct color.
+
+Native decoding and selection remain console hooks. Other consoles share the browser for
+recognized images, with native formats and project-mode original-image adapters planned in
+ROADMAP.md. No source checkout, external image library or proprietary fixture is shipped.

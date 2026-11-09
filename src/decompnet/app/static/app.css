@@ -2172,3 +2172,9 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .rom-texture-candidate > span { line-height:1.4; max-width:100%; }
 
 .asset-validation { min-width:0; overflow-wrap:anywhere; }
+
+/* Texture banks reuse the shared panel, field and button styles in both themes. */
+.rom-texture-card { min-width:0; padding-bottom:12px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.rom-texture-open { height:auto; min-height:220px; padding:10px; display:flex; flex-direction:column; gap:6px; width:100%; text-align:left; white-space:normal; }
+.rom-texture-thumb { flex:none; display:flex; align-items:center; justify-content:center; width:100%; min-height:128px; background:var(--bg); overflow-wrap:anywhere; }
+.rom-texture-thumb img { width:128px; height:128px; max-width:100%; image-rendering:pixelated; object-fit:contain; }

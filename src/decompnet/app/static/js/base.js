@@ -6,7 +6,7 @@
    theme, state and routing, bug reports), sidebar (the project list, New project, the notification centre), home,
    project (overview, decompiling together, public decomps), map, agents (who's working, the launcher, what
    happens), transcripts (full session messages and usage), candidate-recovery (local batch diagnostics), repair-feedback (captured repairs for review), function (the drawer, the function list), repository-push (unpushed commits and explicit origin pushes), steering (drawers and keys, instructions, export, project
-   settings and the compiler), rom-assets and rom-discovery (local media previews, texture comparisons, buffer usage and raw geometry), rom-explorer (whole-image maps and annotations), asset-agents (durable discovery queues and review), pages (the app's own pages, updates, and starting the app). Functions can be called
+   settings and the compiler), rom-assets, rom-discovery and rom-textures (local media previews, texture comparisons, bank gallery, animation, buffer usage and raw geometry), rom-explorer (whole-image maps and annotations), asset-agents (durable discovery queues and review), pages (the app's own pages, updates, and starting the app). Functions can be called
    across files once all have loaded; code that runs while a file loads may only use what this file or an earlier
    one defines. Not ES modules: they would need an import for every name used across files. */
 
