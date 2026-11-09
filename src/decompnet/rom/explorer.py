@@ -57,7 +57,7 @@ def _clue(image, offset, budget):
                 budget[1]-=1
                 try:
                     info=identify(image[offset:offset+MAX_BYTES])
-                    clue.update(size=info['size'],format=info['format'],width=info.get('width'),height=info.get('height'),confidence='tentative' if info['format']=='JPEG' else 'validated',
+                    clue.update(size=info['size'],format=info['format'],rate=info.get('rate'),seconds=info.get('seconds'),width=info.get('width'),height=info.get('height'),confidence='tentative' if info['format']=='JPEG' else 'validated',
                                 reason=info.get('note','Bounded dimensions, container structure and payload checks passed.'))
                 except AssetError:return None
             return clue
@@ -69,7 +69,7 @@ def _clue(image, offset, budget):
             if not budget[1]:return None
             budget[1]-=1
             try:
-                info=identify(image[offset:offset+MAX_BYTES]);clue.update(size=info['size'],confidence='validated',reason='PCM WAVE structure, format and duration checks passed.')
+                info=identify(image[offset:offset+MAX_BYTES]);clue.update(size=info['size'],format=info['format'],rate=info['rate'],seconds=info['seconds'],confidence='validated',reason='PCM WAVE structure, format and duration checks passed.')
             except AssetError:return None
         return clue
     return None

@@ -70,3 +70,8 @@ runtime execution. Similar-region search supplies structural leads, including
 common headers, compatible raw layouts and entropy. It never copies labels.
 
 Native directory evidence can supply resource paths and typed metadata. These are storage roles, not execution proof or recovered character/track names. Check the reported header/record limits; music sequence inspection does not synthesize audio, and animation metadata does not establish a pose. Failed zlib/gzip probes remain rejected evidence rather than compressed classifications.
+
+Detected audio banks accept a zero-based sample index with format=auto. Libmus
+pointer banks do not store a sample rate: rate is an explicit preview choice, never
+evidence of original pitch. Their unique marked-table pairing remains a static
+inference. Archived sequences are not waveforms and cannot be synthesized yet.

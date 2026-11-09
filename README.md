@@ -50,7 +50,10 @@ including RNC-compressed banks, CI8 banks with mixed 16/256-colour palettes, dir
 trailer-count texture packs inside embedded ZIP archives.
 Open **Texture browser** for a thumbnail gallery, format/dimension filters and reference links.
 Select any frame, palette or mip level in a bank; animate frames at a chosen preview rate.
-N64 scans also recognize supported B1 sound banks and their sample tables. Open an audio
+Open **Audio browser** to filter detected samples, prepare WAV previews and listen with Play.
+N64 scans recognize supported B1 and libmus PtrTablesV2 sound banks and their sample tables.
+Banks without a stored rate use a labelled, editable preview rate. Archived sequence candidates
+are listed separately; music sequencing, pitch, mixing and loops are not rendered. Open an audio
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
 Supported indexed N64 geometry is detected automatically, including RNC-compressed models.
 Open a model region, select a mesh and press **Preview asset** for a rotatable wireframe.
