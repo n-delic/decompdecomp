@@ -244,3 +244,34 @@ def test_release_notes_after_an_automatic_release_are_not_duplicated(tmp_path):
     count=net.store.one('SELECT COUNT(*) n FROM notes')['n']
     assert net.release_function(agent,'f','Additional findings','game')==reply
     assert net.store.one('SELECT COUNT(*) n FROM notes')['n']==count
+
+
+@pytest.mark.parametrize('provider_error',[True,False])
+@pytest.mark.parametrize('provider',['opencode','antigravity'])
+def test_remote_capacity_error_does_not_spend_local_handshake_retry(tmp_path,monkeypatch,provider_error,provider):
+    import json
+    net,manager,session,agent=setup(tmp_path,monkeypatch)
+    session.kind=provider;session.options['model']='opencode/synthetic' if provider=='opencode' else 'synthetic'
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *args,**kwargs:None)
+    monkeypatch.setattr(manager,'prepare_session',lambda *args,**kwargs:None)
+    monkeypatch.setattr(manager,'_command',lambda *args:(['stub'],{},''))
+    monkeypatch.setattr(manager,'_save',lambda *args:None)
+    monkeypatch.setattr(agents,'_proc_start',lambda *args:None)
+    message='Our servers are busy. UNAVAILABLE (code 503): No capacity available for model synthetic.'
+    event=({'type':'error','error':{'name':'APIError','data':{'message':message}}} if provider_error else
+           {'type':'text','part':{'text':'An example provider error would say: '+message}})
+    if provider=='antigravity':
+        event=({'event':'error','error':{'message':message}} if provider_error else
+               {'event':'step_update','step_update':{'step_index':1,'step_type':'text','state':'DONE','text_delta':message}})
+    proc=SimpleNamespace(pid=987654321,stdin=io.StringIO(),stdout=io.StringIO(json.dumps(event)+'\n'),
+                         stderr=io.StringIO(),wait=lambda:3)
+    monkeypatch.setattr(agents.subprocess,'Popen',lambda *args,**kwargs:proc)
+    token=net.local_agent(session.agent_name)[1]
+    if provider_error:
+        assert manager._run_cli(session,token,tmp_path) is False
+        assert session.throttled and not session.limited and not session.auth_failed
+        assert session.tool_handshake_failures==0
+        assert 'capacity available for model' in session.error and 'provider' in session.error
+    else:
+        with pytest.raises(agents.ToolConnectionUnavailable):manager._run_cli(session,token,tmp_path)
+        assert not session.throttled and session.tool_handshake_failures==1

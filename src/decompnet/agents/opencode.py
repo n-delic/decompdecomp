@@ -68,7 +68,10 @@ class Opencode(Agent):
         return None
 
     def fatal(self, error: str) -> bool:
-        return bool(re.search(r'ProviderModelNotFoundError|\bModel not found\b|opencode model needs a provider/model ID',error,re.I))
+        # A provider privacy-policy refusal needs an account/model decision.
+        # Repeating the same paid request cannot change that policy.
+        return bool(re.search(r'ProviderModelNotFoundError|\bModel not found\b|opencode model needs a provider/model ID'
+                              r'|This Go model trains on request data|Allow paid endpoints that train on request data',error,re.I))
 
     def config_model(self) -> str | None:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
