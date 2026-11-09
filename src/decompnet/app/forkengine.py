@@ -2092,9 +2092,21 @@ class ForkEngine:
             at = span
             while (later := csource.find(text[at[1]:], look)) is not None:
                 at = (at[1] + later[0], at[1] + later[1])
-                if csource.at_file_scope(text, at[0]) and not cls._hidden(fp, text, at[0]):
+                # (and only one that surely is a definition: at file scope too, find() takes a call for one, `static
+                # double bias = f(2.0) * 2.0;` up to the next definition's `{`, and the code between was replaced;
+                # and only one the build surely compiles: of `#ifdef _WIN32` and its `#else`, a macro the app can't
+                # tell, the try went into the first, maybe the branch the build leaves out, and never matched)
+                if csource.at_file_scope(text, at[0]) and csource.opens_body(text, at, look) and \
+                        cls._surely_compiled(fp, text, at[0]):
                     return at
         return None
+
+    @staticmethod
+    def _surely_compiled(fp: ForkProject, text: str, at: int) -> bool:
+        """Whether the code at `at` is compiled whatever the macros the project may define are (csource.
+        surely_compiled with the project's never-defined ones, _hidden's)."""
+        names = {n for n in csource.condition_names(text, at) if project_macro(n)}
+        return csource.surely_compiled(text, at, fp.never_defined(names) if names else set())
 
     @staticmethod
     def _hidden(fp: ForkProject, text: str, at: int) -> tuple[int, str] | None:

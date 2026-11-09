@@ -149,6 +149,8 @@ SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".cp", ".h", ".hh", ".hpp", ".hx
 BUILD_SUFFIXES = {".py", ".ninja", ".mk", ".json", ".toml", ".yml", ".yaml", ".cmake", ".sh", ".bat", ".ps1", ".lcf", ".ld"}
 BUILD_FILES = {"Makefile", "makefile", "GNUmakefile", "CMakeLists.txt"}
 NOT_SEARCHED = {".git", "build", "orig", "extract", "node_modules", STATE}
+GENERATED_DIRS = {"build"}  # of NOT_SEARCHED, where the build writes headers of its own (never_defined reads those)
+HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}
 SEARCH_MAX = 16 << 20  # bigger files aren't sources or build files
 
 
@@ -732,7 +734,7 @@ class ForkProject:
         cfg = self.objdiff_config()
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
-        rel = os.path.relpath(unit.base, self.root)
+        rel = self._target(unit.base)  # (named from the build's folder: `-C sub` builds final.o for sub/final.o)
         return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=600)
 
     def failed_units(self, targets: list[str]) -> set[str]:
@@ -740,8 +742,24 @@ class ForkProject:
         in steps (objects linked into one, a generated source) reports only the step: `ninja -k 0` never tries what
         depends on it. Counting the object alone, an x86 game's edits that broke such a step were kept as breaking
         nothing, and the next agent to compile there was told the file was broken before it came."""
+        # (the build's targets are named from the folder it runs in: `-C sub` says final.o for sub/final.o)
         want = {os.path.normpath(t) for t in [*targets, *self._made_from(targets)]}
-        return {u.name for u in self.units() if u.base is not None and os.path.normpath(os.path.relpath(u.base, self.root)) in want}
+        return {u.name for u in self.units() if u.base is not None and self._target(u.base) in want}
+
+    def _build_dir(self) -> str:
+        """The folder the build runs in, relative to the root: the project's `-C DIR` (ninja's and make's), else ".".
+        Its targets are named from there: `ninja -C sub` builds `final.o` for sub/final.o."""
+        where, found = _ninja_where(self.objdiff_config().get("custom_args", [])), "."
+        for k, a in enumerate(where):
+            if a == "-C" and k + 1 < len(where):
+                found = os.path.join(found, where[k + 1])
+            elif a.startswith("-C") and len(a) > 2:
+                found = os.path.join(found, a[2:])
+        return os.path.normpath(found)
+
+    def _target(self, path) -> str:
+        """A file of the project (absolute, or relative to the root) as the build names it (_build_dir)."""
+        return os.path.normpath(os.path.relpath(self.root / path, self.root / self._build_dir()))
 
     def never_defined(self, names: set[str]) -> set[str]:
         """Which of these macros no build of the project can define: not the compiler's own (a name that starts with
@@ -754,10 +772,15 @@ class ForkProject:
         words = re.compile(r"(?:\b|(?<=[-/]D))(" + "|".join(map(re.escape, sorted(left))) + r")\b")
         defines = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(" + "|".join(map(re.escape, sorted(left))) + r")\b", re.M)
         for d, dirs, files in os.walk(self.root):
-            dirs[:] = [x for x in dirs if x not in NOT_SEARCHED]
+            # (and the build's own folders: a header the build generates there, `build/config.h`, can define one,
+            # which sources include; only their headers, among the objects)
+            made = Path(d) != self.root and Path(d).relative_to(self.root).parts[0] in GENERATED_DIRS
+            dirs[:] = [x for x in dirs if x not in NOT_SEARCHED or Path(d) == self.root and x in GENERATED_DIRS]
             for f in files:
                 p = Path(d) / f
                 source = p.suffix.lower() in SOURCE_SUFFIXES
+                if made and p.suffix.lower() not in HEADER_SUFFIXES:
+                    continue
                 if not source and p.suffix.lower() not in BUILD_SUFFIXES and f not in BUILD_FILES:
                     continue
                 try:

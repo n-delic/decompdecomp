@@ -290,6 +290,21 @@ def test_the_definition_the_build_sees_beside_a_parked_one_is_at_file_scope():
     # past the parked copy, a call in g followed by a block isn't the build's definition
     text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\nint g(void) {\n    x = f() * 2;\n    if (x) {\n    }\n}\n"
     assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+    # nor one at file scope, a C++ initialiser's (find() read `* 2.0;` as K&R declarations, up to twice's `{`): a
+    # try on scale matched, and the file lost both bias and twice
+    text = ('#ifdef PARKED_DRAFTS\nextern "C" double scale(double x) { return x * 1.2; }\n#endif\n'
+            'extern "C" double scale(double x);\nstatic double bias = scale(2.0) * 2.0;\n'
+            'extern "C" double twice(double x) { double y = 0.0; y = scale(x) * 2.0; if (y > 1.0) { y = 1.0; } '
+            'return y; }\n')
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "scale"), "scale", ["scale"]) is None
+    # and of an #ifdef _WIN32 / #else pair (a macro the app can't tell), neither is surely the build's: the try went
+    # into the _WIN32 copy, maybe the one the build leaves out, and its #else kept being judged
+    text = ("#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\n#ifdef _WIN32\nint f(void) {\n    return 3;\n}\n"
+            "#else\nint f(void) {\n    return 1;\n}\n#endif\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+    # a K&R definition isn't taken either (what's between its parameters and its body reads like a call's)
+    assert csource.opens_body("int f(a)\nint a;\n{\n}\n", (0, 20), "f") is False
+    assert csource.opens_body("int Car::f(int a) const throw() {\n}\n", (0, 35), "Car::f")
 
 
 def test_csource_finds_definitions_and_stubs():
@@ -1020,6 +1035,21 @@ def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
     failed = []
     ok, _ = fp.build_all(failed=failed)
     assert not ok and fp.failed_units(failed) == {"b"}
+    # a build run in a folder of its own (`-C sub`) names its targets from there: b/part.o for sub/b/part.o, which
+    # matched no unit's object; and `ninja -C sub sub/a.o` was an unknown target
+    (tmp_path / "other.ninja").unlink()
+    (tmp_path / "sub").mkdir()
+    rules = f'rule step\n  command = "{py}" ../step.py $in $out\n'
+    for name in "abc":
+        rules += f"build {name}/part.o: step ../src/{name}.c\nbuild {name}.o: step {name}/part.o\n"
+    (tmp_path / "sub" / "build.ninja").write_text(rules + "build all_source: phony a.o b.o c.o\n")
+    (tmp_path / "objdiff.json").write_text(json.dumps({**cfg, "custom_args": ["-C", "sub"], "units": [
+        {**u, "base_path": f"sub/{u['name']}.o"} for u in cfg["units"]]}))
+    fp = ForkProject(tmp_path)
+    failed = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and [Path(t).as_posix() for t in failed] == ["b/part.o"] and fp.failed_units(failed) == {"b"}
+    assert fp.build_unit(fp.unit("a"))[0] and (tmp_path / "sub" / "a.o").exists()
 
 
 def test_which_if_branch_leaves_code_out_is_told_only_when_certain():
@@ -1076,6 +1106,11 @@ def test_a_macro_counts_as_never_defined_only_when_nothing_could_define_it(tmp_p
     assert ForkEngine._hidden(fp, text, text.index("int f")) == (1, "#ifdef PARKED")
     (tmp_path / "include" / "cfg.h").write_text("#define PARKED\n")
     assert ForkEngine._hidden(fp, text, text.index("int f")) is None
+    # a header the build generates (build/config.h, which a source includes) can define one: it was taken for never
+    # defined, and code the build compiles for hidden
+    (tmp_path / "build" / "gen").mkdir()
+    (tmp_path / "build" / "gen" / "config.h").write_text("#define HAS_FEATURE 1\n")
+    assert fp.never_defined({"HAS_FEATURE", "NOWHERE"}) == {"NOWHERE"}
 
 
 @pytest.mark.parametrize("macro", ["MACH", "R5900"])

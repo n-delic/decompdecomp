@@ -173,6 +173,25 @@ def at_file_scope(text: str, at: int) -> bool:
     return all(opened)
 
 
+def opens_body(text: str, span: tuple[int, int], name: str) -> bool:
+    """True when what find() found at `span` is `name`'s own definition: its parameter list is followed by its body,
+    with qualifiers, `throw()` or a constructor's initialisers between them, never a `;`. find() also takes a call
+    followed by an expression and a block for one (`static double bias = f(2.0) * 2.0;`, then the next definition's
+    `{`), reading what's between as K&R parameter declarations; a K&R definition isn't taken here either."""
+    clean = _blank(text[span[0]:span[1]])
+    m = re.search(rf"(?<![\w~]){re.escape(name.split('::')[-1])}\s*\(", clean)  # (`Car::Go(` too)
+    if m is None:
+        return False
+    depth, i = 0, m.end() - 1
+    while i < len(clean):
+        depth += (clean[i] == "(") - (clean[i] == ")")
+        i += 1
+        if depth == 0:
+            break
+    brace = clean.find("{", i)
+    return brace >= 0 and ";" not in clean[i:brace]
+
+
 def _conditionals(text: str, pos: int):
     """(line number, directive, its condition) of each conditional line above `pos`, comments left out."""
     clean = _blank(text[:pos])
@@ -264,8 +283,24 @@ def hidden_by(text: str, pos: int, undefined: set[str]) -> tuple[int, str] | Non
     """(line number, the directive) of the conditional branch that leaves the code at `pos` out of the build, or None
     when it's compiled or that can't be told. `undefined`: the macros known never to be defined (ForkProject.
     never_defined); any other macro, the compiler's own included, could be, so a test of one hides nothing."""
-    stack: list[list] = []  # per open #if: [line, directive, this branch's value, whether a branch before was taken]
     lines = text.splitlines()
+    for n, value, _ in _branches(text, pos, undefined):
+        if value is False:
+            return n, lines[n - 1].strip()
+    return None
+
+
+def surely_compiled(text: str, pos: int, undefined: set[str]) -> bool:
+    """True when the code at `pos` is compiled whatever the macros not in `undefined` are: every conditional branch
+    around it is known to be taken. Code under `#ifdef _WIN32` isn't, nor is its `#else` (hidden_by hides neither:
+    which one a build takes can't be told)."""
+    return all(value is True for _, value, _ in _branches(text, pos, undefined))
+
+
+def _branches(text: str, pos: int, undefined: set[str]) -> list[list]:
+    """The conditional branches open at `pos`: [line, whether it's taken (None: can't be told), whether a branch of
+    its #if was taken before]."""
+    stack: list[list] = []
     for n, kind, cond in _conditionals(text, pos):
         if kind in ("if", "ifdef", "ifndef"):
             v = (_condition(cond, undefined) if kind == "if" else
@@ -279,7 +314,4 @@ def hidden_by(text: str, pos: int, undefined: set[str]) -> tuple[int, str] | Non
             stack[-1] = [n, _negated(stack[-1][2]), True]
         elif kind == "endif" and stack:
             stack.pop()
-    for n, value, _ in stack:
-        if value is False:
-            return n, lines[n - 1].strip()
-    return None
+    return stack
