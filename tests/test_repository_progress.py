@@ -400,3 +400,43 @@ def test_saving_or_publishing_a_match_removes_its_acknowledged_old_draft(progres
         net.progress.sync('game', force=True)
     assert not draft.exists()
     assert (root/'src/f.c').is_file()
+
+
+def test_draft_cleanup_batches_names_without_reading_unrelated_sources(progress, monkeypatch):
+    net, root, _ = progress
+    store = net.project_store('game')
+    pid = net._project('game')['id']
+    with store.tx() as db:
+        db.executemany("""INSERT INTO functions(project_id,name,status,matched_source)
+            VALUES(?,?,'matched',?)""",
+            [(pid, f'no_draft_{i:04d}<&é', '/* synthetic body */' * 100) for i in range(513)])
+    # The one acknowledged draft must still be rechecked against its selected
+    # source; all the other matches have no draft in the saved receipt.
+    from decompnet.app.progress import _Snapshot
+    draft = root / 'best/f.c'
+    draft.parent.mkdir(exist_ok=True)
+    draft.write_text('old draft\n')
+    net.progress._baseline(pid).disk.files.update(_Snapshot.of({'best/f.c': draft.read_text()}).files)
+    native_rows = []
+    original = store._read_rows
+    def read(sql, args, single):
+        result = original(sql, args, single)
+        native_rows.append(1 if single else len(result))
+        return result
+    monkeypatch.setattr(store, '_read_rows', read)
+    from decompnet import payload_storage
+    unpack = payload_storage.unpack
+    def selected_only(key, blob):
+        text = unpack(key, blob)
+        assert text != '/* synthetic body */' * 100
+        return text
+    monkeypatch.setattr(payload_storage, 'unpack', selected_only)
+    assert net.progress.prune_matched_drafts('game') == 1
+    assert not draft.exists()
+    assert (root / 'src/f.c').read_text() == 'void f(void) { return; }\n'
+    assert max(native_rows) <= 1
+    # A newly edited draft must still pass the original receipt checks on the
+    # next invocation; batching names cannot authorize its removal.
+    draft.write_text('new unacknowledged draft\n')
+    assert net.progress.prune_matched_drafts('game') == 0
+    assert draft.read_text() == 'new unacknowledged draft\n'

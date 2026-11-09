@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import compiler, toolchains
+from ..metadata_rows import rows as metadata_rows
 from ..network import NetworkError
 from ..request_timing import phase
 from ..rom.symbols import ASM_LOCAL, IDENT
@@ -188,7 +189,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
             report(f"{name} was missing: written again from the project")
     left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).name not in layout)
     if left:
-        known = {row["name"] for row in store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+        known = {row["name"] for row in metadata_rows(store, ("name",), "SELECT name FROM functions WHERE project_id=?", pid)}
         left = [name for name in left if Path(name).name not in {saves._source_file(function) for function in known}]
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
@@ -442,6 +443,7 @@ class Progress:
         self.rendering: dict[str, tuple[Path, tuple]] = {}
         self.verification_slot = threading.Semaphore(1)
         self.verification_owner: tuple[str, float] | None = None
+        self.verification_details: dict | None = None
         from .progress_file_cache import FileCache
         self.file_cache = FileCache()
         self.disk: dict[str, dict[str, str]] = {}
@@ -698,7 +700,9 @@ class Progress:
             baseline = self._baseline(proj['id'])
             if baseline is None:
                 return 0
-            names = [row['name'] for row in store.all("SELECT name FROM functions WHERE project_id=? "
+            # Keep the full current name set, but transfer it without a native
+            # Python row handoff per match while holding this project's lock.
+            names = [row['name'] for row in metadata_rows(store, ("name",), "SELECT name FROM functions WHERE project_id=? "
                      "AND status='matched'", proj['id'])
                      if f"best/{saves._source_file(row['name'])}" in baseline.disk.files]
             if not names:
@@ -844,8 +848,10 @@ class Progress:
         active = _Recheck(folder, self._signature(folder))
         self.rechecking[slug] = active
 
+        verification = getattr(self.local, 'verification_activity', None)
         def run():
             self.local.busy = True
+            self.local.verification_activity = verification
             try:
                 from .workers import lower_priority
                 lower_priority()
@@ -854,6 +860,7 @@ class Progress:
                 outcome.append((False, error))
             finally:
                 self.local.busy = False
+                self.local.verification_activity = None
                 with condition:
                     condition.notify_all()
 
@@ -944,6 +951,14 @@ class Progress:
             if fields.get("phase", current.get("phase")) != current.get("phase") and "done" in fields:
                 current.update(rate_started=now, rate_done=fields["done"])
             current.update(fields, updated=now)
+            lease = getattr(self.local, 'verification_activity', None)
+            details = getattr(self, 'verification_details', None)
+            # Same-project waiters also update the UI activity. Only the owning
+            # lease (including its saved-judge child) may describe the lane holder.
+            if details is not None and details['lease'] is lease and self.verification_owner[0] == slug:
+                if 'phase' in fields and fields['phase'] != details['phase']:
+                    details.update(phase=fields['phase'], phase_started=now)
+                details['thread'] = threading.current_thread().name
 
     def status(self, slug: str) -> dict | None:
         with self.activity_lock:
@@ -1007,10 +1022,14 @@ class Progress:
                 if now >= next_report:
                     with self.activity_lock:
                         owner = self.verification_owner
-                        phase = self.activity.get(owner[0], {}).get('phase', 'unknown') if owner else 'unknown'
-                    saves.log.warning('Saved verification admission wait project=%s wait=%.3fs owner=%s owner_elapsed=%.3fs phase=%s',
+                        details = self.verification_details
+                        phase = (details['phase'] if details is not None else
+                                 self.activity.get(owner[0], {}).get('phase', 'unknown') if owner else 'unknown')
+                        thread = details['thread'] if details is not None else 'unknown'
+                        phase_elapsed = now-details['phase_started'] if details is not None else 0.
+                    saves.log.warning('Saved verification admission wait project=%s wait=%.3fs owner=%s owner_elapsed=%.3fs phase=%s owner_thread=%s phase_elapsed=%.3fs',
                                       slug, now-began, owner[0] if owner else 'unknown',
-                                      now-owner[1] if owner else 0., phase)
+                                      now-owner[1] if owner else 0., phase, thread, phase_elapsed)
                     next_report = now + 30
                 threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
         if not acquired:
@@ -1027,14 +1046,21 @@ class Progress:
             released = True
             with self.activity_lock:
                 self.verification_owner = None
+                self.verification_details = None
             self.verification_slot.release()
         previous = getattr(self.local, 'verification', None)
         self.local.verification = (slug, release)
+        previous_activity = getattr(self.local, 'verification_activity', None)
+        self.local.verification_activity = release
+        with self.activity_lock:
+            self.verification_details = {'lease':release, 'phase':'Verification admitted',
+                                         'phase_started':time.monotonic(), 'thread':threading.current_thread().name}
         try:
             yield True
         finally:
             release()
             self.local.verification = previous
+            self.local.verification_activity = previous_activity
 
     def _release_verification(self, slug):
         lease = getattr(self.local, 'verification', None)
@@ -1426,7 +1452,7 @@ class Progress:
                 self._activity(slug, message=line)
                 destination(line)
             disk = _repair(net, pid, folder, disk, report)
-            known_names = {row["name"] for row in store.all(
+            known_names = {row["name"] for row in metadata_rows(store, ("name",),
                 "SELECT name FROM functions WHERE project_id=?", pid)}
             manifest = _manifest(disk, cfg, known_names)
             def check_cancel():
@@ -1513,7 +1539,7 @@ class Progress:
                     applied_changed = {name for name in set(candidate) | set(before.files)
                                        if _hash(candidate.get(name)) != before.files.get(name)}
                 if affected is not None:
-                    matched_names = {row['name'] for row in store.all(
+                    matched_names = {row['name'] for row in metadata_rows(store, ("name",),
                         "SELECT name FROM functions WHERE project_id=? AND status='matched'", pid)}
                     # Unpublished drafts still need judging. An already verified
                     # match being exported is not an external source change. A
@@ -1662,7 +1688,7 @@ class Progress:
                 self.revisions[slug] = self.revisions.get(slug, 0) + 1
             self.published[slug] = set(pending) | set(removed)
             disk = _read(folder)
-            known_names = {row["name"] for row in store.all(
+            known_names = {row["name"] for row in metadata_rows(store, ("name",),
                 "SELECT name FROM functions WHERE project_id=?", pid)}
             manifest = _manifest(disk, cfg, known_names)
             saves._remember_revision(net, slug, manifest)
