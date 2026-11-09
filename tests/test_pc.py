@@ -15,6 +15,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -68,9 +69,9 @@ def test_each_visual_cpp_of_the_pack_compiles_on_this_computer(tmp_path, version
 
 
 
-def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp_path, monkeypatch):
-    """The compiler and its includes may live in a Windows user folder with spaces or shell characters."""
-    root = tmp_path / "Project with spaces ü"
+def _template_project(tmp_path, monkeypatch, root: Path) -> tuple[Path, Path, Path]:
+    """A PC template project of one unit (src/auto/sample.cpp) with a stand-in compiler that writes "object" and
+    records its arguments, and a names.py that only checks it: (source, config, compiler root)."""
     tools = Path(scratch_pe.__file__).with_name("project_template") / "tools"
     shutil.copytree(tools, root / "tools")
     source = root / "src/auto/sample.cpp"
@@ -84,8 +85,7 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     compiler = compiler_root / "6.0/Bin/CL.EXE"
     compiler.parent.mkdir(parents=True)
     (compiler_root / "6.0/Include").mkdir()
-    record = root / "compiler-args.txt"
-    monkeypatch.setenv("DECOMP_TEST_CL_ARGS", str(record))
+    monkeypatch.setenv("DECOMP_TEST_CL_ARGS", str(root / "compiler-args.txt"))
     monkeypatch.delenv("DECOMP_TEST_CL_FAIL", raising=False)
     if sys.platform == "win32":
         subprocess.run([sys.executable, str(Path(__file__).with_name("fake_clr_compiler.py")), str(compiler)],
@@ -101,6 +101,14 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     (root / "tools/names.py").write_text('import sys\nfrom pathlib import Path\n'
                                         'out = Path(sys.argv[2])\nassert out.read_text() == "object"\n'
                                         'out.with_suffix(".named").write_text("processed")\n')
+    return source, config, compiler_root
+
+
+def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp_path, monkeypatch):
+    """The compiler and its includes may live in a Windows user folder with spaces or shell characters."""
+    root = tmp_path / "Project with spaces ü"
+    source, config, compiler_root = _template_project(tmp_path, monkeypatch, root)
+    record = root / "compiler-args.txt"
     # every compiler pack: the build takes the one with its version (the 2005-2010 pack has no 6.0)
     newer = tmp_path / "newer pack"
     (newer / "10.0SP1" / "Bin").mkdir(parents=True)
@@ -331,6 +339,39 @@ def test_wine_is_never_run_without_the_apps_prefix(tmp_path):
     done = subprocess.run([sys.executable, str(compile_py), *common], cwd=tmp_path, capture_output=True, text=True,
                           timeout=30, env={**env, "PATH": str(tmp_path), "DECOMPNET_WINE_PREFIX": str(tmp_path)})
     assert done.returncode == 1 and "this computer has no wine" in done.stderr, done.stderr
+
+
+def test_a_pc_build_configures_again_only_when_its_files_change(tmp_path, monkeypatch):
+    """Editing a source compiles it without writing build.ninja again (3 s of every compile on a game of 1,400
+    units, the permuter's variants too); adding one runs configure, and the new file is built, even when nothing
+    else changed; removing one does too (ninja stopped: the file was "needed by configure.facts, missing")."""
+    root = tmp_path / "project"
+    source, _, compiler_root = _template_project(tmp_path, monkeypatch, root)
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(compiler_root)],
+                   check=True, capture_output=True, timeout=30)
+    project = ForkProject(root)
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert ok, output
+    manifest = root / "build.ninja"
+    written = manifest.stat().st_mtime_ns
+    obj = root / "build/TEST/src/auto/sample.obj"
+    obj.unlink()
+    time.sleep(0.05)
+    source.write_text("int sample(void) { return 2; }\n")
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert ok and obj.is_file(), output
+    assert manifest.stat().st_mtime_ns == written, output
+    # a built object is built, by ninja's dry run too (a run of builds asks it: ForkProject._no_work)
+    assert project._no_work(["ninja"], ["build/TEST/src/auto/sample.obj"])
+    (root / "src/auto/more.cpp").write_text("int more(void) { return 3; }\n")  # added alone
+    ok, output = project.run(["ninja", "-j1", "all_source"], log=lambda _: None, timeout=30)
+    assert ok, output
+    assert manifest.stat().st_mtime_ns != written and (root / "build/TEST/src/auto/more.obj").is_file(), output
+    written = manifest.stat().st_mtime_ns
+    (root / "src/auto/more.cpp").unlink()  # removed alone
+    ok, output = project.run(["ninja", "-j1", "all_source"], log=lambda _: None, timeout=30)
+    assert ok and "more.obj" not in manifest.read_text(), output
+    assert manifest.stat().st_mtime_ns != written
 
 
 def _template_tool(name: str):
