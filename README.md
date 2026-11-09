@@ -45,7 +45,8 @@ Loader source groups show bounded static copy/DMA/decompression arguments and la
 passes or reads. Open a region for image, raw texture/palette and audio previews, including
 supported decompressed blocks. Unknown helper roles and raw layouts can be recorded locally. Compare texture guesses as thumbnails,
 follow the linked usage summary, group regions by symbol/loader extents, and inspect raw 3D
-vertex/index buffers as a rotatable wireframe.
+vertex/index buffers as a rotatable wireframe. N64 scans also recognize supported indexed texture banks,
+including RNC-compressed banks, and use their dimensions and palettes for automatic previews.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
 referenced regions. Agents claim regions, retain failed approaches and propose names, formats
 and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.

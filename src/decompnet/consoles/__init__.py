@@ -146,6 +146,12 @@ class Console:
 
     # ------------------------------------------------------------------ starting a project from the user's game
 
+    def asset_regions(self, image, *, check=lambda: None, progress=lambda _: None):
+        return []  # consoles can recognize structurally validated native asset containers
+
+    def asset_decode(self, data):
+        return None  # None delegates to the common preview codecs
+
     def sniff(self, head: bytes, file: bytes | Path) -> bool:
         """Whether the file the user picked is a game of this console (`head`: its first HEAD_BYTES)."""
         return False
