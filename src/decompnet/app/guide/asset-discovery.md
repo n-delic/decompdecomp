@@ -68,3 +68,8 @@ Automatic checks record supported parser results and compare proposed extents wi
 static loader arguments. They do not prove asset meaning, consumer dimensions or
 runtime execution. Similar-region search supplies structural leads, including
 common headers, compatible raw layouts and entropy. It never copies labels.
+
+Detected audio banks accept a zero-based sample index with format=auto. Libmus
+pointer banks do not store a sample rate: rate is an explicit preview choice, never
+evidence of original pitch. Their unique marked-table pairing remains a static
+inference. Archived sequences are not waveforms and cannot be synthesized yet.

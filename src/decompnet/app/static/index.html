@@ -440,6 +440,15 @@
         <div class="row"><button type="button" class="ghost small-btn" id="assetAgentPrevious">Previous findings</button><span class="small muted" id="assetAgentPage"></span><button type="button" class="ghost small-btn" id="assetAgentNext">Next findings</button></div>
       </div>
     </details>
+    <details class="panel settings-disclosure" id="romAudioPanel" hidden>
+      <summary class="panel-head"><h2>Audio browser <span class="disclosure-context" id="romAudioContext"></span></h2></summary>
+      <div class="pad"><p>Browse detected samples and prepare a WAV preview, then press Play to listen. Music sequences, pitch, mixing and loops are not rendered.</p>
+        <div class="rom-asset-fields"><label class="field"><span>Find samples, banks or functions</span><input type="search" id="romAudioFilter"></label><label class="field"><span>Codec</span><select id="romAudioCodec"></select></label><label class="field"><span>Preview rate for banks without a stored rate (1000–192000 Hz)</span><input id="romAudioRate" type="number" min="1000" max="192000" value="22050"></label></div>
+        <p class="small muted">A marked table match is static evidence, not proof of runtime use. No recorded references does not mean unused. Previews are capped at 30 seconds / 4 MiB.</p>
+        <div id="romAudioSequences"></div><div id="romAudioItems"></div><div class="row"><button id="romAudioPrevious" type="button" class="ghost small-btn">Previous samples</button><span id="romAudioPage" class="small muted"></span><button id="romAudioNext" type="button" class="ghost small-btn">Next samples</button></div>
+        <button id="romAudioStop" type="button" class="ghost small-btn" hidden>Stop preparing audio</button><pre id="romAudioWork" class="joblog" hidden></pre><div id="romAudioResult" aria-live="polite"></div>
+      </div>
+    </details>
     <details class="panel settings-disclosure" id="romTexturePanel" hidden>
       <summary class="panel-head"><h2>Texture browser <span class="disclosure-context" id="romTextureContext"></span></h2></summary>
       <div class="pad"><p>Browse detected images and texture banks, compare their layouts and follow recorded references or static loader leads.</p>
@@ -1173,6 +1182,7 @@
 <script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/code-audit.js"></script>
 <script src="/assets/js/rom-audio.js"></script>
+<script src="/assets/js/rom-audio-browser.js"></script>
 <script src="/assets/js/rom-assets.js"></script>
 <script src="/assets/js/rom-discovery.js"></script>
 <script src="/assets/js/rom-textures.js"></script>
