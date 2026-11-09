@@ -24,7 +24,7 @@ import re
 import stat
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -107,6 +107,14 @@ class _Dirty:
 
 class _FolderChanged(Exception):
     """The folder moved while a sync was applying its contribution; its transaction must roll back."""
+
+
+class _RestartSync(Exception):
+    """Prepared saved inputs changed while compiler admission released the project lock."""
+
+
+class _SyncOvertaken(Exception):
+    """Another saved verifier installed foreground-safe inputs while this import waited."""
 
 
 class _StillFailing(NetworkError):
@@ -1118,21 +1126,39 @@ class Progress:
                                       if changed_db else False)
                             if result is not None:self.blocked.pop(slug, None)
                 if result is None:
-                    with self._verification(slug, logger) as acquired:
-                        if not acquired:
-                            return False
-                        if logger is not None:getattr(logger, "check_cancel", lambda: None)()
-                        self._check_paused(slug)
-                        if self._batching(slug):
-                            return False
-                        # Our project lock was released while waiting too: refresh the
-                        # acknowledgement baseline as well as the project's inputs.
-                        cached_signature = self.signatures.get(slug)
-                        # _sync reloads its inputs too; post-sync acknowledgement uses fresh metadata.
-                        proj = self.net._project(slug)
-                        rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
-                        self._activity(slug, phase="Comparing saved files")
-                        result = self._sync(slug, logger)
+                    # Compare files and plan the merge before borrowing the shared
+                    # compiler lane. Only this project's lock is needed for that work.
+                    with ExitStack() as admission:
+                        admitted = False
+                        def admit(current):
+                            nonlocal admitted, cached_signature
+                            if not admitted:
+                                acquired = admission.enter_context(self._verification(slug, logger))
+                                if not acquired:
+                                    raise _SyncOvertaken
+                                admitted = True
+                                cached_signature = self.signatures.get(slug)
+                                if self.rechecking.get(slug) is not None:
+                                    raise _SyncOvertaken
+                                if not current():
+                                    raise _RestartSync
+                        while True:
+                            if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+                            self._check_paused(slug)
+                            if self._batching(slug):
+                                return False
+                            self._activity(slug, phase="Comparing saved files")
+                            try:
+                                result = self._sync(slug, logger, admit=admit)
+                                break
+                            except _RestartSync:
+                                # All prepared locals are discarded. The lane is
+                                # already held, so reload and plan from current inputs.
+                                continue
+                            except _SyncOvertaken:
+                                return False
+                    proj = self.net._project(slug)
+                    rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
                 if rom and result:
                     self.prune_matched_drafts(slug)
                 self.checked[slug] = time.monotonic()
@@ -1283,7 +1309,7 @@ class Progress:
                                dirty.token, dirty_tokens)
         return bool(changes or removed)
 
-    def _sync(self, slug: str, logger=None) -> bool:
+    def _sync(self, slug: str, logger=None, *, admit=None) -> bool:
         net = self.net
         store = net.project_store(slug)
         proj = net._project(slug)
@@ -1479,6 +1505,17 @@ class Progress:
             for entry in applied_manifest.get("layout", []):
                 layout_by_vram.setdefault(entry["vram"], []).append(entry)
             restore_notes = applied_manifest.get('notes', []) != json.loads(rendered[saves.MANIFEST]).get('notes', [])
+            if admit is not None:
+                prepared_project = dict(proj)
+                def current():
+                    return (dict(net._project(slug)) == prepared_project
+                            and self._dirty(pid) == dirty
+                            and self._baseline(pid) == baseline
+                            and _read(folder) == disk)
+                # _repair only repairs this project's own folder under its lock;
+                # shared identities, import writes and compiler calls start after
+                # admission. Waiting can release every recursive project lock.
+                admit(current)
             # The legacy file keeps credits in the same atomic rollback as the
             # restore. Separate stores resolve shared identities before locking
             # project state, never by opening a nested catalog transaction.

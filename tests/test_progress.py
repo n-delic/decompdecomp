@@ -1200,7 +1200,7 @@ def test_sync_activity_is_project_scoped_and_cleared_on_failure(project, monkeyp
     slug = "game"
     entered, release = threading.Event(), threading.Event()
     errors = []
-    def blocked_sync(*args):
+    def blocked_sync(*args, **kwargs):
         net.progress._activity(slug, phase='Verifying saved functions', done=3, total=8,
                                function='func_80001000', matched=2, lost=1)
         entered.set()
@@ -1647,9 +1647,9 @@ def test_background_checks_are_quiet_until_a_full_recheck_is_known(project, monk
     assert net.progress.status('game') is None
     initial = []
     original_sync = net.progress._sync
-    def sync(*args):
+    def sync(*args, **kwargs):
         initial.append(net.progress.status('game'))
-        return original_sync(*args)
+        return original_sync(*args, **kwargs)
     monkeypatch.setattr(net.progress, '_sync', sync)
     net.progress.signatures.clear()
     manifest(folder,instructions="external edit requires synchronization")
@@ -1682,7 +1682,10 @@ def test_sync_reports_project_and_verification_waits_without_changing_lock_behav
         def release(self):self.__exit__()
     monkeypatch.setattr(worker, '_batching', lambda slug: False)
     monkeypatch.setattr(worker, '_state', lambda pid: None)
-    monkeypatch.setattr(worker, '_sync', lambda *args: False)
+    def imported(*args, admit):
+        admit(lambda: True)
+        return False
+    monkeypatch.setattr(worker, '_sync', imported)
     monkeypatch.setattr(worker, '_signature', lambda folder: ())
     monkeypatch.setattr(worker, '_stamp', lambda folder: ())
     monkeypatch.setattr(worker, '_check_paused', lambda slug: None)
