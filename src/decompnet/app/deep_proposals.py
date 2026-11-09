@@ -1,4 +1,4 @@
-"""Bounded shared proposal batches, generated outside the app interpreter in maximum mode."""
+"""Bounded shared proposal batches, generated outside the app interpreter."""
 import hashlib
 import json
 import os
@@ -72,8 +72,9 @@ class Worker:
 
 
 class Pool:
-    def __init__(self, count):
+    def __init__(self, count, *, background=False):
         self.count=count
+        self.background=background
         self.executor = Executor(max_workers=count, purpose='Repair proposal generation',thread_name_prefix='deep-proposals')
         self.capacity = threading.BoundedSemaphore(count*2)
         self.local = threading.local()
@@ -105,6 +106,7 @@ class Pool:
             with self.lock:self.running -= 1
 
     def submit(self, args, kwargs, check):
+        if self.background:kwargs = {**kwargs, '_background':True}
         request = json.dumps([args,kwargs],sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()
         key = hashlib.sha256(request).digest()
         with self.lock:future = self.cache.get(key)

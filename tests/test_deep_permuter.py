@@ -21,6 +21,13 @@ class Log:
 
 def setup(monkeypatch, imported=False):
     net = FakeNet()
+    # Keep synthetic judge tests in process so their patched proposal generators apply.
+    from decompnet.app import deep_proposals
+    def generate(self, args, kwargs, check):
+        check()
+        labels = {}
+        return draft_repairs.variants(*args, labels=labels, **kwargs), labels, 0
+    monkeypatch.setattr(deep_proposals.Pool, 'generate', generate)
     monkeypatch.setattr('decompnet.app.compiler_preflight.warnings', lambda *args: '')
     net._function = lambda name, slug: net.function()
     net.local_agent = lambda name: (AGENT, None)
@@ -783,3 +790,35 @@ def test_predicate_lane_retunes_improvement_before_any_broad_generation(monkeypa
     best,_=search.local_repairs(AGENT,net.project_row('game'),net.function(),55,'fork'if imported else None)
     assert best==0 and tested==[0,1,3,5] and search.tested==4
     assert search.allocation_diagnostic_compiles==0
+
+
+@pytest.mark.parametrize('imported', [False, True])
+@pytest.mark.parametrize('maximum', [False, True])
+def test_both_throughput_modes_generate_outside_the_search_lane(monkeypatch, imported, maximum):
+    from types import SimpleNamespace
+
+    from decompnet.app import deep_throughput
+
+    net = setup(monkeypatch, imported)
+    calls = []
+    class Proposals:
+        def generate(self, args, kwargs, check):
+            check();calls.append('ordered')
+            return ['worker candidate'], {'worker candidate':'local_repair'}, .1
+        def stream(self, args, kwargs, check):
+            check();calls.append('streamed')
+            yield ['worker candidate'], {'worker candidate':'local_repair'}, .1
+    pool = SimpleNamespace(maximum=maximum, metrics=deep_throughput.Metrics(), proposal_pool=lambda:Proposals())
+    log = Log();log.compile_pool = pool
+    search = deep_permuter.Search(net, 1, 10, log)
+    search.compile_pool = pool
+    monkeypatch.setattr(draft_repairs, 'variants', lambda *a, **k:pytest.fail('Generation must leave the search lane'))
+    def judge(self, agent, proj, fn, source, best, fork):
+        assert source == 'worker candidate'
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source=?,best_score=0,status='matched' WHERE id=?", (source, fn['id']))
+        return 0
+    monkeypatch.setattr(Permuter, '_score', judge)
+    assert search.local_repairs(AGENT, net.project_row('game'), net.function(), 40,
+                                'fork' if imported else None) == (0, 'worker candidate')
+    assert calls == ['streamed' if maximum else 'ordered']

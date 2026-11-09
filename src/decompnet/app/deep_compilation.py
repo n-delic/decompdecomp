@@ -49,7 +49,9 @@ class Pool:
         with self.lock:
             if self.proposals is None:
                 from .deep_proposals import Pool
-                self.proposals = Pool(self.count)
+                # Balanced searches also need independent Python interpreters: hundreds
+                # of function threads otherwise serialize pure generation behind the GIL.
+                self.proposals = Pool(self.count, background=not self.maximum)
                 self.metrics.proposals = self.proposals
             return self.proposals
 

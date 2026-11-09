@@ -463,14 +463,14 @@ class Search(Permuter):
                 choices = [child for _, child in cleanup]
                 labels.update({child: family for family, child in cleanup})
             else:
-                if pool is not None and pool.maximum and ACTIVE.get() is None:
+                if pool is not None and ACTIVE.get() is None:
                     self.phase = 'generating local proposals'
                     self.report(force=True)
                     def generation_check():
                         self.check()
                         self.report()
                     proposals=pool.proposal_pool()
-                    if hasattr(proposals,'stream'):
+                    if pool.maximum and hasattr(proposals,'stream'):
                         incoming=iter(proposals.stream(args,options,generation_check))
                         choices,generated_labels,elapsed=next(incoming,([],{},0))
                     else:

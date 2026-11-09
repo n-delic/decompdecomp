@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: balanced deep searches generate broad local repairs in bounded background
+  subprocesses too, so parallel functions do not serialize that work in the app
+  interpreter. Candidate order, cancellation and the ordinary judge are preserved.
+
 - Done: bounded pure bit-predicate helpers, masked-bit staging, CFG-checked storage
   reuse composition and operation-scope topology repairs share the local repair pipeline.
   Deep search retunes extracted helpers before broad generation; its fixed-width frontier

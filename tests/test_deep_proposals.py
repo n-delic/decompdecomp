@@ -148,3 +148,50 @@ def test_cached_worker_result_does_not_count_proposal_work_twice(monkeypatch):
         with compile_timing.collect(counts):pool.generate(args,kwargs,lambda:None)
         assert counts.values['proposal_generation']==5
     finally:pool.close()
+
+
+def test_balanced_workers_preserve_candidate_order_and_labels():
+    args, kwargs = request()
+    labels = {};expected = draft_repairs.variants(*args, labels=labels, **kwargs)
+    pool = deep_proposals.Pool(2, background=True)
+    try:
+        choices, got, _ = pool.generate(args, kwargs, lambda:None)
+        assert choices == expected and got == labels
+        assert '_background' not in kwargs
+    finally:pool.close()
+
+
+def test_balanced_compile_pool_uses_bounded_background_proposal_workers():
+    from decompnet.app.deep_compilation import Pool
+    for maximum in (False, True):
+        pool = Pool(3, maximum=maximum)
+        try:
+            proposals = pool.proposal_pool()
+            assert proposals is pool.proposal_pool()
+            assert proposals.count == 3
+            assert proposals.background is not maximum
+        finally:pool.close()
+
+
+@pytest.mark.parametrize('background', [False, True])
+def test_worker_applies_background_priority_once_and_keeps_metadata_out_of_repairs(monkeypatch, background):
+    import io
+    import json
+    from types import SimpleNamespace
+
+    from decompnet.app import deep_proposal_worker, workers
+
+    args, kwargs = request();kwargs['_background'] = background
+    data = (json.dumps([args, kwargs])+'\n').encode()*2
+    output = io.BytesIO();priorities = [];received = []
+    monkeypatch.setattr(deep_proposal_worker, 'sys', SimpleNamespace(
+        stdin=SimpleNamespace(buffer=io.BytesIO(data)), stdout=SimpleNamespace(buffer=output)))
+    monkeypatch.setattr(workers, 'lower_priority', lambda:priorities.append(True))
+    def variants(*args, **kwargs):
+        received.append(kwargs)
+        return []
+    monkeypatch.setattr(draft_repairs, 'variants', variants)
+    deep_proposal_worker.main()
+    assert priorities == ([True] if background else [])
+    assert len(received) == 2 and all('_background' not in options for options in received)
+    assert all('error' not in json.loads(line) for line in output.getvalue().splitlines())

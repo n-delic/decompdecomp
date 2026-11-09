@@ -7,9 +7,14 @@ def main():
     from decompnet import compile_timing
     from decompnet.app import draft_repairs
     from decompnet.app.repair_generation import PARTITION
+    background = False
     for line in sys.stdin.buffer:
         try:
             args, kwargs = json.loads(line)
+            if kwargs.pop('_background',False) and not background:
+                from decompnet.app.workers import lower_priority
+                lower_priority()
+                background = True
             labels = {}
             counts = compile_timing.Counts()
             partition=kwargs.pop('_partition',None)

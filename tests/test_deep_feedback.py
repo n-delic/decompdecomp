@@ -66,11 +66,12 @@ def test_a_zero_saved_score_is_marked_matched_only_after_the_real_exact_verdict(
     with net.store.tx() as db: db.execute('UPDATE functions SET best_score=0')
     net._compile=lambda *a: SimpleNamespace(ok=True,obj=object())
     net._evaluate=lambda *a: (object(),verdict,[])
-    net._target_obj=lambda *a: object()
+    net._target_obj=lambda *a: SimpleNamespace(cpu='mips')
     net.keep_diff=lambda *a: None
     monkeypatch.setattr(scoring,'diff',lambda *a: scoring.DiffResult(0,1000,[],True))
     # This verdict unit test supplies sentinel objects, not actual ELF compiler output.
     monkeypatch.setattr(source_lines,'mismatches',lambda *a,**k: [])
+    monkeypatch.setattr(scoring,'disassemble',lambda *a: [])
     recorded=[]
     def record(fn,agent,score,source,version,**kwargs):
         recorded.append(kwargs['matched'])
