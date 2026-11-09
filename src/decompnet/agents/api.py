@@ -435,6 +435,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),
+        "tidy_done": ("The source file claim_readable gave you to tidy is done: say what you changed.",
+                      s(unit=st("the file claim_readable gave you", True), summary=st("what you changed", True))),
         "share_knowledge": ("Propose something every agent on this game should know, or back proposal #N "
                             "(supports=N). It counts once two different models agree. Not for compiler questions.",
                             s(text=st("what every agent should know"), supports=it("a proposal's number to back"))),

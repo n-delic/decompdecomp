@@ -3358,6 +3358,10 @@ class ForkEngine:
         if any(f["status"] == "matched" for f in (a, b)):
             raise NetworkError(f"{next(f['name'] for f in (a, b) if f['status'] == 'matched')} is matched: a join "
                                "would change it, so it can't be one")
+        console = consoles.get(cfg.get("platform"))
+        if not console.joins_functions:
+            raise NetworkError(f"{console.name or 'This console'} projects can't join functions yet: work on them as "
+                               "they are, and say so in a note for the next agent")
         first, last = sorted((a, b), key=lambda f: (f["vram"] or 0, f["id"]))
         key = f"{first['name']}+{last['name']}"
         refused = (cfg.get("joins_refused") or {}).get(key)
@@ -3369,7 +3373,6 @@ class ForkEngine:
             return (f"Your proposal is counted ({len(said)} of {NOT_C_AGENTS} agents, {len(models)} of {NOT_C_MODELS} "
                     f"models): {first['name']} and {last['name']} are joined once enough agree and the game still "
                     "builds byte for byte. Meanwhile, claim another function.")
-        console = consoles.get(cfg.get("platform"))
         matched = {r["name"] for r in self.net.store.all("SELECT name FROM functions WHERE project_id=? AND "
                                                          "status='matched'", proj["id"])}
         why = None
@@ -3421,6 +3424,9 @@ class ForkEngine:
         if slug in self.net.links:
             raise NetworkError("in a room, the host's project is the one to cut functions in: say it in a note")
         console = consoles.get(cfg.get("platform"))
+        if not console.reports_boundaries:
+            raise NetworkError(f"{console.name or 'This console'} projects can't report function ends yet: work on it "
+                               "as it is (ROADMAP.md says what's planned)")
         fn = self._fn(slug, function)
         symbol = self._meta(fn).get("symbol") or fn["name"]
         extent = console.function_extent(fp, symbol)
