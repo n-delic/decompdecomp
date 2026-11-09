@@ -3571,3 +3571,108 @@ def test_the_features_agents_use_work_on_a_64_bit_game(tmp_path):
     for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
         said = net.request_boundary(net.local_agent(who)[0], slug, start, "+0x178", "its jump table: data, no code")
     assert said.endswith("set aside as not code. The game still builds byte for byte."), said
+
+
+LOW = 0x10000000  # a program's image base for the analysis tests below (an Xbox game's code sits this low too)
+
+
+def _code(code: bytes) -> "scratch_pe.PE":
+    """A program loaded at LOW whose .text (at LOW + 0x1000) is `code`, with the headers analyse reads (describe)."""
+    exe = bytearray(_tiny_exe(code))
+    struct.pack_into("<I", exe, 0x40 + 24 + 28, LOW)  # image base (_tiny_exe's PE header is at 0x40)
+    return scratch_pe.read_pe(bytes(exe))
+
+
+def test_a_cut_tail_call_is_kept_whole_and_a_flag_mask_isnt_taken_for_an_address():
+    # F: `and edx, <an address inside G>` (a flag mask in a program loaded low, as Xbox games are), `push G` (a
+    # callback: a real address), then a tail call into G, whose last byte Ghidra's function body leaves out
+    f = bytes.fromhex("81e2 14100010" "68 10100010" "e9 00000000")
+    g = bytes.fromhex("9090909090909090c3")
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x100F, "name": "", "source": "DEFAULT"},
+            {"entry": LOW + 0x1010, "end": LOW + 0x1019, "name": "", "source": "DEFAULT"}]
+    fn = scratch_pe.analyse(_code(f + g), rows)[0]
+    assert fn.size == 0x10
+    assert fn.relocs == [(7, scratch_pe.DIR32, "_func_10001010", 0), (12, scratch_pe.REL32, "_func_10001010", 0)]
+
+
+def test_a_function_that_returns_midway_keeps_the_code_after_its_ret_and_one_ending_in_a_call_does_not():
+    # F: `test eax, eax; jz past; ret; past: xor eax, eax; ret`: Ghidra's body ends at the first ret, but a jump
+    # reaches past it. H: Ghidra ends it at a call that doesn't return; what follows isn't H's code
+    f = bytes.fromhex("85c0" "7401" "c3" "33c0" "c3")
+    h = bytes.fromhex("e8 00000000" "33c0" "c3")
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1005, "name": "", "source": "DEFAULT"},
+            {"entry": LOW + 0x1010, "end": LOW + 0x1015, "name": "", "source": "DEFAULT"}]
+    found = scratch_pe.analyse(_code(f + b"\xcc" * (0x10 - len(f)) + h), rows)
+    assert found[0].addr == LOW + 0x1000 and found[0].size >= 8  # the code after the ret is F's
+    assert found[1].addr == LOW + 0x1010 and len(found) == 3  # after H's call: a function of its own (missed)
+
+
+def test_two_jump_tables_and_a_byte_table_relocate_each_entry_once():
+    # jmp [eax*4+T1] (3 cases), movzx eax, byte [ecx+B]; jmp [eax*4+T2] (2 cases): T1's scan runs on into T2,
+    # whose entries are code addresses too; listed twice, objdiff decoded the byte table after them as code
+    code = bytes.fromhex("ff2485 1a100010" "0fb681 2e100010" "ff2485 26100010" "c3c3c3c3c3")
+    t1 = struct.pack("<3I", LOW + 0x1015, LOW + 0x1016, LOW + 0x1017)
+    t2 = struct.pack("<2I", LOW + 0x1018, LOW + 0x1019)
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1032, "name": "", "source": "DEFAULT"}]
+    fn = scratch_pe.analyse(_code(code + t1 + t2 + bytes([0, 1, 1, 0]) + b"\xcc" * 4), rows)[0]
+    assert [o for o, *_ in fn.relocs] == [3, 10, 17, 0x1A, 0x1E, 0x22, 0x26, 0x2A]  # the tables, each entry once
+    assert fn.size == 0x32  # the byte table is the function's, the int3s after it aren't
+    # B indexes T2 (2 cases), not both tables (5): the next function, starting with a byte below 5 but not below 2
+    # (`add eax, eax`), was cut a byte in
+    assert _one_switch(code + t1 + t2, 0x101A, bytes([0, 1]) + bytes.fromhex("03c0c3")) == [(LOW + 0x1000, 0x30),
+                                                                                           (LOW + 0x1030, 0x3)]
+    # one B = [0, 1, 2, 3, 4] indexing both T2 (5 cases), then T1 (3 cases): B ends at the larger count, not the last
+    # table's (cut at its byte 3, B's last two bytes and the next function were a false function)
+    code = bytes.fromhex("0fb681 3a100010" "ff2485 1a100010" "ff2485 2e100010" "c3c3c3c3c3")
+    t2 = struct.pack("<5I", *range(LOW + 0x1015, LOW + 0x101A))
+    t1 = struct.pack("<3I", *range(LOW + 0x1015, LOW + 0x1018))
+    assert _one_switch(code + t2 + t1, 0x101A, bytes(range(5)) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x3F),
+                                                                                             (LOW + 0x103F, 0x3)]
+
+
+def test_a_jumps_index_table_ends_at_its_first_byte_past_the_cases_and_a_lookup_table_runs_on():
+    # F: movzx eax, byte [ecx+B]; jmp [eax*4+T] (2 cases); ret. B's bytes 0, 1, 0 index T; the code after them (G,
+    # which only a vtable reaches: Ghidra has no row for it) starts with a byte past T's 2 cases
+    f = bytes.fromhex("0fb681 17100010" "ff2485 0f100010" "c3") + struct.pack("<2I", LOW + 0x100E, LOW + 0x100E)
+    g = bytes.fromhex("33c0" "c3")
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x100F, "name": "", "source": "DEFAULT"}]
+    found = scratch_pe.analyse(_code(f + bytes([0, 1, 0]) + g + b"\xcc" * 3), rows)
+    assert (found[0].size, found[1].addr) == (0x1A, LOW + 0x101A)  # G is a function of its own, not F's
+    # a byte table F only looks values up in (its load isn't the jump's index) keeps its whole run, as before
+    f = bytes.fromhex("0fb681 1c100010" "ba 01000000" "ff2495 14100010" "c3") + struct.pack("<2I", *[LOW + 0x1013] * 2)
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1014, "name": "", "source": "DEFAULT"}]
+    found = scratch_pe.analyse(_code(f + bytes([5, 6, *range(7, 21)])), rows)
+    assert [(fn.addr, fn.size) for fn in found] == [(LOW + 0x1000, 0x2C)]
+
+
+def _one_switch(f: bytes, end: int, after: bytes) -> list[tuple[int, int]]:
+    rows = [{"entry": LOW + 0x1000, "end": LOW + end, "name": "", "source": "DEFAULT"}]
+    return [(fn.addr, fn.size) for fn in scratch_pe.analyse(_code(f + after + b"\xcc" * 3), rows)]
+
+
+def test_a_byte_table_indexes_a_jump_only_through_the_value_it_loads():
+    """Which register a byte was loaded into isn't enough: the register may be overwritten before the jump, or the
+    byte only compared, and the byte may be moved to another register first. The value is followed."""
+    # movzx eax, byte [ecx+B]; mov eax, 1; jmp [eax*4+T]: eax isn't B's byte any more, so B is a lookup that runs on
+    f = bytes.fromhex("0fb681 1c100010" "b8 01000000" "ff2485 14100010" "c3") + struct.pack("<2I", *[LOW + 0x1013] * 2)
+    assert _one_switch(f, 0x1014, bytes([5, 6]) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x21)]
+    # cmp al, byte [ecx+B]; jmp [eax*4+T]: a compare loads nothing
+    f = bytes.fromhex("3a81 16100010" "ff2485 0e100010" "c3") + struct.pack("<2I", *[LOW + 0x100D] * 2)
+    assert _one_switch(f, 0x100E, bytes([5, 6]) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x1B)]
+    # movzx eax, byte [ecx+B]; mov ecx, eax; jmp [ecx*4+T]: B's byte indexes T from ecx, so B ends at its cases and
+    # the code after it is a function of its own
+    f = bytes.fromhex("0fb681 19100010" "8bc8" "ff248d 11100010" "c3") + struct.pack("<2I", *[LOW + 0x1010] * 2)
+    assert _one_switch(f, 0x1011, bytes([0, 1]) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x1B),
+                                                                               (LOW + 0x101B, 0x3)]
+
+
+def test_a_mask_equal_to_a_functions_start_is_a_number():
+    f = bytes.fromhex("81e2 10100010" "c3").ljust(0x10, b"\xcc")  # and edx, <G's start>; ret
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1007, "name": "", "source": "DEFAULT"},
+            {"entry": LOW + 0x1010, "end": LOW + 0x1011, "name": "", "source": "DEFAULT"}]
+    assert scratch_pe.analyse(_code(f + b"\xc3"), rows)[0].relocs == []
+
+
+def test_a_purge_ghidra_couldnt_work_out_counts_as_none():
+    assert scratch_pe.decorate("f", "__stdcall", 2147483647, 0) == "_f"
+    assert scratch_pe.decorate("f", "__stdcall", 8, 2) == "_f@8"
