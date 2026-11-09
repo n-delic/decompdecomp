@@ -37,7 +37,7 @@ def test_verified_wrapper_c_is_instantiated_with_low_address_local_substitution_
     assert not wrappers.candidates(net,{'id':1,'big_endian':1},dest,group)
 
 
-def test_index_reads_only_exact_donor_source_and_preserves_its_checksum(tmp_path):
+def test_index_reads_only_exact_donor_source_and_preserves_its_checksum(tmp_path,monkeypatch):
     import sqlite3
 
     from decompnet import payload_storage
@@ -54,9 +54,11 @@ def test_index_reads_only_exact_donor_source_and_preserves_its_checksum(tmp_path
                        (i+1,f'f{i}',44,donor['target'],donor['relocs'],unused,unused,unused,source))
         db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?",(payload_storage.digest(unused),))
     reads=[]
+    unpack=payload_storage.unpack
     def decode(digest,blob):
         reads.append(digest)
-        return payload_storage.unpack(digest,blob)
+        return unpack(digest,blob)
+    monkeypatch.setattr(payload_storage,'unpack',decode)
     for conn in (store.conn,store._reader()):conn.create_function('payload_read',2,decode,deterministic=True)
     net=SimpleNamespace(project_store=lambda pid:store)
     try:
@@ -64,9 +66,45 @@ def test_index_reads_only_exact_donor_source_and_preserves_its_checksum(tmp_path
         donors=next(iter(groups.values()))
         assert [row['id'] for row in donors]==[1,2,3]
         assert all(row['matched_source']==source for row in donors)
-        assert reads==[payload_storage.digest(source)]*5
+        assert reads==[payload_storage.digest(source)]
         with store.tx() as db:
             db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?",(payload_storage.digest(source),))
         with pytest.raises(sqlite3.OperationalError,match='user-defined function'):
             wrappers.index(net,{'id':1,'arch':'mips','big_endian':True})
+    finally:store.conn.close()
+
+
+def test_index_never_decodes_rejected_shapes_or_over_cap_donors(tmp_path):
+    from decompnet import payload_storage
+    from decompnet.store import Store
+    store=Store(tmp_path/'shortlist.db');donor=fn(0x123400)
+    bad='unused bad source '*100
+    try:
+        with store.tx() as db:
+            db.execute("INSERT INTO projects(id,slug,root,config) VALUES(1,'synthetic','','{}'),(2,'other','','{}')")
+            for i in range(1,301):
+                valid=257<=i<=260
+                db.execute("INSERT INTO functions(id,project_id,name,status,size,target,relocs,matched_source) VALUES(?,1,?,'matched',44,?,?,?)",
+                           (i,f'f{i}',donor['target'] if valid else b'bad',donor['relocs'],f'int f{i}(void){{return 7;}}' if 257<=i<=259 else bad))
+            db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?",(payload_storage.digest(bad),))
+        groups=wrappers.index(SimpleNamespace(project_store=lambda _:store),{'id':1,'arch':'mips','big_endian':True})
+        assert [r['id'] for r in next(iter(groups.values()))]==[257,258,259]
+    finally:store.conn.close()
+
+
+@pytest.mark.parametrize('change',["status='open'","project_id=2","target=X'00'","matched_source=NULL","size=999"])
+def test_index_rechecks_current_donor_snapshot_after_shortlisting(tmp_path,monkeypatch,change):
+    from decompnet import function_rows
+    from decompnet.store import Store
+    store=Store(tmp_path/'race.db');donor=fn(0x123400)
+    try:
+        with store.tx() as db:
+            db.execute("INSERT INTO projects(id,slug,root,config) VALUES(1,'synthetic','','{}'),(2,'other','','{}')")
+            db.execute("INSERT INTO functions(id,project_id,name,status,size,target,relocs,matched_source) VALUES(1,1,'f','matched',44,?,?,'int f(void){return 7;}')",(donor['target'],donor['relocs']))
+        selected=function_rows.selected
+        def changed(*args,**kwargs):
+            with store.tx() as db:db.execute('UPDATE functions SET '+change+' WHERE id=1')
+            return selected(*args,**kwargs)
+        monkeypatch.setattr(function_rows,'selected',changed)
+        assert wrappers.index(SimpleNamespace(project_store=lambda _:store),{'id':1,'arch':'mips','big_endian':True})=={}
     finally:store.conn.close()

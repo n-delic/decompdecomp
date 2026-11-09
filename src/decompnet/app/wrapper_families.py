@@ -37,17 +37,40 @@ def shape(fn, big):
 
 def index(net,proj):
     if proj['arch']!='mips':return {}
+    from ..function_rows import selected
+    from ..metadata_rows import rows
+    store=net.project_store(proj['id'])
+    shortlist={};after=-1
+    # Shape rejection and the per-shape donor cap need no captured C. Scan small
+    # native metadata pages first; only shortlisted sources cross the payload
+    # boundary. Invalid shapes and the fourth identical donor used to inflate C.
+    while True:
+        page=rows(store,('id','target_hex','relocs'),
+                  "SELECT id,hex(target) AS target_hex,relocs FROM main.functions "
+                  "WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL "
+                  "AND size<=? AND id>? ORDER BY id LIMIT 256",proj['id'],MAX_BYTES,after)
+        if not page:break
+        for row in page:
+            row['target']=bytes.fromhex(row.pop('target_hex'))
+            key=shape(row,bool(proj['big_endian']))
+            if key:
+                group=shortlist.setdefault(key[0],[])
+                if len(group)<MAX_DONORS:group.append(row['id'])
+        after=page[-1]['id']
+    ids=sorted(i for group in shortlist.values() for i in group)
     groups={}
-    # Eligibility and shape need no assembly, seed or best-attempt payload. Read
-    # only the exact donor C through its checksum-validating detail view.
-    for row in net.project_store(proj['id']).all(
-            "SELECT f.id,f.name,f.target,f.relocs,d.matched_source FROM main.functions f "
-            "JOIN functions d ON d.id=f.id WHERE f.project_id=? AND f.status='matched' "
-            "AND f.matched_source IS NOT NULL AND f.size<=? ORDER BY f.id",proj['id'],MAX_BYTES):
-        key=shape(row,bool(proj['big_endian']))
-        if key:
-            group=groups.setdefault(key[0],[])
-            if len(group)<MAX_DONORS:group.append(row)
+    for offset in range(0,len(ids),256):
+        # Capture current target, relocation and source together and recheck the
+        # shape/status: a concurrent edit cannot pair new C with old metadata.
+        for row in selected(store,proj['id'],ids[offset:offset+256],
+                            columns=('id','name','size','target','relocs','matched_source'),matched_only=True):
+            size=row.pop('size')
+            if row['matched_source'] is None or size is None or size>MAX_BYTES:continue
+            key=shape(row,bool(proj['big_endian']))
+            if key:
+                group=groups.setdefault(key[0],[])
+                if len(group)<MAX_DONORS:group.append(row)
+
     return groups
 
 
