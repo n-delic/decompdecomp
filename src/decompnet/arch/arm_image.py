@@ -143,7 +143,11 @@ def image(program: bytes) -> Image:
     result.bss = [(s['sh_addr'], s['sh_addr'] + s['sh_size']) for s in elf.iter_sections()
                   if s['sh_type'] == 'SHT_NOBITS' and s['sh_flags'] & 2]
     got = elf.get_section_by_name('.got')
-    if result.got_base is None and got is not None:
+    # R_ARM_GOT_BREL is based at _GLOBAL_OFFSET_TABLE_, which LLD can place
+    # in .got while DT_PLTGOT points at a separate .got.plt.
+    if '_GLOBAL_OFFSET_TABLE_' in result.values:
+        result.got_base = result.values['_GLOBAL_OFFSET_TABLE_']
+    elif got is not None:
         result.got_base = got['sh_addr']
     got_ranges = [(s['sh_addr'], s['sh_addr'] + s['sh_size']) for s in elf.iter_sections()
                   if s.name in ('.got', '.got.plt')]

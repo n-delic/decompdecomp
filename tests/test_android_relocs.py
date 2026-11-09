@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 
 import pytest
@@ -44,17 +45,23 @@ int call_arm(int x) { return arm_helper(x) + 4; }
 '''
 
 
-@pytest.fixture(scope='module')
-def linked(tmp_path_factory):
+@pytest.fixture(scope='module', params=['gnu', 'lld'])
+def linked(tmp_path_factory, request):
     if toolchains.installed('android-clang-3.5') is None:
         pytest.skip('needs pinned Android Clang 3.5')
-    root = tmp_path_factory.mktemp('android-relocs')
+    root = tmp_path_factory.mktemp(f'android-relocs-{request.param}')
     cfg = compiler_config(root, {'compiler': {'toolchain': 'android-clang-3.5'}})
     compiled = compile_source(cfg, '', SOURCE)
     assert compiled.ok, compiled.log
     (root / 'native.o').write_bytes(compiled.obj)
-    linker = toolchains.path('android-clang-3.5') / 'gcc/bin/arm-linux-androideabi-ld'
-    subprocess.run(capped([str(linker), '-shared', str(root / 'native.o'), '-o', str(root / 'game.so')]),
+    if request.param == 'lld':
+        linker = shutil.which('ld.lld')
+        if linker is None:
+            pytest.skip('needs LLVM lld for the Android LLD linker integration')
+        command = [linker, '-flavor', 'gnu', '-m', 'armelf_linux_eabi']
+    else:
+        command = [str(toolchains.path('android-clang-3.5') / 'gcc/bin/arm-linux-androideabi-ld')]
+    subprocess.run(capped([*command, '-shared', str(root / 'native.o'), '-o', str(root / 'game.so')]),
                    check=True, capture_output=True, timeout=60)
     program = (root / 'game.so').read_bytes()
     split = elf.split(program, root, log=lambda *_: None)
