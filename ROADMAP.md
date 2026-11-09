@@ -40,6 +40,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | ✓ | ✓ | — | ✓ your Visual C++, for 32-bit games (64-bit ones build with the pack's 2017) | ✓ your XDK | — | the project's own build |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | ✓ | — | the project's build | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | the project's build | the project's build |
+| Find better compiler settings from saved C | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — project mode | — project mode | — project mode | — project mode | — public builds |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ over source files | ✓ | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ | — | — | ✓ (named by RTTI where the program has it) | ✓ (RTTI where the program has it) | — | — |
@@ -94,6 +95,7 @@ Where to start on a gap:
   method only through a declaration in the class), and optimised code's register locals (2005's S_LOCAL ranges)
   aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
   can't take one in yet.
+- **Compiler comparison in project mode** needs a source-file trial and an objdiff-backed apply path for each project console. The current saved-C comparison panel runs on ROM projects, including GBA and PS3.
 - **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
   (`Console.cut_function`: PC's functions.json). DS and GameCube projects need theirs.
 - **Tidying a ROM project**: its C is the database's, one function at a time, with one shared header per segment

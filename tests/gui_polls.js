@@ -445,5 +445,20 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
                iso: (await identifyXboxDisc(disc(0x10000)))?.platform, dump: (await identifyXboxDisc(disc(0x18310000)))?.platform,
                plain: await identifyXboxDisc(disc(0x20000)), x360: notSupported(x360, { name: "a.xex" }) };
     })()`, ctx);
+  // Compiler comparison is available to all ROM consoles, including non-MIPS GBA and PS3.
+  checks.compilerComparisonConsoles = vm.runInContext(`(() => {
+    const previous = S.ov, original = document.getElementById, elements = new Map();
+    document.getElementById = id => {
+      if (!elements.has(id)) elements.set(id, { hidden: false, textContent: '', innerHTML: '' });
+      return elements.get(id);
+    };
+    try {
+      return ['gba', 'ps3', 'n64', 'pc'].map(platform => {
+        S.ov = { kind: platform === 'pc' ? 'fork' : 'rom' };
+        renderCompilerAnswer({ compiler: 'test', flags: '', parts: [], elsewhere: [], checks: [], survey: {} });
+        return [platform, elements.get('installedCompilerTest').hidden];
+      });
+    } finally { S.ov = previous; document.getElementById = original; }
+  })()`, ctx);
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

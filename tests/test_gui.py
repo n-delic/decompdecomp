@@ -85,6 +85,11 @@ def test_a_ps3_program_is_taken_and_its_encrypted_eboot_says_what_to_do(gui):
     assert "SELF" in ps3["said"] and "decrypt your own copy" in ps3["said"] and "EBOOT.ELF" in ps3["said"]
 
 
+def test_compiler_comparison_is_available_on_all_rom_consoles(gui):
+    assert gui['checks']['compilerComparisonConsoles'] == [
+        ['gba', False], ['ps3', False], ['n64', False], ['pc', True]]
+
+
 def test_a_gba_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     gba = gui["checks"]["gba"]
     assert gba["good"] == ["gba", "ADQE", "DEMOQUEST"]

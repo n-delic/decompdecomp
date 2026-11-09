@@ -58,6 +58,40 @@ def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp
         assert response.json()["save_folder"] == str((tmp_path / slug).resolve())
 
 
+def test_compiler_comparison_route_passes_options_and_reuses_running_job(tmp_path, monkeypatch):
+    from .test_loading import tiny_game
+
+    (tmp_path / '.decomp').mkdir()
+    net = RomNetwork(tmp_path / '.decomp' / 'decomp.db', tmp_path)
+    tiny_game(net, 'comparison-route')
+    mcp, _, security, _ = build(net, tmp_path / '.decomp', PORT, SECRET)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host='127.0.0.1'),
+                        base_url=f'http://127.0.0.1:{PORT}', headers=WINDOW)
+    started = threading.Event()
+    release = threading.Event()
+    seen = []
+
+    def compare(slug, log, **options):
+        seen.append((slug, options))
+        started.set()
+        assert release.wait(5)
+        return {'tried': 0, 'results': []}
+
+    monkeypatch.setattr(net, 'find_better_compiler_settings', compare)
+    request = {'slug': 'comparison-route', 'find_better_settings': True, 'flags_only': True,
+               'auto_apply': False}
+    try:
+        first = client.post('/api/compilermap', headers={'X-Decomp': '1'}, json=request)
+        assert first.status_code == 200, first.text
+        assert started.wait(5)
+        second = client.post('/api/compilermap', headers={'X-Decomp': '1'}, json=request)
+        assert second.status_code == 200 and second.json()['job'] == first.json()['job']
+    finally:
+        release.set()
+    assert seen == [('comparison-route', {'flags_only': True, 'used_profiles_only': False,
+                                          'untested_only': True, 'auto_apply': False})]
+
+
 def test_a_project_remembers_which_functions_helpers_take_first(app):
     """Issue #205: the owner's order is kept with the project, and only the choices it knows are taken."""
     from .test_loading import tiny_game
