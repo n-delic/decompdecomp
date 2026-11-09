@@ -266,3 +266,117 @@ def test_creation_job_discovery_deduplicates_and_stop_cancels_only_this_project(
     assert client.post('/api/rom-explorer/discovery',json=dict(slug='game',action='stop')).status_code==200
     assert jobs.cancel_events[identity].is_set() and not jobs.cancel_events[other].is_set()
     jobs.cancel(other)
+
+
+def test_different_worker_challenges_proposal_and_cannot_accept_it(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'));region=packet['region']['id']
+    finding=json.loads(discovery.propose(net,agent,'game',region,packet['claim_token'],proposal(packet)))['proposal']
+    # Drain ordinary work; the author cannot review its own interpretation.
+    while True:
+        next_packet=json.loads(discovery.claim(net,agent,'game'))
+        if 'region' not in next_packet:break
+        discovery.defer(net,agent,'game',next_packet['region']['id'],next_packet['claim_token'],'Inspect bytes','No convincing format')
+    assert next_packet['waiting_for_other_workers']
+    other,_=net.local_agent('independent-reviewer')
+    second=SimpleNamespace(**{**session.__dict__,'id':'reviewer','label':'Reviewer','model':'other-model'})
+    discovery.bind(net,second,other)
+    packet=json.loads(discovery.claim(net,other,'game'))
+    assert packet['review_target']['id']==finding
+    assert not discovery.ready(net,session,agent)
+    with pytest.raises(NetworkError,match='Read the cited'):
+        discovery.propose(net,other,'game',region,packet['claim_token'],dict(verdict='agree',evidence='A claim',citations=[{'offset':999999}]))
+    result=call(net,other,'propose_asset_region',region=region,claim_token=packet['claim_token'],proposal=dict(verdict='disagree',evidence='Printable bytes do not prove displayed text.',citations=[{'offset':packet['region']['start']}]))
+    assert result['saved']
+    review=discovery.review(net,'game',finding)
+    assert review['status']=='pending' and review['critiques'][0]['body']['verdict']=='disagree'
+    assert review['body']['validation']['checks'][1]['status']=='unchecked'
+    assert discovery.status(net,'game')['run']['state']=='complete'
+    assert not rom_explorer._read(net,net.project_row('game'))['annotations']
+
+
+def test_interrupted_independent_review_requeues_as_review(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet))
+    store=net.project_store(pid)
+    with store.tx() as db:db.execute("UPDATE asset_queue SET state='skipped' WHERE run=? AND state='queued'",(run,))
+    other,_=net.local_agent('reviewer');second=SimpleNamespace(**{**session.__dict__,'id':'2'})
+    discovery.bind(net,second,other);claimed=json.loads(discovery.claim(net,other,'game'))
+    discovery.release(net,second,other)
+    assert store.one('SELECT state FROM asset_queue WHERE run=? AND region=?',run,claimed['region']['id'])['state']=='review_queued'
+    again=json.loads(discovery.claim(net,other,'game'))
+    assert again['review_target'] and again['claim_token']!=claimed['claim_token']
+
+
+def test_similarity_search_is_advisory_and_rejects_stale_images(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    finding=json.loads(discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet)))['proposal']
+    result=discovery.review(net,'game',finding,'similar')
+    assert result['examined']>=1 and 'Structural leads' in result['note']
+    assert not rom_explorer._read(net,net.project_row('game'))['annotations']
+    (root/'game.rom').write_bytes(bytes(128))
+    with pytest.raises(NetworkError,match='stale'):discovery.review(net,'game',finding,'similar')
+
+
+def test_automatic_checks_compare_layout_bytes_and_loader_extent(discovered,monkeypatch):
+    from decompnet.app.asset_validation import validate
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'));row=packet['region'];body=proposal(packet)
+    report={'regions':[row],'image_hash':'test','loader_flow':{'chains':[dict(source=dict(start=row['start'],end=row['end']),function='reader',instruction=0x80000004,reason='Static arguments',role='copy',steps=[])]}}
+    monkeypatch.setattr(rom_explorer,'asset_preview',lambda *a:dict(details=dict(bytes=100000)))
+    result=validate(net,'game',report,row['id'],{**body,'preview_settings':{'offset':row['start'],'format':'i8','width':2,'height':2}})
+    assert any(c['check']=='Layout within proposed span' and c['status']=='differs' for c in result['checks'])
+    assert any(c['check']=='Static loader extent' and c['status']=='consistent' for c in result['checks'])
+    result=validate(net,'game',report,row['id'],{**body,'end':row['end']-1})
+    assert any(c['check']=='Static loader extent' and c['status']=='differs' for c in result['checks'])
+
+
+def test_similarity_excludes_code_and_searches_all_data_regions(discovered):
+    from decompnet.app.asset_validation import similar
+    net,pid,root,run,agent,session=discovered
+    report=rom_explorer.listing(net,'game');packet=json.loads(discovery.claim(net,agent,'game'))
+    row=next(r for r in report['regions'] if r['id']==packet['region']['id'])
+    # The same synthetic bytes at a second data extent are a structural lead, not a label.
+    duplicate={**row,'id':'copy','functions':[]}
+    report['regions']=[row,duplicate,{**duplicate,'id':'code','kind':'code'}]
+    result=similar(net,'game',report,row['id'],proposal(packet))
+    assert result['examined']==1
+    if len(set((root/'game.rom').read_bytes()[row['start']:min(row['end'],row['start']+64)]))>=4:
+        assert result['matches'][0]['region']=='copy'
+    assert not rom_explorer._read(net,net.project_row('game'))['annotations']
+
+
+def test_idle_reviewer_waits_locally_for_a_peer_then_reviews_final_proposal(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    store=net.project_store(pid)
+    with store.tx() as db:db.execute("UPDATE asset_queue SET state='skipped' WHERE run=? AND state='queued'",(run,))
+    other,_=net.local_agent('final-reviewer');second=SimpleNamespace(**{**session.__dict__,'id':'2'})
+    discovery.bind(net,second,other)
+    assert not discovery.ready(net,second,other) and discovery.awaiting_peer(net,second,other)
+    discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet))
+    assert discovery.ready(net,second,other) and not discovery.awaiting_peer(net,second,other)
+    review=json.loads(discovery.claim(net,other,'game'))
+    assert review['review_target']
+    discovery.defer(net,other,'game',review['region']['id'],review['claim_token'],'Independent inspection','Not enough consumer evidence to agree.')
+    assert discovery.status(net,'game')['run']['state']=='complete'
+
+
+def test_automatic_decompression_checks_use_original_verified_bytes(project):  # noqa: F811
+    import hashlib
+    import zlib
+
+    from decompnet.app.asset_validation import validate
+    net,pid,root=project
+    image=bytes(8)+zlib.compress(b'private synthetic asset'*20)+bytes(128)
+    (root/'game.rom').write_bytes(image)
+    with net.progress.view():cfg=json.loads(json.dumps(net.cfg(net.project_row('game'))))
+    cfg['rom']['sha1']=hashlib.sha1(image).hexdigest()
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+    rom_explorer.run(net,'game',Log())
+    report=rom_explorer.listing(net,'game');row=next(r for r in report['regions'] if r['kind']=='compressed')
+    result=validate(net,'game',report,row['id'],dict(kind='compressed',start=row['start'],end=row['end']))
+    check=next(c for c in result['checks'] if c['check']=='Decompression')
+    assert check['status']=='pass' and check['evidence']['bytes']==460

@@ -46,3 +46,19 @@ Describe unsupported formats as text and defer when evidence is insufficient; do
 
 Human acceptance affects local annotations only. User edits, original image/layout changes and
 expired claims are guarded. Never turn lack of references into a claim that bytes are unused.
+
+## Independent review and automatic checks
+
+Each saved proposal is queued for a different worker. The original author cannot claim
+its own proposal for review. Start at least two discovery agents to process both stages.
+A reviewer receives `review_target` and original inspection tools. Inspect the bytes
+independently, then call `propose_asset_region` with the claim token and
+`proposal={"verdict":"agree|disagree|uncertain","evidence":"...","citations":[{"offset":123}]}`.
+Citations must be ROM offsets read by this review claim. Deferring a review records
+an uncertain verdict. Same-model reviews are labelled; a different worker is not
+necessarily an independent model. The user can accept without waiting for review.
+
+Automatic checks record supported parser results and compare proposed extents with
+static loader arguments. They do not prove asset meaning, consumer dimensions or
+runtime execution. Similar-region search supplies structural leads, including
+common headers, compatible raw layouts and entropy. It never copies labels.

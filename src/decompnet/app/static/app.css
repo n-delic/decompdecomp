@@ -2170,3 +2170,5 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 
 .rom-texture-candidate > img { flex:none; }
 .rom-texture-candidate > span { line-height:1.4; max-width:100%; }
+
+.asset-validation { min-width:0; overflow-wrap:anywhere; }

@@ -47,7 +47,7 @@ def _store(net,slug):
         with store.tx() as db:
             for sql in SCHEMA:db.execute(sql)
             # First access after restart recovers only this app's old leases.
-            for row in db.execute("SELECT DISTINCT run FROM asset_queue WHERE state='claimed' AND instance!=? AND run IN (SELECT id FROM asset_runs WHERE project_id=?)",(INSTANCE,proj['id'])).fetchall():
+            for row in db.execute("SELECT DISTINCT run FROM asset_queue WHERE state IN ('claimed','review_claimed') AND instance!=? AND run IN (SELECT id FROM asset_runs WHERE project_id=?)",(INSTANCE,proj['id'])).fetchall():
                 _park(store,row['run'],reason='The app restarted before a structured report; original read windows are retained.')
         ready.add(proj['id'])
     return proj,store
@@ -87,7 +87,7 @@ def _scope(report,value):
 
 
 def _complete(store,run):
-    remaining=store.one("SELECT COUNT(*) AS n FROM asset_queue WHERE run=? AND state IN ('queued','claimed')",run)['n']
+    remaining=store.one("SELECT COUNT(*) AS n FROM asset_queue WHERE run=? AND state IN ('queued','claimed','review_queued','review_claimed')",run)['n']
     if not remaining:
         with store.tx() as db:db.execute("UPDATE asset_runs SET state='complete',updated=? WHERE id=? AND state='active'",(time.time(),run))
     return remaining
@@ -155,7 +155,7 @@ def guard(net,agent,slug,name,args):
     proj,store,_,report=_report(net,slug);run=_run(store,session.options['asset_run']);_fresh(run,report)
     if run['project_id']!=proj['id']:raise NetworkError('This agent is assigned to another project.')
     if run['state']!='active' and not (run['state']=='complete' and name in ('claim_asset_region','project_info')):raise NetworkError('This discovery pass has stopped. Resume it from ROM Explorer to continue.')
-    with store.tx() as db:db.execute("UPDATE asset_queue SET lease=? WHERE run=? AND agent=? AND state='claimed' AND lease>?",(time.time()+LEASE,run['id'],agent.id,time.time()))
+    with store.tx() as db:db.execute("UPDATE asset_queue SET lease=? WHERE run=? AND agent=? AND state IN ('claimed','review_claimed') AND lease>?",(time.time()+LEASE,run['id'],agent.id,time.time()))
 
 
 def _worker(net,agent,slug):
@@ -167,7 +167,7 @@ def _worker(net,agent,slug):
 
 
 def _held(store,session,agent,region,token):
-    row=store.one("SELECT * FROM asset_queue WHERE run=? AND region=? AND state='claimed' AND agent=? AND token=? AND lease>? AND instance=?",
+    row=store.one("SELECT * FROM asset_queue WHERE run=? AND region=? AND state IN ('claimed','review_claimed') AND agent=? AND token=? AND lease>? AND instance=?",
                   session.options['asset_run'],region,agent.id,token,time.time(),INSTANCE)
     if not row:raise NetworkError('This region claim expired or belongs to another worker. Call claim_asset_region to recover eligible work.')
     with store.tx() as db:db.execute('UPDATE asset_queue SET lease=? WHERE run=? AND region=?',(time.time()+LEASE,row['run'],region))
@@ -178,19 +178,27 @@ def _held(store,session,agent,region,token):
 def claim(net,agent,slug):
     session,store,saved,report=_worker(net,agent,slug);run=session.options['asset_run'];now=time.time()
     with store.tx() as db:
-        for expired in db.execute("SELECT agent FROM asset_queue WHERE run=? AND state='claimed' AND lease<=?",(run,now)).fetchall():
+        for expired in db.execute("SELECT agent FROM asset_queue WHERE run=? AND state IN ('claimed','review_claimed') AND lease<=?",(run,now)).fetchall():
             _park(store,run,expired['agent'],reason='The inspection lease expired before a structured report.')
-        held=db.execute("SELECT * FROM asset_queue WHERE run=? AND agent=? AND state='claimed'",(run,agent.id)).fetchone()
+        held=db.execute("SELECT * FROM asset_queue WHERE run=? AND agent=? AND state IN ('claimed','review_claimed')",(run,agent.id)).fetchone()
         if not held:
             row=db.execute("SELECT * FROM asset_queue WHERE run=? AND state='queued' ORDER BY rowid LIMIT 1",(run,)).fetchone()
+            reviewing=False
+            if not row:
+                row=db.execute("SELECT q.* FROM asset_queue q JOIN asset_findings f ON f.run=q.run AND f.region=q.region AND f.outcome='proposal' WHERE q.run=? AND q.state='review_queued' AND f.agent!=? AND f.status='pending' ORDER BY f.created LIMIT 1",(run,agent.id)).fetchone()
+                reviewing=bool(row)
             if not row:
                 remaining=_complete(store,run)
                 return json.dumps(dict(done=not remaining,waiting_for_other_workers=bool(remaining),message='No unclaimed regions. End this session; other workers will finish their claims.' if remaining else 'Discovery pass complete. Findings await user review.'))
             token=uuid.uuid4().hex
-            db.execute("UPDATE asset_queue SET state='claimed',agent=?,token=?,lease=?,instance=?,reads='[]' WHERE run=? AND region=?",(agent.id,token,now+LEASE,INSTANCE,run,row['region']))
+            db.execute("UPDATE asset_queue SET state=?,agent=?,token=?,lease=?,instance=?,reads='[]' WHERE run=? AND region=?",('review_claimed' if reviewing else 'claimed',agent.id,token,now+LEASE,INSTANCE,run,row['region']))
             held=db.execute('SELECT * FROM asset_queue WHERE run=? AND region=?',(run,row['region'])).fetchone()
     packet=json.loads(inspect(net,agent,slug,held['region'],held['token']))
     history=store.all('SELECT f.author,f.model,f.outcome,f.body,f.status,f.review FROM asset_findings f JOIN asset_runs r ON r.id=f.run WHERE r.project_id=? AND f.region=? AND r.image_hash=? ORDER BY f.created DESC LIMIT 8',net.project_row(slug)['id'],held['region'],report['image_hash'])
+    if held['state']=='review_claimed':
+        finding=store.one("SELECT id,body,author,model FROM asset_findings WHERE run=? AND region=? AND outcome='proposal' AND status='pending' ORDER BY created DESC LIMIT 1",run,held['region'])
+        packet['review_target']={**dict(finding),'body':json.loads(finding['body'])}
+        packet['review_instructions']='Independently inspect original bytes and usage. Challenge the proposed format and boundaries. Submit propose_asset_region with proposal={verdict: agree|disagree|uncertain, evidence: explanation, citations: [{offset: inspected ROM offset}]}. Never accept or relabel it.'
     packet.update(claim_token=held['token'],previous_attempts=[{**dict(row),'body':json.loads(row['body'])} for row in history])
     return json.dumps(packet)
 
@@ -277,11 +285,14 @@ def propose(net,agent,slug,region,claim_token,proposal):
     session,store,saved,report=_worker(net,agent,slug)
     with store.tx() as db:
         held=_held(store,session,agent,region,claim_token)
+        if held['state']=='review_claimed':return _critique(net,agent,slug,session,store,held,proposal)
         body=_proposal(net,slug,report,region,proposal,json.loads(held['reads']))
+        from .asset_validation import validate
+        body['validation']=validate(net,slug,report,region,body)
         identity=uuid.uuid4().hex
         db.execute('INSERT INTO asset_findings(id,run,region,agent,author,model,outcome,body,status,created) VALUES(?,?,?,?,?,?,?,?,?,?)',
                    (identity,held['run'],region,agent.id,session.label,session.model,'proposal',json.dumps(body),'pending',time.time()))
-        db.execute("UPDATE asset_queue SET state='submitted',agent=NULL,token=NULL WHERE run=? AND region=?",(held['run'],region))
+        db.execute("UPDATE asset_queue SET state='review_queued',agent=NULL,token=NULL WHERE run=? AND region=?",(held['run'],region))
         _complete(store,held['run'])
     return json.dumps(dict(saved=True,proposal=identity,message='Proposal saved for user review. No labels, symbols, bytes or matching status changed. Claim the next region.'))
 
@@ -292,6 +303,7 @@ def defer(net,agent,slug,region,claim_token,approach,findings):
     body=dict(approach=_text(approach,'a distinct approach',1000),findings=_text(findings,'findings and what remains unresolved'))
     with store.tx() as db:
         held=_held(store,session,agent,region,claim_token)
+        if held['state']=='review_claimed':return _critique(net,agent,slug,session,store,held,dict(verdict='uncertain',evidence=body['findings'],citations=[{'offset':json.loads(held['reads'])[0][0]}]))
         db.execute('INSERT INTO asset_findings(id,run,region,agent,author,model,outcome,body,status,created) VALUES(?,?,?,?,?,?,?,?,?,?)',
                    (uuid.uuid4().hex,held['run'],region,agent.id,session.label,session.model,'unresolved',json.dumps(body),'recorded',time.time()))
         db.execute("UPDATE asset_queue SET state='skipped',agent=NULL,token=NULL WHERE run=? AND region=?",(held['run'],region));_complete(store,held['run'])
@@ -299,14 +311,14 @@ def defer(net,agent,slug,region,claim_token,approach,findings):
 
 
 def _park(store,run,agent=None,author='Interrupted worker',model='',reason='The discovery worker stopped before a structured finding.'):
-    query="SELECT * FROM asset_queue WHERE run=? AND state='claimed'";args=[run]
+    query="SELECT * FROM asset_queue WHERE run=? AND state IN ('claimed','review_claimed')";args=[run]
     if agent is not None:query+=' AND agent=?';args.append(agent)
     with store.tx() as db:
         for row in db.execute(query,args).fetchall():
             body=dict(approach='Interrupted discovery; no completed interpretation',findings=reason,inspected_windows=json.loads(row['reads']))
             db.execute('INSERT INTO asset_findings(id,run,region,agent,author,model,outcome,body,status,created) VALUES(?,?,?,?,?,?,?,?,?,?)',
                        (uuid.uuid4().hex,run,row['region'],row['agent'],author,model,'interrupted',json.dumps(body),'recorded',time.time()))
-            db.execute("UPDATE asset_queue SET state='queued',agent=NULL,token=NULL WHERE run=? AND region=?",(run,row['region']))
+            db.execute("UPDATE asset_queue SET state=?,agent=NULL,token=NULL WHERE run=? AND region=?",('review_queued' if row['state']=='review_claimed' else 'queued',run,row['region']))
 
 
 @current
@@ -320,13 +332,13 @@ def release(net,session,agent):
 def ready(net,session,agent):
     _,store,_,report=_report(net,session.slug);run=_run(store,session.options['asset_run']);_fresh(run,report)
     if run['state']!='active':return False
-    return bool(store.one("SELECT 1 FROM asset_queue WHERE run=? AND (state='queued' OR (state='claimed' AND (agent=? OR lease<=?))) LIMIT 1",run['id'],agent.id,time.time()))
+    return bool(store.one("SELECT 1 FROM asset_queue WHERE run=? AND (state='queued' OR (state IN ('claimed','review_claimed') AND (agent=? OR lease<=?)) OR (state='review_queued' AND EXISTS (SELECT 1 FROM asset_findings f WHERE f.run=asset_queue.run AND f.region=asset_queue.region AND f.outcome='proposal' AND f.agent!=? AND f.status='pending'))) LIMIT 1",run['id'],agent.id,time.time(),agent.id))
 
 
 @current
 def left(net,slug):
     proj,store=_store(net,slug)
-    return store.one("SELECT COUNT(*) AS n FROM asset_queue q JOIN asset_runs r ON r.id=q.run WHERE r.project_id=? AND r.state='active' AND q.state IN ('queued','claimed')",proj['id'])['n']
+    return store.one("SELECT COUNT(*) AS n FROM asset_queue q JOIN asset_runs r ON r.id=q.run WHERE r.project_id=? AND r.state='active' AND q.state IN ('queued','claimed','review_queued','review_claimed')",proj['id'])['n']
 
 
 @current
@@ -374,7 +386,15 @@ def review(net,slug,identity,action='read',edits=None,annotation_version='',feed
     item=dict(item);run=_run(store,item['run']);saved=rom_explorer._read(net,proj);report=saved['report']
     body=json.loads(item['body']);current_note=saved['annotations'].get(item['region'],{})
     stale=not report or run['image_hash']!=report['image_hash'] or run['revision']!=rom_explorer._revision(net,proj)
-    if action=='read':return dict(item,body=body,annotation=current_note,annotation_version=annotation_revision(current_note),image_hash=run['image_hash'],stale=stale,region_detail=None if stale else rom_explorer.detail(net,slug,item['region'],report['image_hash']))
+    if action=='read':
+        from .asset_validation import validate
+        if item['outcome']=='proposal' and not stale:body['validation']=validate(net,slug,report,item['region'],body)
+        critiques=[{**dict(r),'body':json.loads(r['body'])} for r in store.all("SELECT * FROM asset_findings WHERE run=? AND region=? AND outcome='critique' ORDER BY created",item['run'],item['region'])]
+        return dict(item,critiques=critiques,body=body,annotation=current_note,annotation_version=annotation_revision(current_note),image_hash=run['image_hash'],stale=stale,region_detail=None if stale else rom_explorer.detail(net,slug,item['region'],report['image_hash']))
+    if action=='similar':
+        if stale:raise NetworkError('This finding is stale. Finish a fresh scan and discovery pass.')
+        from .asset_validation import similar
+        return similar(net,slug,report,item['region'],body,(edits or {}).get('page',0))
     if action not in ('accept','reject'):raise NetworkError('Accept or reject the selected proposal.')
     with store.tx() as db:
         latest=db.execute('SELECT status FROM asset_findings WHERE id=?',(identity,)).fetchone()['status']
@@ -392,13 +412,15 @@ def review(net,slug,identity,action='read',edits=None,annotation_version='',feed
             exact=checked['start']==row['start'] and checked['end']==row['end']
             rom_explorer.annotate(net,slug,dict(region=item['region'],image_hash=report['image_hash'],name=checked['name'],kind=checked['kind'] if exact else current_note.get('kind',''),notes=notes,preview_settings=checked['preview_settings'] or current_note.get('preview_settings',{}),model_settings=checked['model_settings'] or current_note.get('model_settings',{})))
             saved=rom_explorer._read(net,proj);saved['annotations'][item['region']]['discovery']={**checked,'finding':identity,'author':item['author']};rom_explorer._write(net,proj,saved)
+        db.execute("UPDATE asset_queue SET state='submitted',agent=NULL,token=NULL WHERE run=? AND region=? AND state IN ('review_queued','review_claimed')",(item['run'],item['region']))
+        _complete(store,item['run'])
         db.execute('UPDATE asset_findings SET status=?,review=? WHERE id=?',('accepted' if action=='accept' else 'rejected',_text(feedback,'review feedback',2000,False),identity))
     return dict(saved=True,action=action)
 
 
 def prompt(session):
     return (INSTRUCTIONS+'\nGuide asset-discovery describes proposal fields and supported layouts. First call project_info(detail=false), then claim_asset_region(). Use its claim_token for inspection and findings. '
-            'Inspect nearby bytes, symbols, usage and loader chains; get_assembly reads original functions. '
+            'Inspect nearby bytes, symbols, usage and loader chains; get_assembly reads original functions. If claim returns review_target, follow review_instructions instead of proposing a new name. A different worker independently challenges each proposal; use another agent identity for review. '
             'preview_asset_region(action="textures") compares layouts and palettes without flooding context with base64; '
             'action="preview" validates image/audio settings; action="model" tests a vertex/index layout. '
             'Propose a descriptive name, data kind, format notes, exact advisory boundaries and related region IDs. '
@@ -427,3 +449,33 @@ def run(manager,session):
     watcher=threading.Thread(target=watch,daemon=True,name='asset-discovery-completion');watcher.start()
     try:return manager._run_work(session)
     finally:finished.set()
+
+
+def _critique(net,agent,slug,session,store,held,data):
+    """A second worker records a challenge, never an acceptance or a new label."""
+    if not isinstance(data,dict) or data.get('verdict') not in ('agree','disagree','uncertain'):
+        raise NetworkError('Provide a review verdict: agree, disagree or uncertain, with evidence and inspected ROM citations.')
+    evidence=_text(data.get('evidence'),'independent review evidence')
+    citations=data.get('citations',[]);reads=json.loads(held['reads'])
+    if not isinstance(citations,list) or not 1<=len(citations)<=32:raise NetworkError('Cite 1–32 independently inspected ROM offsets.')
+    checked=[]
+    for citation in citations:
+        try:offset=integer(citation.get('offset') if isinstance(citation,dict) else None,'Citation offset',0,2**64-1)
+        except AssetError as exc:raise NetworkError(str(exc)) from None
+        if not any(lo<=offset<hi for lo,hi in reads):raise NetworkError('Read the cited ROM offset before reviewing it.')
+        checked.append(dict(offset=offset))
+    original=store.one("SELECT id,agent,model FROM asset_findings WHERE run=? AND region=? AND outcome='proposal' AND status='pending'",held['run'],held['region'])
+    if not original or original['agent']==agent.id:raise NetworkError('A different worker must review a pending proposal.')
+    body=dict(verdict=data['verdict'],evidence=evidence,citations=checked,proposal=original['id'],same_model=original['model']==session.model)
+    with store.tx() as db:
+        db.execute('INSERT INTO asset_findings(id,run,region,agent,author,model,outcome,body,status,created) VALUES(?,?,?,?,?,?,?,?,?,?)',(uuid.uuid4().hex,held['run'],held['region'],agent.id,session.label,session.model,'critique',json.dumps(body),'recorded',time.time()))
+        db.execute("UPDATE asset_queue SET state='submitted',agent=NULL,token=NULL WHERE run=? AND region=?",(held['run'],held['region']))
+        _complete(store,held['run'])
+    return json.dumps(dict(saved=True,message='Independent review recorded. The user decides acceptance. Claim the next region.'))
+
+
+@current
+def awaiting_peer(net,session,agent):
+    """Keep a reviewer available while a peer finishes bytes, without paid polling."""
+    _,store=_store(net,session.slug)
+    return bool(store.one("SELECT 1 FROM asset_queue WHERE run=? AND state='claimed' AND agent!=? AND lease>? LIMIT 1",session.options['asset_run'],agent.id,time.time()))

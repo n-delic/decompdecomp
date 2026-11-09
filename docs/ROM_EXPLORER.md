@@ -188,3 +188,12 @@ Confidence means an agent's assessment, not proof. Static loader analysis, textu
 and manual geometry retain all the limits described above. Proprietary game data stays local
 to the app’s files; selected agents receive inspection evidence through their configured provider,
 just as they receive assembly when decompiling.
+
+Asset discovery now records automatic layout/decompression checks, comparisons with
+static loader extents and independent worker critiques. Use at least two discovery
+agents for both stages; same-model reviews are labelled. The review dialog can
+find structurally similar data regions, with pageable results and no automatic
+label propagation. Parser success and static references remain evidence rather
+than proof of intended use. Human acceptance is unchanged. These features share
+the ROM Explorer adapter on all supported ROM consoles; project-mode object/data
+mapping remains planned before these tools can reach project-mode consoles.

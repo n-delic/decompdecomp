@@ -694,7 +694,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Image, texture/palette and audio previews | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Agent asset discovery, leased claims and human-reviewed interpretations | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Agent asset discovery, automatic checks, independent review and similar regions | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | ROM Explorer: whole analysis image, references, clues and notes | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — image adapter planned | — image adapter planned | — image adapter planned | — image adapter planned |
 | Automatic guarded-return diagnostic pairs | ✓ MIPS ROM | ✓ shared MIPS reader | ✓ shared MIPS reader | ✓ shared MIPS reader | — return-path reader | — return-path reader | — return-path reader | — immutable private diagnostics |
 | Reviewed diagnostic-root deep lane | ✓ local ROM | ✓ shared ROM lane | ✓ shared ROM lane | ✓ shared ROM lane | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot |
@@ -3442,3 +3442,12 @@ similarity alone is insufficient. Their ordinary assembly classifications still 
 - Planned: additional independently verified reference-free SDK bodies and imported
   project/other-console adapters. Relocated code still needs the full linker proof;
   partial SDK signatures never establish handwritten assembly.
+
+Asset discovery now records automatic layout/decompression checks, comparisons with
+static loader extents and independent worker critiques. Use at least two discovery
+agents for both stages; same-model reviews are labelled. The review dialog can
+find structurally similar data regions, with pageable results and no automatic
+label propagation. Parser success and static references remain evidence rather
+than proof of intended use. Human acceptance is unchanged. These features share
+the ROM Explorer adapter on all supported ROM consoles; project-mode object/data
+mapping remains planned before these tools can reach project-mode consoles.

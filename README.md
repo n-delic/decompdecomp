@@ -2020,3 +2020,12 @@ If the required connection fails, the helper displays the underlying startup dia
 and retries with connection backoff before starting a model turn. Session tokens are
 redacted from diagnostics. The separate authenticated app preflight and actual CLI
 `project_info` handshake remain in place.
+
+Asset discovery now records automatic layout/decompression checks, comparisons with
+static loader extents and independent worker critiques. Use at least two discovery
+agents for both stages; same-model reviews are labelled. The review dialog can
+find structurally similar data regions, with pageable results and no automatic
+label propagation. Parser success and static references remain evidence rather
+than proof of intended use. Human acceptance is unchanged. These features share
+the ROM Explorer adapter on all supported ROM consoles; project-mode object/data
+mapping remains planned before these tools can reach project-mode consoles.
