@@ -690,3 +690,18 @@ revision, including uncaught exceptions. Its stdout remains the JSON control
 protocol. Development worker revision checks also cover shared cache, network,
 compiler and progress contracts: lazily importing a new view against a cached old
 read-cache module previously caused an ImportError after source updates.
+
+### Narrow SDK discovery to this game's fingerprints
+
+Shared-code discovery now uses the catalog's `(arch, big_endian, fingerprint)` index
+before fetching SDK signature rows. Only fingerprints present in eligible destination
+targets are read; an empty target set does not scan SDK signatures. Library selection,
+size checks, hint limits and destination-judge requirements remain unchanged. SDK
+signatures continue to supply name-only hints, not verified C or match credit.
+
+A synthetic catalog with 5,002 signatures and two relevant entries fetched 5,002 rows
+before and two after, with identical matching rows. Across three paired trials,
+median idle query time was 4.26 ms versus 0.159 ms; with a competing Python CPU thread,
+1.927 s versus 20.5 ms. These measure the discovery query component, not live app or
+full cross-game pass latency. They do not establish that every long synchronization
+or source-fetch wait has been resolved.

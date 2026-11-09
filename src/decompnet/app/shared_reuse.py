@@ -4,6 +4,7 @@ The catalog includes source-less targets. A signature is evidence of shared code
 Only explicit free passes prepare files; opening a function cannot change a project's build.
 """
 
+import json
 import time
 from collections import defaultdict
 
@@ -85,7 +86,14 @@ def discover(twins, proj, *, job=None, force=False, donors=None, matched_only=Fa
     report(job, 'Checking local SDK signatures')
     arch, big = machine(net, proj)
     from .sdk_library import allowed
-    for sdk in net.store.all('SELECT corpus,name,fingerprint,size FROM sdk_signatures WHERE arch=? AND big_endian=?', arch, big):
+    # The catalog can hold tens of thousands of signatures. Only fingerprints
+    # present in this game can produce hints; use the existing catalog index before
+    # fetching rows or checking per-project library policy.
+    signatures = net.store.all(
+        'SELECT corpus,name,fingerprint,size FROM sdk_signatures WHERE arch=? AND big_endian=? '
+        'AND fingerprint IN (SELECT value FROM json_each(?)) AND size>=? ORDER BY fingerprint,id',
+        arch, big, json.dumps(sorted(wanted)), ACROSS_MIN_BYTES) if wanted else []
+    for sdk in signatures:
         if sdk['size'] < ACROSS_MIN_BYTES or not allowed(net, proj, sdk['corpus']):
             continue
         for fid in wanted.get(sdk['fingerprint'], []):

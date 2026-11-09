@@ -130,3 +130,43 @@ def test_restored_batch_discovers_other_projects_once_and_preserves_size_gaps(pa
     with pair.store.tx() as db:db.execute('UPDATE functions SET size=1000 WHERE id=2')
     pair.cascades.notify_many(donor,[1,3])
     assert len(discoveries)==2 and pair.cascades.pending=={'destination'}
+
+
+def test_sdk_discovery_fetches_only_relevant_fingerprints_and_keeps_policy_and_limits(pair, monkeypatch):
+    import json
+    proj=dict(setup(pair,monkeypatch))
+    proj['config']=json.dumps(pair.cfg(proj) | {'sdk_libraries':['enabled']})
+    with pair.store.tx() as db:
+        db.executemany('INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES(?,?,?,?,?,?)',
+                       [('enabled','mips',1,f'unrelated{i}',f'other{i}',32) for i in range(2500)] +
+                       [('enabled','mips',1,f'hint{i}','same',32) for i in range(40)] +
+                       [('disabled','mips',1,'disabled_hint','same',32),
+                        ('enabled','mips',1,'wrong_size','same',64),
+                        ('enabled','ppc',1,'wrong_arch','same',32),
+                        ('enabled','mips',0,'wrong_endian','same',32)])
+    fetched=[]
+    read=pair.store.all
+    def inspect(query,*args):
+        rows=read(query,*args)
+        if 'SELECT corpus,name,fingerprint,size FROM sdk_signatures' in query:
+            fetched.extend(rows)
+        return rows
+    monkeypatch.setattr(pair.store,'all',inspect)
+    result=shared_reuse.discover(pair.twins,proj,force=True,donors=[])
+    hints=result['hints'][2]
+    assert [h['name'] for h in hints]==[f'hint{i}' for i in range(24)]
+    assert all(not h['verified'] and h['kind']=='SDK object signature; name only' for h in hints)
+    assert len(fetched)==42
+    assert all(r['fingerprint']=='same' for r in fetched)
+
+
+def test_sdk_discovery_without_eligible_targets_does_not_scan_catalog(pair,monkeypatch):
+    proj=setup(pair,monkeypatch)
+    monkeypatch.setattr(pair.twins,'prints',lambda p:{p['id']:Print('small',[],4)})
+    read=pair.store.all
+    def inspect(query,*args):
+        assert 'FROM sdk_signatures' not in query
+        return read(query,*args)
+    monkeypatch.setattr(pair.store,'all',inspect)
+    result=shared_reuse.discover(pair.twins,proj,force=True,donors=[])
+    assert result['hints']=={} and result['detected']==0
