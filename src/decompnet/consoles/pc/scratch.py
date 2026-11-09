@@ -45,6 +45,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -901,7 +902,11 @@ class Function:
 
 def decorate(name: str, convention: str, purge: int, params: int) -> str:
     """The symbol MSVC makes for a C function: _f (__cdecl), _f@8 (__stdcall), @f@8 (__fastcall). __thiscall
-    functions (C++ methods, `this` in ecx) are written in C as __fastcall with an unused second argument (edx)."""
+    functions (C++ methods, `this` in ecx) are written in C as __fastcall with an unused second argument (edx).
+    A purge Ghidra couldn't work out comes as 2147483647 (it made `_func_0001190E@2147483647` on an Xbox program):
+    no function pops that many bytes, so it counts as none."""
+    if not 0 <= purge <= 0xFFFF:
+        purge = 0
     if convention == "__thiscall":
         return f"@{name}@{purge + 8}"
     if convention == "__fastcall":
@@ -1322,14 +1327,31 @@ def _sweep(md, pe: PE, lo: int, hi: int, ordered: list[int], extents: dict, data
         at = end
 
 
+def _full_reg(md, reg: int) -> str:
+    """A register's 32-bit name: `al` and `ax` are eax, as a byte loaded into one indexes a table by the other."""
+    name = md.reg_name(reg) or ""
+    return {"al": "eax", "ah": "eax", "ax": "eax", "bl": "ebx", "bh": "ebx", "bx": "ebx", "cl": "ecx", "ch": "ecx",
+            "cx": "ecx", "dl": "edx", "dh": "edx", "dx": "edx", "si": "esi", "di": "edi", "bp": "ebp"}.get(name, name)
+
+
+_LOADS = frozenset({x86.X86_INS_MOV, x86.X86_INS_MOVZX, x86.X86_INS_MOVSX})
+
+
 def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int, list[int]]:
     """(where the function's code ends, where its data ends, the jump table entries' offsets): MSVC puts a switch's
     jump table (and its byte index table) right after the function's code (a 64-bit one's: _tables_x64)."""
     if pe.x64:
         return _tables_x64(md, pe, start, code_end, sweep=False)
     tables, bytes_at = [], []
+    # which byte table's byte each register holds now (a load puts it there, a plain `mov` moves it on, anything else
+    # that writes the register ends it), and the byte tables a jump's index came from
+    holds, indexing = {}, defaultdict(set)  # (indexing: byte table -> the jump tables it indexes; one byte table
+    # can index several, `switch`es on one value)
     for ins in _disasm(md, pe.read(start, code_end - start), start):
-        for op in ins.operands:
+        ops = ins.operands
+        load = ins.id in _LOADS and len(ops) == 2 and ops[0].type == x86.X86_OP_REG
+        gets = holds.get(_full_reg(md, ops[1].reg)) if load and ops[1].type == x86.X86_OP_REG else None
+        for i, op in enumerate(ops):
             if op.type != x86.X86_OP_MEM or ins.disp_size != 4:
                 continue
             disp = op.mem.disp & 0xFFFFFFFF
@@ -1337,10 +1359,18 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
                 continue
             if op.mem.scale == 4 and ins.id == x86.X86_INS_JMP:
                 tables.append(disp)
+                if (b := holds.get(_full_reg(md, op.mem.index))) is not None:
+                    indexing[b].add(disp)
             elif op.size == 1:
                 bytes_at.append(disp)
+                if load and i == 1:
+                    gets = disp
+        for reg in ins.regs_access()[1]:
+            holds.pop(_full_reg(md, reg), None)
+        if gets is not None:
+            holds[_full_reg(md, ops[0].reg)] = gets
     code_end = min([code_end, *tables, *bytes_at])
-    data_end, entries = code_end, []
+    data_end, entries, cases = code_end, [], {}  # (cases: each jump table's entry count)
     for t in sorted(set(tables)):
         at = t
         while at + 4 <= limit and (at == t or at not in tables):  # (one table ends where the next one starts: its
@@ -1350,11 +1380,100 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
                 break
             entries.append(at - start)
             at += 4
+        cases[t] = (at - t) // 4
         data_end = max(data_end, at)
     for b in sorted(set(bytes_at)):  # a byte table runs to the next function, less its padding
         tail = pe.read(b, limit - b).rstrip(b"\x90\xcc")
+        if n := max((cases[t] for t in indexing.get(b, ())), default=0):
+            # a byte table that indexes a jump table (the byte it loads is the jump's index) has every byte below that
+            # table's entry count (the largest, of tables it indexes): the first one that isn't is past the table (an
+            # x86 game: code that only a vtable reaches followed a byte table and was swallowed). Any other byte table
+            # (a lookup) keeps its whole run
+            tail = tail[:next((k for k, v in enumerate(tail) if v >= n), len(tail))]
         data_end = max(data_end, b + len(tail))
     return code_end, data_end, entries
+
+
+def flow_end(md, pe: PE, start: int, limit: int) -> int:
+    """Where a function's code ends, by following it: linear disassembly up to a ret, or an unconditional jump, that
+    no earlier branch jumps past. A jump out of [start, limit) is a tail call and doesn't extend it, a switch's jump
+    table extends it to its furthest case and ends the code (MSVC puts the tables after the code), and an int3 or
+    bytes that don't decode end it too."""
+    code = pe.read(start, limit - start)
+    reach, table_at, end = start, None, start
+    for ins in _disasm(md, code, start):
+        if (table_at is not None and ins.address >= table_at) or ins.id == x86.X86_INS_INT3:
+            break
+        end = ins.address + ins.size
+        ops = ins.operands
+        imm = bool(ops) and ops[0].type == x86.X86_OP_IMM
+        if ins.id == x86.X86_INS_JMP and ops and ops[0].type == x86.X86_OP_MEM and ops[0].mem.scale == 4 \
+                and ops[0].mem.base == 0 and start < (ops[0].mem.disp & 0xFFFFFFFF) < limit:
+            table = ops[0].mem.disp & 0xFFFFFFFF
+            table_at = table if table_at is None else min(table_at, table)
+            at = table
+            while at + 4 <= limit:
+                value = struct.unpack("<I", pe.read(at, 4).ljust(4, b"\0"))[0]
+                if not start <= value < table:
+                    break
+                reach, at = max(reach, value), at + 4
+        if imm and x86.X86_GRP_JUMP in ins.groups:
+            target = ops[0].imm & 0xFFFFFFFF
+            if start < target < limit:
+                reach = max(reach, target)
+            elif ins.id == x86.X86_INS_JMP and ins.address >= reach:
+                break  # a tail call
+        if ins.address >= reach and (ins.id in (x86.X86_INS_RET, x86.X86_INS_RETF) or (
+                ins.id == x86.X86_INS_JMP and (not imm or ops[0].imm & 0xFFFFFFFF <= ins.address))):
+            break  # nothing falls through: a ret, an indirect jump, or a jump back (a loop's or a shared tail)
+    return end
+
+
+def _flow_end(md, pe: PE, start: int, limit: int) -> int:
+    """flow_end, reading a small window first and a bigger one only when the code reaches its end: the last
+    function's surroundings run to its section's end, and reading all of that for each function was quadratic."""
+    size = 0x1000
+    while True:
+        stop = min(limit, start + size)
+        end = flow_end(md, pe, start, stop)
+        if stop >= limit or end < stop - 16:
+            return end
+        size *= 8
+
+
+def _code_end(md, pe: PE, start: int, ghidra_end: int, limit: int) -> int:
+    """Where a function's code ends: Ghidra's end, moved past an instruction it cuts, and past code the function goes
+    on with after a ret in its middle.
+    - Ghidra's body for a function ending in a tail call (`jmp` to another function) can stop a byte short of the
+      jmp's end, and the cut byte then decodes as garbage on the original's side only (seen in an Xbox game, against
+      an LTCG harness that matched it).
+    - Ghidra's end stops short when a function returns in the middle and goes on after it (code an earlier jump
+      reaches): taken as the end, the rest became a false start. Only then does the function's own flow move the end:
+      a function Ghidra ends at a call that doesn't return keeps its end, as what follows isn't its code."""
+    last = None
+    for ins in _disasm(md, pe.read(start, limit - start), start):
+        if ins.address >= ghidra_end:
+            break
+        last = ins
+    if last is None:
+        return ghidra_end
+    end = max(ghidra_end, min(last.address + last.size, limit))
+    stops = last.id in (x86.X86_INS_RET, x86.X86_INS_RETF, x86.X86_INS_JMP)
+    return max(end, _flow_end(md, pe, start, limit)) if stops and end < limit else end
+
+
+# a bit mask's immediate is a number even when it equals an address, a function's start among them (`and edx,
+# 0x10001010`); a compare or an add can take a real address (a function pointer, a table) and stays
+_MASKS = frozenset({x86.X86_INS_AND, x86.X86_INS_OR, x86.X86_INS_XOR, x86.X86_INS_TEST})
+
+
+def _mid_code(pe: PE, value: int, starts, start: int, end: int) -> bool:
+    """An immediate that lands inside another function's code: a constant, not an address. Xbox programs load at
+    0x10000, so flag masks like `and edx, 0x70000` fall inside .text (seen in an Xbox game; the LTCG harness,
+    comparing numbers, matched where objdiff saw a relocation on one side). A real code address in an immediate is
+    a function (a callback) or a label of the function itself."""
+    sec = pe.section_at(value)
+    return sec is not None and sec.code and value not in starts and not start <= value < end
 
 
 def analyse(pe: PE, found: list[dict], *, msvc: bool = True) -> list[Function]:
@@ -1385,7 +1504,7 @@ def analyse(pe: PE, found: list[dict], *, msvc: bool = True) -> list[Function]:
         start = starts[i]
         sec = pe.section_at(start)
         limit = min(starts[i + 1] if i + 1 < len(starts) else sec.va + sec.size, sec.va + sec.size)
-        code_end = max(start + 1, min(rows[start].get("end", limit), limit))
+        code_end = _code_end(md, pe, start, max(start + 1, min(rows[start].get("end", limit), limit)), limit)
         code_end, end, entries = _tables(md, pe, start, code_end, limit)
         if traps and end == code_end < limit and pe.read(end, 1) == b"\xcc" and \
                 [i.mnemonic for i in _disasm(md, pe.read(start, code_end - start), start)][-1:] == ["call"]:
@@ -1467,10 +1586,12 @@ def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[
                 name, addend = symbol(op.mem.disp & 0xFFFFFFFF)
                 relocs.append((at + ins.disp_offset, DIR32, name, addend))
             elif op.type == x86.X86_OP_IMM and ins.imm_size == 4 and pe.contains(op.imm & 0xFFFFFFFF) and \
-                    (pe.loader_fixups is None or ins.address + ins.imm_offset in pe.loader_fixups):
+                    ((pe.loader_fixups is not None and ins.address + ins.imm_offset in pe.loader_fixups) or
+                     (pe.loader_fixups is None and ins.id not in _MASKS and
+                      not _mid_code(pe, op.imm & 0xFFFFFFFF, names, start, end))):
                 name, addend = symbol(op.imm & 0xFFFFFFFF)
                 relocs.append((at + ins.imm_offset, DIR32, name, addend))
-    for off in entries:
+    for off in sorted(set(entries)):  # a table two jumps go through is found twice (an x86 game has such switches)
         relocs.append((off, DIR32, None, struct.unpack("<I", pe.read(start + off, 4))[0] - start))
     return sorted(relocs)
 

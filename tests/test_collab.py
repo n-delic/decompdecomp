@@ -914,3 +914,28 @@ def test_an_overlay_twin_cant_take_the_other_twins_name(built, tmp_path):  # noq
     with pytest.raises(NetworkError, match="another function"):
         net.rename_symbol(agent, slug, "ovl_func_800007C4", "bounds")
     assert net._function("ovl_func_800007C4", slug)["unit"] == "ovl"
+
+
+def test_a_guest_hears_what_is_left_as_the_hosts_own_agents_do(built, tmp_path):  # noqa: F811
+    """The host's claim handed a guest a bare "nothing left": a function the guest's agent said no C makes, the last
+    one open, was "every open function is matched or someone is on it", the agent wasn't told to stop, and the user
+    wasn't told it waits for them."""
+    host = RomNetwork(tmp_path / "h.db", tmp_path / "h")
+    slug = host.import_rom(built, confirmed=True, log=lambda *_: None)
+    host.rooms[slug] = collab.Room(host, slug)
+    code = host.rooms[slug].open_invite()
+    client = TestClient(collab.host_app(host, host.rooms), base_url="https://abc.trycloudflare.com")
+    guest = RomNetwork(tmp_path / "g.db", tmp_path / "g")
+    gslug = collab.join_room(guest, f"https://abc.trycloudflare.com/join/{code}#room={slug}", "alex", built,
+                             log=lambda *_: None, client=client, start=False)
+    with host.store.tx() as db:  # one function left open
+        db.execute("UPDATE functions SET status='matched' WHERE project_id=? AND status='open' AND name != ?",
+                   (host._project(slug)["id"], "func_80000808"))
+    guest.links[gslug].sync()
+    agent, _ = guest.local_agent("claude-1")
+    assert "CLAIMED" in guest.claim(agent, gslug, "func_80000808")
+    guest.release(agent, "func_80000808", "a hand-written helper: no C makes it", gslug, not_c=True)
+    said = guest.claim(agent, gslug)
+    assert "1 you said no C makes: func_80000808" in said and "Stop working on this project" in said, said
+    told = host.store.all("SELECT detail FROM events WHERE kind='not_c'")
+    assert len(told) == 1 and told[0]["detail"].startswith("func_80000808: waiting for you")
