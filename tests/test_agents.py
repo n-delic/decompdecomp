@@ -2085,3 +2085,68 @@ def test_changed_model_has_new_identity_and_old_history_survives_restart(tmp_pat
     assert later.sessions[new].model == 'opencode-go/example'
     with pytest.raises(ValueError, match='already replaced'):
         later.change_model(old, 'game', 'opencode', 'opencode-go/example')
+
+
+def test_opencode_stderr_stream_rejection_ends_a_process_that_keeps_stdout_open(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    manager = agents.Manager(RomNetwork(tmp_path/'app.db', tmp_path), tmp_path, URL)
+    monkeypatch.setattr(manager, '_preflight_tools', lambda *a, **kw: True)
+    monkeypatch.setattr(manager.net, 'selection_counts', lambda *a, **kw: {'available':1})
+    _, token = manager.net.local_agent('synthetic-stream')
+    line = 'level=error message="stream error" providerID=opencode modelID=example-free small=false error="Free usage limit reached private-secret"'
+    code = f'import sys,time; print({line!r},file=sys.stderr,flush=True); time.sleep(30)'
+    monkeypatch.setattr(manager, '_command', lambda *a: ([sys.executable, '-c', code], dict(os.environ), ''))
+    session = agents.Session('synthetic-stream','opencode','synthetic','game','synthetic-stream', {'model':'opencode/example-free'})
+    saved=[]
+    session.record=lambda kind,text:saved.append((kind,text))
+    with ThreadPoolExecutor(1) as pool:
+        future=pool.submit(manager._run_cli,session,token,tmp_path)
+        try:
+            assert future.result(timeout=5) is False
+        finally:
+            if session.proc is not None:agents._terminate(session.proc)
+    assert session.limited and not session.signed_out
+    assert not session.stop.is_set(), 'provider failure is not a user stop'
+    assert session.proc is None
+    errors=[text for kind,text in saved if kind=='error']
+    assert errors and 'free allowance' in str(errors)
+    assert 'private-secret' not in str(saved)
+
+
+def test_opencode_terminal_stderr_requires_the_selected_primary_stream():
+    agent=kinds.get('opencode')
+    prefix='level=error message="stream error" providerID=opencode modelID=example-free small=false'
+    line=prefix+' error="Free usage limit reached"'
+    for invalid in [line.replace('level=error','level=info'), line.replace('small=false','small=true'),
+                    line.replace('providerID=opencode','providerID=opencode-go'),
+                    line.replace('modelID=example-free','modelID=another-free'),
+                    line.replace('Free usage limit reached','HTTP 502 Bad Gateway; retrying'),
+                    line.replace('Free usage limit reached','rate limit reached; retrying'),
+                    'Free usage limit reached', prefix]:
+        assert not agent.stderr_failure(invalid, 'opencode/example-free')
+    assert 'usage limit' in agent.stderr_failure(line, 'opencode/example-free#high')
+    assert not agent.stderr_failure(line, 'opencode-go/example-free')
+    assert not agent.stderr_failure(line)
+    assert not kinds.get('claude').stderr_failure(line, 'opencode/example-free')
+
+
+@pytest.mark.parametrize('message,outcome', [
+    ('Model example-free has been deprecated.', 'fatal'),
+    ('Upstream request failed: Model is unavailable.', 'capacity'),
+])
+def test_opencode_provider_failure_is_not_a_local_mcp_handshake(tmp_path, monkeypatch, message, outcome):
+    manager=agents.Manager(RomNetwork(tmp_path/'app.db',tmp_path),tmp_path,URL)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *a,**kw:True)
+    monkeypatch.setattr(manager.net,'selection_counts',lambda *a,**kw:{'available':1})
+    _,token=manager.net.local_agent('synthetic-provider')
+    event=json.dumps({'type':'error','error':{'name':'APIError','data':{'message':message}}})
+    code=f'import sys; print({event!r},flush=True); raise SystemExit(1)'
+    monkeypatch.setattr(manager,'_command',lambda *a:([sys.executable,'-c',code],dict(os.environ),''))
+    session=agents.Session('synthetic-provider','opencode','synthetic','game','synthetic-provider',{'model':'opencode/example'})
+    if outcome=='fatal':
+        with pytest.raises(agents.Fatal,match='deprecated'):
+            manager._run_cli(session,token,tmp_path)
+    else:
+        assert manager._run_cli(session,token,tmp_path) is False
+        assert session.throttled and not session.auth_failed and not session.limited
+    assert session.tool_handshake_failures==0

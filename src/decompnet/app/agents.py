@@ -210,7 +210,8 @@ _NO_CREDIT = re.compile(r"insufficient[ _](?:balance|credits?|funds|quota)|excee
 # and when it's asked too much at once (HTTP 429): it works again in a while
 THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency[ _-]?limit|\b429\b|overloaded", re.I)
 # A remote model-capacity refusal is not a failed local MCP handshake.
-PROVIDER_CAPACITY = re.compile(r"\bUNAVAILABLE\s*\(\s*code\s+503\b|\bno capacity available for model\b", re.I)
+PROVIDER_CAPACITY = re.compile(r"\bUNAVAILABLE\s*\(\s*code\s+503\b|\bno capacity available for model\b|"
+                               r"\bUpstream request failed: Model is unavailable\b", re.I)
 # and when a subscription's allowance is used up for now (Claude Code: "usage limit reached", "You've hit your
 # session limit", Codex: "You've hit your usage limit", Antigravity: RESOURCE_EXHAUSTED, OpenCode Go: "quota
 # exceeded"): it resets by itself in hours, so a helper waits for it instead of stopping (a night's run lost most of
@@ -2107,8 +2108,18 @@ class Manager:
             except OSError:  # it exited before reading (stderr says why)
                 pass
 
+        stream_rejected = threading.Event()
+        stream_errors: list[str] = []
+
         def drain_err():
             for line in proc.stderr:
+                failure = k.stderr_failure(line, s.model)
+                if failure and not stream_rejected.is_set() and not s.stop.is_set():
+                    stream_errors.append(failure)
+                    stream_rejected.set()
+                    errors.append(failure)
+                    s.push('error', failure)
+                    _terminate(proc)  # unblock stdout; normal limit handling keeps work and cooldowns
                 text=k.clean_stderr(line).replace(token,'[redacted]')
                 if text and (not errors or errors[-1] != text):
                     errors.append(text)
@@ -2155,6 +2166,7 @@ class Manager:
         s.proc = None
         if s.stop.is_set() or s.rotated:
             return True
+        said.extend(stream_errors)
         everything = " ".join([*said, *errors])
         if (k.focus_resume and code and (s.options.get('resume_conversation') or s.options.get('focus_conversation'))
                 and re.search(r'(?:no (?:session|conversation|thread) found|(?:session|conversation|thread).{0,100}(?:not found|does not exist|could not be found))', everything, re.I)):

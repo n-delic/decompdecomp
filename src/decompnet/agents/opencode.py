@@ -74,7 +74,8 @@ class Opencode(Agent):
         # A provider privacy-policy refusal needs an account/model decision.
         # Repeating the same paid request cannot change that policy.
         return bool(re.search(r'ProviderModelNotFoundError|\bModel not found\b|opencode model needs a provider/model ID'
-                              r'|This Go model trains on request data|Allow paid endpoints that train on request data',error,re.I))
+                              r'|This Go model trains on request data|Allow paid endpoints that train on request data'
+                              r'|\bModel [^\n]{1,120} has been deprecated\b',error,re.I))
 
     def config_model(self) -> str | None:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -165,6 +166,27 @@ class Opencode(Agent):
 
     def exit_reason(self, state: dict) -> str:
         return state.get('finish_reason', 'not reported')
+
+    def stderr_failure(self, line: str, model: str = "") -> str:
+        # --print-logs can report a rejected stream while `run` leaves stdout
+        # open forever. Only its structured error record is authoritative here;
+        # prompts, informational logs and transient retry errors are not failures.
+        # Title/small-model failures may coexist with a healthy main request.
+        # Route only the primary stream for this worker's explicitly selected model.
+        selected = model.split('#', 1)[0]
+        if '/' not in selected:
+            return ""
+        provider, selected_model = selected.split('/', 1)
+        metadata = line.split(' error=', 1)[0]
+        def field(name):
+            match = re.search(r'(?:^|\s)'+name+r'=(?:"([^"\n]*)"|([^\s]+))', metadata)
+            return (match[1] if match[1] is not None else match[2]) if match else None
+        if field('small') != 'false' or field('providerID') != provider or field('modelID') != selected_model:
+            return ""
+        if re.search(r'\blevel=error\b', line, re.I) and re.search(
+                r'\bFree usage limit reached\b', self.clean_stderr(line), re.I):
+            return "Provider usage limit reached; the selected model's free allowance is exhausted."
+        return ""
 
     def clean_stderr(self, line: str) -> str:
         """--print-logs: keep the error itself, drop the stack noise."""
