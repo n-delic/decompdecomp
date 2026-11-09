@@ -23,5 +23,5 @@ function compilerPartGroups(parts, mode = "settings", sort = "count") {
   }
   return result.sort((a, b) => Number(b.default) - Number(a.default) || (sort === "count" ? b.parts.length - a.parts.length
     : sort === "status" ? a.statusRank - b.statusRank
-      : sort === "compiler" ? a.compiler.localeCompare(b.compiler) : direction * (a.start - b.start)) || a.start - b.start);
+      : sort === "compiler" ? (mode === "family" ? a.family.localeCompare(b.family) : a.compiler.localeCompare(b.compiler)) : direction * (a.start - b.start)) || a.start - b.start);
 }

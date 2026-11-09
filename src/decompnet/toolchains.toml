@@ -392,7 +392,7 @@ platforms = ["linux-x86_64"]
 ["pspsnc-1.2.7503"]
 cplusplus = true
 name = "SN Systems SNC for PSP 1.2.7503"
-family = "sn64"
+family = "snc"
 platform = "PSP"
 arch = "mipsel"
 license = "proprietary"

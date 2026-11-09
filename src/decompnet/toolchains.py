@@ -153,8 +153,6 @@ def compiler_family(tid: str) -> str:
     declared = _registry_data().get(tid, {}).get("family")
     if declared:
         return declared
-    if tid.startswith("sn-n64-"):
-        return "sn64"
     prefix = tid.split("/", 1)[0].lower()
     if prefix == "msvc":
         return "msvc"

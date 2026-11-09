@@ -640,6 +640,7 @@ function compilerFunctionLinks(functions) {
 let compilerPartsAnswer = null;
 let compilerPartsSlug = null;
 let compilerDisplayedGroups = [];
+let compilerPartsSignature = null;
 const compilerProfileJobs = new Map();
 async function compareProfileWithDefault(button) {
   const group = compilerDisplayedGroups[Number(button.dataset.profileDefault)], part = group?.parts[0];
@@ -668,13 +669,14 @@ async function compareProfileWithDefault(button) {
 }
 function profileFailureGroups(failures) {
   const groups = new Map();
+  const titles = {no_source: 'No saved C', verification: 'Verification or compiler error'};
   const link = name => `<button type="button" class="link mono" data-profile-function="${esc(name)}">${esc(name)}</button>`;
   for (const failure of failures || []) {
     const key = failure.category || failure.reason || 'Verification failed';
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(failure);
   }
-  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure profile-failure-group" open><summary class="panel-head"><h3>${esc(key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="profile-failure-body"><div class="profile-failure-cards">${rows.map(f => `<article class="profile-failure-card"><div class="profile-failure-heading">${link(f.function)}</div><p class="small muted">${esc(f.reason)}</p></article>`).join('')}</div></div></details>`);
+  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure profile-failure-group" open><summary class="panel-head"><h3>${esc(titles[key] || key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="profile-failure-body"><div class="profile-failure-cards">${rows.map(f => `<article class="profile-failure-card"><div class="profile-failure-heading">${link(f.function)}</div><p class="small muted">${esc(f.reason)}</p></article>`).join('')}</div></div></details>`).join('');
 }
 
 async function testProfileAsDefault(button, action="test") {
@@ -787,9 +789,12 @@ async function testProfileAsDefault(button, action="test") {
 const compilerGroupsOpen = new Set();
 const compilerReasonsOpen = new Set();
 function renderCompilerParts(a) {
-  if (compilerPartsSlug !== S.slug) { compilerPartsSlug = S.slug; compilerGroupsOpen.clear(); compilerReasonsOpen.clear(); }
+  if (compilerPartsSlug !== S.slug) { compilerPartsSlug = S.slug; compilerGroupsOpen.clear(); compilerReasonsOpen.clear(); compilerPartsSignature = null; }
   compilerPartsAnswer = a;
   const parts = a.parts || [], mode = $("compilerGroup").value, sort = $("compilerSort").value;
+  const signature = JSON.stringify([mode, sort, S.ov.kind, parts, [...compilerProfileJobs].filter(([key]) => key.startsWith(`${S.slug}:`))]);
+  if (signature === compilerPartsSignature) return;
+  compilerPartsSignature = signature;
   $("compilerViewControls").hidden = !parts.length;
   const row = (p, showProfile) => {
     const [word, why] = PART_STATE[p.check] || PART_STATE[""];
@@ -841,7 +846,7 @@ function renderCompilerAnswer(a) {
     ${checks.length ? `<p class="col-title">Checks</p><ol class="parts">${checks.map((c) => `<li><span class="part-state ${esc(c.status)}">${(PART_STATE[c.status] || PART_STATE[""])[0]}</span><span class="grow small">${c.audit ? "part" : "suggested"} ${c.ranges.map(([s, e]) => `${hexShort(s)}–${hexShort(e)}`).join(", ")} · ${esc(c.compiler)}${c.said ? `<br><span class="muted">${esc(c.said)}</span>` : ""}</span></li>`).join("")}</ol>` : ""}
     <div class="row"><button class="ghost small-btn" type="button" id="checkNow"${a.checking ? " disabled" : ""}>${a.checking ? "Checking…" : "Check again now"}</button></div>`);
   $("checkNow").onclick = async () => {
-    try { renderCompilerAnswer(await api("/api/compilermap", { method: "POST", body: { slug: S.slug } })); } catch (e) { return toast(esc(e.message), "err"); }
+    try { const answer = await api("/api/compilermap", { method: "POST", body: { slug: S.slug } }); compilerAnswerCache = {slug:S.slug, parts:answer.parts || [], default_function_list:answer.default_function_list}; renderCompilerAnswer(answer); } catch (e) { return toast(esc(e.message), "err"); }
     clearTimeout(S.answerTimer);
     S.answerTimer = setTimeout(() => loadCompilerAnswer(true), COMPILER_ANSWER_EVERY_MS);
   };

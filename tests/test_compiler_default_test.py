@@ -234,6 +234,23 @@ def test_failed_apply_restores_original_compiler_range(net, monkeypatch):
     assert compiler_for(net.cfg(net._project('game')), 0x80001030)['flags'] == ['-O1']
 
 
+def test_failed_apply_restores_range_when_agent_claims_function(net, monkeypatch):
+    agent, _ = net.local_agent('you')
+    monkeypatch.setattr(net, '_judge_with', lambda *args: (True, NS(score=0), ''))
+
+    def near_match(*args):
+        with net.store.tx() as db:
+            fid = db.execute("SELECT id FROM functions WHERE name='f3'").fetchone()['id']
+            db.execute('INSERT INTO claims VALUES(?,?,?,?)', (fid, agent.id, 0, 9999999999))
+        return {'matched': False}
+
+    monkeypatch.setattr(net, 'try_quietly', near_match)
+    before = net._project('game')['config']
+    out = trial.apply_matches(net, 'game', PROFILE, ['f3'])
+    assert out['passed'] == 0 and out['failed'] == 1
+    assert net._project('game')['config'] == before
+
+
 def test_apply_rechecks_and_skips_claimed_functions(net, monkeypatch):
     agent, _ = net.local_agent('you')
     with net.store.tx() as db:

@@ -25,12 +25,10 @@ def replace_range(config, start, end, target):
     config['compiler_ranges'] = sorted(kept, key=lambda item: item['start'])
 
 
-def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
+def cleanup(net, slug, log=print, source_profile=None):
     net._rom_only(slug, 'compiler profile cleanup')
     if source_profile is None:
         raise NetworkError('Choose a compiler profile to compare with the project default.')
-    if not 1 <= rare_limit <= 25:
-        raise NetworkError('Choose a rare-profile limit between 1 and 25 functions.')
     check_cancel = getattr(log, 'check_cancel', lambda: None)
     # Check saved matches before changing their compiler settings.
     with net.progress.judging(slug):
@@ -42,26 +40,19 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
         starts = sorted(addresses)
         counts = Counter(profile(compiler_for(config, fn['vram'])) for fn in rows)
         default = profile(config['compiler'])
-        if source_profile is not None:
-            if not isinstance(source_profile, dict) or not isinstance(source_profile.get('toolchain'), str) or not isinstance(source_profile.get('flags'), list) or not all(isinstance(flag, str) for flag in source_profile['flags']):
-                raise NetworkError('Choose a compiler profile from the current list.')
-            selected = profile(source_profile)
-            if selected == default or selected not in counts:
-                raise NetworkError('That non-default compiler profile is no longer in use. Refresh the list.')
-            if toolchains.installed(default[0]) is None:
-                raise NetworkError('Install the project default compiler before comparing this profile.')
-            common = [default]
-        else:
-            selected = None
-            common = [p for p, _ in counts.most_common(3) if toolchains.installed(p[0]) is not None]
+        if not isinstance(source_profile, dict) or not isinstance(source_profile.get('toolchain'), str) or not isinstance(source_profile.get('flags'), list) or not all(isinstance(flag, str) for flag in source_profile['flags']):
+            raise NetworkError('Choose a compiler profile from the current list.')
+        selected = profile(source_profile)
+        if selected == default or selected not in counts:
+            raise NetworkError('That non-default compiler profile is no longer in use. Refresh the list.')
+        if toolchains.installed(default[0]) is None:
+            raise NetworkError('Install the project default compiler before comparing this profile.')
+        common = [default]
         candidates = [fn for fn in rows if fn['status'] == 'matched' and fn['matched_source']
                       and profile(compiler_for(config, fn['vram'])) != profile(config['compiler'])
-                      and (profile(compiler_for(config, fn['vram'])) == selected if selected else counts[profile(compiler_for(config, fn['vram']))] <= rare_limit)]
+                      and profile(compiler_for(config, fn['vram'])) == selected]
         changed, tested, skipped = [], 0, 0
-        if selected:
-            log(f'Checking all {len(candidates)} matched functions from the selected profile against the project default only.')
-        else:
-            log(f'Checking {len(candidates)} matched functions from profiles used by at most {rare_limit} functions. Testing up to three more-common installed profiles.')
+        log(f'Checking all {len(candidates)} matched functions from the selected profile against the project default only.')
         for index, fn in enumerate(candidates, 1):
             check_cancel()
             if addresses[fn['vram']] > 1 or net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
@@ -70,7 +61,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
                 continue
             own = profile(compiler_for(config, fn['vram']))
             for target in common:
-                if target == own or (selected is None and counts[target] <= counts[own]):
+                if target == own:
                     continue
                 check_cancel()
                 log(f'{index}/{len(candidates)}: {fn["name"]} — {target[0]} {" ".join(target[1])}')
@@ -106,6 +97,7 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
 def commit_config(net, proj, proposed, log=print):
     """Verify affected functions against private settings before an atomic guarded commit."""
     import json
+    import re
 
     before = net.cfg(proj)
     rows = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
@@ -114,6 +106,11 @@ def commit_config(net, proj, proposed, log=print):
     units = {fn['unit'] for fn in affected}
     contexts = [tuple(r) for r in net.store.all('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', proj['id'])
                 if r['unit'] in units]
+    sources = [f['matched_source'] if f['status'] == 'matched' else net._source_of(f) for f in affected]
+    referenced = set().union(*(set(re.findall(r'\b[A-Za-z_]\w*\b', source or '')) for source in sources))
+    ranges = [(f['vram'], f['vram'] + (f['size'] or 0)) for f in affected if f['vram'] is not None]
+    relevant = lambda row: row['name'] in referenced or any(start <= row['address'] < end for start, end in ranges)
+    symbols = [tuple(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name', proj['id']) if relevant(r)]
     check_cancel = getattr(log, 'check_cancel', lambda: None)
     report = getattr(log, 'progress', lambda value: None)
     scores = {}
@@ -133,8 +130,10 @@ def commit_config(net, proj, proposed, log=print):
         latest = [db.execute('SELECT * FROM functions WHERE id=?', (fn['id'],)).fetchone() for fn in affected]
         headers = [tuple(r) for r in db.execute('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', (proj['id'],))
                    if r['unit'] in units]
+        current_symbols = [tuple(r) for r in db.execute('SELECT * FROM symbols WHERE project_id=? ORDER BY name', (proj['id'],)) if relevant(r)]
         if (any(current.get(k) != before.get(k) for k in ('compiler', 'compiler_ranges', 'gp', 'big_endian', 'rom', 'platform'))
-                or any(now is None or tuple(now) != tuple(fn) for fn, now in zip(affected, latest)) or headers != contexts):
+                or any(now is None or tuple(now) != tuple(fn) for fn, now in zip(affected, latest)) or headers != contexts
+                or current_symbols != symbols):
             raise NetworkError('Code or settings changed during verification. Retry after the other work finishes.')
         for fn in affected:
             if fn['status'] == 'open' and db.execute('SELECT 1 FROM claims WHERE function_id=?', (fn['id'],)).fetchone():
@@ -145,5 +144,21 @@ def commit_config(net, proj, proposed, log=print):
         for fid, score in scores.items():
             db.execute('UPDATE functions SET best_score=?,seed=NULL WHERE id=?', (score, fid))
         net._event(db, proj['id'], None, 'compiler', 'Verified compiler profile changes saved')
+    net.bump_generation(proj['id'])
+    net.progress.sync(proj['slug'], force=True)
+
+
+def restore_config(net, proj, previous, applied):
+    """Undo our compiler range after a failed match without rejecting a new claim."""
+    import json
+
+    keys = ('compiler', 'compiler_ranges')
+    with net.progress._project_lock(proj['slug']), net.store.tx() as db:
+        row = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
+        current = json.loads(row['config']) if row else None
+        if current is None or any(current.get(key) != applied.get(key) for key in keys):
+            raise NetworkError('Compiler settings changed during application. Review this function before retrying.')
+        current.update({key: previous.get(key, [] if key == 'compiler_ranges' else None) for key in keys})
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(current), proj['id']))
     net.bump_generation(proj['id'])
     net.progress.sync(proj['slug'], force=True)
