@@ -175,6 +175,11 @@ FORK_JOIN = """\
 Part of another function the analysis cut (no prologue, registers the code before set, a switch's cases in the
 next symbol)? join_functions(it, the other part, why), so it becomes one whole function."""
 
+# What a ROM helper whose engine can join functions is told (the base prompt names no tool its engine lacks)
+ROM_JOIN = """\
+Part of another function the analysis cut (no prologue, registers the code before set, a switch's cases in the
+next symbol)? join_functions(it, the other part, why), so it becomes one whole function."""
+
 
 def _console_guides() -> dict:
     """topic -> file of the guides consoles keep in their packages (consoles/<id>/guides/<topic>.md)."""
@@ -364,10 +369,17 @@ FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
 
 
+def _rom_joins() -> bool:
+    """Whether the ROM engine can join functions. #192 adds EditMixin.join_functions, which is enough on its own;
+    an engine whose handler has another name sets RomNetwork.joins_functions."""
+    return bool(getattr(RomNetwork, "joins_functions", False)) or callable(getattr(RomNetwork, "join_functions", None))
+
+
 def _supports(console, name: str, fork: bool) -> bool:
     """Whether `console` can do `name` in this kind of project. A tool no console lacks keeps its place."""
     if name == "join_functions":
-        return console.joins_functions
+        # Project mode's joins are the console's (Console.join_functions); a ROM's are the engine's (#192).
+        return console.joins_functions if fork else _rom_joins()
     if name == "report_boundary":
         return console.reports_boundaries if fork else arch.BOUNDARIES in console.features
     if name == "get_class":
@@ -383,7 +395,8 @@ def tool_names(fork: bool, console=None, ltcg: bool = False, scratch: bool = Tru
     """The tools that make sense for a project: forks and ROM projects share the core loop. A game started from
     scratch in project mode has those of ROM projects its console makes work there too (Console.own_tools: PC's
     redraft and search_flags). A tool its console can't do (a project mode's join or boundary, a processor without
-    the reader for classes or structs, a compiler map) isn't offered, so its prompt and schema don't either."""
+    the reader for classes or structs, a compiler map), or a ROM join its engine can't make, isn't offered, so its
+    prompt and schema don't either."""
     own = console.own_tools if console is not None and scratch else frozenset()
     skip = ROM_ONLY - own if fork else FORK_ONLY
     names = [n for n in HANDLERS if n not in skip and (ltcg or n not in LTCG_ONLY)]
@@ -417,10 +430,13 @@ def _unoffered(net: RomNetwork, slug: str, name: str) -> str:
     """Why an old prompt or a cached tool list calling `name` is answered instead of run."""
     console = consoles.of(net.cfg(net._project(slug)))
     where = f"{console.name} projects" if console.name else "this project"
+    subject = "its console"
     why = {"join_functions": "can't join functions yet", "report_boundary": "can't report function ends yet",
            "get_class": "can't read C++ classes yet", "guess_struct": "can't read struct layouts yet",
            "compiler_map": "can't read a compiler map yet"}.get(name)
-    return (f"{name} isn't offered in {where}: " + (f"its console {why}" if why else "use the tools you were given")
+    if name == "join_functions" and not net.fork_slug(slug):
+        subject, why = "the ROM engine", "can't join functions yet"  # ROM joins are the engine's (#192), not a console's
+    return (f"{name} isn't offered in {where}: " + (f"{subject} {why}" if why else "use the tools you were given")
             + " (ROADMAP.md says what's planned).")
 
 

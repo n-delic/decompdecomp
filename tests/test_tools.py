@@ -1,6 +1,6 @@
-"""The tools helpers get are the ones their project's console can do (#232): a DS helper isn't offered joins it
-can't make, a GameCube one no function ends or C++ classes, and the API helper's schemas say the same as the MCP
-tool list."""
+"""The tools helpers get are the ones their project's console (or, for a ROM join, its engine) can do (#232): a DS
+helper isn't offered joins it can't make, a GameCube one no function ends or C++ classes, and the API helper's
+schemas say the same as the MCP tool list."""
 
 import json
 
@@ -8,7 +8,7 @@ import pytest
 
 from decompnet import consoles
 from decompnet.agents.api import api_tool_schemas
-from decompnet.app import tools
+from decompnet.app import agents, tools
 from decompnet.app.engine import RomNetwork
 
 # platform, project mode (a fork), tools that must be there, tools that must not
@@ -52,3 +52,42 @@ def test_an_old_prompt_calling_an_unoffered_tool_gets_a_sentence(tmp_path):
                       {"function": "a", "with_function": "b", "reason": "a has no epilogue"})
     assert text.startswith("error: join_functions isn't offered in GameCube projects")
     assert "can't join functions" in text and "Traceback" not in text
+
+
+def test_a_rom_engine_that_can_join_offers_it_to_rom_consoles(monkeypatch):
+    """#192 adds ROM joins in the engine, not on Console: once its join_functions handler exists (and FORK_ONLY no
+    longer hides the tool), every ROM console gets it. Project mode still asks the console: PC joins, GameCube not."""
+    monkeypatch.setattr(tools, "FORK_ONLY", tools.FORK_ONLY - {"join_functions"})
+    monkeypatch.setattr(tools.RomNetwork, "join_functions", lambda *args, **kwargs: "", raising=False)
+    for platform in ("n64", "ps2", "gba"):
+        assert "join_functions" in tools.tool_names(False, consoles.get(platform))
+    assert "join_functions" in tools.tool_names(True, consoles.get("pc"))
+    assert "join_functions" not in tools.tool_names(True, consoles.get("gc"))
+
+
+def test_the_rom_prompt_names_joins_only_when_the_engine_has_them(tmp_path, monkeypatch):
+    """A ROM prompt follows the same gate as its tool list: no join_functions before #192, and the join guidance
+    once the engine has it."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:1/mcp")
+    session = agents.Session("1", "claude", "claude-1", "rom", "claude-1", {})
+    monkeypatch.setattr(net, "overview", lambda slug: {
+        "kind": "rom", "title": "Game", "platform": "n64", "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+    assert "join_functions" not in manager._prompt(session)
+    monkeypatch.setattr(tools, "FORK_ONLY", tools.FORK_ONLY - {"join_functions"})
+    monkeypatch.setattr(tools.RomNetwork, "join_functions", lambda *args, **kwargs: "", raising=False)
+    assert "join_functions" in manager._prompt(session)
+
+
+def test_a_rom_project_without_engine_joins_names_the_engine(tmp_path, monkeypatch):
+    """The refusal follows the same gate: ROM joins are the engine's (#192), not a console's, so say so."""
+    monkeypatch.setattr(tools, "FORK_ONLY", tools.FORK_ONLY - {"join_functions"})
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                   ("rom", "ROM", "", "mips", 0, str(tmp_path), json.dumps({"kind": "rom", "platform": "n64"})))
+    agent, _ = net.local_agent("old-prompt")
+    text = tools.call(net, agent, "rom", "join_functions",
+                      {"function": "a", "with_function": "b", "reason": "a has no epilogue"})
+    assert text.startswith("error: join_functions isn't offered in Nintendo 64 projects")
+    assert "the ROM engine can't join functions" in text and "Traceback" not in text

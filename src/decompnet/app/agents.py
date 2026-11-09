@@ -1176,8 +1176,11 @@ class Manager:
         text = tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
         offered = set(tools.tool_names(False, console))
-        extra = [block for tool, block in (("guess_struct", tools.WORK_STRUCTS),
-                                           ("report_boundary", tools.WORK_BOUNDARY)) if tool in offered]
+        # (a ROM prompt may already name a join its engine offers, as #192's does: don't say it twice)
+        extra = [block for tool, block in (("join_functions", tools.ROM_JOIN),
+                                           ("guess_struct", tools.WORK_STRUCTS),
+                                           ("report_boundary", tools.WORK_BOUNDARY))
+                 if tool in offered and (tool != "join_functions" or "join_functions" not in text)]
         if extra:
             text = text.replace("\nWrite plausible original code", "\n" + "\n\n".join(extra)
                                 + "\n\nWrite plausible original code", 1)
