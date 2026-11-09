@@ -1150,7 +1150,12 @@ def _analyse_x64(pe: PE, found: list[dict]) -> list[Function]:
     for start, end in pdata_extents(pe):
         if (s := pe.section_at(start)) is not None and s.code:
             extents[start] = _tables_x64(md, pe, start, end, sweep=False)
-    starts = set(rows) | funclets_x64(pe) | {pe.entry}
+    # (an incrementally linked program's thunk table, _thunk_table_end: up to the first function .pdata has, the
+    # rest of the section if none; no function, nor are Ghidra's rows in it, the entry point's included)
+    tables = {sec.va: _thunk_table_end(pe, sec.va, min([sec.va + sec.size, *(
+        a for a in extents if sec.va <= a < sec.va + sec.size)])) for sec in pe.sections if sec.code}
+    rows = {a: r for a, r in rows.items() if not _in_table(tables, a)}
+    starts = {a for a in set(rows) | funclets_x64(pe) | {pe.entry} if not _in_table(tables, a)}
     data: dict[int, int] = {}
     for start, (code_end, _, _) in extents.items():  # what the functions' code calls, jumps to or points at
         _code_references_x64(md, pe, start, code_end, starts, data)
@@ -1158,11 +1163,7 @@ def _analyse_x64(pe: PE, found: list[dict]) -> list[Function]:
     ordered = sorted(starts | set(data))  # (the next start after an address, by bisect: a game has tens of thousands)
     for sec in (s for s in pe.sections if s.code):
         known = sorted((a, e) for a, (_, e, _) in extents.items() if sec.va <= a < sec.va + sec.size)
-        # (from after the thunk table an incrementally linked program starts it with: _thunk_table_end; up to the
-        # first function .pdata or Ghidra has that isn't one of its thunks, not the entry point: that's a thunk too)
-        first = min([sec.va + sec.size, *(a for a, _ in known[:1]), *(
-            a for a, r in rows.items() if sec.va <= a < sec.va + sec.size and not r.get("thunk"))])
-        bounds = [_thunk_table_end(pe, sec.va, first), *(x for a, e in known for x in (a, e)), sec.va + sec.size]
+        bounds = [tables[sec.va], *(x for a, e in known for x in (a, e)), sec.va + sec.size]
         for lo, hi in zip(bounds[::2], bounds[1::2]):
             _sweep(md, pe, lo, hi, ordered, extents, data)
     names = {}
@@ -1343,10 +1344,13 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
                 pe.offset(r["entry"]) is None:
             continue  # (a thunk to one of the program's own functions: part of the code it's in, as Ghidra found it)
         rows[r["entry"]] = r if not r.get("thunk") else {**r, "end": r["entry"] + THUNK_BYTES}
+    # (an incrementally linked program's thunk table, _thunk_table_end: no function, nor are Ghidra's rows in it,
+    # the thunks it didn't mark as thunks included)
+    tables = {sec.va: _thunk_table_end(pe, sec.va, sec.va + sec.size) for sec in pe.sections if sec.code}
+    rows = {a: r for a, r in rows.items() if not _in_table(tables, a)}
     for sec in pe.sections:  # code before the first function of a section is looked for as gaps after one are
         first = min((s for s in rows if sec.va <= s < sec.va + sec.size), default=None)
-        # (from after the thunk table an incrementally linked program starts it with: _thunk_table_end)
-        begin = sec.va if first is None else _thunk_table_end(pe, sec.va, first)
+        begin = tables.get(sec.va, sec.va)  # (from after its thunk table)
         if sec.code and first is not None and (rest := pe.read(begin, first - begin).lstrip(b"\x90\xcc\x00")):
             if rest.strip(b"\x90\xcc\x00"):
                 missed = first - len(rest)
@@ -1393,11 +1397,12 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
 
 
 def _thunk_table_end(pe: PE, at: int, stop: int) -> int:
-    """Where the table of `jmp` thunks a code section starting at `at` starts with ends, short of `stop` (the first
-    function known there), or `at` if it has none. An incrementally linked program (Visual C++'s /INCREMENTAL, on
-    with /DEBUG) starts its code with one: a `jmp rel32` to each function, which the program calls through. Only a
-    run from the section's start of padding and at least two such jumps, each to code, is taken for one: a lone
-    `jmp`, or one after a function, is a function (one Ghidra missed, or that is only a tail call), as before."""
+    """Where the table of `jmp` thunks a code section starting at `at` starts with ends, short of `stop`, or `at` if
+    it has none. An incrementally linked program (Visual C++'s /INCREMENTAL, on with /DEBUG) starts its code with
+    one: a `jmp rel32` to each function, which the program calls through (its entry point one of them). It's found
+    from the bytes alone, as Ghidra marks some of the thunks but lists others as functions: a run from the section's
+    start of padding and at least two such jumps, each to code, up to the first byte that's neither. A lone `jmp`,
+    or one after a function, is a function (one Ghidra missed, or that is only a tail call), as before."""
     code, k, end, count = pe.read(at, stop - at), 0, 0, 0
     while True:
         while k < len(code) and code[k] in b"\x90\xcc\x00":
@@ -1410,6 +1415,11 @@ def _thunk_table_end(pe: PE, at: int, stop: int) -> int:
         k = end = k + 5
         count += 1
     return at + end if count >= 2 else at
+
+
+def _in_table(tables: dict[int, int], at: int) -> bool:
+    """Whether `at` is in one of the thunk `tables` (a code section's start -> its table's end)."""
+    return any(start <= at < end for start, end in tables.items())
 
 
 def _missed(md, at: int, rest: bytes) -> dict:

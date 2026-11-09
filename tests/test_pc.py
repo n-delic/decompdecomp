@@ -1796,7 +1796,7 @@ def test_an_incrementally_linked_programs_thunk_table_is_no_function_before_the_
 def test_only_a_leading_run_of_jmp_thunks_is_a_thunk_table():
     """Only a run of at least two `jmp` thunks from a section's start (padding between them) is a thunk table: a leaf
     before a thunk, the thunk, and a lone `jmp` at the start are functions, as before. A thunk Ghidra didn't mark
-    after the last one it did is still the table's."""
+    after the last one it did is still the table's, though Ghidra lists it as a function."""
     pad = lambda code: code + b"\xcc" * (-len(code) % 16)
     jmp = lambda at, to: b"\xe9" + struct.pack("<i", to - (at + 5))
     leaf, function = pad(bytes.fromhex("8bc1c3")), pad(bytes.fromhex("8b442404c3"))
@@ -1807,7 +1807,7 @@ def test_only_a_leading_run_of_jmp_thunks_is_a_thunk_table():
         (pad(jmp(0x401000, 0x401010)) + function, [thunk(0x401000, 0x401010), _row(0x401010, 0x401015)],
          [(0x401000, 5), (0x401010, 5)]),
         (pad(jmp(0x401000, 0x401020)) + pad(jmp(0x401010, 0x401030)) + function + pad(bytes.fromhex("33c0c3")),
-         [thunk(0x401000, 0x401020), _row(0x401020, 0x401025), _row(0x401030, 0x401033)],
+         [thunk(0x401000, 0x401020), _row(0x401010, 0x401015), _row(0x401020, 0x401025), _row(0x401030, 0x401033)],
          [(0x401020, 5), (0x401030, 3)]),
     ]
     for code, rows, functions in cases:
@@ -3425,8 +3425,8 @@ def test_a_constant_past_a_64_bit_leaf_with_no_pdata_is_not_a_function():
 
 
 def test_a_64_bit_incrementally_linked_programs_thunk_table_is_no_function():
-    """A 64-bit program linked incrementally starts its code with a table of `jmp rel32` thunks too (its entry point
-    one of them): two thunks before two .pdata functions are two functions, not four."""
+    """A 64-bit program linked incrementally starts its code with a table of `jmp rel32` thunks too: two thunks before
+    two .pdata functions are two functions, not four, though Ghidra lists the entry point, one of the thunks."""
     t, jmp = X64_BASE, lambda at, to: b"\xe9" + struct.pack("<i", to - (at + 5))
     code = (jmp(t + 0x1000, t + 0x1010) + jmp(t + 0x1005, t + 0x1020)).ljust(0x10, b"\xcc")
     code += bytes.fromhex("4883ec2833c04883c428c3").ljust(0x10, b"\xcc")  # 0x1010: sub rsp, 0x28; xor eax, eax; ...
@@ -3434,7 +3434,8 @@ def test_a_64_bit_incrementally_linked_programs_thunk_table_is_no_function():
     unwind = bytes.fromhex("0104010004420000")  # (sub rsp, 0x28)
     pdata = struct.pack("<6I", 0x1010, 0x101B, 0x2000, 0x1020, 0x102E, 0x2000)
     pe = scratch_pe.read_pe(_tiny_exe64(code, unwind + pdata, {scratch_pe.EXCEPTIONS: (0x2008, 24)}))
-    assert [(f.addr - t, f.size) for f in scratch_pe.analyse(pe, [])] == [(0x1010, 0xB), (0x1020, 0xE)]
+    entry = {**_row(t + 0x1000, t + 0x1005), "name": "entry", "source": "IMPORTED"}  # (as Ghidra gives it)
+    assert [(f.addr - t, f.size) for f in scratch_pe.analyse(pe, [entry])] == [(0x1010, 0xB), (0x1020, 0xE)]
 
 
 def test_a_load_through_image_base_into_its_own_register_keeps_its_relocation():
