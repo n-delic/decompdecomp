@@ -1682,7 +1682,7 @@ class Manager:
             except Exception:  # the host lets the claim expire
                 pass
         # its claims go now, with a note, rather than when their lease runs out; and its next run starts afresh
-        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200])
+        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200], project=s.slug)
 
     def _session_begin(self, s: Session) -> int:
         from .prompt_settings import effective

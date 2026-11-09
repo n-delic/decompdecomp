@@ -337,14 +337,18 @@ class Core(Network):
                         return pick[0]["name"]
             raise
 
-    def _update_cfg(self, slug: str, change) -> dict:
+    def _update_cfg(self, slug: str, change, *, synchronize=True) -> dict:
         """Change a project's config in one transaction (change(cfg) edits it in place)."""
-        proj = self._project(slug)
+        if synchronize:
+            proj = self._project(slug)
+        else:
+            with self.progress.view():
+                proj = self._project(slug)
         with self.project_store(proj["id"]).tx() as db:
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             change(cfg)
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
-        self.progress.sync(slug, force=True)
+        if synchronize:self.progress.sync(slug, force=True)
         return cfg
 
     def _local_identity_name(self, name: str) -> str:

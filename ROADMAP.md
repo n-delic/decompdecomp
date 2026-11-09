@@ -1,5 +1,9 @@
 # Roadmap
 
+- Done: agent start/stop requests use reserved control workers; stopping one helper
+  releases only its project. Usage accounting skips source synchronization, and
+  active cleanup owns its eligibility scan.
+
 - Done: repair implementation fingerprints reuse one search-session snapshot and refresh
   next run; actual compiler/header/target guards remain fresh.
 - Done: deep-search history and speculative-compile preparation reuse advisory
