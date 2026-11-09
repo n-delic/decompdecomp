@@ -3,6 +3,7 @@
 HTML comments mark the text we own. The local SVG travels with the save and needs no image service or game data.
 """
 
+import json
 import math
 import re
 from collections import Counter
@@ -36,12 +37,26 @@ def _replace(text, name, content):
 def update(net, proj, folder, initial, best, details=None):
     """Refresh counts and graphics in both save modes; create the guide only on the first save."""
     store = net.project_store(proj['id'])
-    rows = store.all(f"SELECT name, status, best_score, {SET_ASIDE} AS aside FROM functions "
-                         f"WHERE project_id=? AND {IN_BUILD} ORDER BY vram, unit, name", proj["id"])
-    states = [(r["name"], "aside" if r["aside"] else "matched" if r["status"] == "matched" else
-               "attempt" if r["best_score"] is not None else "open") for r in rows]
+    # One snapshot, bounded packets: sqlite3 hands the GIL back for every
+    # returned row. Thousands of metadata rows can stall a save behind CPU-heavy
+    # background workers even though no source payloads are read here.
+    packets = store.all(f"""WITH numbered AS (
+        SELECT name, CASE WHEN {SET_ASIDE} THEN 'aside'
+            WHEN status='matched' THEN 'matched'
+            WHEN best_score IS NOT NULL THEN 'attempt' ELSE 'open' END AS state,
+            row_number() OVER (ORDER BY vram, unit, name) AS ordinal
+        FROM functions WHERE project_id=? AND {IN_BUILD})
+        SELECT json_group_array(json_array(ordinal,name,state)) AS packet
+        FROM numbered GROUP BY (ordinal-1)/128 ORDER BY min(ordinal)""", proj['id'])
+    ordered = []
+    while packets:
+        ordered.extend(json.loads(packets.pop()['packet']))
+    # Aggregate input ordering is not guaranteed; ordinals retain the original
+    # address/unit/name order, including SQLite's NULL-first ordering.
+    ordered.sort(key=lambda row: row[0])
+    states = [(name, state) for _, name, state in ordered]
     counts = Counter(state for _, state in states)
-    total = len(rows) - counts["aside"]
+    total = len(states) - counts["aside"]
     pct = 100 * counts["matched"] / total if total else 0
     progress = (f"- **Progress:** {counts['matched']} matching function(s), {best} best attempt(s)\n"
                 f"- **Completion:** {counts['matched']:,} / {total:,} functions ({pct:.1f}%). "
